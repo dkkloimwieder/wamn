@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+# Run one Kubernetes gate manifest with fresh, machine-decidable Job verdicts.
+#
+# Each --job value is JSON with this schema:
+#   {"name":"gate","container":"gate","expectation":"positive",
+#    "exit_code":0,"image":"wamn-gates:dev","log_contains":"overall PASS"}
+# expectation is "positive" or "expected-negative". Exactly one
+# expected-negative Job requires --snapshot-executable; each argument is passed
+# separately with --snapshot-arg. Command strings are never evaluated.
+
+set -uo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: kubernetes-gate-run --manifest FILE --receipt FILE [options]
+  --namespace NAME              Kubernetes namespace (default: wamn-system)
+  --timeout-secs N              Per-command and Job wait bound (default: 900)
+  --job JSON                    Repeat for every Job in the aggregate
+  --snapshot-executable PATH    Exact negative side-effect probe executable
+  --snapshot-arg VALUE          Repeat to construct the probe argv
+EOF
+}
+
+manifest=
+receipt=
+namespace=wamn-system
+timeout_secs=900
+snapshot_executable=
+declare -a snapshot_argv=()
+declare -a job_specs=()
+
+while (($#)); do
+  case "$1" in
+    --manifest) manifest=${2-}; shift 2 ;;
+    --receipt) receipt=${2-}; shift 2 ;;
+    --namespace) namespace=${2-}; shift 2 ;;
+    --timeout-secs) timeout_secs=${2-}; shift 2 ;;
+    --job) job_specs+=("${2-}"); shift 2 ;;
+    --snapshot-executable) snapshot_executable=${2-}; shift 2 ;;
+    --snapshot-arg) snapshot_argv+=("${2-}"); shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [[ -z "$manifest" || -z "$receipt" || ${#job_specs[@]} -eq 0 ]]; then
+  usage
+  exit 2
+fi
+if [[ ! "$timeout_secs" =~ ^[1-9][0-9]*$ ]]; then
+  echo "--timeout-secs must be a positive integer" >&2
+  exit 2
+fi
+for required in jq sha256sum timeout date; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "required executable not found: $required" >&2
+    exit 2
+  fi
+done
+
+kubectl_executable=${KUBECTL:-kubectl}
+command_timeout="${timeout_secs}s"
+run_started_at=
+overall=pass
+declare -a failures=()
+declare -a job_receipts=()
+snapshot_receipt=null
+probe_before_hash=
+probe_before_exit=
+probe_after_hash=
+probe_after_exit=
+
+add_failure() {
+  overall=fail
+  failures+=("$1")
+}
+
+hash_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+run_kubectl() {
+  timeout --foreground "$command_timeout" "$kubectl_executable" -n "$namespace" "$@"
+}
+
+run_probe() {
+  local output=$1
+  timeout --foreground "$command_timeout" "$snapshot_executable" "${snapshot_argv[@]}" >"$output"
+  local status=$?
+  return "$status"
+}
+
+valid_specs=true
+negative_count=0
+for spec in "${job_specs[@]}"; do
+  if ! jq -e '
+      type == "object" and
+      (.name | type == "string" and length > 0) and
+      (.container | type == "string" and length > 0) and
+      (.expectation == "positive" or .expectation == "expected-negative") and
+      (.exit_code | type == "number" and floor == . and . >= 0) and
+      (.image | type == "string" and length > 0) and
+      ((.log_contains // "") | type == "string") and
+      (if .expectation == "positive" then .exit_code == 0
+       else .exit_code > 0 and (.log_contains | type == "string" and length > 0)
+       end)
+    ' >/dev/null <<<"$spec"; then
+    echo "invalid --job specification: $spec" >&2
+    valid_specs=false
+  elif [[ $(jq -r '.expectation' <<<"$spec") == expected-negative ]]; then
+    ((negative_count += 1))
+  fi
+done
+if [[ "$valid_specs" != true ]]; then
+  exit 2
+fi
+if ((negative_count > 1)); then
+  echo "at most one expected-negative Job is supported per aggregate" >&2
+  exit 2
+fi
+if ((negative_count == 1)) && [[ -z "$snapshot_executable" ]]; then
+  echo "an expected-negative Job requires --snapshot-executable" >&2
+  exit 2
+fi
+if ((negative_count == 0)) && [[ -n "$snapshot_executable" ]]; then
+  echo "--snapshot-executable requires an expected-negative Job" >&2
+  exit 2
+fi
+
+tmp_dir=$(mktemp -d)
+cleanup() {
+  rm -rf -- "$tmp_dir"
+}
+trap cleanup EXIT
+
+# Capture old identities, then delete each named Job. Applying a manifest with
+# RBAC or other supporting resources remains additive; only executable Jobs are
+# recreated. This makes an unchanged repeated invocation fresh without deleting
+# shared service accounts or roles.
+declare -a old_uids=()
+for spec in "${job_specs[@]}"; do
+  name=$(jq -r '.name' <<<"$spec")
+  old_json="$tmp_dir/old-$name.json"
+  if run_kubectl get job "$name" -o json >"$old_json" 2>/dev/null; then
+    old_uids+=("$(jq -r '.metadata.uid // ""' "$old_json")")
+  else
+    old_uids+=("")
+  fi
+  if ! run_kubectl delete job "$name" --ignore-not-found=true --wait=true \
+      --timeout="$command_timeout" >/dev/null; then
+    add_failure "delete-failed:$name"
+  fi
+done
+
+if ((negative_count == 1)); then
+  probe_before="$tmp_dir/probe-before"
+  if run_probe "$probe_before"; then
+    probe_before_exit=0
+  else
+    probe_before_exit=$?
+    add_failure "snapshot-probe-before-failed"
+  fi
+  probe_before_hash=$(hash_file "$probe_before")
+fi
+
+run_started_at=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+if ! run_kubectl apply -f "$manifest" >/dev/null; then
+  add_failure "apply-failed"
+fi
+
+for index in "${!job_specs[@]}"; do
+  spec=${job_specs[$index]}
+  old_uid=${old_uids[$index]}
+  name=$(jq -r '.name' <<<"$spec")
+  container=$(jq -r '.container' <<<"$spec")
+  expectation=$(jq -r '.expectation' <<<"$spec")
+  expected_exit=$(jq -r '.exit_code' <<<"$spec")
+  expected_image=$(jq -r '.image' <<<"$spec")
+  log_contains=$(jq -r '.log_contains // ""' <<<"$spec")
+  condition=complete
+  expected_phase=Succeeded
+  if [[ "$expectation" == expected-negative ]]; then
+    condition=failed
+    expected_phase=Failed
+  fi
+
+  declare -a job_failures=()
+  if ! run_kubectl wait --for="condition=$condition" "job/$name" \
+      --timeout="$command_timeout" >/dev/null; then
+    job_failures+=("job-wait-timeout")
+  fi
+
+  job_json="$tmp_dir/job-$name.json"
+  pods_json="$tmp_dir/pods-$name.json"
+  logs="$tmp_dir/logs-$name"
+  if ! run_kubectl get job "$name" -o json >"$job_json"; then
+    job_failures+=("job-status-missing")
+    printf '{}' >"$job_json"
+  fi
+  if ! run_kubectl get pods -l "job-name=$name" -o json >"$pods_json"; then
+    job_failures+=("pod-status-missing")
+    printf '{"items":[]}' >"$pods_json"
+  fi
+  if ! run_kubectl logs "job/$name" -c "$container" >"$logs"; then
+    job_failures+=("logs-missing")
+    : >"$logs"
+  elif [[ ! -s "$logs" ]]; then
+    job_failures+=("logs-empty")
+  fi
+
+  uid=$(jq -r '.metadata.uid // ""' "$job_json")
+  created=$(jq -r '.metadata.creationTimestamp // ""' "$job_json")
+  transition=$(jq -r --arg want "${condition^}" \
+    '[.status.conditions[]? | select(.type == $want and .status == "True") | .lastTransitionTime] | last // ""' \
+    "$job_json")
+  if [[ -z "$uid" || ( -n "$old_uid" && "$uid" == "$old_uid" ) ]]; then
+    job_failures+=("stale-job")
+  fi
+  if [[ -z "$created" || "$created" < "$run_started_at" ]]; then
+    job_failures+=("job-predates-run")
+  fi
+  if [[ -z "$transition" || "$transition" < "$run_started_at" ]]; then
+    job_failures+=("condition-predates-run")
+  fi
+
+  pod_count=$(jq '.items | length' "$pods_json")
+  if ((pod_count == 0)); then
+    job_failures+=("pod-never-created")
+  fi
+  if ! jq -e --arg started "$run_started_at" '
+      all(.items[]; (.metadata.creationTimestamp // "") >= $started)
+    ' >/dev/null "$pods_json"; then job_failures+=("pod-predates-run"); fi
+  if ! jq -e --arg started "$run_started_at" '
+      all(.items[]; (.status.startTime // "") >= $started)
+    ' >/dev/null "$pods_json"; then job_failures+=("pod-never-started"); fi
+  if ! jq -e --arg phase "$expected_phase" '
+      all(.items[]; .status.phase == $phase)
+    ' >/dev/null "$pods_json"; then job_failures+=("pod-phase-mismatch"); fi
+  if ! jq -e --arg started "$run_started_at" '
+      all(.items[];
+        ([.spec.initContainers[]?] | length) == ([.status.initContainerStatuses[]?] | length) and
+        all(.status.initContainerStatuses[]?;
+          (.state.terminated.exitCode // -1) == 0 and
+          (.state.terminated.finishedAt // "") >= $started))
+    ' >/dev/null "$pods_json"; then job_failures+=("init-container-failed"); fi
+  if ! jq -e --arg container "$container" --arg image "$expected_image" '
+      all(.items[]; any(.spec.containers[]?; .name == $container and .image == $image))
+    ' >/dev/null "$pods_json"; then job_failures+=("wrong-image"); fi
+  if ! jq -e --arg container "$container" '
+      all(.items[]; any(.status.containerStatuses[]?;
+        .name == $container and (.imageID // "") != ""))
+    ' >/dev/null "$pods_json"; then job_failures+=("image-id-missing"); fi
+  if ! jq -e --arg container "$container" --argjson code "$expected_exit" '
+      all(.items[]; any(.status.containerStatuses[]?;
+        .name == $container and (.state.terminated.exitCode // -1) == $code))
+    ' >/dev/null "$pods_json"; then job_failures+=("container-exit-code-mismatch"); fi
+  if ! jq -e --arg started "$run_started_at" --arg container "$container" '
+      all(.items[]; any(.status.containerStatuses[]?;
+        .name == $container and (.state.terminated.finishedAt // "") >= $started))
+    ' >/dev/null "$pods_json"; then job_failures+=("container-completion-invalid"); fi
+  if [[ -n "$log_contains" ]] && ! grep -Fq -- "$log_contains" "$logs"; then
+    job_failures+=("expected-log-missing")
+  fi
+
+  log_hash=$(hash_file "$logs")
+  pod_observations=$(jq --arg container "$container" '[.items[] | {
+      name: (.metadata.name // ""),
+      uid: (.metadata.uid // ""),
+      created_at: (.metadata.creationTimestamp // ""),
+      started_at: (.status.startTime // null),
+      phase: (.status.phase // ""),
+      init_exit_codes: [.status.initContainerStatuses[]? | (.state.terminated.exitCode // null)],
+      container_exit_code: ([.status.containerStatuses[]? | select(.name == $container) |
+        (.state.terminated.exitCode // null)] | first // null),
+      image_id: ([.status.containerStatuses[]? | select(.name == $container) |
+        (.imageID // "")] | first // "")
+    }]' "$pods_json")
+  job_verdict=pass
+  if ((${#job_failures[@]} > 0)); then
+    job_verdict=fail
+    for failure in "${job_failures[@]}"; do
+      add_failure "$name:$failure"
+    done
+  fi
+  job_failure_json=$(printf '%s\n' "${job_failures[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+  job_receipts+=("$(jq -cn \
+    --arg name "$name" --arg container "$container" --arg expectation "$expectation" \
+    --argjson expected_exit_code "$expected_exit" --arg expected_image "$expected_image" \
+    --arg uid "$uid" --arg old_uid "$old_uid" --arg created_at "$created" \
+    --arg condition "$condition" --arg transition_at "$transition" \
+    --arg logs_sha256 "$log_hash" --arg verdict "$job_verdict" \
+    --argjson pods "$pod_observations" --argjson failures "$job_failure_json" \
+    '{name:$name,container:$container,expectation:$expectation,
+      expected_exit_code:$expected_exit_code,expected_image:$expected_image,
+      observed:{uid:$uid,previous_uid:$old_uid,created_at:$created_at,
+        condition:$condition,condition_transition_at:$transition_at,
+        logs_sha256:$logs_sha256,pods:$pods},verdict:$verdict,failure_classes:$failures}')")
+done
+
+if ((negative_count == 1)); then
+  probe_after="$tmp_dir/probe-after"
+  if run_probe "$probe_after"; then
+    probe_after_exit=0
+  else
+    probe_after_exit=$?
+    add_failure "snapshot-probe-after-failed"
+  fi
+  probe_after_hash=$(hash_file "$probe_after")
+  unchanged=false
+  if [[ "$probe_before_exit" == 0 && "$probe_after_exit" == 0 \
+      && "$probe_before_hash" == "$probe_after_hash" ]]; then
+    unchanged=true
+  else
+    add_failure "negative-side-effect-changed"
+  fi
+  argv_json=$(printf '%s\n' "${snapshot_argv[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+  snapshot_receipt=$(jq -cn --arg executable "$snapshot_executable" \
+    --argjson argv "$argv_json" --argjson before_exit_code "${probe_before_exit:-255}" \
+    --argjson after_exit_code "${probe_after_exit:-255}" \
+    --arg before_stdout_sha256 "$probe_before_hash" --arg after_stdout_sha256 "$probe_after_hash" \
+    --argjson unchanged "$unchanged" \
+    '{executable:$executable,argv:$argv,before_exit_code:$before_exit_code,
+      after_exit_code:$after_exit_code,before_stdout_sha256:$before_stdout_sha256,
+      after_stdout_sha256:$after_stdout_sha256,unchanged:$unchanged}')
+fi
+
+failure_json=$(printf '%s\n' "${failures[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
+jobs_json=$(printf '%s\n' "${job_receipts[@]}" | jq -sc '.')
+mkdir -p -- "$(dirname -- "$receipt")"
+jq -n --arg protocol "wamn-kubernetes-gate-verdict/v1" \
+  --arg manifest "$manifest" --arg namespace "$namespace" --arg run_started_at "$run_started_at" \
+  --argjson timeout_seconds "$timeout_secs" --arg verdict "$overall" \
+  --argjson failure_classes "$failure_json" --argjson jobs "$jobs_json" \
+  --argjson snapshot_probe "$snapshot_receipt" \
+  '{schema_version:1,protocol:$protocol,manifest:$manifest,namespace:$namespace,
+    run_started_at:$run_started_at,timeout_seconds:$timeout_seconds,verdict:$verdict,
+    failure_classes:$failure_classes,jobs:$jobs,snapshot_probe:$snapshot_probe}' >"$receipt"
+
+if [[ "$overall" != pass ]]; then
+  exit 1
+fi
