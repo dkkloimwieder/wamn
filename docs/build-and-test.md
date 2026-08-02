@@ -4013,8 +4013,8 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-exposure-47 \
 
 Publication stores the exact RFC 8785 resolved-interface bundle text beside
 its SHA-256. Copy verifies the graph, bundle bytes, hashes, and artifact key
-before writing. The production queue path reads graph plus typed
-purity/recovery metadata in one release-pinned artifact query, with no legacy
+before writing. The production queue path reads graph plus ordered occurrence
+recovery selections in one release-pinned artifact query, with no legacy
 flow-table fallback.
 
 ```bash
@@ -4065,9 +4065,14 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67 \
 Flowrunner commits an attempt intent before any external dispatch, marks that
 attempt dispatched immediately before the effect, and commits success or error
 afterward. An unmarked prepared attempt is resumable for every recovery class.
-A marked pure or idempotent-with-key attempt may redispatch under its exact
-key; a marked never-replay attempt becomes effect-uncertain and cannot send
-again. Custom nodes without declared purity remain never-replay.
+For a marked attempt, the artifact-pinned occurrence selection and its portable
+claim are admitted against the current environment before the first send. The
+attempt records both the selected and effective recovery classes plus the exact
+connection and credential generation facts that justified admission. Recovery
+uses those durable facts: an admitted `replay` or `idempotent-with-key` attempt
+may redispatch under its exact key, while `never-replay` becomes
+`effect-uncertain` and cannot send again. Runtime node tables, HTTP methods,
+configuration, capture, or current environment state never reclassify it.
 
 ```bash
 cargo test --locked -p wamn-runner -p wamn-run-state -p wamn-node-manifest
@@ -4083,6 +4088,15 @@ docker run -d --rm --name wamn-cf-attempts-pg \
 WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
   cargo test --locked -p wamn-run-state --test run_state_live \
   run_state_live -- --ignored --exact --nocapture
+```
+
+### [PLAN-1 / wamn-4u7p.24] FLOW-SPEC recovery authority
+
+# recipe-test: PLAN-1-FLOW-SPEC-RECOVERY | conformance | wamn-proof-conformance | test | flow_spec_recovery_authority | - | 4 | shipped three-layer recovery authority, legacy classifier exclusions, source/DDL pins, and docs links/cross-references
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-plan-1-flow-spec \
+  cargo test --locked -p wamn-proof-conformance --test flow_spec_recovery_authority
 ```
 
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)

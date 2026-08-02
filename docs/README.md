@@ -9,7 +9,7 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
   decision map (items 0–11). *What are we working on, in what order, and what
   is decided, directional, or open?* (The pivot-era ordering ledger is archived
   at [archive/core-pivot-plan.md](archive/core-pivot-plan.md).)
-- **[FLOW-SPEC.md](execution/FLOW-SPEC.md)** (rev 18, normative) and
+- **[FLOW-SPEC.md](execution/FLOW-SPEC.md)** (rev 19, normative) and
   **[POC-PLAN.md](poc/POC-PLAN.md)** (r6) — the callable-flow protocol and its
   proven POC ladder: the entry gate every PLAN item builds on.
 - **[findings.md](findings.md)** — the single findings ledger and
@@ -67,7 +67,7 @@ findings.md pins them by SHA-256.
   v2 event-plane doc, superseded by v3 ([event-plane-jetstream.md](events/event-plane-jetstream.md)).
   Retained for the outbox-era rationale and the teardown list's provenance.
 - **[archive/exec-ladder.md](archive/exec-ladder.md)** — the predecessor
-  execution-ladder proof, superseded by callable-flow rev18 and the F0–F4
+  execution-ladder proof, superseded by callable-flow rev19 and the F0–F4
   acceptance campaign. Retained as historical proof context.
 - **[archive/p0-exit-criteria.md](archive/p0-exit-criteria.md)** — P0 is closed
   and its results live in [p0-results.md](results/p0-results.md). Retained for the

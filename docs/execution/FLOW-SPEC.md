@@ -1,8 +1,8 @@
 # Callable Flows — the normative specification
 
-**Status: NORMATIVE DRAFT — REVISION 18 (2026-07-26).**
+**Status: NORMATIVE DRAFT — REVISION 19 (2026-08-02).**
 Self-contained; §20 is history; `callable-flows-spec-rev{1..12}.md.bak` are
-archival. Written against `main` @ `9ddcd7d`; re-verify pins at each phase
+archival. Written against `main` @ `a3d8a79`; re-verify pins at each phase
 start.
 
 **The project is greenfield — pre-version alpha.** No production, no data to
@@ -49,7 +49,7 @@ windows, sweep cadence.
 |---|---|---|---|
 | **Entry node** | how the flow starts; its input contract | flow graph | flow artifact |
 | **Response node** | what the caller receives; when released | flow graph | flow artifact |
-| **Flow artifact** | immutable graph + pinned interfaces | `flow_artifacts` | `(tenant, flow_id, flow_version)` — flow IDs are tenant-scoped; `catalog_id` scopes *release* identity |
+| **Flow artifact** | immutable graph + pinned executable contracts + ordered occurrence recovery selections | `flow_artifacts` | `(tenant, flow_id, flow_version)` — flow IDs are tenant-scoped; `catalog_id` scopes *release* identity |
 | **Source / attachment** | which schedule / credential policy / caller policy drives which flow | catalog release | release |
 | **Activation** | is this attachment's confirmed definition live here, now | operational overlay | confirmed hash |
 | **Release** | the complete, validated project definition | `CatalogRelease` | `(catalog_id, catalog_version)` |
@@ -71,6 +71,17 @@ fencing stages with the H9 runtime work.
 **R8** — Cross-run and reconciler transitions name the authority they seize:
 wait tokens for parent wakes; generation seizure for child cancellation and
 the deadline sweep.
+
+Recovery authority has three immutable-to-admission layers. Publication pins
+each implementation's `ResolvedNodeContract.executable_recovery`; standard and
+custom nodes use this same executable-contract model. The artifact then pins one
+ordered recovery selection per exact graph occurrence in
+`occurrence_recovery_json`, authenticated by `occurrence_recovery_hash`.
+Finally, dispatch admits that selected class against current environment facts
+and records the decision on the attempt. Environment attestations may satisfy a
+pinned portable requirement or cause a refusal; they never strengthen, weaken,
+or retarget the selected class. HTTP method, mutable node configuration, and
+capture mode are not recovery authorities.
 
 ---
 
@@ -267,12 +278,12 @@ expressions) and writes (`ctx` keys in config) are **statically detectable**
 by scanning the graph JSON — ambient at runtime, explicit in the document.
 
 **Durability is the existing checkpoint.** The context lives inside
-`state_json` (§10.2): checkpointed at boundaries, size-capped and
-capture-treated with it, reconstructed on recovery by re-executing pure
-nodes — a pure node's `ctx` expression replays deterministically by
-construction. For **effectful** nodes, context-resolved parameters are part
-of the attempt's recorded input (`attempt_input_ref`, §10.3), so recovery
-reasons about what the attempt actually saw, not what context says now.
+`state_json` (§10.2): checkpointed at boundaries and size-capped. Recovery
+authorization is independent of capture and comes only from the pinned
+occurrence selection (§10.3); capture mode neither permits nor prevents a
+dispatch. Context-resolved parameters for an admitted effectful attempt are
+part of its recorded input (`attempt_input_ref`, §10.3), so recovery reasons
+about what the attempt actually saw, not what context says now.
 
 **Scope rules:** per-run; born empty; child runs from `invoke-flow` start
 with fresh context (the invocation payload is the only inheritance); writes
@@ -739,30 +750,50 @@ Inline (`request` runs execute in the invoking service's turn) or queued
 
 Checkpoints at recovery boundaries — before/after effects, park, release,
 terminal. The checkpoint is the `state_json` + frontier write; reconstruction
-reads attempts + the checkpoint through the transitions module. Purity comes
-from the pinned interface.
+reads attempts + the checkpoint through the transitions module. A checkpoint
+records progress; it does not classify or authorize replay. Recovery authority
+comes from the pinned executable contract and occurrence selection described in
+§10.3.
 
 ### 10.3 Node-attempt protocol
 
-Per effectful node occurrence: (1) persist attempt intent — run, node,
-occurrence, input ref, recovery class, attempt key, `attempt_deadline_at`,
-`status = started` — atomically with a lease renewal; (2) invoke, with the
-pre-dispatch check (§10.7); (3) persist output, `status = success`. Recovery
-by `(status, recovery_class)`: `replay` → dispatch again;
-`idempotent-with-key` → same key; `never-replay` → run fails
-**`effect-uncertain`**. Classes are trusted assertions about the destination
-contract: custom nodes default `effectful + never-replay`; GET/HEAD `replay`
-policy-gated; POST/PATCH keyless `never-replay`; PUT keyed-by-content,
-DELETE keyed-by-identity `idempotent-with-key`; `postgres` ops
-`idempotent-with-key` only where the SQL guarantees it. **The purity
-override rule:** a custom node's manifest may declare `purity: pure`; this
-is the trusted assertion — with exactly the epistemic status of every
-recovery class in this section — that authorizes `replay` against the
-custom default of `effectful + never-replay`. The dispatch mechanism (an
-in-cluster HTTP hop) does not make the *node* effectful; the manifest states
-what the node's semantics are, and the platform holds the author to it.
-Attempt state is
-protocol state — capture-exempt, retained until recovery is impossible.
+Recovery classification is resolved once, then consumed in three layers:
+
+1. **Executable contract.** Publication resolves every standard or custom
+   implementation to the same `ResolvedNodeContract` shape. Its sole current
+   implementation-level authority is `executable_recovery`; neither a node
+   type/configuration table nor a second custom-node override may replace it.
+2. **Occurrence selection.** Artifact construction selects one class for each
+   exact `(node_id, node_type)` occurrence. The ordered canonical bytes and
+   hash are persisted as `flow_artifacts.occurrence_recovery_json` and
+   `flow_artifacts.occurrence_recovery_hash`. The runtime's
+   `load_pinned_artifact` passes both to `PinnedArtifact::from_storage`, which
+   verifies the immutable artifact before exposing the selections. A current
+   artifact with an absent, duplicated, retargeted, unsupported, or
+   hash-mismatched selection refuses; historical formats are interpreted only
+   by their explicit historical reader/projection.
+3. **Per-attempt admission.** `admit_occurrence_recovery` matches the exact
+   occurrence and admits its selected class. A pinned portable requirement
+   must be satisfied by attested immutable connection and credential
+   generations; absence or mismatch refuses. Environment facts never
+   strengthen, weaken, or retarget the selected class. Admission persists
+   `selected_recovery_class`, the effective `recovery_class`,
+   `generation_fact_kind`, `connection_generation`, and
+   `credential_generation` with attempt intent.
+
+Per admitted effectful occurrence: (1) persist attempt intent — run, node,
+occurrence, input ref, selected and effective recovery classes, generation
+facts, attempt key, `attempt_deadline_at`, `status = started` — atomically with
+a lease renewal; (2) invoke, with the pre-dispatch check (§10.7); (3) persist
+output, `status = success`. Recovery by `(status, recovery_class)` remains:
+`replay` → dispatch again; `idempotent-with-key` → same key;
+`never-replay` → run fails **`effect-uncertain`**.
+
+HTTP verbs do not imply any class: GET and HEAD do not authorize replay, and
+PUT or DELETE do not authorize idempotent replay. Mutable configuration cannot
+strengthen a pinned selection. Capture is independently optional and has no
+role in classification or admission. Attempt state is protocol state —
+capture-exempt, retained until recovery is impossible.
 `node_runs.status` is `started | parked | success | error`.
 
 ### 10.4 Inline lease ownership
@@ -941,11 +972,15 @@ release node), `response_deadline_at` / `run_deadline_at` (ordering CHECK),
 gains `http`, `internal`, `studio`. `result_json` is diagnostic; the caller's
 answer is `caller_outcome_json`.
 
-**15.2 `node_runs`** — `recovery_class`, `attempt_started_at`,
-`attempt_deadline_at`, `attempt_input_ref`, `attempt_key`; status CHECK
-`started | parked | success | error`.
+**15.2 `node_runs`** — `selected_recovery_class`, effective
+`recovery_class`, `generation_fact_kind`, `connection_generation`,
+`credential_generation`, `attempt_started_at`, `attempt_deadline_at`,
+`attempt_input_ref`, `attempt_key`; status CHECK `started | parked | success |
+error`. A started attempt requires both classes and its generation fact; the
+effective class equals the selected class.
 
-**15.3 Definition plane** — `flow_artifacts` (DB-immutable);
+**15.3 Definition plane** — `flow_artifacts` (DB-immutable, including paired
+`occurrence_recovery_json` + `occurrence_recovery_hash`);
 `release_flows`; `attachments` + `sources`; `catalog_heads`;
 `attachment_activation` + `_events`; `invocation_admissions` (§6.2 shape);
 `run_queue.lease_generation`; `cron_anchor` generation columns. RLS/seed
@@ -1052,11 +1087,11 @@ promotion rule; dispatcher and materializer converted to `admit()`.
 
 | Positive | Negative |
 |---|---|
-| entry-reserved semantics; release-and-continue; boundary recovery re-executes only pure nodes; **frontier exhaustion terminalizes a cron run `completed` through §9.9, including across an unwired completion port** | `never-replay` **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the completion write, recovery yields `effect-uncertain` and the sink count stays at one — the crash-*before*-send variant (zero effects) is the cheap sibling; **this is a Phase 3 gate, not POC Wave 2** |
+| entry-reserved semantics; release-and-continue; boundary recovery dispatches only an artifact-pinned occurrence selection admitted for that attempt; **frontier exhaustion terminalizes a cron run `completed` through §9.9, including across an unwired completion port** | `never-replay` **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the completion write, recovery yields `effect-uncertain` and the sink count stays at one — the crash-*before*-send variant (zero effects) is the cheap sibling; **this is a Phase 3 gate, not POC Wave 2** |
 | **run context**: a `ctx` write replaces the document (a later write without `merge()` provably drops prior keys); context reconstructs identically on boundary recovery; an effectful node's context-resolved params land in `attempt_input_ref` | a child run starts with **empty** context regardless of the parent's; error-port emissions never mutate context |
 | attempt intent atomic with lease renewal; `attempt_deadline_at` enforced pre-dispatch | the paused-original pair: (a) deadline lapsed → resume performs no effect; (b) cancellation during a live attempt → seizure deferred, `cancel_requested` persisted and applied at attempt end |
 | deadline cancels an executing guest within the bound; sweep cancels all five orphan scenarios within the stated bound | interrupted instance disposed, never reused; a `started` attempt never reclaimed early |
-| capture `off` still recovers | post-cancel, the invocation-scoped credential no longer resolves |
+| capture mode neither authorizes nor blocks recovery | post-cancel, the invocation-scoped credential no longer resolves |
 
 ### Phase 4 — invocation service, ingress, the vertical slice
 
@@ -1152,7 +1187,13 @@ envelope `message` made optional to match `fail.message`; §6.1's A/B stages
 restated producer-shaped (event resolution is registration-based; full
 auth/body/mapping B is HTTP's).** **Rev 18: stage C's residual "recheck activation/revocation"
 made producer-specific (events check-and-record the registration hash — no
-attachment exists to activate).**
+attachment exists to activate).** **Rev 19: recovery authority reconciled to
+the shipped three-layer model: `ResolvedNodeContract.executable_recovery`,
+artifact-persisted ordered occurrence selections verified by
+`PinnedArtifact::from_storage`, and `admit_occurrence_recovery` recording the
+selected/effective class plus generation facts. Standard and custom nodes now
+share one model; HTTP method, mutable configuration, environment facts, and
+capture cannot strengthen or retarget the pinned selection.**
 
 ---
 

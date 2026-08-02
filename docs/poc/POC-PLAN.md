@@ -40,7 +40,7 @@ release-and-complete commit, nothing else.
 
 ```
 request
-  → normalize-receipt          custom, pure (manifest purity: pure → replay)
+  → normalize-receipt          custom; artifact occurrence pins replay from ResolvedNodeContract.executable_recovery
   → resolve-and-persist        postgres-query CTE, QUERY mode + RETURNING
   → references-valid?          conditional
       false → invalid-reference fail  {code, status: 400}
@@ -89,9 +89,10 @@ out: { "recommendation": "reject", "confidence": "0.93", "matched": false }
 ```
 
 No id echo — the disposition id stays in F4's run context (below), so F2's
-contract is exactly recommendation logic. The component's manifest declares
-`purity: pure` (spec §10.3) — the trusted assertion authorizing `replay`. Named component edits: accept
-`decision`; `confidence` f64 → decimal string; add `matched`.
+contract is exactly recommendation logic. The manifest declaration is resolved
+at publication into `ResolvedNodeContract.executable_recovery`; the immutable
+artifact pins `replay` for this exact occurrence (spec §10.3). Named component
+edits: accept `decision`; `confidence` f64 → decimal string; add `matched`.
 
 Internal attachment with caller policy allowing F4, **actor mode
 `service`** — the event materializer admits F4 with no client principal to
@@ -273,7 +274,7 @@ superseded by this plan and updated with the fixture refresh).
 | scenario | `{hold, history, decision}` → deterministic result, `confidence` a string | missing field → 400 no run |
 | e2e | F4→F2 under **service mode**: child runs as F2's identity, caller audited | a flow not in `allowed-callers` → rejected at runtime authorization |
 | e2e | disable F2 **after** child creation (F4 parked) → existing child completes, wake proceeds (revocation gates creation only, spec §12.2) | disable **before** child creation → invoke gets `callee-revoked` → `recommendation-failed` |
-| recovery | crash mid-`recommend-disposition` dispatch → recovery **re-dispatches** the node (manifest `purity: pure` authorizes `replay`) and the run completes | the same crash must **not** produce `effect-uncertain` — that outcome would mean the purity override silently failed and the custom default applied |
+| recovery | crash mid-`recommend-disposition` dispatch → recovery **re-dispatches** the node (the artifact-pinned occurrence selection admits `replay`) and the run completes | the same crash must **not** produce `effect-uncertain` — that outcome would mean the pinned occurrence selection was ignored or changed at dispatch |
 
 ## T3 — F3 (Phases 2A–3)
 
