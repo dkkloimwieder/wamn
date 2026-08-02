@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "campaign": "run-plane-canonical",
+  "bead": "wamn-l5i9.73",
+  "source": {
+    "git_commit": "70608374e8c7bef80051ee3962c19b23b680c06c",
+    "runner_sha256": "404cf9653dc8351b2bee6d2e05c1decaba2ce71c658f8c1beee91586b7a242e7"
+  },
+  "profile": "debug",
+  "green_campaign": {
+    "command": ["tools/gate-mutants/run-plane-canonical.sh", "green-all"],
+    "log_sha256": "fc53a1f94de7cf55061bc374dad7829be63b088d475e6c4f636ead25fb20729a",
+    "exit_code": 0,
+    "status": "passed"
+  },
+  "mutant_campaign": {
+    "command": ["tools/gate-mutants/run-plane-canonical.sh", "run-all"],
+    "log_sha256": "4b7ab360c8fcb4ac5f74ab501c4edba3e2d40b10a1d95a69ed2e2e0b7d887520",
+    "exit_code": 0,
+    "status": "passed"
+  },
+  "mutants": [
+    {
+      "id": "check-catalog-is-not-planned",
+      "gate": "run_plane::tests::drifted_and_missing_checks_plan_exact_repairs",
+      "target": "crates/schema/control/src/run_plane.rs",
+      "baseline_sha256": "18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0",
+      "mutant_sha256": "d9d32976fce035ea5a79e07f03cc92b988146bb5283f4bffb43f1ab68a99827f",
+      "restored_sha256": "18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0",
+      "exit_code": 101,
+      "status": "killed"
+    },
+    {
+      "id": "missing-helper-is-accepted",
+      "gate": "run_plane::tests::missing_helpers_and_trigger_are_repaired_for_present_runs",
+      "target": "crates/schema/control/src/run_plane.rs",
+      "baseline_sha256": "18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0",
+      "mutant_sha256": "69c27a1e5635c00418e47c0d83a3de3030a2298741befdeb0fe65cb57ff8a515",
+      "restored_sha256": "18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0",
+      "exit_code": 101,
+      "status": "killed"
+    },
+    {
+      "id": "effect-shell-does-not-apply",
+      "gate": "run_plane_reconcile_live",
+      "target": "services/ctl/src/reconcile_run_plane.rs",
+      "baseline_sha256": "9c72aaf2b9fd98220986950c3d753eef89b8189ca8b761fd0fc348e3acdef69b",
+      "mutant_sha256": "00c8e144474d5ad0a85dcf6d7334fcc94c4f10958b1561aeeab74fae4676492d",
+      "restored_sha256": "9c72aaf2b9fd98220986950c3d753eef89b8189ca8b761fd0fc348e3acdef69b",
+      "exit_code": 101,
+      "status": "killed"
+    }
+  ]
+}
