@@ -1,0 +1,3166 @@
+{
+  "schema_version": 1,
+  "authority": "Canonical semantic registry for shipped gate ownership. Canonical decision status and identity derive from docs/PLAN/PLAN.md. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
+  "registry_owner": "bd:wamn-2jdm.2",
+  "machine_receipt_policy": "Bootstrap source provenance is immutable; machine verdict receipts and aggregate scheduling are explicitly pending wamn-2jdm.7 and wamn-2jdm.8.",
+  "mutation_campaigns": [
+    {
+      "bead": "bd:wamn-2jdm.4",
+      "scope": "runtime, data, node, and observability gates"
+    },
+    {
+      "bead": "bd:wamn-2jdm.5",
+      "scope": "durable execution and callable-flow gates"
+    },
+    {
+      "bead": "bd:wamn-2jdm.6",
+      "scope": "event, catalog, API, and supply-chain gates"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D1",
+      "status": "shipped",
+      "plan_anchor": "**D1**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/callable-flow-wave2-job.yaml"
+      }
+    },
+    {
+      "id": "D2",
+      "status": "shipped",
+      "plan_anchor": "**D2**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/apiproof-job.yaml"
+      }
+    },
+    {
+      "id": "D3",
+      "status": "shipped",
+      "plan_anchor": "**D3**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/queuebench-job.yaml"
+      }
+    },
+    {
+      "id": "D5",
+      "status": "shipped",
+      "plan_anchor": "**D5**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/pgbench-job.yaml"
+      }
+    },
+    {
+      "id": "D6",
+      "status": "shipped",
+      "plan_anchor": "**D6**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/provisionbench-job.yaml"
+      }
+    },
+    {
+      "id": "D7",
+      "status": "shipped",
+      "plan_anchor": "**D7**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/invocationproof-job.yaml"
+      }
+    },
+    {
+      "id": "D8",
+      "status": "shipped",
+      "plan_anchor": "**D8**",
+      "primary_source": {
+        "source_kind": "recipe",
+        "source": "H5-S2-GUARDS"
+      }
+    },
+    {
+      "id": "D9",
+      "status": "shipped",
+      "plan_anchor": "- **D9 / D20**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/dispatchbench-job.yaml"
+      }
+    },
+    {
+      "id": "D13",
+      "status": "shipped",
+      "plan_anchor": "**D13**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/dashproof-job.yaml"
+      }
+    },
+    {
+      "id": "D14",
+      "status": "shipped",
+      "plan_anchor": "**D14**",
+      "primary_source": {
+        "source_kind": "recipe",
+        "source": "H5-CATALOG-IDENTITY"
+      }
+    },
+    {
+      "id": "D15",
+      "status": "shipped",
+      "plan_anchor": "**D15**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/flowbench-job.yaml"
+      }
+    },
+    {
+      "id": "D16",
+      "status": "shipped",
+      "plan_anchor": "**D16**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/bench-job.yaml"
+      }
+    },
+    {
+      "id": "D17",
+      "status": "shipped",
+      "plan_anchor": "**D17**",
+      "primary_source": {
+        "source_kind": "recipe",
+        "source": "H5-COMPONENT-POLICY"
+      }
+    },
+    {
+      "id": "D18",
+      "status": "shipped",
+      "plan_anchor": "**D18**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/provisionbench-job.yaml"
+      }
+    },
+    {
+      "id": "D19",
+      "status": "shipped",
+      "plan_anchor": "**D19**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/rie2ebench-job.yaml"
+      }
+    },
+    {
+      "id": "D20",
+      "status": "shipped",
+      "plan_anchor": "- **D9 / D20**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/queuebench-job.yaml"
+      }
+    },
+    {
+      "id": "D21",
+      "status": "shipped",
+      "plan_anchor": "**D21**",
+      "primary_source": {
+        "source_kind": "recipe",
+        "source": "H5-RUNTIME-INVENTORY"
+      }
+    },
+    {
+      "id": "D22",
+      "status": "shipped",
+      "plan_anchor": "**D22**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/cdcbench-job.yaml"
+      }
+    },
+    {
+      "id": "D23",
+      "status": "shipped",
+      "plan_anchor": "**D23**",
+      "primary_source": {
+        "source_kind": "recipe",
+        "source": "H5-RUNTIME-INVENTORY"
+      }
+    },
+    {
+      "id": "D24",
+      "status": "shipped",
+      "plan_anchor": "**D24**",
+      "primary_source": {
+        "source_kind": "manifest",
+        "source": "deploy/gates/impactproof-job.yaml"
+      }
+    },
+    {
+      "id": "D4",
+      "status": "retired",
+      "plan_anchor": "**Retired.** D4",
+      "primary_source": {
+        "source_kind": "retired",
+        "source": "deploy/gates/outboxbench-job.yaml"
+      }
+    }
+  ],
+  "excluded_decisions": [
+    {
+      "id": "D10",
+      "status": "planned-not-shipped",
+      "plan_anchor": "- **D10**",
+      "reason": "PLAN item 9B retains frontend hosting as future work; no shipped gate owner exists."
+    },
+    {
+      "id": "D11",
+      "status": "open",
+      "plan_anchor": "- **D11**",
+      "reason": "PLAN explicitly leaves the time-series choice open until the industrial tranche."
+    },
+    {
+      "id": "D12",
+      "status": "open",
+      "plan_anchor": "- **D12**",
+      "reason": "PLAN explicitly leaves the MQTT broker choice open until the industrial tranche."
+    }
+  ],
+  "entries": [
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/apibench-job.yaml",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D2"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/apiproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D2"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/bench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D16",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/buildproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-cron-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D9",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-f0-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-f1-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-f2-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-f3-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-f4-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-schema-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-wave1-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/callable-flow-wave2-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/capturebench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/cdcbench-job.yaml",
+      "classification": "measurement",
+      "decision_ids": [
+        "D19",
+        "D22"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "measurement-with-sanity-pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-record-campaign",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/cdcbench-switchover-job.yaml",
+      "classification": "drill",
+      "decision_ids": [
+        "D6",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "drill-completes",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "operator-drill",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/credproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/dashproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/dispatchbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D9",
+        "D20"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/egressbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f2-build-job.yaml",
+      "classification": "non-gate",
+      "decision_ids": [],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "no-verdict",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-prerequisite",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f2-buildproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f2-testgate-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "expected-refusal",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f2invoke-job.yaml",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D7"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f3proof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/f4proof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/failoverbench-job.yaml",
+      "classification": "drill",
+      "decision_ids": [
+        "D6"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "drill-completes",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "operator-drill",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/flowbench-job.yaml",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/impactproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D24"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/invocationproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/logbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/matbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/metricbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/nodebench-job.yaml",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D1",
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/pgbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D5",
+        "D8",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/pgbench-multiproject-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D5",
+        "D6"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/pinproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/pocsuiteproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/provisionbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D6",
+        "D18"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/publish-catalog-job.yaml",
+      "classification": "setup",
+      "decision_ids": [],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "setup-completes",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-prerequisite",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/queuebench-ceiling-job.yaml",
+      "classification": "measurement",
+      "decision_ids": [
+        "D3",
+        "D5"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "measurement-with-sanity-pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-record-campaign",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/queuebench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D9",
+        "D20"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/rie2ebench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19",
+        "D22"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/runstate-baseline-job.yaml",
+      "classification": "measurement",
+      "decision_ids": [
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "measurement-with-sanity-pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-record-campaign",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/samplebench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/socketguard-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/streambench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/suiteexec-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/suiteproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/testhostbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D7"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/testkitbench-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/tracebench-job.yaml",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D13",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/traceproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13",
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/wakeproof-job.yaml",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "manifest",
+      "source": "deploy/gates/walbench-job.yaml",
+      "classification": "measurement",
+      "decision_ids": [
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "in-cluster",
+      "expected_outcome": "measurement-with-sanity-pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
+      },
+      "cadence": "on-demand-record-campaign",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-RUNTIME-INVENTORY",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D21",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-EXECUTION-DEADLINE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D16"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-IP-NAME-LOOKUP",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "PLAN-2A-EXACT",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "PLAN-2A-CAPABILITY-CLASS",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-S2-GUARDS",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D8"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-R18-NEG",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D5",
+        "D8"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "expected-refusal",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-METRIC-RUNTIME",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-METRIC-PROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-TRACEPROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13",
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-TESTKITBENCH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-EGRESSBENCH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-SOCKETGUARD",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-COMPONENT-POLICY",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-TESTGATE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CATALOG-IDENTITY",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D14",
+        "D24"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "CALLABLE-EVENT-LINEAGE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "CALLABLE-CANCEL",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "CALLABLE-CHILD-STATE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D9",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "CALLABLE-CHILD-RUNTIME",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CREDENTIALS",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CREDPROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-WALBENCH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CAUSATION",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-FLOW-SCHEMA",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-F1-FIXTURE",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-POCSUITEPROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-JETSTREAM-UNIT",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D19",
+        "D23"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-JETSTREAM-WIT-MATERIALIZER",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-JETSTREAM-WIT-SAMPLE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D17",
+        "D19"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-RIE2EBENCH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19",
+        "D22"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CDCBENCH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D19",
+        "D22"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-WAKEPROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D3"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-CRON",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D9",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-F0",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-F3",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-F2",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-F4",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-API-PUBLISH",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D2",
+        "D14",
+        "D24"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-API-FIXTURE",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D2",
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-F1",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-WAVE1",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-CALLABLE-WAVE2",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D3",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-BUILDPROOF",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D7",
+        "D17"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-DASHBOARDS",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D13"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "PLAN-1-FLOW-SPEC-RECOVERY",
+      "classification": "partial-proof",
+      "decision_ids": [
+        "D1",
+        "D15"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [
+        "does not execute recovery or prove attempt-intent atomicity"
+      ],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
+      },
+      "cadence": "per-recovery-contract-or-spec-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-4u7p.24",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "PLAN-0-2-GATE-REGISTRY",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D1",
+        "D2",
+        "D3",
+        "D5",
+        "D6",
+        "D7",
+        "D8",
+        "D9",
+        "D13",
+        "D14",
+        "D15",
+        "D16",
+        "D17",
+        "D18",
+        "D19",
+        "D20",
+        "D21",
+        "D22",
+        "D23",
+        "D24"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "proven",
+        "follow_up": null
+      },
+      "cadence": "per-gate-source-or-decision-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/cutbench-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/e2ebench-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/f1bench-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/f1proof-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/ladderproof-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "retired",
+      "source": "deploy/gates/outboxbench-job.yaml",
+      "classification": "retired",
+      "decision_ids": [
+        "D4"
+      ],
+      "bead_owner": "bd:wamn-2jdm.2",
+      "proof_tier": "retired",
+      "expected_outcome": "retired",
+      "can_fail": false,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "not-applicable",
+        "follow_up": null
+      },
+      "cadence": "retired",
+      "latest_evidence": {
+        "issue": "bd:wamn-2jdm.2",
+        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
+        "machine_receipt": "missing",
+        "receipt_follow_up": "bd:wamn-2jdm.7",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    }
+  ]
+}

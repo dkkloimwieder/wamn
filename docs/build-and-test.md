@@ -16,6 +16,18 @@ rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
+### Canonical shipped-decision gate registry (PLAN-0.2 / wamn-2jdm.2)
+
+The registry derives commands and execution inputs from every live gate Job and
+documented recipe while owning only the canonical D1-D24 decision mappings and
+non-derivable gate semantics.
+
+```bash
+# recipe-test: PLAN-0-2-GATE-REGISTRY | conformance | wamn-proof-conformance | test | gate_registry | - | 6 | canonical semantic registry covers every Job manifest and recipe selector, authoritative D1-D24 decision ownership, classifications, immutable evidence pointers, and registry mutants
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-2 \
+  cargo test --locked --offline -p wamn-proof-conformance --test gate_registry
+```
+
 ### wash-runtime feature and deployed-workload inventory (wamn-8zht.12, wamn-8zht.18)
 
 The checked-in inventory resolves every production service that consumes
