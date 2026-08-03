@@ -30,6 +30,16 @@ fn artifact_new(
     flow: &Flow,
     mut implementations: Vec<NodeImplementation>,
 ) -> Result<Artifact, wamn_catalog::CatalogIdentityError> {
+    let request = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "request",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
     let respond = NodeImplementation::platform(
         ResolvedNodeInterface::new(
             "respond",
@@ -40,11 +50,15 @@ fn artifact_new(
         ),
         ExecutableRecoveryContract::pure(),
     );
-    let index = implementations
-        .iter()
-        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
-        .unwrap_or(implementations.len());
-    implementations.insert(index, respond);
+    for implementation in [request, respond] {
+        let index = implementations
+            .iter()
+            .position(|candidate| {
+                candidate.interface().node_type > implementation.interface().node_type
+            })
+            .unwrap_or(implementations.len());
+        implementations.insert(index, implementation);
+    }
     Artifact::new(tenant, flow, implementations)
 }
 
@@ -54,6 +68,16 @@ fn artifact_with_selections(
     mut implementations: Vec<NodeImplementation>,
     mut selections: Vec<OccurrenceRecoverySelection>,
 ) -> Result<Artifact, wamn_catalog::CatalogIdentityError> {
+    let request = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "request",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
     let respond = NodeImplementation::platform(
         ResolvedNodeInterface::new(
             "respond",
@@ -66,6 +90,19 @@ fn artifact_with_selections(
     );
     if !selections
         .iter()
+        .any(|selection| selection.node_id == "request")
+    {
+        let index = selections
+            .iter()
+            .position(|selection| selection.node_id.as_str() > "request")
+            .unwrap_or(selections.len());
+        selections.insert(
+            index,
+            OccurrenceRecoverySelection::conservative("request", "request", request.contract()),
+        );
+    }
+    if !selections
+        .iter()
         .any(|selection| selection.node_id == "response")
     {
         selections.push(OccurrenceRecoverySelection::conservative(
@@ -74,11 +111,15 @@ fn artifact_with_selections(
             respond.contract(),
         ));
     }
-    let index = implementations
-        .iter()
-        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
-        .unwrap_or(implementations.len());
-    implementations.insert(index, respond);
+    for implementation in [request, respond] {
+        let index = implementations
+            .iter()
+            .position(|candidate| {
+                candidate.interface().node_type > implementation.interface().node_type
+            })
+            .unwrap_or(implementations.len());
+        implementations.insert(index, implementation);
+    }
     Artifact::new_with_recovery_selections(tenant, flow, implementations, selections)
 }
 
@@ -87,6 +128,16 @@ fn respond_selection() -> OccurrenceRecoverySelection {
         selection_version: "1".to_string(),
         node_id: "response".to_string(),
         node_type: "respond".to_string(),
+        recovery_class: RecoveryClass::Replay,
+        portable_connection: None,
+    }
+}
+
+fn request_selection() -> OccurrenceRecoverySelection {
+    OccurrenceRecoverySelection {
+        selection_version: "1".to_string(),
+        node_id: "request".to_string(),
+        node_type: "request".to_string(),
         recovery_class: RecoveryClass::Replay,
         portable_connection: None,
     }
@@ -581,6 +632,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
             recovery_class: RecoveryClass::NeverReplay,
             portable_connection: None,
         },
+        request_selection(),
         respond_selection(),
     ];
     let selected = artifact_with_selections(
@@ -600,7 +652,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
     );
     assert_eq!(
         selected.identity().artifact_hash().as_str(),
-        "sha256:51351a6fe1635b4139a33e3a34af4f036cc8521ac87ca2cb6c092918406e0f6f",
+        "sha256:6ebfc67dad4fc9063872a7ae970628481652c8de55312678e1d178d48ef07d55",
         "occurrence recovery frame sequence changed"
     );
 
@@ -645,6 +697,7 @@ fn explicit_occurrence_selections_round_trip_from_canonical_storage() {
             recovery_class: RecoveryClass::NeverReplay,
             portable_connection: None,
         },
+        request_selection(),
         respond_selection(),
     ];
     let flow = repeated_flow();
@@ -673,7 +726,7 @@ fn explicit_occurrence_selections_round_trip_from_canonical_storage() {
     assert_eq!(pinned.occurrence_recovery(), selections);
     assert_eq!(
         artifact.occurrence_recovery_hash(),
-        "sha256:54f5fd89207944d7012cb58326a4fe4aacb8f43d7dbc3679ac01bac017794634",
+        "sha256:17655bec92539fd91c4723f2f1113dad8199798e1d7dc21638420efe167415ed",
         "canonical occurrence-selection ordering changed"
     );
 

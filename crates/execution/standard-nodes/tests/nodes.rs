@@ -1362,6 +1362,7 @@ fn descriptor_version_and_dispatch_divergence_fail_before_publication() {
 /// The dispatch-time capability policy table, pinned row by row.
 #[test]
 fn capability_table_rows_are_exact() {
+    assert_eq!(required_capabilities("request"), Some(&[][..]));
     assert_eq!(required_capabilities("transform"), Some(&[][..]));
     assert_eq!(required_capabilities("conditional"), Some(&[][..]));
     assert_eq!(required_capabilities("time-shift"), Some(&[][..]));
@@ -1403,8 +1404,9 @@ fn dispatch_refuses_ungranted_capability_rows() {
 }
 
 /// Drift guard: every non-reserved node type the committed F3 fixture uses must
-/// be a node this library actually SHIPS (`is_standard`). Entry and boundary
-/// nodes are executed by the engine, never dispatched to this crate.
+/// be a node this library actually ships. Request and respond use the same
+/// standard-node dispatch path; only scheduled/event entries and fail remain
+/// engine-reserved.
 #[test]
 fn f3_fixture_node_types_are_all_standard() {
     use wamn_standard_nodes::is_standard;
@@ -1414,12 +1416,10 @@ fn f3_fixture_node_types_are_all_standard() {
     let flow: Value = serde_json::from_str(&raw).expect("F3 fixture is json");
     let nodes = flow["nodes"].as_array().expect("nodes array");
     let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
-    for t in types.iter().filter(|node_type| {
-        !matches!(
-            **node_type,
-            "request" | "cron" | "event" | "respond" | "fail"
-        )
-    }) {
+    for t in types
+        .iter()
+        .filter(|node_type| !matches!(**node_type, "cron" | "event" | "fail"))
+    {
         assert!(
             is_standard(t),
             "F3 node type {t:?} is not a shipped standard node"
@@ -1430,6 +1430,19 @@ fn f3_fixture_node_types_are_all_standard() {
         types.contains(&"time-shift"),
         "F3 must use the time-shift node"
     );
+}
+
+#[test]
+fn request_is_capability_free_exact_input_passthrough() {
+    let input = json!({"request": {"id": 42}});
+    let mut mock = Mock::default();
+    let emission = go("request", &mut mock, &json!({}), &input).unwrap();
+
+    assert_eq!(emission.port, "main");
+    assert_eq!(emission.payload, input);
+    assert_eq!(emission.ctx, None);
+    assert!(mock.http_calls.is_empty());
+    assert!(mock.pg_calls.is_empty());
 }
 
 #[test]

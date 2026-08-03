@@ -28,6 +28,16 @@ fn artifact_new(
     flow: &Flow,
     mut implementations: Vec<NodeImplementation>,
 ) -> Result<Artifact, CatalogIdentityError> {
+    let request = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "request",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
     let respond = NodeImplementation::platform(
         ResolvedNodeInterface::new(
             "respond",
@@ -38,11 +48,15 @@ fn artifact_new(
         ),
         ExecutableRecoveryContract::pure(),
     );
-    let index = implementations
-        .iter()
-        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
-        .unwrap_or(implementations.len());
-    implementations.insert(index, respond);
+    for implementation in [request, respond] {
+        let index = implementations
+            .iter()
+            .position(|candidate| {
+                candidate.interface().node_type > implementation.interface().node_type
+            })
+            .unwrap_or(implementations.len());
+        implementations.insert(index, implementation);
+    }
     Artifact::new(tenant, flow, implementations)
 }
 

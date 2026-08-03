@@ -79,7 +79,7 @@ use wamn_run_state::queue::{
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, MAIN_PORT, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep,
-    RetryPolicy, Step, ThrottleKey,
+    RetryPolicy, Step, ThrottleKey, validate_request_outcome,
 };
 
 use wamn_node_invoke::{
@@ -1275,12 +1275,7 @@ fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
     let mut unsupported: Vec<String> = flow
         .nodes
         .iter()
-        .filter(|node| {
-            !matches!(
-                node.node_type.as_str(),
-                "request" | "cron" | "event" | "respond" | "fail"
-            )
-        })
+        .filter(|node| !matches!(node.node_type.as_str(), "cron" | "event" | "fail"))
         .filter(|node| resolve_node(&node.node_type, &node.config).is_none())
         .map(|node| node.node_type.clone())
         .collect();
@@ -1297,6 +1292,25 @@ fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
 /// its `node_runs` row. `kill_after_write` spins right after `pg-write` commits
 /// (before that row is written) — the crash window the resume gate exercises.
 fn dispatch_node(
+    d: &Dispatch,
+    run_id: &str,
+    flow: &Flow,
+    kill_after_write: bool,
+    http_status: &mut u32,
+) -> Result<NodeAction, String> {
+    let action = dispatch_node_unvalidated(d, run_id, flow, kill_after_write, http_status)?;
+    validate_dispatched_action(d, &action)?;
+    Ok(action)
+}
+
+fn validate_dispatched_action(dispatch: &Dispatch, action: &NodeAction) -> Result<(), String> {
+    if let NodeAction::Emit(outcome) = action {
+        validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn dispatch_node_unvalidated(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
@@ -3785,6 +3799,57 @@ mod tests {
                 revision: wamn_nodes::STANDARD_NODE_PLATFORM_REVISION.to_string()
             }
         );
+    }
+
+    #[test]
+    fn request_resolves_through_the_standard_node_abi() {
+        assert_eq!(
+            resolve_node("request", &serde_json::json!({"input-schema": {}})),
+            Some(ResolvedNode::Standard)
+        );
+        let contract = wamn_nodes::resolve_descriptor(
+            wamn_nodes::describe("request").expect("request descriptor is shipped"),
+        )
+        .expect("request descriptor resolves");
+        assert_eq!(contract.interface.node_type, "request");
+        assert_eq!(contract.interface.output_ports, ["main"]);
+        assert_eq!(
+            contract.executable_recovery,
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
+        );
+    }
+
+    #[test]
+    fn malformed_request_actions_are_refused_before_durable_checkpointing() {
+        let dispatch = Dispatch {
+            node: "in".to_string(),
+            node_type: "request".to_string(),
+            config: serde_json::json!({"input-schema": {}}),
+            credential: None,
+            payload: serde_json::json!({"admitted": true}),
+            context: serde_json::json!({}),
+            attempt: 0,
+            occurrence: 0,
+            idempotency_key: "run:in:0".to_string(),
+            deadline_ms: None,
+        };
+        for outcome in [
+            NodeOutcome::ok(serde_json::json!({"changed": true})),
+            NodeOutcome::ok_on(dispatch.payload.clone(), "alternate"),
+            NodeOutcome::ok_with_context(
+                dispatch.payload.clone(),
+                MAIN_PORT,
+                serde_json::json!({"changed": true}),
+            ),
+        ] {
+            assert_eq!(
+                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                Err(
+                    "request must emit its admitted input unchanged on main without context"
+                        .to_string()
+                )
+            );
+        }
     }
 
     #[test]

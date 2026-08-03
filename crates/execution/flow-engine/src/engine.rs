@@ -263,6 +263,7 @@ pub enum ApplyError {
     NotReserved(String),
     CallerAlreadyReleased,
     RespondWithoutCaller,
+    InvalidRequestEmission,
     InvalidContext(Value),
 }
 
@@ -277,6 +278,12 @@ impl std::fmt::Display for ApplyError {
             ApplyError::NotReserved(node) => write!(f, "node {node:?} is not engine-reserved"),
             ApplyError::CallerAlreadyReleased => write!(f, "caller was already released"),
             ApplyError::RespondWithoutCaller => write!(f, "respond requires a request caller"),
+            ApplyError::InvalidRequestEmission => {
+                write!(
+                    f,
+                    "request must emit its admitted input unchanged on main without context"
+                )
+            }
             ApplyError::InvalidContext(value) => {
                 write!(f, "run context replacement must be an object, got {value}")
             }
@@ -588,7 +595,7 @@ impl<'f> Plan<'f> {
             .expect("active node in validated flow");
         let occurrence = state.visits.get(&active.node).copied().unwrap_or(0);
         match node.node_type.as_str() {
-            "request" | "cron" | "event" => Some(ReservedStep::Entry {
+            "cron" | "event" => Some(ReservedStep::Entry {
                 node: node.id.clone(),
                 payload: active.payload.clone(),
                 occurrence,
@@ -632,6 +639,7 @@ impl<'f> Plan<'f> {
         if self.build_reserved(state).is_some() {
             return Err(ApplyError::NotReserved(dispatch.node.clone()));
         }
+        validate_request_outcome(dispatch, &outcome)?;
         let attempt = state
             .current
             .as_ref()
@@ -1090,5 +1098,29 @@ impl<'f> Plan<'f> {
             }
             _ => false,
         }
+    }
+}
+
+/// Refuse any request emission that does not preserve the admitted input.
+///
+/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
+/// repeats the check so direct and reconstructed engine users share the invariant.
+pub fn validate_request_outcome(
+    dispatch: &Dispatch,
+    outcome: &NodeOutcome,
+) -> Result<(), ApplyError> {
+    if dispatch.node_type != "request" {
+        return Ok(());
+    }
+    match outcome {
+        NodeOutcome::Success {
+            payload,
+            port,
+            context,
+        } if port == crate::MAIN_PORT && payload == &dispatch.payload && context.is_none() => {
+            Ok(())
+        }
+        NodeOutcome::Error(_) => Ok(()),
+        NodeOutcome::Success { .. } => Err(ApplyError::InvalidRequestEmission),
     }
 }

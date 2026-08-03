@@ -11,10 +11,7 @@ fn compile(source: &str) -> (Flow, ResolvedInterfaces) {
     let flow = Flow::from_json(source).expect("fixture parses");
     let mut interfaces = ResolvedInterfaces::new();
     for node in &flow.nodes {
-        if matches!(
-            node.node_type.as_str(),
-            "request" | "cron" | "event" | "fail"
-        ) {
+        if matches!(node.node_type.as_str(), "cron" | "event" | "fail") {
             continue;
         }
         interfaces
@@ -29,10 +26,17 @@ fn plan<'a>(flow: &'a Flow, interfaces: &'a ResolvedInterfaces) -> Plan<'a> {
 }
 
 fn apply_entry(plan: &Plan<'_>, state: &mut ExecutionState) {
-    let Step::Reserved(entry @ ReservedStep::Entry { .. }) = plan.next(state, 0) else {
-        panic!("fresh state must yield its entry boundary");
-    };
-    plan.apply_reserved(state, &entry).expect("entry applies");
+    match plan.next(state, 0) {
+        Step::Reserved(entry @ ReservedStep::Entry { .. }) => {
+            plan.apply_reserved(state, &entry).expect("entry applies");
+        }
+        Step::Dispatch(request) if request.node_type == "request" => {
+            let payload = request.payload.clone();
+            plan.apply(state, &request, NodeOutcome::ok(payload), 0)
+                .expect("request entry applies");
+        }
+        other => panic!("fresh state must yield its entry boundary, got {other:?}"),
+    }
 }
 
 fn dispatch(plan: &Plan<'_>, state: &mut ExecutionState, now_ms: u64) -> Dispatch {

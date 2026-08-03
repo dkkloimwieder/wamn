@@ -37,6 +37,16 @@ fn artifact_new(
     flow: &Flow,
     mut implementations: Vec<NodeImplementation>,
 ) -> Result<Artifact, CatalogIdentityError> {
+    let request = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "request",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
     let respond = NodeImplementation::platform(
         ResolvedNodeInterface::new(
             "respond",
@@ -47,11 +57,15 @@ fn artifact_new(
         ),
         ExecutableRecoveryContract::pure(),
     );
-    let index = implementations
-        .iter()
-        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
-        .unwrap_or(implementations.len());
-    implementations.insert(index, respond);
+    for implementation in [request, respond] {
+        let index = implementations
+            .iter()
+            .position(|candidate| {
+                candidate.interface().node_type > implementation.interface().node_type
+            })
+            .unwrap_or(implementations.len());
+        implementations.insert(index, implementation);
+    }
     Artifact::new(tenant, flow, implementations)
 }
 
@@ -239,7 +253,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:dfa8ade1c12fcb4429250e02cf72f8adac5740c6ac6ceb2420c75d48b1e5207b",
+        baseline_hash, "sha256:b966e982ebcd4fccac290101a48d3e5bb8399a510a2980e92e5a3e820318ec4b",
         "artifact frame sequence changed"
     );
 }
@@ -933,7 +947,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:3d6d0faa8addbaea24ff8a4cb37bc905f75174cf2dfd3d203fe872812893a191",
+        baseline_hash, "sha256:70088114665be3665967e1b8244058905673b048e7e1f259d90fa81d908238df",
         "definition frame sequence changed"
     );
 }

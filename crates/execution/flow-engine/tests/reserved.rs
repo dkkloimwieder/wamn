@@ -14,6 +14,7 @@ fn flow(source: &str) -> Flow {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
+        ("request".to_string(), vec!["main".to_string()]),
         ("respond".to_string(), vec!["main".to_string()]),
         (
             "choice".to_string(),
@@ -38,6 +39,14 @@ fn dispatch(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) -> wamn_ru
         Step::Dispatch(dispatch) => dispatch,
         other => panic!("expected dispatch, got {other:?}"),
     }
+}
+
+fn apply_request_entry(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) {
+    let request = dispatch(plan, state);
+    assert_eq!(request.node_type, "request");
+    let payload = request.payload.clone();
+    plan.apply(state, &request, NodeOutcome::ok(payload), 0)
+        .unwrap();
 }
 
 fn request_flow(respond_successor: &str) -> Flow {
@@ -106,8 +115,7 @@ fn respond_releases_and_continues_then_late_fail_leaves_caller_untouched() {
     );
     let plan = compile(&flow);
     let mut state = plan.start("run", json!({"request":1}));
-    let entry = reserved(&plan, &mut state);
-    plan.apply_reserved(&mut state, &entry).unwrap();
+    apply_request_entry(&plan, &mut state);
 
     let respond = dispatch(&plan, &mut state);
     assert_eq!(respond.node_type, "respond");
@@ -135,7 +143,9 @@ fn zero_successor_respond_is_a_release_and_complete_boundary() {
         Recorded::new("in", "main", json!({"request":1})),
         Recorded::new("work", "main", json!({"answer":42})),
     ];
-    let mut state = plan.resume("run", Value::Null, &completed).unwrap();
+    let mut state = plan
+        .resume("run", json!({"request": 1}), &completed)
+        .unwrap();
     let respond = dispatch(&plan, &mut state);
     assert_eq!(respond.node_type, "respond");
     plan.apply(
@@ -166,8 +176,7 @@ fn fail_releases_an_attached_request_caller() {
     );
     let plan = compile(&flow);
     let mut state = plan.start("run", Value::Null);
-    let entry = reserved(&plan, &mut state);
-    plan.apply_reserved(&mut state, &entry).unwrap();
+    apply_request_entry(&plan, &mut state);
     let choice = dispatch(&plan, &mut state);
     plan.apply(
         &mut state,
@@ -252,7 +261,7 @@ fn reserved_user_seed_and_post_terminal_writes_are_rejected() {
 }
 
 #[test]
-fn resume_rejects_history_missing_the_synthetic_entry_record() {
+fn resume_rejects_history_missing_the_request_node_emission() {
     let flow = request_flow("");
     let plan = compile(&flow);
     let error = plan
@@ -272,6 +281,32 @@ fn resume_rejects_history_missing_the_synthetic_entry_record() {
 }
 
 #[test]
+fn crash_restart_redispatches_request_until_exact_emission_commits() {
+    let flow = request_flow("");
+    let plan = compile(&flow);
+    let input = json!({"request": 1});
+    let mut first = plan.start("run", input.clone());
+    let boundary = dispatch(&plan, &mut first);
+    assert_eq!(boundary.node_type, "request");
+    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
+
+    let mut restarted = plan.start("run", input.clone());
+    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
+
+    let mut committed = plan
+        .resume(
+            "run",
+            input.clone(),
+            &[Recorded::new("in", "main", input.clone())],
+        )
+        .unwrap();
+    let next = dispatch(&plan, &mut committed);
+    assert_eq!(next.node, "work");
+    assert_eq!(next.payload, input);
+    assert_eq!(committed.caller_state(), CallerState::Attached);
+}
+
+#[test]
 fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
     let flow = request_flow("");
     let plan = compile(&flow);
@@ -279,12 +314,12 @@ fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
         Recorded::new("in", "main", json!({"request":1})),
         Recorded::new("work", "main", json!({"answer":42})),
     ];
-    let mut first = plan.resume("run", Value::Null, &before).unwrap();
+    let mut first = plan.resume("run", json!({"request": 1}), &before).unwrap();
     let boundary = dispatch(&plan, &mut first);
     assert_eq!(boundary.node_type, "respond");
     assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
 
-    let mut restarted = plan.resume("run", Value::Null, &before).unwrap();
+    let mut restarted = plan.resume("run", json!({"request": 1}), &before).unwrap();
     assert_eq!(
         plan.next(&mut restarted, 0),
         Step::Dispatch(boundary.clone())
@@ -302,7 +337,7 @@ fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
         before[1].clone(),
         Recorded::new("out", "main", json!({"answer":42})),
     ];
-    let mut committed = plan.resume("run", Value::Null, &after).unwrap();
+    let mut committed = plan.resume("run", json!({"request": 1}), &after).unwrap();
     assert_eq!(
         plan.next(&mut committed, 0),
         Step::Done(ExecutionStatus::Completed)

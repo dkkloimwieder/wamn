@@ -9,6 +9,7 @@
 //!
 //! | node type        | capabilities            | what it does |
 //! |------------------|-------------------------|--------------|
+//! | `request`        | —                       | emit the admitted request payload unchanged |
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
 //! | `time-shift`     | —                       | shift an epoch-ms input by a signed offset (the arithmetic JMESPath lacks) |
@@ -18,8 +19,8 @@
 //! | `respond`        | —                       | webhook-response terminal (status via [`respond::status_for`]) |
 //!
 //! Deliberately NOT here (v1 scope decisions, wamn-3xa): `delay` and the
-//! trigger entry are runner-intrinsic (parking and trigger payloads are engine
-//! concerns, not node effects); loops are STRUCTURAL (cycles + `conditional`
+//! scheduled/event trigger entries are runner-intrinsic (parking and trigger
+//! admission are engine concerns, not node effects); loops are STRUCTURAL (cycles + `conditional`
 //! express them; dedicated split/merge nodes land with the 5.11 ordering
 //! semantics); `email`/`notify` wait for an email egress capability decision.
 //! Expression power is the JMESPath spec plus the single `context()` reader;
@@ -30,6 +31,7 @@ mod expr;
 mod http;
 mod policy;
 mod postgres;
+mod request;
 mod template;
 mod timeshift;
 mod transform;
@@ -63,7 +65,8 @@ pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
 const STANDARD_NODE_INTERFACE: &str = NODE_WORLD_INTERFACE;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
-pub const NODE_TYPES: [&str; 7] = [
+pub const NODE_TYPES: [&str; 8] = [
+    "request",
     "transform",
     "conditional",
     "time-shift",
@@ -73,6 +76,7 @@ pub const NODE_TYPES: [&str; 7] = [
     "respond",
 ];
 
+static REQUEST: request::Request = request::Request;
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
 static TIME_SHIFT: timeshift::TimeShift = timeshift::TimeShift;
@@ -93,6 +97,7 @@ static RESPOND: respond::Respond = respond::Respond;
 /// [`required_capabilities`]), which cannot run anything.
 pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
+        "request" => Some(&REQUEST),
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
         "time-shift" => Some(&TIME_SHIFT),
@@ -139,15 +144,16 @@ impl fmt::Display for DescriptorError {
 
 impl std::error::Error for DescriptorError {}
 
-static DESCRIPTORS: LazyLock<[NodeDescriptor; 7]> = LazyLock::new(|| {
+static DESCRIPTORS: LazyLock<[NodeDescriptor; 8]> = LazyLock::new(|| {
     [
         pure_descriptor(NODE_TYPES[0], &["main"]),
-        pure_descriptor(NODE_TYPES[1], &["false", "true"]),
-        pure_descriptor(NODE_TYPES[2], &["main"]),
-        http_descriptor(NODE_TYPES[3]),
-        postgres_descriptor(NODE_TYPES[4], &[Capability::Postgres]),
-        postgres_descriptor(NODE_TYPES[5], &[Capability::Postgres, Capability::RawSql]),
-        pure_descriptor(NODE_TYPES[6], &["main"]),
+        pure_descriptor(NODE_TYPES[1], &["main"]),
+        pure_descriptor(NODE_TYPES[2], &["false", "true"]),
+        pure_descriptor(NODE_TYPES[3], &["main"]),
+        http_descriptor(NODE_TYPES[4]),
+        postgres_descriptor(NODE_TYPES[5], &[Capability::Postgres]),
+        postgres_descriptor(NODE_TYPES[6], &[Capability::Postgres, Capability::RawSql]),
+        pure_descriptor(NODE_TYPES[7], &["main"]),
     ]
 });
 

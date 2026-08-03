@@ -79,6 +79,7 @@ fn compile(flow: &Flow) -> Plan<'_> {
             "choice".to_string(),
             vec![MAIN_PORT.to_string(), "drop".to_string()],
         ),
+        ("request".to_string(), vec![MAIN_PORT.to_string()]),
         ("respond".to_string(), vec![MAIN_PORT.to_string()]),
     ]);
     Plan::compile(flow, &interfaces).expect("prototype flow validates")
@@ -168,13 +169,57 @@ fn request_data_crosses_node_abi_before_engine_advances_entry_and_keeps_caller_a
     let plan = compile(&flow);
     let input = json!({"request": 1});
     let mut state = plan.start("request-run", input.clone());
-    let step = reserved(&plan, &mut state);
-
-    apply_entry_after_abi(&plan, &mut state, &step, &EntryNode, &json!({})).unwrap();
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected request dispatch, got {other:?}"),
+    };
+    let mut ctx = NoEffects;
+    let run = run_context(&state, &dispatch.node, &dispatch.config);
+    let emission = EntryNode.run(&mut ctx, &run, &dispatch.payload).unwrap();
+    plan.apply(
+        &mut state,
+        &dispatch,
+        NodeOutcome::ok_on(emission.payload, emission.port),
+        0,
+    )
+    .unwrap();
 
     assert_eq!(state.result(), &input);
     assert_eq!(state.caller_state(), CallerState::Attached);
     assert!(matches!(plan.next(&mut state, 0), Step::Dispatch(_)));
+}
+
+#[test]
+fn failed_request_node_result_does_not_advance_the_entry_token_or_release_the_caller() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"request-failure","version":1,
+            "nodes":[
+              {"id":"in","type":"request","config":{"input-schema":{}}},
+              {"id":"out","type":"respond","config":{"status":200}}
+            ],
+            "edges":[{"from":"in","to":"out"}]}"#,
+    );
+    let plan = compile(&flow);
+    let mut state = plan.start("request-failure-run", json!({"request": 1}));
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected request dispatch, got {other:?}"),
+    };
+
+    plan.apply(
+        &mut state,
+        &dispatch,
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+            "request-failed",
+            "request node failed",
+        ))),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(state.step_seq(), 0);
+    assert_eq!(state.caller_state(), CallerState::Attached);
+    assert_eq!(state.status(), ExecutionStatus::Failed);
 }
 
 #[test]
@@ -238,8 +283,13 @@ fn fail_detail_crosses_node_abi_while_engine_owns_terminality_status_and_caller_
     );
     let plan = compile(&flow);
     let mut state = plan.start("fail-run", json!({"request": 1}));
-    let entry = reserved(&plan, &mut state);
-    apply_entry_after_abi(&plan, &mut state, &entry, &EntryNode, &json!({})).unwrap();
+    let entry = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected request dispatch, got {other:?}"),
+    };
+    let input = entry.payload.clone();
+    plan.apply(&mut state, &entry, NodeOutcome::ok(input), 0)
+        .unwrap();
     let route = match plan.next(&mut state, 0) {
         Step::Dispatch(dispatch) => dispatch,
         other => panic!("expected route dispatch, got {other:?}"),
@@ -288,16 +338,32 @@ fn malformed_abi_results_cannot_authorize_engine_lifecycle_mutation() {
 
     let flow = flow(
         r#"{"schema-version":"0.1","flow-id":"guard","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
+            "nodes":[
+              {"id":"in","type":"request","config":{"input-schema":{}}},
+              {"id":"out","type":"respond","config":{"status":200}}
+            ],
+            "edges":[{"from":"in","to":"out"}]}"#,
     );
     let plan = compile(&flow);
     let mut state = plan.start("guard-run", json!({"original": true}));
-    let step = reserved(&plan, &mut state);
-
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected request dispatch, got {other:?}"),
+    };
+    let mut ctx = NoEffects;
+    let run = run_context(&state, &dispatch.node, &dispatch.config);
+    let emission = MutatingEntry
+        .run(&mut ctx, &run, &dispatch.payload)
+        .unwrap();
     assert_eq!(
-        apply_entry_after_abi(&plan, &mut state, &step, &MutatingEntry, &json!({})),
-        Err("entry node changed the admitted payload contract")
+        plan.apply(
+            &mut state,
+            &dispatch,
+            NodeOutcome::ok_on(emission.payload, emission.port),
+            0,
+        ),
+        Err(wamn_runner::ApplyError::InvalidRequestEmission)
     );
     assert_eq!(state.step_seq(), 0);
-    assert_eq!(plan.next(&mut state, 0), Step::Reserved(step));
+    assert_eq!(plan.next(&mut state, 0), Step::Dispatch(dispatch));
 }

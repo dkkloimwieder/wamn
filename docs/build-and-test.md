@@ -4230,6 +4230,26 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
   tools/gate-mutants/respond-node-abi.sh run
 ```
 
+## PLAN-2A — request common Node ABI (`wamn-ayq7.22`)
+
+`request` resolves to the pinned, capability-free platform standard-node
+executable and emits the admitted payload unchanged on `main`. The flowrunner
+validates that exact payload, port, and absent context replacement before the
+generic durable attempt checkpoint can advance the entry token. The mutation
+bypasses this validation for `request`; the focused debug gate must fail before
+the source is restored.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
+  cargo test --locked -p wamn-runner -p wamn-standard-nodes -p wamn-catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
+  cargo test --locked -p wamn-ctl --lib publish_catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
+  tools/gate-mutants/request-node-abi.sh run
+```
+
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
 
 The final fenced send marker rejects elapsed attempt and run deadlines before
