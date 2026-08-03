@@ -4214,6 +4214,22 @@ CARGO_TARGET_DIR=/tmp/wamn-target-plan-1-flow-spec \
   cargo test --locked -p wamn-proof-conformance --test flow_spec_recovery_authority
 ```
 
+## PLAN-2A — respond common Node ABI (`wamn-ayq7.20`)
+
+`respond` resolves to the pinned platform standard-node executable, dispatches
+through the common Node ABI, and only then enters the engine-owned caller-release
+transition. The mutation removes `respond` from the production standard-node
+resolver and must make the focused debug gate fail before restoring the source.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
+  cargo test --locked -p wamn-runner -p wamn-catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
+  tools/gate-mutants/respond-node-abi.sh run
+```
+
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
 
 The final fenced send marker rejects elapsed attempt and run deadlines before

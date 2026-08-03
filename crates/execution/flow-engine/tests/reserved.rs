@@ -14,6 +14,7 @@ fn flow(source: &str) -> Flow {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
+        ("respond".to_string(), vec!["main".to_string()]),
         (
             "choice".to_string(),
             vec!["main".to_string(), "drop".to_string()],
@@ -108,16 +109,16 @@ fn respond_releases_and_continues_then_late_fail_leaves_caller_untouched() {
     let entry = reserved(&plan, &mut state);
     plan.apply_reserved(&mut state, &entry).unwrap();
 
-    let respond = reserved(&plan, &mut state);
-    assert!(matches!(
-        respond,
-        ReservedStep::Respond {
-            status: 202,
-            complete: false,
-            ..
-        }
-    ));
-    plan.apply_reserved(&mut state, &respond).unwrap();
+    let respond = dispatch(&plan, &mut state);
+    assert_eq!(respond.node_type, "respond");
+    assert_eq!(respond.config, json!({"status": 202}));
+    plan.apply(
+        &mut state,
+        &respond,
+        NodeOutcome::ok(json!({"request":1})),
+        0,
+    )
+    .unwrap();
     assert_eq!(state.caller_state(), CallerState::Released);
 
     let fail = reserved(&plan, &mut state);
@@ -135,16 +136,15 @@ fn zero_successor_respond_is_a_release_and_complete_boundary() {
         Recorded::new("work", "main", json!({"answer":42})),
     ];
     let mut state = plan.resume("run", Value::Null, &completed).unwrap();
-    let respond = reserved(&plan, &mut state);
-    assert!(matches!(
-        respond,
-        ReservedStep::Respond {
-            status: 201,
-            complete: true,
-            ..
-        }
-    ));
-    plan.apply_reserved(&mut state, &respond).unwrap();
+    let respond = dispatch(&plan, &mut state);
+    assert_eq!(respond.node_type, "respond");
+    plan.apply(
+        &mut state,
+        &respond,
+        NodeOutcome::ok(json!({"answer":42})),
+        0,
+    )
+    .unwrap();
     assert_eq!(state.status(), ExecutionStatus::Completed);
     assert_eq!(state.caller_state(), CallerState::Released);
 }
@@ -272,7 +272,7 @@ fn resume_rejects_history_missing_the_synthetic_entry_record() {
 }
 
 #[test]
-fn crash_restart_replays_exactly_one_stable_respond_boundary() {
+fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
     let flow = request_flow("");
     let plan = compile(&flow);
     let before = [
@@ -280,15 +280,22 @@ fn crash_restart_replays_exactly_one_stable_respond_boundary() {
         Recorded::new("work", "main", json!({"answer":42})),
     ];
     let mut first = plan.resume("run", Value::Null, &before).unwrap();
-    let boundary = reserved(&plan, &mut first);
-    assert_eq!(plan.next(&mut first, 0), Step::Reserved(boundary.clone()));
+    let boundary = dispatch(&plan, &mut first);
+    assert_eq!(boundary.node_type, "respond");
+    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
 
     let mut restarted = plan.resume("run", Value::Null, &before).unwrap();
     assert_eq!(
         plan.next(&mut restarted, 0),
-        Step::Reserved(boundary.clone())
+        Step::Dispatch(boundary.clone())
     );
-    plan.apply_reserved(&mut restarted, &boundary).unwrap();
+    plan.apply(
+        &mut restarted,
+        &boundary,
+        NodeOutcome::ok(json!({"answer":42})),
+        0,
+    )
+    .unwrap();
 
     let after = [
         before[0].clone(),

@@ -1695,9 +1695,7 @@ fn execute(
                 });
             }
             Step::Reserved(step) => {
-                if let ReservedStep::Respond { status, .. } | ReservedStep::Fail { status, .. } =
-                    &step
-                {
+                if let ReservedStep::Fail { status, .. } = &step {
                     http_status = u32::from(*status);
                 }
                 record_node_run(
@@ -1726,6 +1724,12 @@ fn execute(
                                 port,
                                 context,
                             } => {
+                                if d.node_type == "respond" {
+                                    http_status = u32::from(
+                                        wamn_nodes::respond::status_for(&d.config)
+                                            .expect("validated respond config has an HTTP status"),
+                                    );
+                                }
                                 record_node_run(
                                     run_id,
                                     &d.node,
@@ -2285,8 +2289,299 @@ fn record_error_and_renew(
     decode_attempt_completion(&response.rows)
 }
 
-/// Commit one engine-owned boundary under the claimed run's fence. Respond and
-/// fail couple caller release, the synthetic node record, and any terminal
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the exact caller outcome and queue fence form one release transition"
+)]
+fn release_caller_in_transaction(
+    txn: &client::Transaction,
+    run_id: &str,
+    kind: &str,
+    body: &Value,
+    status: u16,
+    node: &str,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let release_hash = canonical_json_sha256(body);
+    let parent = txn
+        .query(
+            "SELECT c.parent_run_id, c.parent_node_id, c.parent_occurrence, p.wait_generation \
+               FROM runs AS c LEFT JOIN runs AS p \
+                 ON p.tenant_id = c.tenant_id AND p.run_id = c.parent_run_id \
+              WHERE c.tenant_id = current_setting('app.tenant', true) AND c.run_id = $1",
+            &[text(run_id)],
+        )
+        .map_err(|error| err_name(&error))?
+        .rows
+        .first()
+        .and_then(|row| match row.as_slice() {
+            [
+                SqlValue::Text(parent_run_id),
+                SqlValue::Text(parent_node_id),
+                SqlValue::Int32(parent_occurrence),
+                SqlValue::Int64(wait_generation),
+            ] => Some((
+                parent_run_id.clone(),
+                parent_node_id.clone(),
+                *parent_occurrence,
+                *wait_generation,
+            )),
+            _ => None,
+        });
+    let response = txn
+        .query(
+            &if parent.is_some() {
+                release_child_sql()
+            } else {
+                release_caller_sql()
+            },
+            &match &parent {
+                Some((parent_run_id, parent_node_id, parent_occurrence, wait_generation)) => vec![
+                    text(run_id),
+                    text(run_id),
+                    text(owner),
+                    int64(lease_generation),
+                    text(kind),
+                    jsonb(body),
+                    int32(i32::from(status)),
+                    text(node),
+                    text(&release_hash),
+                    text(parent_run_id),
+                    text(parent_node_id),
+                    int32(*parent_occurrence),
+                    int64(*wait_generation),
+                ],
+                None => vec![
+                    text(run_id),
+                    text(run_id),
+                    text(owner),
+                    int64(lease_generation),
+                    text(kind),
+                    jsonb(body),
+                    int32(i32::from(status)),
+                    text(node),
+                    text(&release_hash),
+                ],
+            },
+        )
+        .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("caller release returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        other => return Err(format!("caller release result shape: {other:?}")),
+    };
+    let run_status = match row.get(1) {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("caller release run status shape: {other:?}")),
+    };
+    let stored_kind = match row.get(2) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("caller release kind shape: {other:?}")),
+    };
+    let stored_body = match row.get(3) {
+        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Some(
+            serde_json::from_str::<Value>(value)
+                .map_err(|error| format!("caller release body parse: {error}"))?,
+        ),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("caller release body shape: {other:?}")),
+    };
+    let stored_status = match row.get(4) {
+        Some(SqlValue::Int32(value)) => u16::try_from(*value).ok(),
+        Some(SqlValue::Int64(value)) => u16::try_from(*value).ok(),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("caller release HTTP status shape: {other:?}")),
+    };
+    let stored_node = match row.get(5) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("caller release node shape: {other:?}")),
+    };
+    let stored_hash = match row.get(6) {
+        Some(SqlValue::Text(value)) => Some(value.clone()),
+        Some(SqlValue::Null) => None,
+        other => return Err(format!("caller release hash shape: {other:?}")),
+    };
+    if parent.is_some() {
+        let release = ChildReleaseResult::from_parts(
+            code,
+            run_status,
+            stored_kind,
+            stored_body,
+            stored_status,
+            stored_node,
+            stored_hash,
+        )
+        .ok_or_else(|| format!("unknown child release result: {code}"))?;
+        match release {
+            ChildReleaseResult::Released => Ok(()),
+            ChildReleaseResult::AlreadyReleased(stored)
+                if stored.exactly_matches(kind, body, Some(status), Some(node), &release_hash) =>
+            {
+                Ok(())
+            }
+            ChildReleaseResult::AlreadyReleased(_) => {
+                Err("child release replay disagrees with stored outcome".to_string())
+            }
+            ChildReleaseResult::FenceLost => Err("child release refused: fence-lost".to_string()),
+            other => Err(format!("child release refused: {other:?}")),
+        }
+    } else {
+        let release = CallerReleaseResult::from_parts(
+            code,
+            run_status,
+            stored_kind,
+            stored_body,
+            stored_status,
+            stored_node,
+            stored_hash,
+        )
+        .ok_or_else(|| format!("unknown caller release result: {code}"))?;
+        match release {
+            CallerReleaseResult::Released => Ok(()),
+            CallerReleaseResult::AlreadyReleased(stored)
+                if stored.exactly_matches(kind, body, Some(status), Some(node), &release_hash) =>
+            {
+                Ok(())
+            }
+            CallerReleaseResult::AlreadyReleased(_) => {
+                Err("caller release replay disagrees with stored outcome".to_string())
+            }
+            CallerReleaseResult::FenceLost => Err("caller release refused: fence-lost".to_string()),
+            other => Err(format!("caller release refused: {other:?}")),
+        }
+    }
+}
+
+fn terminalize_in_transaction(
+    txn: &client::Transaction,
+    run_id: &str,
+    status: &str,
+    reason: Option<&str>,
+    result: &Value,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let response = txn
+        .query(
+            &terminalize_sql(),
+            &[
+                text(run_id),
+                text(run_id),
+                text(owner),
+                int64(lease_generation),
+                text(status),
+                reason.map_or(SqlValue::Null, text),
+                SqlValue::Null,
+                jsonb(result),
+            ],
+        )
+        .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("terminal transition returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        other => return Err(format!("terminal result shape: {other:?}")),
+    };
+    let stored_status = match row.get(1) {
+        Some(SqlValue::Text(value)) => value.as_str(),
+        Some(SqlValue::Null) => "",
+        other => return Err(format!("terminal run status shape: {other:?}")),
+    };
+    match TerminalizeResult::from_parts(code, stored_status)
+        .ok_or_else(|| format!("unknown terminal transition result: {code}"))?
+    {
+        TerminalizeResult::Terminalized => Ok(()),
+        TerminalizeResult::RunTerminal(stored) if stored.as_sql() == status => Ok(()),
+        TerminalizeResult::FenceLost => Err("terminal transition refused: fence-lost".to_string()),
+        other => Err(format!("terminal transition refused: {other:?}")),
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "typed respond emission plus capture and queue fence form one durable transition"
+)]
+fn complete_respond_and_renew(
+    run_id: &str,
+    dispatch: &Dispatch,
+    port: &str,
+    output: &Value,
+    capture: &wamn_flow::Capture,
+    context: &Value,
+    complete: bool,
+    ttl_ms: i64,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<bool, String> {
+    let txn = client::begin().map_err(|error| err_name(&error))?;
+    let (binds, _) = capture_binds(capture, output, &dispatch.payload);
+    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let response = txn
+        .query(
+            &complete_attempt_success_sql(),
+            &[
+                text(run_id),
+                text(run_id),
+                text(owner),
+                int64(lease_generation),
+                text(&dispatch.node),
+                int32(dispatch.occurrence as i32),
+                text(port),
+                out_j,
+                in_j,
+                preview,
+                size,
+                hash,
+                mode,
+                redacted,
+                text(context.to_string()),
+                int64(ttl_ms),
+            ],
+        )
+        .map_err(|error| err_name(&error))?;
+    if decode_attempt_completion(&response.rows)? {
+        txn.commit().map_err(|error| err_name(&error))?;
+        return Ok(true);
+    }
+
+    let status = wamn_nodes::respond::status_for(&dispatch.config)
+        .expect("validated respond config has an HTTP status");
+    release_caller_in_transaction(
+        &txn,
+        run_id,
+        "responded",
+        output,
+        status,
+        &dispatch.node,
+        owner,
+        lease_generation,
+    )?;
+    if complete {
+        terminalize_in_transaction(
+            &txn,
+            run_id,
+            "completed",
+            None,
+            output,
+            owner,
+            lease_generation,
+        )?;
+    }
+    txn.commit().map_err(|error| err_name(&error))?;
+    Ok(false)
+}
+
+/// Commit one engine-owned boundary under the claimed run's fence. Fail couples
+/// caller release, the synthetic node record, and the terminal
 /// verdict in one transaction. A replay may observe `already-released`; it is
 /// accepted only when every stored outcome field matches the boundary being
 /// replayed.
@@ -2358,18 +2653,7 @@ fn commit_reserved_and_renew(
     }
 
     let txn = client::begin().map_err(|error| err_name(&error))?;
-    let (release_kind, release_body, release_status, release_node) = match step {
-        ReservedStep::Respond {
-            payload,
-            status,
-            node,
-            ..
-        } => (
-            Some("responded"),
-            payload.clone(),
-            Some(*status),
-            Some(node.as_str()),
-        ),
+    let (release_body, release) = match step {
         ReservedStep::Fail {
             code,
             message,
@@ -2389,185 +2673,25 @@ fn commit_reserved_and_renew(
             if let Some(message) = message {
                 error.insert("message".to_string(), Value::String(message.clone()));
             }
-            (
-                (caller == CallerState::Attached).then_some("failed"),
-                json!({"error": error}),
-                (caller == CallerState::Attached).then_some(*status),
-                (caller == CallerState::Attached).then_some(node.as_str()),
-            )
+            let body = json!({"error": error});
+            let release =
+                (caller == CallerState::Attached).then_some(("failed", *status, node.as_str()));
+            (body, release)
         }
         ReservedStep::Entry { .. } => unreachable!("entry returned above"),
     };
 
-    if let Some(kind) = release_kind {
-        let release_hash = canonical_json_sha256(&release_body);
-        let parent = txn
-            .query(
-                "SELECT c.parent_run_id, c.parent_node_id, c.parent_occurrence, p.wait_generation \
-                   FROM runs AS c LEFT JOIN runs AS p \
-                     ON p.tenant_id = c.tenant_id AND p.run_id = c.parent_run_id \
-                  WHERE c.tenant_id = current_setting('app.tenant', true) AND c.run_id = $1",
-                &[text(run_id)],
-            )
-            .map_err(|error| err_name(&error))?
-            .rows
-            .first()
-            .and_then(|row| match row.as_slice() {
-                [
-                    SqlValue::Text(parent_run_id),
-                    SqlValue::Text(parent_node_id),
-                    SqlValue::Int32(parent_occurrence),
-                    SqlValue::Int64(wait_generation),
-                ] => Some((
-                    parent_run_id.clone(),
-                    parent_node_id.clone(),
-                    *parent_occurrence,
-                    *wait_generation,
-                )),
-                _ => None,
-            });
-        let response = txn
-            .query(
-                &if parent.is_some() {
-                    release_child_sql()
-                } else {
-                    release_caller_sql()
-                },
-                &match &parent {
-                    Some((parent_run_id, parent_node_id, parent_occurrence, wait_generation)) => {
-                        vec![
-                            text(run_id),
-                            text(run_id),
-                            text(owner),
-                            int64(lease_generation),
-                            text(kind),
-                            jsonb(&release_body),
-                            int32(i32::from(release_status.expect("release has status"))),
-                            text(release_node.expect("release has node")),
-                            text(&release_hash),
-                            text(parent_run_id),
-                            text(parent_node_id),
-                            int32(*parent_occurrence),
-                            int64(*wait_generation),
-                        ]
-                    }
-                    None => vec![
-                        text(run_id),
-                        text(run_id),
-                        text(owner),
-                        int64(lease_generation),
-                        text(kind),
-                        jsonb(&release_body),
-                        int32(i32::from(release_status.expect("release has status"))),
-                        text(release_node.expect("release has node")),
-                        text(&release_hash),
-                    ],
-                },
-            )
-            .map_err(|error| err_name(&error))?;
-        let row = response
-            .rows
-            .first()
-            .ok_or("caller release returned no result row")?;
-        let code = match row.first() {
-            Some(SqlValue::Text(value)) => value.as_str(),
-            other => return Err(format!("caller release result shape: {other:?}")),
-        };
-        let run_status = match row.get(1) {
-            Some(SqlValue::Text(value)) => value.as_str(),
-            Some(SqlValue::Null) => "",
-            other => return Err(format!("caller release run status shape: {other:?}")),
-        };
-        let stored_kind = match row.get(2) {
-            Some(SqlValue::Text(value)) => Some(value.clone()),
-            Some(SqlValue::Null) => None,
-            other => return Err(format!("caller release kind shape: {other:?}")),
-        };
-        let stored_body = match row.get(3) {
-            Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Some(
-                serde_json::from_str::<Value>(value)
-                    .map_err(|error| format!("caller release body parse: {error}"))?,
-            ),
-            Some(SqlValue::Null) => None,
-            other => return Err(format!("caller release body shape: {other:?}")),
-        };
-        let stored_status = match row.get(4) {
-            Some(SqlValue::Int32(value)) => u16::try_from(*value).ok(),
-            Some(SqlValue::Int64(value)) => u16::try_from(*value).ok(),
-            Some(SqlValue::Null) => None,
-            other => return Err(format!("caller release HTTP status shape: {other:?}")),
-        };
-        let stored_node = match row.get(5) {
-            Some(SqlValue::Text(value)) => Some(value.clone()),
-            Some(SqlValue::Null) => None,
-            other => return Err(format!("caller release node shape: {other:?}")),
-        };
-        let stored_hash = match row.get(6) {
-            Some(SqlValue::Text(value)) => Some(value.clone()),
-            Some(SqlValue::Null) => None,
-            other => return Err(format!("caller release hash shape: {other:?}")),
-        };
-        if parent.is_some() {
-            let release = ChildReleaseResult::from_parts(
-                code,
-                run_status,
-                stored_kind,
-                stored_body,
-                stored_status,
-                stored_node,
-                stored_hash,
-            )
-            .ok_or_else(|| format!("unknown child release result: {code}"))?;
-            match release {
-                ChildReleaseResult::Released => {}
-                ChildReleaseResult::AlreadyReleased(stored)
-                    if stored.exactly_matches(
-                        kind,
-                        &release_body,
-                        release_status,
-                        release_node,
-                        &release_hash,
-                    ) => {}
-                ChildReleaseResult::AlreadyReleased(_) => {
-                    return Err("child release replay disagrees with stored outcome".to_string());
-                }
-                ChildReleaseResult::FenceLost => {
-                    return Err("child release refused: fence-lost".to_string());
-                }
-                other => return Err(format!("child release refused: {other:?}")),
-            }
-        } else {
-            let release = CallerReleaseResult::from_parts(
-                code,
-                run_status,
-                stored_kind,
-                stored_body,
-                stored_status,
-                stored_node,
-                stored_hash,
-            )
-            .ok_or_else(|| format!("unknown caller release result: {code}"))?;
-            match release {
-                CallerReleaseResult::Released => {}
-                CallerReleaseResult::AlreadyReleased(stored)
-                    if stored.exactly_matches(
-                        kind,
-                        &release_body,
-                        release_status,
-                        release_node,
-                        &release_hash,
-                    ) => {}
-                CallerReleaseResult::AlreadyReleased(_) => {
-                    return Err("caller release replay disagrees with stored outcome".to_string());
-                }
-                // FenceLost is absolute: return before recording, terminalizing, or
-                // committing anything else through this transaction.
-                CallerReleaseResult::FenceLost => {
-                    return Err("caller release refused: fence-lost".to_string());
-                }
-                other => return Err(format!("caller release refused: {other:?}")),
-            }
-        }
+    if let Some((kind, status, node)) = release {
+        release_caller_in_transaction(
+            &txn,
+            run_id,
+            kind,
+            &release_body,
+            status,
+            node,
+            owner,
+            lease_generation,
+        )?;
     }
 
     let (binds, _) = capture_binds(capture, step.payload(), step.payload());
@@ -2594,58 +2718,21 @@ fn commit_reserved_and_renew(
     .map_err(|error| err_name(&error))?;
 
     let terminal = match step {
-        ReservedStep::Respond { complete: true, .. } => {
-            Some(("completed", None, step.payload().clone()))
-        }
         ReservedStep::Fail { code, .. } => {
             Some(("failed", Some(code.as_str()), release_body.clone()))
         }
-        ReservedStep::Respond {
-            complete: false, ..
-        }
-        | ReservedStep::Entry { .. } => None,
+        ReservedStep::Entry { .. } => None,
     };
     if let Some((status, reason, result)) = terminal {
-        let response = txn
-            .query(
-                &terminalize_sql(),
-                &[
-                    text(run_id),
-                    text(run_id),
-                    text(owner),
-                    int64(lease_generation),
-                    text(status),
-                    reason.map_or(SqlValue::Null, text),
-                    SqlValue::Null,
-                    jsonb(&result),
-                ],
-            )
-            .map_err(|error| err_name(&error))?;
-        let row = response
-            .rows
-            .first()
-            .ok_or("terminal transition returned no result row")?;
-        let code = match row.first() {
-            Some(SqlValue::Text(value)) => value.as_str(),
-            other => return Err(format!("terminal result shape: {other:?}")),
-        };
-        let stored_status = match row.get(1) {
-            Some(SqlValue::Text(value)) => value.as_str(),
-            Some(SqlValue::Null) => "",
-            other => return Err(format!("terminal run status shape: {other:?}")),
-        };
-        let terminal = TerminalizeResult::from_parts(code, stored_status)
-            .ok_or_else(|| format!("unknown terminal transition result: {code}"))?;
-        match terminal {
-            TerminalizeResult::Terminalized => {}
-            TerminalizeResult::RunTerminal(stored) if stored.as_sql() == status => {}
-            // FenceLost is absolute: return before committing or issuing any
-            // later store operation.
-            TerminalizeResult::FenceLost => {
-                return Err("terminal transition refused: fence-lost".to_string());
-            }
-            other => return Err(format!("terminal transition refused: {other:?}")),
-        }
+        terminalize_in_transaction(
+            &txn,
+            run_id,
+            status,
+            reason,
+            &result,
+            owner,
+            lease_generation,
+        )?;
     }
     txn.commit().map_err(|error| err_name(&error))
 }
@@ -3213,17 +3300,36 @@ fn execute_claimed(
                                 context,
                             } => {
                                 let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                                let cancelled = complete_attempt_success(
-                                    run_id,
-                                    &d,
-                                    port,
-                                    payload,
-                                    &flow.capture,
-                                    checkpoint_context,
-                                    ttl_ms,
-                                    owner,
-                                    lease_generation,
-                                )?;
+                                let cancelled = if d.node_type == "respond" {
+                                    http_status = u32::from(
+                                        wamn_nodes::respond::status_for(&d.config)
+                                            .expect("validated respond config has an HTTP status"),
+                                    );
+                                    complete_respond_and_renew(
+                                        run_id,
+                                        &d,
+                                        port,
+                                        payload,
+                                        &flow.capture,
+                                        checkpoint_context,
+                                        plan.successors(&d.node, port).is_empty(),
+                                        ttl_ms,
+                                        owner,
+                                        lease_generation,
+                                    )?
+                                } else {
+                                    complete_attempt_success(
+                                        run_id,
+                                        &d,
+                                        port,
+                                        payload,
+                                        &flow.capture,
+                                        checkpoint_context,
+                                        ttl_ms,
+                                        owner,
+                                        lease_generation,
+                                    )?
+                                };
                                 if cancelled {
                                     return Ok(ClaimOutcome {
                                         outcome: 0,
@@ -3659,6 +3765,25 @@ mod tests {
         assert_eq!(
             resolve_node("transform", &config),
             Some(ResolvedNode::Standard)
+        );
+    }
+
+    #[test]
+    fn respond_resolves_through_the_standard_node_abi() {
+        assert_eq!(
+            resolve_node("respond", &serde_json::json!({"status": 202})),
+            Some(ResolvedNode::Standard)
+        );
+        let contract = wamn_nodes::resolve_descriptor(
+            wamn_nodes::describe("respond").expect("respond descriptor is shipped"),
+        )
+        .expect("respond descriptor resolves");
+        assert_eq!(contract.interface.node_type, "respond");
+        assert_eq!(
+            contract.executable,
+            wamn_node_manifest::ExecutableIdentity::Platform {
+                revision: wamn_nodes::STANDARD_NODE_PLATFORM_REVISION.to_string()
+            }
         );
     }
 

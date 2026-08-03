@@ -25,6 +25,73 @@ fn digest_bytes(bytes: &[u8]) -> String {
     format!("sha256:{hex}")
 }
 
+fn artifact_new(
+    tenant: &str,
+    flow: &Flow,
+    mut implementations: Vec<NodeImplementation>,
+) -> Result<Artifact, wamn_catalog::CatalogIdentityError> {
+    let respond = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "respond",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    let index = implementations
+        .iter()
+        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
+        .unwrap_or(implementations.len());
+    implementations.insert(index, respond);
+    Artifact::new(tenant, flow, implementations)
+}
+
+fn artifact_with_selections(
+    tenant: &str,
+    flow: &Flow,
+    mut implementations: Vec<NodeImplementation>,
+    mut selections: Vec<OccurrenceRecoverySelection>,
+) -> Result<Artifact, wamn_catalog::CatalogIdentityError> {
+    let respond = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "respond",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    if !selections
+        .iter()
+        .any(|selection| selection.node_id == "response")
+    {
+        selections.push(OccurrenceRecoverySelection::conservative(
+            "response",
+            "respond",
+            respond.contract(),
+        ));
+    }
+    let index = implementations
+        .iter()
+        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
+        .unwrap_or(implementations.len());
+    implementations.insert(index, respond);
+    Artifact::new_with_recovery_selections(tenant, flow, implementations, selections)
+}
+
+fn respond_selection() -> OccurrenceRecoverySelection {
+    OccurrenceRecoverySelection {
+        selection_version: "1".to_string(),
+        node_id: "response".to_string(),
+        node_type: "respond".to_string(),
+        recovery_class: RecoveryClass::Replay,
+        portable_connection: None,
+    }
+}
+
 fn historical_v1_artifact_hash(flow: &Flow, contract: &str) -> String {
     fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
         output.extend_from_slice(&(value.len() as u64).to_be_bytes());
@@ -170,7 +237,7 @@ fn descriptor_and_claim_mutations_invalidate_every_consuming_identity() {
     let claim_mutant = implementation("wamn:connection/http@0.1.0", 172_800_000).unwrap();
 
     let baseline_node_hash = baseline.contract().identity_hash();
-    let baseline_artifact = Artifact::new("tenant-a", &flow(), vec![baseline.clone()]).unwrap();
+    let baseline_artifact = artifact_new("tenant-a", &flow(), vec![baseline.clone()]).unwrap();
     let baseline_bundle = bundle(baseline);
 
     for (name, mutant) in [
@@ -182,7 +249,7 @@ fn descriptor_and_claim_mutations_invalidate_every_consuming_identity() {
             mutant.contract().identity_hash(),
             "{name} survived resolved-node identity"
         );
-        let artifact = Artifact::new("tenant-a", &flow(), vec![mutant.clone()]).unwrap();
+        let artifact = artifact_new("tenant-a", &flow(), vec![mutant.clone()]).unwrap();
         assert_ne!(
             baseline_artifact.identity().artifact_hash(),
             artifact.identity().artifact_hash(),
@@ -342,11 +409,11 @@ fn recovery_support_declaration_mutates_artifact_and_bundle_identity() {
         declaration_mutant.contract().identity_hash()
     );
     assert_ne!(
-        Artifact::new("tenant-a", &flow(), vec![baseline.clone()])
+        artifact_new("tenant-a", &flow(), vec![baseline.clone()])
             .unwrap()
             .identity()
             .artifact_hash(),
-        Artifact::new("tenant-a", &flow(), vec![declaration_mutant.clone()])
+        artifact_new("tenant-a", &flow(), vec![declaration_mutant.clone()])
             .unwrap()
             .identity()
             .artifact_hash()
@@ -491,7 +558,7 @@ fn conservative_only_connection_requirement_needs_no_stronger_claim_descriptor()
         ExecutableRecoveryContract::effectful(false),
     )
     .unwrap();
-    Artifact::new("tenant-a", &flow(), vec![implementation])
+    artifact_new("tenant-a", &flow(), vec![implementation])
         .expect("an exact WIT requirement may remain conservative without stronger claims");
 }
 
@@ -514,8 +581,9 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
             recovery_class: RecoveryClass::NeverReplay,
             portable_connection: None,
         },
+        respond_selection(),
     ];
-    let selected = Artifact::new_with_recovery_selections(
+    let selected = artifact_with_selections(
         "tenant-a",
         &repeated_flow(),
         vec![implementation.clone()],
@@ -523,7 +591,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
     )
     .unwrap();
     let conservative =
-        Artifact::new("tenant-a", &repeated_flow(), vec![implementation.clone()]).unwrap();
+        artifact_new("tenant-a", &repeated_flow(), vec![implementation.clone()]).unwrap();
 
     assert_eq!(selected.occurrence_recovery(), selections);
     assert_ne!(
@@ -532,7 +600,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
     );
     assert_eq!(
         selected.identity().artifact_hash().as_str(),
-        "sha256:8e0e05ae5941b0445cfeabab1acecc557f87eb8f0633e1b9912d3cc8b347a172",
+        "sha256:51351a6fe1635b4139a33e3a34af4f036cc8521ac87ca2cb6c092918406e0f6f",
         "occurrence recovery frame sequence changed"
     );
 
@@ -548,7 +616,7 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
     };
     *minimum_retention_ms += 1;
     assert!(
-        Artifact::new_with_recovery_selections(
+        artifact_with_selections(
             "tenant-a",
             &repeated_flow(),
             vec![implementation],
@@ -577,15 +645,12 @@ fn explicit_occurrence_selections_round_trip_from_canonical_storage() {
             recovery_class: RecoveryClass::NeverReplay,
             portable_connection: None,
         },
+        respond_selection(),
     ];
     let flow = repeated_flow();
-    let artifact = Artifact::new_with_recovery_selections(
-        "tenant-a",
-        &flow,
-        vec![implementation],
-        selections.clone(),
-    )
-    .unwrap();
+    let artifact =
+        artifact_with_selections("tenant-a", &flow, vec![implementation], selections.clone())
+            .unwrap();
     let graph = flow.to_json();
     let interfaces = std::str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap();
     let components = serde_json::to_string(artifact.supplied_components()).unwrap();
@@ -608,7 +673,7 @@ fn explicit_occurrence_selections_round_trip_from_canonical_storage() {
     assert_eq!(pinned.occurrence_recovery(), selections);
     assert_eq!(
         artifact.occurrence_recovery_hash(),
-        "sha256:7127f4a08d4ca27aa6cf3c98cf4a2b3cdcf5e95e700341582a6faf8b5fc625db",
+        "sha256:54f5fd89207944d7012cb58326a4fe4aacb8f43d7dbc3679ac01bac017794634",
         "canonical occurrence-selection ordering changed"
     );
 
@@ -720,13 +785,13 @@ fn only_historical_v1_may_project_conservative_occurrence_selections() {
 #[test]
 fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
     let implementation = implementation("wamn:connection/http@0.1.0", 1).unwrap();
-    let baseline = Artifact::new("tenant-a", &repeated_flow(), vec![implementation.clone()])
+    let baseline = artifact_new("tenant-a", &repeated_flow(), vec![implementation.clone()])
         .unwrap()
         .occurrence_recovery()
         .to_vec();
 
     assert!(
-        Artifact::new_with_recovery_selections(
+        artifact_with_selections(
             "tenant-a",
             &repeated_flow(),
             vec![implementation.clone()],
@@ -737,7 +802,7 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
     let mut reordered = baseline.clone();
     reordered.reverse();
     assert!(
-        Artifact::new_with_recovery_selections(
+        artifact_with_selections(
             "tenant-a",
             &repeated_flow(),
             vec![implementation.clone()],
@@ -748,13 +813,8 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
     let mut unknown = baseline;
     unknown[0].selection_version = "99".to_string();
     assert!(
-        Artifact::new_with_recovery_selections(
-            "tenant-a",
-            &repeated_flow(),
-            vec![implementation],
-            unknown,
-        )
-        .is_err()
+        artifact_with_selections("tenant-a", &repeated_flow(), vec![implementation], unknown,)
+            .is_err()
     );
 
     let pure_interface = ResolvedNodeInterface::new(
@@ -778,7 +838,7 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
         portable_connection: None,
     }];
     assert!(
-        Artifact::new_with_recovery_selections("tenant-a", &flow(), vec![pure], weaker).is_err(),
+        artifact_with_selections("tenant-a", &flow(), vec![pure], weaker).is_err(),
         "a selection cannot weaken the executable's conservative default"
     );
 }
@@ -790,7 +850,7 @@ fn recovery_contract_versions_and_current_fallback_mutations_fail_closed() {
     contract.executable_recovery.conservative_class = RecoveryClass::IdempotentWithKey;
     let mismatch = NodeImplementation::from_resolved_component(ResolvedComponent { contract })
         .expect("component identity remains structurally valid");
-    assert!(Artifact::new("tenant-a", &flow(), vec![mismatch]).is_err());
+    assert!(artifact_new("tenant-a", &flow(), vec![mismatch]).is_err());
 
     let mut interface = http_interface("wamn:connection/http@0.1.0");
     interface.contract_version = "99".to_string();
@@ -800,7 +860,7 @@ fn recovery_contract_versions_and_current_fallback_mutations_fail_closed() {
         ExecutableRecoveryContract::effectful(true),
     )
     .unwrap();
-    assert!(Artifact::new("tenant-a", &flow(), vec![unknown]).is_err());
+    assert!(artifact_new("tenant-a", &flow(), vec![unknown]).is_err());
 
     let mut recovery = ExecutableRecoveryContract::effectful(true);
     recovery.contract_version = "99".to_string();

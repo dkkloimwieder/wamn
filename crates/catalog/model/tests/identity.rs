@@ -32,6 +32,29 @@ fn request_flow() -> Flow {
     .expect("fixture flow parses")
 }
 
+fn artifact_new(
+    tenant: &str,
+    flow: &Flow,
+    mut implementations: Vec<NodeImplementation>,
+) -> Result<Artifact, CatalogIdentityError> {
+    let respond = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "respond",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    let index = implementations
+        .iter()
+        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
+        .unwrap_or(implementations.len());
+    implementations.insert(index, respond);
+    Artifact::new(tenant, flow, implementations)
+}
+
 fn interface() -> ResolvedNodeInterface {
     resolved_interface(
         "custom-node",
@@ -100,7 +123,7 @@ fn execution_bundle(implementation: NodeImplementation) -> ExecutionBundleIdenti
 }
 
 fn artifact() -> Artifact {
-    Artifact::new("tenant-a", &request_flow(), vec![supplied('1')])
+    artifact_new("tenant-a", &request_flow(), vec![supplied('1')])
         .expect("fixture artifact is valid")
 }
 
@@ -140,26 +163,25 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
     let baseline_hash = baseline.identity().artifact_hash().as_str();
     assert!(baseline.graph_hash().starts_with("sha256:"));
 
-    let tenant_mutant = Artifact::new("tenant-b", &request_flow(), vec![supplied('1')]).unwrap();
+    let tenant_mutant = artifact_new("tenant-b", &request_flow(), vec![supplied('1')]).unwrap();
 
     let mut flow_id = request_flow();
     flow_id.flow_id = "receive-order-v2".to_string();
-    let flow_id_mutant = Artifact::new("tenant-a", &flow_id, vec![supplied('1')]).unwrap();
+    let flow_id_mutant = artifact_new("tenant-a", &flow_id, vec![supplied('1')]).unwrap();
 
     let mut flow_version = request_flow();
     flow_version.version = 8;
-    let flow_version_mutant =
-        Artifact::new("tenant-a", &flow_version, vec![supplied('1')]).unwrap();
+    let flow_version_mutant = artifact_new("tenant-a", &flow_version, vec![supplied('1')]).unwrap();
 
     let mut graph = request_flow();
     graph.nodes[1].config = json!({"template": "v2"});
-    let graph_mutant = Artifact::new("tenant-a", &graph, vec![supplied('1')]).unwrap();
+    let graph_mutant = artifact_new("tenant-a", &graph, vec![supplied('1')]).unwrap();
 
     let mut changed_ports = interface();
     changed_ports.output_ports = vec!["alternate".to_string()];
     let mut changed_ports_flow = request_flow();
     changed_ports_flow.edges[1].from_port = "alternate".to_string();
-    let interface_ports_mutant = Artifact::new(
+    let interface_ports_mutant = artifact_new(
         "tenant-a",
         &changed_ports_flow,
         vec![
@@ -173,7 +195,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
     )
     .unwrap();
 
-    let interface_semantics_mutant = Artifact::new(
+    let interface_semantics_mutant = artifact_new(
         "tenant-a",
         &request_flow(),
         vec![
@@ -187,8 +209,8 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
     )
     .unwrap();
 
-    let component_mutant = Artifact::new("tenant-a", &request_flow(), vec![supplied('2')]).unwrap();
-    let implementation_class_mutant = Artifact::new(
+    let component_mutant = artifact_new("tenant-a", &request_flow(), vec![supplied('2')]).unwrap();
+    let implementation_class_mutant = artifact_new(
         "tenant-a",
         &request_flow(),
         vec![NodeImplementation::platform(
@@ -217,7 +239,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:a18cfdc85e45b5028b551f27de43753b3f6e42c9672327f84704d93d75588586",
+        baseline_hash, "sha256:dfa8ade1c12fcb4429250e02cf72f8adac5740c6ac6ceb2420c75d48b1e5207b",
         "artifact frame sequence changed"
     );
 }
@@ -225,7 +247,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 #[test]
 fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     let baseline_implementation = supplied('1');
-    let baseline_artifact = Artifact::new(
+    let baseline_artifact = artifact_new(
         "tenant-a",
         &request_flow(),
         vec![baseline_implementation.clone()],
@@ -247,7 +269,7 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
     )
     .unwrap();
     assert!(
-        Artifact::new("tenant-a", &request_flow(), vec![unknown_version]).is_err(),
+        artifact_new("tenant-a", &request_flow(), vec![unknown_version]).is_err(),
         "unknown resolved-contract versions must fail closed"
     );
     let mut strict_interface = interface();
@@ -289,7 +311,7 @@ fn canonical_resolution_drives_artifact_replay_and_execution_bundle_identity() {
                 .unwrap();
         }
         let artifact =
-            Artifact::new("tenant-a", &request_flow(), vec![implementation.clone()]).unwrap();
+            artifact_new("tenant-a", &request_flow(), vec![implementation.clone()]).unwrap();
         let bundle = execution_bundle(implementation);
         assert_ne!(
             baseline_artifact.identity().artifact_hash(),
@@ -773,7 +795,7 @@ fn pinned_artifact_verifies_and_projects_the_legacy_persisted_shape() {
 
     let flow = request_flow();
     let graph = flow.to_json();
-    let graph_hash = Artifact::new("tenant-a", &flow, vec![supplied('1')])
+    let graph_hash = artifact_new("tenant-a", &flow, vec![supplied('1')])
         .unwrap()
         .graph_hash()
         .to_string();
@@ -847,7 +869,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
         json!({"method": "PUT", "path": "/v1/orders"}),
     );
 
-    let changed_artifact = Artifact::new("tenant-a", &request_flow(), vec![supplied('2')]).unwrap();
+    let changed_artifact = artifact_new("tenant-a", &request_flow(), vec![supplied('2')]).unwrap();
     let artifact_mutant = attachment(
         &changed_artifact,
         &baseline_sources,
@@ -911,14 +933,14 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:77136eb14f05014770c5843c6c522d3be8fb336b593cc26496e54bf6050b7b15",
+        baseline_hash, "sha256:3d6d0faa8addbaea24ff8a4cb37bc905f75174cf2dfd3d203fe872812893a191",
         "definition frame sequence changed"
     );
 }
 
 #[test]
 fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
-    let missing_interface = Artifact::new("tenant-a", &request_flow(), vec![])
+    let missing_interface = artifact_new("tenant-a", &request_flow(), vec![])
         .expect_err("an ordinary graph node needs an interface pin");
     assert!(matches!(
         missing_interface,
@@ -1027,7 +1049,7 @@ fn noncanonical_interface_and_member_reordering_is_rejected() {
         vec!["main".to_string()],
         ResolvedPurity::Effectful,
     );
-    let reordered = Artifact::new(
+    let reordered = artifact_new(
         "tenant-a",
         &flow,
         vec![

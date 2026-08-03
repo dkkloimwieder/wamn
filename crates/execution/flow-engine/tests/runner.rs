@@ -99,7 +99,7 @@ fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
     for node in &flow.nodes {
         if matches!(
             node.node_type.as_str(),
-            "request" | "cron" | "event" | "respond" | "fail"
+            "request" | "cron" | "event" | "fail"
         ) {
             continue;
         }

@@ -1390,7 +1390,7 @@ fn prepare_flow_artifact(
         .map(|node| node.node_type.as_str())
         .collect();
     for node_type in node_types {
-        if matches!(node_type, "cron" | "event" | "fail" | "request" | "respond") {
+        if matches!(node_type, "cron" | "event" | "fail" | "request") {
             continue;
         }
         let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
@@ -1874,7 +1874,7 @@ mod tests {
     }
 
     #[test]
-    fn standard_transform_resolves_into_a_canonical_artifact() {
+    fn standard_transform_and_respond_resolve_into_a_canonical_artifact() {
         let graph = r#"{
           "schema-version":"0.1","flow-id":"standard-flow","version":1,
           "nodes":[
@@ -1891,25 +1891,42 @@ mod tests {
         }"#;
         let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
             .expect("standard node resolves");
-        assert_eq!(prepared.artifact.interfaces().len(), 1);
-        assert_eq!(prepared.artifact.interfaces()[0].node_type, "transform");
-        assert_eq!(prepared.artifact.interfaces()[0].output_ports, ["main"]);
-        let contract = &prepared.artifact.interface_bundle().contracts()[0];
+        assert_eq!(prepared.artifact.interfaces().len(), 2);
+        assert_eq!(prepared.artifact.interfaces()[0].node_type, "respond");
+        assert_eq!(prepared.artifact.interfaces()[1].node_type, "transform");
+        assert!(
+            prepared
+                .artifact
+                .interfaces()
+                .iter()
+                .all(|interface| interface.output_ports == ["main"])
+        );
+        let contract = prepared
+            .artifact
+            .interface_bundle()
+            .contract("respond")
+            .expect("respond contract is pinned");
         assert_eq!(
             contract.interface.interface_contract,
             "wamn:node/node@0.1.0"
         );
         assert!(matches!(
-            contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform { .. }
+            &contract.executable,
+            wamn_node_manifest::ExecutableIdentity::Platform { revision }
+                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
         ));
         assert_eq!(
             contract.executable_recovery,
             wamn_node_manifest::ExecutableRecoveryContract::pure()
         );
-        assert_eq!(
-            prepared.artifact.occurrence_recovery()[0].recovery_class,
-            wamn_node_manifest::RecoveryClass::Replay
+        assert!(
+            prepared
+                .artifact
+                .occurrence_recovery()
+                .iter()
+                .all(|selection| {
+                    selection.recovery_class == wamn_node_manifest::RecoveryClass::Replay
+                })
         );
     }
 

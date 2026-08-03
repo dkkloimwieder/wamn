@@ -29,7 +29,7 @@
 use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
-use wamn_flow::{EntryKind, FailConfig, RespondConfig};
+use wamn_flow::{EntryKind, FailConfig};
 
 use crate::outcome::{ErrorDetail, NodeError, NodeOutcome};
 use crate::plan::Plan;
@@ -220,16 +220,6 @@ pub enum ReservedStep {
         payload: Value,
         occurrence: u32,
     },
-    /// Release a request caller with `payload`, then continue on the optional
-    /// `main` successor. `complete` means there is no successor, so release and
-    /// terminal completion belong to one durable transaction.
-    Respond {
-        node: String,
-        payload: Value,
-        occurrence: u32,
-        status: u16,
-        complete: bool,
-    },
     /// End the run with the authored failure, releasing an attached request
     /// caller with the same body and status.
     Fail {
@@ -245,25 +235,21 @@ pub enum ReservedStep {
 impl ReservedStep {
     pub fn node(&self) -> &str {
         match self {
-            ReservedStep::Entry { node, .. }
-            | ReservedStep::Respond { node, .. }
-            | ReservedStep::Fail { node, .. } => node,
+            ReservedStep::Entry { node, .. } | ReservedStep::Fail { node, .. } => node,
         }
     }
 
     pub fn payload(&self) -> &Value {
         match self {
-            ReservedStep::Entry { payload, .. }
-            | ReservedStep::Respond { payload, .. }
-            | ReservedStep::Fail { payload, .. } => payload,
+            ReservedStep::Entry { payload, .. } | ReservedStep::Fail { payload, .. } => payload,
         }
     }
 
     pub fn occurrence(&self) -> u32 {
         match self {
-            ReservedStep::Entry { occurrence, .. }
-            | ReservedStep::Respond { occurrence, .. }
-            | ReservedStep::Fail { occurrence, .. } => *occurrence,
+            ReservedStep::Entry { occurrence, .. } | ReservedStep::Fail { occurrence, .. } => {
+                *occurrence
+            }
         }
     }
 }
@@ -607,17 +593,6 @@ impl<'f> Plan<'f> {
                 payload: active.payload.clone(),
                 occurrence,
             }),
-            "respond" => {
-                let config: RespondConfig =
-                    serde_json::from_value(node.config.clone()).expect("validated respond config");
-                Some(ReservedStep::Respond {
-                    node: node.id.clone(),
-                    payload: active.payload.clone(),
-                    occurrence,
-                    status: config.status,
-                    complete: self.successors(&node.id, crate::MAIN_PORT).is_empty(),
-                })
-            }
             "fail" => {
                 let config: FailConfig =
                     serde_json::from_value(node.config.clone()).expect("validated fail config");
@@ -670,6 +645,16 @@ impl<'f> Plan<'f> {
                 port,
                 context,
             } => {
+                let releases_caller = dispatch.node_type == "respond";
+                let completes_run =
+                    releases_caller && self.successors(&dispatch.node, &port).is_empty();
+                if releases_caller {
+                    match state.caller {
+                        CallerState::None => return Err(ApplyError::RespondWithoutCaller),
+                        CallerState::Released => return Err(ApplyError::CallerAlreadyReleased),
+                        CallerState::Attached => {}
+                    }
+                }
                 if let Some(replacement) = context.as_ref()
                     && !replacement.is_object()
                 {
@@ -683,6 +668,12 @@ impl<'f> Plan<'f> {
                     state.context = replacement;
                 }
                 self.enqueue_successors(state, &dispatch.node, &port, payload);
+                if releases_caller {
+                    state.caller = CallerState::Released;
+                    if completes_run {
+                        state.status = ExecutionStatus::Completed;
+                    }
+                }
             }
             NodeOutcome::Error(NodeError::Retryable(detail)) => {
                 let policy = RetryPolicy::from_config(&dispatch.config);
@@ -776,26 +767,6 @@ impl<'f> Plan<'f> {
                 *state.visits.entry(node.clone()).or_default() += 1;
                 state.result = payload.clone();
                 self.enqueue_successors(state, node, crate::MAIN_PORT, payload.clone());
-            }
-            ReservedStep::Respond {
-                node,
-                payload,
-                complete,
-                ..
-            } => {
-                match state.caller {
-                    CallerState::None => return Err(ApplyError::RespondWithoutCaller),
-                    CallerState::Released => return Err(ApplyError::CallerAlreadyReleased),
-                    CallerState::Attached => state.caller = CallerState::Released,
-                }
-                state.current = None;
-                state.step_seq += 1;
-                *state.visits.entry(node.clone()).or_default() += 1;
-                state.result = payload.clone();
-                self.enqueue_successors(state, node, crate::MAIN_PORT, payload.clone());
-                if *complete {
-                    state.status = ExecutionStatus::Completed;
-                }
             }
             ReservedStep::Fail {
                 node,

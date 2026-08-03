@@ -24,7 +24,8 @@ use wamn_node_manifest::{
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
-const MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
+const MODEL_OWNED_NODES: [&str; 4] = ["cron", "event", "fail", "request"];
+const HISTORICAL_MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
 const HISTORICAL_RESOLVED_CONTRACT_VERSION: &str = "1";
 const LEGACY_RESOLVED_CONTRACT_VERSION: &str = "legacy-v0";
 const LEGACY_INTERFACE_CONTRACT: &str = "legacy-unpinned-wamn-node";
@@ -1452,7 +1453,11 @@ impl PinnedArtifact {
         if let Some((node_type, _)) = components_by_node.pop_first() {
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
-        validate_implementations(&flow, &implementations)?;
+        validate_implementations_with_model_owned(
+            &flow,
+            &implementations,
+            &HISTORICAL_MODEL_OWNED_NODES,
+        )?;
         let id = ArtifactId::new(expected_tenant_id, flow.flow_id.clone(), flow.version)?;
         let mut owned = vec![
             (
@@ -1478,7 +1483,11 @@ impl PinnedArtifact {
         if digest(&frames("artifact", borrowed)) != artifact_hash {
             return Err(CatalogIdentityError::ArtifactHashMismatch);
         }
-        let occurrence_recovery = conservative_occurrence_recovery(&flow, &implementations)?;
+        let occurrence_recovery = conservative_occurrence_recovery_with_model_owned(
+            &flow,
+            &implementations,
+            &HISTORICAL_MODEL_OWNED_NODES,
+        )?;
         Ok(Self {
             flow,
             interface_bundle,
@@ -1542,7 +1551,11 @@ impl PinnedArtifact {
         if let Some((node_type, _)) = components_by_node.pop_first() {
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
-        validate_implementations(&flow, &implementations)?;
+        validate_implementations_with_model_owned(
+            &flow,
+            &implementations,
+            &HISTORICAL_MODEL_OWNED_NODES,
+        )?;
         let id = ArtifactId::new(expected_tenant_id, flow.flow_id.clone(), flow.version)?;
         let mut owned = Vec::new();
         owned.push((
@@ -1585,8 +1598,12 @@ impl PinnedArtifact {
             .map(|implementation| implementation.interface().clone())
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        let occurrence_recovery =
-            conservative_occurrence_recovery(&flow, &implementations)?.into_boxed_slice();
+        let occurrence_recovery = conservative_occurrence_recovery_with_model_owned(
+            &flow,
+            &implementations,
+            &HISTORICAL_MODEL_OWNED_NODES,
+        )?
+        .into_boxed_slice();
         Ok(Self {
             flow,
             interface_bundle,
@@ -1673,9 +1690,17 @@ fn conservative_occurrence_recovery(
     flow: &Flow,
     implementations: &[NodeImplementation],
 ) -> Result<Vec<OccurrenceRecoverySelection>, CatalogIdentityError> {
+    conservative_occurrence_recovery_with_model_owned(flow, implementations, &MODEL_OWNED_NODES)
+}
+
+fn conservative_occurrence_recovery_with_model_owned(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+    model_owned_nodes: &[&str],
+) -> Result<Vec<OccurrenceRecoverySelection>, CatalogIdentityError> {
     let mut selections = Vec::new();
     for node in &flow.nodes {
-        if MODEL_OWNED_NODES.contains(&node.node_type.as_str()) {
+        if model_owned_nodes.contains(&node.node_type.as_str()) {
             continue;
         }
         let implementation = implementations
@@ -1787,6 +1812,14 @@ fn validate_implementations(
     flow: &Flow,
     implementations: &[NodeImplementation],
 ) -> Result<(), CatalogIdentityError> {
+    validate_implementations_with_model_owned(flow, implementations, &MODEL_OWNED_NODES)
+}
+
+fn validate_implementations_with_model_owned(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+    model_owned_nodes: &[&str],
+) -> Result<(), CatalogIdentityError> {
     let mut resolved = BTreeSet::new();
     let interfaces: Vec<_> = implementations
         .iter()
@@ -1803,7 +1836,7 @@ fn validate_implementations(
         .nodes
         .iter()
         .map(|node| node.node_type.as_str())
-        .filter(|node_type| !MODEL_OWNED_NODES.contains(node_type))
+        .filter(|node_type| !model_owned_nodes.contains(node_type))
         .collect();
     for node_type in &required {
         if !resolved.contains(*node_type) {

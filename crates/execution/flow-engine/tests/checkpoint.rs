@@ -13,7 +13,7 @@ fn compile(source: &str) -> (Flow, ResolvedInterfaces) {
     for node in &flow.nodes {
         if matches!(
             node.node_type.as_str(),
-            "request" | "cron" | "event" | "respond" | "fail"
+            "request" | "cron" | "event" | "fail"
         ) {
             continue;
         }
@@ -199,10 +199,15 @@ fn checkpoint_round_trips_released_caller_context_and_last_result() {
         0,
     )
     .unwrap();
-    let Step::Reserved(response @ ReservedStep::Respond { .. }) = plan.next(&mut state, 0) else {
-        panic!("response boundary expected");
-    };
-    plan.apply_reserved(&mut state, &response).unwrap();
+    let response = dispatch(&plan, &mut state, 0);
+    assert_eq!(response.node_type, "respond");
+    plan.apply(
+        &mut state,
+        &response,
+        NodeOutcome::ok(json!({"answer": 42})),
+        0,
+    )
+    .unwrap();
 
     let encoded = snapshot(&state).unwrap();
     let mut restored = restore(&plan, "run-caller", &encoded).unwrap();

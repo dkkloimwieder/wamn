@@ -1,7 +1,7 @@
 use sha2::{Digest as _, Sha256};
 use wamn_catalog::{
-    Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
-    ExecutionPlugManifest, NodeImplementation,
+    Artifact, CatalogIdentityError, ExecutionBundleIdentity, ExecutionBundleInput,
+    ExecutionBundlePackaging, ExecutionPlugManifest, NodeImplementation,
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{
@@ -21,6 +21,29 @@ fn digest(bytes: &[u8]) -> String {
 
 fn fixed_digest(byte: u8) -> String {
     digest(&[byte])
+}
+
+fn artifact_new(
+    tenant: &str,
+    flow: &Flow,
+    mut implementations: Vec<NodeImplementation>,
+) -> Result<Artifact, CatalogIdentityError> {
+    let respond = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "respond",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    let index = implementations
+        .iter()
+        .position(|implementation| implementation.interface().node_type.as_str() > "respond")
+        .unwrap_or(implementations.len());
+    implementations.insert(index, respond);
+    Artifact::new(tenant, flow, implementations)
 }
 
 fn implementation(contract: &str, executable_digest: String) -> NodeImplementation {
@@ -96,9 +119,9 @@ fn material_http_wit_change_is_rejected_or_versioned_through_every_identity() {
         versioned_mutant.contract().identity_hash(),
         "material connection ABI changes must invalidate resolved-node identity"
     );
-    let baseline_artifact = Artifact::new("tenant-a", &flow(), vec![baseline.clone()]).unwrap();
+    let baseline_artifact = artifact_new("tenant-a", &flow(), vec![baseline.clone()]).unwrap();
     let mutant_artifact =
-        Artifact::new("tenant-a", &flow(), vec![versioned_mutant.clone()]).unwrap();
+        artifact_new("tenant-a", &flow(), vec![versioned_mutant.clone()]).unwrap();
     assert_ne!(
         baseline_artifact.identity().artifact_hash(),
         mutant_artifact.identity().artifact_hash(),
