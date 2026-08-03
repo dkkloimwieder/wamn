@@ -47,6 +47,7 @@ wamn-schema-control = { workspace = true }
 wamn-schema-model = { workspace = true }
 wamn-scenario-model = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
+wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
 wasmtime-wasi-http = { workspace = true }

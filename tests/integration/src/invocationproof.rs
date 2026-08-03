@@ -8,7 +8,7 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use serde_json::json;
 use tokio_postgres::{Client, Config, NoTls};
-use wamn_catalog::Artifact;
+use wamn_catalog::{Artifact, NodeImplementation};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_flow::Flow;
 use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult};
@@ -114,6 +114,20 @@ fn echo_flow() -> anyhow::Result<Flow> {
     .map_err(|error| anyhow::anyhow!("parse exact-run fixture: {error}"))
 }
 
+fn echo_implementations() -> anyhow::Result<Vec<NodeImplementation>> {
+    ["request", "respond"]
+        .into_iter()
+        .map(|node_type| {
+            let descriptor = wamn_standard_nodes::describe(node_type)
+                .with_context(|| format!("missing standard-node descriptor for {node_type}"))?;
+            let contract =
+                wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
+            NodeImplementation::from_resolved_platform_contract(contract)
+                .map_err(anyhow::Error::new)
+        })
+        .collect()
+}
+
 async fn create_database(admin_url: &str, name: &str) -> anyhow::Result<()> {
     let (client, handle) = connect(admin_url).await?;
     client
@@ -148,11 +162,13 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         .context("apply catalog and run-plane DDL")?;
 
     let flow = echo_flow()?;
-    let artifact = Artifact::new(TENANT, &flow, vec![])?;
+    let artifact = Artifact::new(TENANT, &flow, echo_implementations()?)?;
     let graph = String::from_utf8(flow.canonical_bytes()).expect("canonical graph is UTF-8");
     let interfaces = String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
         .expect("canonical interfaces are UTF-8");
     let components = serde_json::to_value(artifact.supplied_components())?;
+    let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+        .expect("canonical occurrence recovery selections are UTF-8");
     let artifact_hash = artifact.identity().artifact_hash().as_str();
     let members = json!([{
         "flow-id": FLOW_ID,
@@ -172,8 +188,9 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         .execute(
             "INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8)",
+                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
+                occurrence_recovery_json,occurrence_recovery_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
             &[
                 &TENANT,
                 &FLOW_ID,
@@ -183,6 +200,8 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
                 &interfaces,
                 &artifact.interface_bundle().hash(),
                 &components,
+                &occurrence_recovery,
+                &artifact.occurrence_recovery_hash(),
             ],
         )
         .await?;
@@ -614,10 +633,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exact_fixture_is_model_owned_and_artifact_buildable() {
+    fn exact_fixture_is_uniformly_pinned_and_artifact_buildable() {
         let flow = echo_flow().unwrap();
-        let artifact = Artifact::new(TENANT, &flow, vec![]).unwrap();
-        assert_eq!(artifact.interface_bundle().interfaces().len(), 0);
+        let artifact = Artifact::new(TENANT, &flow, echo_implementations().unwrap()).unwrap();
+        assert_eq!(artifact.interface_bundle().interfaces().len(), 2);
         assert_eq!(artifact.identity().id().flow_id(), FLOW_ID);
     }
 

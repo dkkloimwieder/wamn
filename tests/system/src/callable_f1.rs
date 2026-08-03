@@ -10,8 +10,10 @@ use wamn_catalog::{
     NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
+
+use crate::standard_implementation;
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f1-flow.json");
 const EXPOSURE_JSON: &str = include_str!("../../../deploy/poc/f1-http-attachment.json");
@@ -39,46 +41,44 @@ struct PublishedRelease {
     _release: Release,
 }
 
-fn interface(node_type: &str, ports: &[&str], purity: ResolvedPurity) -> ResolvedNodeInterface {
+fn supplied_interface(node_type: &str) -> ResolvedNodeInterface {
     ResolvedNodeInterface::new(
         node_type,
         "wamn:node/node@0.1.0",
-        ports.iter().map(|port| (*port).to_string()).collect(),
-        vec![match purity {
-            ResolvedPurity::Pure => CapabilityClass::Pure,
-            ResolvedPurity::Effectful => CapabilityClass::Postgres,
-        }],
+        vec!["main".to_string()],
+        vec![CapabilityClass::Pure],
         Vec::new(),
     )
 }
 
 fn implementations() -> anyhow::Result<Vec<NodeImplementation>> {
     let pure = wamn_node_manifest::ExecutableRecoveryContract::pure;
-    let effectful = || wamn_node_manifest::ExecutableRecoveryContract::effectful(false);
-    Ok(vec![
-        NodeImplementation::platform(
-            interface("conditional", &["false", "true"], ResolvedPurity::Pure),
-            pure(),
-        ),
+    let mut implementations = [
+        "conditional",
+        "fail",
+        "postgres-query",
+        "request",
+        "respond",
+        "transform",
+    ]
+    .into_iter()
+    .map(standard_implementation)
+    .collect::<anyhow::Result<Vec<_>>>()?;
+    implementations.extend([
         NodeImplementation::supplied(
-            interface("evaluate-specs", &["main"], ResolvedPurity::Pure),
+            supplied_interface("evaluate-specs"),
             EVALUATE_COMPONENT_DIGEST,
             pure(),
         )?,
         NodeImplementation::supplied(
-            interface("normalize-receipt", &["main"], ResolvedPurity::Pure),
+            supplied_interface("normalize-receipt"),
             NORMALIZE_COMPONENT_DIGEST,
             pure(),
         )?,
-        NodeImplementation::platform(
-            interface("postgres-query", &["main"], ResolvedPurity::Effectful),
-            effectful(),
-        ),
-        NodeImplementation::platform(
-            interface("transform", &["main"], ResolvedPurity::Pure),
-            pure(),
-        ),
-    ])
+    ]);
+    implementations
+        .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+    Ok(implementations)
 }
 
 fn resolved_interfaces() -> ResolvedInterfaces {

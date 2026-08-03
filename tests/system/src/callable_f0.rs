@@ -4,12 +4,13 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::{Value, json};
 use wamn_catalog::{
-    Artifact, Attachment, AttachmentDraft, AttachmentId, AttachmentKind, CanonicalJson,
-    NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
+    Artifact, Attachment, AttachmentDraft, AttachmentId, AttachmentKind, CanonicalJson, Release,
+    ReleaseId, Source, SourceId, SourceKind,
 };
 use wamn_flow::{EntryKind, Flow, ResolvedInterfaces, canonical_json_sha256};
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
+
+use crate::standard_implementation;
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f0-flow.json");
 const EXPOSURE_JSON: &str = include_str!("../../../deploy/poc/f0-http-attachment.json");
@@ -29,16 +30,6 @@ pub fn run(_: CallableF0Args) -> anyhow::Result<()> {
 struct PublishedRelease {
     artifact_hash: String,
     _release: Release,
-}
-
-fn transform_interface() -> ResolvedNodeInterface {
-    ResolvedNodeInterface::new(
-        "transform",
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![CapabilityClass::Pure],
-        Vec::new(),
-    )
 }
 
 fn published_release(flow_json: &str, exposure_json: &str) -> anyhow::Result<PublishedRelease> {
@@ -79,10 +70,10 @@ fn published_release(flow_json: &str, exposure_json: &str) -> anyhow::Result<Pub
     let artifact = Artifact::new(
         "poc",
         &flow,
-        vec![NodeImplementation::platform(
-            transform_interface(),
-            wamn_node_manifest::ExecutableRecoveryContract::pure(),
-        )],
+        ["request", "respond", "transform"]
+            .into_iter()
+            .map(standard_implementation)
+            .collect::<anyhow::Result<Vec<_>>>()?,
     )
     .context("construct immutable F0 artifact")?;
     let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();

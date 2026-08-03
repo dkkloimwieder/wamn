@@ -18,6 +18,8 @@ use wamn_run_state::attempt::{AttemptStartResult, RecoveryClass as AttemptRecove
 use wamn_run_state::child::{ChildCreateResult, create_or_recover_child_sql};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
+use crate::standard_implementation;
+
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f2-flow.json");
 const EXPOSURE_JSON: &str = include_str!("../../../deploy/poc/f2-internal-attachment.json");
 #[cfg(test)]
@@ -74,6 +76,20 @@ fn implementation(digest: &str, purity: ResolvedPurity) -> anyhow::Result<NodeIm
     NodeImplementation::supplied(interface(), digest, recovery).map_err(anyhow::Error::new)
 }
 
+fn implementations(
+    digest: &str,
+    purity: ResolvedPurity,
+) -> anyhow::Result<Vec<NodeImplementation>> {
+    let mut implementations = vec![
+        standard_implementation("request")?,
+        implementation(digest, purity)?,
+        standard_implementation("respond")?,
+    ];
+    implementations
+        .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+    Ok(implementations)
+}
+
 struct PublishedRelease {
     artifact: Artifact,
     _release: Release,
@@ -110,12 +126,8 @@ fn published_release(
     let request = flow.entry_node().context("F2 request entry")?;
     assert_strict_request_schema(&request.config["input-schema"])?;
 
-    let artifact = Artifact::new(
-        "poc",
-        &flow,
-        vec![implementation(digest, ResolvedPurity::Pure)?],
-    )
-    .context("construct immutable F2 artifact")?;
+    let artifact = Artifact::new("poc", &flow, implementations(digest, ResolvedPurity::Pure)?)
+        .context("construct immutable F2 artifact")?;
     ensure!(
         artifact.supplied_components().len() == 1,
         "F2 must pin exactly one supplied component"
@@ -382,7 +394,7 @@ pub mod tests {
         let effectful = Artifact::new(
             "poc",
             &flow,
-            vec![implementation(TEST_COMPONENT_DIGEST, ResolvedPurity::Effectful).unwrap()],
+            implementations(TEST_COMPONENT_DIGEST, ResolvedPurity::Effectful).unwrap(),
         )
         .unwrap();
         assert_ne!(

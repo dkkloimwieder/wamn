@@ -30,6 +30,7 @@ wamn-run-state = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-schema-model = { workspace = true }
+wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi-http = { workspace = true }
 
