@@ -1390,7 +1390,7 @@ fn prepare_flow_artifact(
         .map(|node| node.node_type.as_str())
         .collect();
     for node_type in node_types {
-        if matches!(node_type, "cron" | "event" | "fail") {
+        if matches!(node_type, "event" | "fail") {
             continue;
         }
         let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
@@ -1928,6 +1928,32 @@ mod tests {
                 .all(|selection| {
                     selection.recovery_class == wamn_node_manifest::RecoveryClass::Replay
                 })
+        );
+    }
+
+    #[test]
+    fn standard_cron_resolves_into_a_pinned_canonical_artifact() {
+        let graph = r#"{
+          "schema-version":"0.1","flow-id":"scheduled-flow","version":1,
+          "nodes":[{"id":"tick","type":"cron"}],
+          "edges":[]
+        }"#;
+        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
+            .expect("cron standard node resolves");
+        assert_eq!(prepared.artifact.interfaces().len(), 1);
+        let contract = prepared
+            .artifact
+            .interface_bundle()
+            .contract("cron")
+            .expect("cron contract is pinned");
+        assert!(matches!(
+            &contract.executable,
+            wamn_node_manifest::ExecutableIdentity::Platform { revision }
+                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
+        ));
+        assert_eq!(
+            contract.executable_recovery,
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
         );
     }
 

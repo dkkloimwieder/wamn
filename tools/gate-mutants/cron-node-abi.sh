@@ -2,10 +2,10 @@
 set -euo pipefail
 
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
-readonly MUTATION="respond-falls-out-of-standard-dispatch"
-readonly TEST="tests::respond_resolves_through_the_standard_node_abi"
-readonly NEEDLE='node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
-readonly REPLACEMENT='node_type if node_type != "respond" && wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
+readonly MUTATION="cron-success-bypasses-exact-emission-validation"
+readonly TEST="tests::malformed_cron_actions_are_refused_before_durable_checkpointing"
+readonly NEEDLE='validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
+readonly REPLACEMENT='if dispatch.node_type != "cron" { validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
 readonly EXPECTED_SHA="e1c6b7c4220f6cb583de32aa3cfd4279f3b4ad0f82bf81bbf389a91332c8417a"
 
 ROOT="$(git rev-parse --show-toplevel)"

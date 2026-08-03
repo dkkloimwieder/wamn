@@ -79,7 +79,7 @@ use wamn_run_state::queue::{
 use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, MAIN_PORT, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep,
-    RetryPolicy, Step, ThrottleKey, validate_request_outcome,
+    RetryPolicy, Step, ThrottleKey, validate_cron_outcome, validate_request_outcome,
 };
 
 use wamn_node_invoke::{
@@ -1275,7 +1275,7 @@ fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
     let mut unsupported: Vec<String> = flow
         .nodes
         .iter()
-        .filter(|node| !matches!(node.node_type.as_str(), "cron" | "event" | "fail"))
+        .filter(|node| !matches!(node.node_type.as_str(), "event" | "fail"))
         .filter(|node| resolve_node(&node.node_type, &node.config).is_none())
         .map(|node| node.node_type.clone())
         .collect();
@@ -1306,6 +1306,7 @@ fn dispatch_node(
 fn validate_dispatched_action(dispatch: &Dispatch, action: &NodeAction) -> Result<(), String> {
     if let NodeAction::Emit(outcome) = action {
         validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+        validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -3817,6 +3818,57 @@ mod tests {
             contract.executable_recovery,
             wamn_node_manifest::ExecutableRecoveryContract::pure()
         );
+    }
+
+    #[test]
+    fn cron_resolves_through_the_standard_node_abi() {
+        assert_eq!(
+            resolve_node("cron", &serde_json::Value::Null),
+            Some(ResolvedNode::Standard)
+        );
+        let contract = wamn_nodes::resolve_descriptor(
+            wamn_nodes::describe("cron").expect("cron descriptor is shipped"),
+        )
+        .expect("cron descriptor resolves");
+        assert_eq!(contract.interface.node_type, "cron");
+        assert_eq!(contract.interface.output_ports, ["main"]);
+        assert_eq!(
+            contract.executable_recovery,
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
+        );
+    }
+
+    #[test]
+    fn malformed_cron_actions_are_refused_before_durable_checkpointing() {
+        let dispatch = Dispatch {
+            node: "in".to_string(),
+            node_type: "cron".to_string(),
+            config: serde_json::Value::Null,
+            credential: None,
+            payload: serde_json::json!({"scheduled-at": 42}),
+            context: serde_json::json!({}),
+            attempt: 0,
+            occurrence: 0,
+            idempotency_key: "run:in:0".to_string(),
+            deadline_ms: None,
+        };
+        for outcome in [
+            NodeOutcome::ok(serde_json::json!({"changed": true})),
+            NodeOutcome::ok_on(dispatch.payload.clone(), "alternate"),
+            NodeOutcome::ok_with_context(
+                dispatch.payload.clone(),
+                MAIN_PORT,
+                serde_json::json!({"changed": true}),
+            ),
+        ] {
+            assert_eq!(
+                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                Err(
+                    "cron must emit its scheduler-admitted input unchanged on main without context"
+                        .to_string()
+                )
+            );
+        }
     }
 
     #[test]

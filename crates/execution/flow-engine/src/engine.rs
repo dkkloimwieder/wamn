@@ -264,6 +264,7 @@ pub enum ApplyError {
     CallerAlreadyReleased,
     RespondWithoutCaller,
     InvalidRequestEmission,
+    InvalidCronEmission,
     InvalidContext(Value),
 }
 
@@ -282,6 +283,12 @@ impl std::fmt::Display for ApplyError {
                 write!(
                     f,
                     "request must emit its admitted input unchanged on main without context"
+                )
+            }
+            ApplyError::InvalidCronEmission => {
+                write!(
+                    f,
+                    "cron must emit its scheduler-admitted input unchanged on main without context"
                 )
             }
             ApplyError::InvalidContext(value) => {
@@ -595,7 +602,7 @@ impl<'f> Plan<'f> {
             .expect("active node in validated flow");
         let occurrence = state.visits.get(&active.node).copied().unwrap_or(0);
         match node.node_type.as_str() {
-            "cron" | "event" => Some(ReservedStep::Entry {
+            "event" => Some(ReservedStep::Entry {
                 node: node.id.clone(),
                 payload: active.payload.clone(),
                 occurrence,
@@ -640,6 +647,7 @@ impl<'f> Plan<'f> {
             return Err(ApplyError::NotReserved(dispatch.node.clone()));
         }
         validate_request_outcome(dispatch, &outcome)?;
+        validate_cron_outcome(dispatch, &outcome)?;
         let attempt = state
             .current
             .as_ref()
@@ -1122,5 +1130,26 @@ pub fn validate_request_outcome(
         }
         NodeOutcome::Error(_) => Ok(()),
         NodeOutcome::Success { .. } => Err(ApplyError::InvalidRequestEmission),
+    }
+}
+
+/// Refuse any cron emission that does not preserve the scheduler-admitted input.
+///
+/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
+/// repeats the check so direct and reconstructed engine users share the invariant.
+pub fn validate_cron_outcome(dispatch: &Dispatch, outcome: &NodeOutcome) -> Result<(), ApplyError> {
+    if dispatch.node_type != "cron" {
+        return Ok(());
+    }
+    match outcome {
+        NodeOutcome::Success {
+            payload,
+            port,
+            context,
+        } if port == crate::MAIN_PORT && payload == &dispatch.payload && context.is_none() => {
+            Ok(())
+        }
+        NodeOutcome::Error(_) => Ok(()),
+        NodeOutcome::Success { .. } => Err(ApplyError::InvalidCronEmission),
     }
 }

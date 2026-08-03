@@ -10,6 +10,7 @@
 //! | node type        | capabilities            | what it does |
 //! |------------------|-------------------------|--------------|
 //! | `request`        | —                       | emit the admitted request payload unchanged |
+//! | `cron`           | —                       | emit the scheduler-admitted payload unchanged |
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
 //! | `time-shift`     | —                       | shift an epoch-ms input by a signed offset (the arithmetic JMESPath lacks) |
@@ -18,15 +19,17 @@
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
 //! | `respond`        | —                       | webhook-response terminal (status via [`respond::status_for`]) |
 //!
-//! Deliberately NOT here (v1 scope decisions, wamn-3xa): `delay` and the
-//! scheduled/event trigger entries are runner-intrinsic (parking and trigger
-//! admission are engine concerns, not node effects); loops are STRUCTURAL (cycles + `conditional`
+//! Deliberately NOT here (v1 scope decisions, wamn-3xa): `delay` and the event
+//! trigger entry are runner-intrinsic (parking and event admission are engine
+//! concerns, not node effects); cron schedule admission likewise remains outside
+//! the capability-free node data path. Loops are STRUCTURAL (cycles + `conditional`
 //! express them; dedicated split/merge nodes land with the 5.11 ordering
 //! semantics); `email`/`notify` wait for an email egress capability decision.
 //! Expression power is the JMESPath spec plus the single `context()` reader;
 //! standard nodes may attach a whole context replacement with config `ctx`.
 
 mod conditional;
+mod cron;
 mod expr;
 mod http;
 mod policy;
@@ -65,8 +68,9 @@ pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
 const STANDARD_NODE_INTERFACE: &str = NODE_WORLD_INTERFACE;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
-pub const NODE_TYPES: [&str; 8] = [
+pub const NODE_TYPES: [&str; 9] = [
     "request",
+    "cron",
     "transform",
     "conditional",
     "time-shift",
@@ -77,6 +81,7 @@ pub const NODE_TYPES: [&str; 8] = [
 ];
 
 static REQUEST: request::Request = request::Request;
+static CRON: cron::Cron = cron::Cron;
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
 static TIME_SHIFT: timeshift::TimeShift = timeshift::TimeShift;
@@ -98,6 +103,7 @@ static RESPOND: respond::Respond = respond::Respond;
 pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
         "request" => Some(&REQUEST),
+        "cron" => Some(&CRON),
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
         "time-shift" => Some(&TIME_SHIFT),
@@ -144,16 +150,17 @@ impl fmt::Display for DescriptorError {
 
 impl std::error::Error for DescriptorError {}
 
-static DESCRIPTORS: LazyLock<[NodeDescriptor; 8]> = LazyLock::new(|| {
+static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> = LazyLock::new(|| {
     [
         pure_descriptor(NODE_TYPES[0], &["main"]),
         pure_descriptor(NODE_TYPES[1], &["main"]),
-        pure_descriptor(NODE_TYPES[2], &["false", "true"]),
-        pure_descriptor(NODE_TYPES[3], &["main"]),
-        http_descriptor(NODE_TYPES[4]),
-        postgres_descriptor(NODE_TYPES[5], &[Capability::Postgres]),
-        postgres_descriptor(NODE_TYPES[6], &[Capability::Postgres, Capability::RawSql]),
-        pure_descriptor(NODE_TYPES[7], &["main"]),
+        pure_descriptor(NODE_TYPES[2], &["main"]),
+        pure_descriptor(NODE_TYPES[3], &["false", "true"]),
+        pure_descriptor(NODE_TYPES[4], &["main"]),
+        http_descriptor(NODE_TYPES[5]),
+        postgres_descriptor(NODE_TYPES[6], &[Capability::Postgres]),
+        postgres_descriptor(NODE_TYPES[7], &[Capability::Postgres, Capability::RawSql]),
+        pure_descriptor(NODE_TYPES[8], &["main"]),
     ]
 });
 

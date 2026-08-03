@@ -6,7 +6,7 @@ readonly MUTATION="request-success-bypasses-exact-emission-validation"
 readonly TEST="tests::malformed_request_actions_are_refused_before_durable_checkpointing"
 readonly NEEDLE='if let NodeAction::Emit(outcome) = action {'
 readonly REPLACEMENT='if dispatch.node_type != "request" && let NodeAction::Emit(outcome) = action {'
-readonly EXPECTED_SHA="dddac25f46af39bd6cfaff70b408c8c0459c0f558b98bd67fcfdf634b52e8c4e"
+readonly EXPECTED_SHA="e1c6b7c4220f6cb583de32aa3cfd4279f3b4ad0f82bf81bbf389a91332c8417a"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

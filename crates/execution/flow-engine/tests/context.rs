@@ -9,16 +9,20 @@ fn plan(source: &str) -> Plan<'static> {
             "pure".to_string(),
             vec!["main".to_string(), "again".to_string()],
         ),
+        ("cron".to_string(), vec!["main".to_string()]),
         ("effect".to_string(), vec!["main".to_string()]),
     ])));
     Plan::compile(flow, interfaces).unwrap()
 }
 
 fn acknowledge_entry(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) {
-    let Step::Reserved(entry) = plan.next(state, 0) else {
-        panic!("entry must be reserved");
+    let Step::Dispatch(entry) = plan.next(state, 0) else {
+        panic!("cron entry must dispatch");
     };
-    plan.apply_reserved(state, &entry).unwrap();
+    assert_eq!(entry.node_type, "cron");
+    let payload = entry.payload.clone();
+    plan.apply(state, &entry, NodeOutcome::ok(payload), 0)
+        .unwrap();
 }
 
 fn dispatch(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) -> wamn_runner::Dispatch {

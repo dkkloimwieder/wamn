@@ -97,10 +97,7 @@ fn flow(json_str: &str) -> Flow {
 fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
     let mut interfaces = ResolvedInterfaces::new();
     for node in &flow.nodes {
-        if matches!(
-            node.node_type.as_str(),
-            "request" | "cron" | "event" | "fail"
-        ) {
+        if matches!(node.node_type.as_str(), "request" | "event" | "fail") {
             continue;
         }
         let ports = interfaces.entry(node.node_type.clone()).or_default();
@@ -118,10 +115,13 @@ fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
 
 fn started(plan: &Plan<'_>, run_id: impl Into<String>, input: Value) -> ExecutionState {
     let mut state = plan.start(run_id, input);
-    let Step::Reserved(step) = plan.next(&mut state, 0) else {
-        panic!("fresh run must start at its synthetic entry");
+    let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
+        panic!("fresh run must dispatch its cron entry");
     };
-    plan.apply_reserved(&mut state, &step).unwrap();
+    assert_eq!(entry.node_type, "cron");
+    let payload = entry.payload.clone();
+    plan.apply(&mut state, &entry, NodeOutcome::ok(payload), 0)
+        .unwrap();
     state
 }
 
@@ -133,10 +133,13 @@ fn resumed(
 ) -> Result<ExecutionState, ResumeError> {
     if completed.is_empty() {
         let mut state = plan.resume(run_id, input, completed)?;
-        let Step::Reserved(step) = plan.next(&mut state, 0) else {
-            panic!("empty legacy history must begin at its synthetic entry");
+        let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
+            panic!("empty history must begin at its cron Node-ABI entry");
         };
-        plan.apply_reserved(&mut state, &step).unwrap();
+        assert_eq!(entry.node_type, "cron");
+        let payload = entry.payload.clone();
+        plan.apply(&mut state, &entry, NodeOutcome::ok(payload), 0)
+            .unwrap();
         return Ok(state);
     }
 
@@ -172,7 +175,7 @@ fn linear_walk_completes_in_order() {
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["a", "b", "c"]);
-    assert_eq!(t.state.step_seq(), 4); // synthetic entry + three user nodes
+    assert_eq!(t.state.step_seq(), 4); // cron entry + three downstream nodes
     assert_eq!(t.state.result(), &json!({ "at": "c" }));
     // Each node's input payload is the upstream node's output.
     assert_eq!(t.visited[0].payload, json!({ "seen": [] })); // entry gets the trigger payload
@@ -216,7 +219,7 @@ fn fan_out_and_merge_without_a_join_barrier() {
     assert_eq!(t.status, ExecutionStatus::Completed);
     // BFS order: s, then a, b, then m (from a), m (from b).
     assert_eq!(t.nodes(), ["s", "a", "b", "m", "m"]);
-    assert_eq!(t.state.step_seq(), 6); // synthetic entry + five user visits
+    assert_eq!(t.state.step_seq(), 6); // cron entry + five downstream visits
 }
 
 #[test]
@@ -417,7 +420,7 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
     assert_eq!(key, "run-9:b:0");
     assert!(t.visited.iter().all(|d| &d.idempotency_key == key));
     // step_seq counts only the one successful completion.
-    assert_eq!(t.state.step_seq(), 2); // synthetic entry + successful node
+    assert_eq!(t.state.step_seq(), 2); // cron entry + successful node
 }
 
 #[test]
@@ -677,7 +680,7 @@ fn resume_reconstructs_a_linear_frontier_and_continues() {
     ];
     let mut st = resumed(&plan, "r1", json!({ "trigger": 1 }), &completed).unwrap();
     assert_eq!(st.status(), ExecutionStatus::Running);
-    assert_eq!(st.step_seq(), 3); // synthetic entry + two recorded user steps
+    assert_eq!(st.step_seq(), 3); // cron entry + two recorded downstream steps
 
     // The driver continues: the very next dispatch is c (not a re-run of a/b),
     // and c sees b's recorded output as its input.
@@ -980,7 +983,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
     });
     assert_eq!(live.status, ExecutionStatus::Completed);
     assert_eq!(live.nodes(), ["a", "h"]); // ok skipped
-    assert_eq!(live.state.step_seq(), 2); // synthetic entry + h's success
+    assert_eq!(live.state.step_seq(), 2); // cron entry + h's success
     // The error payload a actually emitted (h's live input) — reuse it verbatim
     // so the record matches what the run emitted.
     let error_payload = live
@@ -1036,12 +1039,12 @@ fn resume_partial_after_error_route_leaves_step_seq_zero_and_null_result() {
     assert_eq!(
         st.step_seq(),
         1,
-        "only the synthetic entry is completed; an error route is not"
+        "only the cron entry is completed; an error route is not"
     );
     assert_eq!(
         st.result(),
         &json!({}),
-        "the synthetic entry retains the admitted payload"
+        "the cron entry retains the scheduler-admitted payload"
     );
 
     // The live remainder: h runs with the error payload as its input, then done.
@@ -1233,24 +1236,25 @@ fn a_runaway_cycle_fails_at_exactly_the_budget() {
     plan.set_dispatch_budget(5);
     let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
-    // Exactly 5 node executions were allowed, then the run failed terminally.
-    assert_eq!(dispatched.len(), 5);
+    // The cron entry consumes one unit, then four downstream executions are
+    // allowed before the run fails terminally at the configured total of five.
+    assert_eq!(dispatched.len(), 4);
     assert_eq!(st.dispatched(), 5);
     assert_eq!(status, ExecutionStatus::Failed);
     let failure = st.failure().expect("failure recorded");
     assert_eq!(failure.kind, ExecutionFailureKind::RunawayBudget);
     // The failure names the node that would have run next (the 6th execution).
-    assert_eq!(failure.node, "a");
+    assert_eq!(failure.node, "b");
     assert_eq!(failure.detail.code.as_deref(), Some("runaway-budget"));
 }
 
 #[test]
 fn a_flow_that_uses_exactly_the_budget_completes() {
-    // linear4 dispatches exactly 4 nodes; budget 4 must let it complete (the
-    // budget is "may execute N nodes", not "fails at N").
+    // The cron entry plus linear4 dispatch exactly 5 nodes; budget 5 must let
+    // the run complete (the budget is "may execute N nodes", not "fails at N").
     let f = linear4();
     let mut plan = compile(&f).unwrap();
-    plan.set_dispatch_budget(4);
+    plan.set_dispatch_budget(5);
     let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
     assert_eq!(status, ExecutionStatus::Completed);
@@ -1297,7 +1301,8 @@ fn retries_count_against_the_budget() {
             }
         }
     };
-    assert_eq!(executions, 3);
+    assert_eq!(executions, 2);
+    assert_eq!(st.dispatched(), 3);
     assert_eq!(status, ExecutionStatus::Failed);
     assert_eq!(
         st.failure().unwrap().kind,
@@ -1367,7 +1372,8 @@ fn the_default_budget_is_generous_but_finite() {
     let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 10_100);
     assert_eq!(status, ExecutionStatus::Failed);
-    assert_eq!(dispatched.len(), 10_000);
+    assert_eq!(dispatched.len(), 9_999);
+    assert_eq!(st.dispatched(), 10_000);
     assert_eq!(
         st.failure().unwrap().kind,
         ExecutionFailureKind::RunawayBudget

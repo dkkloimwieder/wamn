@@ -14,6 +14,7 @@ fn flow(source: &str) -> Flow {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
+        ("cron".to_string(), vec!["main".to_string()]),
         ("request".to_string(), vec!["main".to_string()]),
         ("respond".to_string(), vec!["main".to_string()]),
         (
@@ -70,7 +71,7 @@ fn request_flow(respond_successor: &str) -> Flow {
 }
 
 #[test]
-fn synthetic_entry_and_unwired_completion_port_exhaust_the_cron_frontier() {
+fn cron_node_emission_and_unwired_completion_port_exhaust_the_frontier() {
     let flow = flow(
         r#"{"schema-version":"0.1","flow-id":"cron","version":1,
             "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"choice"}],
@@ -79,13 +80,13 @@ fn synthetic_entry_and_unwired_completion_port_exhaust_the_cron_frontier() {
     let plan = compile(&flow);
     let input = json!({"scheduled-at":"2026-01-01T00:00:00Z"});
     let mut state = plan.start("run", input.clone());
-    let entry = reserved(&plan, &mut state);
-    assert!(matches!(
-        &entry,
-        ReservedStep::Entry { node, payload, .. } if node == "in" && payload == &input
-    ));
-    assert_eq!(plan.next(&mut state, 0), Step::Reserved(entry.clone()));
-    plan.apply_reserved(&mut state, &entry).unwrap();
+    let entry = dispatch(&plan, &mut state);
+    assert_eq!(entry.node_type, "cron");
+    assert_eq!(entry.payload, input);
+    assert_eq!(plan.next(&mut state, 0), Step::Dispatch(entry.clone()));
+    let payload = entry.payload.clone();
+    plan.apply(&mut state, &entry, NodeOutcome::ok(payload), 0)
+        .unwrap();
 
     let work = dispatch(&plan, &mut state);
     plan.apply(
@@ -307,6 +308,36 @@ fn crash_restart_redispatches_request_until_exact_emission_commits() {
 }
 
 #[test]
+fn crash_restart_redispatches_cron_until_exact_emission_commits() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"cron-replay","version":1,
+            "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"echo"}],
+            "edges":[{"from":"in","to":"work"}]}"#,
+    );
+    let plan = compile(&flow);
+    let input = json!({"scheduled-at": 42});
+    let mut first = plan.start("run", input.clone());
+    let boundary = dispatch(&plan, &mut first);
+    assert_eq!(boundary.node_type, "cron");
+    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
+
+    let mut restarted = plan.start("run", input.clone());
+    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
+
+    let mut committed = plan
+        .resume(
+            "run",
+            input.clone(),
+            &[Recorded::new("in", "main", input.clone())],
+        )
+        .unwrap();
+    let next = dispatch(&plan, &mut committed);
+    assert_eq!(next.node, "work");
+    assert_eq!(next.payload, input);
+    assert_eq!(committed.caller_state(), CallerState::None);
+}
+
+#[test]
 fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
     let flow = request_flow("");
     let plan = compile(&flow);
@@ -353,10 +384,11 @@ fn crash_restart_replays_the_fail_boundary_until_its_record_commits() {
             "edges":[{"from":"in","to":"bad"}]}"#,
     );
     let plan = compile(&flow);
-    let before = [Recorded::new("in", "main", json!({"tick":1}))];
-    let mut first = plan.resume("run", Value::Null, &before).unwrap();
+    let input = json!({"tick": 1});
+    let before = [Recorded::new("in", "main", input.clone())];
+    let mut first = plan.resume("run", input.clone(), &before).unwrap();
     let boundary = reserved(&plan, &mut first);
-    let mut restarted = plan.resume("run", Value::Null, &before).unwrap();
+    let mut restarted = plan.resume("run", input, &before).unwrap();
     assert_eq!(
         plan.next(&mut restarted, 0),
         Step::Reserved(boundary.clone())
