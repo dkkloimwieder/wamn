@@ -2015,6 +2015,88 @@ mod tests {
     }
 
     #[test]
+    fn built_in_only_artifacts_round_trip_every_lifecycle_contract() {
+        let graphs = [
+            r#"{
+              "schema-version":"0.1","flow-id":"http-lifecycle","version":1,
+              "nodes":[
+                {"id":"request","type":"request","config":{"input-schema":true}},
+                {"id":"respond","type":"respond","config":{"status":200}}
+              ],
+              "edges":[{"from":"request","to":"respond"}]
+            }"#,
+            r#"{
+              "schema-version":"0.1","flow-id":"cron-lifecycle","version":1,
+              "nodes":[
+                {"id":"cron","type":"cron"},
+                {"id":"fail","type":"fail","config":{"code":"stop"}}
+              ],
+              "edges":[{"from":"cron","to":"fail"}]
+            }"#,
+            r#"{
+              "schema-version":"0.1","flow-id":"event-lifecycle","version":1,
+              "nodes":[{"id":"event","type":"event"}],
+              "edges":[]
+            }"#,
+        ];
+        let mut pinned_node_types = BTreeSet::new();
+
+        for graph in graphs {
+            let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
+                .expect("built-in-only artifact resolves");
+            assert!(prepared.supplied_node_types.is_empty());
+            assert!(!prepared.artifact.interface_bundle().contracts().is_empty());
+            let interface_bundle =
+                std::str::from_utf8(prepared.artifact.interface_bundle().canonical_bytes())
+                    .unwrap();
+            let occurrence_recovery =
+                std::str::from_utf8(prepared.artifact.occurrence_recovery_bytes()).unwrap();
+            let components =
+                serde_json::to_string(prepared.artifact.supplied_components()).unwrap();
+            let pinned = wamn_catalog::PinnedArtifact::from_storage(
+                "tenant",
+                prepared.artifact.identity().id().flow_id(),
+                prepared.artifact.identity().id().flow_version(),
+                &prepared.graph_json,
+                prepared.artifact.graph_hash(),
+                prepared.artifact.identity().artifact_hash().as_str(),
+                interface_bundle,
+                prepared.artifact.interface_bundle().hash(),
+                &components,
+                Some(occurrence_recovery),
+                Some(prepared.artifact.occurrence_recovery_hash()),
+            )
+            .expect("runtime accepts the exact publication-pinned artifact");
+            assert_eq!(
+                pinned.interface_bundle().contracts(),
+                prepared.artifact.interface_bundle().contracts()
+            );
+            for contract in pinned.interface_bundle().contracts() {
+                assert_eq!(
+                    contract.interface.contract_version,
+                    wamn_node_manifest::RESOLVED_CONTRACT_VERSION
+                );
+                assert!(matches!(
+                    contract.executable,
+                    wamn_node_manifest::ExecutableIdentity::Platform { .. }
+                ));
+                pinned_node_types.insert(contract.interface.node_type.clone());
+            }
+        }
+
+        assert_eq!(
+            pinned_node_types,
+            BTreeSet::from([
+                "cron".to_string(),
+                "event".to_string(),
+                "fail".to_string(),
+                "request".to_string(),
+                "respond".to_string(),
+            ])
+        );
+    }
+
+    #[test]
     fn every_descriptor_field_changes_both_identities_or_fails_validation() {
         use wamn_catalog::{
             Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,

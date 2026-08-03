@@ -4317,6 +4317,25 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
   tools/gate-mutants/fail-node-abi.sh run
 ```
 
+## PLAN-1 — uniform node-interface pinning (`wamn-4u7p.38`)
+
+Publication resolves platform and supplied nodes into the same canonical
+resolved-contract bundle. Built-in-only artifacts persist a non-empty bundle,
+and runtime reconstruction verifies those exact contracts without a current
+model-owned fallback. Historical versions retain their explicit compatibility
+readers; unknown versions fail closed. The mutation reintroduces the former
+`request` exemption and must make the focused publication-to-runtime round-trip
+gate fail before restoring the catalog source byte-exact.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
+  cargo test --locked -p wamn-catalog -p wamn-standard-nodes -p wamn-ctl -p wamn-runner
+CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
+  tools/gate-mutants/uniform-interface-pinning.sh run
+```
+
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
 
 The final fenced send marker rejects elapsed attempt and run deadlines before
