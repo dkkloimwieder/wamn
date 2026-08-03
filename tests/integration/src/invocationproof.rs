@@ -28,6 +28,8 @@ const FLOW_ID: &str = "inline-echo";
 const CATALOG_ID: &str = "inline-catalog";
 const ATTACHMENT_ID: &str = "http-proof";
 const DEFINITION_HASH: &str = "sha256:inline-proof";
+// Keep seeded claims valid for the full ten-minute deployed debug gate window.
+const CLAIMED_FIXTURE_DEADLINE_SECONDS: u32 = 10 * 60;
 
 struct ProofInlineDriver {
     host: Arc<tokio::sync::Mutex<ExecutionHost>>,
@@ -296,7 +298,8 @@ async fn seed_claimed(
                 attachment_id,status,trigger_source,input_json,response_deadline_at,run_deadline_at) \
              VALUES ('{TENANT}','{run_id}','{FLOW_ID}',1,'{CATALOG_ID}',1, \
                      'http-proof','{status}','http','{{\"echo\":\"ok\"}}', \
-                     now()+interval '30 seconds',now()+interval '1 minute'); \
+                     now()+make_interval(secs => {CLAIMED_FIXTURE_DEADLINE_SECONDS}), \
+                     now()+make_interval(secs => {CLAIMED_FIXTURE_DEADLINE_SECONDS})); \
              INSERT INTO wamn_run.run_queue \
                (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
              VALUES ('{TENANT}','{run_id}','{OWNER}',{expiry},{generation});"
@@ -646,5 +649,10 @@ mod tests {
             database_url("postgresql://u:p@db:5432/base?sslmode=disable", "proof").unwrap(),
             "postgresql://u:p@db:5432/proof?sslmode=disable"
         );
+    }
+
+    #[test]
+    fn claimed_fixture_deadline_covers_the_debug_gate_window() {
+        assert_eq!(CLAIMED_FIXTURE_DEADLINE_SECONDS, 10 * 60);
     }
 }
