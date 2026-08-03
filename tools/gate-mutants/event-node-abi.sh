@@ -2,10 +2,10 @@
 set -euo pipefail
 
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
-readonly MUTATION="cron-success-bypasses-exact-emission-validation"
-readonly TEST="tests::malformed_cron_actions_are_refused_before_durable_checkpointing"
-readonly NEEDLE='validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
-readonly REPLACEMENT='if dispatch.node_type != "cron" { validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
+readonly MUTATION="event-success-bypasses-exact-emission-validation"
+readonly TEST="tests::malformed_event_actions_are_refused_before_durable_checkpointing"
+readonly NEEDLE='validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
+readonly REPLACEMENT='if dispatch.node_type != "event" { validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
 readonly EXPECTED_SHA="76f272c3d2fed1fb656e8f5f72f35e01f88adde9354c378a2b3886a8e53efda3"
 
 ROOT="$(git rev-parse --show-toplevel)"

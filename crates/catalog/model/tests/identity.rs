@@ -1051,6 +1051,32 @@ fn cron_requires_the_same_pinned_platform_implementation_as_other_nodes() {
 }
 
 #[test]
+fn event_requires_the_same_pinned_platform_implementation_as_other_nodes() {
+    let flow = Flow::from_json(
+        r#"{"schema-version":"0.1","flow-id":"event","version":1,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
+    )
+    .unwrap();
+    assert!(matches!(
+        Artifact::new("tenant", &flow, vec![]),
+        Err(CatalogIdentityError::UnresolvedInterface { node_type }) if node_type == "event"
+    ));
+
+    let event = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "event",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    let artifact = Artifact::new("tenant", &flow, vec![event]).unwrap();
+    assert_eq!(artifact.interfaces()[0].node_type, "event");
+}
+
+#[test]
 fn noncanonical_interface_and_member_reordering_is_rejected() {
     let mut flow = request_flow();
     flow.nodes.insert(

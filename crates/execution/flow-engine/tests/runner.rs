@@ -97,7 +97,7 @@ fn flow(json_str: &str) -> Flow {
 fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
     let mut interfaces = ResolvedInterfaces::new();
     for node in &flow.nodes {
-        if matches!(node.node_type.as_str(), "request" | "event" | "fail") {
+        if matches!(node.node_type.as_str(), "request" | "fail") {
             continue;
         }
         let ports = interfaces.entry(node.node_type.clone()).or_default();

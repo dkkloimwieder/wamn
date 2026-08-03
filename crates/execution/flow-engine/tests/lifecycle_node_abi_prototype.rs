@@ -80,6 +80,7 @@ fn compile(flow: &Flow) -> Plan<'_> {
             vec![MAIN_PORT.to_string(), "drop".to_string()],
         ),
         ("cron".to_string(), vec![MAIN_PORT.to_string()]),
+        ("event".to_string(), vec![MAIN_PORT.to_string()]),
         ("request".to_string(), vec![MAIN_PORT.to_string()]),
         ("respond".to_string(), vec![MAIN_PORT.to_string()]),
     ]);
@@ -111,27 +112,6 @@ fn run_context<'a>(
         config,
         context: state.context(),
     }
-}
-
-/// Prototype adapter: the ABI result proves node data semantics; only then may
-/// the engine acknowledge its own entry-token transition.
-fn apply_entry_after_abi(
-    plan: &Plan<'_>,
-    state: &mut ExecutionState,
-    step: &ReservedStep,
-    node: &dyn Node,
-    config: &Value,
-) -> Result<(), &'static str> {
-    let mut ctx = NoEffects;
-    let run = run_context(state, step.node(), config);
-    let emission = node
-        .run(&mut ctx, &run, step.payload())
-        .map_err(|_| "entry node did not emit")?;
-    if emission.port != MAIN_PORT || emission.ctx.is_some() || emission.payload != *step.payload() {
-        return Err("entry node changed the admitted payload contract");
-    }
-    plan.apply_reserved(state, step)
-        .map_err(|_| "engine rejected entry lifecycle transition")
 }
 
 /// Prototype adapter: the ABI supplies the authored failure detail while the
@@ -319,9 +299,21 @@ fn event_data_crosses_node_abi_before_engine_completes_callerless_run() {
     let plan = compile(&flow);
     let input = json!({"topic": "orders.created", "id": 42});
     let mut state = plan.start("event-run", input.clone());
-    let step = reserved(&plan, &mut state);
-
-    apply_entry_after_abi(&plan, &mut state, &step, &EntryNode, &json!({})).unwrap();
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected event dispatch, got {other:?}"),
+    };
+    assert_eq!(state.dispatched(), 1, "the event entry consumes one unit");
+    let mut ctx = NoEffects;
+    let run = run_context(&state, &dispatch.node, &dispatch.config);
+    let emission = EntryNode.run(&mut ctx, &run, &dispatch.payload).unwrap();
+    plan.apply(
+        &mut state,
+        &dispatch,
+        NodeOutcome::ok_on(emission.payload, emission.port),
+        0,
+    )
+    .unwrap();
 
     assert_eq!(state.result(), &input);
     assert_eq!(state.caller_state(), CallerState::None);
@@ -329,6 +321,61 @@ fn event_data_crosses_node_abi_before_engine_completes_callerless_run() {
         plan.next(&mut state, 0),
         Step::Done(ExecutionStatus::Completed)
     );
+}
+
+#[test]
+fn failed_event_node_result_does_not_advance_the_entry_token() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"event-failure","version":1,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
+    );
+    let plan = compile(&flow);
+    let mut state = plan.start("event-failure-run", json!({"event": 42}));
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected event dispatch, got {other:?}"),
+    };
+
+    plan.apply(
+        &mut state,
+        &dispatch,
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+            "event-failed",
+            "event node failed",
+        ))),
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(state.step_seq(), 0);
+    assert_eq!(state.caller_state(), CallerState::None);
+    assert_eq!(state.status(), ExecutionStatus::Failed);
+}
+
+#[test]
+fn malformed_event_emission_cannot_advance_the_entry_token() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"event-guard","version":1,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
+    );
+    let plan = compile(&flow);
+    let mut state = plan.start("event-guard-run", json!({"event": 42}));
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected event dispatch, got {other:?}"),
+    };
+
+    assert_eq!(
+        plan.apply(
+            &mut state,
+            &dispatch,
+            NodeOutcome::ok(json!({"changed": true})),
+            0,
+        ),
+        Err(wamn_runner::ApplyError::InvalidEventEmission)
+    );
+    assert_eq!(state.step_seq(), 0);
+    assert_eq!(plan.next(&mut state, 0), Step::Dispatch(dispatch));
 }
 
 #[test]

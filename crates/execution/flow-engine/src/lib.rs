@@ -39,8 +39,8 @@
 //! ```
 //!
 //! ## Scope (5.2) vs siblings
-//! Owns: event entry completion, caller-release and fail lifecycle state; the
-//! ported-edge walk, branch/merge, error-path routing;
+//! Owns: caller-release and fail lifecycle state; event admission and durable
+//! entry ordering; the ported-edge walk, branch/merge, error-path routing;
 //! the retry/backoff loop; the shared per-target throttle key + per-flow concurrency
 //! accounting ([`ThrottleTable`]); the hot-reload *consumer* seam (recompile a
 //! [`Plan`] on a new flow version), and the pure **reconstruction primitives**
@@ -63,7 +63,7 @@ mod throttle;
 pub use engine::{
     ApplyError, CallerState, CheckpointError, Dispatch, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, Failure, Recorded, ReservedStep, ResumeError, SeedError, Step, restore,
-    snapshot, validate_cron_outcome, validate_request_outcome,
+    snapshot, validate_cron_outcome, validate_event_outcome, validate_request_outcome,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};

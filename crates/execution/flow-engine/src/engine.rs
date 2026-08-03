@@ -265,6 +265,7 @@ pub enum ApplyError {
     RespondWithoutCaller,
     InvalidRequestEmission,
     InvalidCronEmission,
+    InvalidEventEmission,
     InvalidContext(Value),
 }
 
@@ -289,6 +290,12 @@ impl std::fmt::Display for ApplyError {
                 write!(
                     f,
                     "cron must emit its scheduler-admitted input unchanged on main without context"
+                )
+            }
+            ApplyError::InvalidEventEmission => {
+                write!(
+                    f,
+                    "event must emit its externally admitted input unchanged on main without context"
                 )
             }
             ApplyError::InvalidContext(value) => {
@@ -602,11 +609,6 @@ impl<'f> Plan<'f> {
             .expect("active node in validated flow");
         let occurrence = state.visits.get(&active.node).copied().unwrap_or(0);
         match node.node_type.as_str() {
-            "event" => Some(ReservedStep::Entry {
-                node: node.id.clone(),
-                payload: active.payload.clone(),
-                occurrence,
-            }),
             "fail" => {
                 let config: FailConfig =
                     serde_json::from_value(node.config.clone()).expect("validated fail config");
@@ -648,6 +650,7 @@ impl<'f> Plan<'f> {
         }
         validate_request_outcome(dispatch, &outcome)?;
         validate_cron_outcome(dispatch, &outcome)?;
+        validate_event_outcome(dispatch, &outcome)?;
         let attempt = state
             .current
             .as_ref()
@@ -1151,5 +1154,29 @@ pub fn validate_cron_outcome(dispatch: &Dispatch, outcome: &NodeOutcome) -> Resu
         }
         NodeOutcome::Error(_) => Ok(()),
         NodeOutcome::Success { .. } => Err(ApplyError::InvalidCronEmission),
+    }
+}
+
+/// Refuse any event emission that does not preserve the externally admitted input.
+///
+/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
+/// repeats the check so direct and reconstructed engine users share the invariant.
+pub fn validate_event_outcome(
+    dispatch: &Dispatch,
+    outcome: &NodeOutcome,
+) -> Result<(), ApplyError> {
+    if dispatch.node_type != "event" {
+        return Ok(());
+    }
+    match outcome {
+        NodeOutcome::Success {
+            payload,
+            port,
+            context,
+        } if port == crate::MAIN_PORT && payload == &dispatch.payload && context.is_none() => {
+            Ok(())
+        }
+        NodeOutcome::Error(_) => Ok(()),
+        NodeOutcome::Success { .. } => Err(ApplyError::InvalidEventEmission),
     }
 }

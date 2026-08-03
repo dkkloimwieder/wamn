@@ -15,6 +15,7 @@ fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
         ("cron".to_string(), vec!["main".to_string()]),
+        ("event".to_string(), vec!["main".to_string()]),
         ("request".to_string(), vec!["main".to_string()]),
         ("respond".to_string(), vec!["main".to_string()]),
         (
@@ -319,6 +320,36 @@ fn crash_restart_redispatches_cron_until_exact_emission_commits() {
     let mut first = plan.start("run", input.clone());
     let boundary = dispatch(&plan, &mut first);
     assert_eq!(boundary.node_type, "cron");
+    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
+
+    let mut restarted = plan.start("run", input.clone());
+    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
+
+    let mut committed = plan
+        .resume(
+            "run",
+            input.clone(),
+            &[Recorded::new("in", "main", input.clone())],
+        )
+        .unwrap();
+    let next = dispatch(&plan, &mut committed);
+    assert_eq!(next.node, "work");
+    assert_eq!(next.payload, input);
+    assert_eq!(committed.caller_state(), CallerState::None);
+}
+
+#[test]
+fn crash_restart_redispatches_event_until_exact_emission_commits() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"event-replay","version":1,
+            "nodes":[{"id":"in","type":"event"},{"id":"work","type":"echo"}],
+            "edges":[{"from":"in","to":"work"}]}"#,
+    );
+    let plan = compile(&flow);
+    let input = json!({"topic": "orders.created", "id": 42});
+    let mut first = plan.start("run", input.clone());
+    let boundary = dispatch(&plan, &mut first);
+    assert_eq!(boundary.node_type, "event");
     assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
 
     let mut restarted = plan.start("run", input.clone());

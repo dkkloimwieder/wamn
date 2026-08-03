@@ -4272,6 +4272,28 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-23 \
   tools/gate-mutants/cron-node-abi.sh run
 ```
 
+## PLAN-2A — event common Node ABI (`wamn-ayq7.24`)
+
+`event` resolves to the pinned, capability-free platform standard-node
+executable and emits the externally admitted payload unchanged on `main`. The
+flowrunner validates that exact payload, port, and absent context replacement
+before the generic durable attempt checkpoint can advance the entry token.
+Every inbound-edge dispatch consumes one dispatch-budget unit, including
+event; admission, callerless lifecycle, reconstruction, and durable ordering
+remain owned by the engine and driver. The mutation bypasses event's production
+validation; the focused debug gate must fail before the source is restored.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
+  cargo test --locked -p wamn-runner -p wamn-standard-nodes -p wamn-catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
+  cargo test --locked -p wamn-ctl --lib publish_catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
+  tools/gate-mutants/event-node-abi.sh run
+```
+
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
 
 The final fenced send marker rejects elapsed attempt and run deadlines before

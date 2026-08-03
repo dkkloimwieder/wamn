@@ -11,7 +11,7 @@ fn compile(source: &str) -> (Flow, ResolvedInterfaces) {
     let flow = Flow::from_json(source).expect("fixture parses");
     let mut interfaces = ResolvedInterfaces::new();
     for node in &flow.nodes {
-        if matches!(node.node_type.as_str(), "event" | "fail") {
+        if node.node_type == "fail" {
             continue;
         }
         interfaces
@@ -30,7 +30,9 @@ fn apply_entry(plan: &Plan<'_>, state: &mut ExecutionState) {
         Step::Reserved(entry @ ReservedStep::Entry { .. }) => {
             plan.apply_reserved(state, &entry).expect("entry applies");
         }
-        Step::Dispatch(entry) if matches!(entry.node_type.as_str(), "request" | "cron") => {
+        Step::Dispatch(entry)
+            if matches!(entry.node_type.as_str(), "request" | "cron" | "event") =>
+        {
             let payload = entry.payload.clone();
             plan.apply(state, &entry, NodeOutcome::ok(payload), 0)
                 .expect("Node-ABI entry applies");
