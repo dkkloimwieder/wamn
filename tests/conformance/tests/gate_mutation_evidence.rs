@@ -23,6 +23,10 @@ const SCENARIO_CAMPAIGN: &str = "scenario-replay-impact";
 const SCENARIO_BEAD: &str = "wamn-2jdm.5.3";
 const SCENARIO_RUNNER: &str = "tools/gate-mutants/scenario-replay-impact.sh";
 const SCENARIO_SOURCE_COMMIT: &str = "3b866e82725b84eea40f513d81838b6c7fcbfadf";
+const CAUSATION_CAMPAIGN: &str = "causation-e2e";
+const CAUSATION_BEAD: &str = "wamn-ec7j";
+const CAUSATION_RUNNER: &str = "tools/gate-mutants/causation-e2e.sh";
+const CAUSATION_SOURCE_COMMIT: &str = "21c3836fe0536c347355ef21f7d811eb92cc678a";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -312,5 +316,38 @@ fn checked_in_mutation_evidence_conforms_when_present() {
                 "scenario evidence must identify the checked-in runner bytes"
             );
         }
+        if evidence.campaign == CAUSATION_CAMPAIGN {
+            assert_eq!(evidence.bead, CAUSATION_BEAD);
+            assert_eq!(evidence.source.git_commit, CAUSATION_SOURCE_COMMIT);
+            let runner = fs::read(repository_root().join(CAUSATION_RUNNER))
+                .expect("causation mutation runner is readable");
+            assert_eq!(
+                evidence.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "causation evidence must identify the checked-in runner bytes"
+            );
+        }
     }
+}
+
+#[test]
+fn causation_mutation_evidence_conforms() {
+    let path = repository_root()
+        .join(EVIDENCE_DIRECTORY)
+        .join("causation-e2e.json");
+    let json = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let evidence =
+        parse_evidence(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    validate_evidence(&evidence).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    assert_eq!(evidence.campaign, CAUSATION_CAMPAIGN);
+    assert_eq!(evidence.bead, CAUSATION_BEAD);
+    assert_eq!(evidence.source.git_commit, CAUSATION_SOURCE_COMMIT);
+    let runner = fs::read(repository_root().join(CAUSATION_RUNNER))
+        .expect("causation mutation runner is readable");
+    assert_eq!(
+        evidence.source.runner_sha256,
+        hex::encode(Sha256::digest(runner)),
+        "causation evidence must identify the checked-in runner bytes"
+    );
 }
