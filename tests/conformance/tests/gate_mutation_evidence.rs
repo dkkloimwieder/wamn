@@ -27,6 +27,9 @@ const CAUSATION_CAMPAIGN: &str = "causation-e2e";
 const CAUSATION_BEAD: &str = "wamn-ec7j";
 const CAUSATION_RUNNER: &str = "tools/gate-mutants/causation-e2e.sh";
 const CAUSATION_SOURCE_COMMIT: &str = "21c3836fe0536c347355ef21f7d811eb92cc678a";
+const CALLABLE_CAMPAIGN: &str = "callable-flow-aggregate";
+const CALLABLE_BEAD: &str = "wamn-2jdm.5.4";
+const CALLABLE_RUNNER: &str = "tools/gate-mutants/callable-flow-aggregate.sh";
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -88,13 +91,36 @@ fn validate_sha256(value: &str, field: &str) -> Result<(), String> {
 }
 
 fn validate_command(command: &[String], field: &str) -> Result<(), String> {
-    if command.len() < 2 || command[0] != "cargo" || command[1] != "test" {
-        return Err(format!("{field} must be a fixed cargo test argv"));
-    }
     if command.iter().any(|argument| argument.trim().is_empty()) {
         return Err(format!("{field} contains an empty argument"));
     }
-    Ok(())
+    if command.len() >= 2 && command[0] == "cargo" && command[1] == "test" {
+        return Ok(());
+    }
+    if command.len() == 3
+        && command[0] == CALLABLE_RUNNER
+        && matches!(command[1].as_str(), "green" | "run")
+        && matches!(
+            command[2].as_str(),
+            "schema-nullable-decision"
+                | "cron-activation-digest-drift"
+                | "f0-response-contract-wave1"
+                | "f1-direct-node-contract-wave1"
+                | "f2-direct-node-contract-wave2"
+                | "f3-cutoff-contract-wave1"
+                | "f4-callback-contract-wave2"
+                | "wave1-source-image-drift"
+                | "wave2-mixed-image-id"
+                | "f2invoke-wrong-recommendation"
+                | "f3proof-wrong-cutoff"
+                | "f4proof-wrong-delivery-count"
+        )
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{field} must be a fixed cargo test or callable-flow deployed-runner argv"
+    ))
 }
 
 fn validate_evidence(evidence: &EvidenceRecord) -> Result<(), String> {
@@ -232,6 +258,33 @@ fn strict_evidence_schema_rejects_unknown_fields_and_non_debug_runs() {
 }
 
 #[test]
+fn strict_evidence_schema_accepts_only_the_named_deployed_runner_argv() {
+    validate_command(
+        &[
+            CALLABLE_RUNNER.to_string(),
+            "run".to_string(),
+            "f0-response-contract-wave1".to_string(),
+        ],
+        "deployed command",
+    )
+    .expect("named callable-flow deployed command is exact");
+
+    let error = validate_command(
+        &[
+            "bash".to_string(),
+            "-c".to_string(),
+            "kubectl apply".to_string(),
+        ],
+        "deployed command",
+    )
+    .expect_err("shell evaluation must remain forbidden");
+    assert!(
+        error.contains("fixed cargo test or callable-flow"),
+        "{error}"
+    );
+}
+
+#[test]
 fn strict_evidence_schema_rejects_survivors_and_non_restoration() {
     let survived = evidence_json()
         .replacen("\"exit_code\": 101", "\"exit_code\": 0", 1)
@@ -325,6 +378,35 @@ fn checked_in_mutation_evidence_conforms_when_present() {
                 evidence.source.runner_sha256,
                 hex::encode(Sha256::digest(runner)),
                 "causation evidence must identify the checked-in runner bytes"
+            );
+        }
+        if evidence.campaign == CALLABLE_CAMPAIGN {
+            assert_eq!(evidence.bead, CALLABLE_BEAD);
+            let runner = fs::read(repository_root().join(CALLABLE_RUNNER))
+                .expect("callable-flow mutation runner is readable");
+            assert_eq!(
+                evidence.source.runner_sha256,
+                hex::encode(Sha256::digest(runner)),
+                "callable-flow evidence must identify the checked-in runner bytes"
+            );
+            assert!(
+                evidence.green_runs.iter().all(|run| {
+                    run.command
+                        .first()
+                        .is_some_and(|arg| arg == CALLABLE_RUNNER)
+                        && run.command.get(1).is_some_and(|arg| arg == "green")
+                }),
+                "callable-flow green evidence must use the exact deployed runner argv"
+            );
+            assert!(
+                evidence.mutants.iter().all(|mutant| {
+                    mutant
+                        .command
+                        .first()
+                        .is_some_and(|arg| arg == CALLABLE_RUNNER)
+                        && mutant.command.get(1).is_some_and(|arg| arg == "run")
+                }),
+                "callable-flow red evidence must use the exact deployed runner argv"
             );
         }
     }

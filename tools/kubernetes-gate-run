@@ -3,7 +3,8 @@
 #
 # Each --job value is JSON with this schema:
 #   {"name":"gate","container":"gate","expectation":"positive",
-#    "exit_code":0,"image":"wamn-gates:dev","log_contains":"overall PASS"}
+#    "exit_code":0,"image":"wamn-gates:dev","log_contains":"overall PASS",
+#    "claimed_image_id":"sha256:...","claim_log_prefix":"claimed-image-id="}
 # expectation is "positive" or "expected-negative". Exactly one
 # expected-negative Job requires --snapshot-executable; each argument is passed
 # separately with --snapshot-arg. Command strings are never evaluated.
@@ -90,6 +91,26 @@ run_probe() {
   return "$status"
 }
 
+wait_for_job_terminal() {
+  local name=$1 deadline terminal status
+  deadline=$((SECONDS + timeout_secs))
+  while ((SECONDS < deadline)); do
+    if status=$(run_kubectl get job "$name" -o json 2>/dev/null); then
+      terminal=$(jq -r '
+        [.status.conditions[]?
+         | select(.status == "True" and (.type == "Complete" or .type == "Failed"))
+         | .type] | last // ""
+      ' <<<"$status")
+      if [[ -n "$terminal" ]]; then
+        printf '%s' "$terminal"
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 valid_specs=true
 negative_count=0
 for spec in "${job_specs[@]}"; do
@@ -101,6 +122,12 @@ for spec in "${job_specs[@]}"; do
       (.exit_code | type == "number" and floor == . and . >= 0) and
       (.image | type == "string" and length > 0) and
       ((.log_contains // "") | type == "string") and
+      ((.claimed_image_id // "") | type == "string") and
+      ((.claim_log_prefix // "") | type == "string") and
+      (if has("claimed_image_id") or has("claim_log_prefix") then
+         (.claimed_image_id | test("^sha256:[0-9a-f]{64}$")) and
+         (.claim_log_prefix | length > 0)
+       else true end) and
       (if .expectation == "positive" then .exit_code == 0
        else .exit_code > 0 and (.log_contains | type == "string" and length > 0)
        end)
@@ -177,6 +204,8 @@ for index in "${!job_specs[@]}"; do
   expected_exit=$(jq -r '.exit_code' <<<"$spec")
   expected_image=$(jq -r '.image' <<<"$spec")
   log_contains=$(jq -r '.log_contains // ""' <<<"$spec")
+  claimed_image_id=$(jq -r '.claimed_image_id // ""' <<<"$spec")
+  claim_log_prefix=$(jq -r '.claim_log_prefix // ""' <<<"$spec")
   condition=complete
   expected_phase=Succeeded
   if [[ "$expectation" == expected-negative ]]; then
@@ -185,9 +214,11 @@ for index in "${!job_specs[@]}"; do
   fi
 
   declare -a job_failures=()
-  if ! run_kubectl wait --for="condition=$condition" "job/$name" \
-      --timeout="$command_timeout" >/dev/null; then
+  terminal_condition=
+  if ! terminal_condition=$(wait_for_job_terminal "$name"); then
     job_failures+=("job-wait-timeout")
+  elif [[ "$terminal_condition" != "${condition^}" ]]; then
+    job_failures+=("unexpected-terminal-condition")
   fi
 
   job_json="$tmp_dir/job-$name.json"
@@ -261,6 +292,21 @@ for index in "${!job_specs[@]}"; do
   if [[ -n "$log_contains" ]] && ! grep -Fq -- "$log_contains" "$logs"; then
     job_failures+=("expected-log-missing")
   fi
+  observed_claimed_image_id=
+  if [[ -n "$claimed_image_id" ]]; then
+    observed_claimed_image_id=$(grep -F -- "$claim_log_prefix" "$logs" | tail -n 1 || true)
+    observed_claimed_image_id=${observed_claimed_image_id#*"$claim_log_prefix"}
+    if [[ "$observed_claimed_image_id" != "$claimed_image_id" ]]; then
+      job_failures+=("claimed-image-id-mismatch")
+    fi
+    if ! jq -e --arg container "$container" --arg image_id "$claimed_image_id" '
+        all(.items[]; any(.status.containerStatuses[]?;
+          .name == $container and
+          ((.imageID // "") | capture("(?<digest>sha256:[0-9a-f]{64})$").digest) == $image_id))
+      ' >/dev/null "$pods_json"; then
+      job_failures+=("observed-image-id-mismatch")
+    fi
+  fi
 
   log_hash=$(hash_file "$logs")
   pod_observations=$(jq --arg container "$container" '[.items[] | {
@@ -286,14 +332,18 @@ for index in "${!job_specs[@]}"; do
   job_verdict_records+=("$(jq -cn \
     --arg name "$name" --arg container "$container" --arg expectation "$expectation" \
     --argjson expected_exit_code "$expected_exit" --arg expected_image "$expected_image" \
+    --arg claimed_image_id "$claimed_image_id" \
     --arg uid "$uid" --arg old_uid "$old_uid" --arg created_at "$created" \
     --arg condition "$condition" --arg transition_at "$transition" \
-    --arg logs_sha256 "$log_hash" --arg verdict "$job_verdict" \
+    --arg logs_sha256 "$log_hash" --arg observed_claimed_image_id "$observed_claimed_image_id" \
+    --arg verdict "$job_verdict" \
     --argjson pods "$pod_observations" --argjson failures "$job_failure_json" \
     '{name:$name,container:$container,expectation:$expectation,
       expected_exit_code:$expected_exit_code,expected_image:$expected_image,
+      claimed_image_id:(if $claimed_image_id == "" then null else $claimed_image_id end),
       observed:{uid:$uid,previous_uid:$old_uid,created_at:$created_at,
         condition:$condition,condition_transition_at:$transition_at,
+        claimed_image_id:(if $observed_claimed_image_id == "" then null else $observed_claimed_image_id end),
         logs_sha256:$logs_sha256,pods:$pods},verdict:$verdict,failure_classes:$failures}')")
 done
 

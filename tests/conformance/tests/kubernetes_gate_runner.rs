@@ -41,8 +41,13 @@ case "$command" in
       elif [[ "$FAKE_SCENARIO" == negative-pass && "$name" == *refusal* ]]; then
         condition=Complete
       fi
-      printf '{"metadata":{"uid":"%s","creationTimestamp":"%s"},"status":{"conditions":[{"type":"%s","status":"True","lastTransitionTime":"%s"}]}}\n' \
-        "$uid" "$created" "$condition" "$transition"
+      conditions=$(printf '[{"type":"%s","status":"True","lastTransitionTime":"%s"}]' "$condition" "$transition")
+      if [[ "$FAKE_SCENARIO" == timeout ]] || \
+         [[ "$FAKE_SCENARIO" == multi-failure && "$name" == second ]]; then
+        conditions='[]'
+      fi
+      printf '{"metadata":{"uid":"%s","creationTimestamp":"%s"},"status":{"conditions":%s}}\n' \
+        "$uid" "$created" "$conditions"
     elif [[ "$kind" == pods ]]; then
       selector=$2
       name=${selector#job-name=}
@@ -50,6 +55,9 @@ case "$command" in
       exit_code=0
       image="$FAKE_EXPECTED_IMAGE"
       image_id="docker-pullable://wamn@sha256:abc"
+      if [[ "$FAKE_SCENARIO" == identity-match ]]; then
+        image_id="docker.io/library/import@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      fi
       started='"9998-01-01T00:00:00Z"'
       init='[{"name":"ready","state":{"terminated":{"exitCode":0,"finishedAt":"9998-01-01T00:00:00Z"}}}]'
       if [[ "$name" == *refusal* ]]; then phase=Failed; exit_code=1; fi
@@ -85,6 +93,11 @@ case "$command" in
       printf 'custom-node test gate (11.5): 1 case(s) FAILED against the built artifact\n'
     else
       printf 'overall PASS: true\n'
+      if [[ "$FAKE_SCENARIO" == identity-match ]]; then
+        printf 'claimed-image-id=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n'
+      else
+        printf 'claimed-image-id=docker-pullable://wamn@sha256:abc\n'
+      fi
     fi
     ;;
   *) exit 64 ;;
@@ -153,6 +166,20 @@ fn positive_job(name: &str) -> String {
         "exit_code": 0,
         "image": EXPECTED_IMAGE,
         "log_contains": "overall PASS"
+    })
+    .to_string()
+}
+
+fn image_bound_job(name: &str, image_id: &str) -> String {
+    json!({
+        "name": name,
+        "container": name,
+        "expectation": "positive",
+        "exit_code": 0,
+        "image": EXPECTED_IMAGE,
+        "log_contains": "overall PASS",
+        "claimed_image_id": image_id,
+        "claim_log_prefix": "claimed-image-id="
     })
     .to_string()
 }
@@ -345,12 +372,57 @@ fn wrong_image_mutant_is_red() {
 }
 
 #[test]
+fn claimed_image_id_must_equal_the_log_claim_and_observed_runtime_id() {
+    let observed = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    assert_red(
+        "pass",
+        &[image_bound_job("gate", observed)],
+        false,
+        "claimed-image-id-mismatch",
+    );
+}
+
+#[test]
+fn exact_claimed_and_observed_image_id_match_is_green() {
+    let image_id = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    let result = run(
+        "identity-match",
+        &[image_bound_job("gate", image_id)],
+        false,
+    );
+    assert!(
+        result.output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&result.output.stderr)
+    );
+    assert_eq!(result.record["jobs"][0]["claimed_image_id"], image_id);
+    assert_eq!(
+        result.record["jobs"][0]["observed"]["claimed_image_id"],
+        image_id
+    );
+    assert_eq!(
+        result.record["jobs"][0]["observed"]["pods"][0]["image_id"],
+        format!("docker.io/library/import@{image_id}")
+    );
+}
+
+#[test]
 fn any_unready_job_makes_a_multi_job_aggregate_red() {
     assert_red(
         "multi-failure",
         &[positive_job("first"), positive_job("second")],
         false,
         "second:job-wait-timeout",
+    );
+}
+
+#[test]
+fn opposite_terminal_condition_is_reported_without_waiting_for_timeout() {
+    assert_red(
+        "negative-pass",
+        &[negative_job()],
+        true,
+        "unexpected-terminal-condition",
     );
 }
 

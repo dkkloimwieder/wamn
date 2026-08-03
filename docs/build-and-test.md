@@ -3469,8 +3469,8 @@ kubectl -n wamn-system logs job/callable-flow-wave1
 
 The serial Wave-2 gate reuses the Wave-1 from-zero schema and production
 invocation campaign, then composes the F2/F4 contract and recovery proofs. Its
-gate evidence record binds the source commit, exact image tag and local image
-ID, flowrunner and all three supplied custom-node components, POC configuration
+gate evidence record binds the source commit, exact image tag and Kubernetes-
+observed image ID, flowrunner and all three supplied custom-node components, POC configuration
 and schema, all five graph definitions, each attachment/registration input,
 release membership, deployment identity, and the four T5 measurement-hook
 shapes. The recorded T5 hooks deliberately carry no Phase-6 budgets.
@@ -3486,8 +3486,10 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave2-10 \
 commit="$(git rev-parse HEAD)"
 tag="wamn-gates:cf-wave2-${commit}"
 docker build --target gates -t "${tag}" .
-image_id="$(docker image inspect "${tag}" --format '{{.Id}}')"
 kind load docker-image "${tag}" --name wamn
+# Resolve IMAGE_ID from the common sha256 digest after @ in every kind node's
+# `crictl inspecti "${tag}"` repoDigests entry.
+image_id=<kind-observed-image-id>
 kubectl -n wamn-system delete job callable-flow-wave2 --ignore-not-found
 sed -e "s/ISSUE/${commit}/g" -e "s/IMAGE_ID/${image_id}/g" \
   deploy/gates/callable-flow-wave2-job.yaml > /tmp/callable-flow-wave2-job.yaml
@@ -3497,6 +3499,29 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-wave2
 kubectl -n wamn-system get pod -l app=callable-flow-wave2 \
   -o jsonpath='{.items[0].status.containerStatuses[0].imageID}{"\n"}'
+```
+
+The PLAN-0.2 mutation campaign for the callable-flow family is
+`tools/gate-mutants/callable-flow-aggregate.sh`. It overlays the debug
+`wamn-gates` executable on the Dockerfile-owned gates image, loads the exact
+image into kind, and drives fresh Jobs through `tools/kubernetes-gate-run`.
+Each F0-F4 mutant runs both its direct Job and the Wave-1 or Wave-2 aggregate
+that claims it; schema, cron, `f2invoke`, `f3proof`, `f4proof`, and both Wave
+identity refusals run at their deployed boundary. Expected-negative Jobs use
+`tools/gate-mutants/callable-flow-state-probe.sh` before and after execution
+and require an identical state digest. The runner accepts fixed argv only,
+restores every mutation byte-exactly, removes each case's Jobs and exact local
+and kind tag/import-digest image references before advancing, and records typed evidence in
+`architecture/evidence/mutations/callable-flow-aggregate.json`.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
+  tools/gate-mutants/callable-flow-aggregate.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
+  tools/gate-mutants/callable-flow-aggregate.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
+  tools/gate-mutants/callable-flow-aggregate.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 ```
 
 ### [CF-TIMESHIFT / wamn-5wd1.41] deterministic RFC3339 time-shift component

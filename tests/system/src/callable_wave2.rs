@@ -33,7 +33,7 @@ pub struct CallableWave2IdentityArgs {
     #[arg(long)]
     pub image_identity: String,
 
-    /// Local image ID recorded before the exact tag was loaded into kind.
+    /// Exact image ID observed by Kubernetes after loading the tag into kind.
     #[arg(long)]
     pub image_id: String,
 
@@ -59,6 +59,7 @@ pub struct CallableWave2IdentityArgs {
 }
 
 pub fn run(args: CallableWave2IdentityArgs) -> anyhow::Result<String> {
+    println!("claimed-image-id={}", args.image_id);
     validate_identity(&args)?;
     callable_wave1::prove_contracts()?;
     callable_f2::run(callable_f2::CallableF2Args {

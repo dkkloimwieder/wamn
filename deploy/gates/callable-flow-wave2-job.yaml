@@ -1,9 +1,10 @@
 # Exact-image composed gate for callable-flow Wave 2 (F0-F4).
 #
-# Replace ISSUE and IMAGE_ID with evidence from the exact image build:
+# Replace ISSUE and IMAGE_ID with evidence from the exact image build and load:
 #   docker build --target gates -t wamn-gates:cf-wave2-<commit> .
-#   docker image inspect wamn-gates:cf-wave2-<commit> --format '{{.Id}}'
 #   kind load docker-image wamn-gates:cf-wave2-<commit> --name wamn
+#   # IMAGE_ID is the common sha256 digest after @ in every node's
+#   # `crictl inspecti wamn-gates:cf-wave2-<commit>` repoDigests entry.
 apiVersion: batch/v1
 kind: Job
 metadata:

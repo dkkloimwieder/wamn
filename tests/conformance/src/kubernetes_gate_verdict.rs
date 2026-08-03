@@ -46,6 +46,7 @@ pub struct JobVerdictRecord {
     pub expectation: Expectation,
     pub expected_exit_code: i32,
     pub expected_image: String,
+    pub claimed_image_id: Option<String>,
     pub observed: ObservedJob,
     pub verdict: Verdict,
     pub failure_classes: Vec<String>,
@@ -60,6 +61,7 @@ pub struct ObservedJob {
     pub created_at: String,
     pub condition: String,
     pub condition_transition_at: String,
+    pub claimed_image_id: Option<String>,
     pub logs_sha256: String,
     pub pods: Vec<PodObservation>,
 }
