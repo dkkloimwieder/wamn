@@ -70,6 +70,7 @@ use wamn_gate_harness::{
     check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
     seed_test_suite,
 };
+use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
@@ -179,13 +180,19 @@ pub struct PocSuiteProofArgs {
 // ---------------------------------------------------------------------------
 
 /// The F3 gate flow — the committed rev18/r6 one-row drain shape, with its
-/// notification endpoint and 48-hour offset bound for the proof harness.
-fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
+/// portable notification connection and 48-hour offset bound for the harness.
+fn f3_gate_flow_json(_echo_host: &str, offset_ms: i64) -> String {
     json!({
         "schema-version": "0.1",
         "flow-id": F3_FLOW_ID,
         "version": 1,
         "name": "F3 escalate-stale-holds (pocsuiteproof)",
+        "connection-requirements": [{
+            "name": "manager-notifications",
+            "requirement": PortableConnectionRequirement::never_replay(
+                ConnectionTypeDescriptor::http_v1(),
+            ),
+        }],
         "nodes": [
             { "id": "cron", "type": "cron" },
             { "id": "cutoff-at-48h", "type": "time-shift",
@@ -201,9 +208,9 @@ fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
               "config": { "expression": "@",
                           "ctx": "merge(context(), {hold: rows[0]})" } },
             { "id": "notify-manager", "type": "http-request",
-              "credential": "notify-webhook",
-              "config": { "method": "POST", "url": format!("http://{echo_host}/holds"),
-                          "body": "context().hold", "idempotency-key": true } },
+              "connection": "manager-notifications",
+              "config": { "method": "POST", "path-and-query": "/holds",
+                          "body": "context().hold" } },
             { "id": "escalate-head", "type": "postgres-query",
               "config": { "mode": "execute",
                           "sql": "UPDATE quality_holds SET status = 'escalated' WHERE id = $1::uuid AND status = 'open'",
@@ -221,9 +228,7 @@ fn f3_gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
             { "from": "notify-manager", "to": "escalate-head" },
             { "from": "notify-manager", "from-port": "error", "to": "notification-failed" },
             { "from": "escalate-head", "to": "next-stale-hold" }
-        ],
-        "credentials": [{ "name": "notify-webhook", "kind": "api-key" }],
-        "allowed-hosts": [echo_host]
+        ]
     })
     .to_string()
 }
@@ -1402,7 +1407,7 @@ mod tests {
     }
 
     /// COHERENCE: 3rj's F3 graph copy mirrors the committed `deploy/poc/f3-flow.json`
-    /// — same flow id, typed cron entry, declared credential, and one-row
+    /// — same flow id, typed cron entry, portable HTTP connection, and one-row
     /// selection cycle. A drift in
     /// either the source fixture or 3rj's copy fails this NAMED test.
     #[test]
@@ -1430,15 +1435,17 @@ mod tests {
             v
         };
         assert_eq!(types(&mine), types(&src), "node id→type set drifted");
-        assert!(mine.credentials.iter().any(|c| c.name == "notify-webhook"));
-        assert_eq!(
-            mine.nodes
-                .iter()
-                .find(|node| node.id == "notify-manager")
-                .and_then(|node| node.config.get("idempotency-key")),
-            Some(&serde_json::json!(true)),
-            "F3 notify must remain provider-deduplicable on same-key recovery"
-        );
+        assert_eq!(mine.connection_requirements, src.connection_requirements);
+        let notify = mine
+            .nodes
+            .iter()
+            .find(|node| node.id == "notify-manager")
+            .expect("F3 notify node");
+        assert_eq!(notify.connection.as_deref(), Some("manager-notifications"));
+        assert_eq!(notify.config["path-and-query"], "/holds");
+        assert!(notify.credential.is_none());
+        assert!(notify.config.get("url").is_none());
+        assert!(notify.config.get("idempotency-key").is_none());
         assert!(
             mine.edges
                 .iter()

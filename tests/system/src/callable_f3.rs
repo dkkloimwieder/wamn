@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::{Value, json};
-use wamn_flow::{EntryKind, Flow, ResolvedInterfaces};
+use wamn_flow::{EntryKind, Flow, FlowConnectionRequirement, ResolvedInterfaces};
+use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 use wamn_schema_control::exposure::{ExposureRelease, FlowExposure, resolve_exposure};
 
 const FLOW_JSON: &str = include_str!("../../../deploy/poc/f3-flow.json");
@@ -61,6 +62,16 @@ fn validate_contract(flow_json: &str, exposure_json: &str) -> anyhow::Result<()>
         .map(|node| (node.id.as_str(), node))
         .collect();
     ensure!(nodes.len() == 8, "F3 node set drift");
+    ensure!(
+        flow.connection_requirements
+            == vec![FlowConnectionRequirement {
+                name: "manager-notifications".to_string(),
+                requirement: PortableConnectionRequirement::never_replay(
+                    ConnectionTypeDescriptor::http_v1(),
+                ),
+            }],
+        "F3 must declare its one portable manager-notifications HTTP connection"
+    );
     require_config(
         &nodes,
         "cutoff-at-48h",
@@ -88,9 +99,21 @@ fn validate_contract(flow_json: &str, exposure_json: &str) -> anyhow::Result<()>
         "notify-manager",
         &[
             ("body", json!("context().hold")),
-            ("idempotency-key", json!(true)),
+            ("path-and-query", json!("/holds")),
         ],
     )?;
+    ensure!(
+        nodes["notify-manager"].connection.as_deref() == Some("manager-notifications")
+            && nodes["notify-manager"].credential.is_none()
+            && nodes["notify-manager"].config.get("url").is_none()
+            && nodes["notify-manager"]
+                .config
+                .get("idempotency-key")
+                .is_none()
+            && flow.credentials.is_empty()
+            && flow.allowed_hosts.is_empty(),
+        "F3 HTTP authority, credential, and idempotency injection belong to its connection"
+    );
     require_config(
         &nodes,
         "escalate-head",

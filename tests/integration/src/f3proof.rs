@@ -39,6 +39,7 @@ use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_gate_harness::{check, seed_flow_version};
+use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 
 use wamn_test_fixtures::runner::{
     connect_app, fnv1a_64, ladder_ddl, poll_to_terminal, seed_run, valid_ident,
@@ -109,15 +110,22 @@ pub struct F3ProofArgs {
 }
 
 /// The gate flow: the committed F3 shape (`cron → time-shift → list → gate →
-/// {escalate → notify (dead-end), advance → gate}`), but with the notify url +
-/// allowed-host baked to the echo authority and a seconds-scale offset.
-fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
+/// {escalate → notify (dead-end), advance → gate}`), with its portable manager
+/// notification connection and a seconds-scale offset.
+fn gate_flow_json(_echo_host: &str, offset_ms: i64) -> String {
+    let connection_requirement = serde_json::to_string(
+        &PortableConnectionRequirement::never_replay(ConnectionTypeDescriptor::http_v1()),
+    )
+    .expect("HTTP connection requirement serializes");
     format!(
         r#"{{
   "schema-version": "0.1",
   "flow-id": "{FLOW_ID}",
   "version": 1,
   "name": "F3 escalate-stale-holds (gate)",
+  "connection-requirements": [
+    {{ "name": "manager-notifications", "requirement": {connection_requirement} }}
+  ],
   "nodes": [
     {{ "id": "cron", "type": "cron" }},
     {{ "id": "shift", "type": "time-shift",
@@ -129,8 +137,8 @@ fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
     {{ "id": "gate", "type": "conditional", "config": {{ "expression": "length(@) > `0`" }} }},
     {{ "id": "escalate", "type": "postgres",
        "config": {{ "entity": "quality_holds", "op": "update", "id": "[0].id", "body": "{{status: 'escalated'}}" }} }},
-    {{ "id": "notify", "type": "http-request", "credential": "notify-webhook",
-       "config": {{ "method": "POST", "url": "http://{echo_host}/holds",
+    {{ "id": "notify", "type": "http-request", "connection": "manager-notifications",
+       "config": {{ "method": "POST", "path-and-query": "/holds",
                     "body": "{{hold: id, status: status, opened_at: opened_at}}" }} }},
     {{ "id": "advance", "type": "transform", "config": {{ "expression": "[1:]" }} }}
   ],
@@ -142,9 +150,7 @@ fn gate_flow_json(echo_host: &str, offset_ms: i64) -> String {
     {{ "from": "gate", "from-port": "true", "to": "advance" }},
     {{ "from": "escalate", "to": "notify" }},
     {{ "from": "advance", "to": "gate" }}
-  ],
-  "credentials": [ {{ "name": "notify-webhook", "kind": "api-key" }} ],
-  "allowed-hosts": ["{echo_host}"]
+  ]
 }}"#
     )
 }
@@ -651,7 +657,7 @@ mod tests {
     use super::*;
 
     /// The gate flow the proof registers is a real, valid F3 flow: the cron
-    /// trigger, the declared credential + egress host, and the structural cycle
+    /// trigger, the declared portable HTTP connection, and the structural cycle
     /// (advance loops to the gate; notify is a dead-end). A malformed builder
     /// (e.g. a broken JMESPath in a config) fails here, not only in-cluster.
     #[test]
@@ -671,8 +677,23 @@ mod tests {
             flow.entry_node().map(|node| node.node_type.as_str()),
             Some("cron")
         );
-        assert_eq!(flow.allowed_hosts, vec!["serve-echo:8091".to_string()]);
-        assert!(flow.credentials.iter().any(|c| c.name == "notify-webhook"));
+        assert_eq!(flow.connection_requirements.len(), 1);
+        assert_eq!(
+            flow.connection_requirements[0].name,
+            "manager-notifications"
+        );
+        let notify = flow
+            .nodes
+            .iter()
+            .find(|node| node.id == "notify")
+            .expect("notify node");
+        assert_eq!(notify.connection.as_deref(), Some("manager-notifications"));
+        assert_eq!(notify.config["path-and-query"], "/holds");
+        assert!(notify.credential.is_none());
+        assert!(notify.config.get("url").is_none());
+        assert!(notify.config.get("idempotency-key").is_none());
+        assert!(flow.allowed_hosts.is_empty());
+        assert!(flow.credentials.is_empty());
         assert!(
             flow.edges
                 .iter()
