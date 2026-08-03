@@ -831,6 +831,7 @@ async fn fire(
     let invocation_context = "{}";
     let no_text: Option<&str> = None;
     let no_i64: Option<i64> = None;
+    let no_i32: Option<i32> = None;
     let no_timestamp: Option<std::time::SystemTime> = None;
     let run_deadline = Some(run_deadline);
     let generation = PHASE_2A_CRON_GENERATION;
@@ -864,6 +865,9 @@ async fn fire(
                 &no_i64,
                 &no_text,
                 &no_text,
+                &no_text,
+                &no_text,
+                &no_i32,
                 &partition_key,
                 &policy,
             ],

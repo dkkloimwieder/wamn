@@ -248,4 +248,11 @@ pub(crate) mod tests {
         assert!(!DISPATCHER.contains("INSERT INTO wamn_run.runs"));
         assert!(MANIFEST.contains("callable-cron"));
     }
+
+    #[test]
+    fn dispatcher_binds_event_lineage_nulls_before_cron_partition_fields() {
+        assert!(DISPATCHER.contains(
+            "&no_text,\n                &no_text,\n                &no_text,\n                &no_text,\n                &no_i32,\n                &partition_key,\n                &policy,"
+        ));
+    }
 }
