@@ -1,0 +1,61 @@
+# causation-e2e (wamn-ec7j) — one production invocation admission through the
+# existing deployed runner, the shipped WAL reader executable, and the
+# data-plane evt-nats R3 stream. The gate creates only uniquely named
+# registry/CDC/stream resources plus a temporary sink/entity map in the shared
+# runner schema. A dormant immutable release is installed once as canonical
+# fixture state; its head/activation is temporary. Always-run teardown restores
+# the exact pre-gate run-plane row counts and removes every mutable resource.
+#
+# Preconditions: runner 2/2 Ready; postgres/wamn/wamn_runner_demo canonical;
+# postgres wal_level=logical; evt-nats 3/3.
+#
+#   docker build --target gates -t wamn-gates:dev .
+#   kind load docker-image wamn-gates:dev --name wamn
+#   kubectl -n wamn-system delete job causation-e2e --ignore-not-found
+#   kubectl -n wamn-system apply -f deploy/gates/causation-e2e-job.yaml
+#   kubectl -n wamn-system wait --for=condition=complete job/causation-e2e --timeout=240s
+#   kubectl -n wamn-system logs job/causation-e2e
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: causation-e2e
+  namespace: wamn-system
+  labels: { app: causation-e2e }
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels: { app: causation-e2e }
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: causation-e2e
+          image: wamn-gates:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            [
+              "--log-level", "error",
+              "causation-e2e",
+              "--timeout-secs", "120",
+            ]
+          env:
+            - name: WAMN_PG_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-runner-db, key: url }
+            - name: WAMN_PG_ADMIN_URL
+              valueFrom:
+                secretKeyRef: { name: wamn-runner-db-admin, key: url }
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef: { name: wamn-sysdb-superuser, key: username }
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef: { name: wamn-sysdb-superuser, key: password }
+            - name: WAMN_SYSTEM_ADMIN_URL
+              value: postgres://$(PGUSER):$(PGPASSWORD)@wamn-sysdb-rw.wamn-system.svc.cluster.local:5432/wamn_system
+            - name: WAMN_EVT_NATS_URL
+              value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { memory: "512Mi" }

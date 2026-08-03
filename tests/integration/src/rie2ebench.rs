@@ -564,6 +564,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         system_database_url: swap_db(&args.admin_database_url, DB),
         cdc_url: role_url(&args.admin_database_url, &cdc_name, CDC_PW),
         nats_url: args.nats_url.clone(),
+        stream_replicas: 1,
     })?;
     println!("reader process up (one pg_walstream session -> {stream_name})");
 

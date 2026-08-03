@@ -11,6 +11,7 @@ pub mod bench;
 pub mod callable_cron;
 pub mod capturebench;
 pub mod catalog_live;
+pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;
 pub mod contextproof;

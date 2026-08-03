@@ -18,6 +18,7 @@ pub(crate) struct ReaderArgs {
     pub(crate) system_database_url: String,
     pub(crate) cdc_url: String,
     pub(crate) nats_url: String,
+    pub(crate) stream_replicas: usize,
 }
 
 #[derive(Debug)]
@@ -120,7 +121,7 @@ fn reader_command(binary: &OsStr, args: &ReaderArgs) -> Command {
         .arg("--sslmode")
         .arg("disable")
         .arg("--stream-replicas")
-        .arg("1")
+        .arg(args.stream_replicas.to_string())
         .arg("--dup-window-secs")
         .arg("120")
         .arg("--feedback-secs")
@@ -147,6 +148,7 @@ mod tests {
             system_database_url: "postgres://system".into(),
             cdc_url: "postgres://cdc".into(),
             nats_url: "nats://events".into(),
+            stream_replicas: 3,
         };
 
         let command = reader_command(OsStr::new("/proof/wamn-cdc-reader"), &args);
@@ -168,7 +170,7 @@ mod tests {
                 "--sslmode",
                 "disable",
                 "--stream-replicas",
-                "1",
+                "3",
                 "--dup-window-secs",
                 "120",
                 "--feedback-secs",

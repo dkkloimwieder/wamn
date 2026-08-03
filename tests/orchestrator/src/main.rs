@@ -12,11 +12,12 @@ mod callable_wave2;
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
 use wamn_proof_integration::{
-    apibench, bench, callable_cron, capturebench, cdcbench, dashproof, dispatchbench, f1bench,
-    f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, invocationproof, logbench,
-    matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
-    queuebench, readerbench, rie2ebench, runnerbench, runstate_baseline, samplebench, streambench,
-    suiteproof, testhostbench, testkitbench, tracebench, wakeproof, walbench,
+    apibench, bench, callable_cron, capturebench, causation_e2e, cdcbench, dashproof,
+    dispatchbench, f1bench, f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof,
+    invocationproof, logbench, matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof,
+    pocsuiteproof, provisionbench, queuebench, readerbench, rie2ebench, runnerbench,
+    runstate_baseline, samplebench, streambench, suiteproof, testhostbench, testkitbench,
+    tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
     apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, credproof, f1proof,
@@ -67,6 +68,8 @@ enum Command {
     Streambench(streambench::StreamBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
+    /// Prove one admitted invocation through the deployed runner, WAL reader, and R3 stream.
+    CausationE2e(causation_e2e::CausationE2eArgs),
     /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
     Walbench(walbench::WalBenchArgs),
     /// Record the PLAN-3 pre-checkpoint F1 capture-on persistence baseline.
@@ -191,6 +194,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Capturebench(args) => capturebench::run(args).await,
         Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
+        Command::CausationE2e(args) => causation_e2e::run(args).await,
         Command::Walbench(args) => walbench::run(args).await,
         Command::RunstateBaseline(args) => runstate_baseline::run(args).await,
         Command::Cdcbench(args) => cdcbench::run(args).await,

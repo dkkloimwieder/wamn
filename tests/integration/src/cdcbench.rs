@@ -566,6 +566,7 @@ fn spawn_reader(admin_url: &str, nats_url: &str) -> anyhow::Result<ReaderProcess
         system_database_url: swap_db(admin_url, DB),
         cdc_url: role_url(admin_url, &cdc_name, CDC_PW),
         nats_url: nats_url.to_string(),
+        stream_replicas: 1,
     })
 }
 

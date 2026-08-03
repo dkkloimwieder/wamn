@@ -1771,6 +1771,46 @@ Mutation harness: scratchpad `mutate_l5i9_12_2.py` — M1 emit dropped from
 guard always passes — each fails a NAMED `wamn_postgres::tests` unit test;
 apply/test/restore with sha256, DEBUG builds.
 
+### [EVT-CAUSATION-E2E / wamn-ec7j] one deployed run reaches the R3 stream with its own run id
+
+This closes the composed boundary left deliberately separate by the stitch and
+emit gates above. `causation-e2e` uses the production invocation-admission
+transaction to create one gate-scoped run and queue row atomically, then the
+existing 2-replica runner executes its `pg-write`. The shipped `wamn-cdc-reader`
+executable decodes that transaction from the shared fixture's logical WAL into
+a gate-scoped R3 stream. `readerbench --expect-causation-run` filters the mapped
+sink entity and requires the completed run's exact `run_id` both as the sink id
+and on every delivered envelope.
+
+The Job does not deploy or reconfigure the runner and never inserts `run_queue`
+directly. Its immutable release rows are a dormant, byte-pinned extension of
+the canonical shared fixture (owner decision 2026-08-02); only the temporary
+catalog head/activation makes the invocation target admissible. Always-run
+teardown removes that activation plus the flow/run rows, sink and entity map,
+registry org, replication role/publication/slot, and JetStream stream. Final
+assertions require the original flow/run/node-run/queue counts, exact dormant
+release bytes, and zero mutable/runtime residue.
+
+```bash
+# recipe-test: H5-CAUSATION-E2E | integration | wamn-proof-integration | lib | - | causation_e2e::tests:: | 2 | production invocation/pg-write fixture plus R3 and exact-run reader arguments
+CARGO_TARGET_DIR=/tmp/wamn-target-ec7j cargo test --locked -p wamn-proof-integration --lib causation_e2e::tests::
+cargo clippy --locked -p wamn-proof-integration -p wamn-gates --all-targets -- -D warnings
+tools/gate-mutants/causation-e2e.sh run-all
+
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-gates:dev --name wamn
+kubectl -n wamn-system delete job causation-e2e --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/causation-e2e-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/causation-e2e --timeout=240s
+kubectl -n wamn-system logs job/causation-e2e  # -> overall PASS: true
+```
+
+Mutation harness: `tools/gate-mutants/causation-e2e.sh` applies exact-hash
+mutants for the admitted `pg-write`, the reader's R3 request, and the exact run-id
+causation assertion. Each must turn its named debug unit gate red; the trap
+restores and verifies all starting hashes. Typed results live in
+`architecture/evidence/mutations/causation-e2e.json`.
+
 ### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
 
 Docs: docs/events/event-plane-jetstream.md §5. The **declaration surface** the
