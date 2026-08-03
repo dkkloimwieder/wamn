@@ -6,7 +6,7 @@ readonly MUTATION="cron-success-bypasses-exact-emission-validation"
 readonly TEST="tests::malformed_cron_actions_are_refused_before_durable_checkpointing"
 readonly NEEDLE='validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
 readonly REPLACEMENT='if dispatch.node_type != "cron" { validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
-readonly EXPECTED_SHA="76f272c3d2fed1fb656e8f5f72f35e01f88adde9354c378a2b3886a8e53efda3"
+readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

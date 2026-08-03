@@ -1077,6 +1077,50 @@ fn event_requires_the_same_pinned_platform_implementation_as_other_nodes() {
 }
 
 #[test]
+fn fail_requires_the_same_pinned_platform_implementation_as_other_nodes() {
+    let flow = Flow::from_json(
+        r#"{"schema-version":"0.1","flow-id":"failed","version":1,
+            "nodes":[{"id":"in","type":"cron"},
+                     {"id":"bad","type":"fail","config":{"code":"stop"}}],
+            "edges":[{"from":"in","to":"bad"}]}"#,
+    )
+    .unwrap();
+    let cron = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "cron",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    assert!(matches!(
+        Artifact::new("tenant", &flow, vec![cron.clone()]),
+        Err(CatalogIdentityError::UnresolvedInterface { node_type }) if node_type == "fail"
+    ));
+
+    let fail = NodeImplementation::platform(
+        ResolvedNodeInterface::new(
+            "fail",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
+        ExecutableRecoveryContract::pure(),
+    );
+    let artifact = Artifact::new("tenant", &flow, vec![cron, fail]).unwrap();
+    assert_eq!(artifact.interfaces()[1].node_type, "fail");
+    assert!(
+        artifact
+            .occurrence_recovery()
+            .iter()
+            .any(|selection| { selection.node_id == "bad" && selection.node_type == "fail" })
+    );
+}
+
+#[test]
 fn noncanonical_interface_and_member_reordering_is_rejected() {
     let mut flow = request_flow();
     flow.nodes.insert(

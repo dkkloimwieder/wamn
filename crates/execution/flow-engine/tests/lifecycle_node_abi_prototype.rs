@@ -10,7 +10,7 @@ use wamn_node_sdk::{
     PgCapError, PgRows, PgValue, RunContext,
 };
 use wamn_runner::{
-    CallerState, ExecutionState, ExecutionStatus, MAIN_PORT, NodeOutcome, Plan, ReservedStep, Step,
+    CallerState, ExecutionState, ExecutionStatus, MAIN_PORT, NodeOutcome, Plan, Step,
 };
 
 struct NoEffects;
@@ -81,17 +81,11 @@ fn compile(flow: &Flow) -> Plan<'_> {
         ),
         ("cron".to_string(), vec![MAIN_PORT.to_string()]),
         ("event".to_string(), vec![MAIN_PORT.to_string()]),
+        ("fail".to_string(), vec![MAIN_PORT.to_string()]),
         ("request".to_string(), vec![MAIN_PORT.to_string()]),
         ("respond".to_string(), vec![MAIN_PORT.to_string()]),
     ]);
     Plan::compile(flow, &interfaces).expect("prototype flow validates")
-}
-
-fn reserved(plan: &Plan<'_>, state: &mut ExecutionState) -> ReservedStep {
-    match plan.next(state, 0) {
-        Step::Reserved(step) => step,
-        other => panic!("expected reserved step, got {other:?}"),
-    }
 }
 
 fn run_context<'a>(
@@ -111,29 +105,6 @@ fn run_context<'a>(
         tracestate: None,
         config,
         context: state.context(),
-    }
-}
-
-/// Prototype adapter: the ABI supplies the authored failure detail while the
-/// engine remains authoritative for terminality, status, and caller release.
-fn apply_fail_after_abi(
-    plan: &Plan<'_>,
-    state: &mut ExecutionState,
-    step: &ReservedStep,
-    node: &dyn Node,
-    config: &Value,
-) -> Result<(), &'static str> {
-    let ReservedStep::Fail { code, message, .. } = step else {
-        return Err("not a fail boundary");
-    };
-    let expected = ErrorDetail::coded(code, message.as_deref().unwrap_or(code));
-    let mut ctx = NoEffects;
-    let run = run_context(state, step.node(), config);
-    match node.run(&mut ctx, &run, step.payload()) {
-        Err(NodeError::Terminal(detail)) if detail == expected => plan
-            .apply_reserved(state, step)
-            .map_err(|_| "engine rejected fail lifecycle transition"),
-        _ => Err("fail node did not return the authored terminal detail"),
     }
 }
 
@@ -415,17 +386,18 @@ fn fail_detail_crosses_node_abi_while_engine_owns_terminality_status_and_caller_
         0,
     )
     .unwrap();
-    let fail = reserved(&plan, &mut state);
-    assert!(matches!(&fail, ReservedStep::Fail { status: 403, .. }));
-
-    apply_fail_after_abi(
-        &plan,
-        &mut state,
-        &fail,
-        &FailNode,
-        &json!({"code": "denied", "message": "not allowed", "status": 403}),
-    )
-    .unwrap();
+    let fail = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected fail dispatch, got {other:?}"),
+    };
+    assert_eq!(fail.config["status"], 403);
+    let mut ctx = NoEffects;
+    let run = run_context(&state, &fail.node, &fail.config);
+    let outcome = match FailNode.run(&mut ctx, &run, &fail.payload) {
+        Err(error) => NodeOutcome::Error(error),
+        Ok(_) => panic!("fail node must return a terminal error"),
+    };
+    plan.apply(&mut state, &fail, outcome, 0).unwrap();
 
     assert_eq!(state.status(), ExecutionStatus::Failed);
     assert_eq!(state.caller_state(), CallerState::Released);

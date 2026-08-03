@@ -266,6 +266,7 @@ pub enum ApplyError {
     InvalidRequestEmission,
     InvalidCronEmission,
     InvalidEventEmission,
+    InvalidFailOutcome,
     InvalidContext(Value),
 }
 
@@ -297,6 +298,9 @@ impl std::fmt::Display for ApplyError {
                     f,
                     "event must emit its externally admitted input unchanged on main without context"
                 )
+            }
+            ApplyError::InvalidFailOutcome => {
+                write!(f, "fail must return its authored terminal detail")
             }
             ApplyError::InvalidContext(value) => {
                 write!(f, "run context replacement must be an object, got {value}")
@@ -538,7 +542,7 @@ impl<'f> Plan<'f> {
                 }
             }
         }
-        if let Some(step) = self.build_reserved(state) {
+        if let Some(step @ ReservedStep::Entry { .. }) = self.build_reserved(state) {
             return Step::Reserved(step);
         }
         {
@@ -645,12 +649,32 @@ impl<'f> Plan<'f> {
                 actual: dispatch.node.clone(),
             });
         }
-        if self.build_reserved(state).is_some() {
+        if matches!(self.build_reserved(state), Some(ReservedStep::Entry { .. })) {
             return Err(ApplyError::NotReserved(dispatch.node.clone()));
         }
         validate_request_outcome(dispatch, &outcome)?;
         validate_cron_outcome(dispatch, &outcome)?;
         validate_event_outcome(dispatch, &outcome)?;
+        validate_fail_outcome(dispatch, &outcome)?;
+        if dispatch.node_type == "fail" {
+            let NodeOutcome::Error(NodeError::Terminal(detail)) = outcome else {
+                unreachable!("validated fail outcome is terminal")
+            };
+            if state.caller == CallerState::Attached {
+                state.caller = CallerState::Released;
+            }
+            state.current = None;
+            state.frontier.clear();
+            state.step_seq += 1;
+            *state.visits.entry(dispatch.node.clone()).or_default() += 1;
+            state.status = ExecutionStatus::Failed;
+            state.failure = Some(Failure {
+                node: dispatch.node.clone(),
+                kind: ExecutionFailureKind::Terminal,
+                detail,
+            });
+            return Ok(());
+        }
         let attempt = state
             .current
             .as_ref()
@@ -1178,5 +1202,26 @@ pub fn validate_event_outcome(
         }
         NodeOutcome::Error(_) => Ok(()),
         NodeOutcome::Success { .. } => Err(ApplyError::InvalidEventEmission),
+    }
+}
+
+/// Refuse any fail result other than the exact authored terminal detail.
+///
+/// Durable drivers call this before entering the privileged transaction that
+/// completes the attempt, releases an attached caller, and terminalizes the run.
+/// [`Plan::apply`] repeats the check for direct engine users.
+pub fn validate_fail_outcome(dispatch: &Dispatch, outcome: &NodeOutcome) -> Result<(), ApplyError> {
+    if dispatch.node_type != "fail" {
+        return Ok(());
+    }
+    let config: FailConfig =
+        serde_json::from_value(dispatch.config.clone()).expect("validated fail config");
+    let expected = ErrorDetail::coded(
+        &config.code,
+        config.message.as_deref().unwrap_or(&config.code),
+    );
+    match outcome {
+        NodeOutcome::Error(NodeError::Terminal(detail)) if detail == &expected => Ok(()),
+        _ => Err(ApplyError::InvalidFailOutcome),
     }
 }

@@ -4294,6 +4294,29 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
   tools/gate-mutants/event-node-abi.sh run
 ```
 
+## PLAN-2A — fail common Node ABI (`wamn-ayq7.25`)
+
+`fail` resolves to the pinned, capability-free platform standard-node
+executable and returns the exact authored terminal code/message through the
+common Node ABI. As an ordinary Node-ABI execution it consumes one dispatch-
+budget unit; it is not an inbound node. The production driver validates that
+typed terminal result before one replay-safe transaction completes the attempt,
+releases an attached caller with the configured HTTP status, and terminalizes
+the run. Non-terminal or mismatched results cannot authorize lifecycle
+mutation. The mutation bypasses that production validation; the focused debug
+gate must fail before the source is restored.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
+  cargo test --locked -p wamn-runner -p wamn-standard-nodes -p wamn-catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
+  cargo test --locked -p wamn-ctl --lib publish_catalog
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
+  tools/gate-mutants/fail-node-abi.sh run
+```
+
 ## CF-DEADLINES — bounded attempts and poisoned-instance disposal (`wamn-fqg.14`)
 
 The final fenced send marker rejects elapsed attempt and run deadlines before

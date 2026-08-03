@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
-    ApplyError, CallerState, EngineError, ExecutionStatus, NodeOutcome, Plan, Recorded,
-    ReservedStep, SeedError, Step,
+    ApplyError, CallerState, EngineError, ErrorDetail, ExecutionStatus, NodeError, NodeOutcome,
+    Plan, Recorded, ReservedStep, SeedError, Step,
 };
 
 fn flow(source: &str) -> Flow {
@@ -16,6 +16,7 @@ fn interfaces() -> ResolvedInterfaces {
         ("echo".to_string(), vec!["main".to_string()]),
         ("cron".to_string(), vec!["main".to_string()]),
         ("event".to_string(), vec!["main".to_string()]),
+        ("fail".to_string(), vec!["main".to_string()]),
         ("request".to_string(), vec!["main".to_string()]),
         ("respond".to_string(), vec!["main".to_string()]),
         (
@@ -27,13 +28,6 @@ fn interfaces() -> ResolvedInterfaces {
 
 fn compile(flow: &Flow) -> Plan<'_> {
     Plan::compile(flow, &interfaces()).expect("fixture validates")
-}
-
-fn reserved(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) -> ReservedStep {
-    match plan.next(state, 0) {
-        Step::Reserved(step) => step,
-        other => panic!("expected reserved step, got {other:?}"),
-    }
 }
 
 fn dispatch(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) -> wamn_runner::Dispatch {
@@ -131,8 +125,18 @@ fn respond_releases_and_continues_then_late_fail_leaves_caller_untouched() {
     .unwrap();
     assert_eq!(state.caller_state(), CallerState::Released);
 
-    let fail = reserved(&plan, &mut state);
-    plan.apply_reserved(&mut state, &fail).unwrap();
+    let fail = dispatch(&plan, &mut state);
+    assert_eq!(fail.node_type, "fail");
+    plan.apply(
+        &mut state,
+        &fail,
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+            "late-failure",
+            "late-failure",
+        ))),
+        0,
+    )
+    .unwrap();
     assert_eq!(state.status(), ExecutionStatus::Failed);
     assert_eq!(state.caller_state(), CallerState::Released);
 }
@@ -187,18 +191,59 @@ fn fail_releases_an_attached_request_caller() {
         0,
     )
     .unwrap();
-    let fail = reserved(&plan, &mut state);
-    assert!(matches!(
+    let fail = dispatch(&plan, &mut state);
+    assert_eq!(fail.config["status"], 403);
+    plan.apply(
+        &mut state,
         &fail,
-        ReservedStep::Fail {
-            code,
-            status: 403,
-            ..
-        } if code == "denied"
-    ));
-    plan.apply_reserved(&mut state, &fail).unwrap();
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded("denied", "no"))),
+        0,
+    )
+    .unwrap();
     assert_eq!(state.status(), ExecutionStatus::Failed);
     assert_eq!(state.caller_state(), CallerState::Released);
+    assert_eq!(
+        state.dispatched(),
+        3,
+        "request, choice, and fail each count"
+    );
+}
+
+#[test]
+fn fail_refuses_non_terminal_or_mismatched_results_without_lifecycle_mutation() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"guarded-fail","version":1,
+            "nodes":[{"id":"in","type":"cron"},
+                     {"id":"bad","type":"fail",
+                      "config":{"code":"denied","message":"not allowed","status":403}}],
+            "edges":[{"from":"in","to":"bad"}]}"#,
+    );
+    let plan = compile(&flow);
+    let mut state = plan.start("run", json!({"tick": 1}));
+    let entry = dispatch(&plan, &mut state);
+    let input = entry.payload.clone();
+    plan.apply(&mut state, &entry, NodeOutcome::ok(input), 0)
+        .unwrap();
+    let fail = dispatch(&plan, &mut state);
+
+    for outcome in [
+        NodeOutcome::ok(json!({"not": "terminal"})),
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+            "wrong",
+            "not allowed",
+        ))),
+        NodeOutcome::Error(NodeError::InvalidInput(ErrorDetail::coded(
+            "denied",
+            "not allowed",
+        ))),
+    ] {
+        let mut candidate = state.clone();
+        assert_eq!(
+            plan.apply(&mut candidate, &fail, outcome, 0),
+            Err(ApplyError::InvalidFailOutcome)
+        );
+        assert_eq!(candidate, state, "refusal must not mutate lifecycle state");
+    }
 }
 
 #[test]
@@ -418,12 +463,25 @@ fn crash_restart_replays_the_fail_boundary_until_its_record_commits() {
     let input = json!({"tick": 1});
     let before = [Recorded::new("in", "main", input.clone())];
     let mut first = plan.resume("run", input.clone(), &before).unwrap();
-    let boundary = reserved(&plan, &mut first);
+    let boundary = dispatch(&plan, &mut first);
+    assert_eq!(boundary.node_type, "fail");
     let mut restarted = plan.resume("run", input, &before).unwrap();
     assert_eq!(
         plan.next(&mut restarted, 0),
-        Step::Reserved(boundary.clone())
+        Step::Dispatch(boundary.clone())
     );
-    plan.apply_reserved(&mut restarted, &boundary).unwrap();
+    plan.apply(
+        &mut restarted,
+        &boundary,
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded("stop", "stop"))),
+        0,
+    )
+    .unwrap();
     assert_eq!(restarted.status(), ExecutionStatus::Failed);
+    assert_eq!(restarted.caller_state(), CallerState::None);
+    assert_eq!(
+        restarted.dispatched(),
+        1,
+        "only the live fail dispatch counts"
+    );
 }

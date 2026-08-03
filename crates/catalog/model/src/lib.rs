@@ -24,7 +24,7 @@ use wamn_node_manifest::{
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
-const MODEL_OWNED_NODES: [&str; 1] = ["fail"];
+const MODEL_OWNED_NODES: [&str; 0] = [];
 const HISTORICAL_MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
 const HISTORICAL_RESOLVED_CONTRACT_VERSION: &str = "1";
 const LEGACY_RESOLVED_CONTRACT_VERSION: &str = "legacy-v0";

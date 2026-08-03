@@ -63,7 +63,8 @@ mod throttle;
 pub use engine::{
     ApplyError, CallerState, CheckpointError, Dispatch, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, Failure, Recorded, ReservedStep, ResumeError, SeedError, Step, restore,
-    snapshot, validate_cron_outcome, validate_event_outcome, validate_request_outcome,
+    snapshot, validate_cron_outcome, validate_event_outcome, validate_fail_outcome,
+    validate_request_outcome,
 };
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};

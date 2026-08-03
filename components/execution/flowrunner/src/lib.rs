@@ -52,7 +52,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 use wamn_flow::{
-    Flow, InvokeActorMode, InvokeFlowConfig, ResolvedInterfaces, canonical_json_sha256,
+    FailConfig, Flow, InvokeActorMode, InvokeFlowConfig, ResolvedInterfaces, canonical_json_sha256,
 };
 use wamn_node_sdk as sdk;
 use wamn_run_state::attempt::{
@@ -80,7 +80,7 @@ use wamn_runner::{
     CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, MAIN_PORT, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep,
     RetryPolicy, Step, ThrottleKey, validate_cron_outcome, validate_event_outcome,
-    validate_request_outcome,
+    validate_fail_outcome, validate_request_outcome,
 };
 
 use wamn_node_invoke::{
@@ -1276,7 +1276,6 @@ fn check_flow(flow_json: &str) -> Result<Vec<String>, String> {
     let mut unsupported: Vec<String> = flow
         .nodes
         .iter()
-        .filter(|node| node.node_type != "fail")
         .filter(|node| resolve_node(&node.node_type, &node.config).is_none())
         .map(|node| node.node_type.clone())
         .collect();
@@ -1309,6 +1308,7 @@ fn validate_dispatched_action(dispatch: &Dispatch, action: &NodeAction) -> Resul
         validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
         validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
         validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+        validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -1733,6 +1733,27 @@ fn execute(
             Step::Dispatch(d) => {
                 match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
+                        if d.node_type == "fail" {
+                            let config: FailConfig = serde_json::from_value(d.config.clone())
+                                .expect("validated fail config");
+                            http_status = u32::from(config.status);
+                            let NodeOutcome::Error(error) = &outcome else {
+                                unreachable!("validated fail outcome is terminal")
+                            };
+                            record_error(
+                                run_id,
+                                &d.node,
+                                d.occurrence,
+                                next_seq,
+                                error,
+                                &d.payload,
+                                &flow.capture,
+                            )?;
+                            next_seq += 1;
+                            plan.apply(&mut st, &d, outcome, 0)
+                                .map_err(|error| error.to_string())?;
+                            continue;
+                        }
                         match &outcome {
                             // Record the completed node (after its effect
                             // commits) so a later invocation reconstructs past it.
@@ -2597,6 +2618,99 @@ fn complete_respond_and_renew(
     Ok(false)
 }
 
+/// Complete the fail attempt, release an attached caller, and terminalize the
+/// run under one replay-safe transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "typed fail result plus capture and queue fence form one durable transition"
+)]
+fn complete_fail_and_renew(
+    run_id: &str,
+    flow_id: &str,
+    flow_version: u32,
+    dispatch: &Dispatch,
+    error: &NodeError,
+    caller: CallerState,
+    capture: &wamn_flow::Capture,
+    ttl_ms: i64,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<bool, String> {
+    let txn = client::begin().map_err(|error| err_name(&error))?;
+    let (kind, output, mut detail) = error_row_values(error);
+    let (binds, redacted) = capture_binds(capture, &output, &dispatch.payload);
+    if redacted {
+        wamn_run_state::capture::scrub(&mut detail);
+    }
+    let [out_j, in_j, preview, size, hash, mode, red] = binds;
+    let response = txn
+        .query(
+            &complete_attempt_error_sql(),
+            &[
+                text(run_id),
+                text(run_id),
+                text(owner),
+                int64(lease_generation),
+                text(&dispatch.node),
+                int32(dispatch.occurrence as i32),
+                out_j,
+                in_j,
+                text(kind),
+                jsonb(&detail),
+                preview,
+                size,
+                hash,
+                mode,
+                red,
+                int64(ttl_ms),
+            ],
+        )
+        .map_err(|error| err_name(&error))?;
+    if decode_attempt_completion(&response.rows)? {
+        txn.commit().map_err(|error| err_name(&error))?;
+        return Ok(true);
+    }
+
+    let config: FailConfig =
+        serde_json::from_value(dispatch.config.clone()).expect("validated fail config");
+    let mut error_body = serde_json::Map::from_iter([
+        ("code".to_string(), Value::String(config.code.clone())),
+        ("run-id".to_string(), Value::String(run_id.to_string())),
+        ("flow-id".to_string(), Value::String(flow_id.to_string())),
+        (
+            "flow-version".to_string(),
+            Value::Number(flow_version.into()),
+        ),
+    ]);
+    if let Some(message) = config.message {
+        error_body.insert("message".to_string(), Value::String(message));
+    }
+    let release_body = json!({"error": error_body});
+    if caller == CallerState::Attached {
+        release_caller_in_transaction(
+            &txn,
+            run_id,
+            "failed",
+            &release_body,
+            config.status,
+            &dispatch.node,
+            owner,
+            lease_generation,
+        )?;
+    }
+    terminalize_in_transaction(
+        &txn,
+        run_id,
+        "failed",
+        Some(&config.code),
+        &release_body,
+        owner,
+        lease_generation,
+    )?;
+    txn.commit().map_err(|error| err_name(&error))?;
+    Ok(false)
+}
+
 /// Commit one engine-owned boundary under the claimed run's fence. Fail couples
 /// caller release, the synthetic node record, and the terminal
 /// verdict in one transaction. A replay may observe `already-released`; it is
@@ -3310,6 +3424,53 @@ fn execute_claimed(
                 }
                 match dispatch_node(&d, run_id, flow, false, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
+                        if d.node_type == "fail" {
+                            let NodeOutcome::Error(error) = &outcome else {
+                                unreachable!("validated fail outcome is terminal")
+                            };
+                            let cancelled = complete_fail_and_renew(
+                                run_id,
+                                &flow.flow_id,
+                                flow.version,
+                                &d,
+                                error,
+                                st.caller_state(),
+                                &flow.capture,
+                                ttl_ms,
+                                owner,
+                                lease_generation,
+                            )?;
+                            if cancelled {
+                                return Ok(ClaimOutcome {
+                                    outcome: 0,
+                                    park_ms: 0,
+                                    fail_reason: None,
+                                    already_settled: false,
+                                });
+                            }
+                            next_seq += 1;
+                            emit_node_error(
+                                &flow.flow_id,
+                                run_id,
+                                &d.node,
+                                next_seq - 1,
+                                &tp,
+                                error_row_values(error).0,
+                            );
+                            plan.apply(&mut st, &d, outcome, 0)
+                                .map_err(|error| error.to_string())?;
+                            let failure = st.failure().expect("fail transition is terminal");
+                            return Ok(ClaimOutcome {
+                                outcome: 2,
+                                park_ms: 0,
+                                fail_reason: Some(format!(
+                                    "{}: {}",
+                                    failure.detail.code.as_deref().unwrap_or("failed"),
+                                    failure.detail.message
+                                )),
+                                already_settled: false,
+                            });
+                        }
                         match &outcome {
                             NodeOutcome::Success {
                                 payload,
@@ -3856,6 +4017,63 @@ mod tests {
             contract.executable_recovery,
             wamn_node_manifest::ExecutableRecoveryContract::pure()
         );
+    }
+
+    #[test]
+    fn fail_resolves_through_the_standard_node_abi() {
+        assert_eq!(
+            resolve_node(
+                "fail",
+                &serde_json::json!({"code": "denied", "status": 403}),
+            ),
+            Some(ResolvedNode::Standard)
+        );
+        let contract = wamn_nodes::resolve_descriptor(
+            wamn_nodes::describe("fail").expect("fail descriptor is shipped"),
+        )
+        .expect("fail descriptor resolves");
+        assert_eq!(contract.interface.node_type, "fail");
+        assert_eq!(contract.interface.output_ports, ["main"]);
+        assert_eq!(
+            contract.executable_recovery,
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
+        );
+    }
+
+    #[test]
+    fn malformed_fail_actions_are_refused_before_the_lifecycle_transaction() {
+        let dispatch = Dispatch {
+            node: "bad".to_string(),
+            node_type: "fail".to_string(),
+            config: serde_json::json!({
+                "code": "denied",
+                "message": "not allowed",
+                "status": 403
+            }),
+            credential: None,
+            payload: serde_json::json!({"reason": "policy"}),
+            context: serde_json::json!({}),
+            attempt: 0,
+            occurrence: 0,
+            idempotency_key: "run:bad:0".to_string(),
+            deadline_ms: None,
+        };
+        for outcome in [
+            NodeOutcome::ok(dispatch.payload.clone()),
+            NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+                "wrong",
+                "not allowed",
+            ))),
+            NodeOutcome::Error(NodeError::InvalidInput(ErrorDetail::coded(
+                "denied",
+                "not allowed",
+            ))),
+        ] {
+            assert_eq!(
+                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                Err("fail must return its authored terminal detail".to_string())
+            );
+        }
     }
 
     #[test]

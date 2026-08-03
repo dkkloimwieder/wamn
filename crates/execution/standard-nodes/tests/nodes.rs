@@ -1365,6 +1365,7 @@ fn capability_table_rows_are_exact() {
     assert_eq!(required_capabilities("request"), Some(&[][..]));
     assert_eq!(required_capabilities("cron"), Some(&[][..]));
     assert_eq!(required_capabilities("event"), Some(&[][..]));
+    assert_eq!(required_capabilities("fail"), Some(&[][..]));
     assert_eq!(required_capabilities("transform"), Some(&[][..]));
     assert_eq!(required_capabilities("conditional"), Some(&[][..]));
     assert_eq!(required_capabilities("time-shift"), Some(&[][..]));
@@ -1407,7 +1408,7 @@ fn dispatch_refuses_ungranted_capability_rows() {
 
 /// Drift guard: every non-reserved node type the committed F3 fixture uses must
 /// be a node this library actually ships. Request, cron, event, and respond use the
-/// same standard-node dispatch path; only fail remains engine-reserved.
+/// same standard-node dispatch path.
 #[test]
 fn f3_fixture_node_types_are_all_standard() {
     use wamn_standard_nodes::is_standard;
@@ -1417,7 +1418,7 @@ fn f3_fixture_node_types_are_all_standard() {
     let flow: Value = serde_json::from_str(&raw).expect("F3 fixture is json");
     let nodes = flow["nodes"].as_array().expect("nodes array");
     let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
-    for t in types.iter().filter(|node_type| **node_type != "fail") {
+    for t in &types {
         assert!(
             is_standard(t),
             "F3 node type {t:?} is not a shipped standard node"
@@ -1465,6 +1466,26 @@ fn event_is_capability_free_exact_admitted_input_passthrough() {
     assert_eq!(emission.port, "main");
     assert_eq!(emission.payload, input);
     assert_eq!(emission.ctx, None);
+    assert!(mock.http_calls.is_empty());
+    assert!(mock.pg_calls.is_empty());
+}
+
+#[test]
+fn fail_is_capability_free_and_returns_the_authored_terminal_detail() {
+    let mut mock = Mock::default();
+    let error = go(
+        "fail",
+        &mut mock,
+        &json!({"code": "denied", "message": "not allowed", "status": 403}),
+        &json!({"reason": "policy"}),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        NodeError::Terminal(detail)
+            if detail.code.as_deref() == Some("denied") && detail.message == "not allowed"
+    ));
     assert!(mock.http_calls.is_empty());
     assert!(mock.pg_calls.is_empty());
 }

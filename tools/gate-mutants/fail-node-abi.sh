@@ -2,10 +2,10 @@
 set -euo pipefail
 
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
-readonly MUTATION="event-success-bypasses-exact-emission-validation"
-readonly TEST="tests::malformed_event_actions_are_refused_before_durable_checkpointing"
-readonly NEEDLE='validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
-readonly REPLACEMENT='if dispatch.node_type != "event" { validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
+readonly MUTATION="fail-result-bypasses-exact-terminal-validation"
+readonly TEST="tests::malformed_fail_actions_are_refused_before_the_lifecycle_transaction"
+readonly NEEDLE='validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
+readonly REPLACEMENT='if dispatch.node_type != "fail" { validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
 readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
 
 ROOT="$(git rev-parse --show-toplevel)"

@@ -6,7 +6,7 @@ readonly MUTATION="respond-falls-out-of-standard-dispatch"
 readonly TEST="tests::respond_resolves_through_the_standard_node_abi"
 readonly NEEDLE='node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
 readonly REPLACEMENT='node_type if node_type != "respond" && wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
-readonly EXPECTED_SHA="76f272c3d2fed1fb656e8f5f72f35e01f88adde9354c378a2b3886a8e53efda3"
+readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

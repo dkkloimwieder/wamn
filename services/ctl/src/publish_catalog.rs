@@ -1390,9 +1390,6 @@ fn prepare_flow_artifact(
         .map(|node| node.node_type.as_str())
         .collect();
     for node_type in node_types {
-        if node_type == "fail" {
-            continue;
-        }
         let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
             if let Some(implementation) = supplied.get(node_type) {
                 implementations.push(implementation.clone());
@@ -1980,6 +1977,40 @@ mod tests {
         assert_eq!(
             contract.executable_recovery,
             wamn_node_manifest::ExecutableRecoveryContract::pure()
+        );
+    }
+
+    #[test]
+    fn standard_fail_resolves_into_a_pinned_canonical_artifact() {
+        let graph = r#"{
+          "schema-version":"0.1","flow-id":"fail-flow","version":1,
+          "nodes":[{"id":"in","type":"cron"},
+                   {"id":"bad","type":"fail","config":{"code":"stop"}}],
+          "edges":[{"from":"in","to":"bad"}]
+        }"#;
+        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
+            .expect("fail standard node resolves");
+        assert_eq!(prepared.artifact.interfaces().len(), 2);
+        let contract = prepared
+            .artifact
+            .interface_bundle()
+            .contract("fail")
+            .expect("fail contract is pinned");
+        assert!(matches!(
+            &contract.executable,
+            wamn_node_manifest::ExecutableIdentity::Platform { revision }
+                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
+        ));
+        assert_eq!(
+            contract.executable_recovery,
+            wamn_node_manifest::ExecutableRecoveryContract::pure()
+        );
+        assert!(
+            prepared
+                .artifact
+                .occurrence_recovery()
+                .iter()
+                .any(|selection| { selection.node_id == "bad" && selection.node_type == "fail" })
         );
     }
 
