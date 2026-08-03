@@ -3,7 +3,7 @@
 use anyhow::{Context as _, ensure};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
-use wamn_scheduler::mint_cron_run_id;
+use wamn_scheduler::{canonical_tick, mint_cron_run_id};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
 
@@ -11,7 +11,14 @@ const TENANT: &str = "callable-cron-gate";
 const CATALOG: &str = "callable-cron";
 const FLOW: &str = "callable-cron-flow";
 const ATTACHMENT: &str = "callable-cron-attachment";
-const BASE_MS: i64 = 1_767_225_600_000;
+const PROOF_CLOCK_MARGIN_MS: i64 = 60 * 60 * 1_000;
+
+fn proof_base_ms(database_now_ms: i64) -> anyhow::Result<i64> {
+    database_now_ms
+        .checked_add(PROOF_CLOCK_MARGIN_MS + 999)
+        .map(|value| value / 1_000 * 1_000)
+        .context("callable cron proof clock overflow")
+}
 
 #[derive(Debug, Args)]
 pub struct CallableCronArgs {
@@ -149,6 +156,14 @@ pub async fn run(args: CallableCronArgs) -> anyhow::Result<()> {
     seed(&mut admin)
         .await
         .context("seed callable cron definition")?;
+    let database_now_ms: i64 = admin
+        .query_one(
+            "SELECT floor(extract(epoch FROM clock_timestamp()) * 1000)::bigint",
+            &[],
+        )
+        .await?
+        .get(0);
+    let base_ms = proof_base_ms(database_now_ms)?;
     let spec = ProjectSpec {
         name: "callable-cron".to_string(),
         url: args.database_url.clone(),
@@ -158,12 +173,12 @@ pub async fn run(args: CallableCronArgs) -> anyhow::Result<()> {
     let mut dispatcher =
         DispatcherProcess::spawn(&[spec], "nats://127.0.0.1:1", None, None, None, None)?;
 
-    let first = dispatcher.tick_project(0, BASE_MS).await?;
+    let first = dispatcher.tick_project(0, base_ms).await?;
     ensure!(
         first.cron_fired.is_empty(),
         "first sight fired retroactively"
     );
-    let tick = BASE_MS + 1_000;
+    let tick = base_ms + 1_000;
     let fired_at = tick + 250;
     let fired = dispatcher.tick_project(0, fired_at).await?;
     let expected = mint_cron_run_id(FLOW, tick);
@@ -195,11 +210,11 @@ pub async fn run(args: CallableCronArgs) -> anyhow::Result<()> {
     );
     ensure!(row.get::<_, String>(3) == "cron", "producer identity drift");
     ensure!(
-        row.get::<_, String>(4) == "2026-01-01T00:00:01Z",
+        row.get::<_, String>(4) == canonical_tick(tick)?,
         "scheduled-at drift"
     );
     ensure!(
-        row.get::<_, String>(5) == "2026-01-01T00:00:01.250Z",
+        row.get::<_, String>(5) == canonical_tick(fired_at)?,
         "fired-at drift"
     );
     ensure!(
@@ -254,5 +269,14 @@ pub(crate) mod tests {
         assert!(DISPATCHER.contains(
             "&no_text,\n                &no_text,\n                &no_text,\n                &no_text,\n                &no_i32,\n                &partition_key,\n                &policy,"
         ));
+    }
+
+    #[test]
+    fn proof_clock_is_second_aligned_and_ahead_of_database_time() {
+        let database_now_ms = 1_767_225_600_250;
+        let base_ms = super::proof_base_ms(database_now_ms).unwrap();
+        assert_eq!(base_ms, 1_767_229_201_000);
+        assert!(base_ms >= database_now_ms + super::PROOF_CLOCK_MARGIN_MS);
+        assert_eq!(base_ms % 1_000, 0);
     }
 }
