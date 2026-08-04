@@ -106,30 +106,33 @@ pub async fn run(args: F2InvokeArgs) -> anyhow::Result<()> {
     for (label, input, expected) in [
         (
             "REJECT",
-            r#"{"hold":{"material":"resin-A","moisture_pct":"12.00","moisture_max_pct":"5.00"}}"#,
+            r#"{"hold":{"material":"resin-A","moisture_pct":"12.00","moisture_max_pct":"5.00"},"decision":"reject"}"#,
             "reject",
         ),
         (
             "USE-AS-IS",
-            r#"{"hold":{"material":"resin-A","moisture_pct":"6.00","moisture_max_pct":"5.00"}}"#,
+            r#"{"hold":{"material":"resin-A","moisture_pct":"6.00","moisture_max_pct":"5.00"},"decision":"use-as-is"}"#,
             "use-as-is",
         ),
         (
             "ACCEPT",
-            r#"{"hold":{"material":"resin-A","moisture_pct":"4.00","moisture_max_pct":"5.00"}}"#,
+            r#"{"hold":{"material":"resin-A","moisture_pct":"4.00","moisture_max_pct":"5.00"},"decision":"accept"}"#,
             "accept",
         ),
     ] {
         let resp = serve.invoke(request(input)).await;
         match emission(&resp) {
             Some((v, port)) => {
-                let rec = v.get("recommended").and_then(|x| x.as_str());
-                let conf = v.get("confidence").and_then(|x| x.as_f64());
-                let rationale = v.get("rationale").and_then(|x| x.as_str());
+                let recommendation = v.get("recommendation").and_then(|x| x.as_str());
+                let confidence = v
+                    .get("confidence")
+                    .and_then(|x| x.as_str())
+                    .and_then(|x| x.parse::<f64>().ok());
+                let matched = v.get("matched").and_then(|x| x.as_bool());
                 check(
                     &mut ok,
                     &format!("{label}: recommends {expected}"),
-                    rec == Some(expected),
+                    recommendation == Some(expected),
                 );
                 check(
                     &mut ok,
@@ -138,15 +141,17 @@ pub async fn run(args: F2InvokeArgs) -> anyhow::Result<()> {
                 );
                 check(
                     &mut ok,
-                    &format!("{label}: confidence in (0,1]"),
-                    conf.is_some_and(|c| c > 0.0 && c <= 1.0),
+                    &format!("{label}: decimal-string confidence is in (0,1]"),
+                    confidence.is_some_and(|c| c > 0.0 && c <= 1.0),
                 );
                 check(
                     &mut ok,
-                    &format!("{label}: carries a non-empty rationale"),
-                    rationale.is_some_and(|r| !r.is_empty()),
+                    &format!("{label}: recommendation matches the recorded decision"),
+                    matched == Some(true),
                 );
-                println!("  {label}: recommended={rec:?} confidence={conf:?}");
+                println!(
+                    "  {label}: recommendation={recommendation:?} confidence={confidence:?} matched={matched:?}"
+                );
             }
             None => check(
                 &mut ok,
@@ -158,7 +163,7 @@ pub async fn run(args: F2InvokeArgs) -> anyhow::Result<()> {
 
     // A malformed hold (a non-decimal moisture) surfaces as InvalidInput over the
     // real WIT boundary — the frozen taxonomy arm the runner never retries.
-    let bad = r#"{"hold":{"material":"resin-A","moisture_pct":"not-a-decimal","moisture_max_pct":"5.00"}}"#;
+    let bad = r#"{"hold":{"material":"resin-A","moisture_pct":"not-a-decimal","moisture_max_pct":"5.00"},"decision":"accept"}"#;
     let resp = serve.invoke(request(bad)).await;
     check(
         &mut ok,
