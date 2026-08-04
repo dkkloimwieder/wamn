@@ -18,7 +18,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 tokio = { workspace = true, features = ["net", "time", "rt", "macros"] }
-url = "2"
+url = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }
 wamn-flow = { workspace = true }
