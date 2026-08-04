@@ -60,7 +60,9 @@ use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
 use wamn_catalog::PinnedArtifact;
 use wamn_flow::{EntryKind, Flow, Ordering};
-use wamn_run_state::admission::{AdmissionProducer, AdmissionResult, admission_sql};
+use wamn_run_state::admission::{
+    AdmissionProducer, AdmissionResult, AdmissionSql, RunStateSchema, admission_sql_for_schema,
+};
 use wamn_run_state::cancellation::cancellation_sweep_sql;
 use wamn_run_state::queue::{
     PartitionPolicy, cron_anchor_sql, cron_last_run_sql, parked_due_sql, upsert_cron_anchor_sql,
@@ -171,6 +173,15 @@ pub struct ProjectSpec {
     pub schema: Option<String>,
 }
 
+fn project_admission_sql(schema: Option<&str>) -> anyhow::Result<AdmissionSql> {
+    let schema = schema
+        .map(RunStateSchema::new)
+        .transpose()
+        .context("invalid project run-state schema")?
+        .unwrap_or_default();
+    Ok(admission_sql_for_schema(&schema))
+}
+
 /// Dial one project: a pinned session with `search_path` + the tenant claim set
 /// (the RLS floor the queue SQL is scoped by), a connect deadline, and TCP
 /// keepalives (a silently dead peer is detected in tens of seconds, not the
@@ -203,6 +214,7 @@ async fn dial(spec: &ProjectSpec) -> anyhow::Result<(Client, tokio::task::JoinHa
 /// cron-anchor state the pure decisions fold over.
 pub struct ProjectState {
     pub spec: ProjectSpec,
+    admission_sql: AdmissionSql,
     client: Client,
     _conn: tokio::task::JoinHandle<()>,
     /// Adaptive sweep interval (tightens on work, decays while idle).
@@ -493,9 +505,12 @@ impl Dispatcher {
             {
                 bail!("project {}: invalid schema {:?}", spec.name, s);
             }
+            let admission_sql = project_admission_sql(spec.schema.as_deref())
+                .with_context(|| format!("project {}", spec.name))?;
             let (client, handle) = dial(spec).await?;
             projects.push(ProjectState {
                 spec: spec.clone(),
+                admission_sql,
                 client,
                 _conn: handle,
                 interval_ms: cfg.cadence.min(),
@@ -637,6 +652,7 @@ impl Dispatcher {
                 let span = trigger_span(&firing, &p.spec.tenant);
                 let result = fire(
                     &mut p.client,
+                    &p.admission_sql,
                     cron,
                     &firing,
                     tick,
@@ -852,8 +868,13 @@ fn partition_policy_for_firing(reg: &Registry, f: &Firing) -> &'static str {
 ///
 /// The head lock, definition recheck, run creation, queue creation, and anchor
 /// advance share one transaction. A crash at any seam rolls all of them back.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the cron firing and its project-scoped admission recipe are one transaction boundary"
+)]
 async fn fire(
     client: &mut Client,
+    recipe: &AdmissionSql,
     cron: &CronAttachment,
     f: &Firing,
     tick: i64,
@@ -861,7 +882,6 @@ async fn fire(
     partition_key: Option<&str>,
     policy: &str,
 ) -> anyhow::Result<AdmissionResult> {
-    let recipe = admission_sql();
     let tx = client.transaction().await?;
     tx.query_one(recipe.lock_head(), &[&cron.catalog_id, &cron.environment])
         .await?;
@@ -1249,13 +1269,29 @@ mod tests {
     use super::{
         ArtifactRow, CRON_ATTACHMENTS_SQL, DispatcherConfig, Ordering, PartitionPolicy,
         RUN_QUEUE_DEPTH_SQL, Registry, cancellation_sweep_sql, fire, parse_registry,
-        partition_key_for_firing, partition_policy_for_firing, valid_tenant,
+        partition_key_for_firing, partition_policy_for_firing, project_admission_sql, valid_tenant,
     };
     use wamn_catalog::{Artifact, NodeImplementation};
     use wamn_flow::Flow;
     use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
     use wamn_run_state::admission::AdmissionResult;
     use wamn_scheduler::Firing;
+
+    #[test]
+    fn dispatcher_admission_uses_configured_project_schema() {
+        let recipe = project_admission_sql(Some("wamn_runner_demo"))
+            .expect("configured run-state schema is valid");
+        for sql in [recipe.lock_head(), recipe.admit()] {
+            assert!(sql.contains("\"wamn_runner_demo\"."));
+            assert!(!sql.contains("wamn_run."));
+        }
+    }
+
+    #[test]
+    fn dispatcher_admission_preserves_canonical_schema_by_default() {
+        let configured = project_admission_sql(None).expect("default schema is valid");
+        assert_eq!(configured, wamn_run_state::admission::admission_sql());
+    }
 
     fn f3_artifact_row() -> ArtifactRow {
         let mut graph: serde_json::Value = serde_json::from_str(
@@ -1558,9 +1594,11 @@ mod tests {
         let firing =
             wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick, tick + 5_000)
                 .unwrap();
+        let recipe = wamn_run_state::admission::admission_sql();
 
         let result = fire(
             &mut client,
+            &recipe,
             &cron,
             &firing,
             tick,
@@ -1573,6 +1611,7 @@ mod tests {
         assert!(matches!(result, AdmissionResult::Admitted { .. }));
         let duplicate = fire(
             &mut client,
+            &recipe,
             &cron,
             &firing,
             tick,
@@ -1597,9 +1636,18 @@ mod tests {
         let firing2 =
             wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick2, tick2).unwrap();
         assert!(
-            fire(&mut client, &cron, &firing2, tick2, tick2, None, "blocking")
-                .await
-                .is_err()
+            fire(
+                &mut client,
+                &recipe,
+                &cron,
+                &firing2,
+                tick2,
+                tick2,
+                None,
+                "blocking",
+            )
+            .await
+            .is_err()
         );
         client
             .batch_execute(
@@ -1609,9 +1657,18 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            fire(&mut client, &cron, &firing2, tick2, tick2, None, "blocking")
-                .await
-                .unwrap(),
+            fire(
+                &mut client,
+                &recipe,
+                &cron,
+                &firing2,
+                tick2,
+                tick2,
+                None,
+                "blocking",
+            )
+            .await
+            .unwrap(),
             AdmissionResult::Admitted { .. }
         ));
 
@@ -1619,9 +1676,18 @@ mod tests {
         let firing3 =
             wamn_scheduler::cron_firing(&cron.flow_id, cron.flow_version, 0, tick3, tick3).unwrap();
         assert!(matches!(
-            fire(&mut client, &cron, &firing3, tick3, tick3, None, "blocking")
-                .await
-                .unwrap(),
+            fire(
+                &mut client,
+                &recipe,
+                &cron,
+                &firing3,
+                tick3,
+                tick3,
+                None,
+                "blocking",
+            )
+            .await
+            .unwrap(),
             AdmissionResult::Admitted { .. }
         ));
         let counts = client
@@ -1642,6 +1708,7 @@ mod tests {
         assert_eq!(
             fire(
                 &mut client,
+                &recipe,
                 &stale,
                 &stale_firing,
                 tick3 + 1_000,
@@ -1661,6 +1728,7 @@ mod tests {
         assert_eq!(
             fire(
                 &mut client,
+                &recipe,
                 &changed,
                 &changed_firing,
                 tick3 + 1_500,
@@ -1710,6 +1778,7 @@ mod tests {
         assert_eq!(
             fire(
                 &mut client,
+                &recipe,
                 &cron,
                 &disabled_firing,
                 tick3 + 2_000,
