@@ -364,16 +364,15 @@ fn conditional_branches_by_jmespath_truthiness() {
 // time-shift (deterministic time arithmetic — the F3 cutoff gap)
 // ---------------------------------------------------------------------------
 
-/// The F3 shape: shift the cron `fire-at-ms` back 48h into an RFC 3339 cutoff a
-/// `timestamptz` filter compares against. 1_700_000_000_000 ms = 2023-11-14
-/// 22:13:20Z; − 172_800_000 (48h) = 2023-11-12 22:13:20Z.
+/// The F3 shape: shift the cron `scheduled-at` back 48h into an RFC 3339 cutoff
+/// a `timestamptz` filter compares against.
 #[test]
 fn time_shift_computes_an_iso_cutoff() {
     let mut mock = Mock::default();
     let config = json!({
-        "base": "\"fire-at-ms\"", "offset-ms": -172_800_000, "format": "iso", "key": "cutoff"
+        "base": "\"scheduled-at\"", "offset-ms": -172_800_000, "format": "iso", "key": "cutoff"
     });
-    let input = json!({"trigger": "cron", "fire-at-ms": 1_700_000_000_000i64});
+    let input = json!({"trigger": "cron", "scheduled-at": "2023-11-14T22:13:20Z"});
     let em = go("time-shift", &mut mock, &config, &input).unwrap();
     assert_eq!(em.port, "main");
     assert_eq!(em.payload, json!({"cutoff": "2023-11-12T22:13:20.000Z"}));
@@ -386,12 +385,12 @@ fn time_shift_computes_an_iso_cutoff() {
 #[test]
 fn time_shift_offset_sign_is_respected() {
     let mut mock = Mock::default();
-    let input = json!({"fire-at-ms": 1_700_000_000_000i64});
+    let input = json!({"scheduled-at": "2023-11-14T22:13:20Z"});
 
     let back = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\"", "offset-ms": -172_800_000, "format": "epoch-ms"}),
+        &json!({"base": "\"scheduled-at\"", "offset-ms": -172_800_000, "format": "epoch-ms"}),
         &input,
     )
     .unwrap();
@@ -404,7 +403,7 @@ fn time_shift_offset_sign_is_respected() {
     let fwd = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\"", "offset-ms": 172_800_000, "format": "epoch-ms"}),
+        &json!({"base": "\"scheduled-at\"", "offset-ms": 172_800_000, "format": "epoch-ms"}),
         &input,
     )
     .unwrap();
@@ -419,12 +418,12 @@ fn time_shift_offset_sign_is_respected() {
 #[test]
 fn time_shift_format_and_key_defaults() {
     let mut mock = Mock::default();
-    let input = json!({"fire-at-ms": 0});
+    let input = json!({"scheduled-at": "1970-01-01T00:00:00Z"});
     // Defaults: iso under "cutoff".
     let em = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\"", "offset-ms": 0}),
+        &json!({"base": "\"scheduled-at\"", "offset-ms": 0}),
         &input,
     )
     .unwrap();
@@ -433,37 +432,75 @@ fn time_shift_format_and_key_defaults() {
     let em = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\"", "offset-ms": 1000, "format": "epoch-ms", "key": "before"}),
+        &json!({"base": "\"scheduled-at\"", "offset-ms": 1000, "format": "epoch-ms", "key": "before"}),
         &input,
     )
     .unwrap();
     assert_eq!(em.payload, json!({"before": 1000}));
 }
 
-/// The base is a JMESPath over runtime INPUT: a missing or non-integer value is
+/// The base is a JMESPath over runtime INPUT: a missing or non-RFC3339 value is
 /// the input's fault (invalid-input, never retried) — not a flow-config bug.
 #[test]
 fn time_shift_bad_base_is_invalid_input() {
     let mut mock = Mock::default();
-    let config = json!({"base": "\"fire-at-ms\"", "offset-ms": -1000});
-    // Missing path -> JMESPath null -> not an epoch-ms number.
+    let config = json!({"base": "\"scheduled-at\"", "offset-ms": -1000});
+    // Missing path -> JMESPath null -> not an RFC 3339 string.
     let e = go("time-shift", &mut mock, &config, &json!({"other": 1})).unwrap_err();
     assert!(
         matches!(&e, NodeError::InvalidInput(d) if d.code.as_deref() == Some("invalid-base")),
         "missing base is invalid-input: {e:?}"
     );
-    // Present but a string, not a number.
+    // Present but not RFC 3339.
     let e = go(
         "time-shift",
         &mut mock,
         &config,
-        &json!({"fire-at-ms": "soon"}),
+        &json!({"scheduled-at": "soon"}),
     )
     .unwrap_err();
     assert!(
         matches!(&e, NodeError::InvalidInput(_)),
-        "non-number base: {e:?}"
+        "malformed timestamp base: {e:?}"
     );
+
+    // Greenfield contract: the former epoch-ms number is rejected.
+    let e = go(
+        "time-shift",
+        &mut mock,
+        &config,
+        &json!({"scheduled-at": 1_700_000_000_000i64}),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&e, NodeError::InvalidInput(_)),
+        "epoch-ms base is rejected: {e:?}"
+    );
+}
+
+#[test]
+fn time_shift_normalizes_timezone_and_checks_rfc3339_boundaries() {
+    let mut mock = Mock::default();
+    let shifted = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"scheduled-at\"", "offset-ms": -172_800_000}),
+        &json!({"scheduled-at": "2023-11-15T00:13:20+02:00"}),
+    )
+    .unwrap();
+    assert_eq!(
+        shifted.payload,
+        json!({"cutoff": "2023-11-12T22:13:20.000Z"})
+    );
+
+    let overflow = go(
+        "time-shift",
+        &mut mock,
+        &json!({"base": "\"scheduled-at\"", "offset-ms": 1}),
+        &json!({"scheduled-at": "9999-12-31T23:59:59.999Z"}),
+    )
+    .unwrap_err();
+    assert_eq!(terminal_code(&overflow), "time-overflow");
 }
 
 /// Config faults (missing base / missing offset / unknown format) are terminal
@@ -471,7 +508,7 @@ fn time_shift_bad_base_is_invalid_input() {
 #[test]
 fn time_shift_config_faults_are_terminal() {
     let mut mock = Mock::default();
-    let input = json!({"fire-at-ms": 0});
+    let input = json!({"scheduled-at": "1970-01-01T00:00:00Z"});
     // Missing base string.
     let e = go("time-shift", &mut mock, &json!({"offset-ms": 0}), &input).unwrap_err();
     assert_eq!(terminal_code(&e), "invalid-config");
@@ -479,7 +516,7 @@ fn time_shift_config_faults_are_terminal() {
     let e = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\""}),
+        &json!({"base": "\"scheduled-at\""}),
         &input,
     )
     .unwrap_err();
@@ -488,7 +525,7 @@ fn time_shift_config_faults_are_terminal() {
     let e = go(
         "time-shift",
         &mut mock,
-        &json!({"base": "\"fire-at-ms\"", "offset-ms": 0, "format": "unix"}),
+        &json!({"base": "\"scheduled-at\"", "offset-ms": 0, "format": "unix"}),
         &input,
     )
     .unwrap_err();

@@ -15,7 +15,7 @@
 //! | `fail`           | —                       | return the authored terminal failure detail |
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
-//! | `time-shift`     | —                       | shift an epoch-ms input by a signed offset (the arithmetic JMESPath lacks) |
+//! | `time-shift`     | —                       | shift an RFC 3339 input by a signed offset (the arithmetic JMESPath lacks) |
 //! | `http-request`   | `HttpEgress`            | one outbound HTTP call, taxonomy-classified |
 //! | `postgres`       | `Postgres`              | catalog-derived entity ops via the audited 4.1 surface |
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
