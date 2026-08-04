@@ -6,7 +6,8 @@ use anyhow::{Context as _, ensure};
 use clap::Args;
 use serde_json::{Value, json};
 use wamn_event_reg::{EventRegistration, Op, validate as validate_registration};
-use wamn_flow::{Flow, ResolvedInterfaces};
+use wamn_flow::{Flow, FlowConnectionRequirement, ResolvedInterfaces};
+use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 use wamn_run_state::{
     admission::admission_sql,
     child::{cancel_unreleased_child_sql, create_or_recover_child_sql, release_child_sql},
@@ -79,6 +80,16 @@ fn validate_graph_contract(flow_json: &str) -> anyhow::Result<()> {
         .map(|node| (node.id.as_str(), node))
         .collect();
     ensure!(nodes.len() == 10, "F4 node set drift");
+    ensure!(
+        flow.connection_requirements
+            == vec![FlowConnectionRequirement {
+                name: "erp-callback".to_string(),
+                requirement: PortableConnectionRequirement::never_replay(
+                    ConnectionTypeDescriptor::http_v1(),
+                ),
+            }],
+        "F4 must declare its one portable erp-callback HTTP connection"
+    );
     require_config(
         &nodes,
         "capture",
@@ -139,15 +150,18 @@ fn validate_graph_contract(flow_json: &str) -> anyhow::Result<()> {
         "notify-erp",
         &[
             ("method", json!("POST")),
-            ("url", json!("https://erp.example/dispositions")),
+            ("path-and-query", json!("/dispositions")),
             ("body", json!("@")),
-            ("idempotency-key", json!(true)),
         ],
     )?;
     ensure!(
-        nodes["notify-erp"].credential.as_deref() == Some("erp-callback")
-            && flow.allowed_hosts == ["erp.example"],
-        "F4 callback capability declaration drift"
+        nodes["notify-erp"].connection.as_deref() == Some("erp-callback")
+            && nodes["notify-erp"].credential.is_none()
+            && nodes["notify-erp"].config.get("url").is_none()
+            && nodes["notify-erp"].config.get("idempotency-key").is_none()
+            && flow.credentials.is_empty()
+            && flow.allowed_hosts.is_empty(),
+        "F4 HTTP authority, credential, and idempotency injection belong to its connection"
     );
 
     let history_sql = sql(&nodes, "load-hold-context")?;
@@ -561,9 +575,12 @@ pub mod tests {
     }
 
     #[test]
-    fn callback_key_and_effective_once_mutants_fail() {
+    fn callback_connection_and_effective_once_mutants_fail() {
         let mut flow: Value = serde_json::from_str(FLOW_JSON).unwrap();
-        mutate_node(&mut flow, "notify-erp")["config"]["idempotency-key"] = json!(false);
+        mutate_node(&mut flow, "notify-erp")
+            .as_object_mut()
+            .unwrap()
+            .remove("connection");
         assert!(validate_graph_contract(&flow.to_string()).is_err());
 
         let mut sink = CallbackSink::default();
