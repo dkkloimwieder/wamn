@@ -4238,7 +4238,7 @@ mod tests {
     }
 
     #[test]
-    fn production_lookup_reads_one_pinned_graph_and_bundle_without_legacy_fallback() {
+    fn production_lookup_fail_closes_missing_or_mismatched_authoritative_identity() {
         assert_eq!(PINNED_ARTIFACT_SQL.matches("SELECT r.tenant_id").count(), 1);
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_flows AS rf"));
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_manifests AS rm"));
@@ -4249,10 +4249,15 @@ mod tests {
         assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_json"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_hash"));
         for join in [
+            "rf.tenant_id = r.tenant_id",
             "rf.catalog_id = r.catalog_id",
             "rf.catalog_version = r.catalog_version",
             "rf.flow_id = r.flow_id",
             "rf.flow_version = r.flow_version",
+            "rm.tenant_id = rf.tenant_id",
+            "rm.catalog_id = rf.catalog_id",
+            "rm.catalog_version = rf.catalog_version",
+            "a.tenant_id = rf.tenant_id",
             "a.flow_id = rf.flow_id",
             "a.flow_version = rf.flow_version",
             "member ->> 'artifact-hash' = a.artifact_hash",
@@ -4262,6 +4267,8 @@ mod tests {
                 "pinned identity join missing {join}"
             );
         }
+        assert!(!PINNED_ARTIFACT_SQL.contains("LEFT JOIN"));
+        assert!(!PINNED_ARTIFACT_SQL.contains(" OR "));
         assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows"));
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
     }

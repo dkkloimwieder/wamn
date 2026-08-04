@@ -4144,6 +4144,25 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65 \
   cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
 ```
 
+## PLAN-0.2 authoritative runner artifact handoff (`wamn-2jdm.5.10`)
+
+The production `run-next` path loads the exact immutable artifact selected by
+the admitted run's tenant, catalog, catalog version, flow, flow version, and
+release-manifest artifact hash. Inner joins and exact equality make missing or
+mixed identities return no artifact; there is no legacy `flows` fallback. The
+named mutation changes the catalog-version join and must make the focused debug
+test fail before restoring the source hash.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner \
+  tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity \
+  -- --exact
+
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
+  tools/gate-mutants/authoritative-runner-artifact.sh run
+```
+
 ## CF-CUSTOM-PUBLISH — verified supplied components (`wamn-5wd1.67`)
 
 `publish-catalog --custom-node` accepts a repeatable JSON descriptor containing
