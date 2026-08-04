@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "campaign": "authoritative-runner-artifact",
+  "bead": "wamn-2jdm.5.10",
+  "source": {
+    "git_commit": "ae00808655ba95c77d4216d203bac625c5e11ebe",
+    "runner_sha256": "2d9c9de59d3d61ffe6a2046abcae328fde4cf5b3afed33f77dd56b5273256a63"
+  },
+  "profile": "debug",
+  "green_runs": [
+    {
+      "gate": "tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--manifest-path",
+        "components/Cargo.toml",
+        "-p",
+        "flowrunner",
+        "tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity",
+        "--",
+        "--exact"
+      ],
+      "exit_code": 0,
+      "log_sha256": "5efaf7560e6d8567fcfb3e161d4d82af5daada2e1f70fa871aa20cdc3c4e1e9e",
+      "status": "passed"
+    }
+  ],
+  "mutants": [
+    {
+      "id": "runner-accepts-wrong-catalog-version",
+      "gate": "tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity",
+      "target": "components/execution/flowrunner/src/lib.rs",
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--manifest-path",
+        "components/Cargo.toml",
+        "-p",
+        "flowrunner",
+        "tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity",
+        "--",
+        "--exact"
+      ],
+      "baseline_sha256": "421dd197a699bd764329c0e4255538dd4b943b1a16a9f936fd5515fe25434d8e",
+      "mutant_sha256": "ba082aae649567669150beca00544b4d0482ba68cb160766dafd652ff9f3db29",
+      "restored_sha256": "421dd197a699bd764329c0e4255538dd4b943b1a16a9f936fd5515fe25434d8e",
+      "exit_code": 101,
+      "log_sha256": "5216fd64295243125e6150e31becaee27a454564329ba45542959dc46c2b5cfb",
+      "status": "killed"
+    }
+  ]
+}
