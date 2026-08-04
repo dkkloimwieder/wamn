@@ -129,7 +129,7 @@ fn gate_flow_json(_echo_host: &str, offset_ms: i64) -> String {
   "nodes": [
     {{ "id": "cron", "type": "cron" }},
     {{ "id": "shift", "type": "time-shift",
-       "config": {{ "base": "scheduled-at", "offset-ms": {offset_ms}, "format": "iso", "key": "cutoff" }} }},
+       "config": {{ "base": "\"scheduled-at\"", "offset-ms": {offset_ms}, "format": "iso", "key": "cutoff" }} }},
     {{ "id": "list-stale", "type": "postgres",
        "config": {{ "entity": "quality_holds", "op": "list",
                     "filters": {{ "status": "eq.open", "opened_at": "lt.{{{{cutoff}}}}" }},
@@ -705,6 +705,12 @@ mod tests {
             "notify is a dead-end — it carries no loop state"
         );
         assert!(flow.nodes.iter().all(|node| node.node_type != "respond"));
+        let shift = flow
+            .nodes
+            .iter()
+            .find(|node| node.id == "shift")
+            .expect("time-shift node");
+        assert_eq!(shift.config["base"], "\"scheduled-at\"");
         // The catalog document the node compiles against is well-formed JSON.
         let cat: Value = serde_json::from_str(&holds_catalog_json()).expect("catalog json");
         assert_eq!(cat["entities"][0]["name"], "quality_holds");

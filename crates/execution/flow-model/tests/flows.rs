@@ -254,7 +254,13 @@ fn f3_escalate_stale_holds_shape() {
         .iter()
         .find(|node| node.id == "cutoff-at-48h")
         .expect("cutoff node");
-    assert_eq!(cutoff.config["base"], "scheduled-at");
+    let base = cutoff.config["base"].as_str().expect("base expression");
+    assert_eq!(base, "\"scheduled-at\"");
+    let selected = jmespath::compile(base)
+        .expect("quoted identifier compiles")
+        .search(json!({"scheduled-at": 42}))
+        .expect("quoted identifier evaluates");
+    assert_eq!(serde_json::to_value(selected).unwrap(), json!(42));
     assert_eq!(cutoff.config["ctx"], "@");
     let mark = f
         .nodes

@@ -51,7 +51,7 @@
       "id": "cutoff-at-48h",
       "type": "time-shift",
       "config": {
-        "base": "scheduled-at",
+        "base": "\"scheduled-at\"",
         "offset-ms": -172800000,
         "format": "iso",
         "key": "cutoff",
