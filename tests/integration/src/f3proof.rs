@@ -38,6 +38,7 @@ use clap::Args;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
+use wamn_catalog::{Artifact, NodeImplementation};
 use wamn_gate_harness::{check, seed_flow_version};
 use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 
@@ -48,6 +49,46 @@ use wamn_test_infrastructure::kubernetes::{DeploymentScale, KubeScale};
 
 const FLOW_ID: &str = "escalate-stale-holds";
 const TENANT_DEFAULT: &str = "demo-tenant";
+const CATALOG_ID: &str = "f3proof";
+const ENVIRONMENT: &str = "gate";
+const SOURCE_ID: &str = "f3proof-schedule";
+const ATTACHMENT_ID: &str = "f3proof-cron";
+const SOURCE_HASH: &str = "sha256:f3proof-schedule";
+const DEFINITION_HASH: &str = "sha256:f3proof-cron";
+
+const REGISTER_CATALOG_SQL: &str = "INSERT INTO catalog.catalogs \
+   (tenant_id,catalog_id,version,environment,schema_version,state) \
+ VALUES ($1,$2,$3,$4,'0.1','staged') \
+ ON CONFLICT (tenant_id,catalog_id,version) DO NOTHING";
+const REGISTER_ARTIFACT_SQL: &str = "SELECT catalog.register_flow_artifact( \
+   $1,$2,$3,'0.1',$4::text::jsonb,$5,$6,$7,$8,$9,$10,$11)";
+const REGISTER_MANIFEST_SQL: &str = "SELECT catalog.register_release_manifest($1,$2,$3,$4)";
+const REGISTER_FLOW_SQL: &str = "INSERT INTO catalog.release_flows \
+   (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+ VALUES ($1,$2,$3,$4,$3) ON CONFLICT DO NOTHING";
+const REGISTER_EXPOSURE_SQL: &str =
+    "SELECT catalog.register_release_exposure_manifest($1,$2,$3,'{}')";
+const REGISTER_SOURCE_SQL: &str = "INSERT INTO catalog.release_sources \
+   (tenant_id,catalog_id,catalog_version,source_id,source_kind,definition_json,source_hash) \
+ VALUES ($1,$2,$3,$4,'schedule',$5,$6) ON CONFLICT DO NOTHING";
+const REGISTER_ATTACHMENT_SQL: &str = "INSERT INTO catalog.release_attachments \
+   (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id, \
+    source_id,definition_hash,definition_json) \
+ VALUES ($1,$2,$3,$4,'cron',$5,$6,$7,$8) ON CONFLICT DO NOTHING";
+const UPSERT_HEAD_SQL: &str = "INSERT INTO catalog.catalog_heads \
+   (tenant_id,catalog_id,environment,applied_catalog_version) \
+ VALUES ($1,$2,$3,$4) \
+ ON CONFLICT (tenant_id,catalog_id,environment) DO UPDATE \
+ SET applied_catalog_version=EXCLUDED.applied_catalog_version,updated_at=now()";
+const UPSERT_ACTIVATION_SQL: &str = "INSERT INTO catalog.attachment_activation \
+   (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) \
+ VALUES ($1,$2,$3,$4,$5,true) \
+ ON CONFLICT (tenant_id,catalog_id,environment,attachment_id) DO UPDATE \
+ SET confirmed_definition_hash=EXCLUDED.confirmed_definition_hash,enabled=true";
+const DELETE_ACTIVATION_SQL: &str = "DELETE FROM catalog.attachment_activation \
+ WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND attachment_id=$4";
+const DELETE_HEAD_SQL: &str = "DELETE FROM catalog.catalog_heads \
+ WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND applied_catalog_version=$4";
 
 /// The demo secret the runner's credentials file maps `notify-webhook` to — the
 /// value the delivery assert expects reflected and the containment scan hunts.
@@ -91,6 +132,11 @@ pub struct F3ProofArgs {
     #[arg(long, default_value_t = -60_000)]
     pub offset_ms: i64,
 
+    /// Immutable flow version for this exact graph. Changed graph variants must
+    /// publish a distinct version rather than rewriting catalog history.
+    #[arg(long, default_value_t = 1)]
+    pub flow_version: u32,
+
     /// IN-CLUSTER: the runner Deployment to park→0 and wake. Present ⇒ the
     /// park→dispatcher-fires→wake path; absent ⇒ the LOCAL directly-seeded path.
     #[arg(long)]
@@ -112,7 +158,7 @@ pub struct F3ProofArgs {
 /// The gate flow: the committed F3 shape (`cron → time-shift → list → gate →
 /// {escalate → notify (dead-end), advance → gate}`), with its portable manager
 /// notification connection and a seconds-scale offset.
-fn gate_flow_json(_echo_host: &str, offset_ms: i64) -> String {
+fn gate_flow_json(_echo_host: &str, offset_ms: i64, flow_version: u32) -> String {
     let connection_requirement = serde_json::to_string(
         &PortableConnectionRequirement::never_replay(ConnectionTypeDescriptor::http_v1()),
     )
@@ -121,7 +167,7 @@ fn gate_flow_json(_echo_host: &str, offset_ms: i64) -> String {
         r#"{{
   "schema-version": "0.1",
   "flow-id": "{FLOW_ID}",
-  "version": 1,
+  "version": {flow_version},
   "name": "F3 escalate-stale-holds (gate)",
   "connection-requirements": [
     {{ "name": "manager-notifications", "requirement": {connection_requirement} }}
@@ -202,11 +248,184 @@ fn holds_ddl(schema: &str) -> String {
     )
 }
 
+fn f3_implementations() -> anyhow::Result<Vec<NodeImplementation>> {
+    let mut implementations = [
+        "cron",
+        "time-shift",
+        "postgres",
+        "conditional",
+        "http-request",
+        "transform",
+    ]
+    .into_iter()
+    .map(|node_type| {
+        let descriptor = wamn_standard_nodes::describe(node_type)
+            .with_context(|| format!("missing standard-node descriptor for {node_type}"))?;
+        let contract =
+            wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
+        NodeImplementation::from_resolved_platform_contract(contract).map_err(anyhow::Error::new)
+    })
+    .collect::<anyhow::Result<Vec<_>>>()?;
+    implementations
+        .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+    Ok(implementations)
+}
+
+fn f3_artifact(tenant: &str, graph: &str) -> anyhow::Result<(wamn_flow::Flow, Artifact)> {
+    let flow = wamn_flow::Flow::from_json(graph)
+        .map_err(|error| anyhow::anyhow!("parse F3 release graph: {error}"))?;
+    let artifact = Artifact::new(tenant, &flow, f3_implementations()?)
+        .map_err(|error| anyhow::anyhow!("build F3 release artifact: {error}"))?;
+    Ok((flow, artifact))
+}
+
+async fn seed_authoritative_cron_release(
+    admin: &mut Client,
+    tenant: &str,
+    graph: &str,
+    flow_version: u32,
+) -> anyhow::Result<()> {
+    let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
+    let (flow, artifact) = f3_artifact(tenant, graph)?;
+    let canonical_graph =
+        String::from_utf8(flow.canonical_bytes()).expect("canonical F3 graph is UTF-8");
+    let interfaces = String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+        .expect("canonical F3 interfaces are UTF-8");
+    let components = serde_json::to_value(artifact.supplied_components())?;
+    let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+        .expect("canonical F3 occurrence recovery is UTF-8");
+    let artifact_hash = artifact.identity().artifact_hash().as_str();
+    let members = json!([{
+        "flow-id": FLOW_ID,
+        "flow-version": flow_version,
+        "artifact-hash": artifact_hash,
+    }]);
+    let source = json!({
+        "schedule": "* * * * * *",
+        "timezone": "UTC",
+        "catch-up": "skip",
+    });
+    let attachment = json!({
+        "id": ATTACHMENT_ID,
+        "kind": "cron",
+        "flow-id": FLOW_ID,
+        "source-id": SOURCE_ID,
+        "run-deadline-ms": 120_000,
+    });
+
+    let transaction = admin.transaction().await?;
+    transaction
+        .execute(
+            REGISTER_CATALOG_SQL,
+            &[&tenant, &CATALOG_ID, &flow_version, &ENVIRONMENT],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_ARTIFACT_SQL,
+            &[
+                &tenant,
+                &FLOW_ID,
+                &flow_version,
+                &canonical_graph,
+                &artifact.graph_hash(),
+                &artifact_hash,
+                &interfaces,
+                &artifact.interface_bundle().hash(),
+                &components,
+                &occurrence_recovery,
+                &artifact.occurrence_recovery_hash(),
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_MANIFEST_SQL,
+            &[&tenant, &CATALOG_ID, &flow_version, &members],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_FLOW_SQL,
+            &[&tenant, &CATALOG_ID, &flow_version, &FLOW_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_EXPOSURE_SQL,
+            &[&tenant, &CATALOG_ID, &flow_version],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_SOURCE_SQL,
+            &[
+                &tenant,
+                &CATALOG_ID,
+                &flow_version,
+                &SOURCE_ID,
+                &source,
+                &SOURCE_HASH,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            REGISTER_ATTACHMENT_SQL,
+            &[
+                &tenant,
+                &CATALOG_ID,
+                &flow_version,
+                &ATTACHMENT_ID,
+                &FLOW_ID,
+                &SOURCE_ID,
+                &DEFINITION_HASH,
+                &attachment,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.catalogs SET state='superseded' \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 \
+               AND version<>$4 AND state='applied'",
+            &[&tenant, &CATALOG_ID, &ENVIRONMENT, &flow_version],
+        )
+        .await?;
+    transaction
+        .execute(
+            "UPDATE catalog.catalogs SET state='applied' \
+             WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3",
+            &[&tenant, &CATALOG_ID, &flow_version],
+        )
+        .await?;
+    transaction
+        .execute(
+            UPSERT_HEAD_SQL,
+            &[&tenant, &CATALOG_ID, &ENVIRONMENT, &flow_version],
+        )
+        .await?;
+    transaction
+        .execute(
+            UPSERT_ACTIVATION_SQL,
+            &[
+                &tenant,
+                &CATALOG_ID,
+                &ENVIRONMENT,
+                &ATTACHMENT_ID,
+                &DEFINITION_HASH,
+            ],
+        )
+        .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
 /// Provision the runner tables + the holds catalog/table (superuser), then
 /// register the gate flow + seed 2 stale + 1 fresh hold (app, under the claim).
 async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Result<()> {
     let schema = &args.schema;
-    let (admin, conn) = tokio_postgres::connect(admin_url, NoTls)
+    let (mut admin, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
         .context("admin connect for --setup")?;
     let conn_task = tokio::spawn(conn);
@@ -255,6 +474,17 @@ async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Re
             )
             .await
             .context("write catalog snapshot")?;
+        if !fresh_schema {
+            let graph = gate_flow_json(&args.echo_host, args.offset_ms, args.flow_version);
+            seed_authoritative_cron_release(
+                &mut admin,
+                &args.tenant,
+                &graph,
+                args.flow_version,
+            )
+            .await
+            .context("register authoritative F3 cron release")?;
+        }
         anyhow::Ok(())
     }
     .await;
@@ -264,17 +494,19 @@ async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Re
 
     let app = connect_app(app_url, schema, &args.tenant).await?;
     seed_holds(&app, &args.tenant).await?;
-    seed_flow_version(
-        &app,
-        &args.tenant,
-        FLOW_ID,
-        1,
-        true,
-        &gate_flow_json(&args.echo_host, args.offset_ms),
-        true,
-    )
-    .await
-    .context("register the gate flow")?;
+    if fresh_schema {
+        seed_flow_version(
+            &app,
+            &args.tenant,
+            FLOW_ID,
+            1,
+            true,
+            &gate_flow_json(&args.echo_host, args.offset_ms, 1),
+            true,
+        )
+        .await
+        .context("register the local gate flow")?;
+    }
     Ok(())
 }
 
@@ -304,27 +536,58 @@ async fn seed_holds(app: &Client, tenant: &str) -> anyhow::Result<()> {
 /// Zero-residue teardown. LOCAL drops the throwaway schema; IN-CLUSTER removes
 /// only what the gate added to the live runner schema — the holds/catalog tables
 /// and the gate flow's `flows`/`runs` rows — leaving the runner's own state.
-async fn teardown(admin_url: &str, schema: &str, fresh_schema: bool) -> anyhow::Result<()> {
+async fn teardown(
+    admin_url: &str,
+    schema: &str,
+    tenant: &str,
+    flow_version: u32,
+    fresh_schema: bool,
+) -> anyhow::Result<()> {
     let (admin, conn) = tokio_postgres::connect(admin_url, NoTls).await?;
     let conn_task = tokio::spawn(conn);
-    let sql = if fresh_schema {
-        format!("DROP SCHEMA IF EXISTS {schema} CASCADE;")
-    } else {
-        format!(
-            "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
-             DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE; \
-             DELETE FROM {schema}.node_runs WHERE run_id IN \
-               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-             DELETE FROM {schema}.run_queue WHERE run_id IN \
-               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-             DELETE FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'; \
-             DELETE FROM {schema}.flows WHERE flow_id = '{FLOW_ID}';"
-        )
-    };
-    let r = admin
-        .batch_execute(&sql)
-        .await
-        .map_err(|e| anyhow::anyhow!("teardown: {e}"));
+    let r = async {
+        if fresh_schema {
+            admin
+                .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))
+                .await?;
+            return anyhow::Ok(());
+        }
+        let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
+        admin
+            .batch_execute(&format!(
+                "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
+                 DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE; \
+                 DELETE FROM {schema}.node_runs WHERE run_id IN \
+                   (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
+                 DELETE FROM {schema}.run_queue WHERE run_id IN \
+                   (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
+                 DELETE FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'; \
+                 DELETE FROM {schema}.flows WHERE flow_id = '{FLOW_ID}';"
+            ))
+            .await?;
+        admin
+            .execute(
+                DELETE_ACTIVATION_SQL,
+                &[&tenant, &CATALOG_ID, &ENVIRONMENT, &ATTACHMENT_ID],
+            )
+            .await?;
+        admin
+            .execute(
+                DELETE_HEAD_SQL,
+                &[&tenant, &CATALOG_ID, &ENVIRONMENT, &flow_version],
+            )
+            .await?;
+        admin
+            .execute(
+                "UPDATE catalog.catalogs SET state='superseded' \
+                 WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3 AND state='applied'",
+                &[&tenant, &CATALOG_ID, &flow_version],
+            )
+            .await?;
+        Ok(())
+    }
+    .await
+    .map_err(|error: anyhow::Error| anyhow::anyhow!("teardown: {error}"));
     drop(admin);
     let _ = conn_task.await;
     r.map(|_| ())
@@ -333,6 +596,12 @@ async fn teardown(admin_url: &str, schema: &str, fresh_schema: bool) -> anyhow::
 pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
     if !valid_ident(&args.schema) {
         bail!("invalid schema {:?}", args.schema);
+    }
+    if args.flow_version == 0 {
+        bail!("--flow-version must be positive");
+    }
+    if args.deployment.is_none() && args.flow_version != 1 {
+        bail!("local f3proof supports only --flow-version 1");
     }
     let app_url = args
         .database_url
@@ -379,7 +648,14 @@ pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
     if args.teardown
         && let Some(admin_url) = args.admin_database_url.clone()
     {
-        let _ = teardown(&admin_url, &args.schema, args.deployment.is_none()).await;
+        let _ = teardown(
+            &admin_url,
+            &args.schema,
+            &args.tenant,
+            args.flow_version,
+            args.deployment.is_none(),
+        )
+        .await;
     }
 
     println!("\nf3proof complete — overall PASS: {ok}");
@@ -601,13 +877,30 @@ async fn assert_f3(client: &Client, run_id: &str, secret: &str) -> anyhow::Resul
             &[&run_id],
         )
         .await?;
-    let graph: Option<String> = client
+    let pinned_graph: Option<String> = client
         .query_opt(
-            "SELECT graph_json::text FROM flows WHERE flow_id = $1 AND active",
-            &[&FLOW_ID],
+            "SELECT artifact.graph_json::text \
+             FROM runs AS run \
+             JOIN catalog.flow_artifacts AS artifact \
+               ON artifact.tenant_id=run.tenant_id \
+              AND artifact.flow_id=run.flow_id \
+              AND artifact.flow_version=run.flow_version \
+             WHERE run.run_id=$1",
+            &[&run_id],
         )
         .await?
-        .and_then(|r| r.get(0));
+        .map(|row| row.get(0));
+    let graph: Option<String> = if pinned_graph.is_some() {
+        pinned_graph
+    } else {
+        client
+            .query_opt(
+                "SELECT graph_json::text FROM flows WHERE flow_id = $1 AND active",
+                &[&FLOW_ID],
+            )
+            .await?
+            .and_then(|row| row.get(0))
+    };
     let nodes = client
         .query(
             "SELECT node_id, output_json::text, input_json::text, error_detail::text \
@@ -662,7 +955,7 @@ mod tests {
     /// (e.g. a broken JMESPath in a config) fails here, not only in-cluster.
     #[test]
     fn gate_flow_is_a_valid_f3_flow() {
-        let json = gate_flow_json("serve-echo:8091", -60_000);
+        let json = gate_flow_json("serve-echo:8091", -60_000, 1);
         let flow = wamn_flow::Flow::from_json(&json).expect("gate flow parses");
         let interfaces = std::collections::BTreeMap::from([
             ("conditional".into(), vec!["true".into(), "false".into()]),
@@ -731,5 +1024,29 @@ mod tests {
             manifest.contains("\"default\""),
             "keyed by the default project"
         );
+    }
+
+    #[test]
+    fn authoritative_fixture_builds_a_verifiable_pinned_artifact() {
+        let graph = gate_flow_json("serve-echo:8091", -60_000, 7);
+        let (flow, artifact) = f3_artifact(TENANT_DEFAULT, &graph).expect("artifact builds");
+        assert_eq!(flow.version, 7);
+        assert_eq!(artifact.identity().id().flow_id(), FLOW_ID);
+        assert!(!artifact.interface_bundle().interfaces().is_empty());
+        assert!(!artifact.occurrence_recovery().is_empty());
+    }
+
+    #[test]
+    fn in_cluster_registration_uses_authoritative_release_tables() {
+        assert!(REGISTER_ARTIFACT_SQL.contains("catalog.register_flow_artifact"));
+        assert!(REGISTER_MANIFEST_SQL.contains("catalog.register_release_manifest"));
+        assert!(REGISTER_FLOW_SQL.contains("INSERT INTO catalog.release_flows"));
+        assert!(REGISTER_EXPOSURE_SQL.contains("catalog.register_release_exposure_manifest"));
+        assert!(REGISTER_SOURCE_SQL.contains("INSERT INTO catalog.release_sources"));
+        assert!(REGISTER_ATTACHMENT_SQL.contains("INSERT INTO catalog.release_attachments"));
+        assert!(UPSERT_HEAD_SQL.contains("INSERT INTO catalog.catalog_heads"));
+        assert!(UPSERT_ACTIVATION_SQL.contains("INSERT INTO catalog.attachment_activation"));
+        assert!(DELETE_ACTIVATION_SQL.starts_with("DELETE FROM catalog.attachment_activation"));
+        assert!(DELETE_HEAD_SQL.starts_with("DELETE FROM catalog.catalog_heads"));
     }
 }
