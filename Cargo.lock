@@ -4339,10 +4339,13 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "wamn-catalog",
  "wamn-control-registry",
  "wamn-flow",
+ "wamn-node-manifest",
  "wamn-run-state",
  "wamn-scheduler",
+ "wamn-standard-nodes",
 ]
 
 [[package]]

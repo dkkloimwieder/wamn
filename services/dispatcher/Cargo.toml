@@ -29,6 +29,7 @@ async-nats = { workspace = true }
 rustls = { workspace = true, features = ["std", "tls12", "aws-lc-rs"] }
 # The trigger registry is the flows table's graph_json — the dispatcher parses
 # each active flow and registers its cron / row-event trigger.
+wamn-catalog = { workspace = true }
 wamn-flow = { workspace = true }
 # Durable state transitions and injected-clock scheduling decisions.
 wamn-run-state = { workspace = true }
@@ -36,3 +37,7 @@ wamn-scheduler = { workspace = true }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
 wamn-control-registry = { workspace = true }
+
+[dev-dependencies]
+wamn-node-manifest = { workspace = true }
+wamn-standard-nodes = { workspace = true }

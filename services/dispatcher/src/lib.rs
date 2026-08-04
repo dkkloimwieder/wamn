@@ -58,6 +58,7 @@ use clap::Args;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
 use tracing::Instrument as _;
+use wamn_catalog::PinnedArtifact;
 use wamn_flow::{EntryKind, Flow, Ordering};
 use wamn_run_state::admission::{AdmissionProducer, AdmissionResult, admission_sql};
 use wamn_run_state::cancellation::cancellation_sweep_sql;
@@ -281,7 +282,12 @@ impl Default for DispatcherConfig {
 /// pass through [`admission_sql`].
 pub const CRON_ATTACHMENTS_SQL: &str = "\
 SELECT a.catalog_id, a.environment, a.catalog_version, a.attachment_id, \
-       a.definition_hash, a.flow_id, rf.flow_version, fa.graph_json::text, \
+       a.definition_hash, a.flow_id, rf.flow_version, \
+       fa.tenant_id AS artifact_tenant_id, fa.flow_id AS artifact_flow_id, \
+       fa.flow_version AS artifact_flow_version, fa.graph_json::text, \
+       fa.graph_hash, fa.artifact_hash, fa.interface_bundle_json, \
+       fa.interface_bundle_hash, fa.component_digests::text, \
+       fa.occurrence_recovery_json, fa.occurrence_recovery_hash, \
        source.definition_json->>'schedule' AS schedule, \
        (a.definition_json->>'run-deadline-ms')::bigint AS run_deadline_ms \
   FROM catalog.cron_attachments AS a \
@@ -332,6 +338,42 @@ struct Registry {
     policy: HashMap<String, PartitionPolicy>,
 }
 
+struct ArtifactRow {
+    tenant_id: String,
+    flow_id: String,
+    flow_version: i32,
+    graph_json: String,
+    graph_hash: String,
+    artifact_hash: String,
+    interface_bundle_json: String,
+    interface_bundle_hash: String,
+    component_digests_json: String,
+    occurrence_recovery_json: Option<String>,
+    occurrence_recovery_hash: Option<String>,
+}
+
+impl ArtifactRow {
+    fn verified_flow(&self) -> Result<Flow, String> {
+        let flow_version = u32::try_from(self.flow_version)
+            .map_err(|_| "artifact flow version is not a positive u32".to_string())?;
+        PinnedArtifact::from_storage(
+            &self.tenant_id,
+            &self.flow_id,
+            flow_version,
+            &self.graph_json,
+            &self.graph_hash,
+            &self.artifact_hash,
+            &self.interface_bundle_json,
+            &self.interface_bundle_hash,
+            &self.component_digests_json,
+            self.occurrence_recovery_json.as_deref(),
+            self.occurrence_recovery_hash.as_deref(),
+        )
+        .map(|artifact| artifact.flow().clone())
+        .map_err(|error| error.to_string())
+    }
+}
+
 /// Parse the authoritative attachment scan. A pinned artifact that fails to
 /// parse or validate is skipped with a warning (one bad definition must not
 /// wedge the project).
@@ -340,15 +382,20 @@ fn parse_registry(project: &str, rows: &[tokio_postgres::Row]) -> Registry {
     for row in rows {
         let flow_id: String = row.get("flow_id");
         let flow_version: i32 = row.get("flow_version");
-        let graph: String = row.get("graph_json");
-        let parsed = Flow::from_json(&graph)
-            .map_err(|e| e.to_string())
-            .and_then(|f| {
-                f.validate(&Default::default())
-                    .map_err(|issues| format!("{issues:?}"))
-                    .map(|_| f)
-            });
-        let flow = match parsed {
+        let artifact = ArtifactRow {
+            tenant_id: row.get("artifact_tenant_id"),
+            flow_id: row.get("artifact_flow_id"),
+            flow_version: row.get("artifact_flow_version"),
+            graph_json: row.get("graph_json"),
+            graph_hash: row.get("graph_hash"),
+            artifact_hash: row.get("artifact_hash"),
+            interface_bundle_json: row.get("interface_bundle_json"),
+            interface_bundle_hash: row.get("interface_bundle_hash"),
+            component_digests_json: row.get("component_digests"),
+            occurrence_recovery_json: row.get("occurrence_recovery_json"),
+            occurrence_recovery_hash: row.get("occurrence_recovery_hash"),
+        };
+        let flow = match artifact.verified_flow() {
             Ok(f) => f,
             Err(why) => {
                 tracing::warn!(project = %project, %flow_id, why,
@@ -1200,12 +1247,134 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        CRON_ATTACHMENTS_SQL, DispatcherConfig, Ordering, PartitionPolicy, RUN_QUEUE_DEPTH_SQL,
-        Registry, cancellation_sweep_sql, fire, parse_registry, partition_key_for_firing,
-        partition_policy_for_firing, valid_tenant,
+        ArtifactRow, CRON_ATTACHMENTS_SQL, DispatcherConfig, Ordering, PartitionPolicy,
+        RUN_QUEUE_DEPTH_SQL, Registry, cancellation_sweep_sql, fire, parse_registry,
+        partition_key_for_firing, partition_policy_for_firing, valid_tenant,
     };
+    use wamn_catalog::{Artifact, NodeImplementation};
+    use wamn_flow::Flow;
+    use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
     use wamn_run_state::admission::AdmissionResult;
     use wamn_scheduler::Firing;
+
+    fn f3_artifact_row() -> ArtifactRow {
+        let mut graph: serde_json::Value = serde_json::from_str(
+            r#"{
+              "schema-version":"0.1",
+              "flow-id":"escalate-stale-holds",
+              "version":1,
+              "connection-requirements":[{
+                "name":"manager-notifications",
+                "requirement":null
+              }],
+              "nodes":[
+                {"id":"cron","type":"cron"},
+                {"id":"shift","type":"time-shift","config":{"base":"scheduled-at","offset-ms":-60000,"format":"iso","key":"cutoff"}},
+                {"id":"list-stale","type":"postgres","config":{"entity":"quality_holds","op":"list"}},
+                {"id":"gate","type":"conditional","config":{"expression":"length(@) > `0`"}},
+                {"id":"escalate","type":"postgres","config":{"entity":"quality_holds","op":"update"}},
+                {"id":"notify","type":"http-request","connection":"manager-notifications","config":{"method":"POST","path-and-query":"/holds"}},
+                {"id":"advance","type":"transform","config":{"expression":"[1:]"}}
+              ],
+              "edges":[
+                {"from":"cron","to":"shift"},
+                {"from":"shift","to":"list-stale"},
+                {"from":"list-stale","to":"gate"},
+                {"from":"gate","from-port":"true","to":"escalate"},
+                {"from":"gate","from-port":"true","to":"advance"},
+                {"from":"escalate","to":"notify"},
+                {"from":"advance","to":"gate"}
+              ]
+            }"#,
+        )
+        .expect("F3 fixture JSON parses");
+        graph["connection-requirements"][0]["requirement"] = serde_json::to_value(
+            PortableConnectionRequirement::never_replay(ConnectionTypeDescriptor::http_v1()),
+        )
+        .expect("HTTP connection requirement serializes");
+        let flow = Flow::from_json(&graph.to_string()).expect("F3 fixture flow parses");
+        let mut implementations = [
+            "cron",
+            "time-shift",
+            "postgres",
+            "conditional",
+            "http-request",
+            "transform",
+        ]
+        .into_iter()
+        .map(|node_type| {
+            let descriptor = wamn_standard_nodes::describe(node_type)
+                .unwrap_or_else(|| panic!("missing descriptor for {node_type}"));
+            let contract = wamn_standard_nodes::resolve_descriptor(descriptor)
+                .unwrap_or_else(|error| panic!("invalid descriptor for {node_type}: {error}"));
+            NodeImplementation::from_resolved_platform_contract(contract)
+                .unwrap_or_else(|error| panic!("invalid implementation for {node_type}: {error}"))
+        })
+        .collect::<Vec<_>>();
+        implementations
+            .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+        let artifact = Artifact::new("demo-tenant", &flow, implementations)
+            .expect("F3 fixture artifact resolves");
+        ArtifactRow {
+            tenant_id: "demo-tenant".to_string(),
+            flow_id: flow.flow_id.clone(),
+            flow_version: i32::try_from(flow.version).expect("fixture version fits i32"),
+            graph_json: flow.to_json(),
+            graph_hash: artifact.graph_hash().to_string(),
+            artifact_hash: artifact.identity().artifact_hash().as_str().to_string(),
+            interface_bundle_json: String::from_utf8(
+                artifact.interface_bundle().canonical_bytes().to_vec(),
+            )
+            .expect("canonical interface bundle is UTF-8"),
+            interface_bundle_hash: artifact.interface_bundle().hash().to_string(),
+            component_digests_json: serde_json::to_string(artifact.supplied_components())
+                .expect("component digests serialize"),
+            occurrence_recovery_json: Some(
+                String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+                    .expect("canonical occurrence recovery is UTF-8"),
+            ),
+            occurrence_recovery_hash: Some(artifact.occurrence_recovery_hash().to_string()),
+        }
+    }
+
+    #[test]
+    fn dispatcher_accepts_f3_with_pinned_release_interfaces() {
+        let row = f3_artifact_row();
+        let flow = row
+            .verified_flow()
+            .expect("valid F3 artifact row must verify");
+        assert_eq!(flow.flow_id, "escalate-stale-holds");
+        assert_eq!(flow.nodes.len(), 7);
+    }
+
+    #[test]
+    fn dispatcher_rejects_missing_tampered_or_mismatched_artifact_inputs() {
+        let mut missing = f3_artifact_row();
+        missing.interface_bundle_json.clear();
+        assert!(missing.verified_flow().is_err(), "missing bundle survived");
+
+        let mut tampered = f3_artifact_row();
+        tampered.interface_bundle_hash = format!("sha256:{}", "0".repeat(64));
+        assert!(
+            tampered.verified_flow().is_err(),
+            "tampered bundle survived"
+        );
+
+        let mut mismatched = f3_artifact_row();
+        mismatched.flow_id = "different-flow".to_string();
+        assert!(
+            mismatched.verified_flow().is_err(),
+            "mismatched artifact identity survived"
+        );
+
+        let mut missing_recovery = f3_artifact_row();
+        missing_recovery.occurrence_recovery_json = None;
+        missing_recovery.occurrence_recovery_hash = None;
+        assert!(
+            missing_recovery.verified_flow().is_err(),
+            "missing recovery identity survived"
+        );
+    }
 
     #[test]
     fn dispatcher_sweep_uses_run_state_response_deadline_mapping() {
@@ -1251,6 +1420,14 @@ mod tests {
         assert!(sql.contains("source.source_kind = 'schedule'"));
         assert!(sql.contains("JOIN catalog.release_flows AS rf"));
         assert!(sql.contains("JOIN catalog.flow_artifacts AS fa"));
+        assert!(sql.contains("fa.tenant_id AS artifact_tenant_id"));
+        assert!(sql.contains("fa.graph_hash"));
+        assert!(sql.contains("fa.artifact_hash"));
+        assert!(sql.contains("fa.interface_bundle_json"));
+        assert!(sql.contains("fa.interface_bundle_hash"));
+        assert!(sql.contains("fa.component_digests::text"));
+        assert!(sql.contains("fa.occurrence_recovery_json"));
+        assert!(sql.contains("fa.occurrence_recovery_hash"));
         assert!(sql.contains("source.definition_json->>'schedule'"));
         assert!(!sql.contains("INSERT INTO"));
         assert!(!sql.contains("wamn_run.runs"));
@@ -1290,20 +1467,48 @@ mod tests {
             let ddl = std::fs::read_to_string(format!("{root}{path}")).unwrap();
             client.batch_execute(&ddl).await.unwrap();
         }
-        let graph = serde_json::json!({
-            "schema-version": "0.1",
-            "flow-id": "flow-cron",
-            "version": 1,
-            "nodes": [{"id": "entry", "type": "cron"}]
-        })
-        .to_string();
+        let graph = Flow::from_json(
+            &serde_json::json!({
+                "schema-version": "0.1",
+                "flow-id": "flow-cron",
+                "version": 1,
+                "nodes": [{"id": "entry", "type": "cron"}]
+            })
+            .to_string(),
+        )
+        .expect("live fixture flow parses");
+        let descriptor = wamn_standard_nodes::describe("cron").expect("cron descriptor exists");
+        let contract =
+            wamn_standard_nodes::resolve_descriptor(descriptor).expect("cron descriptor resolves");
+        let implementation = NodeImplementation::from_resolved_platform_contract(contract)
+            .expect("cron implementation resolves");
+        let artifact = Artifact::new("t1", &graph, vec![implementation])
+            .expect("live fixture artifact resolves");
+        let graph_json = graph.to_json();
+        let interface_bundle =
+            String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+                .expect("canonical interface bundle is UTF-8");
+        let component_digests = serde_json::to_string(artifact.supplied_components())
+            .expect("component digests serialize");
+        let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+            .expect("canonical occurrence recovery is UTF-8");
         client
             .execute(
                 "INSERT INTO catalog.flow_artifacts \
                    (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                    artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-                 VALUES ('t1','flow-cron',1,'0.1',$1::text::jsonb,'gh','ah','[]','ih','[]')",
-                &[&graph],
+                    artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
+                    occurrence_recovery_json,occurrence_recovery_hash) \
+                 VALUES ('t1','flow-cron',1,'0.1',$1::text::jsonb,$2,$3,$4,$5,$6::text::jsonb,$7,$8)",
+                &[
+                    &graph_json,
+                    &artifact.graph_hash(),
+                    &artifact.identity().artifact_hash().as_str(),
+                    &interface_bundle,
+                    &artifact.interface_bundle().hash(),
+                    &component_digests,
+                    &occurrence_recovery,
+                    &artifact.occurrence_recovery_hash(),
+                ],
             )
             .await
             .unwrap();
@@ -1315,7 +1520,7 @@ mod tests {
                  INSERT INTO catalog.release_manifests \
                    (tenant_id,catalog_id,catalog_version,members_json) \
                  VALUES ('t1','c1',1, \
-                   '[{\"flow-id\":\"flow-cron\",\"flow-version\":1,\"artifact-hash\":\"ah\"}]'); \
+                   '[{\"flow-id\":\"flow-cron\",\"flow-version\":1,\"artifact-hash\":\"placeholder\"}]'); \
                  INSERT INTO catalog.release_flows \
                    (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
                  VALUES ('t1','c1',1,'flow-cron',1); \
