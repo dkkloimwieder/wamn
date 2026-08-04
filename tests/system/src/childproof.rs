@@ -75,7 +75,7 @@ pub mod tests {
             .find("if d.node_type == \"invoke-flow\"")
             .expect("dedicated invoke-flow branch");
         let attempt = runner[invoke..]
-            .find("let class = recovery_class")
+            .find("let admission = recovery_admission")
             .map(|offset| invoke + offset)
             .expect("ordinary attempt path");
         assert!(invoke < attempt);
