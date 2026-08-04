@@ -36,6 +36,7 @@ const ALLOWED_DIRECT: &[&str] = &[
     "wamn-schema-model",
     "serde_json",
     "jmespath",
+    "chrono",
 ];
 
 fn metadata() -> Value {

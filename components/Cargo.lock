@@ -1270,6 +1270,7 @@ dependencies = [
 name = "wamn-standard-nodes"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "jmespath",
  "serde_json",
  "wamn-entity-access",

@@ -1952,7 +1952,7 @@ proof gates:
   from-zero stored-suite campaign.
 - **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the ExecutionHost
   scenario capability set at a fixed virtual epoch. The **48h cutoff** is proven by
-  time-offset arithmetic (`fire-at-ms − 48h`) against **epoch-anchored** seed rows
+  time-offset arithmetic (`scheduled-at − 48h`) against **epoch-anchored** seed rows
   (2 stale opened 49h before the epoch, 1 fresh AT it, 1 stale-disposed) — 48h
   evaluated in wall-clock milliseconds. Asserts escalated=2 / open=1 / disposed=1
   (`DbState`) + the two notify `Egress{count 2, none-denied}`. The credential
