@@ -76,7 +76,7 @@ fn validate_contract(flow_json: &str, exposure_json: &str) -> anyhow::Result<()>
         &nodes,
         "cutoff-at-48h",
         &[
-            ("base", json!("scheduled-at")),
+            ("base", json!("\"scheduled-at\"")),
             ("offset-ms", json!(-CUTOFF_OFFSET_MS)),
             ("ctx", json!("@")),
         ],
@@ -550,6 +550,13 @@ pub mod tests {
 
         let mut graph: Value = serde_json::from_str(FLOW_JSON).unwrap();
         graph["edges"][5]["to"] = json!("next-stale-hold");
+        assert!(validate_contract(&graph.to_string(), EXPOSURE_JSON).is_err());
+    }
+
+    #[test]
+    fn unquoted_hyphenated_cron_payload_lookup_is_refused() {
+        let mut graph: Value = serde_json::from_str(FLOW_JSON).unwrap();
+        graph["nodes"][1]["config"]["base"] = json!("scheduled-at");
         assert!(validate_contract(&graph.to_string(), EXPOSURE_JSON).is_err());
     }
 
