@@ -48,6 +48,26 @@ mod tests {
                     ExecutableRecoveryContract::effectful(false),
                 )
                 .expect("supplied component pin is complete"),
+                NodeImplementation::platform(
+                    ResolvedNodeInterface::new(
+                        "request",
+                        "wamn:node/node@0.1.0",
+                        vec!["main".to_string()],
+                        vec![CapabilityClass::Pure],
+                        Vec::new(),
+                    ),
+                    ExecutableRecoveryContract::pure(),
+                ),
+                NodeImplementation::platform(
+                    ResolvedNodeInterface::new(
+                        "respond",
+                        "wamn:node/node@0.1.0",
+                        vec!["main".to_string()],
+                        vec![CapabilityClass::Pure],
+                        Vec::new(),
+                    ),
+                    ExecutableRecoveryContract::pure(),
+                ),
             ],
         )
         .expect("artifact is canonical")
