@@ -1070,10 +1070,6 @@ fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
 /// the same `{"error": {...}}` payload the engine routes — exactly what 5.7
 /// reconstruction replays (poc-webhook-f1's shape verbatim); the taxonomy
 /// lands in `error_kind`/`error_detail` for the run history.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the error row's columns plus the 9.6 capture policy"
-)]
 fn record_error(
     run_id: &str,
     node_id: &str,
