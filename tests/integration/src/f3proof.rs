@@ -18,8 +18,10 @@
 //!   matches every notify's recorded digest against `fnv1a(secret)` (delivery) and
 //!   scans every recorded row for the raw secret (containment) — the credproof
 //!   pattern, once per escalated hold.
-//! * **egress allowlist (fqg.11)** — the flow declares `allowed-hosts: [echo]`;
-//!   completing at all proves the fail-closed default admitted exactly the target.
+//! * **portable HTTP connection** — the artifact declares one manager-notification
+//!   requirement; the gate binds it to an environment-owned serve-echo generation
+//!   and credential handle. Completing proves the trusted adapter admitted that
+//!   exact binding and target.
 //!
 //! Two modes, one preamble (provision the holds catalog + table + seed 2 stale +
 //! 1 fresh + register the gate flow):
@@ -55,6 +57,11 @@ const SOURCE_ID: &str = "f3proof-schedule";
 const ATTACHMENT_ID: &str = "f3proof-cron";
 const SOURCE_HASH: &str = "sha256:f3proof-schedule";
 const DEFINITION_HASH: &str = "sha256:f3proof-cron";
+const CONNECTION_NAME: &str = "manager-notifications";
+const CONNECTION_INSTANCE_ID: &str = "f3proof-manager-notifications";
+const CONNECTION_CREDENTIAL_HANDLE: &str = "notify-webhook";
+const CONNECTION_GENERATION_HASH: &str = "sha256:f3proof-manager-notifications-generation-v1";
+const CONNECTION_BINDING_HASH: &str = "sha256:f3proof-manager-notifications-binding-v1";
 
 const REGISTER_CATALOG_SQL: &str = "INSERT INTO catalog.catalogs \
    (tenant_id,catalog_id,version,environment,schema_version,state) \
@@ -113,10 +120,8 @@ pub struct F3ProofArgs {
     #[arg(long, default_value = TENANT_DEFAULT)]
     pub tenant: String,
 
-    /// The serve-echo authority the notify step targets — baked into the gate
-    /// flow's url + allowed-hosts (F3's notify url is a constant, not input-
-    /// templated, because notify runs downstream of the cycle where the run
-    /// input is gone). In-cluster the Service `serve-echo:8091`; locally a
+    /// The serve-echo authority used by the gate's environment-owned connection
+    /// generation. In-cluster the Service `serve-echo:8091`; locally a
     /// `wamn-gates serve-echo` port like `127.0.0.1:8097`.
     #[arg(long, default_value = "serve-echo:8091")]
     pub echo_host: String,
@@ -283,6 +288,7 @@ async fn seed_authoritative_cron_release(
     admin: &mut Client,
     tenant: &str,
     graph: &str,
+    echo_host: &str,
     flow_version: u32,
 ) -> anyhow::Result<()> {
     let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
@@ -295,6 +301,27 @@ async fn seed_authoritative_cron_release(
     let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
         .expect("canonical F3 occurrence recovery is UTF-8");
     let artifact_hash = artifact.identity().artifact_hash().as_str();
+    let connection = flow
+        .connection_requirements
+        .iter()
+        .find(|connection| connection.name == CONNECTION_NAME)
+        .context("F3 manager notification connection requirement")?;
+    let requirement_json = serde_json::to_string(&connection.requirement)?;
+    let requirement_hash = wamn_schema_control::connections::ArtifactConnectionRequirement::new(
+        artifact_hash,
+        CONNECTION_NAME,
+        connection.requirement.clone(),
+    )
+    .requirement_hash();
+    let connection_definition = serde_json::to_string(&json!({
+        "primary-authority": format!("http://{}/", echo_host.trim_end_matches('/')),
+        "failover-authorities": [],
+        "tls-verification": "disabled",
+        "tls-names": [],
+        "redirect-policy": "same-authority",
+        "proxy-transport": null,
+        "credential-set-handle": CONNECTION_CREDENTIAL_HANDLE,
+    }))?;
     let members = json!([{
         "flow-id": FLOW_ID,
         "flow-version": flow_version,
@@ -335,6 +362,18 @@ async fn seed_authoritative_cron_release(
                 &components,
                 &occurrence_recovery,
                 &artifact.occurrence_recovery_hash(),
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
+            wamn_schema_control::connections::insert_connection_requirement_sql(),
+            &[
+                &tenant,
+                &artifact_hash,
+                &CONNECTION_NAME,
+                &requirement_json,
+                &requirement_hash,
             ],
         )
         .await?;
@@ -386,6 +425,82 @@ async fn seed_authoritative_cron_release(
         .await?;
     transaction
         .execute(
+            "INSERT INTO catalog.connection_instances \
+               (tenant_id,environment,instance_id,requirement_type,contract) \
+             VALUES ($1,$2,$3,'http','wamn:connection/http@0.1.0') \
+             ON CONFLICT (tenant_id,environment,instance_id) DO NOTHING",
+            &[&tenant, &ENVIRONMENT, &CONNECTION_INSTANCE_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.connection_generations \
+               (tenant_id,environment,instance_id,generation,definition_json, \
+                definition_hash,credential_set_handle) \
+             VALUES ($1,$2,$3,1,$4::text::jsonb,$5,$6) \
+             ON CONFLICT (tenant_id,environment,instance_id,generation) DO NOTHING",
+            &[
+                &tenant,
+                &ENVIRONMENT,
+                &CONNECTION_INSTANCE_ID,
+                &connection_definition,
+                &CONNECTION_GENERATION_HASH,
+                &CONNECTION_CREDENTIAL_HANDLE,
+            ],
+        )
+        .await?;
+    let generation_matches: bool = transaction
+        .query_one(
+            "SELECT definition_json=$4::text::jsonb AND definition_hash=$5 \
+                    AND credential_set_handle=$6 \
+               FROM catalog.connection_generations \
+              WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 AND generation=1",
+            &[
+                &tenant,
+                &ENVIRONMENT,
+                &CONNECTION_INSTANCE_ID,
+                &connection_definition,
+                &CONNECTION_GENERATION_HASH,
+                &CONNECTION_CREDENTIAL_HANDLE,
+            ],
+        )
+        .await?
+        .get(0);
+    if !generation_matches {
+        bail!("existing F3 connection generation differs from the requested target");
+    }
+    transaction
+        .execute(
+            "UPDATE catalog.connection_instances \
+                SET lifecycle_status='enabled',active_generation=1,revision=revision+1, \
+                    updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') \
+              WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 \
+                AND (lifecycle_status<>'enabled' OR active_generation IS DISTINCT FROM 1)",
+            &[&tenant, &ENVIRONMENT, &CONNECTION_INSTANCE_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            "INSERT INTO catalog.connection_bindings \
+               (tenant_id,catalog_id,catalog_version,artifact_hash,requirement_name, \
+                environment,instance_id,binding_status,validation_status,validation_hash) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'active','valid',$8) \
+             ON CONFLICT (tenant_id,catalog_id,catalog_version,artifact_hash,requirement_name) \
+             DO NOTHING",
+            &[
+                &tenant,
+                &CATALOG_ID,
+                &flow_version,
+                &artifact_hash,
+                &CONNECTION_NAME,
+                &ENVIRONMENT,
+                &CONNECTION_INSTANCE_ID,
+                &CONNECTION_BINDING_HASH,
+            ],
+        )
+        .await?;
+    transaction
+        .execute(
             "UPDATE catalog.catalogs SET state='superseded' \
              WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 \
                AND version<>$4 AND state='applied'",
@@ -399,6 +514,17 @@ async fn seed_authoritative_cron_release(
             &[&tenant, &CATALOG_ID, &flow_version],
         )
         .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn activate_authoritative_cron_release(
+    admin: &mut Client,
+    tenant: &str,
+    flow_version: u32,
+) -> anyhow::Result<()> {
+    let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
+    let transaction = admin.transaction().await?;
     transaction
         .execute(
             UPSERT_HEAD_SQL,
@@ -418,6 +544,53 @@ async fn seed_authoritative_cron_release(
         )
         .await?;
     transaction.commit().await?;
+    Ok(())
+}
+
+async fn deactivate_authoritative_cron_release(
+    admin: &mut Client,
+    tenant: &str,
+    flow_version: u32,
+) -> anyhow::Result<()> {
+    let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
+    let transaction = admin.transaction().await?;
+    transaction
+        .execute(
+            DELETE_ACTIVATION_SQL,
+            &[&tenant, &CATALOG_ID, &ENVIRONMENT, &ATTACHMENT_ID],
+        )
+        .await?;
+    transaction
+        .execute(
+            DELETE_HEAD_SQL,
+            &[&tenant, &CATALOG_ID, &ENVIRONMENT, &flow_version],
+        )
+        .await?;
+    transaction.commit().await?;
+    Ok(())
+}
+
+async fn clear_in_cluster_runtime(
+    admin: &Client,
+    schema: &str,
+    tenant: &str,
+) -> anyhow::Result<()> {
+    admin
+        .execute(
+            &format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
+            &[&tenant, &FLOW_ID],
+        )
+        .await?;
+    admin
+        .batch_execute(&format!(
+            "DELETE FROM {schema}.node_runs WHERE run_id IN \
+               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
+             DELETE FROM {schema}.run_queue WHERE run_id IN \
+               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
+             DELETE FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'; \
+             DELETE FROM {schema}.flows WHERE flow_id = '{FLOW_ID}';"
+        ))
+        .await?;
     Ok(())
 }
 
@@ -458,6 +631,18 @@ async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Re
                 .await
                 .context("apply runner-table DDL")?;
         }
+        if !fresh_schema {
+            deactivate_authoritative_cron_release(
+                &mut admin,
+                &args.tenant,
+                args.flow_version,
+            )
+            .await
+            .context("deactivate any prior F3 cron release")?;
+            clear_in_cluster_runtime(&admin, schema, &args.tenant)
+                .await
+                .context("clear any prior F3 runtime state")?;
+        }
         admin
             .batch_execute(&holds_ddl(schema))
             .await
@@ -480,6 +665,7 @@ async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Re
                 &mut admin,
                 &args.tenant,
                 &graph,
+                &args.echo_host,
                 args.flow_version,
             )
             .await
@@ -553,22 +739,11 @@ async fn teardown(
             return anyhow::Ok(());
         }
         let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
-        admin
-            .execute(
-                &format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
-                &[&tenant, &FLOW_ID],
-            )
-            .await?;
+        clear_in_cluster_runtime(&admin, schema, tenant).await?;
         admin
             .batch_execute(&format!(
                 "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
-                 DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE; \
-                 DELETE FROM {schema}.node_runs WHERE run_id IN \
-                   (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-                 DELETE FROM {schema}.run_queue WHERE run_id IN \
-                   (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-                 DELETE FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'; \
-                 DELETE FROM {schema}.flows WHERE flow_id = '{FLOW_ID}';"
+                 DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE;"
             ))
             .await?;
         admin
@@ -588,6 +763,16 @@ async fn teardown(
                 "UPDATE catalog.catalogs SET state='superseded' \
                  WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3 AND state='applied'",
                 &[&tenant, &CATALOG_ID, &flow_version],
+            )
+            .await?;
+        admin
+            .execute(
+                "UPDATE catalog.connection_instances \
+                    SET lifecycle_status='disabled',active_generation=NULL,revision=revision+1, \
+                        updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') \
+                  WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 \
+                    AND (lifecycle_status<>'disabled' OR active_generation IS NOT NULL)",
+                &[&tenant, &ENVIRONMENT, &CONNECTION_INSTANCE_ID],
             )
             .await?;
         Ok(())
@@ -629,7 +814,7 @@ pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
         setup(&args, &admin_url, &app_url)
             .await
             .context("setup: provision schema + catalog + holds + register flow")?;
-        println!("## setup — schema + catalog + 2 stale/1 fresh holds + gate flow (active)");
+        println!("## setup — schema + catalog + 2 stale/1 fresh holds + gate flow (registered)");
     }
 
     let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
@@ -654,14 +839,14 @@ pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
     if args.teardown
         && let Some(admin_url) = args.admin_database_url.clone()
     {
-        let _ = teardown(
+        teardown(
             &admin_url,
             &args.schema,
             &args.tenant,
             args.flow_version,
             args.deployment.is_none(),
         )
-        .await;
+        .await?;
     }
 
     println!("\nf3proof complete — overall PASS: {ok}");
@@ -717,29 +902,68 @@ async fn drive_in_cluster(
     let parked = wait_scale(&kube, deployment, park_deadline, |s| s.status_replicas == 0).await?;
     check(&mut ok, "PARK: runner scaled to 0 replicas", parked);
 
-    // --- dispatcher fires (distinct phase) ---
+    // --- activate only after PARK, capture one fire, then deactivate. ---
+    let admin_url = args
+        .admin_database_url
+        .as_deref()
+        .context("in-cluster F3 activation needs WAMN_PG_ADMIN_URL")?;
+    let (mut admin, connection) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect for F3 activation")?;
+    let connection_task = tokio::spawn(connection);
+    let activated_after: SystemTime = client
+        .query_one("SELECT clock_timestamp()", &[])
+        .await?
+        .get(0);
+    activate_authoritative_cron_release(&mut admin, &args.tenant, args.flow_version).await?;
+
     let fire_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
-    let run_id = loop {
-        if let Some(id) = latest_cron_run(client).await? {
-            break id;
+    let run_id_result: anyhow::Result<Option<String>> = async {
+        loop {
+            if let Some(id) = first_cron_run_after(client, activated_after).await? {
+                break Ok(Some(id));
+            }
+            if Instant::now() > fire_deadline {
+                break Ok(None);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        if Instant::now() > fire_deadline {
-            check(
-                &mut ok,
-                "DISPATCH: a cron run was written by the dispatcher",
-                false,
-            );
-            return Ok((String::new(), ok, Some(restore_to)));
-        }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    .await;
+    let deactivate_result =
+        deactivate_authoritative_cron_release(&mut admin, &args.tenant, args.flow_version).await;
+    drop(admin);
+    let _ = connection_task.await;
+    deactivate_result.context("deactivate F3 cron release after dispatch")?;
+    let run_id = run_id_result?;
+    let Some(run_id) = run_id else {
+        check(
+            &mut ok,
+            "DISPATCH: a cron run was written by the dispatcher",
+            false,
+        );
+        return Ok((String::new(), ok, Some(restore_to)));
     };
-    check(&mut ok, "DISPATCH: the dispatcher fired a cron run", true);
+    let dispatched_count: i64 = client
+        .query_one(
+            "SELECT count(*) FROM runs WHERE flow_id = $1 AND trigger_source = 'cron' \
+               AND created_at >= $2",
+            &[&FLOW_ID, &activated_after],
+        )
+        .await?
+        .get(0);
+    check(
+        &mut ok,
+        &format!("DISPATCH: exactly one cron run fired (got {dispatched_count})"),
+        dispatched_count == 1,
+    );
 
     // --- wake 0→1 + drain ---
     let wake_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     let woke = wait_scale(&kube, deployment, wake_deadline, |s| s.spec_replicas > 0).await?;
     check(&mut ok, "WAKE: the waker scaled the runner 0→1", woke);
-    let status = poll_to_terminal(client, &run_id, wake_deadline).await?;
+    let drain_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+    let status = poll_to_terminal(client, &run_id, drain_deadline).await?;
     check(
         &mut ok,
         &format!("DRAIN: cron run completed (status {status})"),
@@ -766,12 +990,15 @@ async fn wait_scale(
     }
 }
 
-async fn latest_cron_run(client: &Client) -> anyhow::Result<Option<String>> {
+async fn first_cron_run_after(
+    client: &Client,
+    activated_after: SystemTime,
+) -> anyhow::Result<Option<String>> {
     Ok(client
         .query_opt(
             "SELECT run_id FROM runs WHERE flow_id = $1 AND trigger_source = 'cron' \
-             ORDER BY updated_at DESC LIMIT 1",
-            &[&FLOW_ID],
+               AND created_at >= $2 ORDER BY created_at, run_id LIMIT 1",
+            &[&FLOW_ID, &activated_after],
         )
         .await?
         .map(|r| r.get(0)))
@@ -1024,6 +1251,10 @@ mod tests {
         assert!(
             manifest.contains("notify-webhook"),
             "credential name present"
+        );
+        assert!(
+            manifest.contains(r#""notify-webhook": "{\"headers\":{\"authorization\":\""#),
+            "portable HTTP credential is a header map"
         );
         assert!(manifest.contains(DEMO_SECRET), "f3 demo secret present");
         assert!(

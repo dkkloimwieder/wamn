@@ -586,7 +586,8 @@ pub fn terminalize_sql() -> String {
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN $5::text = 'completed' \
                        AND a.caller_released_at IS NULL \
-                       AND EXISTS (SELECT 1 FROM locked_run WHERE attachment_id IS NOT NULL) \
+                       AND EXISTS (SELECT 1 FROM locked_run \
+                                    WHERE trigger_source IN ('http','internal','studio')) \
                         THEN 'caller-unreleased' \
                       ELSE 'ready' \
                     END AS result_code, \
@@ -1148,6 +1149,8 @@ mod tests {
     #[test]
     fn terminal_and_checkpoint_transitions_are_atomic_statements() {
         let terminal = terminalize_sql();
+        assert!(terminal.contains("trigger_source IN ('http','internal','studio')"));
+        assert!(!terminal.contains("attachment_id IS NOT NULL"));
         assert!(terminal.contains("terminalized AS"));
         assert!(terminal.contains("dead_lettered AS"));
         assert!(terminal.contains("INSERT INTO run_dead_letters"));

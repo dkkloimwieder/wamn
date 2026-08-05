@@ -167,6 +167,63 @@ fn run_state_live() {
     );
     success(&url, &terminal_script);
 
+    // An attachment identifies admission provenance, not necessarily a waiting
+    // caller. Cron and event runs terminalize naturally; request sources must
+    // release their caller first.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,attachment_id,status,trigger_source) VALUES \
+           ('t1','terminal-cron','f',1,'cron-a','running','cron'), \
+           ('t1','terminal-event','f',1,'event-a','running','event'), \
+           ('t1','terminal-http-open','f',1,'http-open','running','http'); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,attachment_id,status,trigger_source, \
+            caller_outcome_kind,caller_outcome_json,caller_http_status,caller_release_node_id, \
+            caller_outcome_hash,caller_released_at) VALUES \
+           ('t1','terminal-http-released','f',1,'http-released','running','http', \
+            'responded','{}',200,'respond','sha256:released',now()); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','terminal-cron','worker-source',now()+interval '1 minute',1), \
+           ('t1','terminal-event','worker-source',now()+interval '1 minute',1), \
+           ('t1','terminal-http-open','worker-source',now()+interval '1 minute',1), \
+           ('t1','terminal-http-released','worker-source',now()+interval '1 minute',1);",
+    );
+    let source_terminal_script = format!(
+        "{} PREPARE terminal_stmt \
+           (text,text,text,bigint,text,text,text,text) AS {}; \
+         CREATE TEMP TABLE cron_terminal AS \
+           EXECUTE terminal_stmt('terminal-cron','terminal-cron','worker-source',1, \
+                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+         CREATE TEMP TABLE event_terminal AS \
+           EXECUTE terminal_stmt('terminal-event','terminal-event','worker-source',1, \
+                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+         CREATE TEMP TABLE http_open_terminal AS \
+           EXECUTE terminal_stmt('terminal-http-open','terminal-http-open','worker-source',1, \
+                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+         CREATE TEMP TABLE http_released_terminal AS \
+           EXECUTE terminal_stmt('terminal-http-released','terminal-http-released', \
+                                 'worker-source',1,'completed','frontier-exhausted',NULL,'{{}}'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM cron_terminal) = 'terminalized', \
+                  'attached cron has no caller to release'; \
+           ASSERT (SELECT result_code FROM event_terminal) = 'terminalized', \
+                  'attached event has no caller to release'; \
+           ASSERT (SELECT result_code FROM http_open_terminal) = 'caller-unreleased', \
+                  'HTTP request must release its caller'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='terminal-http-open') = 'running', \
+                  'caller refusal leaves the request running'; \
+           ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='terminal-http-open'), \
+                  'caller refusal leaves the request queued'; \
+           ASSERT (SELECT result_code FROM http_released_terminal) = 'terminalized', \
+                  'released HTTP request terminalizes'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        terminalize
+    );
+    success(&url, &source_terminal_script);
+
     let post_terminal_script = format!(
         "{} PREPARE release_stmt \
            (text,text,text,bigint,text,text,int,text,text) AS {}; \
