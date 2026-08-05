@@ -72,8 +72,31 @@ pub fn begin_attempt_sql() -> String {
               FOR UPDATE OF n \
          ), \
          connection_facts AS MATERIALIZED ( \
-             SELECT CASE WHEN $16::text IS NULL THEN true ELSE resolved.instance_id IS NOT NULL END \
-                        AS resolved, \
+             SELECT CASE \
+                      WHEN $16::text IS NULL THEN 'ready' \
+                      WHEN resolved.artifact_hash IS NULL \
+                        OR resolved.requirement_json IS NULL THEN 'undeclared-requirement' \
+                      WHEN resolved.node_connection IS DISTINCT FROM $16::text \
+                        OR NOT COALESCE(resolved.node_permitted, false) \
+                        THEN 'node-not-permitted' \
+                      WHEN resolved.binding_instance_id IS NULL \
+                        OR resolved.binding_status IS DISTINCT FROM 'active' \
+                        OR resolved.validation_status IS DISTINCT FROM 'valid' \
+                        OR resolved.instance_id IS NULL THEN 'unbound' \
+                      WHEN resolved.lifecycle_status IS DISTINCT FROM 'enabled' \
+                        OR resolved.active_generation IS NULL \
+                        OR resolved.generation IS NULL \
+                        OR resolved.active_generation IS DISTINCT FROM resolved.generation \
+                        THEN 'inactive-generation' \
+                      WHEN resolved.requirement_json #>> '{{descriptor,requirement-type}}' \
+                             IS DISTINCT FROM 'http' \
+                        OR resolved.requirement_json #>> '{{descriptor,contract}}' \
+                             IS DISTINCT FROM 'wamn:connection/http@0.1.0' \
+                        OR resolved.requirement_type IS DISTINCT FROM 'http' \
+                        OR resolved.contract IS DISTINCT FROM 'wamn:connection/http@0.1.0' \
+                        THEN 'incompatible' \
+                      ELSE 'ready' \
+                    END AS result_code, \
                     CASE WHEN $16::text IS NULL THEN $10::text ELSE 'attested' END \
                         AS generation_fact_kind, \
                     CASE WHEN $16::text IS NULL THEN $11::text \
@@ -84,34 +107,44 @@ pub fn begin_attempt_sql() -> String {
                FROM authority AS a \
                LEFT JOIN locked_run AS r ON true \
                LEFT JOIN LATERAL ( \
-                   SELECT instance.instance_id, generation.generation, \
-                          generation.credential_set_handle \
+                   SELECT artifact.artifact_hash, requirement.requirement_json, \
+                          node.value ->> 'connection' AS node_connection, \
+                          EXISTS ( \
+                              SELECT 1 \
+                                FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) \
+                                     AS implementation(value), \
+                                     jsonb_array_elements(implementation.value -> 'interface' \
+                                         -> 'connection-requirements') AS permitted(value) \
+                               WHERE implementation.value #>> '{{interface,node-type}}' = \
+                                     node.value ->> 'type' \
+                                 AND permitted.value ->> 'requirement-type' = 'http' \
+                                 AND permitted.value ->> 'contract' = \
+                                     'wamn:connection/http@0.1.0' \
+                          ) AS node_permitted, \
+                          binding.binding_status, binding.validation_status, \
+                          binding.instance_id AS binding_instance_id, \
+                          instance.instance_id, instance.requirement_type, instance.contract, \
+                          instance.lifecycle_status, instance.active_generation, \
+                          generation.generation, generation.credential_set_handle \
                      FROM catalog.flow_artifacts AS artifact \
-                     JOIN catalog.connection_requirements AS requirement \
+                     LEFT JOIN catalog.connection_requirements AS requirement \
                        ON requirement.tenant_id = artifact.tenant_id \
                       AND requirement.artifact_hash = artifact.artifact_hash \
                       AND requirement.requirement_name = $16 \
-                     JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
-                       ON node.value ->> 'id' = $5 \
-                      AND node.value ->> 'connection' = $16 \
-                     JOIN catalog.connection_bindings AS binding \
+                     LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') \
+                          AS node(value) ON node.value ->> 'id' = $5 \
+                     LEFT JOIN catalog.connection_bindings AS binding \
                        ON binding.tenant_id = r.tenant_id \
                       AND binding.catalog_id = r.catalog_id \
                       AND binding.catalog_version = r.catalog_version \
                       AND binding.artifact_hash = artifact.artifact_hash \
                       AND binding.requirement_name = $16 \
                       AND binding.environment = r.environment \
-                      AND binding.binding_status = 'active' \
-                      AND binding.validation_status = 'valid' \
-                     JOIN catalog.connection_instances AS instance \
+                     LEFT JOIN catalog.connection_instances AS instance \
                        ON instance.tenant_id = binding.tenant_id \
                       AND instance.environment = binding.environment \
                       AND instance.instance_id = binding.instance_id \
-                      AND instance.requirement_type = 'http' \
-                      AND instance.contract = 'wamn:connection/http@0.1.0' \
-                      AND instance.lifecycle_status = 'enabled' \
-                      AND instance.active_generation IS NOT NULL \
-                     JOIN catalog.connection_generations AS generation \
+                     LEFT JOIN catalog.connection_generations AS generation \
                        ON generation.tenant_id = instance.tenant_id \
                       AND generation.environment = instance.environment \
                       AND generation.instance_id = instance.instance_id \
@@ -120,27 +153,12 @@ pub fn begin_attempt_sql() -> String {
                       AND artifact.flow_id = r.flow_id \
                       AND artifact.flow_version = r.flow_version \
                       AND artifact.artifact_hash = r.invocation_context #>> '{{principal,artifact-digest}}' \
-                      AND requirement.requirement_json #>> '{{descriptor,requirement-type}}' = 'http' \
-                      AND requirement.requirement_json #>> '{{descriptor,contract}}' = \
-                          'wamn:connection/http@0.1.0' \
-                      AND EXISTS ( \
-                          SELECT 1 \
-                            FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) \
-                                 AS implementation(value), \
-                                 jsonb_array_elements(implementation.value -> 'interface' \
-                                     -> 'connection-requirements') AS permitted(value) \
-                           WHERE implementation.value #>> '{{interface,node-type}}' = \
-                                 node.value ->> 'type' \
-                             AND permitted.value ->> 'requirement-type' = 'http' \
-                             AND permitted.value ->> 'contract' = \
-                                 'wamn:connection/http@0.1.0' \
-                      ) \
                ) AS resolved ON $16::text IS NOT NULL \
          ), \
          classified AS ( \
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN NOT f.resolved THEN 'connection-refused' \
+                      WHEN f.result_code <> 'ready' THEN f.result_code \
                       WHEN n.run_id IS NULL AND $9::text = 'idempotent-with-key' \
                        AND ($14::text IS NULL OR $14::text = '') \
                         THEN 'missing-attempt-key' \
@@ -1162,6 +1180,16 @@ mod tests {
         assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
         assert!(sql.contains("connection_facts AS MATERIALIZED"));
         assert!(sql.contains("artifact.interface_bundle_json::jsonb"));
+        for refusal in [
+            "undeclared-requirement",
+            "node-not-permitted",
+            "unbound",
+            "inactive-generation",
+            "incompatible",
+        ] {
+            assert!(sql.contains(refusal), "missing typed refusal {refusal}");
+        }
+        assert!(!sql.contains("connection-refused"));
         assert!(sql.contains("attempt_input_ref, attempt_key"));
         assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
         assert!(sql.contains("n.recovery_class = 'never-replay'"));

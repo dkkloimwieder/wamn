@@ -494,7 +494,7 @@ fn run_state_live() {
                           AND attempt_dispatched_at IS NULL \
                      FROM node_runs WHERE run_id='http-intent' AND node_id='notify'), \
                   'one intent insert records generation, fingerprint, and stable key'; \
-           ASSERT (SELECT result_code FROM wrong_node) = 'connection-refused', \
+           ASSERT (SELECT result_code FROM wrong_node) = 'node-not-permitted', \
                   'node without the admitted connection cannot create intent'; \
            ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='http-wrong-node'), \
                   'refused connection reaches no durable send intent'; \
