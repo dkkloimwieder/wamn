@@ -87,9 +87,16 @@ impl ConnectionHttp {
         request: &RelativeRequest,
     ) -> Result<Response, EffectError> {
         validate_claims(&self.tenant, context, requirement_name, request)?;
-        let target = normalize_portable_http_target(&request.path_and_query)
-            .map_err(|_| EffectError::AuthorityDenied)?;
-        let operation_fingerprint = operation_fingerprint(request, target.clone())?;
+        let target = normalize_portable_http_target(&request.path_and_query).map_err(|error| {
+            tracing::warn!(
+                phase = "target-normalization",
+                error = %error,
+                "trusted HTTP connection authority denied"
+            );
+            EffectError::AuthorityDenied
+        })?;
+        let operation_fingerprint = operation_fingerprint(request, target.clone())
+            .map_err(|error| log_effect_authority_denied("operation-fingerprint", error))?;
         let stable_key = format!(
             "{}:{}:{}",
             context.run_id, context.node_id, context.occurrence
@@ -177,6 +184,13 @@ fn authority_denied(phase: &'static str, error: AuthorityError) -> EffectError {
         "trusted HTTP connection authority denied"
     );
     EffectError::AuthorityDenied
+}
+
+fn log_effect_authority_denied(phase: &'static str, error: EffectError) -> EffectError {
+    if matches!(error, EffectError::AuthorityDenied) {
+        tracing::warn!(phase, "trusted HTTP connection authority denied");
+    }
+    error
 }
 
 fn operation_fingerprint(
@@ -302,9 +316,14 @@ fn require_declared_egress(
     policy: &RunnerEgressPolicy,
     logical_url: &str,
 ) -> Result<(), EffectError> {
-    let uri: hyper::Uri = logical_url
-        .parse()
-        .map_err(|_| EffectError::AuthorityDenied)?;
+    let uri: hyper::Uri = logical_url.parse().map_err(|error| {
+        tracing::warn!(
+            phase = "flow-egress-url",
+            error = %error,
+            "trusted HTTP connection authority denied"
+        );
+        EffectError::AuthorityDenied
+    })?;
     if policy.allows_connection(component_id, &uri) {
         Ok(())
     } else {
@@ -392,7 +411,8 @@ async fn execute(
 ) -> Result<Response, EffectError> {
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| EffectError::Transport("invalid HTTP method".into()))?;
-    let headers = outbound_headers(request, credentials)?;
+    let headers = outbound_headers(request, credentials)
+        .map_err(|error| log_effect_authority_denied("outbound-headers", error))?;
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
