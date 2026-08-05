@@ -490,14 +490,26 @@ impl http_effect::Host for ActiveCtx<'_> {
         request: RelativeRequest,
     ) -> wash_runtime::wasmtime::Result<Result<Response, EffectError>> {
         let plugin = plugin_of(self)?;
-        Ok(plugin
+        let result = plugin
             .send(
                 self.component_id.as_ref(),
                 &context,
                 &requirement_name,
                 &request,
             )
-            .await)
+            .await;
+        if let Err(error) = &result {
+            tracing::warn!(
+                error = ?error,
+                run_id = context.run_id,
+                node_id = context.node_id,
+                occurrence = context.occurrence,
+                attempt = context.attempt,
+                requirement_name,
+                "trusted HTTP effect refused"
+            );
+        }
+        Ok(result)
     }
 }
 
