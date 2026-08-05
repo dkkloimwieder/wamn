@@ -15,6 +15,7 @@ pub mod causation_e2e;
 mod cdc_reader_process;
 pub mod cdcbench;
 pub mod contextproof;
+pub mod credproof;
 pub mod dashproof;
 pub mod dispatchbench;
 mod dispatcher_process;
