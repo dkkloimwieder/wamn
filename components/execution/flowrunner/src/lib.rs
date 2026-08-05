@@ -3081,6 +3081,56 @@ fn terminalize_effect_uncertain(
     }
 }
 
+/// Persist a typed connection-admission refusal before any effect reaches the
+/// wire. Request callers receive the same durable failure envelope read by the
+/// invocation API; callerless runs retain the typed terminal result only.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "typed refusal identity and queue fence form one durable transition"
+)]
+fn terminalize_connection_refusal(
+    run_id: &str,
+    flow_id: &str,
+    flow_version: u32,
+    node_id: &str,
+    caller: CallerState,
+    refusal: &str,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let txn = client::begin().map_err(|error| err_name(&error))?;
+    let result = json!({
+        "error": {
+            "code": refusal,
+            "run-id": run_id,
+            "flow-id": flow_id,
+            "flow-version": flow_version,
+        }
+    });
+    if caller == CallerState::Attached {
+        release_caller_in_transaction(
+            &txn,
+            run_id,
+            "failed",
+            &result,
+            500,
+            node_id,
+            owner,
+            lease_generation,
+        )?;
+    }
+    terminalize_in_transaction(
+        &txn,
+        run_id,
+        "failed",
+        Some(refusal),
+        &result,
+        owner,
+        lease_generation,
+    )?;
+    txn.commit().map_err(|error| err_name(&error))
+}
+
 /// Remove a run's queue row on a guest-observed TERMINAL failure (the `runs`
 /// history stays) — and, iff the row is a `blocking`-partition head, land the
 /// `run_dead_letters` marker in the SAME statement/transaction (wamn-v8cv, the
@@ -3533,6 +3583,36 @@ fn execute_claimed(
                                 d.node
                             )),
                             already_settled: false,
+                        });
+                    }
+                    refusal @ (AttemptStartResult::UndeclaredRequirement
+                    | AttemptStartResult::NodeNotPermitted
+                    | AttemptStartResult::Unbound
+                    | AttemptStartResult::InactiveGeneration
+                    | AttemptStartResult::Incompatible) => {
+                        let refusal = match refusal {
+                            AttemptStartResult::UndeclaredRequirement => "undeclared-requirement",
+                            AttemptStartResult::NodeNotPermitted => "node-not-permitted",
+                            AttemptStartResult::Unbound => "unbound",
+                            AttemptStartResult::InactiveGeneration => "inactive-generation",
+                            AttemptStartResult::Incompatible => "incompatible",
+                            _ => unreachable!("the pattern above contains every typed refusal"),
+                        };
+                        terminalize_connection_refusal(
+                            run_id,
+                            &flow.flow_id,
+                            flow.version,
+                            &d.node,
+                            st.caller_state(),
+                            refusal,
+                            owner,
+                            lease_generation,
+                        )?;
+                        return Ok(ClaimOutcome {
+                            outcome: 2,
+                            park_ms: 0,
+                            fail_reason: Some(format!("{refusal}: {}", d.node)),
+                            already_settled: true,
                         });
                     }
                     AttemptStartResult::FenceLost => {
