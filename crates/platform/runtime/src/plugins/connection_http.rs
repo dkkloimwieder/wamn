@@ -107,6 +107,7 @@ impl ConnectionHttp {
         let snapshot = self
             .postgres
             .connection_effect_snapshot(
+                component_id,
                 &self.project,
                 &self.tenant,
                 &ConnectionEffectLookup {

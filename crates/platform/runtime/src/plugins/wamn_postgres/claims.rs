@@ -128,8 +128,8 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
         AND nr.credential_generation = generation.credential_set_handle \
         AND nr.attempt_input_ref = $6 AND nr.attempt_key = $7 \
         AND nr.attempt_dispatched_at IS NOT NULL) \
-  FROM wamn_run.runs AS r \
-  LEFT JOIN wamn_run.node_runs AS nr \
+  FROM runs AS r \
+  LEFT JOIN node_runs AS nr \
     ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
    AND nr.node_id = $2 AND nr.occurrence = $3 \
   LEFT JOIN catalog.connection_requirements AS requirement \
@@ -720,19 +720,28 @@ impl WamnPostgres {
     }
 
     /// Load every host-derived HTTP authorization input in one read-only
-    /// transaction under the injected tenant claim.
+    /// transaction under the component's injected tenant and run-state schema.
     pub async fn connection_effect_snapshot(
         &self,
+        component_id: &str,
         project: &str,
         tenant: &str,
         lookup: &ConnectionEffectLookup<'_>,
     ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
+        let schema = self.schema_for(component_id);
         let (conn, policy) = self
             .checkout(project)
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if let Err(error) = self
-            .begin_with_claims(&conn, tenant, None, None, None, policy.statement_timeout_ms)
+            .begin_with_claims(
+                &conn,
+                tenant,
+                schema.as_deref(),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
             .await
         {
             self.destroy(conn);
@@ -1092,6 +1101,13 @@ mod tests {
         }
     }
 
+    #[test]
+    fn connection_effect_snapshot_sql_uses_the_injected_run_schema() {
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("FROM runs AS r"));
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("LEFT JOIN node_runs AS nr"));
+        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("wamn_run."));
+    }
+
     // R16 — the validators stay as the identity-format contract (demoted from the
     // injection boundary by R2): a malformed identity fails closed even though
     // the value would bind as inert data.
@@ -1396,6 +1412,7 @@ mod tests {
             row_limit: 1_000,
         })
         .unwrap();
+        pg.set_schema("http-runner", "wamn_run").unwrap();
         let lookup = ConnectionEffectLookup {
             run_id: "http-intent",
             node_id: "notify",
@@ -1412,7 +1429,7 @@ mod tests {
             stable_key: "http-intent:notify:0",
         };
         let snapshot = pg
-            .connection_effect_snapshot(DEFAULT_PROJECT, "t1", &lookup)
+            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &lookup)
             .await
             .unwrap()
             .expect("admitted run exists");
@@ -1431,7 +1448,7 @@ mod tests {
             ..lookup
         };
         let snapshot = pg
-            .connection_effect_snapshot(DEFAULT_PROJECT, "t1", &wrong_attempt)
+            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &wrong_attempt)
             .await
             .unwrap()
             .expect("run still exists");
