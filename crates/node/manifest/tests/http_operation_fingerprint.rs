@@ -1,6 +1,7 @@
 use wamn_node_manifest::{
     HTTP_OPERATION_FINGERPRINT_VERSION, HttpBodyDigest, HttpOperation,
     HttpOperationFingerprintErrorKind, HttpSemanticHeader, fingerprint_http_operation,
+    is_http_operation_semantic_header, normalize_portable_http_target,
 };
 
 fn operation<'a>(
@@ -11,7 +12,7 @@ fn operation<'a>(
 ) -> HttpOperation<'a> {
     HttpOperation {
         method,
-        relative_target: target,
+        target: normalize_portable_http_target(target).expect("portable target spelling"),
         semantic_headers: headers,
         body_digest: HttpBodyDigest::sha256(body),
     }
@@ -49,13 +50,13 @@ fn equivalent_operations_have_identical_canonical_bytes_and_digest() {
     ];
     let first = operation(
         "post",
-        "orders/%7eactive?customer=%41da&view=a%2fb",
+        "/orders/%7eactive?customer=%41da&view=a%2fb",
         &first_headers,
         br#"{"sku":"A-1"}"#,
     );
     let equivalent = operation(
         "POST",
-        "orders/~active?customer=Ada&view=a%2Fb",
+        "/orders/~active?customer=Ada&view=a%2Fb",
         &reordered_headers,
         br#"{"sku":"A-1"}"#,
     );
@@ -73,13 +74,13 @@ fn every_semantic_field_mutation_changes_the_digest() {
         name: "content-type",
         value: "text/plain",
     }];
-    let baseline = fingerprint(&operation("POST", "orders?mode=live", &headers, b"one")).1;
+    let baseline = fingerprint(&operation("POST", "/orders?mode=live", &headers, b"one")).1;
 
     for mutation in [
-        operation("PUT", "orders?mode=live", &headers, b"one"),
-        operation("POST", "orders?mode=dry", &headers, b"one"),
-        operation("POST", "orders?mode=live", &changed_headers, b"one"),
-        operation("POST", "orders?mode=live", &headers, b"two"),
+        operation("PUT", "/orders?mode=live", &headers, b"one"),
+        operation("POST", "/orders?mode=dry", &headers, b"one"),
+        operation("POST", "/orders?mode=live", &changed_headers, b"one"),
+        operation("POST", "/orders?mode=live", &headers, b"two"),
     ] {
         assert_ne!(fingerprint(&mutation).1, baseline);
     }
@@ -99,7 +100,7 @@ fn target_and_header_normalization_rules_are_deterministic() {
     ];
     let canonical = fingerprint(&operation(
         "patch",
-        "v1/%75sers?separator=%2f&literal=%7E",
+        "/v1/%75sers?separator=%2f&literal=%7E",
         &headers,
         b"",
     ))
@@ -121,12 +122,15 @@ fn endpoint_and_environment_injections_fail_closed() {
     for target in [
         "https://prod.example/orders",
         "//prod.example/orders",
-        "/orders",
-        "../orders",
-        "orders/%2fadmin",
+        "orders",
+        "",
     ] {
+        normalize_portable_http_target(target).expect_err("non-portable target spelling must fail");
+    }
+
+    for target in ["/../orders", "/orders/%2fadmin"] {
         let error = fingerprint_http_operation(&operation("POST", target, &[], b""))
-            .expect_err("authority or path escape must fail");
+            .expect_err("path escape must fail");
         assert_eq!(
             error.kind(),
             HttpOperationFingerprintErrorKind::InvalidRelativeTarget
@@ -144,7 +148,7 @@ fn endpoint_and_environment_injections_fail_closed() {
             name,
             value: "injected",
         }];
-        let error = fingerprint_http_operation(&operation("POST", "orders", &headers, b""))
+        let error = fingerprint_http_operation(&operation("POST", "/orders", &headers, b""))
             .expect_err("environment or system-owned header must fail");
         assert_eq!(
             error.kind(),
@@ -159,7 +163,7 @@ fn canonical_preimage_omission_mutant_is_killed_by_named_frames() {
         name: "content-type",
         value: "application/json",
     }];
-    let canonical = fingerprint(&operation("POST", "orders", &headers, b"payload")).0;
+    let canonical = fingerprint(&operation("POST", "/orders", &headers, b"payload")).0;
 
     for frame in [
         HTTP_OPERATION_FINGERPRINT_VERSION.as_bytes(),
@@ -192,7 +196,7 @@ fn canonical_preimage_reordering_mutant_is_killed_by_golden_digest() {
     ];
     let digest = fingerprint(&operation(
         "POST",
-        "orders/%7Eactive?mode=live",
+        "/orders/%7Eactive?mode=live",
         &headers,
         br#"{"sku":"A-1"}"#,
     ))
@@ -220,10 +224,17 @@ fn duplicate_semantic_headers_fail_instead_of_using_ambient_joining_rules() {
             value: "two",
         },
     ];
-    let error = fingerprint_http_operation(&operation("POST", "orders", &headers, b""))
+    let error = fingerprint_http_operation(&operation("POST", "/orders", &headers, b""))
         .expect_err("duplicate semantic headers need contract-specific joining");
     assert_eq!(
         error.kind(),
         HttpOperationFingerprintErrorKind::InvalidSemanticHeader
     );
+}
+
+#[test]
+fn tracing_metadata_is_not_part_of_operation_identity() {
+    assert!(!is_http_operation_semantic_header("traceparent"));
+    assert!(!is_http_operation_semantic_header("TraceParent"));
+    assert!(is_http_operation_semantic_header("content-type"));
 }

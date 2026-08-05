@@ -56,6 +56,9 @@ authority AS ( \
 /// node id, occurrence, sequence, selected and effective recovery classes,
 /// generation fact kind, exact optional connection and credential generations,
 /// immutable input reference, optional attempt key, and lease TTL milliseconds.
+/// Parameter 16 is the optional portable connection requirement name; when
+/// present, the transaction derives both generation facts from admitted state
+/// and ignores caller-supplied generation values.
 /// An authorized redispatch advances the durable attempt counter in the same
 /// statement only when those immutable admission facts match.
 pub fn begin_attempt_sql() -> String {
@@ -68,18 +71,85 @@ pub fn begin_attempt_sql() -> String {
                 AND n.node_id = $5 AND n.occurrence = $6 \
               FOR UPDATE OF n \
          ), \
+         connection_facts AS MATERIALIZED ( \
+             SELECT CASE WHEN $16::text IS NULL THEN true ELSE resolved.instance_id IS NOT NULL END \
+                        AS resolved, \
+                    CASE WHEN $16::text IS NULL THEN $10::text ELSE 'attested' END \
+                        AS generation_fact_kind, \
+                    CASE WHEN $16::text IS NULL THEN $11::text \
+                         ELSE resolved.instance_id || ':' || resolved.generation::text END \
+                        AS connection_generation, \
+                    CASE WHEN $16::text IS NULL THEN $12::text \
+                         ELSE resolved.credential_set_handle END AS credential_generation \
+               FROM authority AS a \
+               LEFT JOIN locked_run AS r ON true \
+               LEFT JOIN LATERAL ( \
+                   SELECT instance.instance_id, generation.generation, \
+                          generation.credential_set_handle \
+                     FROM catalog.flow_artifacts AS artifact \
+                     JOIN catalog.connection_requirements AS requirement \
+                       ON requirement.tenant_id = artifact.tenant_id \
+                      AND requirement.artifact_hash = artifact.artifact_hash \
+                      AND requirement.requirement_name = $16 \
+                     JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
+                       ON node.value ->> 'id' = $5 \
+                      AND node.value ->> 'connection' = $16 \
+                     JOIN catalog.connection_bindings AS binding \
+                       ON binding.tenant_id = r.tenant_id \
+                      AND binding.catalog_id = r.catalog_id \
+                      AND binding.catalog_version = r.catalog_version \
+                      AND binding.artifact_hash = artifact.artifact_hash \
+                      AND binding.requirement_name = $16 \
+                      AND binding.environment = r.environment \
+                      AND binding.binding_status = 'active' \
+                      AND binding.validation_status = 'valid' \
+                     JOIN catalog.connection_instances AS instance \
+                       ON instance.tenant_id = binding.tenant_id \
+                      AND instance.environment = binding.environment \
+                      AND instance.instance_id = binding.instance_id \
+                      AND instance.requirement_type = 'http' \
+                      AND instance.contract = 'wamn:connection/http@0.1.0' \
+                      AND instance.lifecycle_status = 'enabled' \
+                      AND instance.active_generation IS NOT NULL \
+                     JOIN catalog.connection_generations AS generation \
+                       ON generation.tenant_id = instance.tenant_id \
+                      AND generation.environment = instance.environment \
+                      AND generation.instance_id = instance.instance_id \
+                      AND generation.generation = instance.active_generation \
+                    WHERE artifact.tenant_id = r.tenant_id \
+                      AND artifact.flow_id = r.flow_id \
+                      AND artifact.flow_version = r.flow_version \
+                      AND artifact.artifact_hash = r.invocation_context #>> '{{principal,artifact-digest}}' \
+                      AND requirement.requirement_json #>> '{{descriptor,requirement-type}}' = 'http' \
+                      AND requirement.requirement_json #>> '{{descriptor,contract}}' = \
+                          'wamn:connection/http@0.1.0' \
+                      AND EXISTS ( \
+                          SELECT 1 \
+                            FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) \
+                                 AS implementation(value), \
+                                 jsonb_array_elements(implementation.value -> 'interface' \
+                                     -> 'connection-requirements') AS permitted(value) \
+                           WHERE implementation.value #>> '{{interface,node-type}}' = \
+                                 node.value ->> 'type' \
+                             AND permitted.value ->> 'requirement-type' = 'http' \
+                             AND permitted.value ->> 'contract' = \
+                                 'wamn:connection/http@0.1.0' \
+                      ) \
+               ) AS resolved ON $16::text IS NOT NULL \
+         ), \
          classified AS ( \
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
+                      WHEN NOT f.resolved THEN 'connection-refused' \
                       WHEN n.run_id IS NULL AND $9::text = 'idempotent-with-key' \
                        AND ($14::text IS NULL OR $14::text = '') \
                         THEN 'missing-attempt-key' \
                       WHEN n.run_id IS NULL THEN 'new' \
                       WHEN n.selected_recovery_class IS DISTINCT FROM $8::text \
                         OR n.recovery_class IS DISTINCT FROM $9::text \
-                        OR n.generation_fact_kind IS DISTINCT FROM $10::text \
-                        OR n.connection_generation IS DISTINCT FROM $11::text \
-                        OR n.credential_generation IS DISTINCT FROM $12::text \
+                        OR n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind \
+                        OR n.connection_generation IS DISTINCT FROM f.connection_generation \
+                        OR n.credential_generation IS DISTINCT FROM f.credential_generation \
                         THEN 'effect-uncertain' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
@@ -94,7 +164,9 @@ pub fn begin_attempt_sql() -> String {
                       ELSE 'effect-uncertain' \
                     END AS result_code, a.tenant_id, a.run_id, a.status, \
                     a.run_deadline_at \
-               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+               FROM authority AS a \
+               LEFT JOIN locked_attempt AS n ON true \
+               CROSS JOIN connection_facts AS f \
          ), \
          inserted AS ( \
              INSERT INTO node_runs \
@@ -103,12 +175,14 @@ pub fn begin_attempt_sql() -> String {
                      generation_fact_kind, connection_generation, credential_generation, \
                      attempt_started_at, attempt_deadline_at, attempt_input_ref, attempt_key) \
              SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, $9, \
-                    $10, $11, $12, now(), \
+                    f.generation_fact_kind, f.connection_generation, \
+                    f.credential_generation, now(), \
                     LEAST( \
                         now() + ($15::bigint * interval '1 millisecond'), \
                         COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
                     ), $13, $14 \
-               FROM classified AS c WHERE c.result_code = 'new' \
+               FROM classified AS c CROSS JOIN connection_facts AS f \
+              WHERE c.result_code = 'new' \
              RETURNING run_id \
          ), \
          redispatched AS ( \
@@ -1085,7 +1159,9 @@ mod tests {
         assert!(sql.contains("selected_recovery_class, recovery_class"));
         assert!(sql.contains("generation_fact_kind, connection_generation, credential_generation"));
         assert!(sql.contains("n.selected_recovery_class IS DISTINCT FROM $8::text"));
-        assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM $10::text"));
+        assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
+        assert!(sql.contains("connection_facts AS MATERIALIZED"));
+        assert!(sql.contains("artifact.interface_bundle_json::jsonb"));
         assert!(sql.contains("attempt_input_ref, attempt_key"));
         assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
         assert!(sql.contains("n.recovery_class = 'never-replay'"));

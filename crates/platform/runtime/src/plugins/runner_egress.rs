@@ -98,6 +98,15 @@ impl RunnerEgressPolicy {
             .get(component_id)
             .cloned()
     }
+
+    /// Apply optional flow-level narrowing to an already-authorized portable
+    /// connection authority. Absent/empty means no additional narrowing; the
+    /// environment-owned connection plus host policy remain authoritative.
+    pub fn allows_connection(&self, component_id: &str, uri: &hyper::Uri) -> bool {
+        self.declared(component_id)
+            .as_deref()
+            .is_none_or(|hosts| hosts.is_empty() || hosts.iter().any(|host| host.matches(uri)))
+    }
 }
 
 impl HostPlugin for RunnerEgressPolicy {

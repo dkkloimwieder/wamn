@@ -292,6 +292,8 @@ fn admission_live() {
                         WHERE run_id='event-1') = '1'; \
                ASSERT (SELECT invocation_context->'principal'->>'artifact-digest' \
                         FROM wamn_run.runs WHERE run_id='event-1') = 'ah-event'; \
+               ASSERT (SELECT invocation_context->'principal'->>'run-id' \
+                        FROM wamn_run.runs WHERE run_id='event-1') = 'event-1'; \
              END $$;",
             registration_digest
         ),

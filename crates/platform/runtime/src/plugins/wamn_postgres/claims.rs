@@ -62,6 +62,102 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
 }
 
+/// Host-only identity used to load one HTTP effect authorization snapshot.
+pub struct ConnectionEffectLookup<'a> {
+    pub run_id: &'a str,
+    pub node_id: &'a str,
+    pub occurrence: i32,
+    pub attempt: i32,
+    pub requirement_name: &'a str,
+    pub flow_id: &'a str,
+    pub flow_version: i32,
+    pub catalog_id: &'a str,
+    pub catalog_version: i32,
+    pub environment: &'a str,
+    pub artifact_digest: &'a str,
+    pub operation_fingerprint: &'a str,
+    pub stable_key: &'a str,
+}
+
+/// One transactionally consistent set of admitted HTTP effect facts.
+#[derive(Debug, Clone)]
+pub struct ConnectionEffectSnapshot {
+    pub run_status: String,
+    pub flow_id: String,
+    pub flow_version: i32,
+    pub catalog_id: Option<String>,
+    pub catalog_version: Option<i64>,
+    pub environment: Option<String>,
+    pub admitted_artifact_digest: Option<String>,
+    pub attempt_matches: bool,
+    pub requirement_json: Option<serde_json::Value>,
+    pub node_connection: Option<String>,
+    pub node_permitted: bool,
+    pub binding_active: bool,
+    pub binding_valid: bool,
+    pub instance_id: Option<String>,
+    pub requirement_type: Option<String>,
+    pub contract: Option<String>,
+    pub instance_enabled: bool,
+    pub active_generation: Option<i64>,
+    pub generation: Option<i64>,
+    pub definition: Option<serde_json::Value>,
+    pub definition_hash: Option<String>,
+    pub credential_handle: Option<String>,
+    pub attempt_recorded: bool,
+}
+
+const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
+SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
+       r.invocation_context #>> '{principal,artifact-digest}', \
+       (nr.status = 'started' AND nr.attempt = $4), \
+       requirement.requirement_json::text, node.value ->> 'connection', \
+       EXISTS (SELECT 1 \
+                 FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS resolved(value), \
+                      jsonb_array_elements(resolved.value -> 'interface' -> 'connection-requirements') AS permitted(value) \
+                WHERE resolved.value #>> '{interface,node-type}' = node.value ->> 'type' \
+                  AND permitted.value ->> 'requirement-type' = 'http' \
+                  AND permitted.value ->> 'contract' = 'wamn:connection/http@0.1.0'), \
+       binding.binding_status = 'active', binding.validation_status = 'valid', \
+       instance.instance_id, instance.requirement_type, instance.contract, \
+       instance.lifecycle_status = 'enabled', instance.active_generation, \
+       generation.generation, generation.definition_json::text, generation.definition_hash, \
+       generation.credential_set_handle, \
+       (nr.attempt = $4 AND nr.generation_fact_kind = 'attested' \
+        AND nr.connection_generation = instance.instance_id || ':' || generation.generation::text \
+        AND nr.credential_generation = generation.credential_set_handle \
+        AND nr.attempt_input_ref = $6 AND nr.attempt_key = $7 \
+        AND nr.attempt_dispatched_at IS NOT NULL) \
+  FROM wamn_run.runs AS r \
+  LEFT JOIN wamn_run.node_runs AS nr \
+    ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
+   AND nr.node_id = $2 AND nr.occurrence = $3 \
+  LEFT JOIN catalog.connection_requirements AS requirement \
+    ON requirement.tenant_id = r.tenant_id \
+   AND requirement.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+   AND requirement.requirement_name = $5 \
+  LEFT JOIN catalog.flow_artifacts AS artifact \
+    ON artifact.tenant_id = r.tenant_id \
+   AND artifact.flow_id = r.flow_id AND artifact.flow_version = r.flow_version \
+   AND artifact.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+  LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
+    ON node.value ->> 'id' = $2 \
+  LEFT JOIN catalog.connection_bindings AS binding \
+    ON binding.tenant_id = r.tenant_id AND binding.catalog_id = r.catalog_id \
+   AND binding.catalog_version = r.catalog_version \
+   AND binding.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+   AND binding.requirement_name = $5 \
+  LEFT JOIN catalog.connection_instances AS instance \
+    ON instance.tenant_id = binding.tenant_id \
+   AND instance.environment = binding.environment \
+   AND instance.instance_id = binding.instance_id \
+  LEFT JOIN catalog.connection_generations AS generation \
+    ON generation.tenant_id = instance.tenant_id \
+   AND generation.environment = instance.environment \
+   AND generation.instance_id = instance.instance_id \
+   AND generation.generation = instance.active_generation \
+ WHERE r.run_id = $1";
+
 /// Reject guest SQL that would set or reset a session variable or role in-band.
 ///
 /// A guest on the transaction / one-shot / cursor API must not be able to
@@ -621,6 +717,96 @@ impl WamnPostgres {
             tenant_claim: row.try_get(1)?,
             xact_id: row.try_get(2)?,
         })
+    }
+
+    /// Load every host-derived HTTP authorization input in one read-only
+    /// transaction under the injected tenant claim.
+    pub async fn connection_effect_snapshot(
+        &self,
+        project: &str,
+        tenant: &str,
+        lookup: &ConnectionEffectLookup<'_>,
+    ) -> anyhow::Result<Option<ConnectionEffectSnapshot>> {
+        let (conn, policy) = self
+            .checkout(project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(&conn, tenant, None, None, None, policy.statement_timeout_ms)
+            .await
+        {
+            self.destroy(conn);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
+            let params: [&(dyn ToSql + Sync); 7] = [
+                &lookup.run_id,
+                &lookup.node_id,
+                &lookup.occurrence,
+                &lookup.attempt,
+                &lookup.requirement_name,
+                &lookup.operation_fingerprint,
+                &lookup.stable_key,
+            ];
+            let row = conn
+                .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
+                .await
+                .context("query HTTP effect authorization snapshot")?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let json = |index| -> anyhow::Result<Option<serde_json::Value>> {
+                let value: Option<String> =
+                    row.try_get(index).context("decode HTTP effect JSON fact")?;
+                value
+                    .map(|value| {
+                        serde_json::from_str(&value).context("parse HTTP effect JSON fact")
+                    })
+                    .transpose()
+            };
+            let snapshot = ConnectionEffectSnapshot {
+                run_status: row.try_get(0)?,
+                flow_id: row.try_get(1)?,
+                flow_version: row.try_get(2)?,
+                catalog_id: row.try_get(3)?,
+                catalog_version: row.try_get(4)?,
+                environment: row.try_get(5)?,
+                admitted_artifact_digest: row.try_get(6)?,
+                attempt_matches: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                requirement_json: json(8)?,
+                node_connection: row.try_get(9)?,
+                node_permitted: row.try_get(10)?,
+                binding_active: row.try_get::<_, Option<bool>>(11)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
+                instance_id: row.try_get(13)?,
+                requirement_type: row.try_get(14)?,
+                contract: row.try_get(15)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(16)?.unwrap_or(false),
+                active_generation: row.try_get(17)?,
+                generation: row.try_get(18)?,
+                definition: json(19)?,
+                definition_hash: row.try_get(20)?,
+                credential_handle: row.try_get(21)?,
+                attempt_recorded: row.try_get::<_, Option<bool>>(22)?.unwrap_or(false),
+            };
+            Ok(Some(snapshot))
+        }
+        .await;
+        match result {
+            Ok(snapshot) => {
+                if let Err(error) = conn.batch_execute("COMMIT").await {
+                    self.destroy(conn);
+                    return Err(error).context("commit HTTP effect authorization snapshot");
+                }
+                Ok(snapshot)
+            }
+            Err(error) => {
+                if conn.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(conn);
+                }
+                Err(error)
+            }
+        }
     }
 
     pub(super) fn destroy(&self, obj: Object) {
@@ -1193,6 +1379,64 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(scs, "on");
+    }
+
+    /// The adapter's read-only lookup accepts only the exact durable intent
+    /// written and marked by `run_state_live` for the portable HTTP attempt.
+    #[tokio::test]
+    async fn live_connection_effect_snapshot_requires_exact_marked_intent() {
+        let Some(url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
+            return;
+        };
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(url),
+            pool_max_size: 1,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        let lookup = ConnectionEffectLookup {
+            run_id: "http-intent",
+            node_id: "notify",
+            occurrence: 0,
+            attempt: 0,
+            requirement_name: "manager",
+            flow_id: "http-flow",
+            flow_version: 1,
+            catalog_id: "c-http",
+            catalog_version: 1,
+            environment: "dev",
+            artifact_digest: "artifact-http",
+            operation_fingerprint: "sha256:operation",
+            stable_key: "http-intent:notify:0",
+        };
+        let snapshot = pg
+            .connection_effect_snapshot(DEFAULT_PROJECT, "t1", &lookup)
+            .await
+            .unwrap()
+            .expect("admitted run exists");
+        assert!(snapshot.attempt_matches);
+        assert!(snapshot.attempt_recorded);
+        assert_eq!(snapshot.active_generation, Some(1));
+        assert_eq!(snapshot.generation, Some(1));
+        assert_eq!(snapshot.instance_id.as_deref(), Some("manager-dev"));
+        assert_eq!(
+            snapshot.credential_handle.as_deref(),
+            Some("manager-credential-v1")
+        );
+
+        let wrong_attempt = ConnectionEffectLookup {
+            attempt: 1,
+            ..lookup
+        };
+        let snapshot = pg
+            .connection_effect_snapshot(DEFAULT_PROJECT, "t1", &wrong_attempt)
+            .await
+            .unwrap()
+            .expect("run still exists");
+        assert!(!snapshot.attempt_matches);
+        assert!(!snapshot.attempt_recorded);
     }
 
     // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL

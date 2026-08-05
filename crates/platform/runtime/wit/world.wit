@@ -57,6 +57,11 @@ world causation-plugin {
   import wamn:runner/causation@0.1.0;
 }
 
+/// Host-side bindgen world for the trusted one-frame HTTP effect surface.
+world runner-http-effect-plugin {
+  import wamn:runner/http-effect@0.1.0;
+}
+
 /// Host-side bindgen world for the `wamn:jetstream` plugin (E10): the host
 /// IMPLEMENTS durable-consumer binding + pull/fetch + per-message ack/nack/term
 /// and header-carrying publish over the async-nats JetStream client — the

@@ -58,6 +58,9 @@ world flowrunner {
   // events. Cleared (none) between runs. A guest cannot forge causation: the
   // frozen wamn:postgres surface rejects a raw-SQL wamn.* emit.
   import wamn:runner/causation@0.1.0;
+  // PLAN-2B: the trusted one-frame portable HTTP effect. The context carries
+  // identity claims only; the host re-derives every permission and binding.
+  import wamn:runner/http-effect@0.1.0;
   // wamn-yf3: run-path observability. The engine emits a few structured records
   // per run (node completion, node error CLASS, run completion) through the
   // wamn:logging plugin, which host-injects the (unspoofable) tenant/project and

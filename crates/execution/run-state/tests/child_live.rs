@@ -150,6 +150,7 @@ fn child_live() {
              AND attachment_id='child-internal' \
              AND input_json='{{\"decision\":\"approve\"}}'::jsonb \
              AND invocation_context->>'version'='1' \
+             AND invocation_context->'principal'->>'run-id'='child-created' \
              AND invocation_context->'principal'->>'artifact-digest'='sha256:artifact' \
              AND invocation_context->'source'->'actor'->>'subject'='service:cat:poc:child-flow' \
              AND invocation_context->'source'->'caller'->>'flow-id'='parent-flow'), 'child identity pinned'; \

@@ -38,6 +38,8 @@ fn run_state_live() {
     let url = std::env::var("WAMN_RUN_STORE_PG_URL")
         .expect("set WAMN_RUN_STORE_PG_URL to the throwaway superuser database");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
+        .expect("read catalog DDL");
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
@@ -51,7 +53,9 @@ fn run_state_live() {
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
              END $$; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; {run_state} {run_queue}"
+             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             {catalog} {run_state} {run_queue}"
         ),
     );
 
@@ -307,10 +311,10 @@ fn run_state_live() {
     );
     let rollback_script = format!(
         "{} PREPARE begin_stmt \
-           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint) AS {}; \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
          EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
                             'effect',0,1,'never-replay','never-replay','not-required', \
-                            NULL,NULL,'sha256:input',NULL,30000); \
+                            NULL,NULL,'sha256:input',NULL,30000,NULL); \
          ROLLBACK;",
         app_preamble(),
         begin_attempt
@@ -318,61 +322,61 @@ fn run_state_live() {
     success(&url, &rollback_script);
     let nr_script = format!(
         "{} PREPARE begin_stmt \
-           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint) AS {}; \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
          PREPARE mark_stmt (text,text,text,bigint,text,int,bigint) AS {}; \
          CREATE TEMP TABLE rollback_recovery AS \
            EXECUTE begin_stmt('nr-rollback','nr-rollback','worker-nr',1, \
                               'effect',0,1,'never-replay','never-replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE before_first AS \
            EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
                               'effect',0,1,'never-replay','never-replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE before_retarget AS \
            EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
                               'effect',0,1,'replay','replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE before_recovery AS \
            EXECUTE begin_stmt('nr-before-send','nr-before-send','worker-nr',1, \
                               'effect',0,1,'never-replay','never-replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE before_marked AS \
            EXECUTE mark_stmt('nr-before-send','nr-before-send','worker-nr',1, \
                              'effect',0,30000); \
          CREATE TEMP TABLE nr_first AS \
            EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
                               'effect',0,1,'never-replay','never-replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE nr_marked AS \
            EXECUTE mark_stmt('nr-never','nr-never','worker-nr',1,'effect',0,30000); \
          CREATE TEMP TABLE nr_recovery AS \
            EXECUTE begin_stmt('nr-never','nr-never','worker-nr',1, \
                               'effect',0,1,'never-replay','never-replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE pure_first AS \
            EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
                               'pure',0,1,'replay','replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE pure_marked AS \
            EXECUTE mark_stmt('nr-replay','nr-replay','worker-nr',1,'pure',0,30000); \
          CREATE TEMP TABLE pure_recovery AS \
            EXECUTE begin_stmt('nr-replay','nr-replay','worker-nr',1, \
                               'pure',0,1,'replay','replay','not-required', \
-                              NULL,NULL,'sha256:input',NULL,30000); \
+                              NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE keyed_first AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
                               'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
-                              'not-required',NULL,NULL,'sha256:input','key-1',30000); \
+                              'not-required',NULL,NULL,'sha256:input','key-1',30000,NULL); \
          CREATE TEMP TABLE keyed_prepared_missing AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
                               'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
-                              'not-required',NULL,NULL,'sha256:input',NULL,30000); \
+                              'not-required',NULL,NULL,'sha256:input',NULL,30000,NULL); \
          CREATE TEMP TABLE keyed_marked AS \
            EXECUTE mark_stmt('nr-keyed','nr-keyed','worker-nr',1,'keyed',0,30000); \
          CREATE TEMP TABLE keyed_missing AS \
            EXECUTE begin_stmt('nr-keyed','nr-keyed','worker-nr',1, \
                               'keyed',0,1,'idempotent-with-key','idempotent-with-key', \
-                              'not-required',NULL,NULL,'sha256:input',NULL,30000); \
+                              'not-required',NULL,NULL,'sha256:input',NULL,30000,NULL); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM rollback_recovery) = 'started', \
                   'crash before intent commit leaves the occurrence resumable'; \
@@ -412,6 +416,100 @@ fn run_state_live() {
         mark_attempt
     );
     success(&url, &nr_script);
+
+    // Portable HTTP admission resolves and records generation facts in the
+    // same INSERT that creates the write-ahead attempt intent. The caller
+    // supplies only the requirement name; generation parameters remain NULL.
+    success(
+        &url,
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) \
+         VALUES ('t1','c-http',1,'dev','0.1','applied'); \
+         INSERT INTO catalog.flow_artifacts \
+           (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash, \
+            interface_bundle_json,interface_bundle_hash,component_digests) VALUES \
+           ('t1','http-flow',1,'0.1', \
+            '{\"nodes\":[{\"id\":\"notify\",\"type\":\"http-request\",\"connection\":\"manager\"}]}', \
+            'graph-http','artifact-http', \
+            '[{\"interface\":{\"node-type\":\"http-request\",\"connection-requirements\":[{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}]}}]', \
+            'interfaces-http','[]'); \
+         INSERT INTO catalog.release_manifests \
+           (tenant_id,catalog_id,catalog_version,members_json) VALUES \
+           ('t1','c-http',1,'[{\"flow-id\":\"http-flow\",\"flow-version\":1,\"artifact-hash\":\"artifact-http\"}]'); \
+         INSERT INTO catalog.release_flows \
+           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+         VALUES ('t1','c-http',1,'http-flow',1); \
+         INSERT INTO catalog.connection_requirements \
+           (tenant_id,artifact_hash,requirement_name,requirement_json,requirement_hash) VALUES \
+           ('t1','artifact-http','manager', \
+            '{\"descriptor\":{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}}', \
+            'requirement-http'); \
+         INSERT INTO catalog.connection_instances \
+           (tenant_id,environment,instance_id,requirement_type,contract) VALUES \
+           ('t1','dev','manager-dev','http','wamn:connection/http@0.1.0'); \
+         INSERT INTO catalog.connection_generations \
+           (tenant_id,environment,instance_id,generation,definition_json,definition_hash, \
+            credential_set_handle) VALUES \
+           ('t1','dev','manager-dev',1,'{}','definition-http','manager-credential-v1'); \
+         UPDATE catalog.connection_instances \
+            SET active_generation=1,revision=1,updated_at=now()+interval '1 microsecond' \
+          WHERE tenant_id='t1' AND environment='dev' AND instance_id='manager-dev'; \
+         INSERT INTO catalog.connection_bindings \
+           (tenant_id,catalog_id,catalog_version,artifact_hash,requirement_name,environment, \
+            instance_id,binding_status,validation_status,validation_hash) VALUES \
+           ('t1','c-http',1,'artifact-http','manager','dev','manager-dev','active','valid', \
+            'binding-http'); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status, \
+            invocation_context) VALUES \
+           ('t1','http-intent','http-flow',1,'c-http',1,'dev','running', \
+            '{\"principal\":{\"artifact-digest\":\"artifact-http\"}}'), \
+           ('t1','http-wrong-node','http-flow',1,'c-http',1,'dev','running', \
+            '{\"principal\":{\"artifact-digest\":\"artifact-http\"}}'); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','http-intent','worker-http',now()+interval '1 minute',1), \
+           ('t1','http-wrong-node','worker-http',now()+interval '1 minute',1);",
+    );
+    let connection_intent_script = format!(
+        "{} PREPARE begin_http \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
+         PREPARE mark_http (text,text,text,bigint,text,int,bigint) AS {}; \
+         CREATE TEMP TABLE http_intent AS \
+           EXECUTE begin_http('http-intent','http-intent','worker-http',1, \
+                              'notify',0,7,'never-replay','never-replay','attested', \
+                              NULL,NULL,'sha256:operation','http-intent:notify:0',30000,'manager'); \
+         CREATE TEMP TABLE wrong_node AS \
+           EXECUTE begin_http('http-wrong-node','http-wrong-node','worker-http',1, \
+                              'other',0,7,'never-replay','never-replay','attested', \
+                              NULL,NULL,'sha256:operation','http-wrong-node:other:0',30000,'manager'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM http_intent) = 'started', \
+                  'portable HTTP intent inserts before send'; \
+           ASSERT (SELECT generation_fact_kind = 'attested' \
+                          AND connection_generation = 'manager-dev:1' \
+                          AND credential_generation = 'manager-credential-v1' \
+                          AND attempt_input_ref = 'sha256:operation' \
+                          AND attempt_key = 'http-intent:notify:0' \
+                          AND attempt_dispatched_at IS NULL \
+                     FROM node_runs WHERE run_id='http-intent' AND node_id='notify'), \
+                  'one intent insert records generation, fingerprint, and stable key'; \
+           ASSERT (SELECT result_code FROM wrong_node) = 'connection-refused', \
+                  'node without the admitted connection cannot create intent'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='http-wrong-node'), \
+                  'refused connection reaches no durable send intent'; \
+         END $$; \
+         CREATE TEMP TABLE http_marked AS \
+           EXECUTE mark_http('http-intent','http-intent','worker-http',1,'notify',0,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM http_marked) = 'marked', \
+                  'durable intent crosses the send boundary only after insertion'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        begin_attempt,
+        mark_attempt
+    );
+    success(&url, &connection_intent_script);
 
     // The final host-side send marker refuses both expired authority windows
     // and performs no dispatch-state write.

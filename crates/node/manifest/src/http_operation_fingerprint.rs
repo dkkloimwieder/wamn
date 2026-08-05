@@ -9,9 +9,12 @@
 //! Normalization is deterministic: method and header names use uppercase and
 //! lowercase ASCII respectively; header order is lexical; surrounding header
 //! OWS is removed; and percent encodings use uppercase hex while unreserved
-//! bytes are decoded. Relative targets start with neither `/` nor an authority,
-//! and ambiguous dot segments or encoded path separators fail closed. Duplicate
-//! semantic header names fail rather than relying on protocol-specific joining.
+//! bytes are decoded. Portable targets use a single leading `/`; the sole
+//! normalizer strips it before the connection-relative target enters this
+//! codec and the authority resolver. Ambiguous dot segments, authorities, or
+//! encoded path separators fail closed. Duplicate semantic header names fail
+//! rather than relying on protocol-specific joining. Transport tracing metadata
+//! (`traceparent`) is not an operation-semantic header.
 
 use sha2::{Digest as _, Sha256};
 
@@ -33,6 +36,70 @@ const FORBIDDEN_SEMANTIC_HEADERS: &[&str] = &[
     "transfer-encoding",
     "upgrade",
 ];
+
+/// A portable HTTP target normalized exactly once for canonical consumers.
+///
+/// The private field prevents the resolver and fingerprint codec from
+/// accepting a target that bypassed [`normalize_portable_http_target`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalHttpTarget(Box<str>);
+
+impl CanonicalHttpTarget {
+    /// Return the connection-relative spelling consumed by canonical stacks.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Normalize the sole portable spelling by stripping exactly one leading `/`.
+pub fn normalize_portable_http_target(
+    portable: &str,
+) -> Result<CanonicalHttpTarget, PortableHttpTargetError> {
+    if portable.starts_with("//") {
+        return Err(PortableHttpTargetError::new(
+            "portable HTTP path-and-query cannot start with //",
+        ));
+    }
+    let Some(canonical) = portable.strip_prefix('/') else {
+        return Err(PortableHttpTargetError::new(
+            "portable HTTP path-and-query must start with /",
+        ));
+    };
+    if canonical.is_empty() {
+        return Err(PortableHttpTargetError::new(
+            "portable HTTP path-and-query must contain a path",
+        ));
+    }
+    let first_segment = canonical.split(['/', '?', '#']).next().unwrap_or_default();
+    if canonical.contains(['#', '\\']) || first_segment.contains(':') {
+        return Err(PortableHttpTargetError::new(
+            "portable HTTP path-and-query is ambiguous",
+        ));
+    }
+    Ok(CanonicalHttpTarget(canonical.into()))
+}
+
+/// A portable HTTP target that cannot enter canonical resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortableHttpTargetError {
+    detail: Box<str>,
+}
+
+impl PortableHttpTargetError {
+    fn new(detail: impl Into<Box<str>>) -> Self {
+        Self {
+            detail: detail.into(),
+        }
+    }
+}
+
+impl std::fmt::Display for PortableHttpTargetError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl std::error::Error for PortableHttpTargetError {}
 
 /// A SHA-256 digest of the exact HTTP request body bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,11 +129,16 @@ pub struct HttpSemanticHeader<'a> {
     pub value: &'a str,
 }
 
+/// Whether an authored header participates in the portable operation identity.
+pub fn is_http_operation_semantic_header(name: &str) -> bool {
+    !name.eq_ignore_ascii_case("traceparent")
+}
+
 /// The complete portable input to the HTTP operation fingerprint codec.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpOperation<'a> {
     pub method: &'a str,
-    pub relative_target: &'a str,
+    pub target: CanonicalHttpTarget,
     pub semantic_headers: &'a [HttpSemanticHeader<'a>],
     pub body_digest: HttpBodyDigest,
 }
@@ -134,7 +206,7 @@ pub fn fingerprint_http_operation(
     operation: &HttpOperation<'_>,
 ) -> Result<HttpOperationFingerprint, HttpOperationFingerprintError> {
     let method = canonical_method(operation.method)?;
-    let target = canonical_relative_target(operation.relative_target)?;
+    let target = canonical_relative_target(operation.target.as_str())?;
     let mut headers = canonical_semantic_headers(operation.semantic_headers)?;
     headers.sort_unstable();
 

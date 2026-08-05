@@ -76,7 +76,8 @@ fn committed_schema_matches_types() {
     // Drift guard: regenerate with
     //   cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/contracts/catalog-model.schema.json
     let committed = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../docs/contracts/catalog-model.schema.json"),
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../docs/contracts/catalog-model.schema.json"),
     )
     .expect("read committed schema");
     assert_eq!(

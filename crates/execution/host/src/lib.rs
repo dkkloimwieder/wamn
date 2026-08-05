@@ -42,6 +42,7 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
+use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
@@ -393,6 +394,7 @@ impl ExecutionHost {
         // plugin stamps a transactional wamn.causation message onto every
         // run-owned txn (the CDC reader stitches it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
+        connection_http::add_to_linker(&mut linker)?;
         // wamn-yf3: wasi:logging — the flowrunner emits a few structured records
         // per run (node/run lifecycle) that the wamn:logging plugin enriches +
         // ships. The guest imports it unconditionally, so the linker must satisfy
@@ -405,6 +407,18 @@ impl ExecutionHost {
             mode,
             egress_policy,
         } = capabilities;
+        let connection_allowed_hosts = match &mode {
+            CapabilityMode::Production { allowed_hosts }
+            | CapabilityMode::Injected { allowed_hosts, .. } => allowed_hosts.clone(),
+        };
+        let connection_http = Arc::new(ConnectionHttp::new(
+            plugin.clone(),
+            vault.clone(),
+            egress_policy.clone(),
+            tenant,
+            project,
+            connection_allowed_hosts,
+        ));
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
@@ -421,6 +435,10 @@ impl ExecutionHost {
         plugins.insert(
             WAMN_LOGGING_ID,
             logging as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        plugins.insert(
+            CONNECTION_HTTP_ID,
+            connection_http as Arc<dyn HostPlugin + Send + Sync>,
         );
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
         let ctx = match mode {

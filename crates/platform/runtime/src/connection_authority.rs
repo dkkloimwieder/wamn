@@ -5,6 +5,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use hyper::Uri;
 use url::{Host, Url};
+use wamn_node_manifest::CanonicalHttpTarget;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.
@@ -251,7 +252,7 @@ pub fn parse_http_connection_authority(
 /// Resolve a guest-controlled relative path/query under a trusted connection.
 pub async fn resolve_http_request<R, N>(
     connection: &HttpConnectionAuthority,
-    path_and_query: &str,
+    target: &CanonicalHttpTarget,
     platform_hosts: &[AllowedHost],
     network: &N,
     dns: &R,
@@ -260,8 +261,8 @@ where
     R: DnsResolver,
     N: NetworkPolicy,
 {
-    validate_relative_target(path_and_query)?;
-    let target = connection.base_url.join(path_and_query).map_err(|error| {
+    validate_relative_target(target.as_str())?;
+    let target = connection.base_url.join(target.as_str()).map_err(|error| {
         AuthorityError::new(
             AuthorityErrorKind::InvalidRequestTarget,
             format!("invalid relative HTTP target: {error}"),
@@ -465,7 +466,7 @@ fn parse_proxy(value: &str) -> Result<ProxyAuthority, AuthorityError> {
 }
 
 fn validate_relative_target(value: &str) -> Result<(), AuthorityError> {
-    if value.starts_with('/') || Url::parse(value).is_ok() {
+    if Url::parse(value).is_ok() {
         return Err(AuthorityError::new(
             AuthorityErrorKind::InvalidRequestTarget,
             "HTTP request target must be connection-relative",
@@ -618,5 +619,47 @@ fn bracket_ip_v6(host: &str) -> std::borrow::Cow<'_, str> {
         format!("[{host}]").into()
     } else {
         host.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct EmptyDns;
+
+    impl DnsResolver for EmptyDns {
+        fn resolve(
+            &self,
+            _host: &str,
+            _port: u16,
+        ) -> impl Future<Output = Result<Vec<SocketAddr>, AuthorityError>> + Send {
+            std::future::ready(Ok(Vec::new()))
+        }
+    }
+
+    #[derive(Debug)]
+    struct DenyNetwork;
+
+    impl NetworkPolicy for DenyNetwork {
+        fn allows(&self, _address: SocketAddr) -> bool {
+            false
+        }
+    }
+
+    #[tokio::test]
+    async fn resolved_target_outside_base_is_refused() {
+        let connection = parse_http_connection_authority(
+            "https://manager.example/api/",
+            TlsPolicy::VerifyAuthority,
+            None,
+        )
+        .expect("connection definition");
+        let outside = Url::parse("https://manager.example/outside").expect("outside target");
+        let error = resolve_target(&connection, outside, &[], &DenyNetwork, &EmptyDns)
+            .await
+            .expect_err("resolved target escaped its configured base");
+        assert_eq!(error.kind(), AuthorityErrorKind::BasePathEscape);
     }
 }

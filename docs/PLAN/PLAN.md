@@ -895,6 +895,15 @@ effective destination  =  connection-defined authority
 resolution, or proxy behaviour.** The resolver is 2B's design; the property is what its tests
 must establish.
 
+**HTTP `0.1` floor decisions (`wamn-ko5r.8`).** The artifact spelling is a leading-slash
+connection-relative target such as `/holds`; bare `holds`, raw `//`, absolute authorities,
+and base-path escapes are invalid. Exactly one normalizer strips that one leading slash and
+constructs the canonical target accepted by both the resolver and operation fingerprint.
+The v1 transport is direct-only. A generation declaring proxy transport is typed
+`incompatible` both during staged-generation validation and again at dispatch; it never
+falls back to direct. CONNECT/TLS proxy transport is demand-gated separately by
+`wamn-ko5r.32` when a named environment requires proxied egress.
+
 An earlier draft said connections *supersede* an env-level allowlist. They do not; they are
 the innermost of three layers.
 Symmetric with what exists, stated precisely now that the three-way split exists:
@@ -929,6 +938,13 @@ where an effect was actually sent.
 
 At minimum, effect history identifies the connection requirement, the instance, its
 generation or definition hash, and the credential generation used — never secret material.
+
+The floor adapter uses write-ahead intent ordering: one durable insert records
+`(tenant, run, node, occurrence)` with the pinned generation, admitted claim, canonical
+operation fingerprint, and stable key; only then may the request reach the wire, after
+which the outcome is recorded. A crash between intent and outcome leaves a pending
+effect-uncertain attempt that parks. Caller claims carry identity only; release, binding,
+generation, and authorization facts are derived from the admitted run and catalog state.
 
 **Decision (wamn-ko5r.1): an uncertain attempt stays on its recorded generation.** A retry
 or recovery dispatch for an existing effect attempt may use only the exact immutable

@@ -7,9 +7,9 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 use wamn_standard_nodes::{
-    Capability, CredentialCapError, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError,
-    PgCapError, PgRows, PgValue, RunContext, STANDARD_NODE_DESCRIPTOR_VERSION,
-    STANDARD_NODE_PLATFORM_REVISION, dispatch, granted_for, required_capabilities, respond,
+    Capability, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError, PgCapError, PgRows,
+    PgValue, RunContext, STANDARD_NODE_DESCRIPTOR_VERSION, STANDARD_NODE_PLATFORM_REVISION,
+    dispatch, granted_for, required_capabilities, respond,
 };
 
 // ---------------------------------------------------------------------------
@@ -29,10 +29,6 @@ struct Mock {
     http_results: VecDeque<Result<HttpResponse, HttpCapError>>,
     catalog: Option<String>,
     raw_sql: bool,
-    /// The vault's answer for this node's declared credential. `None` mirrors
-    /// the trait's fail-closed default (`NotGranted` — no credential is in
-    /// this node's context).
-    credential: Option<Result<String, CredentialCapError>>,
 }
 
 impl NodeCtx for Mock {
@@ -54,11 +50,6 @@ impl NodeCtx for Mock {
     fn raw_sql_enabled(&self) -> bool {
         self.raw_sql
     }
-    fn credential(&mut self) -> Result<String, CredentialCapError> {
-        self.credential
-            .clone()
-            .unwrap_or(Err(CredentialCapError::NotGranted))
-    }
 }
 
 fn run_with_context<'a>(config: &'a Value, context: &'a Value) -> RunContext<'a> {
@@ -67,6 +58,7 @@ fn run_with_context<'a>(config: &'a Value, context: &'a Value) -> RunContext<'a>
         flow_id: "f",
         flow_version: 1,
         node_id: "n",
+        connection: Some("test-http"),
         attempt: 0,
         idempotency_key: "r-1:n",
         deadline_ms: None,
@@ -581,7 +573,7 @@ fn f3_cycle_jmespath_surface_holds() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn http_request_templates_url_headers_and_body() {
+fn http_request_templates_portable_path_headers_and_body() {
     let mut mock = Mock::default();
     mock.http_results.push_back(ok_http(
         200,
@@ -590,7 +582,7 @@ fn http_request_templates_url_headers_and_body() {
     ));
     let config = json!({
         "method": "post",
-        "url": "http://api.test/r/{{id}}",
+        "path-and-query": "/r/{{id}}",
         "headers": {"x-token": "{{tok}}"},
         "body": "payload"
     });
@@ -598,8 +590,9 @@ fn http_request_templates_url_headers_and_body() {
     let em = go("http-request", &mut mock, &config, &input).unwrap();
 
     let req = &mock.http_calls[0];
+    assert_eq!(req.requirement, "test-http");
     assert_eq!(req.method, "POST");
-    assert_eq!(req.url, "http://api.test/r/42");
+    assert_eq!(req.path_and_query, "/r/42");
     assert!(req.headers.contains(&("x-token".into(), "T".into())));
     assert!(
         req.headers
@@ -617,7 +610,7 @@ fn http_request_templates_url_headers_and_body() {
 fn http_request_null_body_expression_sends_no_body() {
     let mut mock = Mock::default();
     mock.http_results.push_back(ok_http(204, &[], ""));
-    let config = json!({"url": "http://api.test/x", "body": "missing.path"});
+    let config = json!({"path-and-query": "/x", "body": "missing.path"});
     let em = go("http-request", &mut mock, &config, &json!({})).unwrap();
     assert_eq!(mock.http_calls[0].method, "GET", "method defaults to GET");
     assert_eq!(mock.http_calls[0].body, None);
@@ -630,13 +623,14 @@ fn http_request_null_body_expression_sends_no_body() {
 fn http_request_forwards_active_traceparent() {
     let mut mock = Mock::default();
     mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({"url": "http://api.test/x"});
+    let config = json!({"path-and-query": "/x"});
     let context = json!({});
     let rc = RunContext {
         run_id: "r-1",
         flow_id: "f",
         flow_version: 1,
         node_id: "n",
+        connection: Some("test-http"),
         attempt: 0,
         idempotency_key: "r-1:n",
         deadline_ms: None,
@@ -675,7 +669,7 @@ fn http_request_explicit_traceparent_header_wins() {
     let mut mock = Mock::default();
     mock.http_results.push_back(ok_http(200, &[], "{}"));
     let config = json!({
-        "url": "http://api.test/x",
+        "path-and-query": "/x",
         "headers": {"traceparent": "00-explicit-01"}
     });
     let context = json!({});
@@ -684,6 +678,7 @@ fn http_request_explicit_traceparent_header_wins() {
         flow_id: "f",
         flow_version: 1,
         node_id: "n",
+        connection: Some("test-http"),
         attempt: 0,
         idempotency_key: "r-1:n",
         deadline_ms: None,
@@ -709,184 +704,13 @@ fn http_request_explicit_traceparent_header_wins() {
     assert_eq!(tps[0].1, "00-explicit-01", "config header wins");
 }
 
-/// F4: the opt-in `"idempotency-key": true` stamps the run's dispatch
-/// idempotency key as the `Idempotency-Key` header on the outbound request —
-/// the value comes from `RunContext::idempotency_key` (dispatch mechanics),
-/// NOT templated over input. The MUTATION KILLER for a dropped idempotency
-/// header (the F4 exactly-once ERP callback depends on it).
-#[test]
-fn http_request_stamps_opt_in_idempotency_key() {
-    let mut mock = Mock::default();
-    mock.http_results.push_back(ok_http(202, &[], "{}"));
-    let config =
-        json!({"method": "post", "url": "http://erp.test/callback", "idempotency-key": true});
-    let context = json!({});
-    let rc = RunContext {
-        run_id: "disp:evt:9",
-        flow_id: "f",
-        flow_version: 1,
-        node_id: "callback",
-        attempt: 2,
-        idempotency_key: "disp:evt:9:callback:0",
-        deadline_ms: None,
-        traceparent: None,
-        tracestate: None,
-        config: &config,
-        context: &context,
-    };
-    dispatch(
-        "http-request",
-        granted_for(false),
-        &mut mock,
-        &rc,
-        &json!({}),
-    )
-    .unwrap();
-    let req = &mock.http_calls[0];
-    assert!(
-        req.headers
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("idempotency-key") && v == "disp:evt:9:callback:0"),
-        "opt-in stamps the dispatch idempotency key; got {:?}",
-        req.headers
-    );
-}
-
-/// F4: without the opt-in flag, NO Idempotency-Key header is added (the
-/// default-off contract — the header must not leak onto unrelated flows).
-#[test]
-fn http_request_no_idempotency_key_without_opt_in() {
-    let mut mock = Mock::default();
-    mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({"method": "post", "url": "http://erp.test/callback"});
-    let em = go("http-request", &mut mock, &config, &json!({}));
-    em.unwrap();
-    assert!(
-        !mock.http_calls[0]
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key")),
-        "no idempotency header when the flow did not opt in"
-    );
-}
-
-/// 5.9: the node's DECLARED credential resolves through the vault and rides
-/// as the `authorization` header by default — the secret exists only in the
-/// outbound request, never in config or the emitted payload.
-#[test]
-fn http_request_sends_the_declared_credential() {
-    let mut mock = Mock {
-        credential: Some(Ok("Bearer s3cr3t-tok".into())),
-        ..Mock::default()
-    };
-    mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({"url": "http://notify.test/x"});
-    let em = go("http-request", &mut mock, &config, &json!({})).unwrap();
-    assert!(
-        mock.http_calls[0]
-            .headers
-            .iter()
-            .any(|(k, v)| k == "authorization" && v == "Bearer s3cr3t-tok"),
-        "declared credential sent as authorization; got {:?}",
-        mock.http_calls[0].headers
-    );
-    assert!(
-        !em.payload.to_string().contains("s3cr3t-tok"),
-        "the secret never enters the emitted payload"
-    );
-}
-
-/// The header the credential rides in is config-selectable
-/// (`credential-header`), and an explicit config header of the same name wins
-/// (the trace-context rule).
-#[test]
-fn http_request_credential_header_is_configurable_and_config_wins() {
-    let mut mock = Mock {
-        credential: Some(Ok("k-123".into())),
-        ..Mock::default()
-    };
-    mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({"url": "http://notify.test/x", "credential-header": "x-api-key"});
-    go("http-request", &mut mock, &config, &json!({})).unwrap();
-    let req = &mock.http_calls[0];
-    assert!(
-        req.headers
-            .iter()
-            .any(|(k, v)| k == "x-api-key" && v == "k-123"),
-        "credential rides the configured header; got {:?}",
-        req.headers
-    );
-    assert!(
-        !req.headers.iter().any(|(k, _)| k == "authorization"),
-        "no stray authorization header"
-    );
-
-    // An explicit config header of the credential's name wins outright.
-    let mut mock = Mock {
-        credential: Some(Ok("from-vault".into())),
-        ..Mock::default()
-    };
-    mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({
-        "url": "http://notify.test/x",
-        "headers": {"Authorization": "explicit"}
-    });
-    go("http-request", &mut mock, &config, &json!({})).unwrap();
-    let auths: Vec<_> = mock.http_calls[0]
-        .headers
-        .iter()
-        .filter(|(k, _)| k.eq_ignore_ascii_case("authorization"))
-        .collect();
-    assert_eq!(auths.len(), 1, "exactly one authorization header");
-    assert_eq!(auths[0].1, "explicit", "explicit config header wins");
-}
-
-/// A node that declared NO credential proceeds bare (`NotGranted` is the
-/// no-credential signal, not an error); vault failures classify mechanically —
-/// unknown name is config-shaped (terminal), a down store is retryable — and
-/// in both cases nothing leaves the node.
-#[test]
-fn http_request_credential_errors_classify_mechanically() {
-    // No declaration: request proceeds without a credential header.
-    let mut mock = Mock::default();
-    mock.http_results.push_back(ok_http(200, &[], "{}"));
-    let config = json!({"url": "http://notify.test/x"});
-    go("http-request", &mut mock, &config, &json!({})).unwrap();
-    assert!(
-        !mock.http_calls[0]
-            .headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization")),
-        "no credential declared ⇒ bare request"
-    );
-
-    let mut mock = Mock {
-        credential: Some(Err(CredentialCapError::NotFound)),
-        ..Mock::default()
-    };
-    let e = go("http-request", &mut mock, &config, &json!({})).unwrap_err();
-    assert_eq!(terminal_code(&e), "credential-not-found");
-    assert!(mock.http_calls.is_empty(), "nothing left the node");
-
-    let mut mock = Mock {
-        credential: Some(Err(CredentialCapError::Unavailable)),
-        ..Mock::default()
-    };
-    let e = go("http-request", &mut mock, &config, &json!({})).unwrap_err();
-    assert!(
-        matches!(&e, NodeError::Retryable(d) if d.code.as_deref() == Some("credential-unavailable")),
-        "a down vault is retryable, got {e:?}"
-    );
-    assert!(mock.http_calls.is_empty(), "nothing left the node");
-}
-
 /// THE mechanical status → taxonomy map (docs/contracts/wamn-node.wit): 429 →
 /// rate-limited with the source delay + throttle host; 408/5xx → retryable;
 /// other 4xx → terminal; transport → retryable; host egress denial → terminal.
 #[test]
 fn http_statuses_classify_mechanically() {
     let mut mock = Mock::default();
-    let config = json!({"url": "http://api.test/x"});
+    let config = json!({"path-and-query": "/x"});
 
     mock.http_results
         .push_back(ok_http(429, &[("Retry-After", "7")], "slow down"));
@@ -897,8 +721,8 @@ fn http_statuses_classify_mechanically() {
     assert_eq!(rl.retry_after_ms, Some(7000), "Retry-After honored");
     assert_eq!(
         rl.target_host.as_deref(),
-        Some("api.test"),
-        "throttle key host"
+        Some("test-http"),
+        "throttle key is the logical connection requirement"
     );
 
     for status in [500u16, 503, 408] {
@@ -928,12 +752,12 @@ fn http_statuses_classify_mechanically() {
 }
 
 #[test]
-fn http_request_rejects_relative_urls() {
+fn http_request_rejects_legacy_url_config() {
     let mut mock = Mock::default();
     let e = go(
         "http-request",
         &mut mock,
-        &json!({"url": "/relative/{{id}}"}),
+        &json!({"url": "https://legacy.example/{{id}}"}),
         &json!({"id": "x"}),
     )
     .unwrap_err();
@@ -1398,7 +1222,7 @@ fn dispatch_refuses_ungranted_capability_rows() {
         "http-request",
         &[],
         &mut mock,
-        &run(&json!({"url": "http://api.test/x"})),
+        &run(&json!({"path-and-query": "/x"})),
         &json!({}),
     )
     .unwrap_err();

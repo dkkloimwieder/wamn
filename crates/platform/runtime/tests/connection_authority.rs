@@ -3,6 +3,7 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex;
 
+use wamn_node_manifest::{CanonicalHttpTarget, normalize_portable_http_target};
 use wamn_runtime::connection_authority::{
     AuthorityError, AuthorityErrorKind, DnsResolver, HttpScheme, NetworkPolicy, TlsIdentity,
     TlsPolicy, TransportDecision, parse_http_connection_authority, resolve_http_redirect,
@@ -77,6 +78,10 @@ fn allowed(value: &str) -> AllowedHost {
     value.parse().expect("allowed-host fixture parses")
 }
 
+fn target(value: &str) -> CanonicalHttpTarget {
+    normalize_portable_http_target(value).expect("portable target spelling")
+}
+
 #[tokio::test]
 async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
     let connection = parse_http_connection_authority(
@@ -92,7 +97,7 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
 
     let decision = resolve_http_request(
         &connection,
-        "orders?id=7",
+        &target("/orders?id=7"),
         &[allowed("https://erp.example")],
         &network,
         &dns,
@@ -135,26 +140,24 @@ async fn request_authority_and_base_path_injection_fail_before_dns() {
     let network = ExactNetwork(Vec::new());
     let policy = [allowed("https://erp.example")];
 
-    for target in [
+    for spelling in [
         "https://evil.example/steal",
         "http://169.254.169.254/latest/meta-data",
         "//evil.example/steal",
-        "/outside",
-        "../outside",
-        "%2e%2e/outside",
-        "orders%2f..%2foutside",
-        "orders\\outside",
-        "orders#fragment",
     ] {
-        let error = resolve_http_request(&connection, target, &policy, &network, &dns)
+        normalize_portable_http_target(spelling).expect_err(spelling);
+    }
+    for spelling in ["/../outside", "/%2e%2e/outside", "/orders%2f..%2foutside"] {
+        let normalized = target(spelling);
+        let error = resolve_http_request(&connection, &normalized, &policy, &network, &dns)
             .await
-            .expect_err(target);
+            .expect_err(spelling);
         assert!(
             matches!(
                 error.kind(),
                 AuthorityErrorKind::InvalidRequestTarget | AuthorityErrorKind::BasePathEscape
             ),
-            "unexpected failure for {target}: {error:?}"
+            "unexpected failure for {spelling}: {error:?}"
         );
     }
     assert!(dns.calls.lock().expect("DNS calls lock").is_empty());
@@ -176,7 +179,8 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
     let network = ExactNetwork(vec![admitted]);
     let policy = [allowed("https://erp.example")];
 
-    let first = resolve_http_request(&connection, "orders", &policy, &network, &dns)
+    let request = target("/orders");
+    let first = resolve_http_request(&connection, &request, &policy, &network, &dns)
         .await
         .expect("first DNS answer is admitted");
     let first_endpoint = match &first.transport {
@@ -185,7 +189,7 @@ async fn dns_rebinding_cannot_change_an_already_pinned_transport_address() {
     };
     assert_eq!(first_endpoint.address, admitted);
 
-    let error = resolve_http_request(&connection, "orders", &policy, &network, &dns)
+    let error = resolve_http_request(&connection, &request, &policy, &network, &dns)
         .await
         .expect_err("rebound address is outside the network ceiling");
     assert_eq!(error.kind(), AuthorityErrorKind::NetworkDenied);
@@ -208,7 +212,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
 
     let host_error = resolve_http_request(
         &connection,
-        "orders",
+        &target("/orders"),
         &[allowed("https://other.example")],
         &ExactNetwork(vec![address]),
         &dns,
@@ -219,7 +223,7 @@ async fn both_outer_policy_ceiling_denials_are_final() {
 
     let network_error = resolve_http_request(
         &connection,
-        "orders",
+        &target("/orders"),
         &[allowed("https://erp.example")],
         &ExactNetwork(Vec::new()),
         &dns,
@@ -245,7 +249,7 @@ async fn configured_proxy_is_pinned_without_replacing_logical_authority() {
 
     let decision = resolve_http_request(
         &connection,
-        "orders",
+        &target("/orders"),
         &[
             allowed("https://erp.example"),
             allowed("http://proxy.internal:8080"),

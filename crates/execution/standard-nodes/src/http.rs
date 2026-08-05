@@ -1,22 +1,15 @@
-//! `http-request` — one outbound HTTP call through the runner's `wasi:http`
-//! capability (still under the host's `allowedHosts` policy).
+//! `http-request` — one portable outbound HTTP call through the trusted
+//! connection adapter.
 //!
 //! Config:
 //! ```jsonc
 //! {
 //!   "method": "POST",                        // default GET
-//!   "url": "https://api.example/x/{{id}}",   // {{jmespath}} templating
+//!   "path-and-query": "/x/{{id}}",          // {{jmespath}} templating
 //!   "headers": {"x-token": "{{auth.token}}"},// values templated
 //!   "body": "payload",                       // OPTIONAL jmespath over the
 //!                                            // input; null result = no body;
 //!                                            // else sent as JSON
-//!   "credential-header": "x-api-key",        // OPTIONAL header the node's
-//!                                            // DECLARED credential (5.9) is
-//!                                            // sent as; default authorization
-//!   "idempotency-key": true                  // OPTIONAL opt-in (default off):
-//!                                            // stamp the dispatch's stable
-//!                                            // idempotency key as the
-//!                                            // Idempotency-Key header (F4)
 //! }
 //! ```
 //! Success payload: `{"status": n, "headers": {...}, "body": <json-or-string>}`.
@@ -29,8 +22,8 @@
 
 use serde_json::{Map, Value};
 use wamn_node_sdk::{
-    Capability, CredentialCapError, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse,
-    Node, NodeCtx, NodeError, RateLimitDetail, RunContext,
+    Capability, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, Node, NodeCtx,
+    NodeError, RateLimitDetail, RunContext,
 };
 
 use crate::expr::eval_to_value;
@@ -49,49 +42,43 @@ impl Node for HttpRequestNode {
         run: &RunContext<'_>,
         input: &Value,
     ) -> Result<Emission, NodeError> {
-        let mut req = build_request(run.config, input, run.context)?;
+        let requirement = run.connection.ok_or_else(|| {
+            NodeError::Terminal(ErrorDetail::coded(
+                "invalid-config",
+                "http-request requires an artifact-local connection",
+            ))
+        })?;
+        let mut req = prepare_http_request(requirement, run.config, input, run.context)?;
         // 9.2: forward the active W3C trace context so this request continues
         // the run's trace. The host also stamps outbound `wasi:http` calls, so
         // continuity holds regardless; forwarding here keeps `traceparent`
         // present on the node's own request (a config header of the same name
         // still wins — `apply_trace_context` skips keys already set).
         run.apply_trace_context(&mut req.headers);
-        // 5.9: the node's DECLARED credential (`node.credential` in the flow)
-        // resolves through the vault and rides as a header. The secret never
-        // touches config or flow data — it exists only in this request.
-        apply_credential(ctx, run.config, &mut req.headers)?;
-        // F4: opt-in idempotency. The KEY is the dispatch's stable
-        // idempotency key (`RunContext::idempotency_key`), supplied by the
-        // caller — dispatch-level mechanics, never templated over `input`
-        // (the 24i input-scoped rule). Off unless the flow opts in.
-        apply_idempotency_key(run.config, &mut req.headers, run.idempotency_key);
-        let host = url_host(&req.url).unwrap_or_default().to_string();
         match ctx.http(&req) {
-            Ok(resp) => classify_response(&host, &resp),
+            Ok(resp) => classify_response(requirement, &resp),
             Err(e) => Err(classify_cap_error(e)),
         }
     }
 }
 
 /// Build the outbound request from config + input (pure).
-pub(crate) fn build_request(
+pub fn prepare_http_request(
+    requirement: &str,
     config: &Value,
     input: &Value,
     context: &Value,
 ) -> Result<HttpRequest, NodeError> {
-    let url_template = config.get("url").and_then(Value::as_str).ok_or_else(|| {
+    let path_template = config
+        .get("path-and-query")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
         NodeError::Terminal(ErrorDetail::coded(
             "invalid-config",
-            "http-request config requires a string \"url\"",
+            "http-request portable config requires a string \"path-and-query\" and one connection",
         ))
     })?;
-    let url = expand(url_template, input, context)?;
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return Err(NodeError::Terminal(ErrorDetail::coded(
-            "invalid-config",
-            format!("http-request url must be absolute http(s), got {url:?}"),
-        )));
-    }
+    let path_and_query = expand(path_template, input, context)?;
     let method = config
         .get("method")
         .and_then(Value::as_str)
@@ -134,82 +121,12 @@ pub(crate) fn build_request(
     };
 
     Ok(HttpRequest {
+        requirement: requirement.to_string(),
         method,
-        url,
+        path_and_query,
         headers,
         body,
     })
-}
-
-/// 5.9: resolve the node's declared credential and send it as a header.
-/// Header name from config `"credential-header"` (default `"authorization"`);
-/// an explicit config header of the same name wins (the trace-context rule).
-/// `NotGranted` means no credential is in this node's context (none declared)
-/// — not an error, the request proceeds bare. `not-found` is config-shaped
-/// (terminal); `unavailable` is the backing store (retryable, per the WIT
-/// annotation). The secret value never enters an error detail.
-fn apply_credential(
-    ctx: &mut dyn NodeCtx,
-    config: &Value,
-    headers: &mut Vec<(String, String)>,
-) -> Result<(), NodeError> {
-    let header = config
-        .get("credential-header")
-        .and_then(Value::as_str)
-        .unwrap_or("authorization");
-    match ctx.credential() {
-        Ok(secret) => {
-            if !headers.iter().any(|(k, _)| k.eq_ignore_ascii_case(header)) {
-                headers.push((header.to_string(), secret));
-            }
-            Ok(())
-        }
-        Err(CredentialCapError::NotGranted) => Ok(()),
-        Err(CredentialCapError::NotFound) => Err(NodeError::Terminal(ErrorDetail::coded(
-            "credential-not-found",
-            "the node's declared credential is unknown in this project's vault",
-        ))),
-        Err(CredentialCapError::Unavailable) => Err(NodeError::Retryable(ErrorDetail::coded(
-            "credential-unavailable",
-            "the credential vault's backing store is unavailable",
-        ))),
-    }
-}
-
-/// F4: opt-in idempotency-key stamping. When config `"idempotency-key"` is the
-/// boolean `true`, add an `Idempotency-Key` header carrying `key` — the
-/// dispatch's runner-generated key (`RunContext::idempotency_key`), which is
-/// STABLE across retries of this node visit (R25), so a rate-limited callback
-/// re-sent after the queue backoff carries the SAME key and the upstream can
-/// dedupe it to one effective side effect. The value is dispatch-level
-/// mechanics passed in by the caller — never JMESPath-templated over `input`
-/// (the standing 24i input-scoped rule). An explicit config header of the same
-/// name wins (the trace-context / credential precedence rule); an empty key is
-/// never stamped.
-fn apply_idempotency_key(config: &Value, headers: &mut Vec<(String, String)>, key: &str) {
-    let opted_in = config
-        .get("idempotency-key")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if opted_in
-        && !key.is_empty()
-        && !headers
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
-    {
-        headers.push(("idempotency-key".to_string(), key.to_string()));
-    }
-}
-
-/// The authority (host[:port]) of an absolute http(s) URL — the shared
-/// throttle's target-host key.
-pub(crate) fn url_host(url: &str) -> Option<&str> {
-    let rest = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))?;
-    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let host = &rest[..end];
-    (!host.is_empty()).then_some(host)
 }
 
 /// Mechanical response → taxonomy classification (see module docs).
@@ -281,69 +198,5 @@ fn detail_for(status: u16, resp: &HttpResponse) -> ErrorDetail {
         message: format!("upstream answered HTTP {status}"),
         code: Some(format!("HTTP_{status}")),
         data: Some(serde_json::json!({"status": status, "body": head})),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    /// F4: the opt-in stamps the caller-supplied dispatch key verbatim.
-    #[test]
-    fn idempotency_key_opt_in_stamps_the_dispatch_key() {
-        let config = json!({"idempotency-key": true});
-        let mut headers = Vec::new();
-        apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
-        assert_eq!(
-            headers,
-            vec![(
-                "idempotency-key".to_string(),
-                "run-7:callback:0".to_string()
-            )]
-        );
-    }
-
-    /// Default (flag absent) and an explicit `false` never stamp — a stray
-    /// Idempotency-Key must not appear on flows that did not opt in.
-    #[test]
-    fn idempotency_key_off_by_default() {
-        for config in [json!({}), json!({"idempotency-key": false})] {
-            let mut headers = Vec::new();
-            apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
-            assert!(
-                headers.is_empty(),
-                "no idempotency header without opt-in: {config}"
-            );
-        }
-    }
-
-    /// An explicit config header of the same name wins (the trace/credential
-    /// precedence rule) and is not duplicated.
-    #[test]
-    fn explicit_idempotency_header_wins() {
-        let config = json!({"idempotency-key": true});
-        let mut headers = vec![("Idempotency-Key".to_string(), "explicit".to_string())];
-        apply_idempotency_key(&config, &mut headers, "run-7:callback:0");
-        let keys: Vec<_> = headers
-            .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case("idempotency-key"))
-            .collect();
-        assert_eq!(keys.len(), 1, "exactly one idempotency-key header");
-        assert_eq!(keys[0].1, "explicit");
-    }
-
-    /// A non-boolean flag value is not truthy (the flag is a strict opt-in),
-    /// and an empty key is never stamped.
-    #[test]
-    fn non_bool_flag_and_empty_key_do_not_stamp() {
-        let mut headers = Vec::new();
-        apply_idempotency_key(&json!({"idempotency-key": "yes"}), &mut headers, "k");
-        assert!(
-            headers.is_empty(),
-            "a string flag is not the boolean opt-in"
-        );
-        apply_idempotency_key(&json!({"idempotency-key": true}), &mut headers, "");
-        assert!(headers.is_empty(), "an empty dispatch key is never stamped");
     }
 }

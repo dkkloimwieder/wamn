@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
+use wamn_node_manifest::normalize_portable_http_target;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use crate::connection_authority::{
@@ -112,6 +113,7 @@ pub enum GenerationValidationErrorKind {
     TlsIdentityMismatch,
     RedirectPolicyMismatch,
     ProxyMismatch,
+    UnsupportedTransport,
     CredentialMissing,
     CredentialKindMismatch,
     InvalidInputIdentity,
@@ -488,15 +490,21 @@ fn validate_proxy_transport(
         Some(_) => transport == Some("connect"),
         None => object["proxy-transport"].is_null(),
     };
-    if coherent {
-        Ok(())
-    } else {
-        Err(GenerationValidationError::field(
+    if !coherent {
+        return Err(GenerationValidationError::field(
             GenerationValidationErrorKind::ProxyMismatch,
             "proxy-transport",
             "proxy transport must be connect exactly when a proxy authority is configured",
-        ))
+        ));
     }
+    if proxy.is_some() {
+        return Err(GenerationValidationError::field(
+            GenerationValidationErrorKind::UnsupportedTransport,
+            "proxy-transport",
+            "HTTP connection v1 supports direct transport only",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_canonical(
@@ -578,9 +586,11 @@ where
     R: DnsResolver,
     N: NetworkPolicy,
 {
+    let target = normalize_portable_http_target("/__authority_validation__")
+        .expect("fixed validation target uses the portable spelling");
     resolve_http_request(
         authority,
-        "",
+        &target,
         snapshot.platform_host_policy.allowed_hosts,
         snapshot.cluster_network_policy.policy,
         dns,

@@ -11,6 +11,7 @@ wamn-component-policy = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow-invocation = { workspace = true }
+wamn-node-manifest = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-run-state = { workspace = true }
 anyhow = { workspace = true }
@@ -29,6 +30,7 @@ opentelemetry = { workspace = true, features = ["logs", "metrics"] }
 opentelemetry_sdk = { workspace = true, features = ["logs"] }
 opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "logs"] }
 rand_core = { workspace = true }
+reqwest = { workspace = true, features = ["rustls"] }
 sha2 = { workspace = true }
 serde_json = { workspace = true }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }

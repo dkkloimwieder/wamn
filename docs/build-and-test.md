@@ -4232,6 +4232,43 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 tools/gate-mutants/trusted-invocation-context.sh run
 ```
 
+## PLAN-2B — portable HTTP connection floor (`wamn-ko5r.8`)
+
+The flowrunner writes one authorization-derived attempt intent before the send
+boundary, then calls the trusted host adapter with identity claims and a
+connection-relative request. The host re-derives the release, binding, active
+direct-only generation, credential handle, and node permission from admitted
+state. `/holds` is portable; bare `holds`, proxy fallback, base escape,
+misattribution, and reaching the wire without the exact marked intent fail.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-run-state -p wamn-standard-nodes \
+    -p wamn-node-manifest -p wamn-runtime
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked -p wamn-run-state -p wamn-standard-nodes \
+    -p wamn-runtime -p wamn-execution-host --all-targets -- -D warnings
+cargo fmt --all -- --check
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-run-state --test run_state_live \
+    run_state_live -- --ignored --exact --nocapture
+WAMN_CONNECTION_EFFECT_PG_URL=postgresql://wamn_app:wamn_app@127.0.0.1:15623/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --lib \
+    live_connection_effect_snapshot_requires_exact_marked_intent -- --nocapture
+
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/portable-http-connection-floor.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/portable-http-connection-floor.sh run-all
+cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
+
+# Then run the existing H5-CALLABLE-WAVE1 and H5-CALLABLE-WAVE2 exact-image
+# recipes below; F3 and F4 are the deployed standard/custom connection proofs.
+```
+
 ## PLAN-2A — respond common Node ABI (`wamn-ayq7.20`)
 
 `respond` resolves to the pinned platform standard-node executable, dispatches

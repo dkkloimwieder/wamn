@@ -51,3 +51,59 @@ interface causation {
   /// `wamn.causation` message is unforgeable.
   set-run-context: func(ctx: option<run-context>);
 }
+/// Trusted one-frame HTTP effect surface. Linked only into the digest-pinned
+/// flowrunner; ordinary custom nodes import wamn:connection/http instead.
+interface http-effect {
+  record invocation-context {
+    version: u32,
+    tenant-id: string,
+    environment: string,
+    catalog-id: string,
+    catalog-version: s32,
+    run-id: string,
+    flow-id: string,
+    flow-version: u32,
+    artifact-digest: string,
+    node-id: string,
+    occurrence: u32,
+    attempt: u32,
+    requirement-name: string,
+  }
+
+  record header {
+    name: string,
+    value: list<u8>,
+  }
+
+  record relative-request {
+    method: string,
+    path-and-query: string,
+    headers: list<header>,
+    body: option<list<u8>>,
+  }
+
+  record response {
+    status: u16,
+    headers: list<header>,
+    body: list<u8>,
+  }
+
+  variant effect-error {
+    invalid-context,
+    undeclared-requirement,
+    node-not-permitted,
+    unbound,
+    inactive-generation,
+    incompatible,
+    authority-denied,
+    credential-unavailable,
+    timeout,
+    transport(string),
+  }
+
+  send: func(
+    context: invocation-context,
+    requirement-name: string,
+    request: relative-request,
+  ) -> result<response, effect-error>;
+}

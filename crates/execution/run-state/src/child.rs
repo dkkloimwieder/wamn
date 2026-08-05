@@ -350,6 +350,7 @@ pub fn create_or_recover_child_sql() -> String {
                       'principal', jsonb_build_object( \
                         'tenant-id', c.tenant_id, 'environment', c.environment, \
                         'catalog-id', c.catalog_id, 'catalog-version', c.catalog_version, \
+                        'run-id', $7, \
                         'flow-id', $9::text, 'flow-version', c.flow_version, \
                         'artifact-digest', c.artifact_hash), \
                       'source', jsonb_build_object( \
@@ -670,6 +671,7 @@ mod tests {
         assert!(sql.contains("p.invoke_depth + 1 > $13::int"));
         assert!(sql.contains("fs.child_count >= $14::bigint"));
         assert!(sql.contains("'artifact-digest', c.artifact_hash"));
+        assert!(sql.contains("'run-id', $7"));
         assert!(sql.contains("invocation_context, admission_context_version"));
         assert!(sql.contains("c.caller_context->'source'->'actor'"));
         assert!(sql.contains(

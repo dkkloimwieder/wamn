@@ -512,6 +512,7 @@ created_run AS ( \
              'principal', jsonb_build_object( \
                'tenant-id', c.tenant_id, 'environment', c.environment, \
                'catalog-id', c.catalog_id, 'catalog-version', c.expected_catalog_version, \
+               'run-id', c.run_id, \
                'flow-id', c.flow_id, 'flow-version', c.flow_version, \
                'artifact-digest', c.artifact_hash), \
              'source', CASE WHEN c.producer = 'event' \
@@ -684,6 +685,7 @@ mod tests {
             "'environment', c.environment",
             "'catalog-id', c.catalog_id",
             "'catalog-version', c.expected_catalog_version",
+            "'run-id', c.run_id",
             "'flow-id', c.flow_id",
             "'flow-version', c.flow_version",
             "'artifact-digest', c.artifact_hash",

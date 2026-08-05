@@ -376,6 +376,46 @@ fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, St
     .map_err(|error| format!("pinned flow artifact verification: {error}"))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectRunClaims {
+    tenant_id: String,
+    environment: String,
+    catalog_id: String,
+    catalog_version: i32,
+    artifact_digest: String,
+}
+
+const EFFECT_RUN_CLAIMS_SQL: &str = "\
+SELECT tenant_id, environment, catalog_id, catalog_version, \
+       invocation_context #>> '{principal,artifact-digest}' \
+  FROM runs \
+ WHERE run_id = $1 AND status = 'running'";
+
+fn load_effect_run_claims(run_id: &str) -> Result<EffectRunClaims, String> {
+    let rows = client::query(EFFECT_RUN_CLAIMS_SQL, &[text(run_id)]).map_err(|e| err_name(&e))?;
+    let row = rows
+        .rows
+        .first()
+        .ok_or("run is absent or its status does not admit effects")?;
+    let string = |index: usize, name: &str| match row.get(index) {
+        Some(SqlValue::Text(value)) if !value.is_empty() => Ok(value.clone()),
+        other => Err(format!("effect run {name} shape: {other:?}")),
+    };
+    let catalog_version = match row.get(3) {
+        Some(SqlValue::Int32(value)) => *value,
+        Some(SqlValue::Int64(value)) => i32::try_from(*value)
+            .map_err(|_| "effect run catalog_version is out of range".to_string())?,
+        other => return Err(format!("effect run catalog_version shape: {other:?}")),
+    };
+    Ok(EffectRunClaims {
+        tenant_id: string(0, "tenant_id")?,
+        environment: string(1, "environment")?,
+        catalog_id: string(2, "catalog_id")?,
+        catalog_version,
+        artifact_digest: string(4, "artifact_digest")?,
+    })
+}
+
 /// Read the run's persisted `flow_version` — the version the dispatcher (or the
 /// direct driver's own `open_run`) stamped when the run row was written.
 /// `Some(v)` on a resume (the row exists); `None` for a fresh run whose row this
@@ -1046,8 +1086,9 @@ fn read_response_body(resp: IncomingResponse) -> Result<String, NodeError> {
 // Standard node library glue (5.3): the wamn-standard-nodes vocabulary dispatches
 // through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
 // (SR2) over this component's real imports — the WIT<->SDK mirrors and the
-// full outbound-HTTP path live there, not here. Egress still leaves the flow
-// ONLY via wasi:http, so the S6 egress spy interposes unchanged.
+// full outbound-HTTP path live there, not here. Node-owned HTTP leaves through
+// the trusted `wamn:runner/http-effect` import; the separate `wasi:http` import
+// remains only for the runner-to-serve-node custom dispatch hop.
 // ---------------------------------------------------------------------------
 
 /// Whether the engine will ROUTE this error emission down the node's error
@@ -1186,6 +1227,7 @@ struct RecoveryAdmission {
     selected_class: RecoveryClass,
     effective_class: RecoveryClass,
     generation_fact_kind: GenerationFactKind,
+    connection_required: bool,
 }
 
 fn recovery_admission(
@@ -1221,11 +1263,7 @@ fn admit_occurrence_recovery(
             selection.node_type
         ));
     }
-    if selection.portable_connection.is_some() {
-        return Err(format!(
-            "pinned recovery selection for node {node_id} requires an attested immutable connection and credential generation"
-        ));
-    }
+    let connection_required = selection.portable_connection.is_some();
     let selected_class = match selection.recovery_class {
         wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
         wamn_node_manifest::RecoveryClass::IdempotentWithKey => RecoveryClass::IdempotentWithKey,
@@ -1234,7 +1272,12 @@ fn admit_occurrence_recovery(
     Ok(RecoveryAdmission {
         selected_class,
         effective_class: selected_class,
-        generation_fact_kind: GenerationFactKind::NotRequired,
+        generation_fact_kind: if connection_required {
+            GenerationFactKind::Attested
+        } else {
+            GenerationFactKind::NotRequired
+        },
+        connection_required,
     })
 }
 
@@ -1291,10 +1334,12 @@ fn dispatch_node(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
+    effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeAction, String> {
-    let action = dispatch_node_unvalidated(d, run_id, flow, kill_after_write, http_status)?;
+    let action =
+        dispatch_node_unvalidated(d, run_id, flow, effect_run, kill_after_write, http_status)?;
     validate_dispatched_action(d, &action)?;
     Ok(action)
 }
@@ -1313,6 +1358,7 @@ fn dispatch_node_unvalidated(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
+    effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeAction, String> {
@@ -1407,6 +1453,7 @@ fn dispatch_node_unvalidated(
                 flow_id: &flow.flow_id,
                 flow_version: flow.version,
                 node_id: &d.node,
+                connection: d.connection.as_deref(),
                 attempt: d.attempt,
                 idempotency_key: &d.idempotency_key,
                 deadline_ms: d.deadline_ms,
@@ -1432,7 +1479,26 @@ fn dispatch_node_unvalidated(
                 raw_sql: wamn_nodes::required_capabilities(node_type)
                     .is_some_and(|capabilities| capabilities.contains(&sdk::Capability::RawSql))
                     && raw_sql_enabled(),
-                credential: d.credential.clone(),
+                http_effect: match (effect_run, d.connection.as_deref()) {
+                    (Some(run), Some(requirement_name)) => {
+                        Some(wamn_node_guest::caps::HttpEffectContext {
+                            version: 1,
+                            tenant_id: run.tenant_id.clone(),
+                            environment: run.environment.clone(),
+                            catalog_id: run.catalog_id.clone(),
+                            catalog_version: run.catalog_version,
+                            run_id: run_id.to_string(),
+                            flow_id: flow.flow_id.clone(),
+                            flow_version: flow.version,
+                            artifact_digest: run.artifact_digest.clone(),
+                            node_id: d.node.clone(),
+                            occurrence: d.occurrence,
+                            attempt: d.attempt,
+                            requirement_name: requirement_name.to_string(),
+                        })
+                    }
+                    _ => None,
+                },
             };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(NodeAction::Emit(
@@ -1727,7 +1793,7 @@ fn execute(
                     .map_err(|error| error.to_string())?;
             }
             Step::Dispatch(d) => {
-                match dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)? {
+                match dispatch_node(&d, run_id, &flow, None, kill_after_write, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
                         if d.node_type == "fail" {
                             let config: FailConfig = serde_json::from_value(d.config.clone())
@@ -2138,10 +2204,25 @@ fn begin_attempt(
     lease_generation: i64,
     ttl_ms: i64,
 ) -> Result<AttemptStartResult, String> {
-    let input_ref = canonical_json_sha256(&dispatch.attempt_input());
-    let attempt_key = (admission.effective_class == RecoveryClass::IdempotentWithKey)
+    let input_ref = if admission.connection_required {
+        http_operation_fingerprint(dispatch)?
+    } else {
+        canonical_json_sha256(&dispatch.attempt_input())
+    };
+    let attempt_key = (admission.connection_required
+        || admission.effective_class == RecoveryClass::IdempotentWithKey)
         .then_some(dispatch.idempotency_key.as_str())
         .filter(|key| !key.is_empty());
+    let connection = if admission.connection_required {
+        Some(dispatch.connection.as_deref().ok_or_else(|| {
+            format!(
+                "pinned recovery selection for node {} has no connection",
+                dispatch.node
+            )
+        })?)
+    } else {
+        None
+    };
     let response = client::query(
         &begin_attempt_sql(),
         &[
@@ -2160,6 +2241,7 @@ fn begin_attempt(
             text(input_ref),
             attempt_key.map_or(SqlValue::Null, text),
             int64(ttl_ms),
+            connection.map_or(SqlValue::Null, text),
         ],
     )
     .map_err(|error| err_name(&error))?;
@@ -2169,6 +2251,45 @@ fn begin_attempt(
     };
     AttemptStartResult::from_code(code)
         .ok_or_else(|| format!("unknown attempt intent result: {code}"))
+}
+
+fn http_operation_fingerprint(dispatch: &Dispatch) -> Result<String, String> {
+    let requirement = dispatch
+        .connection
+        .as_deref()
+        .ok_or_else(|| format!("HTTP node {} has no connection", dispatch.node))?;
+    let request = wamn_nodes::prepare_http_request(
+        requirement,
+        &dispatch.config,
+        &dispatch.payload,
+        &dispatch.context,
+    )
+    .map_err(|error| format!("prepare HTTP effect intent: {error:?}"))?;
+    let target = wamn_node_manifest::normalize_portable_http_target(&request.path_and_query)
+        .map_err(|error| format!("normalize HTTP effect intent: {error}"))?;
+    let semantic_headers = request
+        .headers
+        .iter()
+        .filter(|(name, _)| wamn_node_manifest::is_http_operation_semantic_header(name))
+        .map(|(name, value)| wamn_node_manifest::HttpSemanticHeader { name, value })
+        .collect::<Vec<_>>();
+    let fingerprint =
+        wamn_node_manifest::fingerprint_http_operation(&wamn_node_manifest::HttpOperation {
+            method: &request.method,
+            target,
+            semantic_headers: &semantic_headers,
+            body_digest: wamn_node_manifest::HttpBodyDigest::sha256(
+                request.body.as_deref().unwrap_or_default(),
+            ),
+        })
+        .map_err(|error| format!("fingerprint HTTP effect intent: {error}"))?;
+    let mut encoded = String::with_capacity(71);
+    encoded.push_str("sha256:");
+    for byte in fingerprint.digest() {
+        use std::fmt::Write as _;
+        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
+    }
+    Ok(encoded)
 }
 
 fn mark_attempt_dispatched(
@@ -3181,6 +3302,7 @@ fn execute_claimed(
     lease_generation: i64,
 ) -> Result<ClaimOutcome, String> {
     let flow = artifact.flow();
+    let effect_run = load_effect_run_claims(run_id)?;
     // l5i9.12.2: the production dispatch path (run-next) — declare this run's
     // causation BEFORE any write so the wamn:postgres plugin stamps
     // {run, root, depth} onto every run-owned txn (checkpoints included; the CDC
@@ -3418,7 +3540,7 @@ fn execute_claimed(
                     }
                     other => return Err(format!("attempt intent refused: {other:?}")),
                 }
-                match dispatch_node(&d, run_id, flow, false, &mut http_status)? {
+                match dispatch_node(&d, run_id, flow, Some(&effect_run), false, &mut http_status)? {
                     NodeAction::Emit(outcome) => {
                         if d.node_type == "fail" {
                             let NodeOutcome::Error(error) = &outcome else {
@@ -4046,6 +4168,7 @@ mod tests {
                 "message": "not allowed",
                 "status": 403
             }),
+            connection: None,
             credential: None,
             payload: serde_json::json!({"reason": "policy"}),
             context: serde_json::json!({}),
@@ -4078,6 +4201,7 @@ mod tests {
             node: "in".to_string(),
             node_type: "event".to_string(),
             config: serde_json::Value::Null,
+            connection: None,
             credential: None,
             payload: serde_json::json!({"topic": "orders.created", "id": 42}),
             context: serde_json::json!({}),
@@ -4111,6 +4235,7 @@ mod tests {
             node: "in".to_string(),
             node_type: "cron".to_string(),
             config: serde_json::Value::Null,
+            connection: None,
             credential: None,
             payload: serde_json::json!({"scheduled-at": 42}),
             context: serde_json::json!({}),
@@ -4144,6 +4269,7 @@ mod tests {
             node: "in".to_string(),
             node_type: "request".to_string(),
             config: serde_json::json!({"input-schema": {}}),
+            connection: None,
             credential: None,
             payload: serde_json::json!({"admitted": true}),
             context: serde_json::json!({}),
@@ -4301,6 +4427,7 @@ mod tests {
                 selected_class: RecoveryClass::NeverReplay,
                 effective_class: RecoveryClass::NeverReplay,
                 generation_fact_kind: GenerationFactKind::NotRequired,
+                connection_required: false,
             }
         );
         assert_eq!(
@@ -4309,6 +4436,7 @@ mod tests {
                 selected_class: RecoveryClass::Replay,
                 effective_class: RecoveryClass::Replay,
                 generation_fact_kind: GenerationFactKind::NotRequired,
+                connection_required: false,
             }
         );
     }
@@ -4345,7 +4473,7 @@ mod tests {
     }
 
     #[test]
-    fn portable_occurrence_refuses_without_attested_immutable_generations() {
+    fn portable_occurrence_requires_host_derived_attested_generations() {
         let mut selected = selection(
             "call",
             "http-request",
@@ -4357,7 +4485,14 @@ mod tests {
                 86_400_000,
             ),
         );
-        let error = admit_occurrence_recovery(&[selected], "call", "http-request").unwrap_err();
-        assert!(error.contains("attested immutable connection and credential generation"));
+        assert_eq!(
+            admit_occurrence_recovery(&[selected], "call", "http-request").unwrap(),
+            RecoveryAdmission {
+                selected_class: RecoveryClass::IdempotentWithKey,
+                effective_class: RecoveryClass::IdempotentWithKey,
+                generation_fact_kind: GenerationFactKind::Attested,
+                connection_required: true,
+            }
+        );
     }
 }

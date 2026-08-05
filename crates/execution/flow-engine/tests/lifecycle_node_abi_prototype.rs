@@ -98,6 +98,7 @@ fn run_context<'a>(
         flow_id: "prototype",
         flow_version: 1,
         node_id,
+        connection: None,
         attempt: 0,
         idempotency_key: "prototype:node:0",
         deadline_ms: None,

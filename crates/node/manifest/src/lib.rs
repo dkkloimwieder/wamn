@@ -22,9 +22,10 @@ mod http_operation_fingerprint;
 
 #[doc(inline)]
 pub use http_operation_fingerprint::{
-    HTTP_OPERATION_FINGERPRINT_VERSION, HttpBodyDigest, HttpOperation, HttpOperationFingerprint,
-    HttpOperationFingerprintError, HttpOperationFingerprintErrorKind, HttpSemanticHeader,
-    fingerprint_http_operation,
+    CanonicalHttpTarget, HTTP_OPERATION_FINGERPRINT_VERSION, HttpBodyDigest, HttpOperation,
+    HttpOperationFingerprint, HttpOperationFingerprintError, HttpOperationFingerprintErrorKind,
+    HttpSemanticHeader, PortableHttpTargetError, fingerprint_http_operation,
+    is_http_operation_semantic_header, normalize_portable_http_target,
 };
 
 /// The OCI annotation key the manifest JSON is stored under.

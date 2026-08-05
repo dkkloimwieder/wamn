@@ -57,8 +57,7 @@ fn definition() -> Value {
         "tls-verification": "verify-authority",
         "tls-names": ["erp.example", "erp-backup.example"],
         "redirect-policy": "same-authority",
-        "proxy-authority": "http://proxy.internal:8080/",
-        "proxy-transport": "connect",
+        "proxy-transport": null,
         "credential-set-handle": "erp-api"
     })
 }
@@ -75,7 +74,6 @@ impl Fixture {
     fn new() -> Self {
         let primary = socket(1, 443);
         let failover = socket(2, 443);
-        let proxy = socket(3, 8080);
         Self {
             contract: ConnectionContractSnapshot {
                 identity: identity("http-contract", "descriptor-v1"),
@@ -91,13 +89,11 @@ impl Fixture {
             hosts: vec![
                 allowed("https://erp.example"),
                 allowed("https://erp-backup.example"),
-                allowed("http://proxy.internal:8080"),
             ],
-            network: ExactNetwork(vec![primary, failover, proxy]),
+            network: ExactNetwork(vec![primary, failover]),
             dns: FixedDns(HashMap::from([
                 ("erp.example".into(), vec![primary]),
                 ("erp-backup.example".into(), vec![failover]),
-                ("proxy.internal".into(), vec![proxy]),
             ])),
         }
     }
@@ -166,14 +162,7 @@ async fn compatible_generation_records_every_validated_input_identity() {
         validated.failover_authorities[0].host(),
         "erp-backup.example"
     );
-    assert_eq!(
-        validated
-            .proxy_authority
-            .as_ref()
-            .expect("configured proxy")
-            .host(),
-        "proxy.internal"
-    );
+    assert!(validated.proxy_authority.is_none());
     assert_eq!(
         validated.connection_contract_input.revision.as_ref(),
         "descriptor-v1"
@@ -291,10 +280,16 @@ async fn canonical_authority_tls_redirect_and_proxy_coherence_are_closed() {
         GenerationValidationErrorKind::RedirectPolicyMismatch
     );
     let mut proxy = definition();
-    proxy["proxy-transport"] = Value::Null;
+    proxy["proxy-authority"] = json!("http://proxy.internal:8080/");
     assert_eq!(
         error_for(&fixture, &proxy).await,
         GenerationValidationErrorKind::ProxyMismatch
+    );
+
+    proxy["proxy-transport"] = json!("connect");
+    assert_eq!(
+        error_for(&fixture, &proxy).await,
+        GenerationValidationErrorKind::UnsupportedTransport
     );
 }
 

@@ -14,6 +14,7 @@ pub struct AdmittedPrincipal {
     environment: String,
     catalog_id: String,
     catalog_version: i32,
+    run_id: String,
     flow_id: String,
     flow_version: u32,
     artifact_digest: String,
@@ -21,11 +22,16 @@ pub struct AdmittedPrincipal {
 
 impl AdmittedPrincipal {
     /// Construct the principal derived from one admitted release artifact.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the admission trust boundary must name every principal field explicitly"
+    )]
     pub fn new(
         tenant_id: impl Into<String>,
         environment: impl Into<String>,
         catalog_id: impl Into<String>,
         catalog_version: i32,
+        run_id: impl Into<String>,
         flow_id: impl Into<String>,
         flow_version: u32,
         artifact_digest: impl Into<String>,
@@ -35,6 +41,7 @@ impl AdmittedPrincipal {
             environment: environment.into(),
             catalog_id: catalog_id.into(),
             catalog_version,
+            run_id: run_id.into(),
             flow_id: flow_id.into(),
             flow_version,
             artifact_digest: artifact_digest.into(),
@@ -59,6 +66,10 @@ impl AdmittedPrincipal {
         self.catalog_version
     }
 
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
     pub fn flow_id(&self) -> &str {
         &self.flow_id
     }
@@ -75,6 +86,7 @@ impl AdmittedPrincipal {
         if self.tenant_id.is_empty()
             || self.environment.is_empty()
             || self.catalog_id.is_empty()
+            || self.run_id.is_empty()
             || self.flow_id.is_empty()
             || self.artifact_digest.is_empty()
             || self.catalog_version <= 0
@@ -241,6 +253,7 @@ mod tests {
             "prod",
             "catalog-a",
             7,
+            "run-a",
             "flow-a",
             3,
             "sha256:artifact",
