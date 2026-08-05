@@ -1,6 +1,6 @@
 //! The capability-bearing twin of the no-caps scaffolding (SR2): the
 //! `wamn_node_sdk::NodeCtx` facade a component SHELL implements over its real
-//! imports — `wamn:postgres` for data, outbound `wasi:http` for egress — plus
+//! imports — `wamn:postgres` for data and the trusted HTTP effect — plus
 //! the WIT↔SDK value mirrors both directions. `components/execution/flowrunner` grew
 //! the first copy of this glue; this module is where it lives so the next
 //! capability-bearing component links it instead of copying it.
@@ -8,10 +8,10 @@
 //! Feature-gated (`caps`) so the default build stays exactly the zero-import
 //! scaffolding: a custom node built on `export_node!` alone must remain
 //! physically incapable of I/O (the `world node` claim egressbench pins).
-//! A component using [`CapsCtx`] must import `wamn:postgres/{types,client}`
-//! and `wasi:http/{types,outgoing-handler}` at the versions pinned in
-//! `wit-caps/world.wit` in its OWN world — the bindings here emit the same
-//! canonical import names, so they unify at componentization.
+//! The digest-pinned runner component using [`CapsCtx`] imports
+//! `wamn:postgres/{types,client}` and `wamn:runner/http-effect` at the versions
+//! pinned in `wit-caps/world.wit`; ordinary custom-node worlds are not granted
+//! the trusted runner effect.
 
 use wamn_node_sdk as sdk;
 
@@ -23,36 +23,45 @@ mod bindings {
     });
 }
 
-use bindings::wamn::node::credentials as wit_credentials;
 use bindings::wamn::postgres::client;
 use bindings::wamn::postgres::types::{PgError, SqlValue};
-use bindings::wasi::http::outgoing_handler;
-use bindings::wasi::http::types::{
-    ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
-};
+use bindings::wamn::runner::http_effect;
+
+/// Identity claims passed with one trusted HTTP effect call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpEffectContext {
+    pub version: u32,
+    pub tenant_id: String,
+    pub environment: String,
+    pub catalog_id: String,
+    pub catalog_version: i32,
+    pub run_id: String,
+    pub flow_id: String,
+    pub flow_version: u32,
+    pub artifact_digest: String,
+    pub node_id: String,
+    pub occurrence: u32,
+    pub attempt: u32,
+    pub requirement_name: String,
+}
 
 /// The component-shell capability facade: dispatch `wamn-standard-nodes` (or any
 /// SDK-authored node) over the component's real imports. The D8 raw-SQL flag
 /// defaults OFF — per-project enablement wiring lands with the user-SQL role
 /// split (wamn-1nd).
 ///
-/// Constructed FRESH per node dispatch: `credential` carries ONLY the
-/// executing node's declared credential name (`node.credential` in the flow),
-/// which is what makes "the secret is injected only into the executing node's
-/// context" structural — a sibling node's ctx never names it, so its
-/// `credential()` is `NotGranted` without the vault ever being asked.
 #[derive(Default)]
 pub struct CapsCtx {
     /// Whether the `RawSql` capability is granted (D8; default off).
     pub raw_sql: bool,
-    /// The executing node's DECLARED credential name (5.9). `None` = the node
-    /// declared none; `credential()` refuses without a host call.
-    pub credential: Option<String>,
+    /// Complete claims for this single effect attempt. Absent means HTTP is
+    /// refused locally without entering the host.
+    pub http_effect: Option<HttpEffectContext>,
 }
 
 impl sdk::NodeCtx for CapsCtx {
     fn http(&mut self, req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
-        http_request_full(req)
+        trusted_http_effect(self.http_effect.as_ref(), req)
     }
 
     fn pg_query(
@@ -93,20 +102,6 @@ impl sdk::NodeCtx for CapsCtx {
 
     fn raw_sql_enabled(&self) -> bool {
         self.raw_sql
-    }
-
-    fn credential(&mut self) -> Result<String, sdk::CredentialCapError> {
-        // Only the DECLARED name ever reaches the host: no declaration, no
-        // vault call. The host resolves the handle within the component's
-        // project scope and audit-logs every get.
-        let Some(name) = self.credential.as_deref() else {
-            return Err(sdk::CredentialCapError::NotGranted);
-        };
-        wit_credentials::get(name).map_err(|e| match e {
-            wit_credentials::CredentialError::NotGranted => sdk::CredentialCapError::NotGranted,
-            wit_credentials::CredentialError::NotFound => sdk::CredentialCapError::NotFound,
-            wit_credentials::CredentialError::Unavailable => sdk::CredentialCapError::Unavailable,
-        })
     }
 }
 
@@ -159,141 +154,73 @@ fn wit_err_to_sdk(e: PgError) -> sdk::PgCapError {
     }
 }
 
-/// Full outbound request for the standard `http-request` node: method,
-/// headers, body, https — and the response body drained completely. Egress
-/// leaves the component ONLY via `wasi:http`, so the S6 egress spy (and the
-/// production allowed_hosts policy) interposes here.
-fn http_request_full(req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
-    let (scheme, authority, path) = parse_url_any(&req.url)
-        .ok_or_else(|| sdk::HttpCapError::BadRequest(format!("unparseable url {:?}", req.url)))?;
-    let fields = Fields::new();
-    for (k, v) in &req.headers {
-        fields
-            .append(k, &v.clone().into_bytes())
-            .map_err(|e| sdk::HttpCapError::BadRequest(format!("header {k:?}: {e:?}")))?;
-    }
-    let out = OutgoingRequest::new(fields);
-    if out.set_method(&wasi_method(&req.method)).is_err()
-        || out.set_scheme(Some(&scheme)).is_err()
-        || out.set_authority(Some(&authority)).is_err()
-        || out.set_path_with_query(Some(&path)).is_err()
-    {
+fn trusted_http_effect(
+    context: Option<&HttpEffectContext>,
+    req: &sdk::HttpRequest,
+) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
+    let context = context.ok_or(sdk::HttpCapError::NotGranted)?;
+    if context.requirement_name != req.requirement {
         return Err(sdk::HttpCapError::BadRequest(
-            "request fields rejected".into(),
+            "request requirement does not match the attempt context".into(),
         ));
     }
-    let body = out
-        .body()
-        .map_err(|_| sdk::HttpCapError::BadRequest("body unavailable".into()))?;
-    if let Some(bytes) = &req.body {
-        let stream = body
-            .write()
-            .map_err(|_| sdk::HttpCapError::BadRequest("body stream unavailable".into()))?;
-        // blocking_write_and_flush accepts at most 4096 bytes per call.
-        for chunk in bytes.chunks(4096) {
-            if stream.blocking_write_and_flush(chunk).is_err() {
-                return Err(sdk::HttpCapError::Transport(
-                    "request body write failed".into(),
-                ));
-            }
-        }
-    }
-    if OutgoingBody::finish(body, None).is_err() {
-        return Err(sdk::HttpCapError::Transport(
-            "request body finish failed".into(),
-        ));
-    }
-    let fut = match outgoing_handler::handle(out, None) {
-        Ok(f) => f,
-        Err(code) => return Err(handle_err(code)), // host refused before dispatch
+    let context = http_effect::InvocationContext {
+        version: context.version,
+        tenant_id: context.tenant_id.clone(),
+        environment: context.environment.clone(),
+        catalog_id: context.catalog_id.clone(),
+        catalog_version: context.catalog_version,
+        run_id: context.run_id.clone(),
+        flow_id: context.flow_id.clone(),
+        flow_version: context.flow_version,
+        artifact_digest: context.artifact_digest.clone(),
+        node_id: context.node_id.clone(),
+        occurrence: context.occurrence,
+        attempt: context.attempt,
+        requirement_name: context.requirement_name.clone(),
     };
-    let pollable = fut.subscribe();
-    pollable.block();
-    match fut.get() {
-        Some(Ok(Ok(resp))) => {
-            let status = resp.status();
-            let headers = resp
-                .headers()
-                .entries()
-                .into_iter()
-                .map(|(k, v)| (k, String::from_utf8_lossy(&v).into_owned()))
-                .collect();
-            let body = read_incoming_body(resp)?;
-            Ok(sdk::HttpResponse {
-                status,
-                headers,
-                body,
+    let request = http_effect::RelativeRequest {
+        method: req.method.clone(),
+        path_and_query: req.path_and_query.clone(),
+        headers: req
+            .headers
+            .iter()
+            .map(|(name, value)| http_effect::Header {
+                name: name.clone(),
+                value: value.as_bytes().to_vec(),
             })
-        }
-        Some(Ok(Err(code))) => Err(handle_err(code)),
-        _ => Err(sdk::HttpCapError::Transport("no response".into())),
-    }
-}
-
-/// A `wasi:http` refusal → SDK capability error: an explicit host denial (the
-/// allowedHosts policy / the S6 egress spy) is permanent; anything else is a
-/// transport failure the node classifies as retryable.
-fn handle_err(code: ErrorCode) -> sdk::HttpCapError {
-    match code {
-        ErrorCode::HttpRequestDenied => sdk::HttpCapError::Denied,
-        other => sdk::HttpCapError::Transport(format!("{other:?}")),
-    }
-}
-
-fn read_incoming_body(resp: IncomingResponse) -> Result<Vec<u8>, sdk::HttpCapError> {
-    let body = resp
-        .consume()
-        .map_err(|_| sdk::HttpCapError::Transport("body already consumed".into()))?;
-    let stream = body
-        .stream()
-        .map_err(|_| sdk::HttpCapError::Transport("body stream unavailable".into()))?;
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) => out.extend_from_slice(&chunk),
-            Err(bindings::wasi::io::streams::StreamError::Closed) => break,
-            Err(e) => {
-                return Err(sdk::HttpCapError::Transport(format!("body read: {e:?}")));
+            .collect(),
+        body: req.body.clone(),
+    };
+    http_effect::send(&context, &req.requirement, &request)
+        .map(|response| sdk::HttpResponse {
+            status: response.status,
+            headers: response
+                .headers
+                .into_iter()
+                .map(|header| {
+                    (
+                        header.name,
+                        String::from_utf8_lossy(&header.value).into_owned(),
+                    )
+                })
+                .collect(),
+            body: response.body,
+        })
+        .map_err(|error| match error {
+            http_effect::EffectError::InvalidContext
+            | http_effect::EffectError::UndeclaredRequirement
+            | http_effect::EffectError::NodeNotPermitted
+            | http_effect::EffectError::Unbound
+            | http_effect::EffectError::InactiveGeneration
+            | http_effect::EffectError::Incompatible
+            | http_effect::EffectError::AuthorityDenied => sdk::HttpCapError::Denied,
+            http_effect::EffectError::CredentialUnavailable => {
+                sdk::HttpCapError::Transport("credential unavailable".into())
             }
-        }
-    }
-    Ok(out)
-}
-
-fn parse_url_any(url: &str) -> Option<(Scheme, String, String)> {
-    let (scheme, rest) = if let Some(r) = url.strip_prefix("http://") {
-        (Scheme::Http, r)
-    } else {
-        (Scheme::Https, url.strip_prefix("https://")?)
-    };
-    let split = rest.find(['/', '?']).unwrap_or(rest.len());
-    let (authority, tail) = rest.split_at(split);
-    if authority.is_empty() {
-        return None;
-    }
-    let path = if tail.is_empty() {
-        "/".to_string()
-    } else if tail.starts_with('?') {
-        format!("/{tail}")
-    } else {
-        tail.to_string()
-    };
-    Some((scheme, authority.to_string(), path))
-}
-
-fn wasi_method(m: &str) -> Method {
-    match m {
-        "GET" => Method::Get,
-        "HEAD" => Method::Head,
-        "POST" => Method::Post,
-        "PUT" => Method::Put,
-        "DELETE" => Method::Delete,
-        "CONNECT" => Method::Connect,
-        "OPTIONS" => Method::Options,
-        "TRACE" => Method::Trace,
-        "PATCH" => Method::Patch,
-        other => Method::Other(other.to_string()),
-    }
+            http_effect::EffectError::Timeout => sdk::HttpCapError::Transport("timeout".into()),
+            http_effect::EffectError::Transport(detail) => sdk::HttpCapError::Transport(detail),
+        })
 }
 
 #[cfg(test)]
@@ -341,30 +268,5 @@ mod tests {
             wit_err_to_sdk(PgError::QueryError(("22P02".into(), "m".into()))),
             sdk::PgCapError::QueryError { code, .. } if code == "22P02"
         ));
-    }
-
-    /// The per-dispatch credential scoping is LOCAL and fail-closed: a ctx
-    /// whose node declared no credential refuses without ever calling the
-    /// host vault import (this test runs on the host target, where a real
-    /// `credentials.get` call would abort — not returning `NotGranted` here
-    /// means the guard is gone).
-    #[test]
-    fn credential_without_a_declaration_is_not_granted_locally() {
-        use sdk::NodeCtx as _;
-        let mut ctx = CapsCtx::default();
-        assert_eq!(ctx.credential(), Err(sdk::CredentialCapError::NotGranted));
-    }
-
-    #[test]
-    fn url_parse_covers_scheme_authority_path() {
-        let (s, a, p) = parse_url_any("https://api.example:8443/v1?x=1").unwrap();
-        assert!(matches!(s, Scheme::Https));
-        assert_eq!(a, "api.example:8443");
-        assert_eq!(p, "/v1?x=1");
-        let (s, a, p) = parse_url_any("http://h").unwrap();
-        assert!(matches!(s, Scheme::Http));
-        assert_eq!(a, "h");
-        assert_eq!(p, "/");
-        assert!(parse_url_any("ftp://x").is_none());
     }
 }

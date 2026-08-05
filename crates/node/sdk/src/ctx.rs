@@ -41,6 +41,9 @@ pub struct RunContext<'a> {
     pub flow_version: u32,
     /// The node instance id within the flow graph.
     pub node_id: &'a str,
+    /// Artifact-local portable connection consumed by this node, when any.
+    /// This is runner metadata, not part of the frozen guest ABI.
+    pub connection: Option<&'a str>,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
     /// Runner-generated, stable across retries of this node in this run.
@@ -96,10 +99,12 @@ impl RunContext<'_> {
 /// An outbound HTTP request a node asks the runner to make.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpRequest {
+    /// Artifact-local portable requirement selected by the node occurrence.
+    pub requirement: String,
     /// Uppercase HTTP method, e.g. `"GET"`, `"POST"`.
     pub method: String,
-    /// Absolute `http://` / `https://` URL.
-    pub url: String,
+    /// Request target relative to the environment-owned connection authority.
+    pub path_and_query: String,
     pub headers: Vec<(String, String)>,
     /// Request body bytes; `None` sends no body.
     pub body: Option<Vec<u8>>,
@@ -262,6 +267,7 @@ mod tests {
             flow_id: "f1",
             flow_version: 1,
             node_id: "n1",
+            connection: None,
             attempt: 0,
             idempotency_key: "r1:n1",
             deadline_ms: None,

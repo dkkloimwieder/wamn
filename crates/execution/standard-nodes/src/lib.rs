@@ -46,6 +46,7 @@ mod transform;
 pub mod respond;
 
 pub use conditional::{FALSE_PORT, TRUE_PORT};
+pub use http::prepare_http_request;
 pub use policy::{GRANTS_DEFAULT, GRANTS_WITH_RAW_SQL, granted_for};
 pub use wamn_node_sdk::{
     Capability, CredentialCapError, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse,

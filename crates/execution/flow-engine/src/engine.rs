@@ -318,6 +318,7 @@ pub struct Dispatch {
     pub node: String,
     pub node_type: String,
     pub config: Value,
+    pub connection: Option<String>,
     pub credential: Option<String>,
     /// The payload entering this node — the trigger payload at `entry`, otherwise
     /// the upstream node's output (unchanged across retries of this node).
@@ -350,6 +351,7 @@ impl Dispatch {
     /// snapshot the original attempt observed.
     pub fn attempt_input(&self) -> Value {
         serde_json::json!({
+            "connection": self.connection,
             "config": self.config,
             "context": self.context,
             "input": self.payload,
@@ -591,6 +593,7 @@ impl<'f> Plan<'f> {
             node: a.node.clone(),
             node_type: node.node_type.clone(),
             config: node.config.clone(),
+            connection: node.connection.clone(),
             credential: node.credential.clone(),
             payload: a.payload.clone(),
             context: state.context.clone(),

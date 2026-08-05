@@ -168,6 +168,7 @@ pub fn run_node<N: Node>(
         flow_id: &ctx.flow_id,
         flow_version: ctx.flow_version,
         node_id: &ctx.node_id,
+        connection: None,
         attempt: ctx.attempt,
         idempotency_key: &ctx.idempotency_key,
         deadline_ms: ctx.deadline_ms,

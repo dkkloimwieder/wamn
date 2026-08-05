@@ -197,8 +197,11 @@ outbound request and applies this algorithm:
    request-local method, relative path/query, headers, and body.
 2. Canonicalize the generation's authority to `(scheme, ASCII host, effective
    port)`. Reject user-info, fragments, ambiguous encodings, and unsupported
-   schemes. Resolve a relative path against the configured base path without
-   permitting `..` or encoded separators to escape it.
+   schemes. The sole portable spelling has one leading slash (`/holds`): reject
+   bare forms and raw `//`, strip exactly one slash in the single target
+   normalizer, then resolve that canonical newtype against the configured base
+   path without permitting `..` or encoded separators to escape it. Both the
+   resolver and operation fingerprint accept only that newtype.
 3. Form the logical destination from that authority. Request fields cannot
    replace scheme, host, port, TLS identity, proxy, or credentials.
 4. Apply connection authority, platform host policy, and cluster network policy
@@ -208,78 +211,109 @@ outbound request and applies this algorithm:
    selected address to this request, and retain the canonical DNS name for HTTP
    `Host` and TLS identity. A literal address is allowed only when the generation
    itself names that literal and both outer ceilings allow it.
-6. Ignore guest and process proxy settings. If the generation declares a proxy,
-   the host connects only to that proxy under the outer ceilings and fixes the
-   CONNECT/origin target to the already-authorized logical destination.
+6. Ignore guest and process proxy settings. HTTP `0.1` transport is direct-only:
+   a generation declaring a proxy is typed `incompatible` at staged validation
+   and again here, and never falls back to direct. Pinned CONNECT/TLS proxy
+   transport is demand-gated separately by `wamn-ko5r.32`.
 7. Do not follow redirects automatically. A redirect may be followed only after
    re-entering this resolver; the minimum policy permits the same canonical
    authority and base-path scope only. Cross-authority redirects are denied.
 
 DNS therefore chooses a transport address but never destination authority;
-redirects initiate a fresh decision but cannot add an authority; and a proxy is
-a configured transport hop, not an alternate destination. Resolution and the
-actual connect use the same selected address, closing the check/use DNS-rebinding
-gap.
+redirects initiate a fresh decision but cannot add an authority. A future proxy
+transport remains a configured hop rather than an alternate destination.
+Resolution and the actual connect use the same selected address, closing the
+check/use DNS-rebinding gap.
 
 The adapter records the canonical authority decision and generation identity,
 not resolved secret values. Existing host and cluster policies remain the outer
 ceilings, so a connection can narrow but never widen them.
 
-## Minimum typed connection ABI
+## Minimum trusted HTTP effect ABI
 
-The first contract is `wamn:connection/http@0.1.0`. Its minimum WIT shape is:
+The artifact contract remains `wamn:connection/http@0.1.0`, while the evolving
+one-frame effect call lives on the trusted flowrunner-to-host package
+`wamn:runner/http-effect@0.1.0`. The frozen public `wamn:node@0.1.x` ABI is not
+changed. Its minimum WIT shape is:
 
 ```wit
-package wamn:connection@0.1.0;
+package wamn:runner@0.1.0;
 
-interface http {
+interface http-effect {
+  record invocation-context {
+    version: u32,
+    tenant-id: string,
+    environment: string,
+    catalog-id: string,
+    catalog-version: s32,
+    run-id: string,
+    flow-id: string,
+    flow-version: u32,
+    artifact-digest: string,
+    node-id: string,
+    occurrence: u32,
+    attempt: u32,
+    requirement-name: string,
+  }
   record header { name: string, value: list<u8> }
-  record request {
-    requirement: string,
+  record relative-request {
     method: string,
     path-and-query: string,
     headers: list<header>,
     body: option<list<u8>>,
-    idempotency-key: option<string>,
   }
   record response {
     status: u16,
     headers: list<header>,
     body: list<u8>,
   }
-  variant connection-error {
+  variant effect-error {
+    invalid-context,
+    undeclared-requirement,
+    node-not-permitted,
     unbound,
+    inactive-generation,
     incompatible,
     authority-denied,
-    attestation-invalid,
     credential-unavailable,
     timeout,
     transport(string),
   }
-  send: func(request: request) -> result<response, connection-error>;
+  send: func(
+    context: invocation-context,
+    requirement-name: string,
+    request: relative-request,
+  ) -> result<response, effect-error>;
 }
 ```
 
 This is intentionally smaller than a general HTTP client. It makes the logical
-requirement explicit, accepts no absolute URI or proxy, and carries the stable
-idempotency key as a distinct field so the adapter—not arbitrary node code—owns
-its required header propagation. Streaming and protocol-specific extensions
-require a versioned contract change; they are not hidden in JSON.
+requirement explicit and accepts no absolute URI or proxy. Streaming and
+protocol-specific extensions require a versioned contract change; they are not
+hidden in JSON.
 
-The host adapter receives trusted execution context containing release,
-artifact, node, occurrence, and attempt identity. It verifies that the named
-requirement belongs to the artifact, that the executing node may consume its
-type contract, and that the release binds it. It installs credentials only after
-that check, invokes the canonical resolver, and writes the effect connection
-record before network transmission. A custom component gets this interface by
-declaring the import; it never receives a generic raw-egress grant.
+The host adapter receives trusted execution context containing run, release,
+artifact, node, occurrence, and attempt identity. It verifies the run row and
+derives release and binding from admitted state; caller-supplied permissions,
+bindings, or generation choices are not accepted. It verifies that the named
+requirement belongs to the artifact and that the executing node may consume its
+type contract, installs call-scoped credentials only after authorization, and
+invokes the canonical resolver. Standard and custom node SDK calls route through
+the trusted flowrunner; neither receives a generic raw-egress grant.
+
+Before any send, one durable insert records the intent under
+`(tenant, run-id, node-id, occurrence)` with its pinned generation, claim,
+operation fingerprint, and stable key. The send boundary is marked only after
+that insert; outcome recording follows the wire call. A crash between intent and
+outcome leaves a pending `effect-uncertain` attempt and parks rather than
+redispatching blindly.
 
 This ABI is also the dependency carried by 2A's first capability-bearing proof.
-That proof composes a node importing `wamn:connection/http@0.1.0`, verifies the
-composed artifact imports that typed capability and no generic HTTP/socket
-capability, and includes the exact adapter revision in execution-bundle
-identity. Dev and prod then run the same artifact and bundle against distinct
-bindings.
+That proof composes a node whose resolved contract permits
+`wamn:connection/http@0.1.0`, verifies that only the trusted flowrunner imports
+the effect surface and no node receives generic HTTP/socket capability, and
+includes the exact adapter revision in execution-bundle identity. Dev and prod
+then run the same artifact and bundle against distinct bindings.
 
 ## Attempt identity and recovery
 

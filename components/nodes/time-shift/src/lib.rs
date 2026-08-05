@@ -133,6 +133,7 @@ mod tests {
             flow_id: "flow",
             flow_version: 1,
             node_id: "shift",
+            connection: None,
             attempt: 0,
             idempotency_key: "run:shift:0",
             deadline_ms: None,

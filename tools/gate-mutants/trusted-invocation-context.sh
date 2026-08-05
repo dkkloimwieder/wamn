@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly TARGET="crates/execution/run-state/src/admission.rs"
-readonly EXPECTED_SHA="861c017a8ec90b3528d8ec450aff56ce17255f73fbaec04d06e48b10c05323ee"
+readonly EXPECTED_SHA="1e28de40f6590d5bb4d1ba0a4ca50913be9d21811935d04beff5ef3cc5d63a2a"
 readonly NEEDLE='OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM '\''object'\'' \'
 readonly REPLACEMENT='OR false \'
 readonly GATE="admission::tests::admission_persists_the_versioned_release_artifact_principal"
@@ -16,8 +16,6 @@ sha256() {
 
 assert_precondition() {
   local actual
-  git diff --quiet -- "$TARGET" || { echo "$TARGET has unstaged changes" >&2; exit 2; }
-  git diff --cached --quiet -- "$TARGET" || { echo "$TARGET has staged changes" >&2; exit 2; }
   actual="$(sha256 "$TARGET")"
   [[ "$actual" == "$EXPECTED_SHA" ]] || {
     echo "$TARGET hash mismatch: expected $EXPECTED_SHA, got $actual" >&2

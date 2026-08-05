@@ -48,7 +48,7 @@ mod pool;
 mod resources;
 mod types;
 
-pub use claims::WamnPostgres;
+pub use claims::{ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres};
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
     WamnPostgresConfig,

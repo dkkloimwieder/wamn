@@ -708,6 +708,7 @@ mod tests {
             flow_id: "f",
             flow_version: 1,
             node_id: "recommend",
+            connection: None,
             attempt: 0,
             idempotency_key: "r:recommend",
             deadline_ms: None,

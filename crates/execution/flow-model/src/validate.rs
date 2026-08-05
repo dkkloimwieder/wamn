@@ -5,7 +5,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use boon::{Compiler, Draft, Schemas};
 use serde::Deserialize;
 use serde_json::Value;
-use wamn_node_manifest::{ConnectionTypeDescriptor, PORTABLE_CONNECTION_REQUIREMENT_VERSION};
+use wamn_node_manifest::{
+    ConnectionTypeDescriptor, PORTABLE_CONNECTION_REQUIREMENT_VERSION,
+    normalize_portable_http_target,
+};
 
 use crate::types::{
     ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node, Ordering,
@@ -411,13 +414,11 @@ fn validate_http_request_connection(
         }
     };
     let target = config.path_and_query.as_str();
-    let prefix = target.split(['/', '?', '#']).next().unwrap_or_default();
-    if target.is_empty() || target.starts_with("//") || target.contains('#') || prefix.contains(':')
-    {
+    if let Err(error) = normalize_portable_http_target(target) {
         issues.push(Issue::error(
             "http-request-target-not-relative",
             format!("nodes[{index}].config.path-and-query"),
-            format!("HTTP path-and-query {target:?} must be connection-relative"),
+            format!("HTTP path-and-query {target:?} is not portable: {error}"),
         ));
     }
     if config
@@ -1179,6 +1180,7 @@ mod tests {
             "https://erp.example/x",
             "//erp.example/x",
             "custom:authority",
+            "holds",
             "/safe#fragment",
             "",
         ] {
