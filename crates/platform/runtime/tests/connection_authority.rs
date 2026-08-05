@@ -129,6 +129,40 @@ async fn canonical_request_pins_dns_and_preserves_host_and_tls_identity() {
 }
 
 #[tokio::test]
+async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver() {
+    let connection =
+        parse_http_connection_authority("http://serve-echo:8091/", TlsPolicy::Disabled, None)
+            .expect("connection definition");
+    let selected = socket(1, 8091);
+    let dns = FixedDns::with("serve-echo", vec![selected]);
+
+    let decision = resolve_http_request(
+        &connection,
+        &target("/credproof"),
+        &[allowed("serve-echo:8091")],
+        &ExactNetwork(vec![selected]),
+        &dns,
+    )
+    .await
+    .expect("service authority resolves");
+
+    assert_eq!(
+        decision.logical_url.as_ref(),
+        "http://serve-echo:8091/credproof"
+    );
+    assert_eq!(decision.host_header.as_ref(), "serve-echo:8091");
+    assert_eq!(
+        decision.transport,
+        TransportDecision::Direct {
+            origin: wamn_runtime::connection_authority::PinnedEndpoint {
+                address: selected,
+                tls_identity: None,
+            },
+        }
+    );
+}
+
+#[tokio::test]
 async fn request_authority_and_base_path_injection_fail_before_dns() {
     let connection = parse_http_connection_authority(
         "https://erp.example/api/",

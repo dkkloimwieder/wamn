@@ -168,9 +168,17 @@ mod tests {
         // A later declaration REPLACES (the next run's flow may declare less).
         policy.set_declared("runner", &[]);
         let set = policy.declared("runner").expect("declared");
-        assert!(
-            set.is_empty(),
-            "declared-empty is stored, and means deny-all"
-        );
+        assert!(set.is_empty(), "declared-empty is stored");
+    }
+
+    #[test]
+    fn empty_declaration_does_not_narrow_a_portable_connection() {
+        let policy = RunnerEgressPolicy::default();
+        policy.set_declared("runner", &[]);
+        let target = "http://serve-echo:8091/credproof"
+            .parse()
+            .expect("logical connection URL");
+
+        assert!(policy.allows_connection("runner", &target));
     }
 }
