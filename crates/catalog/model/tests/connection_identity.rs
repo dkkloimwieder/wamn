@@ -3,7 +3,7 @@ use wamn_catalog::{
     Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
     ExecutionPlugManifest, NodeImplementation, PinnedArtifact,
 };
-use wamn_flow::Flow;
+use wamn_flow::{Flow, FlowConnectionRequirement};
 use wamn_node_manifest::{
     CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
     ExecutableConnectionRecoveryMode, ExecutableRecoveryClaim, ExecutableRecoveryContract,
@@ -209,7 +209,7 @@ fn implementation(
 }
 
 fn repeated_flow() -> Flow {
-    Flow::from_json(
+    let mut flow = Flow::from_json(
         r#"{
           "schema-version":"0.1",
           "flow-id":"repeated-connection-identity",
@@ -227,7 +227,21 @@ fn repeated_flow() -> Flow {
           ]
         }"#,
     )
-    .expect("fixture flow parses")
+    .expect("fixture flow parses");
+    let requirement = PortableConnectionRequirement::stable_key_dedup_v1(
+        ConnectionTypeDescriptor::http_v1(),
+        86_400_000,
+    );
+    flow.connection_requirements = vec![FlowConnectionRequirement {
+        name: "manager".to_string(),
+        requirement,
+    }];
+    flow.nodes
+        .iter_mut()
+        .find(|node| node.id == "call-a")
+        .expect("fixture call-a exists")
+        .connection = Some("manager".to_string());
+    flow
 }
 
 fn http_interface(contract: &str) -> ResolvedNodeInterface {
@@ -614,7 +628,7 @@ fn conservative_only_connection_requirement_needs_no_stronger_claim_descriptor()
 }
 
 #[test]
-fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types() {
+fn ordered_occurrence_selections_pin_connection_recovery_for_exact_occurrence() {
     let implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
     let portable = implementation.portable_connections()[0].clone();
     let selections = vec![
@@ -642,17 +656,10 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
         selections.clone(),
     )
     .unwrap();
-    let conservative =
-        artifact_new("tenant-a", &repeated_flow(), vec![implementation.clone()]).unwrap();
-
     assert_eq!(selected.occurrence_recovery(), selections);
-    assert_ne!(
-        selected.identity().artifact_hash(),
-        conservative.identity().artifact_hash()
-    );
     assert_eq!(
         selected.identity().artifact_hash().as_str(),
-        "sha256:6ebfc67dad4fc9063872a7ae970628481652c8de55312678e1d178d48ef07d55",
+        "sha256:5ab11c9c5f1999d5164178232d4d4bea104343df836f3ea568f44c7536b6c280",
         "occurrence recovery frame sequence changed"
     );
 
@@ -677,6 +684,31 @@ fn ordered_occurrence_selections_pin_distinct_recovery_for_repeated_node_types()
         .is_err(),
         "an unpinned claim mutation must fail closed"
     );
+}
+
+#[test]
+fn conservative_selection_pins_the_connection_requirement_used_by_the_occurrence() {
+    let implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
+    let artifact = artifact_new("tenant-a", &repeated_flow(), vec![implementation.clone()])
+        .expect("connected artifact resolves");
+    let call_a = artifact
+        .occurrence_recovery()
+        .iter()
+        .find(|selection| selection.node_id == "call-a")
+        .expect("call-a recovery is pinned");
+    assert_eq!(call_a.recovery_class, RecoveryClass::IdempotentWithKey);
+    assert_eq!(
+        call_a.portable_connection.as_ref(),
+        implementation.portable_connections().first()
+    );
+
+    let call_b = artifact
+        .occurrence_recovery()
+        .iter()
+        .find(|selection| selection.node_id == "call-b")
+        .expect("call-b recovery is pinned");
+    assert_eq!(call_b.recovery_class, RecoveryClass::NeverReplay);
+    assert!(call_b.portable_connection.is_none());
 }
 
 #[test]
@@ -837,17 +869,21 @@ fn only_historical_v1_may_project_conservative_occurrence_selections() {
 
 #[test]
 fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
-    let implementation = implementation("wamn:connection/http@0.1.0", 1).unwrap();
-    let baseline = artifact_new("tenant-a", &repeated_flow(), vec![implementation.clone()])
-        .unwrap()
-        .occurrence_recovery()
-        .to_vec();
+    let http_implementation = implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap();
+    let baseline = artifact_new(
+        "tenant-a",
+        &repeated_flow(),
+        vec![http_implementation.clone()],
+    )
+    .unwrap()
+    .occurrence_recovery()
+    .to_vec();
 
     assert!(
         artifact_with_selections(
             "tenant-a",
             &repeated_flow(),
-            vec![implementation.clone()],
+            vec![http_implementation.clone()],
             baseline[..1].to_vec(),
         )
         .is_err()
@@ -858,7 +894,7 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
         artifact_with_selections(
             "tenant-a",
             &repeated_flow(),
-            vec![implementation.clone()],
+            vec![http_implementation.clone()],
             reordered,
         )
         .is_err()
@@ -866,8 +902,37 @@ fn occurrence_selection_rejects_missing_reordered_unknown_and_weaker_inputs() {
     let mut unknown = baseline;
     unknown[0].selection_version = "99".to_string();
     assert!(
-        artifact_with_selections("tenant-a", &repeated_flow(), vec![implementation], unknown,)
-            .is_err()
+        artifact_with_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![http_implementation],
+            unknown,
+        )
+        .is_err()
+    );
+
+    let mut unpinned = artifact_new(
+        "tenant-a",
+        &repeated_flow(),
+        vec![implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap()],
+    )
+    .unwrap()
+    .occurrence_recovery()
+    .to_vec();
+    unpinned
+        .iter_mut()
+        .find(|selection| selection.node_id == "call-a")
+        .expect("call-a selection exists")
+        .portable_connection = None;
+    assert!(
+        artifact_with_selections(
+            "tenant-a",
+            &repeated_flow(),
+            vec![implementation("wamn:connection/http@0.1.0", 86_400_000).unwrap()],
+            unpinned,
+        )
+        .is_err(),
+        "a connected occurrence cannot drop its exact portable requirement"
     );
 
     let pure_interface = ResolvedNodeInterface::new(
