@@ -30,7 +30,7 @@ load_mutation() {
   case "$id" in
     node-authorization-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2d162602606ef17392a69b5ab6c3ab8fbb8f27555592542601ef2a0b0dda46dd"
+      EXPECTED_SHA="a565c3c9d5b177e22d560328c2c3d03bd798e1fe54490692ddb953207d1e5628"
       NEEDLE='if snapshot.node_connection.as_deref() != Some(requirement_name) || !snapshot.node_permitted {'
       REPLACEMENT='if snapshot.node_connection.as_deref() != Some(requirement_name) {'
       GATE="plugins::connection_http::tests::refusal_precedence_is_explicit_and_typed"
@@ -38,7 +38,7 @@ load_mutation() {
       ;;
     wrong-attempt-attribution)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2d162602606ef17392a69b5ab6c3ab8fbb8f27555592542601ef2a0b0dda46dd"
+      EXPECTED_SHA="a565c3c9d5b177e22d560328c2c3d03bd798e1fe54490692ddb953207d1e5628"
       NEEDLE='        || !snapshot.attempt_matches'
       REPLACEMENT=''
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -46,7 +46,7 @@ load_mutation() {
       ;;
     wrong-run-attribution)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2d162602606ef17392a69b5ab6c3ab8fbb8f27555592542601ef2a0b0dda46dd"
+      EXPECTED_SHA="a565c3c9d5b177e22d560328c2c3d03bd798e1fe54490692ddb953207d1e5628"
       NEEDLE='        || snapshot.admitted_artifact_digest.as_deref() != Some(context.artifact_digest.as_str())'
       REPLACEMENT=''
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -70,7 +70,7 @@ load_mutation() {
       ;;
     send-without-durable-intent)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2d162602606ef17392a69b5ab6c3ab8fbb8f27555592542601ef2a0b0dda46dd"
+      EXPECTED_SHA="a565c3c9d5b177e22d560328c2c3d03bd798e1fe54490692ddb953207d1e5628"
       NEEDLE='    if !snapshot.attempt_recorded {'
       REPLACEMENT='    if false && !snapshot.attempt_recorded {'
       GATE="plugins::connection_http::tests::durable_intent_is_required_before_the_wire_path"
