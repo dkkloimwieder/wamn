@@ -535,7 +535,7 @@ async fn seed_holds(app: &Client, tenant: &str) -> anyhow::Result<()> {
 
 /// Zero-residue teardown. LOCAL drops the throwaway schema; IN-CLUSTER removes
 /// only what the gate added to the live runner schema — the holds/catalog tables
-/// and the gate flow's `flows`/`runs` rows — leaving the runner's own state.
+/// and the gate flow's runtime rows — leaving the runner's own state.
 async fn teardown(
     admin_url: &str,
     schema: &str,
@@ -553,6 +553,12 @@ async fn teardown(
             return anyhow::Ok(());
         }
         let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
+        admin
+            .execute(
+                &format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
+                &[&tenant, &FLOW_ID],
+            )
+            .await?;
         admin
             .batch_execute(&format!(
                 "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
