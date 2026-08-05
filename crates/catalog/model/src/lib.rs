@@ -1709,11 +1709,41 @@ fn conservative_occurrence_recovery_with_model_owned(
             .ok_or_else(|| CatalogIdentityError::UnresolvedInterface {
                 node_type: node.node_type.clone(),
             })?;
-        selections.push(OccurrenceRecoverySelection::conservative(
+        let mut selection = OccurrenceRecoverySelection::conservative(
             node.id.clone(),
             node.node_type.clone(),
             implementation.contract(),
-        ));
+        );
+        if let Some(requirement_name) = node.connection.as_deref() {
+            let requirement = flow
+                .connection_requirements
+                .iter()
+                .find(|requirement| requirement.name == requirement_name)
+                .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                    message: format!(
+                        "node {:?} references missing connection requirement {requirement_name:?}",
+                        node.id
+                    ),
+                })?;
+            let portable = implementation
+                .contract()
+                .portable_connections
+                .iter()
+                .find(|portable| *portable == &requirement.requirement)
+                .cloned()
+                .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                    message: format!(
+                        "node {:?} cannot pin connection requirement {requirement_name:?}",
+                        node.id
+                    ),
+                })?;
+            selection.recovery_class = match portable.recovery {
+                PortableRecoveryClaim::NeverReplay => RecoveryClass::NeverReplay,
+                PortableRecoveryClaim::StableKeyDedupV1 { .. } => RecoveryClass::IdempotentWithKey,
+            };
+            selection.portable_connection = Some(portable);
+        }
+        selections.push(selection);
     }
     selections.sort_by(|left, right| left.node_id.cmp(&right.node_id));
     Ok(selections)
@@ -1758,6 +1788,31 @@ fn validate_occurrence_recovery(
             .ok_or_else(|| CatalogIdentityError::UnresolvedInterface {
                 node_type: expected_type.to_string(),
             })?;
+        let expected_connection = flow
+            .nodes
+            .iter()
+            .find(|node| node.id == expected_id)
+            .and_then(|node| node.connection.as_deref())
+            .map(|requirement_name| {
+                flow.connection_requirements
+                    .iter()
+                    .find(|requirement| requirement.name == requirement_name)
+                    .map(|requirement| &requirement.requirement)
+                    .ok_or_else(|| CatalogIdentityError::InvalidDefinition {
+                        message: format!(
+                            "node {expected_id:?} references missing connection requirement {requirement_name:?}"
+                        ),
+                    })
+            })
+            .transpose()?;
+        if selection.portable_connection.as_ref() != expected_connection {
+            return Err(CatalogIdentityError::InvalidDefinition {
+                message: format!(
+                    "recovery selection for occurrence {:?} does not pin its exact connection requirement",
+                    selection.node_id
+                ),
+            });
+        }
         let recovery = implementation.contract().recovery_contract();
         if !recovery
             .supported_classes
