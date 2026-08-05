@@ -16,8 +16,8 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::connection_authority::{
-    NetworkPolicy, TlsPolicy, TokioDnsResolver, TransportDecision, parse_http_connection_authority,
-    resolve_http_request,
+    AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, TransportDecision,
+    parse_http_connection_authority, resolve_http_request,
 };
 
 use super::runner_egress::RunnerEgressPolicy;
@@ -144,7 +144,7 @@ impl ConnectionHttp {
         require_direct_transport(object)?;
         let proxy = None;
         let authority = parse_http_connection_authority(primary, tls, proxy)
-            .map_err(|_| EffectError::AuthorityDenied)?;
+            .map_err(|error| authority_denied("definition", error))?;
         require_declared_egress(component_id, &self.egress, authority.canonical_base_url())?;
         let decision = resolve_http_request(
             &authority,
@@ -154,7 +154,7 @@ impl ConnectionHttp {
             &TokioDnsResolver,
         )
         .await
-        .map_err(|_| EffectError::AuthorityDenied)?;
+        .map_err(|error| authority_denied("request", error))?;
 
         let handle = snapshot
             .credential_handle
@@ -167,6 +167,16 @@ impl ConnectionHttp {
         let credential_headers = credential_headers(&secret)?;
         execute(decision, request, credential_headers).await
     }
+}
+
+fn authority_denied(phase: &'static str, error: AuthorityError) -> EffectError {
+    tracing::warn!(
+        phase,
+        kind = ?error.kind(),
+        error = %error,
+        "trusted HTTP connection authority denied"
+    );
+    EffectError::AuthorityDenied
 }
 
 fn operation_fingerprint(
@@ -298,6 +308,11 @@ fn require_declared_egress(
     if policy.allows_connection(component_id, &uri) {
         Ok(())
     } else {
+        tracing::warn!(
+            component_id,
+            logical_url,
+            "trusted HTTP connection denied by the flow egress narrowing"
+        );
         Err(EffectError::AuthorityDenied)
     }
 }
