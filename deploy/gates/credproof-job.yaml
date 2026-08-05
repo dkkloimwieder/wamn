@@ -1,11 +1,10 @@
-# [5.9] The credential-vault gate of record (wamn-17o): credproof seeds one
-# manual run of deploy/cred/notify.flow.json and waits for the DEPLOYED
-# run-worker (deploy/platform/runner.yaml + the wamn-runner-credentials Secret) to
-# drive it against serve-echo (deploy/gates/serve-echo.yaml), then asserts DELIVERY
-# (the reflected authorization header == the vault secret) and CONTAINMENT
-# (the secret appears in no recorded run/node_run/graph row outside the http
-# node's own echo output). Prereqs: the demo schema provisioned + the flow
-# registered (the fqg.8/ojm provisioning recipe), runner + serve-echo up.
+# [5.9] The credential-vault gate of record: credproof provisions a throwaway
+# canonical catalog/run plane, admits both committed fixtures through the
+# production invocation transaction, and drives the exact baked flowrunner via
+# ExecutionHost. The positive artifact has one active environment binding whose
+# credential-set handle resolves to a call-scoped authorization header; the
+# deny artifact deliberately has no binding. serve-echo witnesses delivery,
+# while the database scan proves containment.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
@@ -40,14 +39,22 @@ spec:
                 secretKeyRef:
                   name: wamn-runner-db
                   key: url
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: password } }
+            - name: PGHOST
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: host } }
+            - name: PGPORT
+              valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: port } }
           args:
             - "--log-level"
             - "error"
             - "credproof"
-            - "--schema"
-            - "wamn_runner_demo"
-            - "--tenant"
-            - "demo-tenant"
+            - "--flowrunner"
+            - "/bench/flowrunner.wasm"
+            - "--admin-database-url"
+            - "postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/postgres"
             - "--echo-url"
             - "http://serve-echo:8091"
             - "--timeout-secs"

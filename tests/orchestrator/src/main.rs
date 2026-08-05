@@ -12,7 +12,7 @@ mod callable_wave2;
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
 use wamn_proof_integration::{
-    apibench, bench, callable_cron, capturebench, causation_e2e, cdcbench, dashproof,
+    apibench, bench, callable_cron, capturebench, causation_e2e, cdcbench, credproof, dashproof,
     dispatchbench, f1bench, f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof,
     invocationproof, logbench, matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof,
     pocsuiteproof, provisionbench, queuebench, readerbench, rie2ebench, runnerbench,
@@ -20,7 +20,7 @@ use wamn_proof_integration::{
     tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
-    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, credproof, f1proof,
+    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, f1proof,
     pocsuiteproof as callable_flow_schema, traceproof,
 };
 

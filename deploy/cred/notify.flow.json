@@ -3,11 +3,46 @@
   "flow-id": "cred-notify",
   "version": 1,
   "name": "Credential-vault notify proof (5.9)",
-  "credentials": [
+  "connection-requirements": [
     {
-      "name": "notify-token",
-      "kind": "api-key",
-      "description": "The stored secret the notify step sends — resolved by the vault at dispatch, never inlined here."
+      "name": "notify-endpoint",
+      "requirement": {
+        "requirement-version": "1",
+        "descriptor": {
+          "descriptor-version": "1",
+          "requirement-type": "http",
+          "contract": "wamn:connection/http@0.1.0",
+          "authority-model": "http-origin",
+          "field-ownership": [
+            { "field": "method", "owner": "author" },
+            { "field": "relative-target", "owner": "author" },
+            { "field": "headers", "owner": "author" },
+            { "field": "body", "owner": "author" },
+            { "field": "authority", "owner": "environment" },
+            { "field": "tls", "owner": "environment" },
+            { "field": "redirect", "owner": "environment" },
+            { "field": "proxy", "owner": "environment" },
+            { "field": "credential", "owner": "environment" },
+            { "field": "idempotency-key", "owner": "system" }
+          ],
+          "credential-injection": "environment-selected-http-header",
+          "idempotency-key-injection": "http-idempotency-key-header",
+          "conservative-recovery": "never-replay",
+          "recovery-claims": [
+            {
+              "claim": "stable-key-dedup-v1",
+              "parameters": ["minimum-retention-ms"],
+              "operation_fingerprint": [
+                "method",
+                "relative-target",
+                "semantic-headers",
+                "body-digest"
+              ]
+            }
+          ]
+        },
+        "recovery": { "claim": "never-replay" }
+      }
     }
   ],
   "nodes": [
@@ -24,8 +59,8 @@
     {
       "id": "notify",
       "type": "http-request",
-      "credential": "notify-token",
-      "config": { "method": "GET", "url": "{{echo}}" }
+      "connection": "notify-endpoint",
+      "config": { "method": "GET", "path-and-query": "/credproof" }
     },
     { "id": "status", "type": "transform", "config": { "expression": "status" } },
     { "id": "out", "type": "respond", "config": { "status": 200 } }
@@ -34,6 +69,5 @@
     { "from": "in", "to": "notify" },
     { "from": "notify", "to": "status" },
     { "from": "status", "to": "out" }
-  ],
-  "allowed-hosts": ["serve-echo:8091", "127.0.0.1:8093"]
+  ]
 }

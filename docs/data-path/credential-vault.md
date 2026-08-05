@@ -112,25 +112,32 @@ per-flow allowlists are the fqg.11 refinement.
 
 ## The gate (`credproof`)
 
-`tests/system/src/credproof.rs` — the ladderproof shape: a pure DB
-client seeds ONE manual run of `deploy/cred/notify.flow.json`
-(`in → http-request{credential: notify-token} → transform{status} → respond`)
-and waits for the **separately-deployed** run-worker to drive it against
-serve-echo. serve-echo reflects a **one-way FNV-1a digest** of the
-`authorization` header it received (never the raw value), so the two 5.9
-acceptance halves are both provable:
+`tests/integration/src/credproof.rs` — the ladderproof shape: a live integration
+driver provisions a throwaway canonical catalog/run plane and admits
+`deploy/cred/notify.flow.json`
+(`in → http-request{connection: notify-endpoint} → transform{status} → respond`)
+through the production invocation transaction and exact baked flowrunner
+against serve-echo. The artifact carries only the portable requirement and relative
+path; the admitted environment binding supplies the authority and an opaque
+credential-set handle. That handle resolves to strict host-only JSON
+`{"headers":{"authorization":"Bearer ..."}}` for the duration of the call.
+serve-echo reflects a **one-way FNV-1a digest** of the `authorization` header it
+received (never the raw value), so the two 5.9 acceptance halves are both
+provable:
 
 * **Delivery** — the http node's recorded output carries serve-echo's
-  reflected digest, and it equals `fnv1a(secret)`. The flow names the
-  credential only by reference, so a matching digest at the target can only
-  have come from the vault.
+  reflected digest, and it equals `fnv1a(Bearer secret)`. The flow contains no
+  authority or credential, so a matching digest at the target can only have
+  come from the environment binding and vault.
 * **Containment** — because the witness is a digest, the scan is **total**:
   the secret substring must appear in NO recorded row — `runs.input_json` /
   `result_json` / `state_json` / `fail_reason`, the registered `graph_json`,
   and every `node_runs` row's input/output/error.
 
-Gate of record: `deploy/gates/credproof-job.yaml` against `deploy/platform/runner.yaml` (with
-`deploy/platform/runner-credentials.example.yaml`) + `deploy/gates/serve-echo.yaml`.
+The same release contains `deploy/cred/deny.flow.json` without a connection
+binding; its admitted run must return the typed unbound failure before reaching
+the wire. Gate of record: `deploy/gates/credproof-job.yaml` plus
+`deploy/gates/serve-echo.yaml`.
 Verification commands: [build-and-test.md](../build-and-test.md) § *[5.9]*.
 
 ## Host-enforced grant (cjv.3)
