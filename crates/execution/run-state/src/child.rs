@@ -328,7 +328,7 @@ pub fn create_or_recover_child_sql() -> String {
                     c.run_id AS existing_run_id, c.caller_released_at AS child_released_at, \
                     c.caller_outcome_kind, c.caller_outcome_json, c.caller_http_status, \
                     c.caller_release_node_id, c.caller_outcome_hash, \
-                    d.flow_version, d.run_deadline_ms, d.response_deadline_ms \
+                    d.flow_version, d.artifact_hash, d.run_deadline_ms, d.response_deadline_ms \
                FROM authority AS a \
                LEFT JOIN locked_run AS p ON true \
                LEFT JOIN resolved AS d ON true \
@@ -340,20 +340,28 @@ pub fn create_or_recover_child_sql() -> String {
              INSERT INTO runs \
                     (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
                      attachment_id, status, trigger_source, input_json, invocation_context, \
-                     platform_revision, parent_run_id, parent_node_id, parent_occurrence, \
+                     admission_context_version, platform_revision, \
+                     parent_run_id, parent_node_id, parent_occurrence, \
                      invoke_depth, invoke_root_run_id, response_deadline_at, run_deadline_at) \
              SELECT c.tenant_id, $7, $9, c.flow_version, c.catalog_id, c.catalog_version, \
                     c.environment, $8, 'dispatched', 'internal', $11::text::jsonb, \
                     jsonb_build_object( \
-                      'actor', jsonb_build_object( \
-                        'mode', 'service', \
-                        'subject', 'service:' || c.catalog_id || ':' \
-                                   || c.environment || ':' || $9::text), \
-                      'caller', jsonb_build_object( \
-                        'run-id', c.run_id, 'flow-id', c.caller_flow_id, \
-                        'actor', COALESCE(c.caller_context->'actor', 'null'::jsonb), \
-                        'lineage', COALESCE(c.caller_context->'caller', 'null'::jsonb))), \
-                    $12, c.run_id, $5, $6, c.invoke_depth + 1, c.invoke_root_run_id, \
+                      'version', 1, \
+                      'principal', jsonb_build_object( \
+                        'tenant-id', c.tenant_id, 'environment', c.environment, \
+                        'catalog-id', c.catalog_id, 'catalog-version', c.catalog_version, \
+                        'flow-id', $9::text, 'flow-version', c.flow_version, \
+                        'artifact-digest', c.artifact_hash), \
+                      'source', jsonb_build_object( \
+                        'actor', jsonb_build_object( \
+                          'mode', 'service', \
+                          'subject', 'service:' || c.catalog_id || ':' \
+                                     || c.environment || ':' || $9::text), \
+                        'caller', jsonb_build_object( \
+                          'run-id', c.run_id, 'flow-id', c.caller_flow_id, \
+                          'actor', COALESCE(c.caller_context->'source'->'actor', 'null'::jsonb), \
+                          'lineage', COALESCE(c.caller_context->'source'->'caller', 'null'::jsonb)))), \
+                    1, $12, c.run_id, $5, $6, c.invoke_depth + 1, c.invoke_root_run_id, \
                     LEAST( \
                       now() + (COALESCE(c.response_deadline_ms, c.run_deadline_ms) \
                                * interval '1 millisecond'), \
@@ -661,6 +669,9 @@ mod tests {
         assert!(sql.contains("WHEN c.run_id IS NOT NULL THEN 'ready'"));
         assert!(sql.contains("p.invoke_depth + 1 > $13::int"));
         assert!(sql.contains("fs.child_count >= $14::bigint"));
+        assert!(sql.contains("'artifact-digest', c.artifact_hash"));
+        assert!(sql.contains("invocation_context, admission_context_version"));
+        assert!(sql.contains("c.caller_context->'source'->'actor'"));
         assert!(sql.contains(
             "'subject', 'service:' || c.catalog_id || ':' || c.environment || ':' || $9::text"
         ));

@@ -67,6 +67,8 @@ pub mod child;
 pub mod context;
 /// Durable lookup, wait, and fenced-cancel queries for flow invocation.
 pub mod invocation;
+/// Versioned identity shared by persisted admission and trusted effect calls.
+pub mod invocation_context;
 mod model;
 /// Durable queue, lease, partition, timer, and dead-letter decisions and SQL.
 pub mod queue;

@@ -323,8 +323,12 @@ source_lineage AS MATERIALIZED ( \
      FOR KEY SHARE OF r \
 ), \
 release_flow AS MATERIALIZED ( \
-    SELECT f.flow_id, f.flow_version \
-      FROM catalog.release_flows AS f, input AS i, locked_head AS h \
+    SELECT f.flow_id, f.flow_version, a.artifact_hash \
+      FROM catalog.release_flows AS f \
+      JOIN catalog.flow_artifacts AS a \
+        ON a.tenant_id = f.tenant_id AND a.flow_id = f.flow_id \
+       AND a.flow_version = f.flow_version \
+      CROSS JOIN input AS i CROSS JOIN locked_head AS h \
      WHERE f.tenant_id = i.tenant_id AND f.catalog_id = i.catalog_id \
        AND f.catalog_version = h.applied_catalog_version \
        AND f.flow_id = i.flow_id AND f.flow_version = i.flow_version \
@@ -366,6 +370,7 @@ classified AS ( \
         OR i.flow_id IS NULL OR i.flow_id = '' OR i.flow_version IS NULL \
         OR i.flow_version <= 0 OR i.run_id IS NULL OR i.run_id = '' \
         OR i.input_json IS NULL OR i.invocation_context IS NULL \
+        OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM 'object' \
         OR i.platform_revision IS NULL OR i.platform_revision = '' THEN 'invalid-input' \
       WHEN i.partition_policy IS NULL \
         OR i.partition_policy NOT IN ('blocking', 'leapfrog') \
@@ -462,7 +467,7 @@ classified AS ( \
         THEN 'conflicting-run-identity' \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
       ELSE 'ready' END AS result_code, \
-      i.*, eh.run_id AS admitted_run_id, xr.run_id AS existing_run_id \
+      i.*, rf.artifact_hash, eh.run_id AS admitted_run_id, xr.run_id AS existing_run_id \
     FROM input AS i \
     LEFT JOIN locked_head AS h ON true \
     LEFT JOIN active_definition AS d ON true \
@@ -492,7 +497,7 @@ created_run AS ( \
       (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
        attachment_id, registration_id, status, trigger_source, input_json, \
        event_source_run_id, event_root_run_id, event_depth, \
-       invocation_context, platform_revision, idempotency_key, \
+       invocation_context, admission_context_version, platform_revision, idempotency_key, \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
            c.expected_catalog_version, c.environment, \
@@ -502,10 +507,18 @@ created_run AS ( \
            CASE WHEN c.producer = 'event' THEN c.event_source_run_id END, \
            CASE WHEN c.producer = 'event' THEN c.event_root_run_id END, \
            CASE WHEN c.producer = 'event' THEN c.event_depth END, \
-           CASE WHEN c.producer = 'event' THEN jsonb_set(c.invocation_context, \
-             '{registration-hash}', to_jsonb(c.registration_hash), true) \
-             ELSE c.invocation_context END, \
-           c.platform_revision, \
+           jsonb_build_object( \
+             'version', 1, \
+             'principal', jsonb_build_object( \
+               'tenant-id', c.tenant_id, 'environment', c.environment, \
+               'catalog-id', c.catalog_id, 'catalog-version', c.expected_catalog_version, \
+               'flow-id', c.flow_id, 'flow-version', c.flow_version, \
+               'artifact-digest', c.artifact_hash), \
+             'source', CASE WHEN c.producer = 'event' \
+               THEN jsonb_set(c.invocation_context, '{registration-hash}', \
+                              to_jsonb(c.registration_hash), true) \
+               ELSE c.invocation_context END), \
+           1, c.platform_revision, \
            CASE WHEN c.producer = 'event' \
              THEN 'evt:' || c.registration_id || ':' || c.event_seq::text END, \
            c.response_deadline_at, c.run_deadline_at \
@@ -657,6 +670,29 @@ mod tests {
         assert!(sql.contains("EXISTS (SELECT 1 FROM created_http)"));
         assert!(ddl.contains("DEFERRABLE INITIALLY DEFERRED"));
         assert_ne!(recipe.lock_head(), recipe.admit());
+    }
+
+    #[test]
+    fn admission_persists_the_versioned_release_artifact_principal() {
+        let sql = admission_sql().admit().to_string();
+        assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
+        assert!(sql.contains("a.artifact_hash"));
+        for field in [
+            "'version', 1",
+            "'principal'",
+            "'tenant-id', c.tenant_id",
+            "'environment', c.environment",
+            "'catalog-id', c.catalog_id",
+            "'catalog-version', c.expected_catalog_version",
+            "'flow-id', c.flow_id",
+            "'flow-version', c.flow_version",
+            "'artifact-digest', c.artifact_hash",
+            "'source'",
+            "invocation_context, admission_context_version",
+        ] {
+            assert!(sql.contains(field), "missing trusted-context field {field}");
+        }
+        assert!(sql.contains("jsonb_typeof(i.invocation_context) IS DISTINCT FROM 'object'"));
     }
 
     #[test]

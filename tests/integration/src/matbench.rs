@@ -732,11 +732,11 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     let plain_e6 = registered_evt_run_id("f-plain", "r-plain", 6);
     let row = admin
         .query_one(
-            "SELECT trigger_source, invocation_context->>'trigger', \
-                    invocation_context->>'entity', invocation_context->>'table', \
-                    invocation_context->>'seq', event_source_run_id, \
+            "SELECT trigger_source, invocation_context->'source'->>'trigger', \
+                    invocation_context->'source'->>'entity', invocation_context->'source'->>'table', \
+                    invocation_context->'source'->>'seq', event_source_run_id, \
                     event_root_run_id, event_depth, input_json ? 'causation', \
-                    invocation_context ? 'causation' \
+                    invocation_context->'source' ? 'causation' \
              FROM wamn_run.runs WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &plain_e6],
         )
@@ -761,7 +761,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .query_one(
             "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = $1 \
              AND registration_id IS NOT NULL \
-             AND invocation_context->>'seq' = '7'",
+             AND invocation_context->'source'->>'seq' = '7'",
             &[&TENANT],
         )
         .await?
@@ -774,7 +774,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     let old_e8 = registered_evt_run_id("f-old", "r-old", 8);
     let e8 = admin
         .query_one(
-            "SELECT trigger_source, invocation_context->>'trigger' FROM wamn_run.runs \
+            "SELECT trigger_source, invocation_context->'source'->>'trigger' FROM wamn_run.runs \
              WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &old_e8],
         )

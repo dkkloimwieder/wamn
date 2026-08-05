@@ -286,8 +286,12 @@ fn admission_live() {
                         WHERE run_id='flow-cron:cron:1:2026-07-27T00:00:00Z') IS NULL; \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='event-1') IS NULL; \
                ASSERT (SELECT stream_seq FROM wamn_run.run_queue WHERE run_id='event-1') = 41; \
-               ASSERT (SELECT invocation_context->>'registration-hash' FROM wamn_run.runs \
+               ASSERT (SELECT invocation_context->'source'->>'registration-hash' FROM wamn_run.runs \
                         WHERE run_id='event-1') = '{}'; \
+               ASSERT (SELECT invocation_context->>'version' FROM wamn_run.runs \
+                        WHERE run_id='event-1') = '1'; \
+               ASSERT (SELECT invocation_context->'principal'->>'artifact-digest' \
+                        FROM wamn_run.runs WHERE run_id='event-1') = 'ah-event'; \
              END $$;",
             registration_digest
         ),
@@ -343,7 +347,7 @@ fn admission_live() {
                      AND event_depth=2 FROM wamn_run.runs WHERE run_id='event-grandchild'); \
            ASSERT NOT (SELECT input_json ? 'causation' FROM wamn_run.runs \
                         WHERE run_id='event-grandchild'); \
-           ASSERT NOT (SELECT invocation_context ? 'causation' FROM wamn_run.runs \
+           ASSERT NOT (SELECT invocation_context->'source' ? 'causation' FROM wamn_run.runs \
                         WHERE run_id='event-grandchild'); \
          END $$;",
     );

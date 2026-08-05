@@ -4214,6 +4214,24 @@ CARGO_TARGET_DIR=/tmp/wamn-target-plan-1-flow-spec \
   cargo test --locked -p wamn-proof-conformance --test flow_spec_recovery_authority
 ```
 
+## PLAN-2B — typed trusted invocation context (`wamn-99wl`)
+
+Admission derives a versioned principal from the applied release and immutable
+flow artifact, then wraps producer-specific metadata under `source`. The same
+Rust type can add the node occurrence, attempt, and requirement in the single
+trusted HTTP effect call frame. Legacy-unversioned, incomplete, unknown, and
+non-object documents fail closed.
+
+```bash
+cargo test --locked -p wamn-run-state --lib
+cargo clippy --locked -p wamn-run-state --all-targets -- -D warnings
+cargo fmt -p wamn-run-state --check
+WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
+  cargo test --locked -p wamn-run-state --test admission_live \
+  --test child_live -- --ignored --nocapture --test-threads=1
+tools/gate-mutants/trusted-invocation-context.sh run
+```
+
 ## PLAN-2A — respond common Node ABI (`wamn-ayq7.20`)
 
 `respond` resolves to the pinned platform standard-node executable, dispatches

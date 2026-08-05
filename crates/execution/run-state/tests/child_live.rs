@@ -149,8 +149,10 @@ fn child_live() {
              AND catalog_id='cat' AND catalog_version=4 AND environment='poc' \
              AND attachment_id='child-internal' \
              AND input_json='{{\"decision\":\"approve\"}}'::jsonb \
-             AND invocation_context->'actor'->>'subject'='service:cat:poc:child-flow' \
-             AND invocation_context->'caller'->>'flow-id'='parent-flow'), 'child identity pinned'; \
+             AND invocation_context->>'version'='1' \
+             AND invocation_context->'principal'->>'artifact-digest'='sha256:artifact' \
+             AND invocation_context->'source'->'actor'->>'subject'='service:cat:poc:child-flow' \
+             AND invocation_context->'source'->'caller'->>'flow-id'='parent-flow'), 'child identity pinned'; \
            ASSERT EXISTS (SELECT FROM run_queue WHERE run_id='child-created'), 'child enqueued'; \
            ASSERT EXISTS (SELECT FROM runs WHERE run_id='parent-create' \
              AND waiting_child_run_id='child-created' AND waiting_child_occurrence=0 \
