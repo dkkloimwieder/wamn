@@ -2560,9 +2560,6 @@ Assumed to exist by work already in flight, owned by no document and no item abo
 - **Deprovisioning.** `crates/control/provision` ships `backup.rs`, `dump.rs` and
   `restore.rs`; teardown appears among no subcommand. A client admin deleting a production
   project by mistake must be recoverable. *Item 10 should adopt this.*
-- **The trusted invocation context** — the column and its version now exist and are
-  written on every admission, but **no typed shape** governs the document. It is a `jsonb`
-  with adjectives.
 - **The idempotency-key namespace** — one flat unique index per tenant, no reserved
   prefixes. Cron, event, and HTTP identities share it by convention.
 - **Platform revision** — the column exists and admission rejects an empty value, but every
