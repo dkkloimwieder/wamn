@@ -33,7 +33,10 @@
 //!     0→1, and the runner drain — then assert, teardown, and restore scale
 //!     floored at 1 (the wakeproof shape).
 
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    future::Future,
+    time::{Duration, Instant, SystemTime},
+};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
@@ -96,6 +99,15 @@ const DELETE_ACTIVATION_SQL: &str = "DELETE FROM catalog.attachment_activation \
  WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND attachment_id=$4";
 const DELETE_HEAD_SQL: &str = "DELETE FROM catalog.catalog_heads \
  WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND applied_catalog_version=$4";
+const DROP_GATE_TABLES_SQL: &str = "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
+ DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE;";
+const SUPERSEDE_GATE_CATALOG_SQL: &str = "UPDATE catalog.catalogs SET state='superseded' \
+ WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3 AND state='applied'";
+const DISABLE_GATE_CONNECTION_SQL: &str = "UPDATE catalog.connection_instances \
+ SET lifecycle_status='disabled',active_generation=NULL,revision=revision+1, \
+     updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') \
+ WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 \
+   AND (lifecycle_status<>'disabled' OR active_generation IS NOT NULL)";
 
 /// The demo secret the runner's credentials file maps `notify-webhook` to — the
 /// value the delivery assert expects reflected and the containment scan hunts.
@@ -570,27 +582,43 @@ async fn deactivate_authoritative_cron_release(
     Ok(())
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct RuntimeCleanupSql {
+    cron_anchor: String,
+    node_runs: String,
+    run_queue: String,
+    runs: String,
+    flows: String,
+}
+
+fn runtime_cleanup_sql(schema: &str) -> RuntimeCleanupSql {
+    RuntimeCleanupSql {
+        cron_anchor: format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
+        node_runs: format!(
+            "DELETE FROM {schema}.node_runs WHERE tenant_id=$1 AND run_id IN \
+             (SELECT run_id FROM {schema}.runs WHERE tenant_id=$1 AND flow_id=$2)"
+        ),
+        run_queue: format!(
+            "DELETE FROM {schema}.run_queue WHERE tenant_id=$1 AND run_id IN \
+             (SELECT run_id FROM {schema}.runs WHERE tenant_id=$1 AND flow_id=$2)"
+        ),
+        runs: format!("DELETE FROM {schema}.runs WHERE tenant_id=$1 AND flow_id=$2"),
+        flows: format!("DELETE FROM {schema}.flows WHERE tenant_id=$1 AND flow_id=$2"),
+    }
+}
+
 async fn clear_in_cluster_runtime(
     admin: &Client,
     schema: &str,
     tenant: &str,
 ) -> anyhow::Result<()> {
-    admin
-        .execute(
-            &format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
-            &[&tenant, &FLOW_ID],
-        )
-        .await?;
-    admin
-        .batch_execute(&format!(
-            "DELETE FROM {schema}.node_runs WHERE run_id IN \
-               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-             DELETE FROM {schema}.run_queue WHERE run_id IN \
-               (SELECT run_id FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'); \
-             DELETE FROM {schema}.runs WHERE flow_id = '{FLOW_ID}'; \
-             DELETE FROM {schema}.flows WHERE flow_id = '{FLOW_ID}';"
-        ))
-        .await?;
+    let sql = runtime_cleanup_sql(schema);
+    let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&tenant, &FLOW_ID];
+    admin.execute(&sql.cron_anchor, &parameters).await?;
+    admin.execute(&sql.node_runs, &parameters).await?;
+    admin.execute(&sql.run_queue, &parameters).await?;
+    admin.execute(&sql.runs, &parameters).await?;
+    admin.execute(&sql.flows, &parameters).await?;
     Ok(())
 }
 
@@ -741,10 +769,7 @@ async fn teardown(
         let flow_version = i32::try_from(flow_version).context("F3 flow version exceeds i32")?;
         clear_in_cluster_runtime(&admin, schema, tenant).await?;
         admin
-            .batch_execute(&format!(
-                "DROP TABLE IF EXISTS {schema}.quality_holds CASCADE; \
-                 DROP TABLE IF EXISTS {schema}.wamn_catalog CASCADE;"
-            ))
+            .batch_execute(&DROP_GATE_TABLES_SQL.replace("{schema}", schema))
             .await?;
         admin
             .execute(
@@ -760,18 +785,13 @@ async fn teardown(
             .await?;
         admin
             .execute(
-                "UPDATE catalog.catalogs SET state='superseded' \
-                 WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3 AND state='applied'",
+                SUPERSEDE_GATE_CATALOG_SQL,
                 &[&tenant, &CATALOG_ID, &flow_version],
             )
             .await?;
         admin
             .execute(
-                "UPDATE catalog.connection_instances \
-                    SET lifecycle_status='disabled',active_generation=NULL,revision=revision+1, \
-                        updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') \
-                  WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 \
-                    AND (lifecycle_status<>'disabled' OR active_generation IS NOT NULL)",
+                DISABLE_GATE_CONNECTION_SQL,
                 &[&tenant, &ENVIRONMENT, &CONNECTION_INSTANCE_ID],
             )
             .await?;
@@ -782,6 +802,109 @@ async fn teardown(
     drop(admin);
     let _ = conn_task.await;
     r.map(|_| ())
+}
+
+#[derive(PartialEq, Eq)]
+struct GateResidueCleanup {
+    admin_url: String,
+    schema: String,
+    tenant: String,
+    flow_version: u32,
+    fresh_schema: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct RunnerScaleCleanup {
+    deployment: String,
+    replicas: i32,
+}
+
+#[derive(Default)]
+struct CleanupPlan {
+    gate_residue: Option<GateResidueCleanup>,
+    runner_scale: Option<RunnerScaleCleanup>,
+}
+
+fn cleanup_plan(args: &F3ProofArgs) -> CleanupPlan {
+    CleanupPlan {
+        gate_residue: if args.teardown {
+            args.admin_database_url
+                .as_ref()
+                .map(|admin_url| GateResidueCleanup {
+                    admin_url: admin_url.clone(),
+                    schema: args.schema.clone(),
+                    tenant: args.tenant.clone(),
+                    flow_version: args.flow_version,
+                    fresh_schema: args.deployment.is_none(),
+                })
+        } else {
+            None
+        },
+        runner_scale: None,
+    }
+}
+
+fn arm_runner_restore(cleanup: &mut CleanupPlan, deployment: &str, original_replicas: i32) {
+    cleanup.runner_scale = Some(RunnerScaleCleanup {
+        deployment: deployment.to_owned(),
+        replicas: original_replicas.max(1),
+    });
+}
+
+fn combine_cleanup<T>(
+    result: anyhow::Result<T>,
+    cleanup: anyhow::Result<()>,
+    cleanup_action: &str,
+) -> anyhow::Result<T> {
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(cleanup_error)) => Err(cleanup_error).context(cleanup_action.to_owned()),
+        (Err(error), Err(cleanup_error)) => Err(error).with_context(|| {
+            format!("{cleanup_action} also failed after the primary error: {cleanup_error:#}")
+        }),
+    }
+}
+
+async fn finish_with_cleanup<T, Teardown, Restore>(
+    result: anyhow::Result<T>,
+    teardown: Teardown,
+    restore: Restore,
+) -> anyhow::Result<T>
+where
+    Teardown: Future<Output = anyhow::Result<()>>,
+    Restore: Future<Output = anyhow::Result<()>>,
+{
+    let result = combine_cleanup(result, teardown.await, "remove F3 gate-owned residue");
+    combine_cleanup(result, restore.await, "restore F3 runner scale")
+}
+
+async fn remove_gate_residue(cleanup: Option<GateResidueCleanup>) -> anyhow::Result<()> {
+    if let Some(cleanup) = cleanup {
+        teardown(
+            &cleanup.admin_url,
+            &cleanup.schema,
+            &cleanup.tenant,
+            cleanup.flow_version,
+            cleanup.fresh_schema,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn restore_runner_scale(cleanup: Option<RunnerScaleCleanup>) -> anyhow::Result<()> {
+    let Some(cleanup) = cleanup else {
+        return Ok(());
+    };
+    let kube = KubeScale::in_cluster()?;
+    kube.set_replicas(&cleanup.deployment, cleanup.replicas)
+        .await?;
+    println!(
+        "## restore — {} scaled back to {}",
+        cleanup.deployment, cleanup.replicas
+    );
+    Ok(())
 }
 
 pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
@@ -817,43 +940,44 @@ pub async fn run(args: F3ProofArgs) -> anyhow::Result<()> {
         println!("## setup — schema + catalog + 2 stale/1 fresh holds + gate flow (registered)");
     }
 
-    let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
+    let mut cleanup = cleanup_plan(&args);
+    let result = async {
+        let mut client = connect_app(&app_url, &args.schema, &args.tenant).await?;
 
-    // Park-and-wake (in-cluster) or direct-seed (local) — either way the LIVE
-    // runner drains the run, and the assertions read the same DB outcome.
-    let (run_id, mut ok, scale_restore) = if let Some(deployment) = args.deployment.clone() {
-        drive_in_cluster(&client, &args, &deployment).await?
-    } else {
-        (drive_local(&mut client, &args).await?, true, None)
-    };
+        // Park-and-wake (in-cluster) or direct-seed (local) — either way the LIVE
+        // runner drains the run, and the assertions read the same DB outcome.
+        let (run_id, mut ok) = if let Some(deployment) = args.deployment.as_deref() {
+            let kube = KubeScale::in_cluster()?;
+            let original = kube.get_scale(deployment).await?;
+            // Arm restoration before attempting the park: PATCH may have reached
+            // Kubernetes even if observing its response fails.
+            arm_runner_restore(&mut cleanup, deployment, original.spec_replicas);
+            drive_in_cluster(&client, &args, deployment, &kube).await?
+        } else {
+            (drive_local(&mut client, &args).await?, true)
+        };
 
-    ok &= assert_f3(&client, &run_id, &args.secret).await?;
+        ok &= assert_f3(&client, &run_id, &args.secret).await?;
 
-    // Restore scale floored at 1 (in-cluster only).
-    if let (Some(scale), Some(deployment)) = (scale_restore, args.deployment.clone()) {
-        let kube = KubeScale::in_cluster()?;
-        kube.set_replicas(&deployment, scale).await?;
-        println!("## restore — {deployment} scaled back to {scale}");
+        if !ok {
+            bail!("f3proof failed");
+        }
+        Ok(())
     }
+    .await;
 
-    if args.teardown
-        && let Some(admin_url) = args.admin_database_url.clone()
-    {
-        teardown(
-            &admin_url,
-            &args.schema,
-            &args.tenant,
-            args.flow_version,
-            args.deployment.is_none(),
-        )
-        .await?;
-    }
-
-    println!("\nf3proof complete — overall PASS: {ok}");
-    if !ok {
-        bail!("f3proof failed");
-    }
-    Ok(())
+    let CleanupPlan {
+        gate_residue,
+        runner_scale,
+    } = cleanup;
+    let result = finish_with_cleanup(
+        result,
+        remove_gate_residue(gate_residue),
+        restore_runner_scale(runner_scale),
+    )
+    .await;
+    println!("\nf3proof complete — overall PASS: {}", result.is_ok());
+    result
 }
 
 /// LOCAL: seed a normative cron input directly and let the separately-started
@@ -885,21 +1009,20 @@ async fn drive_local(client: &mut Client, args: &F3ProofArgs) -> anyhow::Result<
 /// dispatcher fire the registered CRON flow (a DISTINCT phase — isolating a
 /// projects-config failure from a wake failure, the wakeproof precedent), then
 /// the waker wakes 0→1 and the runner drains. Returns the fired run id, the
-/// running verdict, and the replica count to restore (floored at 1).
+/// running verdict. The caller arms failure-safe scale restoration before this
+/// function attempts the park.
 async fn drive_in_cluster(
     client: &Client,
     args: &F3ProofArgs,
     deployment: &str,
-) -> anyhow::Result<(String, bool, Option<i32>)> {
+    kube: &KubeScale,
+) -> anyhow::Result<(String, bool)> {
     let mut ok = true;
-    let kube = KubeScale::in_cluster()?;
 
     // --- park ---
-    let original = kube.get_scale(deployment).await?;
-    let restore_to = original.spec_replicas.max(1);
     kube.set_replicas(deployment, 0).await?;
     let park_deadline = Instant::now() + Duration::from_secs(60);
-    let parked = wait_scale(&kube, deployment, park_deadline, |s| s.status_replicas == 0).await?;
+    let parked = wait_scale(kube, deployment, park_deadline, |s| s.status_replicas == 0).await?;
     check(&mut ok, "PARK: runner scaled to 0 replicas", parked);
 
     // --- activate only after PARK, capture one fire, then deactivate. ---
@@ -942,7 +1065,7 @@ async fn drive_in_cluster(
             "DISPATCH: a cron run was written by the dispatcher",
             false,
         );
-        return Ok((String::new(), ok, Some(restore_to)));
+        return Ok((String::new(), ok));
     };
     let dispatched_count: i64 = client
         .query_one(
@@ -960,7 +1083,7 @@ async fn drive_in_cluster(
 
     // --- wake 0→1 + drain ---
     let wake_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
-    let woke = wait_scale(&kube, deployment, wake_deadline, |s| s.spec_replicas > 0).await?;
+    let woke = wait_scale(kube, deployment, wake_deadline, |s| s.spec_replicas > 0).await?;
     check(&mut ok, "WAKE: the waker scaled the runner 0→1", woke);
     let drain_deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     let status = poll_to_terminal(client, &run_id, drain_deadline).await?;
@@ -970,7 +1093,7 @@ async fn drive_in_cluster(
         status == "completed",
     );
 
-    Ok((run_id, ok, Some(restore_to)))
+    Ok((run_id, ok))
 }
 
 async fn wait_scale(
@@ -1285,5 +1408,142 @@ mod tests {
         assert!(UPSERT_ACTIVATION_SQL.contains("INSERT INTO catalog.attachment_activation"));
         assert!(DELETE_ACTIVATION_SQL.starts_with("DELETE FROM catalog.attachment_activation"));
         assert!(DELETE_HEAD_SQL.starts_with("DELETE FROM catalog.catalog_heads"));
+    }
+
+    fn cleanup_test_args() -> F3ProofArgs {
+        F3ProofArgs {
+            database_url: Some("postgresql://app.invalid/gate".to_owned()),
+            admin_database_url: Some("postgresql://admin.invalid/gate".to_owned()),
+            schema: "wamn_runner_demo".to_owned(),
+            tenant: TENANT_DEFAULT.to_owned(),
+            echo_host: "serve-echo:8091".to_owned(),
+            secret: DEMO_SECRET.to_owned(),
+            offset_ms: -60_000,
+            flow_version: 7,
+            deployment: Some("runner".to_owned()),
+            setup: true,
+            teardown: true,
+            timeout_secs: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn error_after_park_runs_exact_gate_cleanup_and_scale_restore() {
+        let args = cleanup_test_args();
+        let mut cleanup = cleanup_plan(&args);
+        arm_runner_restore(&mut cleanup, "runner", 0);
+        let gate_residue = cleanup.gate_residue.as_ref().expect("gate cleanup armed");
+        assert!(
+            gate_residue
+                == &GateResidueCleanup {
+                    admin_url: "postgresql://admin.invalid/gate".to_owned(),
+                    schema: "wamn_runner_demo".to_owned(),
+                    tenant: TENANT_DEFAULT.to_owned(),
+                    flow_version: 7,
+                    fresh_schema: false,
+                }
+        );
+        assert_eq!(
+            cleanup.runner_scale,
+            Some(RunnerScaleCleanup {
+                deployment: "runner".to_owned(),
+                replicas: 1,
+            })
+        );
+        let executed = std::cell::RefCell::new(Vec::new());
+
+        let result: anyhow::Result<()> = finish_with_cleanup(
+            Err(anyhow::anyhow!("injected error after park")),
+            async {
+                executed.borrow_mut().push("remove gate residue");
+                Ok(())
+            },
+            async {
+                executed.borrow_mut().push("restore runner scale");
+                Ok(())
+            },
+        )
+        .await;
+
+        assert!(
+            format!(
+                "{:#}",
+                result.expect_err("the primary error survives cleanup")
+            )
+            .contains("injected error after park")
+        );
+        assert_eq!(
+            executed.into_inner(),
+            vec!["remove gate residue", "restore runner scale"]
+        );
+    }
+
+    #[test]
+    fn in_cluster_cleanup_is_byte_and_row_exact() {
+        assert_eq!(
+            runtime_cleanup_sql("wamn_runner_demo"),
+            RuntimeCleanupSql {
+                cron_anchor: "DELETE FROM wamn_runner_demo.cron_anchor WHERE tenant_id=$1 AND flow_id=$2".to_owned(),
+                node_runs: "DELETE FROM wamn_runner_demo.node_runs WHERE tenant_id=$1 AND run_id IN (SELECT run_id FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2)".to_owned(),
+                run_queue: "DELETE FROM wamn_runner_demo.run_queue WHERE tenant_id=$1 AND run_id IN (SELECT run_id FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2)".to_owned(),
+                runs: "DELETE FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2".to_owned(),
+                flows: "DELETE FROM wamn_runner_demo.flows WHERE tenant_id=$1 AND flow_id=$2".to_owned(),
+            }
+        );
+        assert_eq!(
+            DROP_GATE_TABLES_SQL.replace("{schema}", "wamn_runner_demo"),
+            "DROP TABLE IF EXISTS wamn_runner_demo.quality_holds CASCADE; DROP TABLE IF EXISTS wamn_runner_demo.wamn_catalog CASCADE;"
+        );
+        assert_eq!(
+            DELETE_ACTIVATION_SQL,
+            "DELETE FROM catalog.attachment_activation WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND attachment_id=$4"
+        );
+        assert_eq!(
+            DELETE_HEAD_SQL,
+            "DELETE FROM catalog.catalog_heads WHERE tenant_id=$1 AND catalog_id=$2 AND environment=$3 AND applied_catalog_version=$4"
+        );
+        assert_eq!(
+            SUPERSEDE_GATE_CATALOG_SQL,
+            "UPDATE catalog.catalogs SET state='superseded' WHERE tenant_id=$1 AND catalog_id=$2 AND version=$3 AND state='applied'"
+        );
+        assert_eq!(
+            DISABLE_GATE_CONNECTION_SQL,
+            "UPDATE catalog.connection_instances SET lifecycle_status='disabled',active_generation=NULL,revision=revision+1, updated_at=GREATEST(clock_timestamp(),updated_at+interval '1 microsecond') WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3 AND (lifecycle_status<>'disabled' OR active_generation IS NOT NULL)"
+        );
+
+        let mut args = cleanup_test_args();
+        args.teardown = false;
+        assert!(cleanup_plan(&args).gate_residue.is_none());
+    }
+
+    /// Load-bearing mutation guard: returning after the first cleanup error
+    /// leaves the runner parked and makes this test red.
+    #[tokio::test]
+    async fn cleanup_failure_does_not_skip_load_bearing_scale_restore() {
+        let executed = std::cell::RefCell::new(Vec::new());
+
+        let result: anyhow::Result<()> = finish_with_cleanup(
+            Err(anyhow::anyhow!("injected proof failure")),
+            async {
+                executed.borrow_mut().push("remove F3 gate-owned residue");
+                Err(anyhow::anyhow!("injected teardown failure"))
+            },
+            async {
+                executed.borrow_mut().push("restore F3 runner scale");
+                Ok(())
+            },
+        )
+        .await;
+
+        assert_eq!(
+            executed.into_inner(),
+            vec!["remove F3 gate-owned residue", "restore F3 runner scale"]
+        );
+        let error = format!(
+            "{:#}",
+            result.expect_err("primary and cleanup errors are reported")
+        );
+        assert!(error.contains("injected proof failure"));
+        assert!(error.contains("injected teardown failure"));
     }
 }
