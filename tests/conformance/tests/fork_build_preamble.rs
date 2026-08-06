@@ -19,6 +19,7 @@ inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`."#;
 const EXPECTED_MANIFEST_LEDGER_COMMENT: &str = "# Upstream v2.6.1 plus the policies recorded in\n\
 # docs/platform/wash-runtime-fork.md. The ledger is authoritative.";
+const EXPECTED_PLAN_REVISION: &str = "09b1132f";
 const EXPECTED_REVISION: &str = "09b1132f2bab36e6e71f4637bd0e4755e359dd43";
 const EXPECTED_UPSTREAM_BASE: &str = "df8a8bcd69adc9c23ded842e504071a5272d04ed";
 const POLICY_COMMITS: [&str; 7] = [
@@ -272,9 +273,12 @@ fn active_plan_points_to_the_v2_6_1_delta() {
     let plan = read_repository_file(&root, ACTIVE_PLAN);
 
     assert!(
-        plan.contains("The **v2.6.1 fork upgrade precedes 1 and 2A**")
+        plan.contains("**The v2.6.1 upgrade is complete.**")
+            && plan.contains("as `wamn/2.6.1`, pinned at rev")
+            && plan.contains(&format!("`{EXPECTED_PLAN_REVISION}`"))
             && plan.contains("`docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`")
-            && plan.contains("Doing this on the 2.6.1 fork"),
-        "active roadmap must point current fork work at the v2.6.1 delta"
+            && plan.contains("`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`")
+            && plan.contains("It was a **policy re-port**, not a dependency bump"),
+        "active roadmap must record the completed fork retarget and retained upgrade records"
     );
 }

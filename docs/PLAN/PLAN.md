@@ -2,8 +2,8 @@
 status: active
 genre:  plan
 date:   2026-07-27
-verified-against: a2c120c
-verification-date: 2026-07-27
+verified-against: 7ea1fb2
+verification-date: 2026-08-06
 horizon: post-POC (assumes FLOW-SPEC rev18 + POC-PLAN r6 land)
 ---
 
@@ -64,7 +64,7 @@ here is a one-line restatement placed under the item that spends it; the number 
 to the full row *and to the alternative that was rejected*. Do not treat a restatement as
 the decision.
 
-**Verification.** Claims below were checked against code, SQL, and gates at `a2c120c`.
+**Verification.** Claims below were checked against code, SQL, and gates at `7ea1fb2`.
 **Re-verify before use** — the previous revision of this document was pinned 21 commits
 back and four of its factual claims had already gone false, including two of the three
 supports under its largest risk. A stale tip line is not metadata; it is an expiry date.
@@ -87,7 +87,7 @@ change this after data exists?**
 | 3 | Measurement gate | the R6 verdict, deferred constants | 1, 2A | — (a gate) |
 | 4 | Security structural closes | trust-level gap in the shipped surface | — | **irreversible** once exposed |
 | 5 | Identity & access | who a principal is, at which tier | entry gate | **irreversible** — key encoding |
-| 6A | Minimum authoring loop | validate → draft-run → observe | 2A, 5 (+2B for the outbound journey) | expensive |
+| 6A | Minimum authoring loop | validate → draft-run → observe | 2A; 5 before client exposure (+2B for the outbound journey) | expensive |
 | 6B | Complete studio | canvas, palette, exposure UX | 6A | reversible |
 | 7 | Release normalization | what a release contains, its lifecycle | entry gate | expensive |
 | 8 | Event plane completion | registration exposure, convergence | 7; **external precondition:** an org bootstrapped by platform administration | expensive |
@@ -113,7 +113,7 @@ is built, and the plan should not pretend otherwise.
   a loop against the interpreter and then switching is rework where H1 makes rework
   expensive. It develops against `ctl` and fixtures — a studio is convenience, not a
   dependency.
-- The **v2.6.1 fork upgrade precedes 1 and 2A** (0.3) — both build against the runtime.
+- The completed **v2.6.1 fork upgrade precedes 1 and 2A** (0.3) — both build against the runtime.
 - Item 8 needs 7's registration versioning.
 - Items 1 and 2A are **largely parallel**: checkpointing is host-side (`run-state`),
   composition is guest-side. Only 2C's bulk connectors need payload handles.
@@ -202,6 +202,28 @@ out speculatively.
 invalidate assumptions in items already written. Expect to revisit earlier items rather
 than treat them as closed doors.
 
+**Next wave (settled 2026-08-04): the iteration loop.** With the fork base
+complete and items 1, 2A, and 2B at their v1 floors, the sequence turns to
+the loop every later item consumes: item 6A's minimum authoring loop (the
+draft model and its retention, draft-safe connections, draft-workspace
+scope, run-visibility surface), item 7's release normalization, and the
+flow-testing surface (editor-run test execution, stored suites, publish
+gates, ephemeral per-run schema isolation). The parked durable-execution
+tail — semantic strengthening and its revalidation economics, the payload
+store and threshold campaign, re-attempt and compensation verbs, declarative
+failure policy, and the controlled-Replay protocol — resumes only on its
+recorded reactivation condition in item 1.
+
+**Exit gate for the wave:** an author edit reaches a draft execution without
+minting a release, and a stored suite runs from the editor before publish —
+both demonstrated end to end, with edit→run latency measured and recorded.
+The latency figure is a measurement output, not a promised constant.
+
+This is an internal author-loop proof under the existing development administrator, not a
+client-facing exposure: item 5 still gates retained client identity and client use. Item 3's
+full execution-model verdict remains a separate gate after the v1 floors; the edit→run figure
+above measures the loop and neither replaces that verdict nor promises its constants.
+
 ---
 
 ## 0 · Continuous obligations
@@ -241,13 +263,17 @@ gates." Until it holds, every **Done when** below is unfalsifiable.
   added commit. No carried-commit ceiling. *Revisit if a base-version bump conflicts a
   carried commit on consecutive syncs.*
 
-**The v2.6.1 upgrade is a one-time prerequisite, not routine sync** — delta in
-`docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`, amending the base plan in
-`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`. It precedes items 1 and 2A because both
-are built *against* the runtime; doing them on 2.5.2 and re-porting is rework in
-the two most expensive items.
-It is a **policy re-port**, not a dependency bump: upstream reworked the same files the fork
-patches. It also puts P3 on the table for item 1's streaming decision.
+**The v2.6.1 upgrade is complete.** The fork retarget landed ahead of items
+1 and 2A — both build *against* the runtime — as `wamn/2.6.1`, pinned at rev
+`09b1132f`. It was a **policy re-port**, not a dependency bump: upstream
+reworked the same files the fork patches. Surface absorbed: the crates.io
+Wasmtime 47.0.1 family, `HttpServer`→`Ingress`, `AllowedIPNameLookups`, the
+`wasmcloud:host` identity and cancel interfaces, and `host-component-plugins`
+present but feature-disabled. The delta and base records remain in
+`docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md` and
+`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md` pending their retirement decision. It
+also put P3 on the table for item 1's streaming decision — taken there, and
+declined in favour of the frozen P2 contract.
 
 **New D23 cost:** v2.6.1 maintains **parallel P2 and P3 host surfaces**, so a policy at a
 boundary implemented separately for both generations needs dual coverage — already
@@ -267,20 +293,22 @@ streaming contract** that item 2C's client blob node consumes. Does **not** own 
 transition surface (shipped with the POC), the client-facing blob node itself (2C), or its
 authoring presentation (item 6).
 
-**Goal.** Make the durable set the *resume point* rather than a log of everything that
-happened, and move bulk payloads out of Postgres — so that **active recovery state is
-bounded by the nonterminal working set rather than accumulated node history**, while replay
-seeds and observability remain separately retention-bounded.
+**v1 goal.** Make the durable set the *resume point* rather than a log of everything that
+happened, so **active recovery state is bounded by the nonterminal working set rather than
+accumulated node history**, while replay seeds and observability remain separately
+retention-bounded. The v1 floor uses bounded in-band payloads; moving bulk payloads out of
+Postgres is the parked tail specified below.
 
 **Position.** First, because item 3 measures the durable-run model and cannot produce a
-meaningful number until this is settled: with capture on the recovery path, the F1
-scenario reports roughly the cost of storing the receipt document once per node, which is
-a telemetry default rather than the execution model. Instrument before and after within
-this item; item 3 then renders the R6 verdict against the architecture that will actually
-ship.
+meaningful number until capture-independent checkpoint recovery is settled: with capture on
+the recovery path, the F1 scenario reports roughly the cost of storing the receipt document
+once per node, which is a telemetry default rather than the execution model. Item 3 measures
+the v1 floor and may trigger the parked payload tail; offload comparisons wait for that
+reactivation rather than blocking the floor.
 
-**Depends on** the POC. **Blocks** item 3's exit criterion, and the bulk/data-collection
-capability in items 8–9.
+**Depends on** the POC. The v1 floor **blocks** item 3's recovery-model entry. The parked
+payload tail — not checkpoint recovery — blocks the bulk/data-collection capability in
+items 8–9.
 
 ### Why — the distinction that drives everything
 
@@ -483,6 +511,49 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   different results. Scrubbing is a capture convenience and **not a security boundary**;
   secrets travel by credential reference and must not ride in payloads.
 
+### v1 recovery posture — ship the floor, park the tail
+
+Settled 2026-08-04. The platform ships the conservative recovery floor and
+defers the strengthened tail until demand or measurement forces it.
+
+**In force:** `never-replay` as the only recovery class; effect-attempt
+recording with pinned generations, claims, fingerprints, and stable keys;
+exact-generation refusal; explicit `effect-uncertain` as a first-class
+state; the trusted one-frame HTTP effect adapter with write-ahead intent.
+
+**Automatic behaviour is unchanged in v1.** A terminally failed effect
+attempt fails its node run and the run resolves through existing run-state
+transitions; an attempt classified `effect-uncertain` — the `never-replay`
+default for a lost outcome — **parks the run** on the parked condition that
+already exists in the transition layer, pending disposition. Park/release
+therefore binds to existing machinery rather than minting a new state. The
+declarative per-binding failure-policy surface (retry shape, park-after,
+`on_terminal_failure` actions such as fail-run, compensate-with, or notify)
+is parked with the tail below.
+
+**The v1 operator surface is disposition, not re-execution.** Two verbs.
+**Park/release**, and **resolve** — a role-gated assertion that an attempt
+succeeded or failed, carrying a typed basis (external evidence, counterparty
+confirmation, operator judgment) and an audit record, available in bulk
+filtered by connection, generation, flow, and window. An attempt is never
+mutated: resolution dispositions it, and any later authorized re-execution
+is a successor attempt with typed lineage — never a substitution of
+authority on the original.
+
+**Parked, not abandoned:** the semantic-strengthening machinery
+(`stable-key-dedup-v1` attestation, evidence, revalidation cadence and
+maximum validity), the payload-store buildout and the sustained
+threshold/ceiling campaign, re-attempt and compensation verbs, the
+declarative per-binding failure-policy surface, and the controlled-Replay
+protocol. On reactivation, the strengthening specification must
+additionally pin whether the named idempotency domain is
+instance-independent across create-instance migration.
+
+**Reactivation condition:** a named client integration whose economics
+require deduplicated recovery or historical Replay, or item 3 measurement
+showing parked scope on the critical path. Until then the parked scope is a
+recorded decision, not an open question.
+
 ### Exit gates — two that were previously filed as decision points
 
 **Decided (wamn-4u7p.2): one resolved recovery model across standard and custom nodes.**
@@ -517,33 +588,47 @@ one checkpoints, crash, the other replays the producer and sees different bytes)
 branches to exist. Without them, re-execution before a boundary just proceeds with fresher
 data. Design the recovery model so fan-out remains addable; do not block item 1 on it.
 
-### Done when
+### Done when — v1 floor
 
-A run recovers correctly with capture `off`; over-threshold payloads ride as references
-with the bytes in the blob store; a crash between the blob write and the checkpoint leaves
-an orphan and a resumable run, never a dangling reference; GC reclaims orphans without
-reaching client objects; and the same F1 scenario measured before and after shows the
-WAL and storage difference the model predicts.
+A run recovers correctly with capture `off`; attempt completion and the successor
+checkpoint commit atomically; a lost `never-replay` outcome becomes `effect-uncertain` and
+parks for disposition; recovery refuses rather than retargeting an existing attempt across
+a connection-generation change; audit reconstruction does not execute; and the role-gated
+park/release and resolve surface records typed, immutable dispositions.
+
+**Parked tail exit, on reactivation:** over-threshold payloads ride as references with the
+bytes in the blob store; a crash between blob write and checkpoint leaves an orphan and a
+resumable run, never a dangling reference; GC reclaims orphans without reaching client
+objects; and the same F1 scenario measured before and after shows the WAL and storage
+difference the model predicts.
 
 ### Failed if
 
 Recovery cannot be made capture-independent without also re-architecting the engine — that
 would mean the checkpoint is not a sufficient resume point and the *model* needs revision,
-not the code. Or: the offload path's latency proves unacceptable even above the threshold,
-which would push toward a much higher threshold and a hard payload ceiling instead.
+not the code. **Parked-tail failure case:** if offload latency proves unacceptable even above
+the measured threshold, the tail moves toward a much higher threshold and a hard payload
+ceiling instead.
 
 ### Decision points
 
-- **Inline threshold and hard ceiling** — the two numbers, set by measurement below.
-- **Does capture keep serving the studio's run view, or move to the telemetry pipeline?**
-  D13 already runs a collector over three stores, and capture *is* telemetry — but an
-  author's run history is a product surface, not an SRE one. Decides an item 6 dependency.
+- ~~**Inline threshold and hard ceiling**~~ — **Deferred (2026-08-04):** the
+  v1 floor is bounded in-band payloads on the frozen `wamn:node@0.1.x`
+  contract; the two numbers are set by measurement when the parked tail
+  below reactivates.
+- ~~**Does capture keep serving the studio's run view, or move to the
+  telemetry pipeline?**~~ **Settled (2026-08-04) as status quo for v1:**
+  capture keeps serving the author's run history as platform data — a
+  product surface, not an SRE one. Relocation is revisited only with the
+  parked tail, and any relocation must preserve durable seeds for parked
+  controlled Replay.
 - *(Resolved: the client blob node belongs to **2C** — it is a node-authoring and catalogue
   deliverable, with item 6 owning only its authoring presentation. **Item 1's obligation is
   to leave behind the handle and streaming contract 2C's blob node consumes.** Its arrival
   trips `egressbench`'s `wasi:blobstore` justification by design.)*
-- **GC by TTL or by reference sweep** — TTL is Temporal's answer, simple and wasteful;
-  reference-counted is precise but must handle content-addressed sharing.
+- ~~**GC by TTL or by reference sweep**~~ — **Deferred (2026-08-04):** the parked tail
+  resumes from the two-mechanism envelope above: replay-reachability collection for
+  referenced objects and age-based collection for uncommitted orphans.
 - **Does a non-deterministic node followed by fan-out force persistence?** Re-executing a
   fetch after a crash is normally safe, since nothing past the boundary committed — but
   under fan-out, one branch may already have checkpointed with the old bytes, and
@@ -868,9 +953,6 @@ separated:
 > **Portable artifacts and templates declare typed connection requirements. Environments own
 > connection instances. An environment-specific release binds requirements to instances.**
 
-Node placement and execution transport are platform-plane — flows reference implementations,
-never endpoints — and connection-backed HTTP excludes flow-level `allowed-hosts`.
-
 Without that split, two sources of truth emerge: credential rotation or endpoint failover
 could accidentally become release changes, template portability cannot tell a declaration
 from supplied material, and promotion validation cannot say precisely what is missing. The
@@ -948,6 +1030,15 @@ operation fingerprint, and stable key; only then may the request reach the wire,
 which the outcome is recorded. A crash between intent and outcome leaves a pending
 effect-uncertain attempt that parks. Caller claims carry identity only; release, binding,
 generation, and authorization facts are derived from the admitted run and catalog state.
+
+**Plane boundary (settled 2026-08-05).** Node placement and execution
+transport are platform-plane: a flow references pinned implementation
+identities, never endpoints — node configuration cannot carry an endpoint
+or any absolute URL — and connection-backed HTTP and flow-level
+`allowed-hosts` are mutually exclusive. Business egress is a portable
+connection resolved through an environment binding; invoking a custom node
+is internal execution transport through the trusted host runtime, with
+placement and signing host-owned.
 
 **Decision (wamn-ko5r.1): an uncertain attempt stays on its recorded generation.** A retry
 or recovery dispatch for an existing effect attempt may use only the exact immutable
@@ -1103,6 +1194,15 @@ may proceed only after ordinary resolution admits a currently valid attestation.
 `confirmed_definition_hash` on attachments and `generation` on cron anchors, and the attempt
 protocol already records `attempt_input_ref` so recovery reasons about what the attempt saw.
 Connection instance is the outbound member of that same set.
+
+**v1 scope (settled 2026-08-04).** The floor above — the trusted one-frame
+effect, write-ahead intent, typed refusals — is shipped and in force.
+Connection recovery ships at the contract default only: `never-replay` for
+HTTP `0.1`. The strengthening path — attestation, evidence, revalidation,
+cadence and maximum validity — remains fully specified and parked behind
+item 1's reactivation condition. Generations, staged CAS activation, and
+exact-generation refusal remain in force: they are the rotation-safety
+floor, not the strengthened path.
 
 **It also sharpens H1.** The tested-bundle invariant proves **executable identity**, not
 environmental behaviour — dev and prod deliberately bind different connection instances, so
@@ -1722,11 +1822,13 @@ execution model it builds against (items 1, 2) or the node catalogue's growth (i
 happened when it ran — without hand-writing JSON or touching `ctl`.
 
 **New item.** The POC proves the first capability rung *mechanically*; nothing in the
-previous plan makes it **usable**. Verified at `a2c120c`: no management or studio crate, no
+previous plan makes it **usable**. Verified at `7ea1fb2`: no management or studio crate, no
 studio document in a 30-document corpus, and no item owning it. For an opinionated low-code
 platform this is not a surface among others — it is the product.
 
-**Depends on** items 2A (the execution model the loop runs against) and 5. **Also 2B, but
+**Depends on** item 2A (the execution model the loop runs against). Item 5 gates
+client-facing use and retained client identity, but the next-wave internal draft-run proof
+may use the existing development administrator; it is not client exposure. **Also 2B, but
 only for the complete acceptance journey** — the worked example resolves a connection named
 `erp`, so an outbound-integration vertical needs connections; management API and basic
 editing can begin before. Given the industrial positioning, the first vertical almost
@@ -1757,8 +1859,9 @@ own consumption surfaces.
 - **b. The studio** — schema designer, flow canvas, exposure configuration, credential
   management.
 - **c. Author-facing run visibility** — run history, per-node execution detail, failure
-  surfacing, retry and replay. *The previous plan carried "run-status surface scope" as an
-  open question; post-POC it is this item's core, because a post-release failure is
+  surfacing, read-only audit reconstruction, and effect disposition. *The previous plan
+  carried "run-status surface scope" as an open question; post-POC it is this item's core,
+  because a post-release failure is
   invisible to the caller by construction and SRE dashboards do not serve an author.*
 - **d. Node library breadth** — the error and retry semantics an author can reason about,
   and the palette the studio presents. **Node *authoring* moved to item 2**: composing
@@ -1817,42 +1920,20 @@ limits — defaulted, advanced-only, exactly as above. The other two are not set
 - **Occurrence keys are engine-generated protocol identity.** They derive from the
   completed-visits map and carry child-run identity, idempotency, and history correlation. An
   author never edits one; they may be visible as read-only diagnostics.
-- **Recovery class is a contract property, never a free setting** — but it is not uniformly
-  non-authorial either. Where the contract is fixed by a node's semantics (`transform` is
-  `replay`; a keyless POST is `never-replay`) it is read-only. Where it depends on
-  author-supplied content it cannot be inferred: FLOW-SPEC §10.3 makes `postgres` operations
-  `idempotent-with-key` *"only where the SQL guarantees it"*, and the author writes the SQL.
-  In that case it is a **trusted, auditable assertion** — but *trusted from whom* matters,
-  and an earlier draft got this wrong by equating it with `purity: pure`. Those are different
-  principals:
+- **Recovery class is a contract property, never a free setting.** In v1 every external or
+  author-supplied effect remains at the conservative `never-replay` class; no user assertion
+  strengthens it. A method, header, SQL claim, or checkbox cannot authorize repetition of a
+  possibly completed effect. The fully specified strengthening path is parked under item 1's
+  reactivation condition and, when resumed, still requires privileged attributable evidence.
 
-  | Principal | Asserts | Accountability |
-  |---|---|---|
-  | component publisher | this component is pure | signs the artifact, passes the builder pipeline |
-  | flow author | this SQL is idempotent | may be an ordinary project author on a low-code surface |
-
-  Upgrading `never-replay → idempotent-with-key` is not configuration: it authorizes the
-  engine to **repeat a possibly-completed external effect** after uncertain failure. So:
-
-  > **A flow author may select only the recovery behaviour permitted by the signed node
-  > contract and the resolved connection contract. Strengthening a guarantee beyond the
-  > conservative default requires a privileged, attributable assertion.**
-
-  **Which principal, for in-project effects, is unassigned.** A connection administrator is
-  the wrong owner — no external connection is involved — and an ordinary flow author is too
-  weak. That question belongs to items 5 and 6A: *which project role may make or approve a
-  privileged recovery assertion for author-supplied effect definitions, and how is it
-  surfaced and audited?* Candidates, all open: a project administrator; a dedicated
-  application-safety role; platform approval; or **no user assertion at all initially —
-  always `never-replay`**, which is the conservative start and needs no new role. Left
-  unassigned, an implementation will quietly expose "idempotent" as a checkbox to the same
-  author who wrote the SQL.
-
-  For free-form SQL the safe default stays `never-replay` unless the platform can prove the
-  operation's semantics or an appropriately privileged principal accepts the risk. For HTTP,
-  a request carrying an idempotency key proves nothing — the connection contract must assert
-  the receiver honours it. Which ties this to connection-instance generation: **whether a
-  retry is safe can depend on the exact destination instance, not only the node type.**
+  **The open role question is disposition, not recovery strengthening.** Items 1 and 5 must
+  decide which project or platform roles may **park/release** and **resolve** an effect
+  attempt; whether resolve requires a stronger role; the single-attempt and bulk granularity;
+  the permitted bulk filters by connection, generation, flow, and time window; and the
+  separation-of-duties and audit requirements. Resolution asserts succeeded or failed with a
+  typed basis and dispositions an immutable attempt — it never rewrites the attempt, grants
+  compensation, or silently re-executes it. An ordinary flow author receives no implicit
+  self-approval.
 
 **Requirement this places on descriptors**, without prescribing the taxonomy: node and
 connection descriptors must distinguish **who owns each field** — author-editable,
@@ -2214,11 +2295,19 @@ failure takes, and it is predictable enough to watch for.
 
 ## 8 · Event plane completion
 
+**Causation is a proven invariant.** Every run carries `{run, root, depth}`;
+the `wamn:postgres` plugin stamps a transactional `wamn.causation` logical
+message onto every run-owned transaction, the CDC reader stitches it onto
+that transaction's row events, and the end-to-end proof is gated
+(`[EVT-CAUSATION-E2E]`) with mutation evidence on record. Event-triggered
+runs carry a real root and depth; a root run is its own root at depth zero.
+
 **Boundary.** Owns registration exposure and durable-consumer convergence. Does **not**
 own the event entry type or run admission — both shipped with the POC.
 
-**Goal.** Per-org accounts, reader lease election and fleet enumeration, the durable
-consumer reconciler, and replay.
+**v1 goal.** Per-org accounts, reader lease election and fleet enumeration, and the durable
+consumer reconciler. Controlled Replay and current-definition Reprocess retain their settled
+semantics below but are parked with item 1's durable-execution tail.
 
 **Depends on** item 7 for registration versioning.
 
@@ -2230,24 +2319,27 @@ consumer reconciler, and replay.
   isolation. *Revisit if per-org accounts or credential tiers force per-org reader
   identities anyway — which is this item's own work, so expect to.*
 
-**Done when** registrations are release members with a reconciler converging durable
-consumers to the desired set, reporting drift; historical controlled Replay works across a
-registration change; and per-org accounts isolate.
+**Done when — v1 floor:** registrations are release members with a reconciler converging
+durable consumers to the desired set and reporting drift, and per-org accounts isolate.
+**Parked tail exit, on reactivation:** historical controlled Replay works across a
+registration change, and current-definition Reprocess has distinct admission and lineage.
 
 **Failed if** the reconciler cannot converge without manual intervention on any realistic
 registration edit — an external-resource reconciler that needs an operator is not a
 reconciler.
 
 **Decision points**
-- ~~**Which replay?**~~ **Settled by wamn-4u7p.1.** Historical execution under the pinned
-  registration, release, artifact, and bundle is controlled Replay and is this item's replay
-  exit (`wamn-v21a.1`). Processing retained event input under the current active registration
-  and flow release is the separate production operation **Reprocess** / live re-execution
-  (`wamn-v21a.2`). Item 8 still owns each protocol's ordering, idempotency, audit, and
-  compensation details; it does not collapse them behind one verb.
+- ~~**Which replay?**~~ **Settled by wamn-4u7p.1; implementation deferred 2026-08-04.**
+  Historical execution under the pinned registration, release, artifact, and bundle is
+  controlled Replay (`wamn-v21a.1`). Processing retained event input under the current active
+  registration and flow release is the separate production operation **Reprocess** / live
+  re-execution (`wamn-v21a.2`). Both protocols are parked behind item 1's reactivation
+  condition; on resumption item 8 owns their ordering, idempotency, audit, and compensation
+  details and does not collapse them behind one verb.
 - **Per-org reader identity** — D22's own revisit trigger, expected to fire here.
-- **Claim-check / payload store** for oversize events — the previous plan carries "payload
-  store backend" as unowned; this item is where it bites.
+- ~~**Claim-check / payload store** for oversize events~~ — **Deferred (2026-08-04):** item
+  8 inherits item 1's platform-store, namespace, and GC decisions when the parked payload
+  tail reactivates.
 
 ---
 
@@ -2521,7 +2613,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
 | ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement plus live semantic-attestation verdict in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
 | ~~What evidence, freshness, and invalidation rules apply per semantic-attestation type~~ | **Settled (wamn-ko5r.4):** each strengthening connection claim declares bounded evidence, a maximum validity window, periodic revalidation, semantic scope, and material invalidation inputs; missing policy means the conservative default only. HTTP `0.1` `stable-key-dedup-v1` requires time-bounded end-to-end evidence over every admitted proxy and route, with scope changes or expiry failing explicitly. DNS rotation is not proof; resolution outside the attested service identity/domain refuses. No expiry, revocation, or invalidation may silently downgrade to `never-replay`. | — |
-| **Which project role may approve a privileged recovery assertion for author-supplied effects** | Raw SQL has no connection administrator; candidates run from a project admin to a safety role to no user assertion at all | 5, 6A |
+| **Who holds the v1 effect-disposition verbs, and at what granularity?** | Decide the role-by-verb matrix for park/release and resolve, single and bulk scopes and filters, separation of duties, and the audit identity and typed basis; attempts remain immutable and ordinary authors receive no implicit self-approval | 1, 5, 6A |
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
@@ -2537,7 +2629,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Draft retention and cache eviction** | Content-addressed drafts, unpublished artifacts, orphaned bundles and draft-run captures accumulate; 6A owns draft reachability, 2A owns cache eviction | 6A, 2A |
 | **Which connections are draft-safe?** | Draft execution is a real admission capability with real effects; an author iterating against a connection pointing at production is the failure to prevent | 6A, 2B |
 | **Flow-draft loop only, or a project-definition draft workspace?** | 6A's fast loop pins the applied catalog, so schema/connection changes go through ordinary releases unless a provisional definition world is built | 6A |
-| ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Item 8 specifies and implements the distinct protocols | — |
+| ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1; implementation deferred 2026-08-04:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Both protocols resume behind item 1's reactivation condition | — |
 | **Do custom nodes compose in, or keep D7's signed hop?** | Removes a round trip and preserves memory isolation, but moves the supply-chain signature to the composition | 2D |
 | **Node digest pinning versus patchability** | A platform node's security patch would otherwise need every client flow republished | 2D |
 | **Node distribution: curated, private, marketplace?** | Feeds the studio palette and decides whether clients can share nodes | 2C |
@@ -2549,8 +2641,8 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Does the E1–E11 roadmap survive, and in what form?~~ | **Settled (0.1, 2026-07-31):** it does not survive as ordering — the backlog was re-baselined onto items 0–11 as `[PLAN-*]` epics (bd sweep `wamn-role`): survivors re-anchored, speculation closed with supersession reasons, `platform-plan.md` retained as the D-number and E-heading archive of record | — |
 | **Run placement — inline or queued** | Item 3's exit. One execution model, two placements — the queue row exists either way; only who executes it differs. If inline does not earn its complexity, there is one placement | 3 |
 | **Runs-per-process density** | One replica drives one run at a time today, so request concurrency scales only by pod count; 2A's instance pooling is the mechanism, measured in 3 | 2A, 3 |
-| **Payload inline threshold and hard ceiling** | Item 3 cannot measure the execution model until these are set and capture is off the recovery path | 1 |
-| **Does capture serve the studio's run view, or move to the telemetry pipeline?** | An item 6 dependency; capture *is* telemetry, but an author's run history is a product surface | 1, 6 |
+| ~~**Payload inline threshold and hard ceiling**~~ | **Deferred (2026-08-04):** the v1 floor is bounded in-band payloads on frozen `wamn:node@0.1.x`; the two numbers are set by measurement when item 1's parked tail reactivates | — |
+| ~~**Does capture serve the studio's run view, or move to the telemetry pipeline?**~~ | **Settled (2026-08-04) as status quo for v1:** capture remains platform data serving the author's run history; relocation waits for the parked tail and must preserve durable Replay seeds | — |
 | **Where does raw SQL's structural close land?** | D8's precondition does not exist; the shipped guard is defeatable by dynamic SQL | 4 |
 | **Do D15's latency SLOs get product sign-off?** | Recorded pending it; never obtained. Until then the synchronous path carries no numeric commitment | 3 |
 | **Does the catalog get a float field type?** | Industrial telemetry is natively float; D11/D12 assume it. Today authors invent a `numeric` scale or hide it in untyped `json`. The recorded ban covers material quantities only | Beyond, but decided earlier |
@@ -2559,7 +2651,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | Waiter transport | The response path stays provisional | 3 |
 | The deferred constants — idempotency TTL, outcome retention, schema limits, budgets, purge windows, sweep cadence | | 3, 7 |
 | Custom-node compatibility model | The node manifest declares a contract that is shape-validated and compared to nothing; an envelope change has already shipped | 2C |
-| Payload store — platform namespace, GC policy, client-node split | **Owned by item 1** for the platform side; the event claim-check inherits it | 1, 8 |
+| ~~Payload store — platform namespace, GC policy, client-node split~~ | **Deferred (2026-08-04):** parked with the durable-execution tail; the two-GC-mechanism and three-retention-class constraints in item 1 remain the design envelope on reactivation | — |
 | Production posture — topology, cardinality, recovery objectives, availability, threat model, isolation, credential lifecycle, residency, audit access, data lifecycle, upgrade and client compatibility, unit economics | | 11 |
 
 ---
