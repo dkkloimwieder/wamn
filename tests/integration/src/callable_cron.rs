@@ -3,11 +3,13 @@
 use anyhow::{Context as _, ensure};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_flow::Flow;
 use wamn_scheduler::{canonical_tick, mint_cron_run_id};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
 
-const TENANT: &str = "callable-cron-gate";
+const TENANT: &str = "callable-cron-gate-v2";
 const CATALOG: &str = "callable-cron";
 const FLOW: &str = "callable-cron-flow";
 const ATTACHMENT: &str = "callable-cron-attachment";
@@ -49,15 +51,46 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         "nodes": [{"id": "entry", "type": "cron"}]
     })
     .to_string();
+    let flow = Flow::from_json(&graph)
+        .map_err(|error| anyhow::anyhow!("parse callable cron flow: {error}"))?;
+    let descriptor = wamn_standard_nodes::describe("cron")
+        .context("missing standard-node descriptor for cron")?;
+    let contract =
+        wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
+    let implementation = NodeImplementation::from_resolved_platform_contract(contract)
+        .map_err(anyhow::Error::new)?;
+    let artifact = Artifact::new(TENANT, &flow, vec![implementation])?;
+    let canonical_graph =
+        String::from_utf8(flow.canonical_bytes()).expect("canonical cron graph is UTF-8");
+    let interfaces = String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+        .expect("canonical cron interfaces are UTF-8");
+    let components = serde_json::to_value(artifact.supplied_components())?;
+    let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+        .expect("canonical cron occurrence recovery is UTF-8");
+    let artifact_hash = artifact.identity().artifact_hash().as_str().to_owned();
+    let members = serde_json::json!([{
+        "flow-id": FLOW,
+        "flow-version": 1,
+        "artifact-hash": artifact_hash,
+    }])
+    .to_string();
     admin
         .execute(
-            "INSERT INTO catalog.flow_artifacts \
-               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,'cron-graph','cron-artifact', \
-                     '[]','cron-interface','[]') \
-             ON CONFLICT (tenant_id,flow_id,flow_version) DO NOTHING",
-            &[&TENANT, &FLOW, &graph],
+            wamn_schema_control::sql::register_flow_artifact_sql(),
+            &[
+                &TENANT,
+                &FLOW,
+                &1_i32,
+                &"0.1",
+                &canonical_graph,
+                &artifact.graph_hash(),
+                &artifact_hash,
+                &interfaces,
+                &artifact.interface_bundle().hash(),
+                &components,
+                &occurrence_recovery,
+                &artifact.occurrence_recovery_hash(),
+            ],
         )
         .await?;
     admin
@@ -72,12 +105,8 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
     let release = admin.transaction().await?;
     release
         .execute(
-            "INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ($1,$2,1, \
-               '[{\"flow-id\":\"callable-cron-flow\",\"flow-version\":1,\"artifact-hash\":\"cron-artifact\"}]') \
-             ON CONFLICT (tenant_id,catalog_id,catalog_version) DO NOTHING",
-            &[&TENANT, &CATALOG],
+            wamn_schema_control::sql::register_release_manifest_sql(),
+            &[&TENANT, &CATALOG, &1_i32, &members],
         )
         .await?;
     release
@@ -259,6 +288,10 @@ pub(crate) mod tests {
     #[test]
     fn proof_uses_catalog_attachment_and_process_boundary() {
         assert!(SOURCE.contains("catalog.release_attachments"));
+        assert!(SOURCE.contains("Artifact::new"));
+        assert!(SOURCE.contains("register_flow_artifact_sql"));
+        let placeholder_artifact = ["cron", "artifact"].join("-");
+        assert!(!SOURCE.contains(&placeholder_artifact));
         assert!(SOURCE.contains("DispatcherProcess::spawn"));
         assert!(!DISPATCHER.contains("INSERT INTO wamn_run.runs"));
         assert!(MANIFEST.contains("callable-cron"));
