@@ -219,8 +219,9 @@ pub async fn run(args: CallableCronArgs) -> anyhow::Result<()> {
     ensure!(duplicate.cron_fired.is_empty(), "same tick fired twice");
 
     let (app, app_connection) = connect(&args.database_url).await?;
-    app.batch_execute("SET app.tenant='callable-cron-gate'; SET search_path=wamn_run,public")
+    app.execute("SELECT set_config('app.tenant',$1,false)", &[&TENANT])
         .await?;
+    app.batch_execute("SET search_path=wamn_run,public").await?;
     let row = app
         .query_one(
             "SELECT r.catalog_id,r.catalog_version,r.attachment_id,r.trigger_source, \
