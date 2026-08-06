@@ -30,9 +30,15 @@ $kubectl_executable -n "$namespace" exec "$postgres_pod" -- \
   psql -X -qAt -U postgres -d wamn -v ON_ERROR_STOP=1 -c \
   "SELECT 'schema=' || count(*) FROM pg_namespace WHERE nspname='wamn_callable_flow_schema';
    SELECT 'cron-runs=' || count(*) FROM wamn_run.runs
-     WHERE tenant_id='callable-cron-gate' AND flow_id='callable-cron-flow';
+     WHERE tenant_id='callable-cron-gate-v2' AND flow_id='callable-cron-flow';
    SELECT 'cron-queue=' || count(*) FROM wamn_run.run_queue
-     WHERE tenant_id='callable-cron-gate';
+     WHERE tenant_id='callable-cron-gate-v2';
+   SELECT 'cron-activation=' || coalesce(string_agg(
+       attachment_id || ':' || confirmed_definition_hash || ':' || enabled::text,
+       ',' ORDER BY attachment_id), '')
+     FROM catalog.attachment_activation
+     WHERE tenant_id='callable-cron-gate-v2' AND catalog_id='callable-cron'
+       AND environment='gate';
    SELECT 'f3-runs=' || count(*) FROM wamn_run.runs
      WHERE tenant_id='demo-tenant' AND flow_id='escalate-stale-holds';
    SELECT 'f3-queue=' || count(*) FROM wamn_run.run_queue q

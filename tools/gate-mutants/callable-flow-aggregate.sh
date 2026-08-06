@@ -60,7 +60,7 @@ load_mutation() {
       MANIFESTS=(deploy/gates/callable-flow-cron-job.yaml)
       JOB_NAMES=(callable-flow-cron)
       CONTAINERS=(proof)
-      LOG_MARKERS=("due tick did not fire once")
+      LOG_MARKERS=("attachment-definition-not-current")
       ;;
     f0-response-contract-wave1)
       TARGET="deploy/poc/f0-flow.json"
