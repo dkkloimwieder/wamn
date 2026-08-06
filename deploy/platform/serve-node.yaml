@@ -16,11 +16,9 @@
 #
 # SINGLE-NODE, SINGLE-PROJECT (the api-gateway / runner analog): one Deployment
 # per published custom node per project — the node artifact, the project, and its
-# vault scope are this Deployment's config. Discovery in v0 is the flow/node
-# manifest's recorded Service URL (the node step's config.endpoint), so the flow
-# points at THIS Service name; an operator that renders serve-node Deployments +
-# EndpointSlices from the registry on publish is the follow-up (see the bd5
-# deferrals).
+# vault scope are this Deployment's config. The platform maps the published
+# component digest to THIS Service; flow artifacts carry only the admitted
+# implementation identity and never a Service URL.
 #
 # NODE ARTIFACT (v0 gap, deferred): the node .wasm is a published OCI artifact;
 # until an image-fetch/init sidecar pulls it, v0 mounts it from a ConfigMap (or
@@ -33,9 +31,8 @@
 # the `x-wamn-signature` header BEFORE parsing the envelope or installing the
 # grant — a missing/malformed/wrong signature is a 401 refusal that never reaches
 # the node. A pod that lacks the env's key can therefore no longer POST /run with
-# attacker-chosen input/grant. With NO key configured the host falls back to the
-# legacy network-trust posture (unsigned POSTs admitted), warned loudly at
-# startup — so bank the key for every project-env. mTLS (SPIFFE/cert-manager) is
+# attacker-chosen input/grant. Signing is required in this production fixture;
+# a missing key refuses every invocation. mTLS (SPIFFE/cert-manager) is
 # the named LATER infra upgrade, not this path. The host-enforced invariants that
 # hold regardless: get-only credential linking (no self-grant), the host-owned
 # project (no cross-project read), and the E17 import allowlist screened at load
@@ -100,14 +97,10 @@ spec:
               value: default
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
-            # [wamn-fqg.31] FAIL-CLOSED. Set to "true" to REQUIRE a per-project-env
-            # signing key: with no key configured the host refuses ALL invocations
-            # (401 signing-key-required) instead of silently reverting to network
-            # trust. Default (unset) keeps the backward-compatible network-trust
-            # fallback (warned loudly at startup). Turn this on once every
-            # project-env has its `wamn:node-invoke-signing-key` banked.
-            # - name: WAMN_REQUIRE_SIGNING_KEY
-            #   value: "true"
+            # [wamn-fqg.31] FAIL-CLOSED: no key means every invocation is refused
+            # rather than silently reverting to network trust.
+            - name: WAMN_REQUIRE_SIGNING_KEY
+              value: "true"
           volumeMounts:
             - name: node-artifact
               mountPath: /components
@@ -135,9 +128,8 @@ spec:
             requests: { cpu: "100m", memory: "128Mi" }
             limits: { memory: "384Mi" }
 ---
-# The operator-managed Service the flow's node step points at (config.endpoint =
-# http://serve-node.wamn-system.svc.cluster.local:8080). v0 uses this stable
-# Service DNS; a per-node EndpointSlice controller is the follow-up.
+# The operator-managed Service selected by environment placement for the exact
+# published component digest. Flow configuration never contains this address.
 apiVersion: v1
 kind: Service
 metadata:

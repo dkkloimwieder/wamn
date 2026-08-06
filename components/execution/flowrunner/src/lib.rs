@@ -84,20 +84,18 @@ use wamn_runner::{
 };
 
 use wamn_node_invoke::{
-    NodeInvokeRequest, NodeInvokeResponse, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL,
-    TIMESTAMP_HEADER, WireErrorDetail, WireNodeError, WirePayload, WireRunContext,
-    granted_credentials, sign_envelope_with_timestamp,
+    NodeInvokeRequest, NodeInvokeResponse, WireErrorDetail, WireNodeError, WirePayload,
+    WireRunContext, granted_credentials,
 };
+use wamn_node_manifest::ExecutableIdentity;
 
 use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
+use wamn::runner::node_invocation::{self, InvocationContext};
 
 use wasi::clocks::wall_clock;
 use wasi::http::outgoing_handler;
-use wasi::http::types::{
-    ErrorCode, Fields, IncomingResponse, Method, OutgoingBody, OutgoingRequest, Scheme,
-};
-use wasi::io::streams::StreamError;
+use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
 
 struct Component;
 export!(Component);
@@ -805,33 +803,38 @@ fn http_get(url: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// 5.6 / wamn-bd5: custom-node invocation (the in-cluster HTTP hop)
+// 5.6 / wamn-bd5: custom-node invocation (trusted platform-plane transport)
 // ---------------------------------------------------------------------------
 
-/// Dispatch a `custom` node: the v0 runner->node HTTP hop. Reads the node's
-/// Service endpoint from the node step's config (registry-recorded, no
-/// EndpointSlice controller in v0), derives this step's credential grant, POSTs
-/// the invocation envelope, and folds the reply into a [`NodeOutcome`]. A
-/// transport / envelope failure becomes a classified [`NodeError`] so the engine
-/// decides retry-vs-error-vs-fail mechanically, exactly as for a standard node.
-fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeAction, String> {
-    // Endpoint discovery (v0): the node step's config carries the in-cluster
-    // Service URL. A missing endpoint is a flow authoring error — terminal,
-    // routed like any other node failure (never a runner panic).
-    let Some(endpoint) = d.config.get("endpoint").and_then(Value::as_str) else {
-        return Ok(NodeAction::Emit(NodeOutcome::Error(NodeError::Terminal(
-            ErrorDetail::coded(
-                "custom-node-misconfigured",
-                "custom node step is missing config.endpoint (the serve-node Service URL)",
-            ),
-        ))));
+/// Dispatch a supplied component through the trusted host. The guest names only
+/// the exact release-admitted component digest; placement, signing, and network
+/// transport are environment-owned host concerns. A host refusal is an outer
+/// execution error, never a node-authored [`NodeError`].
+fn custom_node_dispatch(
+    d: &Dispatch,
+    run_id: &str,
+    flow: &Flow,
+    artifact: Option<&wamn_catalog::PinnedArtifact>,
+    effect_run: Option<&EffectRunClaims>,
+) -> Result<NodeAction, String> {
+    let artifact = artifact.ok_or_else(|| {
+        "custom node invocation requires an immutable admitted artifact".to_string()
+    })?;
+    let effect_run = effect_run
+        .ok_or_else(|| "custom node invocation requires admitted run effect claims".to_string())?;
+    let contract = artifact
+        .interface_bundle()
+        .contract(&d.node_type)
+        .ok_or_else(|| format!("custom node type {:?} is not admitted", d.node_type))?;
+    let implementation_digest = match &contract.executable {
+        ExecutableIdentity::Component { digest } => digest,
+        ExecutableIdentity::Platform { .. } => {
+            return Err(format!(
+                "custom node type {:?} is not a supplied component",
+                d.node_type
+            ));
+        }
     };
-    let url = if endpoint.ends_with("/run") {
-        endpoint.to_string()
-    } else {
-        format!("{}/run", endpoint.trim_end_matches('/'))
-    };
-
     let req = NodeInvokeRequest {
         ctx: WireRunContext {
             run_id: run_id.to_string(),
@@ -854,50 +857,70 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
         // pure helper, so the grant cannot silently widen to the whole project.
         grant: granted_credentials(d.credential.as_deref()),
     };
-
-    // wamn-fqg.22: sign the exact request body with the per-project-env HMAC key
-    // BEFORE the hop, so the serve-node verifies before installing the grant. The
-    // key reaches this GUEST the SAME way every per-project credential does — the
-    // vault via `wamn:node/credentials.get` (no new WIT) — under the reserved
-    // name the runner grants itself (`declare_run_grant`). A deployment with NO
-    // key configured resolves nothing here and sends unsigned (legacy
-    // network-trust, accepted only by a keyless serve-node). The key is NEVER
-    // logged, echoed, or placed in the envelope grant.
     let body = req.to_json();
-    // wamn-fqg.32: when we hold a key, stamp a freshness timestamp (unix seconds)
-    // that is COVERED BY the signature and rides the `x-wamn-timestamp` header.
-    // The serve-node enforces max-age only when configured (OFF by default), but
-    // always sending it means a freshness-enabled env needs no flowrunner change;
-    // a keyless deployment signs (and stamps) nothing. The timestamp folds into
-    // the signed bytes additively (version-safe in wamn-node-invoke).
-    let signed = read_signing_key().map(|key| {
-        let ts = wall_now_secs().to_string();
-        let sig = sign_envelope_with_timestamp(key.as_bytes(), body.as_bytes(), Some(&ts));
-        (ts, sig)
-    });
-    let body = match http_post_run(
-        &url,
-        &body,
-        signed.as_ref().map(|(_, sig)| sig.as_str()),
-        signed.as_ref().map(|(ts, _)| ts.as_str()),
-    ) {
-        Ok(b) => b,
-        Err(e) => return Ok(NodeAction::Emit(NodeOutcome::Error(e))),
+    let context = InvocationContext {
+        version: 1,
+        tenant_id: effect_run.tenant_id.clone(),
+        environment: effect_run.environment.clone(),
+        catalog_id: effect_run.catalog_id.clone(),
+        catalog_version: effect_run.catalog_version,
+        run_id: run_id.to_string(),
+        flow_id: flow.flow_id.clone(),
+        flow_version: flow.version,
+        artifact_digest: effect_run.artifact_digest.clone(),
+        node_id: d.node.clone(),
+        occurrence: d.occurrence,
+        attempt: d.attempt,
+        implementation_digest: implementation_digest.clone(),
     };
-    let resp = NodeInvokeResponse::from_json(&body)
+    let response = node_invocation::invoke(&context, body.as_bytes())
+        .map_err(|error| format!("custom node infrastructure refusal: {error:?}"))?;
+    let outcome = node_response_to_outcome(&response, &contract.interface)?;
+    Ok(NodeAction::Emit(outcome))
+}
+
+fn node_response_to_outcome(
+    response: &[u8],
+    interface: &wamn_node_manifest::ResolvedNodeInterface,
+) -> Result<NodeOutcome, String> {
+    let response = std::str::from_utf8(response)
+        .map_err(|_| "custom node host returned a non-UTF-8 response".to_string())?;
+    let resp: NodeInvokeResponse = serde_json::from_str(response)
         .map_err(|e| format!("custom node returned an undecodable response: {e}"))?;
     let outcome = match resp {
         NodeInvokeResponse::Ok(em) => {
             let payload = match em.payload.inline() {
-                Some(s) => serde_json::from_str(s)
-                    .map_err(|e| format!("custom node output payload is not JSON: {e}"))?,
+                Some(s) => match serde_json::from_str(s) {
+                    Ok(payload) => payload,
+                    Err(error) => {
+                        return Ok(NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+                            "invalid-output",
+                            format!("custom node output payload is not JSON: {error}"),
+                        ))));
+                    }
+                },
                 None => Value::Null,
             };
             let port = em.port.unwrap_or_else(|| "main".to_string());
+            if !interface.permits_output_port(&port) {
+                return Ok(NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+                    "invalid-output-port",
+                    format!("custom node emitted undeclared output port {port:?}"),
+                ))));
+            }
             match em.ctx {
                 Some(context) => {
-                    let context: Value = serde_json::from_str(&context)
-                        .map_err(|e| format!("custom node context is not JSON: {e}"))?;
+                    let context: Value = match serde_json::from_str(&context) {
+                        Ok(context) => context,
+                        Err(error) => {
+                            return Ok(NodeOutcome::Error(NodeError::Terminal(
+                                ErrorDetail::coded(
+                                    "invalid-context",
+                                    format!("custom node context is not JSON: {error}"),
+                                ),
+                            )));
+                        }
+                    };
                     if context.is_object() {
                         NodeOutcome::ok_with_context(payload, port, context)
                     } else {
@@ -912,7 +935,7 @@ fn custom_node_dispatch(d: &Dispatch, run_id: &str, flow: &Flow) -> Result<NodeA
         }
         NodeInvokeResponse::Err(we) => NodeOutcome::Error(wire_error_to_runner(we)),
     };
-    Ok(NodeAction::Emit(outcome))
+    Ok(outcome)
 }
 
 /// The frozen `node-error` taxonomy off the wire -> the engine's error type,
@@ -939,156 +962,13 @@ fn wire_detail(d: WireErrorDetail) -> ErrorDetail {
     }
 }
 
-/// A retryable transport failure of the runner->node hop.
-fn node_transport(msg: impl Into<String>) -> NodeError {
-    NodeError::Retryable(ErrorDetail::coded("NODE_TRANSPORT", msg))
-}
-
-/// A `wasi:http` refusal on the runner->node hop -> a classified node error: a
-/// host egress DENIAL is terminal (the node Service host is not allowlisted — a
-/// misconfiguration, not a transient), anything else is a retryable transport
-/// failure.
-fn hop_egress_error(code: ErrorCode) -> NodeError {
-    match code {
-        ErrorCode::HttpRequestDenied => NodeError::Terminal(ErrorDetail::coded(
-            "egress-denied",
-            "runner->node hop denied by the egress allowlist (node Service host not allowed)",
-        )),
-        other => node_transport(format!("runner->node hop failed: {other:?}")),
-    }
-}
-
-/// Read the per-project-env HMAC signing key from the vault (wamn-fqg.22),
-/// scoped to the runner's host-injected project — the SAME channel every
-/// per-project credential reaches this guest through
-/// (`wamn:node/credentials.get`), so no new WIT. `None` when no key is
-/// configured (a keyless deployment signs nothing — legacy network-trust) or the
-/// reserved name is not granted/resolvable. The secret is handed back for
-/// signing ONLY and is never logged or echoed.
-fn read_signing_key() -> Option<String> {
-    wamn::node::credentials::get(SIGNING_KEY_CREDENTIAL).ok()
-}
-
-/// POST `body` to the custom node's `serve-node` endpoint and return the
-/// response body. Egress leaves the flow ONLY here (wasi:http), so the host
-/// egress guard + the flow's `allowed-hosts` govern the hop. `signature`, when
-/// present, is the hex HMAC over `body` (+ `timestamp`, wamn-fqg.32) carried in
-/// the `x-wamn-signature` header (wamn-fqg.22) so the serve-node verifies before
-/// installing the grant; `timestamp` (unix seconds) rides `x-wamn-timestamp` and
-/// is bound by that signature.
-fn http_post_run(
-    url: &str,
-    body: &str,
-    signature: Option<&str>,
-    timestamp: Option<&str>,
-) -> Result<String, NodeError> {
-    let Some((scheme, authority, path)) = parse_http_url(url) else {
-        return Err(NodeError::Terminal(ErrorDetail::coded(
-            "bad-endpoint",
-            format!("unparseable custom-node endpoint {url:?}"),
-        )));
-    };
-    let headers = Fields::new();
-    if let Some(sig) = signature
-        && headers.append(SIGNATURE_HEADER, sig.as_bytes()).is_err()
-    {
-        return Err(node_transport("runner->node signature header rejected"));
-    }
-    // wamn-fqg.32: the freshness timestamp header (bound by the signature above).
-    if let Some(ts) = timestamp
-        && headers.append(TIMESTAMP_HEADER, ts.as_bytes()).is_err()
-    {
-        return Err(node_transport("runner->node timestamp header rejected"));
-    }
-    let req = OutgoingRequest::new(headers);
-    if req.set_method(&Method::Post).is_err()
-        || req.set_scheme(Some(&scheme)).is_err()
-        || req.set_authority(Some(&authority)).is_err()
-        || req.set_path_with_query(Some(&path)).is_err()
-    {
-        return Err(node_transport("runner->node request fields rejected"));
-    }
-    let out_body = req
-        .body()
-        .map_err(|_| node_transport("runner->node request body unavailable"))?;
-    {
-        let stream = out_body
-            .write()
-            .map_err(|_| node_transport("runner->node body stream unavailable"))?;
-        // blocking_write_and_flush accepts at most 4096 bytes per call.
-        for chunk in body.as_bytes().chunks(4096) {
-            if stream.blocking_write_and_flush(chunk).is_err() {
-                return Err(node_transport("runner->node body write failed"));
-            }
-        }
-        // `stream` (a child resource of `out_body`) is dropped here, before finish.
-    }
-    if OutgoingBody::finish(out_body, None).is_err() {
-        return Err(node_transport("runner->node body finish failed"));
-    }
-    let fut = match outgoing_handler::handle(req, None) {
-        Ok(f) => f,
-        Err(code) => return Err(hop_egress_error(code)), // host refused before dispatch
-    };
-    let pollable = fut.subscribe();
-    pollable.block();
-    let resp = match fut.get() {
-        Some(Ok(Ok(resp))) => resp,
-        Some(Ok(Err(code))) => return Err(hop_egress_error(code)),
-        _ => return Err(node_transport("no response from custom node")),
-    };
-    let status = resp.status();
-    // wamn-fqg.29: a 401 is the serve-node's signature REFUSAL
-    // (`invocation-unauthorized`) — a persistent authn mismatch (a wrong/rotated
-    // signing key, a fail-closed keyless host) that is identical on every
-    // attempt, so retrying it only burns the node's whole retry budget before the
-    // run fails anyway. Map it to a TERMINAL node failure so the engine routes it
-    // immediately (the flow's error path, else a `terminal` run failure), exactly
-    // as `hop_egress_error` treats an egress DENIAL. `node_transport` below stays
-    // for genuinely transient transport faults (a 5xx, a dropped connection). The
-    // refusal body carries only the MAC-free reason class (no oracle); it rides
-    // the detail message for operators.
-    if status == 401 {
-        let reason = read_response_body(resp).unwrap_or_default();
-        return Err(NodeError::Terminal(ErrorDetail::coded(
-            "invocation-unauthorized",
-            format!("runner->node signature refused by the serve-node (HTTP 401): {reason}"),
-        )));
-    }
-    if status != 200 {
-        return Err(node_transport(format!(
-            "custom node host returned HTTP {status}"
-        )));
-    }
-    read_response_body(resp)
-}
-
-/// Drain an incoming response body to a `String`.
-fn read_response_body(resp: IncomingResponse) -> Result<String, NodeError> {
-    let body = resp
-        .consume()
-        .map_err(|_| node_transport("custom node response body already consumed"))?;
-    let stream = body
-        .stream()
-        .map_err(|_| node_transport("custom node response body stream unavailable"))?;
-    let mut out = Vec::new();
-    loop {
-        match stream.blocking_read(64 * 1024) {
-            Ok(chunk) => out.extend_from_slice(&chunk),
-            Err(StreamError::Closed) => break,
-            Err(_) => return Err(node_transport("custom node response body read failed")),
-        }
-    }
-    String::from_utf8(out).map_err(|_| node_transport("custom node response body is not UTF-8"))
-}
-
 // ---------------------------------------------------------------------------
 // Standard node library glue (5.3): the wamn-standard-nodes vocabulary dispatches
 // through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
 // (SR2) over this component's real imports — the WIT<->SDK mirrors and the
 // full outbound-HTTP path live there, not here. Node-owned HTTP leaves through
 // the trusted `wamn:runner/http-effect` import; the separate `wasi:http` import
-// remains only for the runner-to-serve-node custom dispatch hop.
+// remains for the legacy S6 `http-call` fixture.
 // ---------------------------------------------------------------------------
 
 /// Whether the engine will ROUTE this error emission down the node's error
@@ -1334,12 +1214,20 @@ fn dispatch_node(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
+    artifact: Option<&wamn_catalog::PinnedArtifact>,
     effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeAction, String> {
-    let action =
-        dispatch_node_unvalidated(d, run_id, flow, effect_run, kill_after_write, http_status)?;
+    let action = dispatch_node_unvalidated(
+        d,
+        run_id,
+        flow,
+        artifact,
+        effect_run,
+        kill_after_write,
+        http_status,
+    )?;
     validate_dispatched_action(d, &action)?;
     Ok(action)
 }
@@ -1358,6 +1246,7 @@ fn dispatch_node_unvalidated(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
+    artifact: Option<&wamn_catalog::PinnedArtifact>,
     effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
@@ -1430,15 +1319,10 @@ fn dispatch_node_unvalidated(
             *http_status = http_get(url);
             Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
         }
-        // 5.6 / wamn-bd5: a CUSTOM node — a separately-deployed, untrusted node
-        // component served by a `serve-node` host. v0 dispatch is a boring
-        // in-cluster HTTP hop: POST the invocation envelope (ctx + input + this
-        // step's declared credential GRANT) to the node's Service endpoint over
-        // wasi:http (governed by the host egress guard + the flow's
-        // allowed-hosts), then fold the node's emission / node-error back into
-        // the walk. The grant is EXACTLY `node.credential` (never the project's
-        // whole set); the serve-node host installs it before invoking, get-only.
-        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow),
+        // A supplied component is addressed only by the implementation digest
+        // pinned into this run's immutable artifact. The trusted host resolves
+        // its environment placement, signs the envelope, and owns transport.
+        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow, artifact, effect_run),
         ResolvedNode::InvokeFlow => {
             Err("invoke-flow is handled by the claimed-run child runtime".to_string())
         }
@@ -1529,15 +1413,7 @@ fn dispatch_node_unvalidated(
 /// both. Called on every walk (including a resume) since the grant lives on the
 /// long-lived instance and each run overwrites the prior declaration.
 fn declare_run_grant(flow: &Flow) {
-    let mut names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
-    // wamn-fqg.22: the runner also grants ITSELF the reserved per-project-env
-    // signing key so `read_signing_key` (the custom-node hop) can resolve it
-    // through the same `wamn:node/credentials.get` channel every credential uses
-    // — infrastructure, not flow-declared. It never enters the invocation
-    // envelope grant (`granted_credentials` reads only `node.credential`), and
-    // the serve-node strips it from any grant defensively; a keyless deployment
-    // simply resolves nothing.
-    names.push(SIGNING_KEY_CREDENTIAL.to_string());
+    let names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
     wamn::runner::credentials::set_granted(&names);
 }
 
@@ -1793,7 +1669,15 @@ fn execute(
                     .map_err(|error| error.to_string())?;
             }
             Step::Dispatch(d) => {
-                match dispatch_node(&d, run_id, &flow, None, kill_after_write, &mut http_status)? {
+                match dispatch_node(
+                    &d,
+                    run_id,
+                    &flow,
+                    None,
+                    None,
+                    kill_after_write,
+                    &mut http_status,
+                )? {
                     NodeAction::Emit(outcome) => {
                         if d.node_type == "fail" {
                             let config: FailConfig = serde_json::from_value(d.config.clone())
@@ -3620,7 +3504,15 @@ fn execute_claimed(
                     }
                     other => return Err(format!("attempt intent refused: {other:?}")),
                 }
-                match dispatch_node(&d, run_id, flow, Some(&effect_run), false, &mut http_status)? {
+                match dispatch_node(
+                    &d,
+                    run_id,
+                    flow,
+                    Some(artifact),
+                    Some(&effect_run),
+                    false,
+                    &mut http_status,
+                )? {
                     NodeAction::Emit(outcome) => {
                         if d.node_type == "fail" {
                             let NodeOutcome::Error(error) = &outcome else {
@@ -4378,10 +4270,8 @@ mod tests {
     }
 
     #[test]
-    fn f1_supplied_node_types_dispatch_through_the_custom_abi() {
-        let config = serde_json::json!({
-            "endpoint": "http://normalize-receipt.wamn-system.svc.cluster.local"
-        });
+    fn f1_supplied_node_types_dispatch_through_the_custom_abi_without_endpoint_config() {
+        let config = serde_json::json!({});
         assert_eq!(
             resolve_node("normalize-receipt", &config),
             Some(ResolvedNode::Custom)
@@ -4390,6 +4280,50 @@ mod tests {
             resolve_node("evaluate-specs", &config),
             Some(ResolvedNode::Custom)
         );
+    }
+
+    #[test]
+    fn node_authored_malformed_output_is_a_terminal_node_failure() {
+        let interface = wamn_node_manifest::ResolvedNodeInterface::new(
+            "custom",
+            wamn_node_manifest::NODE_WORLD_INTERFACE,
+            vec!["main".into()],
+            Vec::new(),
+            Vec::new(),
+        );
+        for (response, code) in [
+            (
+                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
+                    payload: WirePayload::Inline("not-json".into()),
+                    port: None,
+                    ctx: None,
+                }),
+                "invalid-output",
+            ),
+            (
+                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
+                    payload: WirePayload::Inline("{}".into()),
+                    port: None,
+                    ctx: Some("not-json".into()),
+                }),
+                "invalid-context",
+            ),
+            (
+                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
+                    payload: WirePayload::Inline("{}".into()),
+                    port: Some("undeclared".into()),
+                    ctx: None,
+                }),
+                "invalid-output-port",
+            ),
+        ] {
+            assert!(matches!(
+                node_response_to_outcome(response.to_json().as_bytes(), &interface),
+                Ok(NodeOutcome::Error(NodeError::Terminal(ref detail)))
+                    if detail.code.as_deref() == Some(code)
+            ));
+        }
+        assert!(node_response_to_outcome(b"not-json", &interface).is_err());
     }
 
     #[test]

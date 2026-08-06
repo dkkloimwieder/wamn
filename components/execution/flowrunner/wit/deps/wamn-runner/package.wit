@@ -107,3 +107,43 @@ interface http-effect {
     request: relative-request,
   ) -> result<response, effect-error>;
 }
+
+/// Trusted one-frame custom-node invocation surface. The guest identifies the
+/// exact admitted implementation; endpoint placement and signing remain host
+/// authority and never enter a flow-owned request.
+interface node-invocation {
+  record invocation-context {
+    version: u32,
+    tenant-id: string,
+    environment: string,
+    catalog-id: string,
+    catalog-version: s32,
+    run-id: string,
+    flow-id: string,
+    flow-version: u32,
+    artifact-digest: string,
+    node-id: string,
+    occurrence: u32,
+    attempt: u32,
+    implementation-digest: string,
+  }
+
+  variant effect-error {
+    invalid-context,
+    node-not-permitted,
+    implementation-mismatch,
+    placement-unavailable,
+    signing-unavailable,
+    signing-refused,
+    timeout,
+    transport(string),
+  }
+
+  /// `request` and a successful `response` are the existing
+  /// `wamn-node-invoke` JSON envelope bytes. In particular, a node-returned
+  /// `node-error` stays inside `response`; it is not an effect error.
+  invoke: func(
+    context: invocation-context,
+    request: list<u8>,
+  ) -> result<list<u8>, effect-error>;
+}

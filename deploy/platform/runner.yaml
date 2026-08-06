@@ -6,6 +6,7 @@
 # enqueued and driving each to completion.
 #
 #   kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml   # once (per project)
+#   kubectl -n wamn-system apply -f deploy/platform/runner-node-placements.example.yaml # once; populate exact digests
 #   kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 #   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   kubectl -n wamn-system logs -l app=runner --tail=20
@@ -104,6 +105,12 @@ spec:
             secretName: wamn-runner-credentials
             optional: true
             defaultMode: 420
+        # Platform-owned component placement, generated from admitted releases.
+        # The graph never carries these authorities.
+        - name: node-placements
+          configMap:
+            name: wamn-node-placements
+            defaultMode: 420
       containers:
         - name: runner
           image: wamn-run-worker:dev
@@ -126,6 +133,8 @@ spec:
             # (optional Secret absent) = empty vault, warned at startup.
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
+            - name: WAMN_NODE_PLACEMENTS_FILE
+              value: /etc/wamn/node-placements/placements.json
             # [wamn-yf3] Run-path observability. The flowrunner emits a few
             # structured wasi:logging records per run (node/run lifecycle) that
             # the wamn:logging plugin enriches (host-injected tenant/project +
@@ -154,6 +163,9 @@ spec:
               readOnly: true
             - name: credentials
               mountPath: /etc/wamn/credentials
+              readOnly: true
+            - name: node-placements
+              mountPath: /etc/wamn/node-placements
               readOnly: true
           args:
             - "--log-level"

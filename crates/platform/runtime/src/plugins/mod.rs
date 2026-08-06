@@ -1,4 +1,5 @@
 pub mod connection_http;
+pub mod node_invocation;
 pub mod runner_egress;
 pub mod wamn_credentials;
 pub mod wamn_flow_invocation;
@@ -8,6 +9,7 @@ pub mod wamn_node;
 pub mod wamn_postgres;
 
 pub use connection_http::ConnectionHttp;
+pub use node_invocation::{NodeInvocation, NodePlacementMap};
 pub use runner_egress::RunnerEgressPolicy;
 pub use wamn_credentials::WamnCredentials;
 pub use wamn_flow_invocation::WamnFlowInvocation;

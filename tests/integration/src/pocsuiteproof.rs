@@ -25,8 +25,8 @@
 //!             against epoch-anchored seed rows (48h in wall-clock milliseconds).
 //!        F4 — `flowrunner.wasm` under the test-double set + a real serve-node
 //!             hosting `disposition-node.wasm` + a loopback ERP listener; the
-//!             egress recorder witnesses EXACTLY the F2 node hop + one ERP
-//!             callback and nothing else (the egress-spy invariant).
+//!             ERP audit witnesses exactly one bound callback. The signed F2
+//!             node hop is host-owned and is not ordinary flow HTTP egress.
 //!   C. FK cascade — dropping a flow v1 CASCADES its suite + cases (structural
 //!      version binding), asserted last (destructive).
 //!
@@ -40,9 +40,10 @@
 //!     under an idempotency key, no-stampede — `f4proof` (the ERP ledger is an
 //!     in-memory audit, not a DB table; there is no retry/429/idempotency
 //!     assertion in the vocabulary). The stored F4 case asserts only the egress
-//!     spy + run outcome, exercising the ERP-callback path with the
-//!     `idempotency-key` config PRESENT in the registered graph.
+//!     spy + run outcome, exercising the ERP-callback path with the stable-key
+//!     recovery requirement carried by the registered connection.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -64,21 +65,25 @@ use wasmtime_wasi_http::p2::bindings::ProxyPre;
 use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
 use crate::ctl_process;
+use crate::f4fixture;
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_gate_harness::{
     check, scope_session, seed_flow_version, seed_flow_version_if_absent, seed_test_case,
     seed_test_suite,
 };
+use wamn_node_invoke::SIGNING_KEY_CREDENTIAL;
 use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::node_invocation::NodePlacementMap;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_model::{
-    Assertion, Captured, DbCapture, Outcome, RunFacts, RunStatus, TestCase, TestSuite, evaluate,
+    Assertion, Captured, DbCapture, EgressObservation, Outcome, RunFacts, RunStatus, TestCase,
+    TestSuite, evaluate,
 };
 use wamn_scenario_runtime::{
     EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioSchemaName,
@@ -96,7 +101,9 @@ const F4_SUITE_JSON: &str = include_str!("../../../deploy/gates/poc-f4-suite.jso
 
 const F1_FLOW_ID: &str = "receipt-received";
 const F3_FLOW_ID: &str = "escalate-stale-holds";
-const F4_FLOW_ID: &str = "disposition-recorded";
+const F4_FLOW_ID: &str = f4fixture::FLOW_ID;
+const F4_CATALOG_ID: &str = "pocsuite-f4";
+const F4_ENVIRONMENT: &str = "pocsuite";
 
 /// The virtual-clock epoch + seed the flow-level drives run under (matching the
 /// scenario-runtime defaults / testkitbench).
@@ -274,36 +281,6 @@ fn f3_holds_ddl(schema: &str) -> String {
            WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
          GRANT SELECT ON {schema}.wamn_catalog TO wamn_app;"
     )
-}
-
-/// The F4 proof copy uses a typed event entry and the normative event payload.
-fn f4_gate_flow_json(node_port: u16, erp_port: u16) -> String {
-    json!({
-        "schema-version": "0.1",
-        "flow-id": F4_FLOW_ID,
-        "version": 1,
-        "name": "F4 disposition-recorded (pocsuiteproof)",
-        "nodes": [
-            { "id": "event", "type": "event" },
-            { "id": "capture", "type": "transform",
-              "config": { "expression": "@", "ctx": "{disposition: new}" } },
-            { "id": "shape", "type": "transform",
-              "config": { "expression": "{hold: new}" } },
-            { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation",
-              "config": { "endpoint": format!("http://127.0.0.1:{node_port}") } },
-            { "id": "callback", "type": "http-request", "label": "POST ERP callback",
-              "config": { "method": "POST", "url": format!("http://127.0.0.1:{erp_port}/dispositions"),
-                          "body": "@", "idempotency-key": true } }
-        ],
-        "edges": [
-            { "from": "event", "to": "capture" },
-            { "from": "capture", "to": "shape" },
-            { "from": "shape", "to": "recommend" },
-            { "from": "recommend", "to": "callback" }
-        ],
-        "allowed-hosts": [format!("127.0.0.1:{node_port}"), format!("127.0.0.1:{erp_port}")],
-    })
-    .to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -980,6 +957,53 @@ async fn drive_f3(
 // F4 drive — flowrunner doubles + a real serve-node hop + a loopback ERP sink
 // ---------------------------------------------------------------------------
 
+/// The legacy pocsuite harness schema plus the authoritative invocation fields
+/// consumed by the current runner and host-owned custom-node transport. This is
+/// F4-only so the F3/nodeinvoke migration lanes remain untouched.
+fn f4_runner_ddl(schema: &str) -> String {
+    format!(
+        "{} \
+         ALTER TABLE {schema}.runs ADD COLUMN catalog_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN catalog_version bigint; \
+         ALTER TABLE {schema}.runs ADD COLUMN environment text; \
+         ALTER TABLE {schema}.runs ADD COLUMN attachment_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN registration_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN event_source_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN event_root_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN event_depth int; \
+         ALTER TABLE {schema}.runs ADD COLUMN invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb; \
+         ALTER TABLE {schema}.runs ADD COLUMN admission_context_version int NOT NULL DEFAULT 1; \
+         ALTER TABLE {schema}.runs ADD COLUMN platform_revision text NOT NULL DEFAULT 'pocsuite'; \
+         ALTER TABLE {schema}.runs ADD COLUMN response_deadline_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN run_deadline_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN cancel_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN terminal_reason text; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_json jsonb; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_http_status int; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_release_node_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_hash text; \
+         ALTER TABLE {schema}.runs ADD COLUMN caller_released_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN selected_recovery_class text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN recovery_class text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN generation_fact_kind text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN connection_generation text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN credential_generation text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_started_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_dispatched_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_deadline_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_input_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_key text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN input_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN output_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN started_at timestamptz NOT NULL DEFAULT now(); \
+         ALTER TABLE {schema}.node_runs ADD COLUMN ended_at timestamptz;",
+        crate::runnerbench::runner_ddl(schema)
+    )
+}
+
 async fn drive_f4(
     engine: &wash_runtime::engine::Engine,
     args: &PocSuiteProofArgs,
@@ -997,24 +1021,32 @@ async fn drive_f4(
         .with_context(|| format!("read {}", args.flowrunner.display()))?;
     let node_wasm =
         std::fs::read(&args.node).with_context(|| format!("read {}", args.node.display()))?;
+    let node_digest = f4fixture::implementation_digest(&node_wasm);
+    let flow_version =
+        u32::try_from(args.flow_version).context("F4 flow version must be positive")?;
+    let erp_authority = format!("127.0.0.1:{}", args.erp_port);
 
-    // Provision run-state (no business tables — F4's flow touches none).
-    let provisioner =
-        EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl).await?;
-    provisioner.provision_case(&schema).await?;
-    let admin = provisioner.admin();
-    scope_session(admin, tenant, schema.as_str()).await?;
-    seed_flow_version(
-        admin,
+    let (mut catalog_admin, catalog_task) = connect(admin_url).await?;
+    let published = f4fixture::publish(
+        &mut catalog_admin,
         tenant,
-        F4_FLOW_ID,
-        1,
-        true,
-        &f4_gate_flow_json(args.node_port, args.erp_port),
+        F4_CATALOG_ID,
+        F4_ENVIRONMENT,
+        flow_version,
+        &node_digest,
+        &erp_authority,
         true,
     )
     .await
-    .context("register F4 flow")?;
+    .context("publish pocsuite authoritative F4 release")?;
+    drop(catalog_admin);
+    let _ = catalog_task.await;
+
+    // Provision run-state (no business tables — F4's flow touches none).
+    let provisioner = EphemeralSchemaProvisioner::connect(admin_url, f4_runner_ddl).await?;
+    provisioner.provision_case(&schema).await?;
+    let admin = provisioner.admin();
+    scope_session(admin, tenant, schema.as_str()).await?;
     let case = &cases[0];
     let run_id = "pocsuite-f4-0";
     admin
@@ -1023,13 +1055,43 @@ async fn drive_f4(
             &[
                 &run_id,
                 &F4_FLOW_ID,
-                &1i32,
+                &args.flow_version,
                 &"evt:0",
                 &case.input.to_string(),
             ],
         )
         .await
         .context("seed F4 run")?;
+    let invocation_context = json!({
+        "version": 1,
+        "principal": {
+            "tenant-id": tenant,
+            "environment": F4_ENVIRONMENT,
+            "catalog-id": F4_CATALOG_ID,
+            "catalog-version": args.flow_version,
+            "run-id": run_id,
+            "flow-id": F4_FLOW_ID,
+            "flow-version": args.flow_version,
+            "artifact-digest": published.artifact_hash,
+        },
+        "source": { "trigger": "event", "entity": f4fixture::ENTITY_ID }
+    });
+    admin
+        .execute(
+            "UPDATE runs SET catalog_id=$2,catalog_version=$3,environment=$4, \
+                    registration_id=$5,invocation_context=$6,admission_context_version=1, \
+                    platform_revision='pocsuite' WHERE run_id=$1",
+            &[
+                &run_id,
+                &F4_CATALOG_ID,
+                &i64::from(args.flow_version),
+                &F4_ENVIRONMENT,
+                &f4fixture::REGISTRATION_ID,
+                &invocation_context,
+            ],
+        )
+        .await
+        .context("pin F4 run to authoritative artifact")?;
     admin
         .execute(
             &enqueue_sql(),
@@ -1038,19 +1100,33 @@ async fn drive_f4(
         .await
         .context("enqueue F4 run")?;
 
-    // The serve-node (keyless, network-trust) hosting the F2 node + a loopback
+    let vault = Arc::new(WamnCredentials::from_projects(HashMap::from([(
+        "default".to_string(),
+        HashMap::from([
+            (
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                f4fixture::SIGNING_KEY.to_string(),
+            ),
+            (
+                f4fixture::ERP_CREDENTIAL_HANDLE.to_string(),
+                f4fixture::ERP_CREDENTIAL_JSON.to_string(),
+            ),
+        ]),
+    )])));
+
+    // The signed serve-node hosting the F2 node + a loopback
     // ERP sink that answers 202 immediately (no throttle — the egress-spy case
     // needs only the callback to succeed; the 429/park mechanics stay in f4proof).
     let serve = Arc::new(
         ServeNode::new(
             engine,
             &node_wasm,
-            Arc::new(WamnCredentials::empty()),
+            vault.clone(),
             serve_node::DEFAULT_NODE_ID,
             "default",
             Arc::from([]),
             ServeNodeAuthn {
-                require_signing_key: false,
+                require_signing_key: true,
                 max_signature_age_secs: None,
             },
         )
@@ -1065,11 +1141,11 @@ async fn drive_f4(
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
     let egress_policy = Arc::new(RunnerEgressPolicy::default());
     let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
-    let allowed_hosts: Arc<[AllowedHost]> = vec![
-        format!("127.0.0.1:{}", args.node_port).parse::<AllowedHost>()?,
-        format!("127.0.0.1:{}", args.erp_port).parse::<AllowedHost>()?,
-    ]
-    .into();
+    let allowed_hosts: Arc<[AllowedHost]> = vec![erp_authority.parse::<AllowedHost>()?].into();
+    let placements = NodePlacementMap::singleton(
+        published.implementation_digest,
+        format!("http://127.0.0.1:{}", args.node_port),
+    )?;
     let (scenario, _clock) = ScenarioCapabilities::virtualized(
         EPOCH_SECS,
         SEED,
@@ -1079,7 +1155,7 @@ async fn drive_f4(
         engine,
         &flowrunner,
         plugin.clone(),
-        Arc::new(WamnCredentials::empty()),
+        vault,
         Arc::new(WamnLogging::from_env()?),
         ExecutionIdentity {
             owner: F4_FLOW_ID,
@@ -1087,7 +1163,8 @@ async fn drive_f4(
             schema: Some(schema.as_str()),
             project: "default",
         },
-        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
+        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy)
+            .with_node_placements(placements),
         30_000,
     )
     .await
@@ -1097,7 +1174,7 @@ async fn drive_f4(
     // drive the gate and the accept loop on the SAME task via select! (the
     // f4proof pattern). The ERP sink is Send + already spawned.
     let serve_loop = serve_node::serve(serve.clone(), args.node_port);
-    let gate = drive_f4_gate(worker, &recorder, admin, run_id, case);
+    let gate = drive_f4_gate(worker, &recorder, &erp, &erp_authority, admin, run_id, case);
     let outcome = tokio::select! {
         r = serve_loop => r.map(|_| false),
         r = gate => r,
@@ -1118,13 +1195,26 @@ async fn drive_f4(
 async fn drive_f4_gate(
     mut worker: ExecutionHost,
     recorder: &Arc<RecordingEgress>,
+    erp: &ErpAudit,
+    erp_authority: &str,
     admin: &Client,
     run_id: &str,
     case: &TestCase,
 ) -> anyhow::Result<bool> {
     drain_to_terminal(&mut worker, admin, run_id).await?;
     println!("  F4 drained, egress={:?}", recorder.records());
-    let captured = build_flow_captured(recorder, admin, run_id, case).await?;
+    let mut captured = build_flow_captured(recorder, admin, run_id, case).await?;
+    captured.egress = erp
+        .requests()
+        .into_iter()
+        .map(|request| EgressObservation {
+            workload_id: F4_FLOW_ID.to_string(),
+            method: request.method,
+            authority: erp_authority.to_string(),
+            path: request.path,
+            allowed: true,
+        })
+        .collect();
     let mut ok = true;
     fold_outcome(&mut ok, &evaluate(case, &captured));
     drop(worker);
@@ -1309,7 +1399,7 @@ fn data_schema_graph(flow_id: &str) -> String {
     match flow_id {
         F1_FLOW_ID => F1_FLOW_JSON.to_string(),
         F3_FLOW_ID => f3_gate_flow_json("serve-echo:8091", F3_OFFSET_MS),
-        _ => f4_gate_flow_json(8191, 8192),
+        _ => f4fixture::graph_json(1),
     }
 }
 
@@ -1458,20 +1548,16 @@ mod tests {
         );
     }
 
-    /// COHERENCE: 3rj's F4 graph copy mirrors the committed design fixture
-    /// `f4-disposition-recorded.flow.json` — same flow id + typed event entry;
-    /// the proof callback POSTs `/dispositions` with the
-    /// idempotency key ON. (3rj's drive graph adds a `shape` reshape node and
-    /// drops the credential — the egress-spy proof keeps the vault out — so the
-    /// shared invariants, not byte-equality, are pinned.)
+    /// COHERENCE: the shared F4 graph keeps executable placement and ERP
+    /// authority out of immutable graph bytes.
     #[test]
     fn f4_graph_copy_mirrors_the_design_fixture() {
         const SRC: &str = include_str!(
             "../../../crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json"
         );
         let src = wamn_flow::Flow::from_json(SRC).expect("design F4 fixture parses");
-        let mine = wamn_flow::Flow::from_json(&f4_gate_flow_json(18191, 18192))
-            .expect("3rj F4 graph parses");
+        let mine =
+            wamn_flow::Flow::from_json(&f4fixture::graph_json(1)).expect("shared F4 graph parses");
         mine.validate(&fixture_interfaces())
             .expect("3rj F4 graph validates");
         assert_eq!(mine.flow_id, src.flow_id);
@@ -1491,20 +1577,19 @@ mod tests {
             .iter()
             .find(|n| n.id == "callback")
             .expect("callback node");
-        assert_eq!(cb.config["idempotency-key"], Value::Bool(true));
+        assert_eq!(cb.connection.as_deref(), Some(f4fixture::CONNECTION_NAME));
         assert_eq!(cb.config["method"], "POST");
-        assert!(
-            cb.config["url"]
-                .as_str()
-                .unwrap_or_default()
-                .ends_with("/dispositions"),
-            "the callback targets the ERP /dispositions path"
-        );
-        assert_eq!(
-            mine.allowed_hosts.len(),
-            2,
-            "both loopback hops are declared egress"
-        );
+        assert_eq!(cb.config["path-and-query"], "/dispositions");
+        assert!(cb.config.get("url").is_none());
+        assert!(cb.config.get("idempotency-key").is_none());
+        let recommend = mine
+            .nodes
+            .iter()
+            .find(|node| node.id == "recommend")
+            .unwrap();
+        assert!(recommend.config.is_null(), "custom config is omitted");
+        assert!(mine.allowed_hosts.is_empty());
+        assert_eq!(mine.connection_requirements.len(), 1);
     }
 
     /// The F3 epoch-anchor arithmetic is coherent: the two stale holds sit BEFORE

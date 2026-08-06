@@ -4,7 +4,7 @@
 //!
 //! F4 is the CDC row-event flow: an insert on `dispositions` fires the D19 v3
 //! event plane (reader → JetStream → materializer → run queue, run id
-//! `disposition-recorded:evt:<stream_seq>`); the run invokes the SHIPPED F2
+//! `disposition-recorded:r-disp:evt:<stream_seq>`); the run invokes the SHIPPED F2
 //! disposition node over a serve-node HTTP hop, then POSTs an ERP callback
 //! carrying an idempotency key. The ERP simulator returns `429 + Retry-After`
 //! on demand, and the gate asserts the queue-park backoff produces NO stampede.
@@ -20,8 +20,8 @@
 //!
 //! Phases:
 //!   1. materialize — one insert → the reader publishes one EVT → the
-//!      materializer enqueues `disposition-recorded:evt:<seq>` (padded id, REAL
-//!      stream_seq, trigger_source `evt:<seq>`).
+//!      materializer enqueues `disposition-recorded:r-disp:evt:<seq>` (padded
+//!      id, REAL stream_seq, trigger_source `event`).
 //!   2. throttle — drain: shape → F2 recommend (serve-node hop) → ERP callback.
 //!      The ERP sim 429s the first request, so the run PARKS: `available_at`
 //!      pushed by the Retry-After horizon, lease released, and an IMMEDIATE
@@ -35,11 +35,11 @@
 //!
 //! Needs: `--admin-database-url` (SUPERUSER on a `wal_level=logical` PG — the
 //! gate owns the throwaway `wamn_f4proof` db, slot, and role), `--nats-url`
-//! (JetStream). The runnable gate flow declares NO credential on the callback
-//! node (the ERP sim needs no auth), keeping the vault out of the throttle
-//! proof; the design fixture `f4-disposition-recorded.flow.json` documents the
-//! credentialed shape. Recipe: docs/build-and-test.md [POC-F4].
+//! (JetStream). The callback binding resolves a strict-JSON credential document
+//! and the custom-node hop uses the shared runner/node-host signing key. Recipe:
+//! docs/build-and-test.md [POC-F4].
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -57,6 +57,7 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
+use crate::f4fixture;
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::sql::{
@@ -64,8 +65,10 @@ use wamn_control_registry::sql::{
 };
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
+use wamn_node_invoke::SIGNING_KEY_CREDENTIAL;
 use wamn_run_state::queue::mint_evt_run_id;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::node_invocation::NodePlacementMap;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_jetstream::{
@@ -122,6 +125,10 @@ pub struct F4ProofArgs {
     /// Concurrent dispositions for the no-stampede phase.
     #[arg(long, default_value_t = 3)]
     pub concurrent: usize,
+
+    /// Negative gate: omit the ERP binding and prove denial before callback I/O.
+    #[arg(long)]
+    pub mutant_deny_callback_binding: bool,
 }
 
 const BENCH_ID: &str = "f4proof";
@@ -131,11 +138,11 @@ const PROJECT: &str = "app";
 const ENV: &str = "dev";
 const TENANT: &str = "t1";
 const CDC_PW: &str = "wamn_cdc_pw";
-const ENTITY_ID: &str = "dispositions";
+const ENTITY_ID: &str = f4fixture::ENTITY_ID;
 const TABLE: &str = "dispositions";
 const CATALOG_ID: &str = "f4cat";
-const FLOW_ID: &str = "disposition-recorded";
-const REG_ID: &str = "r-disp";
+const FLOW_ID: &str = f4fixture::FLOW_ID;
+const REG_ID: &str = f4fixture::REGISTRATION_ID;
 
 // The REAL shipped DDL, compiled in — the gate cannot drift from deploy/sql.
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
@@ -156,7 +163,9 @@ const CATALOG_JSON: &str = r#"{
     { "id": "dispositions", "name": "dispositions", "fields": [
       { "id": "material", "name": "material", "type": { "kind": "text" } },
       { "id": "moisture_pct", "name": "moisture_pct", "type": { "kind": "text" } },
-      { "id": "moisture_max_pct", "name": "moisture_max_pct", "type": { "kind": "text" } }
+      { "id": "moisture_max_pct", "name": "moisture_max_pct", "type": { "kind": "text" } },
+      { "id": "decision", "name": "decision",
+        "type": { "kind": "enum", "variants": ["accept", "reject", "use-as-is"] } }
     ] }
   ]
 }"#;
@@ -170,51 +179,11 @@ fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
         .map_err(|e| anyhow::anyhow!("f4proof catalog parse: {e}"))
 }
 
-/// The runnable F4 flow (f3proof programmatic-JSON pattern): typed event entry,
-/// `shape` reshapes the new row to the F2 node's `{hold: …}` contract,
-/// `recommend` invokes the F2 node over the serve-node hop, and `callback` POSTs
-/// the recommendation to the ERP sim with `idempotency-key: true`. NO credential
-/// on the callback (the sim needs no auth — the vault is out of the throttle
-/// proof); `allowed-hosts` admits both loopback hops.
-fn gate_flow_json(node_port: u16, erp_port: u16) -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "flow-id": FLOW_ID,
-        "version": 1,
-        "name": "F4 disposition-recorded (gate)",
-        "nodes": [
-            { "id": "event", "type": "event" },
-            { "id": "shape", "type": "transform", "config": { "expression": "{hold: new}" } },
-            { "id": "recommend", "type": "custom", "label": "F2 disposition recommendation",
-              "config": { "endpoint": format!("http://127.0.0.1:{node_port}") } },
-            { "id": "callback", "type": "http-request", "label": "POST ERP callback",
-              "config": { "method": "POST", "url": format!("http://127.0.0.1:{erp_port}/dispositions"),
-                          "body": "@", "idempotency-key": true } }
-        ],
-        "edges": [
-            { "from": "event", "to": "shape" },
-            { "from": "shape", "to": "recommend" },
-            { "from": "recommend", "to": "callback" }
-        ],
-        "allowed-hosts": [format!("127.0.0.1:{node_port}"), format!("127.0.0.1:{erp_port}")],
-    })
-    .to_string()
-}
-
 /// The insert-only registration on `dispositions` — NO old-image condition, so
 /// NO REPLICA IDENTITY FULL is derived (the RI reconcile is a no-op, asserted).
+#[cfg(test)]
 fn registration_json() -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "registration-id": REG_ID,
-        "catalog-id": CATALOG_ID,
-        "flow-id": FLOW_ID,
-        "entity": ENTITY_ID,
-        "ops": ["insert"],
-        "condition": null,
-        "partition-key": null,
-    })
-    .to_string()
+    f4fixture::registration_json(CATALOG_ID)
 }
 
 // ---------------------------------------------------------------------------
@@ -262,12 +231,14 @@ async fn insert_disposition(
     material: &str,
     moisture: &str,
     max: &str,
+    decision: &str,
 ) -> anyhow::Result<String> {
     Ok(db
         .query_one(
-            "INSERT INTO app.dispositions (tenant_id, material, moisture_pct, moisture_max_pct) \
-             VALUES ($1, $2, $3, $4) RETURNING id::text",
-            &[&TENANT, &material, &moisture, &max],
+            "INSERT INTO app.dispositions \
+               (tenant_id, material, moisture_pct, moisture_max_pct, decision) \
+             VALUES ($1, $2, $3, $4, $5) RETURNING id::text",
+            &[&TENANT, &material, &moisture, &max, &decision],
         )
         .await
         .context("insert disposition stimulus")?
@@ -402,6 +373,12 @@ impl MatHarness {
 pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
     println!("# wamn-gates f4proof (wamn-lxk POC-F4 — CDC row-event flow + 429 throttle)");
+    if args.fail_first_n != 1 {
+        bail!("f4proof proves one park/wake retry and requires --fail-first-n 1");
+    }
+    if args.retry_after_secs < 2 {
+        bail!("f4proof requires --retry-after-secs >= 2 so the parked horizon is observable");
+    }
 
     let mat_wasm = std::fs::read(&args.component)
         .with_context(|| format!("read {}", args.component.display()))?;
@@ -409,6 +386,7 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         .with_context(|| format!("read {}", args.flowrunner.display()))?;
     let node_wasm =
         std::fs::read(&args.node).with_context(|| format!("read {}", args.node.display()))?;
+    let node_digest = f4fixture::implementation_digest(&node_wasm);
 
     let cdc_name = cdc_object_name(ORG, PROJECT, ENV);
     let stream_name = event_stream_name(ORG, ENV);
@@ -443,7 +421,7 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         .context("create db")?;
 
     // --- the REAL substrate: shipped DDL + real builders --------------------
-    let db = connect(&swap_db(&args.admin_database_url, DB)).await?;
+    let mut db = connect(&swap_db(&args.admin_database_url, DB)).await?;
     db.batch_execute(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
          THEN CREATE ROLE wamn_system NOLOGIN; END IF; END $$;\n\
@@ -553,34 +531,22 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
     .await
     .context("grants")?;
 
-    // The flow + the insert registration.
-    db.execute(
-        "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) \
-         VALUES ($1, $2, 1, true, $3::text::jsonb)",
-        &[
-            &TENANT,
-            &FLOW_ID,
-            &gate_flow_json(args.node_port, args.erp_port),
-        ],
+    let published = f4fixture::publish(
+        &mut db,
+        TENANT,
+        CATALOG_ID,
+        ENV,
+        1,
+        &node_digest,
+        &format!("127.0.0.1:{}", args.erp_port),
+        !args.mutant_deny_callback_binding,
     )
     .await
-    .context("seed flow")?;
-    db.execute(
-        "INSERT INTO catalog.event_registrations \
-         (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
-         VALUES ($1, $2, $3, $4, $5, $6::text::jsonb)",
-        &[
-            &TENANT,
-            &CATALOG_ID,
-            &REG_ID,
-            &FLOW_ID,
-            &ENTITY_ID,
-            &registration_json(),
-        ],
-    )
-    .await
-    .context("seed registration")?;
-    println!("seeded flow {FLOW_ID} + insert registration {REG_ID} on entity {ENTITY_ID}");
+    .context("publish authoritative F4 release")?;
+    println!(
+        "published {FLOW_ID} artifact {} + insert registration {REG_ID} on entity {ENTITY_ID}",
+        published.artifact_hash
+    );
 
     // The insert-only subscription needs NO REPLICA IDENTITY FULL — the RI
     // reconcile must be a NO-OP (nothing to flip). Asserted below.
@@ -658,17 +624,31 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         stream_name: stream_name.clone(),
     };
 
-    // --- the serve-node (keyless, network-trust) + the ERP simulator --------
+    let vault = Arc::new(WamnCredentials::from_projects(HashMap::from([(
+        "default".to_string(),
+        HashMap::from([
+            (
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                f4fixture::SIGNING_KEY.to_string(),
+            ),
+            (
+                f4fixture::ERP_CREDENTIAL_HANDLE.to_string(),
+                f4fixture::ERP_CREDENTIAL_JSON.to_string(),
+            ),
+        ]),
+    )])));
+
+    // --- the signed serve-node + the ERP simulator --------------------------
     let serve = Arc::new(
         ServeNode::new(
             &engine,
             &node_wasm,
-            Arc::new(WamnCredentials::empty()),
+            vault.clone(),
             serve_node::DEFAULT_NODE_ID,
             "default",
             Arc::from([]),
             ServeNodeAuthn {
-                require_signing_key: false,
+                require_signing_key: true,
                 max_signature_age_secs: None,
             },
         )
@@ -678,16 +658,17 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
     let erp = ErpAudit::new(args.fail_first_n, args.retry_after_secs);
     let erp_task = tokio::spawn(crate::erp_sim::serve(erp.clone(), args.erp_port));
 
-    // The production runner: empty vault (the gate flow declares no credential),
-    // host allowlist admits BOTH loopback hops (serve-node + ERP sim).
+    // Custom-node placement is host-owned. The ordinary HTTP allowlist admits
+    // only the ERP authority; the signed node hop does not use wasi:http.
     let mut runner_cfg = WamnPostgresConfig::from_env();
     runner_cfg.database_url = Some(app_url.clone());
     let runner_pg = Arc::new(WamnPostgres::new(runner_cfg)?);
-    let allowed: Arc<[AllowedHost]> = vec![
-        format!("127.0.0.1:{}", args.node_port).parse::<AllowedHost>()?,
-        format!("127.0.0.1:{}", args.erp_port).parse::<AllowedHost>()?,
-    ]
-    .into();
+    let allowed: Arc<[AllowedHost]> =
+        vec![format!("127.0.0.1:{}", args.erp_port).parse::<AllowedHost>()?].into();
+    let placements = NodePlacementMap::singleton(
+        published.implementation_digest,
+        format!("http://127.0.0.1:{}", args.node_port),
+    )?;
 
     // Drive the gate while the serve-node accept loop runs on the SAME task
     // (select!): its wasmtime store is !Send, so it cannot be spawned. The
@@ -697,6 +678,8 @@ pub async fn run(args: F4ProofArgs) -> anyhow::Result<()> {
         &engine,
         &flowrunner,
         runner_pg,
+        vault,
+        placements,
         allowed,
         &harness,
         &db,
@@ -751,6 +734,8 @@ async fn gate_body(
     engine: &wash_runtime::engine::Engine,
     flowrunner: &[u8],
     runner_pg: Arc<WamnPostgres>,
+    vault: Arc<WamnCredentials>,
+    placements: NodePlacementMap,
     allowed: Arc<[AllowedHost]>,
     harness: &MatHarness,
     db: &tokio_postgres::Client,
@@ -767,7 +752,7 @@ async fn gate_body(
         engine,
         flowrunner,
         runner_pg,
-        Arc::new(WamnCredentials::empty()),
+        vault,
         Arc::new(WamnLogging::from_env()?),
         ExecutionIdentity {
             owner: BENCH_ID,
@@ -775,7 +760,8 @@ async fn gate_body(
             schema: Some("wamn_run"),
             project: "default",
         },
-        production_capabilities(allowed, Arc::new(RunnerEgressPolicy::default())),
+        production_capabilities(allowed, Arc::new(RunnerEgressPolicy::default()))
+            .with_node_placements(placements),
         30_000,
     )
     .await?;
@@ -793,7 +779,7 @@ async fn gate_body(
     // Phase 1 — materialize: one insert -> one EVT -> one enqueued evt run.
     // ========================================================================
     println!("\n## phase 1: materialize (one INSERT -> reader -> materializer -> run queue)");
-    let disp_id = insert_disposition(db, "resin-A", "12.00", "5.00").await?;
+    let disp_id = insert_disposition(db, "resin-A", "12.00", "5.00", "accept").await?;
     let seq = wait_stream_count(js, stream_name, 1, 60).await?;
     check(
         &mut pass,
@@ -803,7 +789,10 @@ async fn gate_body(
     let report1 = harness.run_guest(4, 64).await?;
     println!("phase-1 materializer report: {report1}");
 
-    let run_id = mint_evt_run_id(FLOW_ID, seq);
+    let run_id = mint_evt_run_id(&format!("{FLOW_ID}:{REG_ID}"), seq);
+    let registration_document: serde_json::Value =
+        serde_json::from_str(&f4fixture::registration_json(CATALOG_ID))?;
+    let registration_hash = wamn_run_state::admission::registration_hash(&registration_document);
     let queued = scalar(
         db,
         &format!(
@@ -814,7 +803,10 @@ async fn gate_body(
     .await?;
     let run_row = db
         .query_opt(
-            "SELECT trigger_source, flow_id FROM wamn_run.runs WHERE tenant_id = 't1' AND run_id = $1",
+            "SELECT trigger_source, flow_id, registration_id, event_source_run_id, \
+                    event_root_run_id, event_depth, idempotency_key, \
+                    invocation_context #>> '{source,registration-hash}' \
+               FROM wamn_run.runs WHERE tenant_id = 't1' AND run_id = $1",
             &[&run_id],
         )
         .await?;
@@ -825,7 +817,15 @@ async fn gate_body(
         ),
         queued == 1
             && run_row.as_ref().is_some_and(|r| {
-                r.get::<_, String>(0) == format!("evt:{seq}") && r.get::<_, String>(1) == FLOW_ID
+                r.get::<_, String>(0) == "event"
+                    && r.get::<_, String>(1) == FLOW_ID
+                    && r.get::<_, Option<String>>(2).as_deref() == Some(REG_ID)
+                    && r.get::<_, Option<String>>(3).as_deref() == Some(run_id.as_str())
+                    && r.get::<_, Option<String>>(4).as_deref() == Some(run_id.as_str())
+                    && r.get::<_, Option<i32>>(5) == Some(0)
+                    && r.get::<_, Option<String>>(6).as_deref()
+                        == Some(format!("evt:{REG_ID}:{seq}").as_str())
+                    && r.get::<_, Option<String>>(7).as_deref() == Some(registration_hash.as_str())
             }),
     );
     check(
@@ -833,6 +833,48 @@ async fn gate_body(
         "materializer fired exactly one run",
         counter(&report1, "fired") == 1,
     );
+
+    if args.mutant_deny_callback_binding {
+        println!("\n## mutant: callback binding denied before ERP transport");
+        let denied = worker.drain().await?;
+        let row = db
+            .query_one(
+                "SELECT status,terminal_reason,fail_kind,fail_node,fail_reason FROM wamn_run.runs \
+                 WHERE tenant_id='t1' AND run_id=$1",
+                &[&run_id],
+            )
+            .await?;
+        let status: String = row.get(0);
+        let terminal_reason: Option<String> = row.get(1);
+        let fail_kind: Option<String> = row.get(2);
+        let fail_node: Option<String> = row.get(3);
+        let fail_reason: Option<String> = row.get(4);
+        check(
+            &mut pass,
+            "CALLBACK-BINDING-DENIAL: the typed unbound refusal fails one claimed run",
+            denied.claimed == 1
+                && denied.failed == 1
+                && denied.completed == 0
+                && denied.parked == 0
+                && status == "failed"
+                && terminal_reason.as_deref() == Some("unbound")
+                && fail_kind.is_none()
+                && fail_node.is_none()
+                && fail_reason.is_none(),
+        );
+        check(
+            &mut pass,
+            "CALLBACK-BINDING-DENIAL: ERP observed zero requests",
+            erp.requests().is_empty(),
+        );
+        println!(
+            "  binding mutant: status={status} terminal_reason={terminal_reason:?} \
+             fail_kind={fail_kind:?} \
+             fail_node={fail_node:?} fail_reason={fail_reason:?} ERP requests={}",
+            erp.requests().len(),
+        );
+        return Ok(pass);
+    }
 
     // ========================================================================
     // Phase 2 — throttle: drain -> F2 hop -> ERP callback 429 -> queue PARK.
@@ -861,7 +903,7 @@ async fn gate_body(
         .as_deref()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
         .and_then(|v| {
-            v.get("recommended")
+            v.get("recommendation")
                 .and_then(|x| x.as_str())
                 .map(str::to_string)
         });
@@ -958,7 +1000,7 @@ async fn gate_body(
     );
     let n = args.concurrent as u64;
     for i in 0..args.concurrent {
-        insert_disposition(db, &format!("resin-{i}"), "12.00", "5.00").await?;
+        insert_disposition(db, &format!("resin-{i}"), "12.00", "5.00", "accept").await?;
     }
     // seqs 2..=1+n now on the stream.
     let want = 1 + n;
@@ -967,7 +1009,7 @@ async fn gate_body(
     println!("phase-3 materializer report: {report3}");
     let evt_runs = scalar(
         db,
-        "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = 't1' AND trigger_source LIKE 'evt:%'",
+        "SELECT count(*) FROM wamn_run.runs WHERE tenant_id = 't1' AND trigger_source = 'event'",
     )
     .await?;
     check(
@@ -1042,7 +1084,7 @@ async fn gate_body(
     // effect for any key despite the concurrent park/retry.
     let total_deliveries = erp.total_deliveries();
     let max_per_key_ok = (0..args.concurrent).all(|i| {
-        let rid = mint_evt_run_id(FLOW_ID, 2 + i as u64);
+        let rid = mint_evt_run_id(&format!("{FLOW_ID}:{REG_ID}"), 2 + i as u64);
         erp.key(&format!("{rid}:callback:0")).delivered == 1
     });
     check(
@@ -1102,6 +1144,15 @@ async fn gate_body(
         ),
         counter(&report4, "duplicate") > 0,
     );
+    let requests = erp.requests();
+    check(
+        &mut pass,
+        "every ERP callback uses exactly POST /dispositions",
+        !requests.is_empty()
+            && requests
+                .iter()
+                .all(|request| request.method == "POST" && request.path == "/dispositions"),
+    );
 
     Ok(pass)
 }
@@ -1111,12 +1162,12 @@ mod tests {
     use super::*;
 
     /// The gate flow the proof registers is a real, valid F4 flow: row-event
-    /// trigger on the insert, the `shape → recommend → callback` shape, the
-    /// callback opts into idempotency, and both hops are declared egress. A
+    /// trigger on the insert, the `shape → recommend → callback` shape, and the
+    /// portable ERP connection requirement. A
     /// malformed builder fails here at `cargo test`, before any live infra.
     #[test]
     fn gate_flow_is_a_valid_f4_flow() {
-        let json = gate_flow_json(8191, 8192);
+        let json = f4fixture::graph_json(1);
         let flow = wamn_flow::Flow::from_json(&json).expect("gate flow parses");
         let interfaces = std::collections::BTreeMap::from([
             ("custom".into(), vec!["main".into()]),
@@ -1135,16 +1186,28 @@ mod tests {
                 .is_some_and(|node| node.config.is_null() || node.config == serde_json::json!({})),
             "event registration lookup stays outside the graph"
         );
-        // The callback opts into the idempotency header (the exactly-once belt).
+        assert_eq!(flow.connection_requirements.len(), 1);
+        assert_eq!(
+            flow.connection_requirements[0].name,
+            f4fixture::CONNECTION_NAME
+        );
         let cb = flow
             .nodes
             .iter()
             .find(|n| n.id == "callback")
             .expect("callback node");
-        assert_eq!(cb.config["idempotency-key"], serde_json::Value::Bool(true));
+        assert_eq!(cb.connection.as_deref(), Some(f4fixture::CONNECTION_NAME));
         assert_eq!(cb.config["method"], "POST");
-        // Both hops are declared egress (fqg.11 fail-closed).
-        assert_eq!(flow.allowed_hosts.len(), 2);
+        assert_eq!(cb.config["path-and-query"], "/dispositions");
+        assert!(cb.config.get("url").is_none());
+        assert!(cb.config.get("idempotency-key").is_none());
+        let custom = flow
+            .nodes
+            .iter()
+            .find(|node| node.id == "recommend")
+            .unwrap();
+        assert!(custom.config.is_null());
+        assert!(flow.allowed_hosts.is_empty());
     }
 
     /// The registration is a frozen, insert-only EventRegistration — the op set

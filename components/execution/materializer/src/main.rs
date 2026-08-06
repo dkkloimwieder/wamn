@@ -367,8 +367,13 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
         Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s,
         _ => return None,
     };
+    let interfaces = match row.get(3) {
+        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s,
+        _ => return None,
+    };
     let flow = Flow::from_json(graph).ok()?;
-    flow.validate(&Default::default()).ok()?;
+    let interfaces = wamn_catalog::InterfaceBundle::from_canonical_json(interfaces).ok()?;
+    flow.validate(&interfaces.resolved_ports()).ok()?;
     if flow.flow_id != flow_id {
         // The flows-table column and the graph's embedded id must agree (the
         // dispatcher's charset-extension rule); a mismatch holds.

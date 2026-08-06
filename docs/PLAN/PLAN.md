@@ -868,6 +868,9 @@ separated:
 > **Portable artifacts and templates declare typed connection requirements. Environments own
 > connection instances. An environment-specific release binds requirements to instances.**
 
+Node placement and execution transport are platform-plane — flows reference implementations,
+never endpoints — and connection-backed HTTP excludes flow-level `allowed-hosts`.
+
 Without that split, two sources of truth emerge: credential rotation or endpoint failover
 could accidentally become release changes, template portability cannot tell a declaration
 from supplied material, and promotion validation cannot say precisely what is missing. The

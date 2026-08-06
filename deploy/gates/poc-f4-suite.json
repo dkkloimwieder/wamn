@@ -17,6 +17,9 @@
           "new": {
             "id": "00000000-0000-0000-0000-000000000401",
             "hold_id": "00000000-0000-0000-0000-000000000301",
+            "material": "resin-A",
+            "moisture_pct": "12.00",
+            "moisture_max_pct": "5.00",
             "decision": "accept",
             "inspector_id": "inspector-7",
             "decided_at": "2026-07-26T14:03:22Z"

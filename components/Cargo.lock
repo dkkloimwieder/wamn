@@ -698,6 +698,7 @@ name = "materializer"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "wamn-catalog",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-flow",
@@ -1130,6 +1131,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "url",
  "wamn-flow",
  "wamn-node-manifest",
 ]

@@ -23,6 +23,7 @@ pub mod exposure_live;
 pub mod f1bench;
 pub mod f2invoke;
 pub mod f3proof;
+pub mod f4fixture;
 pub mod f4proof;
 pub mod failoverbench;
 pub mod flowbench;

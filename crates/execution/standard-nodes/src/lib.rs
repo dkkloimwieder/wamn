@@ -59,9 +59,9 @@ use std::sync::LazyLock;
 use serde_json::Value;
 use wamn_node_manifest::{
     CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement, ConnectionTypeDescriptor,
-    ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryContract,
-    NODE_WORLD_INTERFACE, PortableConnectionRequirement, ResolvedNodeContract,
-    ResolvedNodeInterface,
+    ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryClaim,
+    ExecutableRecoveryContract, IdempotencyKeyInjection, NODE_WORLD_INTERFACE,
+    PortableConnectionRequirement, ResolvedNodeContract, ResolvedNodeInterface,
 };
 
 /// Shape version for the complete standard-node descriptor.
@@ -229,15 +229,25 @@ fn effectful_descriptor(
 fn http_descriptor(node_type: &str) -> NodeDescriptor {
     let connection = ConnectionTypeDescriptor::http_v1();
     let mut descriptor = effectful_descriptor(node_type, &[Capability::HttpEgress]);
+    descriptor.executable_recovery = ExecutableRecoveryContract::effectful(true);
     descriptor.connection_requirements = vec![ConnectionRequirement {
         requirement_type: connection.requirement_type.clone(),
         contract: connection.contract.clone(),
     }];
     descriptor.connection_recovery_support = vec![ConnectionRecoverySupport {
         descriptor: connection.clone(),
-        supported_modes: vec![ExecutableConnectionRecoveryMode::NeverReplay],
+        supported_modes: vec![
+            ExecutableConnectionRecoveryMode::NeverReplay,
+            ExecutableConnectionRecoveryMode::IdempotentWithKey {
+                claim: ExecutableRecoveryClaim::StableKeyDedupV1,
+                key_propagation: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
+            },
+        ],
     }];
-    descriptor.portable_connections = vec![PortableConnectionRequirement::never_replay(connection)];
+    descriptor.portable_connections = vec![
+        PortableConnectionRequirement::never_replay(connection.clone()),
+        PortableConnectionRequirement::stable_key_dedup_v1(connection, 86_400_000),
+    ];
     descriptor
 }
 

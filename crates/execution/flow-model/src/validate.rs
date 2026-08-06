@@ -433,15 +433,18 @@ fn validate_http_request_connection(
         ));
     }
     for header in config.headers.keys() {
-        if matches!(
-            header.to_ascii_lowercase().as_str(),
-            "authorization" | "proxy-authorization" | "host"
-        ) {
-            issues.push(Issue::error(
+        match header.to_ascii_lowercase().as_str() {
+            "authorization" | "proxy-authorization" | "host" => issues.push(Issue::error(
                 "http-request-environment-header",
                 format!("nodes[{index}].config.headers[{header:?}]"),
                 format!("HTTP header {header:?} is owned by the environment connection"),
-            ));
+            )),
+            "idempotency-key" => issues.push(Issue::error(
+                "http-request-system-header",
+                format!("nodes[{index}].config.headers[{header:?}]"),
+                "HTTP Idempotency-Key is injected by the platform from the durable attempt",
+            )),
+            _ => {}
         }
     }
     let _ = config.body;
@@ -1172,6 +1175,10 @@ mod tests {
                 "environment-owned header {header:?} was accepted"
             );
         }
+
+        let mut system = connection_http_flow();
+        system.nodes[1].config["headers"] = json!({"Idempotency-Key": "author-value"});
+        assert!(codes(&system).contains(&"http-request-system-header"));
     }
 
     #[test]

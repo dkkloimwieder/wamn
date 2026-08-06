@@ -2,11 +2,13 @@
 //!
 //! Proves the WHOLE v0 path end-to-end, locally and repeatably: the REAL runner
 //! (the production [`ExecutionHost`] driving `flowrunner.wasm`) executes a flow whose
-//! step is a CUSTOM node, which dispatches as an in-cluster HTTP hop to a REAL
-//! [`ServeNode`] host serving `node-cred.wasm` under the real `wamn:node` world.
-//! Both wasmtime stores run concurrently on ONE task via `select!` (no cross-
-//! thread store), so the flowrunner's `wasi:http` POST reaches the serve-node's
-//! `/run` and the reply folds back into the walk.
+//! step is a CUSTOM node, which names only the exact component digest admitted
+//! by its release. The trusted runner host resolves that digest through its
+//! environment-owned placement map, signs the invocation, and dispatches it to
+//! a REAL [`ServeNode`] host serving `node-cred.wasm` under the real `wamn:node`
+//! world. Both wasmtime stores run concurrently on ONE task via `select!` (no
+//! cross-thread store), so the host-owned POST reaches the serve-node's `/run`
+//! and the reply folds back into the walk.
 //!
 //! Assertions (each named):
 //!   * DELIVERY — every seeded run completes; the custom node's `node_runs`
@@ -28,19 +30,25 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_flow::Flow;
 use wamn_node_invoke::{
     NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS,
     SignatureError, WirePayload, WireRunContext, granted_credentials, sign_envelope,
     sign_envelope_with_timestamp,
 };
+use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::node_invocation::NodePlacementMap;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
@@ -50,14 +58,18 @@ const SCHEMA: &str = "wamn_nodeinvoke_bench";
 const TENANT: &str = "nodeinvoke-tenant";
 const OWNER: &str = "nodeinvoke-bench";
 const FLOW_ID: &str = "node-invoke";
+const CATALOG_ID: &str = "nodeinvoke-catalog";
+const ENVIRONMENT: &str = "test";
+const FLOW_VERSION: i32 = 1;
 const PROJECT: &str = "default";
+const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 /// Distinctive secrets so `ok:<secret>` / the leak are unambiguous.
 const SECRET: &str = "node-secret-7c1f2a";
 const SIBLING_SECRET: &str = "sibling-secret-do-not-leak";
 /// The per-project-env HMAC signing key (wamn-fqg.22), banked in BOTH the
-/// runner's vault (so the flowrunner guest signs) and the serve-node's vault (so
-/// it verifies) under the reserved `SIGNING_KEY_CREDENTIAL` name — the shared
-/// runner-credentials Secret in production. A wrong key the negatives forge with.
+/// runner host's vault (so the trusted invocation plugin signs) and the
+/// serve-node's vault (so it verifies) under the reserved
+/// `SIGNING_KEY_CREDENTIAL` name. A wrong key is used by the negative host.
 const SIGNING_KEY: &str = "fqg22-per-project-env-hmac-0a1b2c3d4e5f";
 const WRONG_KEY: &str = "attacker-guessed-the-wrong-key";
 /// The PREVIOUS per-project-env key for the wamn-fqg.30 rotation-window assert.
@@ -82,9 +94,8 @@ pub struct NodeInvokeArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
-    /// Loopback port the serve-node HTTP server binds (the runner->node hop
-    /// target). The flow's allowed-hosts + the runner host allowlist both admit
-    /// `127.0.0.1:<port>`.
+    /// Loopback port the serve-node HTTP server binds. The trusted host maps the
+    /// release-pinned component digest to this authority; the flow never sees it.
     #[arg(long, default_value_t = 8091)]
     pub node_port: u16,
 
@@ -95,22 +106,65 @@ pub struct NodeInvokeArgs {
 }
 
 /// The custom-node flow: `in -> call(custom) -> done(respond)`. The `call` step
-/// declares credential `granted`, points at the loopback serve-node, and probes
-/// `granted` (declared -> readable) + `sibling` (undeclared -> not-granted).
-fn flow_json(port: u16) -> String {
+/// declares credential `granted` and probes `granted` (declared -> readable) +
+/// `sibling` (undeclared -> not-granted). Placement is deliberately absent.
+fn flow_json() -> String {
     format!(
-        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":1,
-            "trigger":{{"type":"manual"}},"entry":"in",
+        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":{FLOW_VERSION},
             "credentials":[{{"name":"granted"}}],
-            "allowed-hosts":["127.0.0.1:{port}"],
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
               {{"id":"call","type":"custom","credential":"granted",
-                "config":{{"endpoint":"http://127.0.0.1:{port}","probe":"granted","forbidden":"sibling"}}}},
-              {{"id":"done","type":"respond"}}
+                "config":{{"probe":"granted","forbidden":"sibling"}}}},
+              {{"id":"done","type":"respond","config":{{"status":200}}}}
             ],
             "edges":[{{"from":"in","to":"call"}},{{"from":"call","to":"done"}}]}}"#
     )
+}
+
+#[derive(Debug)]
+struct PublishedNodeInvoke {
+    graph_json: String,
+    artifact_hash: String,
+    implementation_digest: String,
+}
+
+fn implementation_digest(component: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(component)))
+}
+
+fn admitted_artifact(node_wasm: &[u8]) -> anyhow::Result<(Flow, Artifact, String)> {
+    let flow = Flow::from_json(&flow_json())
+        .map_err(|error| anyhow::anyhow!("parse nodeinvoke release graph: {error}"))?;
+    let implementation_digest = implementation_digest(node_wasm);
+    let request = wamn_standard_nodes::describe("request")
+        .context("missing standard-node descriptor for request")?;
+    let request = wamn_standard_nodes::resolve_descriptor(request).map_err(anyhow::Error::new)?;
+    let mut implementations = vec![
+        NodeImplementation::from_resolved_platform_contract(request).map_err(anyhow::Error::new)?,
+        NodeImplementation::supplied(
+            ResolvedNodeInterface::new(
+                "custom",
+                "wamn:node/node@0.1.0",
+                vec!["main".to_string()],
+                vec![CapabilityClass::Pure],
+                Vec::new(),
+            ),
+            implementation_digest.clone(),
+            ExecutableRecoveryContract::pure(),
+        )?,
+    ];
+    let respond = wamn_standard_nodes::describe("respond")
+        .context("missing standard-node descriptor for respond")?;
+    let respond = wamn_standard_nodes::resolve_descriptor(respond).map_err(anyhow::Error::new)?;
+    implementations.push(
+        NodeImplementation::from_resolved_platform_contract(respond).map_err(anyhow::Error::new)?,
+    );
+    implementations
+        .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+    let artifact = Artifact::new(TENANT, &flow, implementations)
+        .map_err(|error| anyhow::anyhow!("build nodeinvoke release artifact: {error}"))?;
+    Ok((flow, artifact, implementation_digest))
 }
 
 // --- ephemeral schema (the flowrunner flow tables + the run_queue) -----------
@@ -142,8 +196,24 @@ fn runner_ddl(schema: &str) -> String {
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
+            catalog_id text, catalog_version bigint, environment text, \
+            attachment_id text, registration_id text, event_source_run_id text, \
+            event_root_run_id text, event_depth int, \
+            invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
+            admission_context_version int NOT NULL DEFAULT 1, \
+            platform_revision text NOT NULL DEFAULT 'nodeinvoke', \
+            response_deadline_at timestamptz, run_deadline_at timestamptz, \
+            cancel_requested_kind text, cancel_requested_at timestamptz, \
+            cancel_kind text, terminal_reason text, \
+            caller_outcome_kind text, caller_outcome_json jsonb, \
+            caller_http_status int, caller_release_node_id text, \
+            caller_outcome_hash text, caller_released_at timestamptz, \
             idempotency_key text, replay_of text, root_run_id text, \
+            parent_run_id text, parent_node_id text, parent_occurrence int, \
+            invoke_depth int NOT NULL DEFAULT 0, invoke_root_run_id text, \
+            waiting_child_run_id text, waiting_child_occurrence int, wait_generation bigint, \
             fail_kind text, fail_node text, fail_reason text, \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
@@ -157,8 +227,14 @@ fn runner_ddl(schema: &str) -> String {
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, resume_at timestamptz, \
+            selected_recovery_class text, recovery_class text, \
+            generation_fact_kind text, connection_generation text, credential_generation text, \
+            attempt_started_at timestamptz, attempt_dispatched_at timestamptz, \
+            attempt_deadline_at timestamptz, attempt_input_ref text, attempt_key text, \
+            input_ref text, output_ref text, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
+            started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
@@ -213,12 +289,46 @@ fn runner_ddl(schema: &str) -> String {
     )
 }
 
-async fn provision(admin_url: &str) -> anyhow::Result<()> {
-    let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
+async fn provision(
+    admin_url: &str,
+    node_wasm: &[u8],
+) -> anyhow::Result<(PublishedNodeInvoke, bool)> {
+    let (mut client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
     let result = async {
+        let catalog_exists: bool = client
+            .query_one("SELECT to_regnamespace('catalog') IS NOT NULL", &[])
+            .await?
+            .get(0);
+        let created_catalog = if catalog_exists {
+            let complete: bool = client
+                .query_one(
+                    "SELECT to_regclass('catalog.flow_artifacts') IS NOT NULL \
+                        AND to_regclass('catalog.release_manifests') IS NOT NULL \
+                        AND to_regclass('catalog.release_flows') IS NOT NULL \
+                        AND to_regclass('catalog.connection_requirements') IS NOT NULL \
+                        AND to_regclass('catalog.connection_instances') IS NOT NULL \
+                        AND to_regclass('catalog.connection_generations') IS NOT NULL \
+                        AND to_regclass('catalog.connection_bindings') IS NOT NULL",
+                    &[],
+                )
+                .await?
+                .get(0);
+            if !complete {
+                bail!(
+                    "existing catalog schema is incomplete for trusted node-invocation admission"
+                );
+            }
+            false
+        } else {
+            client
+                .batch_execute(CATALOG_SQL)
+                .await
+                .context("apply catalog DDL for the standalone gate")?;
+            true
+        };
         client
             .batch_execute(&format!(
                 "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; CREATE SCHEMA {SCHEMA} AUTHORIZATION postgres; GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_app;"
@@ -229,7 +339,77 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&runner_ddl(SCHEMA))
             .await
             .context("apply runner DDL")?;
-        anyhow::Ok(())
+
+        let (flow, artifact, implementation_digest) = admitted_artifact(node_wasm)?;
+        let graph_json = String::from_utf8(flow.canonical_bytes())
+            .context("canonical nodeinvoke graph is not UTF-8")?;
+        let interface_bundle =
+            String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+                .context("canonical nodeinvoke interface bundle is not UTF-8")?;
+        let component_digests = serde_json::to_value(artifact.supplied_components())?;
+        let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+            .context("canonical nodeinvoke recovery selections are not UTF-8")?;
+        let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
+        let members = json!([{
+            "flow-id": FLOW_ID,
+            "flow-version": FLOW_VERSION,
+            "artifact-hash": artifact_hash,
+        }]);
+
+        let transaction = client.transaction().await?;
+        transaction
+            .execute(
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id,catalog_id,version,environment,schema_version,state) \
+                 VALUES ($1,$2,$3,$4,'0.1','staged') \
+                 ON CONFLICT (tenant_id,catalog_id,version) DO NOTHING",
+                &[&TENANT, &CATALOG_ID, &FLOW_VERSION, &ENVIRONMENT],
+            )
+            .await?;
+        transaction
+            .execute(
+                "SELECT catalog.register_flow_artifact( \
+                   $1,$2,$3,$4,$5::text::jsonb,$6,$7,$8,$9,$10,$11,$12)",
+                &[
+                    &TENANT,
+                    &FLOW_ID,
+                    &FLOW_VERSION,
+                    &artifact.schema_version(),
+                    &graph_json,
+                    &artifact.graph_hash(),
+                    &artifact_hash,
+                    &interface_bundle,
+                    &artifact.interface_bundle().hash(),
+                    &component_digests,
+                    &occurrence_recovery,
+                    &artifact.occurrence_recovery_hash(),
+                ],
+            )
+            .await?;
+        transaction
+            .execute(
+                "SELECT catalog.register_release_manifest($1,$2,$3,$4)",
+                &[&TENANT, &CATALOG_ID, &FLOW_VERSION, &members],
+            )
+            .await?;
+        transaction
+            .execute(
+                "INSERT INTO catalog.release_flows \
+                   (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+                 VALUES ($1,$2,$3,$4,$3) ON CONFLICT DO NOTHING",
+                &[&TENANT, &CATALOG_ID, &FLOW_VERSION, &FLOW_ID],
+            )
+            .await?;
+        transaction.commit().await?;
+
+        anyhow::Ok((
+            PublishedNodeInvoke {
+                graph_json,
+                artifact_hash,
+                implementation_digest,
+            },
+            created_catalog,
+        ))
     }
     .await;
     drop(client);
@@ -237,12 +417,17 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
     result
 }
 
-async fn teardown(admin_url: &str) {
+async fn teardown(admin_url: &str, created_catalog: bool) {
     if let Ok((client, conn)) = tokio_postgres::connect(admin_url, NoTls).await {
         let conn_task = tokio::spawn(conn);
         let _ = client
             .batch_execute(&format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"))
             .await;
+        if created_catalog {
+            let _ = client
+                .batch_execute("DROP SCHEMA IF EXISTS catalog CASCADE")
+                .await;
+        }
         drop(client);
         let _ = conn_task.await;
     }
@@ -267,11 +452,44 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
 /// Seed a run the way the dispatcher does: the write-ahead `dispatched` row +
 /// the queue row, co-transacted. The trigger input is a JSON string the
 /// custom node echoes back.
-async fn seed_run(client: &mut Client, run_id: &str, input_json: &str) -> anyhow::Result<()> {
+async fn seed_run(
+    client: &mut Client,
+    published: &PublishedNodeInvoke,
+    run_id: &str,
+    input_json: &str,
+) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     tx.execute(
         &write_ahead_triggered_run_sql(),
-        &[&run_id, &FLOW_ID, &1i32, &"manual", &input_json],
+        &[&run_id, &FLOW_ID, &FLOW_VERSION, &"manual", &input_json],
+    )
+    .await?;
+    let invocation_context = json!({
+        "version": 1,
+        "principal": {
+            "tenant-id": TENANT,
+            "environment": ENVIRONMENT,
+            "catalog-id": CATALOG_ID,
+            "catalog-version": FLOW_VERSION,
+            "run-id": run_id,
+            "flow-id": FLOW_ID,
+            "flow-version": FLOW_VERSION,
+            "artifact-digest": published.artifact_hash,
+        },
+        "source": { "trigger": "manual" },
+    });
+    tx.execute(
+        "UPDATE runs SET catalog_id=$2,catalog_version=$3,environment=$4, \
+                invocation_context=$5,admission_context_version=1,platform_revision='nodeinvoke' \
+          WHERE tenant_id=$6 AND run_id=$1",
+        &[
+            &run_id,
+            &CATALOG_ID,
+            &i64::from(FLOW_VERSION),
+            &ENVIRONMENT,
+            &invocation_context,
+            &TENANT,
+        ],
     )
     .await?;
     tx.execute(
@@ -307,9 +525,11 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     let n = args.iters;
 
     println!(
-        "# wamn-gates nodeinvoke — v0 custom-node HTTP invocation (schema {SCHEMA}, node port {port})"
+        "# wamn-gates nodeinvoke — trusted host custom-node invocation (schema {SCHEMA}, node port {port})"
     );
-    provision(&admin_url).await.context("provision schema")?;
+    let (published, created_catalog) = provision(&admin_url, &node_wasm)
+        .await
+        .context("provision admitted nodeinvoke release")?;
 
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
@@ -339,8 +559,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
             PROJECT,
             Arc::from([]),
             ServeNodeAuthn {
-                // authn keyed below; not fail-closed (a key is present)
-                require_signing_key: false,
+                require_signing_key: true,
                 // wamn-fqg.32: replay-freshness OFF (default) for the E2E drain
                 max_signature_age_secs: None,
             },
@@ -357,6 +576,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
         &flowrunner,
         &node_wasm,
         &app_url,
+        &published,
         serve.clone(),
         port,
         n,
@@ -368,7 +588,7 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     };
 
     ticker.abort();
-    teardown(&admin_url).await;
+    teardown(&admin_url, created_catalog).await;
     let pass = outcome?;
 
     println!("\nnodeinvoke complete — overall PASS: {pass}");
@@ -378,11 +598,16 @@ pub async fn run(args: NodeInvokeArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "live gate receives each independently provisioned fixture dependency"
+)]
 async fn gate_body(
     engine: &wash_runtime::engine::Engine,
     flowrunner: &[u8],
     node_wasm: &[u8],
     app_url: &str,
+    published: &PublishedNodeInvoke,
     serve: Arc<ServeNode>,
     port: u16,
     n: usize,
@@ -392,24 +617,20 @@ async fn gate_body(
         &seed_conn,
         TENANT,
         FLOW_ID,
-        1,
+        FLOW_VERSION,
         true,
-        &flow_json(port),
+        &published.graph_json,
         true,
     )
     .await?;
 
-    // The production runner. Its OWN vault is empty — the custom node's
-    // credentials resolve at the serve-node's vault, not here — but the flow
-    // declares `granted`, so the runner's per-run grant channel names it (for
-    // any standard node; the custom hop carries its own grant in the envelope).
+    // The production runner. The custom node's own credentials resolve at the
+    // serve-node vault; this host vault carries only the transport signing key.
     let mut cfg = WamnPostgresConfig::from_env();
     cfg.database_url = Some(app_url.to_string());
     let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    // wamn-fqg.22: the runner's vault carries the SAME per-project-env signing
-    // key (the shared runner-credentials Secret in prod) so the flowrunner guest
-    // resolves it via `wamn:node/credentials.get` and signs the hop envelope. The
-    // node's own credentials still resolve at the serve-node's vault, not here.
+    // The trusted invocation plugin, not the guest, resolves this environment's
+    // signing key and signs the admitted one-frame request.
     let runner_vault = Arc::new(WamnCredentials::from_projects(
         std::collections::HashMap::from([(
             PROJECT.to_string(),
@@ -419,10 +640,11 @@ async fn gate_body(
             )]),
         )]),
     ));
-    // The runner host allowlist admits the loopback serve-node (the outer bound;
-    // the flow's declared allowed-hosts is the inner — both must pass).
-    let allowed: Arc<[AllowedHost]> =
-        vec![format!("127.0.0.1:{port}").parse::<AllowedHost>()?].into();
+    let allowed: Arc<[AllowedHost]> = Arc::from([]);
+    let placements = NodePlacementMap::singleton(
+        published.implementation_digest.clone(),
+        format!("http://127.0.0.1:{port}"),
+    )?;
 
     let mut worker = ExecutionHost::instantiate(
         engine,
@@ -436,14 +658,15 @@ async fn gate_body(
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default())),
+        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default()))
+            .with_node_placements(placements.clone()),
         30_000,
     )
     .await?;
 
     // Seed N runs of the custom-node flow, each echoing the same input.
     for i in 0..n {
-        seed_run(&mut seed_conn, &format!("ni-{i}"), "\"hello\"").await?;
+        seed_run(&mut seed_conn, published, &format!("ni-{i}"), "\"hello\"").await?;
     }
     let report = worker.drain().await?;
 
@@ -556,11 +779,11 @@ async fn gate_body(
     // -------------------------------------------------------------------------
     // The drain above ALREADY proves the signed positive end-to-end: the
     // serve-node holds a key, so it REQUIRES a valid signature; every run
-    // completing means the REAL flowrunner signed the exact body correctly (an
-    // unsigned or forged runner would 401 → DELIVERY would have failed).
+    // completing means the REAL trusted host signed the exact body correctly
+    // (an unsigned or forged host would 401 → DELIVERY would have failed).
     check(
         &mut ok,
-        "AUTHN-POSITIVE: the signed hop drained N runs (a keyed serve-node accepted the flowrunner's real signature)",
+        "AUTHN-POSITIVE: the signed hop drained N runs (a keyed serve-node accepted the trusted host's real signature)",
         report.completed == n,
     );
     let grants_after_positive = serve.grant_install_count();
@@ -579,7 +802,7 @@ async fn gate_body(
     );
 
     // Drive the serve-node directly over raw HTTP to exercise the refusal arms
-    // the happy path cannot forge — the exact envelope the flowrunner sends.
+    // the happy path cannot forge — the exact envelope the trusted host sends.
     let body = canonical_request().to_json();
     // The host clock (unix seconds) the fqg.32 freshness asserts compare against.
     let now = std::time::SystemTime::now()
@@ -713,8 +936,8 @@ async fn gate_body(
     // -------------------------------------------------------------------------
     // wamn-fqg.30 — dual-key acceptance (rotation window). A serve-node holding
     // the CURRENT + PREVIOUS reserved keys accepts an envelope signed with EITHER
-    // (the flowrunner always signs with the current key; the previous key covers
-    // the window while runners pick up the new one). Garbage still 401s. A mutant
+    // (the runner host always signs with the current key; the previous key covers
+    // the window while hosts pick up the new one). Garbage still 401s. A mutant
     // that only ever checks the current key rejects the previous-key signature →
     // the first check flips.
     // -------------------------------------------------------------------------
@@ -824,16 +1047,14 @@ async fn gate_body(
     );
 
     // -------------------------------------------------------------------------
-    // wamn-fqg.29 — a persistent key mismatch fails the run TERMINALLY (no retry
-    // budget burn). A runner whose vault holds the WRONG signing key signs every
-    // custom-node POST wrong, so the keyed serve-node 401s each one identically.
-    // The flowrunner maps that `invocation-unauthorized` refusal to a TERMINAL
-    // node failure, so the engine fails the run on the FIRST attempt instead of
-    // scheduling its full retry budget of transport retries against a refusal
-    // that can never succeed. A mutant reverting the mapping to `Retryable` parks
-    // the run for a backoff retry (failed=0, parked=1) → this check kills it.
+    // A persistent key mismatch is a PLATFORM transport/authentication fault,
+    // never a node-authored failure. A trusted host whose environment key is
+    // wrong reaches the real signing-required serve-node and receives 401. The
+    // guest surfaces the typed host refusal as an outer execution error, leaving
+    // the started attempt + queue lease for infrastructure recovery; it must not
+    // manufacture a terminal/retryable NodeError or blame the custom node.
     // -------------------------------------------------------------------------
-    seed_run(&mut seed_conn, "ni-mismatch", "\"hello\"").await?;
+    seed_run(&mut seed_conn, published, "ni-mismatch", "\"hello\"").await?;
     let mismatch_vault = Arc::new(WamnCredentials::from_projects(
         std::collections::HashMap::from([(
             PROJECT.to_string(),
@@ -858,23 +1079,33 @@ async fn gate_body(
             schema: Some(SCHEMA),
             project: PROJECT,
         },
-        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default())),
+        production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default()))
+            .with_node_placements(placements),
         30_000,
     )
     .await?;
-    let mreport = mismatch_worker.drain().await?;
+    let grants_before_mismatch = serve.grant_install_count();
+    let mismatch_result = mismatch_worker.drain().await;
+    let mismatch_error = mismatch_result
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
     check(
         &mut ok,
-        "AUTHN-MISMATCH-TERMINAL (fqg.29): a wrong-key run fails TERMINALLY in one claim (no park / retry-budget burn)",
-        mreport.claimed == 1
-            && mreport.failed == 1
-            && mreport.parked == 0
-            && mreport.completed == 0,
+        "AUTHN-MISMATCH-INFRASTRUCTURE: the real wrong-key hop is a typed outer execution refusal",
+        mismatch_result.is_err() && mismatch_error.contains("SigningRefused"),
     );
     let mrow = seed_conn
         .query_one(
             &format!(
-                "SELECT status, fail_kind, fail_node FROM {SCHEMA}.runs WHERE run_id = 'ni-mismatch'"
+                "SELECT r.status, r.fail_kind, r.fail_node, n.status, n.error_kind, q.lease_owner \
+                   FROM {SCHEMA}.runs AS r \
+                   LEFT JOIN {SCHEMA}.node_runs AS n \
+                     ON n.tenant_id=r.tenant_id AND n.run_id=r.run_id AND n.node_id='call' \
+                   LEFT JOIN {SCHEMA}.run_queue AS q \
+                     ON q.tenant_id=r.tenant_id AND q.run_id=r.run_id \
+                  WHERE r.run_id = 'ni-mismatch'"
             ),
             &[],
         )
@@ -882,35 +1113,38 @@ async fn gate_body(
     let mstatus: String = mrow.get(0);
     let mkind: Option<String> = mrow.get(1);
     let mnode: Option<String> = mrow.get(2);
+    let mattempt_status: Option<String> = mrow.get(3);
+    let mattempt_error: Option<String> = mrow.get(4);
+    let mlease_owner: Option<String> = mrow.get(5);
     check(
         &mut ok,
-        "AUTHN-MISMATCH-TERMINAL (fqg.29): run recorded failed/terminal on the custom-node step",
-        mstatus == "failed"
-            && mkind.as_deref() == Some("terminal")
-            && mnode.as_deref() == Some("call"),
+        "AUTHN-MISMATCH-PLANE: signing refusal did not create a node failure verdict",
+        mstatus == "running"
+            && mkind.is_none()
+            && mnode.is_none()
+            && mattempt_status.as_deref() == Some("started")
+            && mattempt_error.is_none(),
     );
-    // The queue row is GONE (dequeued on a terminal outcome, never parked for a
-    // retry): the retry budget was never engaged.
-    let mismatch_q = count(
-        &seed_conn,
-        &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = 'ni-mismatch'"),
-    )
-    .await?;
     check(
         &mut ok,
-        "AUTHN-MISMATCH-TERMINAL (fqg.29): the failed run's queue row was dequeued (not parked for retry)",
-        mismatch_q == 0,
+        "AUTHN-MISMATCH-RECOVERY: the queue lease remains owned for infrastructure recovery",
+        mlease_owner.as_deref() == Some("nodeinvoke-mismatch"),
+    );
+    check(
+        &mut ok,
+        "AUTHN-MISMATCH-VERIFY-BEFORE-GRANT: the wrong-key host installed no node grant",
+        serve.grant_install_count() == grants_before_mismatch,
     );
     println!(
-        "  fqg.29 mismatch: claimed={} failed={} parked={} status={mstatus} fail_kind={:?} fail_node={:?}",
-        mreport.claimed, mreport.failed, mreport.parked, mkind, mnode
+        "  authn mismatch: error={mismatch_error:?} status={mstatus} fail_kind={mkind:?} \
+         fail_node={mnode:?} attempt_status={mattempt_status:?} lease_owner={mlease_owner:?}"
     );
 
     Ok(ok)
 }
 
-/// The exact envelope the flowrunner's custom-node hop POSTs for this flow — the
-/// substrate the raw authn checks sign, tamper, and mis-key.
+/// The exact envelope the trusted host's custom-node hop POSTs for this flow —
+/// the substrate the raw authn checks sign, tamper, and mis-key.
 fn canonical_request() -> NodeInvokeRequest {
     NodeInvokeRequest {
         ctx: WireRunContext {
@@ -923,8 +1157,7 @@ fn canonical_request() -> NodeInvokeRequest {
             deadline_ms: Some(30_000),
             traceparent: None,
             tracestate: None,
-            config: r#"{"endpoint":"http://127.0.0.1","probe":"granted","forbidden":"sibling"}"#
-                .into(),
+            config: r#"{"probe":"granted","forbidden":"sibling"}"#.into(),
             context: "{}".into(),
         },
         input: WirePayload::Inline("\"hello\"".into()),
@@ -973,6 +1206,12 @@ async fn raw_post(port: u16, body: &str, signature: Option<&str>) -> anyhow::Res
 mod tests {
     use super::*;
     use crate::schema_drift::{Need, assert_stand_in};
+
+    #[test]
+    fn nodeinvoke_flow_uses_the_current_portable_schema() {
+        admitted_artifact(b"nodeinvoke-test-component")
+            .expect("nodeinvoke release graph and resolved interfaces validate");
+    }
 
     /// wamn-9mg8 [GATE-DRIFT]: nodeinvoke's `run_queue` stand-in vs the schema of
     /// record, through the uniform guard. nodeinvoke drives the real runner over

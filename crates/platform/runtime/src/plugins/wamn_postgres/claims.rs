@@ -17,6 +17,8 @@ use wamn_event_wire::Causation;
 
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
+use crate::plugins::node_invocation::{NodeInvocationLookup, NodeInvocationSnapshot};
+
 use super::pool::{
     CheckoutProbe, CredentialProvider, ProjectConfig, ProjectPool, StaticCredentialProvider,
     WamnPostgresConfig, destroy_connection, standard_conforming_strings_hook,
@@ -156,6 +158,49 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
    AND generation.generation = instance.active_generation \
+ WHERE r.run_id = $1";
+
+const NODE_INVOCATION_SNAPSHOT_SQL: &str = "\
+SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
+       r.invocation_context #>> '{principal,artifact-digest}', \
+       EXISTS ( \
+           SELECT 1 \
+             FROM catalog.release_flows AS rf \
+             JOIN catalog.release_manifests AS rm \
+               ON rm.tenant_id = rf.tenant_id \
+              AND rm.catalog_id = rf.catalog_id \
+              AND rm.catalog_version = rf.catalog_version \
+            WHERE rf.tenant_id = r.tenant_id \
+              AND rf.catalog_id = r.catalog_id \
+              AND rf.catalog_version = r.catalog_version \
+              AND rf.flow_id = r.flow_id \
+              AND rf.flow_version = r.flow_version \
+              AND EXISTS ( \
+                  SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
+                   WHERE member ->> 'flow-id' = rf.flow_id \
+                     AND (member ->> 'flow-version')::int = rf.flow_version \
+                     AND member ->> 'artifact-hash' = artifact.artifact_hash \
+              ) \
+       ), \
+       (nr.status = 'started' AND nr.attempt = $4 \
+        AND nr.attempt_dispatched_at IS NOT NULL), \
+       node.value ->> 'type', contract.value #>> '{executable,kind}', \
+       contract.value #>> '{executable,digest}', \
+       COALESCE(node.value -> 'config', 'null'::jsonb)::text, \
+       node.value ->> 'connection', node.value ->> 'credential', \
+       nr.attempt_input_ref, nr.attempt_key \
+  FROM runs AS r \
+  LEFT JOIN node_runs AS nr \
+    ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
+   AND nr.node_id = $2 AND nr.occurrence = $3 \
+  LEFT JOIN catalog.flow_artifacts AS artifact \
+    ON artifact.tenant_id = r.tenant_id \
+   AND artifact.flow_id = r.flow_id AND artifact.flow_version = r.flow_version \
+   AND artifact.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+  LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
+    ON node.value ->> 'id' = $2 \
+  LEFT JOIN LATERAL jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS contract(value) \
+    ON contract.value #>> '{interface,node-type}' = node.value ->> 'type' \
  WHERE r.run_id = $1";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
@@ -806,6 +851,90 @@ impl WamnPostgres {
                 if let Err(error) = conn.batch_execute("COMMIT").await {
                     self.destroy(conn);
                     return Err(error).context("commit HTTP effect authorization snapshot");
+                }
+                Ok(snapshot)
+            }
+            Err(error) => {
+                if conn.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(conn);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Load the admitted release, implementation, and exact dispatched attempt
+    /// for one custom-node invocation in a single read-only transaction.
+    pub async fn node_invocation_snapshot(
+        &self,
+        component_id: &str,
+        project: &str,
+        tenant: &str,
+        lookup: &NodeInvocationLookup<'_>,
+    ) -> anyhow::Result<Option<NodeInvocationSnapshot>> {
+        let schema = self.schema_for(component_id);
+        let (conn, policy) = self
+            .checkout(project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &conn,
+                tenant,
+                schema.as_deref(),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(conn);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let result: anyhow::Result<Option<NodeInvocationSnapshot>> = async {
+            let params: [&(dyn ToSql + Sync); 4] = [
+                &lookup.run_id,
+                &lookup.node_id,
+                &lookup.occurrence,
+                &lookup.attempt,
+            ];
+            let row = conn
+                .query_opt(NODE_INVOCATION_SNAPSHOT_SQL, &params)
+                .await
+                .context("query node invocation authorization snapshot")?;
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            Ok(Some(NodeInvocationSnapshot {
+                run_status: row.try_get(0)?,
+                flow_id: row.try_get(1)?,
+                flow_version: row.try_get(2)?,
+                catalog_id: row.try_get(3)?,
+                catalog_version: row.try_get(4)?,
+                environment: row.try_get(5)?,
+                admitted_artifact_digest: row.try_get(6)?,
+                release_member: row.try_get(7)?,
+                attempt_matches: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
+                node_type: row.try_get(9)?,
+                executable_kind: row.try_get(10)?,
+                admitted_implementation_digest: row.try_get(11)?,
+                admitted_config: row
+                    .try_get::<_, Option<String>>(12)?
+                    .map(|config| serde_json::from_str(&config))
+                    .transpose()
+                    .context("parse admitted node config")?,
+                admitted_connection: row.try_get(13)?,
+                admitted_credential: row.try_get(14)?,
+                attempt_input_ref: row.try_get(15)?,
+                attempt_key: row.try_get(16)?,
+            }))
+        }
+        .await;
+        match result {
+            Ok(snapshot) => {
+                if let Err(error) = conn.batch_execute("COMMIT").await {
+                    self.destroy(conn);
+                    return Err(error).context("commit node invocation authorization snapshot");
                 }
                 Ok(snapshot)
             }

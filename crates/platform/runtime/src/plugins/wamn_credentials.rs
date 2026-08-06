@@ -43,6 +43,7 @@ use std::path::Path;
 use std::sync::RwLock;
 
 use anyhow::Context as _;
+use wamn_node_invoke::{SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -241,8 +242,15 @@ impl WamnCredentials {
     /// The full guest-facing `get(handle)` decision (cjv.3): fail-closed
     /// project → fail-closed grant → project-scoped resolution. `not-granted`
     /// precedes any lookup, so an ungranted name never learns whether the
-    /// secret exists.
+    /// secret exists. Node-invocation signing keys are host-only and remain
+    /// inaccessible even if the trusted runner asks to grant their names.
     fn authorize(&self, component_id: &str, handle: &str) -> Result<String, CredentialError> {
+        if matches!(
+            handle,
+            SIGNING_KEY_CREDENTIAL | SIGNING_KEY_CREDENTIAL_PREVIOUS
+        ) {
+            return Err(CredentialError::NotGranted);
+        }
         // Fail-closed identity: no registered project ⇒ nothing is granted.
         let project = self
             .project_for(component_id)
@@ -491,6 +499,48 @@ mod tests {
             vault.authorize("no-grant", "granted"),
             Err(CredentialError::NotGranted)
         ));
+    }
+
+    #[test]
+    fn guest_authorization_never_exposes_host_signing_keys() {
+        let vault = WamnCredentials::from_projects(HashMap::from([(
+            "proj-a".to_string(),
+            HashMap::from([
+                (
+                    SIGNING_KEY_CREDENTIAL.to_string(),
+                    "current-key".to_string(),
+                ),
+                (
+                    SIGNING_KEY_CREDENTIAL_PREVIOUS.to_string(),
+                    "previous-key".to_string(),
+                ),
+            ]),
+        )]));
+        vault.set_project("runner", "proj-a").unwrap();
+        vault.set_granted_credentials(
+            "runner",
+            [
+                SIGNING_KEY_CREDENTIAL.to_string(),
+                SIGNING_KEY_CREDENTIAL_PREVIOUS.to_string(),
+            ],
+        );
+
+        for name in [SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS] {
+            assert!(matches!(
+                vault.authorize("runner", name),
+                Err(CredentialError::NotGranted)
+            ));
+        }
+        assert_eq!(
+            vault.lookup("proj-a", SIGNING_KEY_CREDENTIAL).as_deref(),
+            Some("current-key")
+        );
+        assert_eq!(
+            vault
+                .lookup("proj-a", SIGNING_KEY_CREDENTIAL_PREVIOUS)
+                .as_deref(),
+            Some("previous-key")
+        );
     }
 
     /// Grant passes but resolution still governs existence/source: a GRANTED

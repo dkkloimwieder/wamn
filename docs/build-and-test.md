@@ -1958,11 +1958,14 @@ proof gates:
   (`DbState`) + the two notify `Egress{count 2, none-denied}`. The credential
   digest + cycle-visit count stay in `f3proof`.
 - **F4** (`poc-f4-suite`): `disposition-recorded` v1 under the double set + a real
-  serve-node hosting `disposition-node.wasm` (the F2 hop) + a loopback ERP sink.
-  The **egress spy** = `Egress{ExactlyThese([POST /run, POST /dispositions])}` —
-  exactly the F2 node hop + the ONE ERP callback, nothing else (an extra call
-  fails the set) — plus `none-denied` + `RunOutcome`. The registered graph carries
-  `idempotency-key: true`. The 429/Retry-After park, no-reclaim-during-backoff,
+  serve-node hosting `disposition-node.wasm` (the signed, platform-owned F2 hop)
+  + a loopback ERP sink. The **flow-egress spy** =
+  `Egress{ExactlyThese([POST /dispositions])}` — exactly the ONE callback through
+  the portable `erp-callback` connection, nothing else (an extra call fails the
+  set) — plus `none-denied` + `RunOutcome`. The host-owned node hop is not flow
+  egress. The graph has no endpoint, URL, `allowed-hosts`, or idempotency toggle;
+  the HTTP effect stamps the system-owned stable key. The 429/Retry-After park,
+  no-reclaim-during-backoff,
   one-effective-delivery, and no-stampede mechanics are NOT expressible in the
   stored vocabulary (the ERP ledger is an in-memory audit, not a DB table) and stay
   in `f4proof`.
@@ -1980,7 +1983,8 @@ cargo test --locked -p wamn-test-fixtures --lib f1fixture::tests::
 # validate-on-write, the F1 flow-ref binding, the F3/F4 graph copies mirror the
 # committed source fixtures (deploy/poc/f3-flow.json,
 # crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json), the F3
-# epoch-anchor straddles the cutoff, the F4 egress-spy names exactly {/run,/dispositions}:
+# epoch-anchor straddles the cutoff, the F4 flow-egress spy names exactly
+# {/dispositions} (the signed node hop is platform transport):
 # Integration-proof boundary: pocsuiteproof fixtures and assertions live in
 # wamn-proof-integration; wamn-gates only routes the executable subcommand.
 # recipe-test: H5-POCSUITEPROOF | integration | wamn-proof-integration | lib | - | pocsuiteproof::tests:: | 7 | tests/integration/src/pocsuiteproof.rs stored F1/F3/F4 suite fixtures
@@ -3511,7 +3515,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-timeshift-41 \
   --target wasm32-wasip2
 ```
 
-### [POC-F4] disposition-recorded CDC row-event flow + 429 throttle (wamn-lxk)
+### [POC-F4 / wamn-2jdm.26] disposition-recorded CDC row-event flow + 429 throttle
 
 Docs: docs/poc/poc-material-receiving.md §F4. The `f4proof` gate is the F4
 end-to-end proof AND the **EVT-CUTOVER regression by construction**: it is the
@@ -3522,12 +3526,29 @@ ERP callback — from a single real WAL insert, over a throwaway
 `wal_level=logical` Postgres + throwaway JetStream (rie2ebench substrate). ONE
 `INSERT INTO dispositions` is the sole stimulus.
 
-Three mechanics rest on it: (1) the **idempotency-key** — the `http-request`
-node's opt-in `"idempotency-key": true` stamps the dispatch's stable key
-(`RunContext::idempotency_key`, `{run_id}:{node}:{occurrence}` — stable across
-retries) as the `Idempotency-Key` header; the value is dispatch mechanics, NOT
-input-templated (24i). No flowrunner change was needed — the RunContext already
-carries the key to standard nodes. (2) **THROTTLE v0 = the queue-park property**:
+Authority is deliberately split. The graph declares exactly ONE portable HTTP
+connection, `erp-callback`, and its callback node names only the relative
+`/dispositions` path. The connection HTTP effect resolves the environment-owned
+binding and stamps the dispatch's stable key
+(`{run_id}:{node}:{occurrence}`, stable across retries) as the system-owned
+`Idempotency-Key` header. The flow cannot supply or override that header and has
+no flow-level `allowed-hosts`.
+
+The custom-node hop is platform transport, not a portable connection. The guest
+passes an admitted implementation digest and one-frame invocation context through
+the node-invocation capability; its interface has no endpoint or URL. The trusted
+host verifies the digest against the admitted release before consulting an
+environment-owned digest-to-endpoint placement map, then signs the existing
+node-host request. The fixture runs serve-node with signing required. Admission,
+placement, and missing-key refusals happen before network access; a remote
+signature refusal is the typed result of the real signed hop and occurs before
+node execution or grant installation. Transport failure is an infrastructure
+fault, while a response from the node carrying a node fault is a node failure.
+Custom-node config containing `endpoint` or any absolute URL is invalid.
+
+Three mechanics rest on the live gate: (1) the **idempotency-key** is injected by
+the connection HTTP effect from the system stable key; it is dispatch mechanics,
+not input-templated or flow-configured. (2) **THROTTLE v0 = the queue-park property**:
 a 429 → `rate-limited` → the run PARKS (`available_at` pushed by `Retry-After`,
 lease released) and is NOT re-claimed before the wake; N concurrent 429'd runs
 each park with ONE claim, no thundering re-claim. The inert cross-run
@@ -3543,18 +3564,39 @@ no-op, asserted). Redelivery leg: delete the durable consumer, re-run — ZERO n
 runs (ON CONFLICT DO NOTHING). Zero-residue teardown (slot/db/role/stream).
 
 ```bash
-cargo test -p wamn-standard-nodes                 # the idempotency-key config parse + header decision (+ the classify/taxonomy tests stay green)
-cargo test -p wamn-flow --test flows     # the f4-disposition-recorded fixture validates (endpoint + url + idempotency-key: true)
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p materializer -p disposition-node)
+# Focused debug proofs: capability shape, host admission/placement, portable
+# graph validation, and the shared F4 fixture.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --lib plugins::node_invocation::tests::
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --test node_invocation_wit_coherence
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-catalog --test identity \
+    supplied_node_config_refuses_platform_transport_addresses
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-flow --test flows
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-proof-integration --lib f4proof::tests::
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked -p wamn-gates -p wamn-ctl -p wamn-cdc-reader
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked --manifest-path components/Cargo.toml \
+    --target wasm32-wasip2 -p flowrunner -p materializer -p disposition-node \
+    -p node-cred
+
 # Local gate of record — REAL reader + materializer + runner + serve-node + ERP sim,
 # throwaway wal_level=logical PG + throwaway JetStream:
 docker run -d --name lane-f4-pg -p 5464:5432 -e POSTGRES_PASSWORD=postgres postgres:18 \
   -c wal_level=logical -c max_replication_slots=10 -c max_wal_senders=10
 docker run -d --name lane-f4-nats -p 4232:4222 nats:2.10 -js
-REL=components/target/wasm32-wasip2/release
-./target/debug/wamn-gates --log-level error f4proof \
-  --component $REL/materializer.wasm --flowrunner $REL/flowrunner.wasm \
-  --node $REL/disposition_node.wasm \
+until docker exec lane-f4-pg pg_isready -U postgres; do sleep 1; done
+until docker logs lane-f4-nats 2>&1 | grep -q 'Server is ready'; do sleep 1; done
+DBG=/tmp/wamn-target-2jdm-26/wasm32-wasip2/debug
+export WAMN_CTL_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-ctl
+export WAMN_CDC_READER_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-cdc-reader
+/tmp/wamn-target-2jdm-26/debug/wamn-gates --log-level error f4proof \
+  --component $DBG/materializer.wasm --flowrunner $DBG/flowrunner.wasm \
+  --node $DBG/disposition_node.wasm \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5464/postgres \
   --nats-url nats://127.0.0.1:4232
 docker rm -f lane-f4-pg lane-f4-nats
@@ -3566,12 +3608,50 @@ kubectl -n wamn-system wait --for=condition=complete job/f4proof --timeout=600s
 kubectl -n wamn-system logs job/f4proof
 ```
 
-Mutation harness (apply/test/restore with sha256): M1 the idempotency header
-push removed → `wamn-standard-nodes` `idempotency_key_opt_in_stamps_the_dispatch_key`
-fails; M2 `park_sql` stops pushing `available_at` (claim-during-backoff allowed)
-→ f4proof's `an immediate re-drain claims NOTHING` assert fails (flowrunner guest
-rebuild); M3 the ERP sim always answers 202 → `erp_sim`
-`per_key_429_then_one_effective_then_idempotent_replays` fails.
+Mutation proofs (debug builds; each command is an expected-green negative gate):
+
+```bash
+# M1 — the ordinary nodeinvoke gate includes a REAL wrong-key host against its
+# signing-required serve-node. Require the named AUTHN-MISMATCH-INFRASTRUCTURE,
+# AUTHN-MISMATCH-PLANE, AUTHN-MISMATCH-RECOVERY, and
+# AUTHN-MISMATCH-VERIFY-BEFORE-GRANT checks.
+docker run -d --name lane-nodeinvoke-mutant-pg -p 5463:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:18
+until docker exec lane-nodeinvoke-mutant-pg pg_isready -U postgres; do sleep 1; done
+docker exec lane-nodeinvoke-mutant-pg psql -U postgres -c \
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+/tmp/wamn-target-2jdm-26/debug/wamn-gates --log-level error nodeinvoke \
+  --flowrunner /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/flowrunner.wasm \
+  --node-cred /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/node_cred.wasm \
+  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5463/postgres \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5463/postgres \
+  --node-port 8091 --iters 1
+docker rm -f lane-nodeinvoke-mutant-pg
+
+# M2 — omit the environment binding. Require CALLBACK-BINDING-DENIAL's typed
+# unbound verdict and its independent "ERP observed zero requests" check.
+docker run -d --name lane-f4-mutant-pg -p 5464:5432 \
+  -e POSTGRES_PASSWORD=postgres postgres:18 -c wal_level=logical \
+  -c max_replication_slots=10 -c max_wal_senders=10
+docker run -d --name lane-f4-mutant-nats -p 4232:4222 nats:2.10 -js
+until docker exec lane-f4-mutant-pg pg_isready -U postgres; do sleep 1; done
+until docker logs lane-f4-mutant-nats 2>&1 | grep -q 'Server is ready'; do sleep 1; done
+export WAMN_CTL_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-ctl
+export WAMN_CDC_READER_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-cdc-reader
+/tmp/wamn-target-2jdm-26/debug/wamn-gates --log-level error f4proof \
+  --component /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/materializer.wasm \
+  --flowrunner /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/flowrunner.wasm \
+  --node /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/disposition_node.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5464/postgres \
+  --nats-url nats://127.0.0.1:4232 --mutant-deny-callback-binding
+docker rm -f lane-f4-mutant-pg lane-f4-mutant-nats
+
+# M3 — both a custom-node `endpoint` key and an absolute URL value must receive
+# the typed custom-node-has-platform-transport validation refusal.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-catalog --test identity \
+    supplied_node_config_refuses_platform_transport_addresses
+```
 
 ### [EVT-REPLICA-IDENT / wamn-l5i9.31] per-entity REPLICA IDENTITY FULL reconciler
 
@@ -3743,50 +3823,62 @@ executed 2026-07-20) — a before/after against a deleted path cannot be
 re-measured, so the record is final. CDC-path regression coverage continues in
 [EVT-MAT] (matbench) and [E10-E2E] (samplebench).
 
-### [NODE-INVOKE / wamn-bd5] production runner ↔ custom-node invocation (5.6)
+### [NODE-INVOKE / wamn-bd5 + wamn-2jdm.26] production runner ↔ custom-node invocation (5.6)
 
 Docs: docs/platform-plan.md §5.6, docs/contracts/wamn-node.wit, docs/results/p0-results.md §S4.
-v0 dispatch of a dynamically-loaded CUSTOM node is a boring in-cluster HTTP hop:
-the trusted flow-runner (a custom-node step) POSTs an invocation envelope over
-`wasi:http` to a `serve-node` host that runs the node under the REAL frozen
-`wamn:node` world. The wire shape (envelope + per-step grant derivation + the
-config-parse memoization, note 9b) is the pure `wamn-node-invoke` crate, linked
-by BOTH ends so it cannot drift. NODE-HOST-changed (the `wamn-node-host`
-transport leaf + the `wamn-node-runtime` core) AND GUEST-changed (the flowrunner's
-`custom` dispatch arm) — the in-cluster gate rebakes the host image + rebuilds
-the flowrunner wasm.
+Current dispatch keeps placement and transport behind the trusted runner host.
+The flowrunner's `custom` arm sends the admitted node identity, a one-frame
+invocation context, and opaque request bytes through the internal
+`wamn:runner/node-invocation` capability. Its guest-visible type contains no
+endpoint, URL, authority, or signing key. The host rechecks the claimed
+implementation digest against the admitted release/artifact and exact attempt,
+then resolves an environment-owned `digest → authority` placement. Only after
+those checks does it encode and sign the existing `wamn-node-invoke` envelope
+and POST it to a `serve-node` host running the component under the REAL frozen
+`wamn:node` world.
 
-Trust model (v0, honest): in-cluster callers are trusted at the NETWORK layer;
-the serve-node host installs the request's declared grant GET-ONLY (a node
-cannot self-grant — it never links `wamn:runner/credentials`) and scopes
-resolution to its OWN `--project` (never the request), so a forged envelope
-cannot cross projects. Runner↔node authn (mTLS / signed envelope) is out of
-scope (a named deferral). The E17 tenant import allowlist is screened at load
-(a node importing `wamn:postgres` / `wasi:sockets` / `wamn:runner` is refused).
+The host refuses invalid context, unadmitted identity/grant/config, missing
+placement, and unavailable signing before transport. Signing refusal and
+transport failure remain outer infrastructure faults; only a response authored
+by the node can become a node failure. The serve-node verifies the signature
+before installing the admitted GET-ONLY grant. A node cannot self-grant — it
+never links `wamn:runner/credentials` — and credential resolution stays scoped
+to the serve-node's OWN `--project` (never the request). The E17 tenant import
+allowlist is screened at load (a node importing `wamn:postgres`, `wasi:sockets`,
+or `wamn:runner` is refused).
 
 ```bash
-# Pure unit tests (envelope encode/decode, grant derivation, config memoization,
-# the descriptor-returning wamn_nodes surface):
-cargo test -p wamn-node-invoke
-cargo test -p wamn-node-runtime
-cargo test -p wamn-standard-nodes public_resolution_surface_is_descriptor_only
-cargo build -p wamn-node-host
+# Pure/runtime tests: envelope/authentication, node runtime, host admission and
+# placement, guest-visible WIT shape, and the descriptor-only public surface.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-node-invoke -p wamn-node-runtime
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --lib plugins::node_invocation::tests::
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --test node_invocation_wit_coherence
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-standard-nodes \
+    public_resolution_surface_is_descriptor_only
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked -p wamn-node-host -p wamn-gates
 
-# Guest + node builds (release wasm32-wasip2; node-cred is the credential-reading
-# custom node under the real wamn:node world):
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p node-cred)
+# Debug guest + node builds; node-cred reads only its admitted node credential.
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked --manifest-path components/Cargo.toml \
+    --target wasm32-wasip2 -p flowrunner -p node-cred
 
-# Local live gate — the WHOLE path on ONE task (real ExecutionHost -> wasi:http hop ->
-# real serve-node -> node-cred): payload round-trip, the declared credential
-# readable, an UNDECLARED credential not-granted, config parsed once across N runs.
+# Local live gate — the WHOLE path on ONE task (real ExecutionHost -> internal
+# node-invocation capability -> host admission/placement/signing -> real
+# serve-node -> node-cred): payload round-trip, the declared credential readable,
+# an UNDECLARED credential not-granted, and config parsed once across N runs.
 # Throwaway PG (wamn-bd5-pg on 5463) with a wamn_app role; NATS is optional.
 docker run -d --name wamn-bd5-pg -e POSTGRES_PASSWORD=postgres -p 5463:5432 \
   postgres:18 -c fsync=off -c synchronous_commit=off
 docker exec wamn-bd5-pg psql -U postgres -c \
   "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-./target/debug/wamn-gates --log-level error nodeinvoke \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --node-cred components/target/wasm32-wasip2/release/node_cred.wasm \
+/tmp/wamn-target-2jdm-26/debug/wamn-gates --log-level error nodeinvoke \
+  --flowrunner /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/flowrunner.wasm \
+  --node-cred /tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/node_cred.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5463/postgres \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5463/postgres \
   --node-port 8091 --iters 12
@@ -3801,37 +3893,36 @@ docker build --target node-host -t wamn-node-host:dev . && docker build --target
 # The custom node ships as a ConfigMap (v0; the OCI image-fetch sidecar is a
 # deferral). serve-node runs from the dedicated wamn-node-host image:
 kubectl -n wamn-system create configmap wamn-custom-node \
-  --from-file=node.wasm=components/target/wasm32-wasip2/release/node_cred.wasm
+  --from-file=node.wasm=/tmp/wamn-target-2jdm-26/wasm32-wasip2/debug/node_cred.wasm
 kubectl -n wamn-system apply -f deploy/platform/serve-node.yaml
 kubectl -n wamn-system rollout status deploy/serve-node --timeout=120s
-# The flow's custom node step points config.endpoint at the Service DNS
-# (http://serve-node.wamn-system.svc.cluster.local:8080) and declares that host
-# in the flow's allowed-hosts; the runner host allowlist must also admit it.
+# Populate deploy/platform/runner-node-placements.example.yaml with the admitted
+# component's exact sha256 digest -> serve-node Service authority, then apply it
+# before deploy/platform/runner.yaml. The flow contains neither that authority
+# nor an endpoint/URL/allowed-hosts entry; an empty placement map fails closed.
 ```
 
 ### [NODE-INVOKE-AUTHN / wamn-fqg.22] runner ↔ node authn — signed envelope
 
 Docs: docs/platform-plan.md §5.6, deploy/platform/serve-node.yaml + runner-credentials.example.yaml.
-v0 trusted in-cluster callers at the NETWORK layer — any pod reaching the
-serve-node Service could POST an envelope with attacker-chosen input/grant.
-wamn-fqg.22 adds authn as a **SIGNED INVOCATION ENVELOPE**: a per-project-env
-HMAC-SHA256 over the EXACT request body bytes, carried in the `x-wamn-signature`
-header. The canonical signed bytes live in the pure `wamn-node-invoke` crate
-(`sign_envelope` / `verify_envelope`, hmac's constant-time `verify_slice`), so
-the flowrunner GUEST (signer) and the serve-node HOST (verifier) cannot drift.
+wamn-fqg.22 added a **SIGNED INVOCATION ENVELOPE**: a per-project-env HMAC-SHA256
+over the EXACT request body bytes, carried in `x-wamn-signature`. wamn-2jdm.26
+moves the signer out of the guest and into the trusted node-invocation host
+plugin. The canonical signed bytes remain in the pure `wamn-node-invoke` crate
+(`sign_envelope` / `verify_envelope`, hmac's constant-time `verify_slice`), shared
+by the trusted runner host and serve-node verifier so the transport cannot drift.
 
-Key path (BOTH ends, one Secret, no new WIT): the reserved vault entry
-`wamn:node-invoke-signing-key` in the shared `wamn-runner-credentials` Secret.
-The flowrunner reads it via `wamn:node/credentials.get` (the same channel every
-per-project credential reaches the guest through) and signs; the serve-node reads
-it host-side from the same mounted vault and VERIFIES **before installing the
-grant** (`ServeNode::verify_signature` precedes `invoke`). Missing / malformed /
-wrong signature ⇒ a 401-class refusal (`{"error":"invocation-unauthorized",
-"reason":...}`) that never reaches the node. Replay-within-project-env is the
-accepted residual risk (documented on `sign_envelope`): the key scopes replay to
-one env, the signature closes the named FORGERY threat, and the stateless
-serve-node would need nonce state or a synced clock to add freshness — out of
-scope for v0. mTLS is the later infra upgrade.
+The reserved runner-host vault entry is `wamn:node-invoke-signing-key`; the
+serve-node has the corresponding environment key in its host-side vault. The
+guest cannot read either key. After admission and digest placement, the runner
+host signs; the serve-node VERIFIES **before installing the grant**
+(`ServeNode::verify_signature` precedes `invoke`). Missing, malformed, or wrong
+signatures produce a 401-class refusal
+(`{"error":"invocation-unauthorized","reason":...}`) that never reaches the
+node. The runner-host plugin exposes that signing refusal as a typed outer
+infrastructure fault rather than manufacturing a node failure. Replay freshness
+remains controlled by the fqg.32 timestamp policy; mTLS is the later infra
+upgrade.
 
 The `nodeinvoke` gate (same command as above) now also asserts, on top of
 DELIVERY/GRANT/NOT-GRANTED/MEMOIZED: AUTHN-POSITIVE (the real signed hop drains N
@@ -3839,35 +3930,41 @@ runs against a keyed serve-node + grant-install count advances), AUTHN-UNSIGNED 
 AUTHN-TAMPERED / AUTHN-WRONG-KEY (raw POSTs → 401 with the reason class),
 AUTHN-NO-ORACLE (a refusal never echoes the expected MAC), VERIFY-BEFORE-GRANT
 (no refused request advanced `grant_install_count`), and AUTHN-SIGNED (a correct
-raw POST is accepted 200 and installs exactly one grant).
+raw POST is accepted 200 and installs exactly one grant). Its real wrong-key
+runner-host phase additionally asserts AUTHN-MISMATCH-INFRASTRUCTURE,
+AUTHN-MISMATCH-PLANE, AUTHN-MISMATCH-RECOVERY, and
+AUTHN-MISMATCH-VERIFY-BEFORE-GRANT.
 
 ```bash
 # Unit tests — canonical signing bytes + MAC roundtrip + tamper/wrong-key/malformed:
-cargo test -p wamn-node-invoke signed_envelope_bytes_are_the_body_and_verify \
-  a_tampered_body_is_mismatch a_wrong_key_signature_is_mismatch \
-  malformed_signature_and_reason_codes
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-node-invoke --lib
 
 # The live gate is the SAME nodeinvoke command as [NODE-INVOKE] above (the gate
-# banks the signing key in both vaults; the flowrunner signs, the serve-node
-# verifies). Rebuild the flowrunner guest + wamn-gates first:
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner -p node-cred)
-cargo build -p wamn-gates --bin wamn-gates
+# banks corresponding keys in both host vaults; the trusted runner host signs,
+# and serve-node verifies). Rebuild the debug guest + wamn-gates first:
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked --manifest-path components/Cargo.toml \
+    --target wasm32-wasip2 -p flowrunner -p node-cred
+CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-26 CARGO_INCREMENTAL=0 \
+  cargo build --locked -p wamn-gates --bin wamn-gates
 # then run the nodeinvoke command from [NODE-INVOKE / wamn-bd5].
 
 # Mutation harness (3 mutants, each must exit non-zero): scratchpad mutate_fqg22.py
 #   (a) serve-node DROPS verify-before-grant (verify_signature call removed);
 #   (b) verify_envelope compare always Ok (skip constant-time / accept any MAC);
-#   (c) the flowrunner signs the WRONG bytes (empty body instead of the envelope).
+#   (c) the trusted invocation host signs the WRONG bytes (empty body instead of
+#       the envelope).
 # Killers: (a) VERIFY-BEFORE-GRANT + AUTHN-UNSIGNED; (b) AUTHN-WRONG-KEY +
 #   a_wrong_key_signature_is_mismatch; (c) AUTHN-POSITIVE (DELIVERY) + the
 #   signed_envelope unit roundtrip.
 ```
 
 In-cluster gate of record (the MAIN LOOP runs this after integration): the
-signing key must be present in the deployed `wamn-runner-credentials` Secret
-(add the reserved entry — see runner-credentials.example.yaml), then rebake the
-host image + rebuild the flowrunner wasm and re-run nodeinvoke against the
-deployed serve-node (the rebake riders under [NODE-INVOKE / wamn-bd5]).
+signing key must be present in both the trusted runner-host and serve-node vaults
+(see runner-credentials.example.yaml), then rebake the host image + gates image
+and re-run nodeinvoke against the deployed serve-node (the rebake riders under
+[NODE-INVOKE / wamn-bd5]).
 
 ### [NODE-INVOKE-HARDENING / wamn-fqg.29·.31·.30·.32] authn follow-ups
 
@@ -3875,12 +3972,13 @@ Docs: docs/platform-plan.md §5.6, deploy/platform/serve-node.yaml + runner-cred
 Four surgical hardenings on the fqg.22 signed-envelope path, all asserted by the
 SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
 
-* **fqg.29 — terminal on refusal.** The flowrunner maps the serve-node's 401
-  `invocation-unauthorized` refusal to a TERMINAL node failure (was: any non-200
-  → retryable transport error, so a persistent key mismatch burned the node's
-  whole retry budget). Gate: `AUTHN-MISMATCH-TERMINAL` — a runner with the WRONG
-  vault key drives a run that fails `terminal`/`call` in ONE claim (failed=1,
-  parked=0), its queue row dequeued (never parked for retry).
+* **fqg.29 — terminal on refusal (superseded attribution).** fqg.29 stopped a
+  persistent 401 from consuming the retry budget when the guest owned transport.
+  Under wamn-2jdm.26 the guest no longer receives HTTP status: a wrong runner-host
+  key is `SigningRefused`, an outer infrastructure fault. Gate:
+  `AUTHN-MISMATCH-INFRASTRUCTURE` + `AUTHN-MISMATCH-PLANE` prove the run stays
+  running with no node failure verdict; `AUTHN-MISMATCH-RECOVERY` proves the
+  started attempt and lease remain available to infrastructure recovery.
 
 * **fqg.31 — fail-closed toggle.** New serve-node flag `--require-signing-key`
   (env `WAMN_REQUIRE_SIGNING_KEY`): when set and NO signing key is configured for
@@ -3893,14 +3991,14 @@ SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
 * **fqg.30 — dual-key rotation window.** A second reserved vault name
   `wamn:node-invoke-signing-key-previous` holds the OLD key; the serve-node
   accepts a signature under the current OR the previous key, so an env's key
-  rotates with no serve-node restart (the flowrunner always signs with the
-  current key). A second NAME, not a delimited value, keeps the
+  rotates with no serve-node restart (the trusted runner host always signs with
+  the current key). A second NAME, not a delimited value, keeps the
   `{project:{name:secret}}` shape. Gate: `DUAL-KEY` — a previous-key signature
   verifies, the current key still verifies, garbage is still `bad-signature`.
 
 * **fqg.32 — replay freshness (opt-in).** An additive signed timestamp: the
-  flowrunner stamps `x-wamn-timestamp` (unix seconds) folded into the HMAC bytes
-  (version-safe — no timestamp ⇒ byte-identical to fqg.22). New serve-node flag
+  trusted runner host stamps `x-wamn-timestamp` (unix seconds) folded into the
+  HMAC bytes (version-safe — no timestamp ⇒ byte-identical to fqg.22). New serve-node flag
   `--signature-max-age-secs` (env `WAMN_SIGNATURE_MAX_AGE_SECS`), OFF by default
   (replay-within-project-env stays the documented accepted risk): when set, a
   signed IN-WINDOW timestamp is required, checked AFTER the MAC (never a freshness
@@ -3909,8 +4007,8 @@ SAME `nodeinvoke` gate (extra checks on top of the fqg.22 authn set):
   `FRESHNESS-LEGACY` (a timestamp-less envelope still verifies when OFF).
 
 The live gate is the SAME `nodeinvoke` command as [NODE-INVOKE / wamn-bd5];
-rebuild the flowrunner guest + wamn-gates first (the fqg.32 flowrunner change
-below re-touches the guest). Mutation harness: scratchpad `mutate_lane_a.py`
+rebuild the debug flowrunner guest + trusted runtime/gates host first. Mutation
+harness: scratchpad `mutate_lane_a.py`
 (≥3 mutants; each must fail a NAMED gate check / unit test).
 
 ### [R24 / wamn-03m + wamn-cjv.10 + wamn-2jkm.42] per-visit occurrence — merge/loop history + resume

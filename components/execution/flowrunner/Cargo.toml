@@ -26,11 +26,11 @@ wamn-nodes = { workspace = true }
 # wamn:postgres + outbound wasi:http live in the scaffolding crate's `caps`
 # feature — this shell links them instead of copying them.
 wamn-node-guest = { workspace = true, features = ["caps"] }
-# 5.6 / wamn-bd5: the v0 custom-node invocation protocol — the wire envelope the
-# runner POSTs to a `serve-node` host and the per-step grant derivation. The
-# SAME crate the serve-node HOST links, so the wire shape cannot drift between
-# the two ends. Pure serde; the guest links only the envelope + the grant helper
-# (never the host-side ConfigCache).
+# 5.6 / wamn-bd5: the custom-node wire envelope and per-step grant derivation.
+# The guest submits these opaque bytes through the trusted node-invocation
+# capability; its host signs and POSTs them to serve-node. The SAME crate the
+# serve-node host links keeps the wire shape coherent. Pure serde; the guest
+# links only the envelope + grant helper (never host placement or transport).
 wamn-node-invoke = { workspace = true }
 wamn-node-manifest = { workspace = true }
 

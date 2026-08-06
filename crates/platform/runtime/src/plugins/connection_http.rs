@@ -173,7 +173,7 @@ impl ConnectionHttp {
             .lookup(&self.project, handle)
             .ok_or(EffectError::CredentialUnavailable)?;
         let credential_headers = credential_headers(&secret)?;
-        execute(decision, request, credential_headers).await
+        execute(decision, request, credential_headers, &stable_key).await
     }
 }
 
@@ -377,12 +377,14 @@ fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
             | "upgrade"
             | "proxy-connection"
             | "proxy-authorization"
+            | "idempotency-key"
     )
 }
 
 fn outbound_headers(
     request: &RelativeRequest,
     credentials: HashMap<String, String>,
+    idempotency_key: &str,
 ) -> Result<reqwest::header::HeaderMap, EffectError> {
     let mut headers = reqwest::header::HeaderMap::new();
     for header in &request.headers {
@@ -402,6 +404,12 @@ fn outbound_headers(
             .map_err(|_| EffectError::CredentialUnavailable)?;
         headers.insert(name, value);
     }
+    let idempotency_key = reqwest::header::HeaderValue::from_str(idempotency_key)
+        .map_err(|_| EffectError::InvalidContext)?;
+    headers.insert(
+        reqwest::header::HeaderName::from_static("idempotency-key"),
+        idempotency_key,
+    );
     Ok(headers)
 }
 
@@ -409,10 +417,11 @@ async fn execute(
     decision: crate::connection_authority::AuthorityDecision,
     request: &RelativeRequest,
     credentials: HashMap<String, String>,
+    idempotency_key: &str,
 ) -> Result<Response, EffectError> {
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| EffectError::Transport("invalid HTTP method".into()))?;
-    let headers = outbound_headers(request, credentials)
+    let headers = outbound_headers(request, credentials, idempotency_key)
         .map_err(|error| log_effect_authority_denied("outbound-headers", error))?;
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -596,6 +605,23 @@ mod tests {
     }
 
     #[test]
+    fn callback_binding_mutant_is_denied_before_transport_resolution() {
+        let context = context();
+        let mut inactive = snapshot();
+        inactive.binding_active = false;
+        let mut invalid = snapshot();
+        invalid.binding_valid = false;
+        let mut missing = snapshot();
+        missing.instance_id = None;
+        for facts in [&inactive, &invalid, &missing] {
+            assert!(matches!(
+                authorize_snapshot(&context, "manager-notifications", facts),
+                Err(EffectError::Unbound)
+            ));
+        }
+    }
+
+    #[test]
     fn wrong_attempt_and_wrong_run_identity_fail_before_authorization() {
         let context = context();
         let mut wrong_attempt = snapshot();
@@ -660,17 +686,49 @@ mod tests {
         let headers = outbound_headers(
             &request,
             HashMap::from([("authorization".into(), "Bearer host-value".into())]),
+            "run-a:notify:0",
         )
         .expect("headers");
         assert_eq!(headers["authorization"], "Bearer host-value");
+        assert_eq!(headers["idempotency-key"], "run-a:notify:0");
 
         request.headers = vec![Header {
             name: "host".into(),
             value: b"other.example".to_vec(),
         }];
         assert!(matches!(
-            outbound_headers(&request, HashMap::new()),
+            outbound_headers(&request, HashMap::new(), "run-a:notify:0"),
             Err(EffectError::AuthorityDenied)
+        ));
+    }
+
+    #[test]
+    fn idempotency_key_is_system_owned_and_injected_exactly_once() {
+        let request = RelativeRequest {
+            method: "POST".into(),
+            path_and_query: "/holds".into(),
+            headers: Vec::new(),
+            body: None,
+        };
+        let key = "run-a:notify:0";
+        let headers = outbound_headers(&request, HashMap::new(), key).expect("headers");
+        assert_eq!(headers.get_all("idempotency-key").iter().count(), 1);
+        assert_eq!(headers["idempotency-key"], key);
+
+        let authored = RelativeRequest {
+            headers: vec![Header {
+                name: "Idempotency-Key".into(),
+                value: b"author-controlled".to_vec(),
+            }],
+            ..request
+        };
+        assert!(matches!(
+            outbound_headers(&authored, HashMap::new(), key),
+            Err(EffectError::AuthorityDenied)
+        ));
+        assert!(matches!(
+            credential_headers(r#"{"headers":{"idempotency-key":"credential-controlled"}}"#),
+            Err(EffectError::CredentialUnavailable)
         ));
     }
 

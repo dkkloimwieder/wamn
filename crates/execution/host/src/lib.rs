@@ -43,6 +43,9 @@ use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestC
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
+use wamn_runtime::plugins::node_invocation::{
+    self, NODE_INVOCATION_ID, NodeInvocation, NodePlacementMap,
+};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
 use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
@@ -55,6 +58,7 @@ pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
 pub struct ExecutionCapabilities {
     mode: CapabilityMode,
     egress_policy: Arc<RunnerEgressPolicy>,
+    node_placements: NodePlacementMap,
 }
 
 impl std::fmt::Debug for ExecutionCapabilities {
@@ -67,6 +71,14 @@ impl std::fmt::Debug for ExecutionCapabilities {
             .debug_struct("ExecutionCapabilities")
             .field("mode", &mode)
             .finish()
+    }
+}
+
+impl ExecutionCapabilities {
+    /// Supply the environment-owned component-digest to node-host placement map.
+    pub fn with_node_placements(mut self, node_placements: NodePlacementMap) -> Self {
+        self.node_placements = node_placements;
+        self
     }
 }
 
@@ -89,6 +101,7 @@ pub fn production_capabilities(
     ExecutionCapabilities {
         mode: CapabilityMode::Production { allowed_hosts },
         egress_policy,
+        node_placements: NodePlacementMap::default(),
     }
 }
 
@@ -111,6 +124,7 @@ pub fn injected_capabilities(
             allowed_hosts,
         },
         egress_policy,
+        node_placements: NodePlacementMap::default(),
     }
 }
 
@@ -395,6 +409,7 @@ impl ExecutionHost {
         // run-owned txn (the CDC reader stitches it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         connection_http::add_to_linker(&mut linker)?;
+        node_invocation::add_to_linker(&mut linker)?;
         // wamn-yf3: wasi:logging — the flowrunner emits a few structured records
         // per run (node/run lifecycle) that the wamn:logging plugin enriches +
         // ships. The guest imports it unconditionally, so the linker must satisfy
@@ -406,6 +421,7 @@ impl ExecutionHost {
         let ExecutionCapabilities {
             mode,
             egress_policy,
+            node_placements,
         } = capabilities;
         let connection_allowed_hosts = match &mode {
             CapabilityMode::Production { allowed_hosts }
@@ -418,6 +434,13 @@ impl ExecutionHost {
             tenant,
             project,
             connection_allowed_hosts,
+        ));
+        let node_invocation = Arc::new(NodeInvocation::new(
+            plugin.clone(),
+            vault.clone(),
+            tenant,
+            project,
+            node_placements,
         ));
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
@@ -439,6 +462,10 @@ impl ExecutionHost {
         plugins.insert(
             CONNECTION_HTTP_ID,
             connection_http as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        plugins.insert(
+            NODE_INVOCATION_ID,
+            node_invocation as Arc<dyn HostPlugin + Send + Sync>,
         );
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
         let ctx = match mode {

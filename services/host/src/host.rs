@@ -111,6 +111,10 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
 
+    /// Environment-owned mapping from admitted component digest to node-host authority.
+    #[arg(long, env = "WAMN_NODE_PLACEMENTS_FILE")]
+    pub node_placements_file: Option<PathBuf>,
+
     /// Production outbound HTTP allowlist. Empty denies all egress.
     #[arg(
         long = "allowed-hosts",
@@ -163,6 +167,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         postgres.clone(),
         logging.clone(),
         args.credentials_file.as_deref(),
+        args.node_placements_file.as_deref(),
         allowed_hosts,
         args.inline_lease_ttl_ms,
     )?);

@@ -40,10 +40,7 @@
     },
     {
       "id": "normalize-receipt",
-      "type": "normalize-receipt",
-      "config": {
-        "endpoint": "http://normalize-receipt.wamn-system.svc.cluster.local"
-      }
+      "type": "normalize-receipt"
     },
     {
       "id": "resolve-and-persist",
@@ -63,10 +60,7 @@
     { "id": "invalid-reference", "type": "fail", "config": { "code": "invalid-reference", "status": 400 } },
     {
       "id": "evaluate-specs",
-      "type": "evaluate-specs",
-      "config": {
-        "endpoint": "http://evaluate-specs.wamn-system.svc.cluster.local"
-      }
+      "type": "evaluate-specs"
     },
     {
       "id": "create-holds",

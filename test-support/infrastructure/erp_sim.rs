@@ -60,6 +60,15 @@ pub struct KeyRecord {
     pub delivered: u64,
 }
 
+/// One callback request observed by the simulator.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct RequestRecord {
+    pub method: String,
+    pub path: String,
+    pub idempotency_key: Option<String>,
+}
+
 #[derive(Debug, Default)]
 struct AuditState {
     fail_first_n: u32,
@@ -67,6 +76,7 @@ struct AuditState {
     keys: HashMap<String, KeyRecord>,
     /// The keyless global counter (requests with no `Idempotency-Key`).
     no_key: KeyRecord,
+    requests: Vec<RequestRecord>,
 }
 
 /// A shared, cloneable handle to the simulator's ledger — the in-process audit
@@ -84,14 +94,20 @@ impl ErpAudit {
                 retry_after_secs,
                 keys: HashMap::new(),
                 no_key: KeyRecord::default(),
+                requests: Vec::new(),
             })),
         }
     }
 
     /// Record a request under `key` (None = keyless) and decide its response.
     /// Returns `(status, retry_after_secs?)`.
-    fn record(&self, key: Option<&str>) -> (u16, Option<u64>) {
+    fn record(&self, method: &str, path: &str, key: Option<&str>) -> (u16, Option<u64>) {
         let mut st = self.inner.lock().expect("erp-sim audit poisoned");
+        st.requests.push(RequestRecord {
+            method: method.to_string(),
+            path: path.to_string(),
+            idempotency_key: key.map(str::to_string),
+        });
         let fail_first_n = st.fail_first_n;
         let retry_after = st.retry_after_secs;
         let rec = match key {
@@ -138,6 +154,15 @@ impl ErpAudit {
             .len()
     }
 
+    /// Callback method/path observations in arrival order.
+    pub fn requests(&self) -> Vec<RequestRecord> {
+        self.inner
+            .lock()
+            .expect("erp-sim audit poisoned")
+            .requests
+            .clone()
+    }
+
     /// A JSON snapshot for the `GET /audit` endpoint.
     fn snapshot(&self) -> serde_json::Value {
         let st = self.inner.lock().expect("erp-sim audit poisoned");
@@ -160,6 +185,7 @@ impl ErpAudit {
             "retry_after_secs": st.retry_after_secs,
             "distinct_keys": st.keys.len(),
             "total_deliveries": st.keys.values().map(|r| r.delivered).sum::<u64>() + st.no_key.delivered,
+            "requests": &st.requests,
             "keys": keys,
         })
     }
@@ -205,7 +231,7 @@ async fn handle_connection(sock: TcpStream, audit: ErpAudit) -> anyhow::Result<(
             json_response(200, None, &body)
         } else if method == "POST" {
             let key = header_of(&head, "idempotency-key");
-            let (status, retry_after) = audit.record(key.as_deref());
+            let (status, retry_after) = audit.record(&method, &path, key.as_deref());
             let body = serde_json::json!({
                 "status": status,
                 "idempotency-key": key,
@@ -315,10 +341,18 @@ mod tests {
         let audit = ErpAudit::new(2, 3);
         let key = Some("disp:evt:5:callback:0");
 
-        assert_eq!(audit.record(key), (429, Some(3)));
-        assert_eq!(audit.record(key), (429, Some(3)));
-        assert_eq!(audit.record(key), (202, None), "the K+1th is the delivery");
-        assert_eq!(audit.record(key), (202, None), "a duplicate replays 202");
+        assert_eq!(audit.record("POST", "/dispositions", key), (429, Some(3)));
+        assert_eq!(audit.record("POST", "/dispositions", key), (429, Some(3)));
+        assert_eq!(
+            audit.record("POST", "/dispositions", key),
+            (202, None),
+            "the K+1th is the delivery"
+        );
+        assert_eq!(
+            audit.record("POST", "/dispositions", key),
+            (202, None),
+            "a duplicate replays 202"
+        );
 
         let rec = audit.key("disp:evt:5:callback:0");
         assert_eq!(rec.requests, 4);
@@ -333,10 +367,13 @@ mod tests {
     fn distinct_keys_are_independent() {
         let audit = ErpAudit::new(1, 2);
         for k in ["a", "b", "c"] {
-            assert_eq!(audit.record(Some(k)), (429, Some(2)));
+            assert_eq!(
+                audit.record("POST", "/dispositions", Some(k)),
+                (429, Some(2))
+            );
         }
         for k in ["a", "b", "c"] {
-            assert_eq!(audit.record(Some(k)), (202, None));
+            assert_eq!(audit.record("POST", "/dispositions", Some(k)), (202, None));
         }
         assert_eq!(audit.distinct_keys(), 3);
         assert_eq!(audit.total_deliveries(), 3, "one delivery per distinct key");
@@ -350,7 +387,10 @@ mod tests {
     #[test]
     fn fail_first_zero_accepts_immediately() {
         let audit = ErpAudit::new(0, 5);
-        assert_eq!(audit.record(Some("k")), (202, None));
+        assert_eq!(
+            audit.record("POST", "/dispositions", Some("k")),
+            (202, None)
+        );
         assert_eq!(audit.key("k").rejected_429, 0);
         assert_eq!(audit.key("k").delivered, 1);
     }

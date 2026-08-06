@@ -62,6 +62,11 @@ world runner-http-effect-plugin {
   import wamn:runner/http-effect@0.1.0;
 }
 
+/// Host-side bindgen world for trusted one-frame custom-node invocation.
+world runner-node-invocation-plugin {
+  import wamn:runner/node-invocation@0.1.0;
+}
+
 /// Host-side bindgen world for the `wamn:jetstream` plugin (E10): the host
 /// IMPLEMENTS durable-consumer binding + pull/fetch + per-message ack/nack/term
 /// and header-carrying publish over the async-nats JetStream client — the

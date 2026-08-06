@@ -1905,7 +1905,49 @@ fn validate_implementations_with_model_owned(
             return Err(CatalogIdentityError::UnexpectedInterface { node_type });
         }
     }
+    validate_component_node_config(flow, implementations)?;
     Ok(())
+}
+
+/// Supplied components name their implementation through the immutable resolved
+/// contract. Placement and transport stay environment-owned, so their graph
+/// configuration cannot carry an endpoint or any other absolute URL.
+fn validate_component_node_config(
+    flow: &Flow,
+    implementations: &[NodeImplementation],
+) -> Result<(), CatalogIdentityError> {
+    let supplied = implementations
+        .iter()
+        .filter_map(|implementation| {
+            matches!(
+                &implementation.contract().executable,
+                ExecutableIdentity::Component { .. }
+            )
+            .then_some(implementation.interface().node_type.as_str())
+        })
+        .collect::<BTreeSet<_>>();
+    if flow.nodes.iter().any(|node| {
+        supplied.contains(node.node_type.as_str())
+            && contains_platform_transport_address(&node.config)
+    }) {
+        return Err(CatalogIdentityError::FlowInvalid {
+            codes: vec!["custom-node-has-platform-transport"],
+        });
+    }
+    Ok(())
+}
+
+fn contains_platform_transport_address(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => object.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("endpoint") || contains_platform_transport_address(value)
+        }),
+        serde_json::Value::Array(values) => values.iter().any(contains_platform_transport_address),
+        serde_json::Value::String(value) => url::Url::parse(value).is_ok(),
+        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => {
+            false
+        }
+    }
 }
 
 fn validate_executable_recovery(

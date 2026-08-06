@@ -21,6 +21,7 @@ use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, production_capabilities,
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::plugins::node_invocation::NodePlacementMap;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
@@ -52,6 +53,10 @@ pub struct ExecutorArgs {
     /// Mounted production credential-vault file.
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
+
+    /// Environment-owned mapping from admitted component digest to node-host authority.
+    #[arg(long, env = "WAMN_NODE_PLACEMENTS_FILE")]
+    pub node_placements_file: Option<PathBuf>,
 
     /// Project whose credentials this executor may resolve.
     #[arg(long, env = "WAMN_PROJECT", default_value = wamn_postgres::DEFAULT_PROJECT)]
@@ -268,6 +273,14 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         Some(path) => WamnCredentials::from_file(path)?,
         None => WamnCredentials::empty(),
     });
+    let node_placements = match &args.node_placements_file {
+        Some(path) => NodePlacementMap::from_json(
+            &std::fs::read_to_string(path)
+                .with_context(|| format!("read node placements {}", path.display()))?,
+        )
+        .with_context(|| format!("parse node placements {}", path.display()))?,
+        None => NodePlacementMap::default(),
+    };
     let logging = Arc::new(WamnLogging::from_env().context("wamn:logging plugin init")?);
     let allowed_hosts: Arc<[AllowedHost]> = args
         .allowed_hosts
@@ -291,7 +304,8 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             schema: args.schema.as_deref(),
             project: &args.project,
         },
-        production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default())),
+        production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default()))
+            .with_node_placements(node_placements),
         args.lease_ttl_ms,
     )
     .await?;

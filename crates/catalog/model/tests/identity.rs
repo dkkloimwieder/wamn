@@ -141,6 +141,24 @@ fn artifact() -> Artifact {
         .expect("fixture artifact is valid")
 }
 
+#[test]
+fn supplied_node_config_refuses_platform_transport_addresses() {
+    for config in [
+        json!({"endpoint": "node-host.default.svc:8080"}),
+        json!({"callback": "https://node-host.example.test/run"}),
+    ] {
+        let mut flow = request_flow();
+        flow.nodes[1].config = config;
+        let error = artifact_new("tenant-a", &flow, vec![supplied('1')])
+            .expect_err("supplied-node placement must stay out of flow config");
+        assert!(matches!(
+            error,
+            CatalogIdentityError::FlowInvalid { ref codes }
+                if codes == &["custom-node-has-platform-transport"]
+        ));
+    }
+}
+
 fn source(id: &str, kind: SourceKind, definition: serde_json::Value) -> Source {
     Source::new(
         SourceId::new(id).expect("fixture source id is valid"),

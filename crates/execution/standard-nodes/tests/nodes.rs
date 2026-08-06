@@ -1176,12 +1176,15 @@ fn every_standard_node_has_one_complete_versioned_resolution_descriptor() {
 
     let http = describe("http-request").unwrap();
     assert_eq!(http.connection_requirements.len(), 1);
-    assert_eq!(http.portable_connections.len(), 1);
+    assert_eq!(http.portable_connections.len(), 2);
     assert!(matches!(
         http.connection_recovery_support[0]
             .supported_modes
             .as_slice(),
-        [ExecutableConnectionRecoveryMode::NeverReplay]
+        [
+            ExecutableConnectionRecoveryMode::NeverReplay,
+            ExecutableConnectionRecoveryMode::IdempotentWithKey { .. }
+        ]
     ));
 
     for node_type in ["postgres", "postgres-query"] {

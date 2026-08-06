@@ -113,14 +113,17 @@ fn frozen_http_surface_is_relative_typed_and_extension_free() {
 }
 
 #[test]
-fn host_and_custom_binding_worlds_pin_the_exact_http_contract() {
+fn host_adapter_and_trusted_runner_worlds_pin_the_authority_split() {
     let root = repo_root();
     let host = fs::read_to_string(root.join("crates/platform/runtime/wit/world.wit"))
         .expect("host world reads");
     let custom = fs::read_to_string(root.join("crates/node/guest/wit-caps/world.wit"))
         .expect("custom-node binding world reads");
-    let import = "import wamn:connection/http@0.1.0;";
+    let portable_import = "import wamn:connection/http@0.1.0;";
+    let trusted_import = "import wamn:runner/http-effect@0.1.0;";
 
-    assert_eq!(host.matches(import).count(), 1);
-    assert_eq!(custom.matches(import).count(), 1);
+    assert_eq!(host.matches(portable_import).count(), 1);
+    assert_eq!(custom.matches(portable_import).count(), 0);
+    assert_eq!(host.matches(trusted_import).count(), 1);
+    assert_eq!(custom.matches(trusted_import).count(), 1);
 }

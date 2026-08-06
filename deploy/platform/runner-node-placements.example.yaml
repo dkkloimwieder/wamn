@@ -1,0 +1,18 @@
+# Environment-owned custom-node placement for deploy/platform/runner.yaml.
+#
+# Populate this object when publishing supplied component bytes. Each key is the
+# exact admitted lower-hex sha256 digest; each value is the HTTP(S) authority of
+# the serve-node instance hosting those bytes. Paths are forbidden: the trusted
+# runner host appends `/run`. Flow artifacts never contain these addresses.
+#
+# Keep this as a separately managed ConfigMap so re-applying runner.yaml cannot
+# overwrite placement. The empty object is fail-closed: custom-node invocation
+# returns `placement-unavailable` before network access.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wamn-node-placements
+  namespace: wamn-system
+data:
+  placements.json: |
+    {}

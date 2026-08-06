@@ -23,7 +23,8 @@ pub fn select_registrations_sql() -> String {
 /// when the head or release member is absent, so the caller holds the
 /// registration. Event resolution deliberately has no attachment join.
 pub fn select_release_flow_sql() -> String {
-    "SELECT h.applied_catalog_version, r.flow_version, a.graph_json::text AS graph_json \
+    "SELECT h.applied_catalog_version, r.flow_version, a.graph_json::text AS graph_json, \
+            a.interface_bundle_json::text AS interface_bundle_json \
        FROM catalog.catalog_heads AS h \
        JOIN catalog.release_flows AS r \
          ON r.tenant_id = h.tenant_id AND r.catalog_id = h.catalog_id \
@@ -58,7 +59,8 @@ mod tests {
         assert!(
             flow.contains("catalog.catalog_heads")
                 && flow.contains("catalog.release_flows")
-                && flow.contains("catalog.flow_artifacts"),
+                && flow.contains("catalog.flow_artifacts")
+                && flow.contains("interface_bundle_json"),
             "event candidates resolve the applied release"
         );
         assert!(
