@@ -285,26 +285,62 @@ async fn seed_claimed(
     status: &str,
     expired: bool,
 ) -> anyhow::Result<()> {
-    let (client, handle) = connect(admin_url).await?;
-    let expiry = if expired {
-        "now() - interval '1 second'"
-    } else {
-        "now() + interval '30 seconds'"
-    };
-    client
-        .batch_execute(&format!(
+    let (mut client, handle) = connect(admin_url).await?;
+    let artifact_hash: String = client
+        .query_one(
+            "SELECT artifact_hash FROM catalog.flow_artifacts \
+              WHERE tenant_id=$1 AND flow_id=$2 AND flow_version=1",
+            &[&TENANT, &FLOW_ID],
+        )
+        .await?
+        .get(0);
+    let invocation_context = json!({
+        "version": 1,
+        "principal": {
+            "tenant-id": TENANT,
+            "environment": "proof",
+            "catalog-id": CATALOG_ID,
+            "catalog-version": 1,
+            "run-id": run_id,
+            "flow-id": FLOW_ID,
+            "flow-version": 1,
+            "artifact-digest": artifact_hash,
+        },
+        "source": { "trigger": "http" },
+    });
+    let deadline_seconds = i64::from(CLAIMED_FIXTURE_DEADLINE_SECONDS);
+    let transaction = client.transaction().await?;
+    transaction
+        .execute(
             "INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                attachment_id,status,trigger_source,input_json,response_deadline_at,run_deadline_at) \
-             VALUES ('{TENANT}','{run_id}','{FLOW_ID}',1,'{CATALOG_ID}',1, \
-                     'http-proof','{status}','http','{{\"echo\":\"ok\"}}', \
-                     now()+make_interval(secs => {CLAIMED_FIXTURE_DEADLINE_SECONDS}), \
-                     now()+make_interval(secs => {CLAIMED_FIXTURE_DEADLINE_SECONDS})); \
-             INSERT INTO wamn_run.run_queue \
-               (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
-             VALUES ('{TENANT}','{run_id}','{OWNER}',{expiry},{generation});"
-        ))
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                attachment_id,status,trigger_source,input_json,invocation_context, \
+                response_deadline_at,run_deadline_at) \
+             VALUES ($1,$2,$3,1,$4,1,'proof',$5,$6,'http','{\"echo\":\"ok\"}',$7, \
+                     now()+make_interval(secs => $8),now()+make_interval(secs => $8))",
+            &[
+                &TENANT,
+                &run_id,
+                &FLOW_ID,
+                &CATALOG_ID,
+                &ATTACHMENT_ID,
+                &status,
+                &invocation_context,
+                &deadline_seconds,
+            ],
+        )
         .await?;
+    transaction
+        .execute(
+            "INSERT INTO wamn_run.run_queue \
+               (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
+             VALUES ($1,$2,$3, \
+                     CASE WHEN $5 THEN now()-interval '1 second' \
+                          ELSE now()+interval '30 seconds' END,$4)",
+            &[&TENANT, &run_id, &OWNER, &generation, &expired],
+        )
+        .await?;
+    transaction.commit().await?;
     drop(client);
     let _ = handle.await;
     Ok(())
