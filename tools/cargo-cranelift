@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${1-} == cranelift ]]; then
+  shift
+fi
+
+for argument in "$@"; do
+  case "$argument" in
+    -r|--release|--profile|--profile=*|--target|--target=*|--manifest-path|--manifest-path=*|--config|--config=*)
+      echo "cargo cranelift is debug/native-only; refusing Cargo option: $argument" >&2
+      exit 64
+      ;;
+  esac
+done
+
+if [[ ! -f Cargo.toml || ! -f rust-toolchain.toml ]]; then
+  echo "cargo cranelift must run from the mounted wamn workspace root" >&2
+  exit 64
+fi
+
+exec env RUSTFLAGS=-Zcodegen-backend=cranelift cargo +nightly build "$@"

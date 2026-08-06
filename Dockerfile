@@ -332,3 +332,10 @@ RUN cd components && cargo fetch
 RUN cp /native-output/wamn-builder /usr/local/bin/wamn-builder
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-builder"]
+
+FROM chef AS cranelift-dev
+# Opt-in native debug shell only. No shipping stage inherits this toolchain.
+RUN rustup toolchain install nightly --profile minimal \
+ && rustup component add rustc-codegen-cranelift-preview --toolchain nightly
+COPY --chmod=0755 tools/cargo-cranelift /usr/local/bin/cargo-cranelift
+WORKDIR /workspace
