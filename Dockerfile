@@ -16,8 +16,9 @@
 FROM rust:1.97-trixie AS builder
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
-RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
+COPY .cargo/config.toml ./.cargo/config.toml
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 COPY services ./services

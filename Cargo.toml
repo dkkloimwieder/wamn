@@ -111,3 +111,13 @@ wamn-waker = { path = "services/waker", version = "0.1.0" }
 
 [profile.release]
 lto = "thin"
+
+[profile.dev]
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.dev.build-override]
+opt-level = 1
