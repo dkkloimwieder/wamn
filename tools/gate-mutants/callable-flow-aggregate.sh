@@ -53,7 +53,7 @@ load_mutation() {
       ;;
     cron-activation-digest-drift)
       TARGET="tests/integration/src/callable_cron.rs"
-      EXPECTED_SHA="bdc1f2c631e33805f8635bd44387ae88cac25d1553c7808028aae51b45dc646e"
+      EXPECTED_SHA="2bfd8ddcebc3f387ebf2d80834a65e5c9b966a54ffc8921ed1a3dd2c46ad2c1c"
       NEEDLE="VALUES (\$1,\$2,'gate',\$3,'sha256:callable-cron',true)"
       REPLACEMENT="VALUES (\$1,\$2,'gate',\$3,'sha256:stale-cron',true)"
       GATE="callable-flow-cron"

@@ -64,7 +64,7 @@ async fn seed(admin: &mut Client) -> anyhow::Result<()> {
         String::from_utf8(flow.canonical_bytes()).expect("canonical cron graph is UTF-8");
     let interfaces = String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
         .expect("canonical cron interfaces are UTF-8");
-    let components = serde_json::to_value(artifact.supplied_components())?;
+    let components = serde_json::to_string(artifact.supplied_components())?;
     let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
         .expect("canonical cron occurrence recovery is UTF-8");
     let artifact_hash = artifact.identity().artifact_hash().as_str().to_owned();
