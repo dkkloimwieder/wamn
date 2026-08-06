@@ -308,7 +308,7 @@ async fn seed_claimed(
         },
         "source": { "trigger": "http" },
     });
-    let deadline_seconds = i64::from(CLAIMED_FIXTURE_DEADLINE_SECONDS);
+    let deadline_seconds = f64::from(CLAIMED_FIXTURE_DEADLINE_SECONDS);
     let transaction = client.transaction().await?;
     transaction
         .execute(
