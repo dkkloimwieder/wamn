@@ -76,7 +76,7 @@ load_mutation() {
       ;;
     f1-direct-node-contract-wave1)
       TARGET="deploy/poc/f1-flow.json"
-      EXPECTED_SHA="764a8e7885fd944f2c643cc6c9442243f61f5e088ea33b6aca06977c15a1c5bb"
+      EXPECTED_SHA="df38e2044ff7cc652bac142ce9ca772d71e572f6137e2712abbc138c55eb3432"
       NEEDLE=$'"id": "normalize-receipt",\n      "type": "normalize-receipt"'
       REPLACEMENT=$'"id": "normalize-receipt",\n      "type": "transform"'
       GATE="callable-flow-f1+callable-flow-wave1"
@@ -100,7 +100,7 @@ load_mutation() {
       ;;
     f3-cutoff-contract-wave1)
       TARGET="deploy/poc/f3-flow.json"
-      EXPECTED_SHA="03151f6d674eaddc156eb72dfdf7a6e4d870d816b23ab1c8cf2e8a73db71e77f"
+      EXPECTED_SHA="30f067e87ff1cfc5e75d9b19b94e8acc166f1fd69c19f8cec7b6e7a2567b16e7"
       NEEDLE='"offset-ms": -172800000'
       REPLACEMENT='"offset-ms": -86400000'
       GATE="callable-flow-f3+callable-flow-wave1"
@@ -159,7 +159,7 @@ load_mutation() {
       ;;
     f3proof-wrong-cutoff)
       TARGET="deploy/gates/f3proof-job.yaml"
-      EXPECTED_SHA="0e07cf613969e0e67788fc87041992aae4f373a923be68543978c72c0d839c04"
+      EXPECTED_SHA="539e5c54fffccb975421de6108d5e0f160e243f46e7b3ef3302fd847bc41642e"
       NEEDLE='"--offset-ms=-60000"'
       REPLACEMENT='"--offset-ms=-1"'
       GATE="f3proof"
@@ -170,7 +170,7 @@ load_mutation() {
       ;;
     f4proof-wrong-delivery-count)
       TARGET="tests/integration/src/f4proof.rs"
-      EXPECTED_SHA="b1b1d1d7fbeabf233757fee7d8bc68271386f32e2d2f67a30fd0aa8f2d65b6a0"
+      EXPECTED_SHA="55b72655b6abb96f1ee7d71cb39831a8aedff71b31d1a797fc0dc22b66b02ada"
       NEEDLE='&& rec.requests == u64::from(args.fail_first_n) + 1,'
       REPLACEMENT='&& rec.requests == u64::from(args.fail_first_n) + 2,'
       GATE="f4proof"
