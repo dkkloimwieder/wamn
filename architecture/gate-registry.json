@@ -380,8 +380,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -408,8 +409,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -436,8 +438,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -464,8 +467,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -492,8 +496,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -520,8 +525,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -547,8 +553,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -575,8 +582,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -603,8 +611,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -897,8 +906,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -924,8 +934,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -951,8 +962,9 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {

@@ -30,6 +30,21 @@ const CAUSATION_SOURCE_COMMIT: &str = "21c3836fe0536c347355ef21f7d811eb92cc678a"
 const CALLABLE_CAMPAIGN: &str = "callable-flow-aggregate";
 const CALLABLE_BEAD: &str = "wamn-2jdm.5.4";
 const CALLABLE_RUNNER: &str = "tools/gate-mutants/callable-flow-aggregate.sh";
+const CALLABLE_SOURCE_COMMIT: &str = "00aa063800a69fc084c3811667beaccf23e000f4";
+const CALLABLE_MUTANT_IDS: [&str; 12] = [
+    "schema-nullable-decision",
+    "cron-activation-digest-drift",
+    "f0-response-contract-wave1",
+    "f1-direct-node-contract-wave1",
+    "f2-direct-node-contract-wave2",
+    "f3-cutoff-contract-wave1",
+    "f4-callback-contract-wave2",
+    "wave1-source-image-drift",
+    "wave2-mixed-image-id",
+    "f2invoke-wrong-recommendation",
+    "f3proof-wrong-cutoff",
+    "f4proof-wrong-delivery-count",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -382,6 +397,7 @@ fn checked_in_mutation_evidence_conforms_when_present() {
         }
         if evidence.campaign == CALLABLE_CAMPAIGN {
             assert_eq!(evidence.bead, CALLABLE_BEAD);
+            assert_eq!(evidence.source.git_commit, CALLABLE_SOURCE_COMMIT);
             let runner = fs::read(repository_root().join(CALLABLE_RUNNER))
                 .expect("callable-flow mutation runner is readable");
             assert_eq!(
@@ -432,4 +448,53 @@ fn causation_mutation_evidence_conforms() {
         hex::encode(Sha256::digest(runner)),
         "causation evidence must identify the checked-in runner bytes"
     );
+}
+
+#[test]
+fn callable_flow_mutation_evidence_conforms() {
+    let path = repository_root()
+        .join(EVIDENCE_DIRECTORY)
+        .join("callable-flow-aggregate.json");
+    let json = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    let evidence =
+        parse_evidence(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    validate_evidence(&evidence).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    assert_eq!(evidence.campaign, CALLABLE_CAMPAIGN);
+    assert_eq!(evidence.bead, CALLABLE_BEAD);
+    assert_eq!(evidence.source.git_commit, CALLABLE_SOURCE_COMMIT);
+
+    let runner = fs::read(repository_root().join(CALLABLE_RUNNER))
+        .expect("callable-flow mutation runner is readable");
+    assert_eq!(
+        evidence.source.runner_sha256,
+        hex::encode(Sha256::digest(runner)),
+        "callable-flow evidence must identify the checked-in runner bytes"
+    );
+
+    let expected_ids = BTreeSet::from(CALLABLE_MUTANT_IDS);
+    assert_eq!(evidence.green_runs.len(), expected_ids.len());
+    assert!(evidence.green_runs.iter().all(|run| {
+        run.command.len() == 3 && run.command[0] == CALLABLE_RUNNER && run.command[1] == "green"
+    }));
+    let green_ids: BTreeSet<&str> = evidence
+        .green_runs
+        .iter()
+        .map(|run| run.command[2].as_str())
+        .collect();
+    assert_eq!(green_ids, expected_ids);
+
+    assert_eq!(evidence.mutants.len(), expected_ids.len());
+    assert!(evidence.mutants.iter().all(|mutant| {
+        mutant.command.len() == 3
+            && mutant.command[0] == CALLABLE_RUNNER
+            && mutant.command[1] == "run"
+            && mutant.command[2] == mutant.id
+    }));
+    let mutant_ids: BTreeSet<&str> = evidence
+        .mutants
+        .iter()
+        .map(|mutant| mutant.id.as_str())
+        .collect();
+    assert_eq!(mutant_ids, expected_ids);
 }
