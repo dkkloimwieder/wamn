@@ -9,17 +9,48 @@
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
 #   docker build --target builder-svc -t wamn-builder:dev   .  # 5.5 node build sandbox (cargo+jco)
-# Later invocations are fully layer-cached off the one builder stage. The
+# Later invocations reuse cargo-chef dependency layers and named BuildKit
+# target caches. The root and component workspaces cook from separate recipes,
+# so their lockfiles remain independent cache keys. The
 # washlet artifact ships no provisioning / replication-credential / gate code
 # (SR9 strings spot-check); the gates image layers the suite on top of the
 # IDENTICAL host stage so Jobs exercise the same host lib code they verify.
-FROM rust:1.97-trixie AS builder
+FROM rust:1.97-trixie AS chef
 # libprotobuf-dev carries the well-known types (google/protobuf/*.proto)
 # that protobuf-compiler alone does not ship on Debian.
 RUN apt-get update && apt-get install -y --no-install-recommends clang mold protobuf-compiler libprotobuf-dev git && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
+RUN --mount=type=cache,id=wamn-chef-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-chef-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo install cargo-chef --version 0.1.77 --locked
+
+# The planner may see source changes, but the recipe copied into root-cook
+# changes only when the root workspace manifests or Cargo.lock change.
+FROM chef AS root-planner
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
+COPY services ./services
+COPY test-support ./test-support
+COPY tests ./tests
+COPY poc ./poc
+RUN cargo chef prepare --recipe-path root-recipe.json
+
+FROM chef AS root-cook
 COPY .cargo/config.toml ./.cargo/config.toml
-COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY --from=root-planner /build/root-recipe.json ./root-recipe.json
+# Keep cooked dependencies in an ordinary image layer so mode=max registry
+# cache export can carry them to a fresh builder. The real build seeds its
+# local target cache from this layer when the recipe changes.
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo chef cook --locked --release --recipe-path root-recipe.json \
+      -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher \
+      -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader \
+      -p wamn-waker -p wamn-gates -p wamn-builder \
+ && mv target /root-chef-target
+
+FROM root-cook AS builder
+COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY services ./services
 COPY test-support ./test-support
@@ -33,15 +64,41 @@ COPY deploy ./deploy
 COPY components/execution/flowrunner/src/lib.rs ./components/execution/flowrunner/src/lib.rs
 COPY components/samples/disposition-node/cases.json components/samples/disposition-node/cases-refusal-fixture.json ./components/samples/disposition-node/
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
-# (docs/platform/wash-runtime-fork.md); cargo fetches it during the build.
-# rust-toolchain.toml would force a rustup download inside the container;
-# the base image already ships the right version.
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/usr/local/cargo/git rm rust-toolchain.toml && cargo build --release -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-waker -p wamn-gates -p wamn-builder
+# (docs/platform/wash-runtime-fork.md); cargo fetches it during the cook/build.
+# rust-toolchain.toml is deliberately absent: the base image already ships the
+# pinned Rust line, and copying it would force a rustup download in the image.
+RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-root-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=wamn-root-target,target=/build/target,sharing=locked \
+    if ! cmp -s root-recipe.json target/.wamn-chef-recipe.json; then \
+      find target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; \
+      cp -a /root-chef-target/. target/; \
+      cp root-recipe.json target/.wamn-chef-recipe.json; \
+    fi \
+ && cargo build --locked --release \
+      -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher \
+      -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader \
+      -p wamn-waker -p wamn-gates -p wamn-builder \
+ && install -d /native-output \
+ && for artifact in \
+      wamn-host wamn-node-host wamn-ctl wamn-dispatcher wamn-run-worker \
+      wamn-scenario-worker wamn-cdc-reader wamn-waker wamn-gates wamn-builder; do \
+      install -m 0755 "target/release/${artifact}" "/native-output/${artifact}"; \
+    done
 
 # ---- locked component outputs shared by every embedding image --------------
-# Keep the guest workspace separate from the native workspace while reusing the
-# native builder's repository sources for the guests' path dependencies.
-FROM builder AS component-builder
+# Keep the guest workspace and lockfile separate from the native recipe. Root
+# Cargo.toml plus crates/poc are present only because guest path dependencies
+# inherit root workspace fields and use those source trees.
+FROM chef AS component-planner
+COPY Cargo.toml ./
+COPY crates ./crates
+COPY poc ./poc
+COPY components ./components
+WORKDIR /build/components
+RUN cargo chef prepare --recipe-path component-recipe.json
+
+FROM chef AS component-toolchain
 RUN rustup target add --toolchain 1.97.0 wasm32-wasip2 \
  && apt-get update && apt-get install -y --no-install-recommends nodejs npm \
  && rm -rf /var/lib/apt/lists/* \
@@ -53,17 +110,38 @@ ENV PATH="/opt/jco/node_modules/.bin:${PATH}"
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
     cargo +1.97.0 install wac-cli --version 0.10.1 --locked
-COPY components/Cargo.toml components/Cargo.lock ./components/
-COPY components/ingress ./components/ingress
-COPY components/fixtures ./components/fixtures
-COPY components/execution ./components/execution
-COPY components/nodes ./components/nodes
-COPY components/samples ./components/samples
+
+FROM component-toolchain AS component-cook
+COPY .cargo/config.toml /build/.cargo/config.toml
+COPY --from=component-planner /build/Cargo.toml /build/Cargo.toml
+COPY --from=component-planner /build/crates /build/crates
+COPY --from=component-planner /build/poc /build/poc
 WORKDIR /build/components
+COPY --from=component-planner /build/components/component-recipe.json ./component-recipe.json
+RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    cargo +1.97.0 chef cook --locked --release --target wasm32-wasip2 \
+      --recipe-path component-recipe.json \
+      -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
+      -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
+      -p disposition-node -p js-sample -p node-rs -p sample-node \
+ && mv target /component-chef-target
+
+FROM component-cook AS component-builder
+COPY .cargo/config.toml /build/.cargo/config.toml
+COPY Cargo.toml /build/Cargo.toml
+COPY crates /build/crates
+COPY poc /build/poc
+COPY components /build/components
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=wamn-component-target,target=/build/components/target \
-    cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
+    --mount=type=cache,id=wamn-component-target,target=/build/components/target,sharing=locked \
+    if ! cmp -s component-recipe.json target/.wamn-chef-recipe.json; then \
+      find target -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +; \
+      cp -a /component-chef-target/. target/; \
+      cp component-recipe.json target/.wamn-chef-recipe.json; \
+    fi \
+ && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
       -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
       -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
@@ -85,14 +163,14 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
 # ---- washlet image: host + locked inline flowrunner -------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-host /usr/local/bin/wamn-host
+COPY --from=builder /native-output/wamn-host /usr/local/bin/wamn-host
 COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 
 FROM debian:trixie-slim AS node-host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-node-host /usr/local/bin/wamn-node-host
+COPY --from=builder /native-output/wamn-node-host /usr/local/bin/wamn-node-host
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-node-host"]
 
@@ -101,14 +179,14 @@ ENTRYPOINT ["/usr/local/bin/wamn-node-host"]
 # dump/restore-project-env need a pg-client-equipped environment.
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=builder /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 
 # ---- dispatcher image: the shared trigger dispatcher service (SR9) ----------
 FROM debian:trixie-slim AS dispatcher
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-dispatcher /usr/local/bin/wamn-dispatcher
+COPY --from=builder /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-dispatcher"]
 
@@ -117,7 +195,7 @@ ENTRYPOINT ["/usr/local/bin/wamn-dispatcher"]
 # source package is wamn-executor.
 FROM debian:trixie-slim AS run-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-run-worker
+COPY --from=builder /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
 # The flowrunner component is a PRODUCTION artifact, not a gate fixture: the
 # run-worker (fqg.8) instantiates it to drive claimed runs, so it travels with
 # this binary (default --flowrunner /components/flowrunner.wasm).
@@ -128,7 +206,7 @@ ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 # ---- scenario-worker image: deterministic product scenarios ----------------
 FROM debian:trixie-slim AS scenario-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+COPY --from=builder /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # Deliberately the same compiled guest as the production executor. Capability
 # composition differs in the native service artifact, not in flow semantics.
 COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
@@ -138,7 +216,7 @@ ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 # ---- cdc-reader image: the CDC event reader service (SR9) -------------------
 FROM debian:trixie-slim AS cdc-reader
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --from=builder /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
 
@@ -147,28 +225,28 @@ ENTRYPOINT ["/usr/local/bin/wamn-cdc-reader"]
 # API. The ONE component granted k8s scale privilege (deploy/platform/waker.yaml).
 FROM debian:trixie-slim AS waker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /build/target/release/wamn-waker /usr/local/bin/wamn-waker
+COPY --from=builder /native-output/wamn-waker /usr/local/bin/wamn-waker
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-waker"]
 
 # ---- gates image: the host stage + the gate suite + wasm fixtures -----------
 FROM host AS gates
-COPY --from=builder /build/target/release/wamn-gates /usr/local/bin/wamn-gates
+COPY --from=builder /native-output/wamn-gates /usr/local/bin/wamn-gates
 # Control-plane integration proofs drive the deployable ctl artifact through its
 # executable boundary; the proof packages do not link the service crate.
-COPY --from=builder /build/target/release/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=builder /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 # Stored-suite compatibility is a process adapter: the gate invokes the product
 # worker binary and never links its execution engine into wamn-gates.
-COPY --from=builder /build/target/release/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+COPY --from=builder /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # Reader-inclusive gates exercise the native CDC service through its executable
 # boundary; the gates package does not link the service crate.
-COPY --from=builder /build/target/release/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --from=builder /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
 # Dispatcher gates drive stepped and lifecycle behavior through the executable
 # boundary; the gates package does not link the deployable service crate.
-COPY --from=builder /build/target/release/wamn-dispatcher /usr/local/bin/wamn-dispatcher
+COPY --from=builder /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatcher
 # Metricbench drives run telemetry through the production executor boundary;
 # the integration proof must not duplicate the executor-owned instruments.
-COPY --from=builder /build/target/release/wamn-run-worker /usr/local/bin/wamn-run-worker
+COPY --from=builder /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
 # Bench fixtures baked in so the gate Jobs run with no volume plumbing.
 COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
 COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm
@@ -223,8 +301,8 @@ COPY deploy/gates/poc-f4-suite.json /bench/poc-f4-suite.json
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
 # ---- builder-svc image: the 5.5 node build sandbox (cargo + jco) ------------
-# FROM the cargo-ful `builder` stage (rust:1.97-trixie, WORKDIR /build, the full
-# repo source + the release target dir already cached), so `wamn-builder build`
+# FROM the cargo-ful `builder` stage (rust:1.97-trixie, WORKDIR /build, full
+# root source, and the persisted native outputs), so `wamn-builder build`
 # can run the toolchains itself at runtime: cargo (wasm32-wasip2 target added
 # here) for a Rust cdylib node, jco for a JS/TS ES module. This is the ONLY
 # cargo-ful runtime image; kept LAST so a `--target host/ctl/…` build never
@@ -251,6 +329,6 @@ COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 RUN cd components && cargo fetch
 # The compiled verb binary (built in the `builder` stage above) on PATH.
-RUN cp /build/target/release/wamn-builder /usr/local/bin/wamn-builder
+RUN cp /native-output/wamn-builder /usr/local/bin/wamn-builder
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-builder"]

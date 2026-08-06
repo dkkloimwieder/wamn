@@ -101,8 +101,8 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     expected.sort_unstable();
     assert_eq!(actual, expected, "embedded component inventory drifted");
 
-    assert!(DOCKERFILE.contains("FROM builder AS component-builder"));
-    assert!(DOCKERFILE.contains("COPY components/Cargo.toml components/Cargo.lock ./components/"));
+    assert!(DOCKERFILE.contains("FROM component-cook AS component-builder"));
+    assert!(DOCKERFILE.contains("COPY components /build/components"));
     assert!(DOCKERFILE.contains("rustup target add --toolchain 1.97.0 wasm32-wasip2"));
     assert!(DOCKERFILE.contains("cargo +1.97.0 install wac-cli --version 0.10.1 --locked"));
     assert!(DOCKERFILE.contains("cargo +1.97.0 build --locked --release --target wasm32-wasip2"));
@@ -119,4 +119,25 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             .lines()
             .any(|line| line == "/components/samples/node-ts/node-ts.wasm")
     );
+}
+
+#[test]
+fn dependency_caches_are_keyed_per_workspace() {
+    assert!(DOCKERFILE.contains("cargo install cargo-chef --version 0.1.77 --locked"));
+    assert!(DOCKERFILE.contains("COPY Cargo.toml Cargo.lock ./"));
+    assert!(
+        DOCKERFILE.contains("COPY --from=root-planner /build/root-recipe.json ./root-recipe.json")
+    );
+    assert!(DOCKERFILE.contains(
+        "COPY --from=component-planner /build/components/component-recipe.json ./component-recipe.json"
+    ));
+    assert!(DOCKERFILE.contains("COPY .cargo/config.toml /build/.cargo/config.toml"));
+    assert!(DOCKERFILE.contains("COPY --from=component-planner /build/crates /build/crates"));
+    assert!(DOCKERFILE.contains("COPY --from=component-planner /build/poc /build/poc"));
+    assert!(DOCKERFILE.contains("cargo chef cook --locked --release"));
+    assert!(DOCKERFILE.contains("cargo +1.97.0 chef cook --locked --release"));
+    assert!(DOCKERFILE.contains("id=wamn-root-target,target=/build/target"));
+    assert!(DOCKERFILE.contains("id=wamn-component-target,target=/build/components/target"));
+    assert!(DOCKERFILE.contains("install -d /native-output"));
+    assert!(!DOCKERFILE.contains("COPY --from=builder /build/target/release/"));
 }

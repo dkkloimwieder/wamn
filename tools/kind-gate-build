@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Build a gates image with a caller-owned registry cache, then load it to kind.
+
+set -euo pipefail
+
+usage() {
+  cat >&2 <<'EOF'
+usage: kind-gate-build --image REF --cache-ref REF [options]
+  --image REF       Exact wamn-gates tag to build and load
+  --cache-ref REF   Stable caller-owned OCI reference for BuildKit cache
+  --cluster NAME    kind cluster name (default: wamn)
+  --builder NAME    Explicit buildx builder (default: current builder)
+  --context DIR     Docker build context (default: repository root)
+
+The cache reference must be a tagged repository separate from wamn-gates.
+Reuse one stable cache reference across builds; do not derive it from the gate
+image tag. Registry authentication, TLS, retention, and builder configuration
+remain owned by the caller.
+EOF
+}
+
+image=
+cache_ref=
+cluster=wamn
+builder=
+context=
+
+while (($#)); do
+  case "$1" in
+    --image) image=${2-}; shift 2 ;;
+    --cache-ref) cache_ref=${2-}; shift 2 ;;
+    --cluster) cluster=${2-}; shift 2 ;;
+    --builder) builder=${2-}; shift 2 ;;
+    --context) context=${2-}; shift 2 ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [[ -z "$image" || -z "$cache_ref" ]]; then
+  usage
+  exit 2
+fi
+if [[ ! "$image" =~ ^(docker\.io/library/)?wamn-gates:[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+  echo "--image must be an exact wamn-gates tag: $image" >&2
+  exit 2
+fi
+image_tag=${image##*:}
+case "$image_tag" in
+  dev|latest|callable-flow-base-*)
+    echo "--image must not use a protected gate tag: $image" >&2
+    exit 2
+    ;;
+esac
+if [[ "$cache_ref" =~ [[:space:]@] ]] ||
+   [[ ! "$cache_ref" =~ :[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+  echo "--cache-ref must be a tagged OCI repository reference: $cache_ref" >&2
+  exit 2
+fi
+if [[ "$cache_ref" =~ (^|/)wamn-gates: ]] || [[ "$cache_ref" == "$image" ]]; then
+  echo "--cache-ref must be separate from wamn-gates image tags: $cache_ref" >&2
+  exit 2
+fi
+if [[ ! "$cluster" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+  echo "invalid --cluster value: $cluster" >&2
+  exit 2
+fi
+if [[ -n "$builder" && ! "$builder" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+  echo "invalid --builder value: $builder" >&2
+  exit 2
+fi
+
+if [[ -z "$context" ]]; then
+  script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  context=$(cd -- "$script_dir/.." && pwd)
+fi
+if [[ ! -d "$context" || ! -f "$context/Dockerfile" ]]; then
+  echo "Docker build context has no Dockerfile: $context" >&2
+  exit 2
+fi
+context=$(cd -- "$context" && pwd)
+
+docker_executable=${DOCKER:-docker}
+kind_executable=${KIND:-kind}
+for required in "$docker_executable" "$kind_executable"; do
+  if ! command -v "$required" >/dev/null 2>&1; then
+    echo "required executable not found: $required" >&2
+    exit 2
+  fi
+done
+
+build=(
+  buildx build
+  --progress=plain
+  --load
+  --target gates
+  --tag "$image"
+  --cache-from "type=registry,ref=$cache_ref"
+  --cache-to "type=registry,ref=$cache_ref,mode=max,oci-mediatypes=true,image-manifest=true"
+)
+if [[ -n "$builder" ]]; then
+  build+=(--builder "$builder")
+fi
+build+=("$context")
+
+"$docker_executable" "${build[@]}"
+printf 'when no longer needed, retire the exact image from kind with:\n  %q --cluster %q --image %q --apply\n' \
+  "$context/tools/kind-gate-image-remove" "$cluster" "$image"
+printf 'then remove the host tag with:\n  %q image rm %q\n' \
+  "$docker_executable" "$image"
+"$kind_executable" load docker-image "$image" --name "$cluster"
+
+printf 'built and loaded %s into kind cluster %s\n' "$image" "$cluster"

@@ -1214,7 +1214,7 @@ mod tests {
         );
         let dockerfile = include_str!("../../../Dockerfile");
         assert!(dockerfile.contains(
-            "COPY --from=builder /build/target/release/wamn-run-worker \
+            "COPY --from=builder /native-output/wamn-run-worker \
              /usr/local/bin/wamn-run-worker"
         ));
     }

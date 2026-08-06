@@ -16,6 +16,36 @@ rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
+### Cached kind gate image build (wamn-9ler.2)
+
+`tools/kind-gate-build` runs the ordinary `gates` Docker target with plain
+BuildKit output, imports and exports a registry-backed layer cache, loads the
+resulting exact image tag into kind, and leaves the image available for its
+gate run. The caller owns registry authentication, TLS, retention, and buildx
+builder configuration:
+
+```bash
+./tools/kind-gate-build \
+  --image wamn-gates:<exact-issue-tag> \
+  --cache-ref <registry>/wamn/build-cache:gates \
+  --builder <buildx-builder>
+```
+
+Use one stable mutable cache reference across builds. It is deliberately
+separate from the gate image tag: source-only edits keep the root and component
+`cargo chef cook` steps cached, while `Cargo.lock` and `components/Cargo.lock`
+key independent dependency recipes. The cache reference is never loaded into
+kind and must not be made unique per issue.
+
+After the Job no longer references its exact image, retire that image from the
+kind nodes and the host without deleting the shared dependency cache:
+
+```bash
+./tools/kind-gate-image-remove \
+  --image wamn-gates:<exact-issue-tag> --apply
+docker image rm wamn-gates:<exact-issue-tag>
+```
+
 ### Canonical shipped-decision gate registry (PLAN-0.2 / wamn-2jdm.2)
 
 The registry derives commands and execution inputs from every live gate Job and
