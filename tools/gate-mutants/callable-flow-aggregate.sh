@@ -71,7 +71,7 @@ load_mutation() {
       MANIFESTS=(deploy/gates/callable-flow-f0-job.yaml deploy/gates/callable-flow-wave1-job.yaml)
       JOB_NAMES=(callable-flow-f0 callable-flow-wave1)
       CONTAINERS=(proof proof)
-      LOG_MARKERS=("F0 node set drift" "F0 node set drift")
+      LOG_MARKERS=("no-response-node" "no-response-node")
       IMAGE_TAGS=(f0 wave1)
       ;;
     f1-direct-node-contract-wave1)
@@ -107,7 +107,7 @@ load_mutation() {
       MANIFESTS=(deploy/gates/callable-flow-f3-job.yaml deploy/gates/callable-flow-wave1-job.yaml)
       JOB_NAMES=(callable-flow-f3 callable-flow-wave1)
       CONTAINERS=(proof proof)
-      LOG_MARKERS=("cutoff-at-48h config drift" "cutoff-at-48h config drift")
+      LOG_MARKERS=("cutoff-at-48h config offset-ms drift" "cutoff-at-48h config offset-ms drift")
       IMAGE_TAGS=(f3 wave1)
       ;;
     f4-callback-contract-wave2)
@@ -119,7 +119,7 @@ load_mutation() {
       MANIFESTS=(deploy/gates/callable-flow-f4-job.yaml deploy/gates/callable-flow-wave2-job.yaml)
       JOB_NAMES=(callable-flow-f4 callable-flow-wave2)
       CONTAINERS=(proof proof)
-      LOG_MARKERS=("F4 HTTP authority, credential, and idempotency injection belong to its connection" "F4 HTTP authority, credential, and idempotency injection belong to its connection")
+      LOG_MARKERS=("unknown-connection-requirement" "unknown-connection-requirement")
       IMAGE_TAGS=(f4 wave2)
       ;;
     wave1-source-image-drift)
