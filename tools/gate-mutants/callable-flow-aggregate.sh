@@ -159,7 +159,7 @@ load_mutation() {
       ;;
     f3proof-wrong-cutoff)
       TARGET="deploy/gates/f3proof-job.yaml"
-      EXPECTED_SHA="539e5c54fffccb975421de6108d5e0f160e243f46e7b3ef3302fd847bc41642e"
+      EXPECTED_SHA="528aedd2fb7acaf4a7933dcd3ba53f5a5b38835554cbd546228de81a7d26dffc"
       NEEDLE='"--offset-ms=-60000"'
       REPLACEMENT='"--offset-ms=-1"'
       GATE="f3proof"
@@ -354,6 +354,20 @@ run_jobs() (
     rendered="$work/job-$index.yaml"
     verdict="$work/verdict-$index.json"
     render_manifest "$manifest" "$rendered" "$tag" "$image_id"
+    if [[ "$expectation" == expected-negative && "$id" == f3proof-wrong-cutoff ]]; then
+      # The green and mutant F3 definitions are distinct immutable artifacts;
+      # give the deliberate break its own release version so the deployed proof
+      # reaches the wrong-cutoff assertion rather than a publication conflict.
+      RENDERED="$rendered" python3 -c '
+import os, pathlib, sys
+p = pathlib.Path(os.environ["RENDERED"])
+s = p.read_text()
+needle = "\"--flow-version\", \"2\""
+if s.count(needle) != 1:
+    sys.exit("rendered f3proof manifest must contain flow version 2 exactly once")
+p.write_text(s.replace(needle, "\"--flow-version\", \"3\"", 1))
+'
+    fi
     if [[ "$expectation" == positive ]]; then
       spec="$(jq -cn --arg name "${JOB_NAMES[$index]}" --arg container "${CONTAINERS[$index]}" --arg image "$tag" --arg log "${LOG_MARKERS[$index]}" '{name:$name,container:$container,expectation:"positive",exit_code:0,image:$image,log_contains:$log}')"
       if [[ "$manifest" == *callable-flow-wave2-job.yaml ]]; then

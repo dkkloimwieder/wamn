@@ -87,7 +87,7 @@ spec:
               "--tenant", "demo-tenant",
               "--deployment", "runner",
               "--echo-host", "serve-echo:8091",
-              "--flow-version", "1",
+              "--flow-version", "2",
               "--offset-ms=-60000",
               "--setup",
               "--teardown",
