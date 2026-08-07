@@ -3452,6 +3452,27 @@ WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5471/wamn \
 docker stop wamn-platform-identity-pg
 ```
 
+### [5 / wamn-ctc8.7] personal access tokens and headless login
+
+This gate covers `identity.pats`, the opaque token format, digest-at-rest
+issuance, the `login_local` flow S0 uses headlessly, and the uniform refusal of
+malformed, unknown, forged, expired, revoked, and disabled-principal tokens. It
+also covers the state-ownership row for the new table. It does not cover HTTP
+routes, middleware, audit wiring, cookies, or OIDC — those ride wamn-ctc8.8.
+
+```bash
+cargo test --locked -p wamn-platform-identity
+cargo clippy --locked -p wamn-platform-identity --all-targets -- -D warnings
+cargo fmt -p wamn-platform-identity --check
+cargo test --locked -p wamn-proof-conformance --test state_ownership
+# Live gate of record (throwaway postgres:18 only):
+docker run -d --rm --name wamn-platform-identity-pg -p 5471:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5471/wamn \
+  cargo test --locked -p wamn-platform-identity --test pat_live -- --nocapture
+docker stop wamn-platform-identity-pg
+```
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md

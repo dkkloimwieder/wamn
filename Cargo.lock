@@ -4634,7 +4634,10 @@ name = "wamn-platform-identity"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "hex",
  "password-hash",
+ "sha2 0.11.0",
+ "subtle",
  "tokio",
  "tokio-postgres",
 ]

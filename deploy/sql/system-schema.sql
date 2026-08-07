@@ -69,7 +69,8 @@
 -- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
 -- `provisioning` = the saga state that orchestrates it (10.1's
 -- exactly-once/resumable steps); `identity` = first-party platform principals,
--- local human credential hashes, and project-role assignments (wamn-ctc8.6).
+-- local human credential hashes, project-role assignments (wamn-ctc8.6), and
+-- personal-access-token digests (wamn-ctc8.7).
 -- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
 -- ---------------------------------------------------------------------------
@@ -244,6 +245,39 @@ CREATE TABLE identity.project_roles (
     CONSTRAINT project_roles_role_check
         CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
+
+-- ---------------------------------------------------------------------------
+-- Personal access tokens (wamn-ctc8.7) — the opaque bearer presenter both
+-- humans and services use headlessly. INVARIANT: no token material is stored.
+-- `token_prefix` is the non-secret lookup half (hex of the token's random
+-- lookup bytes, UNIQUE so verification is a single index probe);
+-- `token_hash` is the hex SHA-256 of the WHOLE token string, which is high-
+-- entropy random material, so a plain digest — not Argon2 — is the correct
+-- rest form. Expiry is mandatory (no immortal tokens) and revocation is a
+-- one-way stamp. The principal FK is deliberately RESTRICT, not CASCADE: a
+-- token row is audit evidence that must outlive careless principal deletes.
+-- ---------------------------------------------------------------------------
+CREATE TABLE identity.pats (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    principal_id uuid NOT NULL
+        REFERENCES identity.principals (id) ON DELETE RESTRICT,
+    token_prefix text NOT NULL UNIQUE,
+    token_hash   text NOT NULL,
+    label        text NOT NULL,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    expires_at   timestamptz NOT NULL,
+    revoked_at   timestamptz,
+    CONSTRAINT pats_token_prefix_check
+        CHECK (token_prefix ~ '^[0-9a-f]{16}$'),
+    CONSTRAINT pats_token_hash_check
+        CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT pats_label_check
+        CHECK (btrim(label) <> '' AND char_length(label) <= 200),
+    CONSTRAINT pats_expiry_check
+        CHECK (expires_at > created_at)
+);
+
+CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)

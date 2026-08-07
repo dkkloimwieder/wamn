@@ -7,7 +7,10 @@ license.workspace = true
 
 [dependencies]
 argon2 = { workspace = true }
+hex = { workspace = true }
 password-hash = { workspace = true }
+sha2 = { workspace = true }
+subtle = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 tokio-postgres = { workspace = true }
 

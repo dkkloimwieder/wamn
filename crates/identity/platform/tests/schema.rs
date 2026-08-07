@@ -20,7 +20,7 @@ fn code_only(sql: &str) -> String {
 fn system_schema_contains_the_platform_identity_core() {
     let sql = code_only(&system_schema_sql());
     assert!(sql.contains("CREATE SCHEMA identity AUTHORIZATION wamn_system"));
-    for table in ["principals", "local_credentials", "project_roles"] {
+    for table in ["principals", "local_credentials", "project_roles", "pats"] {
         assert!(
             sql.contains(&format!("CREATE TABLE identity.{table}")),
             "missing identity.{table}"
@@ -40,6 +40,19 @@ fn system_schema_contains_the_platform_identity_core() {
 }
 
 #[test]
+fn system_schema_stores_personal_access_tokens_as_expirable_digests() {
+    let sql = code_only(&system_schema_sql());
+    assert!(sql.contains("token_prefix text NOT NULL UNIQUE"));
+    assert!(sql.contains("token_hash   text NOT NULL"));
+    assert!(sql.contains("expires_at   timestamptz NOT NULL"));
+    assert!(sql.contains("revoked_at   timestamptz,"));
+    assert!(sql.contains("CHECK (token_prefix ~ '^[0-9a-f]{16}$')"));
+    assert!(sql.contains("CHECK (token_hash ~ '^[0-9a-f]{64}$')"));
+    assert!(sql.contains("CHECK (expires_at > created_at)"));
+    assert!(sql.contains("REFERENCES identity.principals (id) ON DELETE RESTRICT"));
+}
+
+#[test]
 fn system_schema_has_no_plaintext_identity_credential_column() {
     let sql = code_only(&system_schema_sql());
     for forbidden in [
@@ -47,6 +60,8 @@ fn system_schema_has_no_plaintext_identity_credential_column() {
         "secret text",
         "credential text",
         "token text",
+        "token_secret",
+        "token_plaintext",
     ] {
         assert!(
             !sql.contains(forbidden),
