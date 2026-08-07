@@ -921,50 +921,35 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
     {
         return Vec::new();
     }
+    let privilege_list = privilege_list_positions(&tokens);
     let mut discoveries = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
         let (token, line) = &tokens[index];
+        if privilege_list[index] {
+            index += 1;
+            continue;
+        }
         let operation = match token.to_ascii_uppercase().as_str() {
-            "INSERT"
-                if tokens
-                    .get(index + 1)
-                    .is_some_and(|(next, _)| next.eq_ignore_ascii_case("INTO")) =>
-            {
+            "INSERT" if token_is(&tokens, index + 1, "INTO") => {
                 index += 2;
                 "insert"
             }
-            "UPDATE"
-                if !tokens[..index].iter().rev().take(3).any(|(previous, _)| {
-                    previous.eq_ignore_ascii_case("BEFORE")
-                        || previous.eq_ignore_ascii_case("AFTER")
-                }) =>
-            {
+            "UPDATE" if !names_trigger_event(&tokens, index) && !locks_rows(&tokens, index) => {
                 index += 1;
                 "update"
             }
-            "DELETE"
-                if tokens
-                    .get(index + 1)
-                    .is_some_and(|(next, _)| next.eq_ignore_ascii_case("FROM")) =>
-            {
+            "DELETE" if token_is(&tokens, index + 1, "FROM") => {
                 index += 2;
                 "delete"
             }
-            "MERGE"
-                if tokens
-                    .get(index + 1)
-                    .is_some_and(|(next, _)| next.eq_ignore_ascii_case("INTO")) =>
-            {
+            "MERGE" if token_is(&tokens, index + 1, "INTO") => {
                 index += 2;
                 "merge"
             }
             "TRUNCATE" => {
                 index += 1;
-                if tokens
-                    .get(index)
-                    .is_some_and(|(next, _)| next.eq_ignore_ascii_case("TABLE"))
-                {
+                if token_is(&tokens, index, "TABLE") {
                     index += 1;
                 }
                 "truncate"
@@ -985,6 +970,9 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
         {
             continue;
         }
+        if operation == "update" && !has_set_clause(&tokens, index) {
+            continue;
+        }
         discoveries.push(Discovery {
             path: path.to_string(),
             line: starting_line + line.saturating_sub(1),
@@ -996,14 +984,73 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
     discoveries
 }
 
+fn token_is(tokens: &[(String, usize)], index: usize, keyword: &str) -> bool {
+    tokens
+        .get(index)
+        .is_some_and(|(token, _)| token.eq_ignore_ascii_case(keyword))
+}
+
+/// `CREATE TRIGGER ... BEFORE INSERT OR UPDATE ON t` names trigger events, so
+/// the `UPDATE` there is DDL vocabulary rather than a statement.
+fn names_trigger_event(tokens: &[(String, usize)], index: usize) -> bool {
+    tokens[..index].iter().rev().take(3).any(|(previous, _)| {
+        previous.eq_ignore_ascii_case("BEFORE") || previous.eq_ignore_ascii_case("AFTER")
+    })
+}
+
+/// `SELECT ... FOR UPDATE` takes a row lock; it never writes a row itself.
+fn locks_rows(tokens: &[(String, usize)], index: usize) -> bool {
+    index > 0 && token_is(tokens, index - 1, "FOR")
+}
+
+/// Every PostgreSQL `UPDATE` statement carries a `SET` clause. Prose such as an
+/// `update flow draft` error context, which the statement-keyword prefilter
+/// cannot tell from SQL, never does. A `{...}` format placeholder counts: the
+/// scan cannot see through it, and builders such as the run-queue batch claim
+/// interpolate their whole `SET` clause that way.
+fn has_set_clause(tokens: &[(String, usize)], target_index: usize) -> bool {
+    tokens
+        .iter()
+        .skip(target_index + 1)
+        .any(|(token, _)| token.eq_ignore_ascii_case("SET") || token.starts_with('{'))
+}
+
+/// Marks each token that sits in a `GRANT`/`REVOKE` privilege list, where
+/// `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` name privileges rather than
+/// statements. The list runs from the `GRANT`/`REVOKE` keyword to the `ON` or
+/// `TO` that closes it.
+fn privilege_list_positions(tokens: &[(String, usize)]) -> Vec<bool> {
+    let mut inside = false;
+    tokens
+        .iter()
+        .map(|(token, _)| {
+            if token.eq_ignore_ascii_case("GRANT") || token.eq_ignore_ascii_case("REVOKE") {
+                inside = true;
+            } else if token.eq_ignore_ascii_case("ON") || token.eq_ignore_ascii_case("TO") {
+                inside = false;
+            }
+            inside
+        })
+        .collect()
+}
+
+/// Splits SQL into word tokens. Single-quoted SQL string literals are opaque:
+/// their text is data — a `TG_OP` comparison, a hyphenated error message, a
+/// privilege name — and must never be read as a statement keyword.
 fn sql_tokens(source: &str) -> Vec<(String, usize)> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut line = 1;
     let mut token_line = 1;
+    let mut quoted = false;
     for character in source.chars() {
-        let allowed = character.is_ascii_alphanumeric()
-            || matches!(character, '_' | '.' | '"' | '{' | '}' | '<' | '>');
+        if character == '\'' {
+            quoted = !quoted;
+        }
+        let allowed = !quoted
+            && character != '\''
+            && (character.is_ascii_alphanumeric()
+                || matches!(character, '_' | '.' | '"' | '{' | '}' | '<' | '>'));
         if allowed {
             if current.is_empty() {
                 token_line = line;
@@ -1410,4 +1457,193 @@ fn trigger_event_declarations_are_not_inventoried_as_writes() {
         discoveries.is_empty(),
         "a trigger event is DDL, not an UPDATE statement: {discoveries:?}"
     );
+}
+
+/// Asserts a snippet yields exactly the one genuine write it contains. Each
+/// false-positive regression case below pairs its artefact with a real
+/// `UPDATE ... SET`, so the case fails if its own skip rule is removed rather
+/// than passing because some coarser rule happened to swallow the artefact too.
+fn assert_only_write(discoveries: &[Discovery], operation: &str, target: &str) {
+    assert_eq!(
+        discoveries.len(),
+        1,
+        "exactly the genuine write must be inventoried: {discoveries:?}"
+    );
+    assert_eq!(discoveries[0].operation, operation, "{discoveries:?}");
+    assert_eq!(discoveries[0].target, target, "{discoveries:?}");
+}
+
+#[test]
+fn plpgsql_trigger_operation_literal_is_not_an_update() {
+    let discoveries = discover_writes(
+        "crates/schema/control/src/run_plane.rs",
+        741,
+        "CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write() \
+         RETURNS trigger LANGUAGE plpgsql AS $function$ \
+         DECLARE \
+             old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END; \
+         BEGIN \
+             UPDATE wamn_run.authoring_report_reservations \
+                SET state = 'observed' \
+              WHERE report_id = old_row ->> 'report_id'; \
+             RETURN NEW; \
+         END $function$",
+    );
+    assert_only_write(
+        &discoveries,
+        "update",
+        "wamn_run.authoring_report_reservations",
+    );
+}
+
+#[test]
+fn hyphenated_error_message_literal_is_not_an_update() {
+    let discoveries = discover_writes(
+        "deploy/sql/catalog-schema.sql",
+        1,
+        "CREATE FUNCTION catalog.guard_flow_draft_update() RETURNS trigger AS $function$ \
+         BEGIN \
+             IF NEW.revision <> OLD.revision + 1 THEN \
+                 RAISE EXCEPTION USING ERRCODE = '55000', \
+                     MESSAGE = 'flow-draft-uncontrolled-update'; \
+             END IF; \
+             UPDATE catalog.flow_drafts SET edited_at = now() WHERE draft_id = NEW.draft_id; \
+             RETURN NEW; \
+         END $function$ LANGUAGE plpgsql",
+    );
+    assert_only_write(&discoveries, "update", "catalog.flow_drafts");
+}
+
+#[test]
+fn row_lock_clause_is_not_an_update() {
+    let discoveries = discover_writes(
+        "deploy/sql/flow-tests.sql",
+        1,
+        "SELECT to_jsonb(reservation) INTO reservation_command \
+           FROM wamn_run.authoring_report_reservations AS reservation \
+          WHERE reservation.state = 'pending' \
+          FOR UPDATE; \
+          IF reservation_command IS NULL THEN \
+              RAISE EXCEPTION USING ERRCODE = '55000'; \
+          END IF; \
+          UPDATE wamn_run.authoring_report_reservations \
+             SET state = 'claimed' \
+           WHERE report_id = reservation_command ->> 'report_id';",
+    );
+    assert_only_write(
+        &discoveries,
+        "update",
+        "wamn_run.authoring_report_reservations",
+    );
+}
+
+#[test]
+fn grant_privilege_list_is_not_a_write() {
+    let discoveries = discover_writes(
+        "deploy/sql/catalog-schema.sql",
+        1,
+        "GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_scenario_author; \
+         UPDATE catalog.flow_drafts SET edited_at = now() WHERE draft_id = $1;",
+    );
+    assert_only_write(&discoveries, "update", "catalog.flow_drafts");
+}
+
+#[test]
+fn quoted_privilege_name_probe_is_not_a_write() {
+    for (path, statement) in [
+        (
+            "crates/schema/control/src/run_plane.rs",
+            "SELECT namespace.nspname, relation.relname, actor.rolname, privilege.name \
+               FROM pg_catalog.pg_roles AS actor \
+               CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                                  ('DELETE'::text), ('TRUNCATE'::text)) AS privilege(name) \
+              WHERE pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name)",
+        ),
+        (
+            "services/scenario-worker/src/authoring.rs",
+            "WITH allowed_mutation(schema_name, table_name, privilege) AS ( \
+                 VALUES ('catalog', 'flow_drafts', 'INSERT'), \
+                        ('catalog', 'flow_drafts', 'UPDATE') \
+             ) SELECT true",
+        ),
+    ] {
+        let discoveries = discover_writes(path, 1, statement);
+        assert!(
+            discoveries.is_empty(),
+            "a quoted privilege name is data, not a statement: {discoveries:?}"
+        );
+    }
+}
+
+#[test]
+fn english_prose_context_is_not_an_update() {
+    let discoveries = discover_writes(
+        "services/scenario-worker/src/authoring.rs",
+        660,
+        "update flow draft",
+    );
+    assert!(
+        discoveries.is_empty(),
+        "an error context without a SET clause is prose, not an UPDATE statement: {discoveries:?}"
+    );
+}
+
+#[test]
+fn interpolated_set_clause_still_inventories_the_update() {
+    let discoveries = discover_writes(
+        "crates/execution/run-state/src/queue/sql.rs",
+        154,
+        "WITH claimed AS MATERIALIZED ( {cte} ) \
+         UPDATE run_queue AS q \
+             {set} \
+            FROM claimed \
+           WHERE q.tenant_id = claimed.tenant_id AND q.run_id = claimed.run_id",
+    );
+    assert_eq!(
+        discoveries.len(),
+        1,
+        "a `SET` clause behind a format placeholder must still be inventoried: {discoveries:?}"
+    );
+    assert_eq!(discoveries[0].target, "run_queue");
+}
+
+#[test]
+fn run_plane_effect_backfill_writes_resolve_to_schema_control() {
+    let manifest = read_manifest(&repository());
+    for (line, operation, target, id) in [
+        (
+            1606,
+            "insert",
+            "{schema}.effect_attempts",
+            "wamn_run.effect_attempts",
+        ),
+        (
+            1622,
+            "insert",
+            "{schema}.effect_attempt_dispatches",
+            "wamn_run.effect_attempt_dispatches",
+        ),
+        (
+            1632,
+            "insert",
+            "{schema}.effect_attempt_outcomes",
+            "wamn_run.effect_attempt_outcomes",
+        ),
+        (1643, "update", "{schema}.node_runs", "wamn_run.node_runs"),
+    ] {
+        let discovery = Discovery {
+            path: "crates/schema/control/src/run_plane.rs".to_string(),
+            line,
+            operation: operation.to_string(),
+            target: target.to_string(),
+        };
+        assert_eq!(
+            resolve_target(&manifest, &discovery)
+                .expect("run-plane default schema")
+                .id(),
+            id
+        );
+        validate_discovered_writers(&manifest, std::slice::from_ref(&discovery))
+            .expect("schema-control is a declared run-plane writer");
+    }
 }

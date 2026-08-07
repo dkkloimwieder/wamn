@@ -270,6 +270,10 @@
         "default_schema": "wamn_run"
       },
       {
+        "path_prefix": "crates/schema/control/src/run_plane.rs",
+        "default_schema": "wamn_run"
+      },
+      {
         "path_prefix": "services/scenario-worker/src",
         "default_schema": "wamn_run"
       },
@@ -401,7 +405,7 @@
     {"id":"wamn_run.runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher","scenario-worker","flowrunner","materializer"],"readers":["run-state","dispatcher","scenario-worker","flowrunner","materializer"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"wamn_run.invocation_admissions","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state"],"readers":["run-state"],"compatibility_horizon":"caller-outcome-retention-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"wamn_run.cron_anchor","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher"],"readers":["run-state","dispatcher"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.node_runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","flowrunner"],"readers":["run-state","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
+    {"id":"wamn_run.node_runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","schema-control","flowrunner"],"readers":["run-state","schema-control","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"wamn_run.effect_attempts","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"wamn_run.effect_attempt_dispatches","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
     {"id":"wamn_run.effect_attempt_outcomes","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
