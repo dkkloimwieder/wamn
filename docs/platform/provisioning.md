@@ -530,9 +530,9 @@ run plane previously lacked: the deploy files evolve (E4 `stream_seq`, D20
 nothing migrated schemas instantiated from older revisions — and the demo
 fixture pod is EPHEMERAL, so a restart wipes every provisioned schema.
 
-The pure decision (`wamn_schema_control::plan_run_plane`) diffs what the shell observed
-live against the record and emits the idempotent, **additive** plan, executed in
-order:
+The pure decision (`wamn_schema_control::plan_run_plane`) diffs what the shell
+observed live against the record and emits the idempotent, data-preserving
+migration plan, executed in order:
 
 - **missing tables** created from their record sections (DDL + indexes + RLS +
   policy + grants), in FK order — from-zero on a bare database included (the
@@ -540,9 +540,22 @@ order:
 - **missing record columns** added via `ALTER TABLE … ADD COLUMN <record
   definition>` (defaults backfill existing rows: `stream_seq` 0,
   `partition_policy` `'blocking'`);
+- **immutable effect authority storage** created as five append-only ledgers
+  (`effect_attempts`, dispatches, outcomes, disposition requests, and
+  dispositions), with catalog publication-provenance columns/CHECKs reconciled
+  first. If legacy `node_runs` attempt projections exist, one transactional
+  action takes a `SHARE ROW EXCLUSIVE` lock on `node_runs`, validates every
+  authority fact and attested connection against the pinned catalog graph,
+  appends explicitly marked legacy attempt/dispatch/outcome facts, advances
+  `current_effect_attempt_id`, proves no candidate was lost, and only then
+  activates the composite current-pointer FK;
 - **index drift**: a record index absent live is created; a present one whose
   live definition lost a record column (the pre-E4 `run_queue_claimable`
-  without `stream_seq`) is dropped and recreated from record;
+  without `stream_seq`) or violates a pinned disposition uniqueness/predicate
+  definition is dropped and recreated from record;
+- **constraint and guard drift**: named record CHECKs, managed lineage/time
+  FKs, helper functions, and user triggers converge to their exact canonical
+  definitions; disabled or replica-only guards are drift, not healthy state;
 - **the pre-l5i9.19 outbox era** torn down: `outbox`/`evt_shadow` tables, the
   `wamn_outbox_event` trigger (per table) and function (trigger first — the
   function drop is RESTRICT), and legacy registration `state` keys stripped;
@@ -551,19 +564,26 @@ order:
 
 | flag | meaning |
 | --- | --- |
-| `--admin-database-url` | superuser URL to the project database (`WAMN_PG_ADMIN_URL`) — CREATE/ALTER/DROP need table ownership |
+| `--admin-database-url` | administrative URL to the project database (`WAMN_PG_ADMIN_URL`). Both observation and apply require `SUPERUSER` or `BYPASSRLS`; apply also needs the relevant DDL ownership/privileges. A plain schema/table owner is refused because forced RLS can hide legacy rows. |
 | `--schema` | the project-env schema (e.g. `wamn_runner_demo`, `poc_f1`) |
 | `--dry-run` | print the plan without applying — STRICTLY read-only (no role ensure, no writes) |
 
-**Additive only:** no live column, no non-legacy table, and no data row is ever
-dropped; live columns the record does not know are printed (`[extra]`), never
-touched. Constraint drift on an EXISTING column (a legacy `fail_kind` CHECK
-missing `'runaway-budget'`) is the wamn-fqg.16 sibling class and is deliberately
-out of scope. So are the tenant floor (`publish-catalog --provision` /
-`migrate-catalog`) and flow/seed CONTENT (`publish-catalog --flow` /
-`--seed-dataset`) — after a from-zero restore, run this verb for the schemas,
-then the provisioning verbs for content (the f1 recipe:
-`deploy/poc/f1-provision-job.yaml`, then this verb for the queue tables).
+**Data preserving, not insert-only:** no live column or non-legacy table is
+dropped, and no row in a retained table is deleted; unknown live columns are
+printed (`[extra]`) and left alone.
+The deliberate row mutations are limited to column-default fills, legacy
+registration-state removal, and the locked effect-attempt cutover above
+(append immutable facts, then set the nullable current pointer). Incomplete,
+NULL-shaped, temporally inconsistent, or join-lost legacy authority aborts with
+a typed refusal and rolls the backfill action back; incompatible canonical
+CHECK/FK validation also fails loudly. The tenant floor
+(`publish-catalog --provision` / `migrate-catalog`) and flow/seed content
+(`publish-catalog --flow` / `--seed-dataset`) remain out of scope. This child
+installs and migrates storage only; activating immutable runtime readers and
+writers is the ordered follow-up (`wamn-4u7p.42.3`). After a from-zero restore,
+run this verb for the schemas, then the provisioning verbs for content (the f1
+recipe: `deploy/poc/f1-provision-job.yaml`, then this verb for the queue
+tables).
 
 One-shot Job template: `deploy/platform/run-plane-reconcile.example.yaml` (one
 per project-env — substitute `--schema` and the admin URL). Idempotent: a

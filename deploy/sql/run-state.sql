@@ -64,6 +64,96 @@ $$;
 REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
 
+-- Disposition requests and per-attempt entries are append-only even for the
+-- owning role; retention must remove them only through an explicit future
+-- audit-retention protocol, never an ad-hoc UPDATE/DELETE.
+CREATE FUNCTION wamn_run.reject_immutable_effect_fact_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'effect-disposition-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;
+
+-- This rollout child exposes no runtime writer for immutable effect facts.
+-- Only migration sessions that bypass forced RLS may append; the next runtime
+-- child must replace this refusal with a distinct host-only adapter rather
+-- than granting the guest-visible application role direct table authority.
+CREATE FUNCTION wamn_run.guard_effect_fact_append()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    current_can_migrate boolean := COALESCE(
+        (SELECT candidate.rolsuper OR candidate.rolbypassrls
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_can_migrate THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-fact-append-requires-migration-authority';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.guard_effect_fact_append() FROM PUBLIC;
+
+-- Direct app-role inserts can never manufacture disposition audit. Any future
+-- host or project adapter must cross this guard through separately authenticated,
+-- explicitly privileged platform machinery; no runner-claim bridge is provided.
+CREATE FUNCTION wamn_run.guard_effect_disposition_append()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    owner_name text := pg_catalog.pg_get_userbyid((
+        SELECT rel.relowner
+        FROM pg_catalog.pg_class AS rel
+        WHERE rel.oid = TG_RELID
+    ));
+    current_is_super boolean := COALESCE(
+        (SELECT candidate.rolsuper
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_is_super
+       AND NOT (CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-disposition-append-requires-trusted-adapter';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.guard_effect_disposition_append() FROM PUBLIC;
+
+-- Causation is fixed by the admission transaction. Normal run-state updates
+-- may advance status/checkpoints, but cannot rewrite event ancestry.
+CREATE FUNCTION wamn_run.guard_event_lineage_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id
+       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id
+       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN
+        RAISE EXCEPTION 'event causation lineage is immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the trigger payload replay
 -- seeds the entry node with; `result_json` is the last node's output on
@@ -200,21 +290,6 @@ CREATE POLICY runs_tenant ON wamn_run.runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 
--- Causation is fixed by the admission transaction. Normal run-state updates
--- may advance status/checkpoints, but cannot rewrite event ancestry.
-CREATE FUNCTION wamn_run.guard_event_lineage_immutable()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id
-       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id
-       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN
-        RAISE EXCEPTION 'event causation lineage is immutable';
-    END IF;
-    RETURN NEW;
-END
-$$;
 CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
@@ -289,8 +364,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.cron_anchor TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- node_runs: one row per node execution, the branch-aware reconstruction source.
 -- The idempotency key is (tenant_id, run_id, node_id, occurrence): `occurrence`
--- disambiguates a node the flow LOOPS through (0 = first visit); retries of ONE
--- occurrence share the row and bump `attempt` — they never create new rows.
+-- disambiguates a node the flow LOOPS through (0 = first visit). Effect
+-- redispatches append a new immutable effect_attempts row and advance only the
+-- constrained current pointer — they never copy authority facts onto this row.
 -- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
 -- (status success/error) in `seq` order, folding each as an emission on
 -- `output_port` carrying `output_json`; a `running`/`parked` row is an
@@ -301,10 +377,18 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.cron_anchor TO wamn_app;
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.node_runs (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),
+    -- Mutable occurrence projection only: points at the current row in the
+    -- append-only effect_attempts ledger. Never expose this pointer as an
+    -- immutable attempt identity without joining that ledger.
+    current_effect_attempt_id uuid,
     run_id        text NOT NULL,
     node_id       text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
     seq           int  NOT NULL,
+    -- Compatibility projection retained through the immutable-ledger
+    -- activation. New runtime authority moves to effect_attempts in the next
+    -- ordered rollout child; legacy binaries must remain valid after this
+    -- additive schema/reconcile child is published.
     attempt       int  NOT NULL DEFAULT 0,
     status        text NOT NULL
         CHECK (status IN ('started', 'parked', 'success', 'error')),
@@ -369,3 +453,364 @@ CREATE POLICY node_runs_tenant ON wamn_run.node_runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs TO wamn_app;
+
+-- ---------------------------------------------------------------------------
+-- Immutable effect-attempt ledger. `node_runs` remains the current occurrence
+-- projection; every actual dispatch generation gets its own server-minted id
+-- here. A crash before the send boundary reuses its prepared row. An authorized
+-- replay/idempotent redispatch appends a successor and advances only the
+-- node_runs pointer. Never-replay cannot mint a successor.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.effect_attempts (
+    tenant_id       text NOT NULL,
+    attempt_id      uuid NOT NULL DEFAULT gen_random_uuid(),
+    run_id          text NOT NULL,
+    node_id         text NOT NULL,
+    occurrence      int NOT NULL,
+    seq             int NOT NULL,
+    attempt_index   int NOT NULL,
+    predecessor_attempt_id uuid,
+    -- Legacy mutable rows had no predecessor identity. The migration marks
+    -- that one exception explicitly; new successor attempts must carry typed
+    -- same-occurrence lineage.
+    legacy_imported boolean NOT NULL DEFAULT false,
+    selected_recovery_class text NOT NULL,
+    recovery_class  text NOT NULL,
+    generation_fact_kind text NOT NULL,
+    connection_name text,
+    connection_generation text,
+    credential_generation text,
+    verified_author_principal text,
+    verified_publisher_principal text,
+    attempt_started_at timestamptz NOT NULL,
+    attempt_deadline_at timestamptz NOT NULL,
+    attempt_input_ref text NOT NULL,
+    attempt_key text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempts_occurrence_check CHECK (occurrence >= 0),
+    CONSTRAINT effect_attempts_seq_check CHECK (seq >= 0),
+    CONSTRAINT effect_attempts_attempt_index_check CHECK (attempt_index >= 0),
+    CONSTRAINT effect_attempts_lineage_check CHECK (
+        (legacy_imported AND predecessor_attempt_id IS NULL)
+        OR
+        (NOT legacy_imported
+         AND ((attempt_index = 0 AND predecessor_attempt_id IS NULL)
+              OR (attempt_index > 0 AND predecessor_attempt_id IS NOT NULL)))
+    ),
+    CONSTRAINT effect_attempts_recovery_class_check
+        CHECK (selected_recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')
+               AND recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')
+               AND selected_recovery_class = recovery_class),
+    CONSTRAINT effect_attempts_generation_fact_check
+        CHECK (generation_fact_kind IN ('not-required', 'attested')),
+    CONSTRAINT effect_attempts_generation_values_check CHECK (
+        (generation_fact_kind = 'not-required'
+         AND connection_name IS NULL
+         AND connection_generation IS NULL AND credential_generation IS NULL)
+        OR
+        (generation_fact_kind = 'attested'
+         AND connection_name IS NOT NULL AND connection_name <> ''
+         AND connection_generation IS NOT NULL AND connection_generation <> ''
+         AND credential_generation IS NOT NULL AND credential_generation <> '')
+    ),
+    CONSTRAINT effect_attempts_author_check
+        CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''),
+    CONSTRAINT effect_attempts_publisher_check
+        CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''),
+    CONSTRAINT effect_attempts_deadline_check
+        CHECK (attempt_started_at <= attempt_deadline_at),
+    CONSTRAINT effect_attempts_input_ref_check
+        CHECK (attempt_input_ref <> ''),
+    CONSTRAINT effect_attempts_key_check
+        CHECK (recovery_class <> 'idempotent-with-key'
+               OR (attempt_key IS NOT NULL AND attempt_key <> '')),
+    PRIMARY KEY (tenant_id, attempt_id),
+    UNIQUE (tenant_id, attempt_id, run_id, node_id, occurrence),
+    UNIQUE (tenant_id, attempt_id, attempt_started_at),
+    UNIQUE (tenant_id, run_id, node_id, occurrence, attempt_index),
+    CONSTRAINT effect_attempts_predecessor_fk
+        FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence)
+        REFERENCES wamn_run.effect_attempts
+            (tenant_id, attempt_id, run_id, node_id, occurrence)
+);
+-- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
+-- audit ledger with an independent retention lifetime. Pruning terminal run
+-- history cascades through the mutable node projection but must leave these
+-- immutable facts intact. The current projection pointer below is constrained
+-- in the opposite direction so it cannot name a nonexistent/cross-tenant fact.
+CREATE INDEX effect_attempts_occurrence
+    ON wamn_run.effect_attempts
+       (tenant_id, run_id, node_id, occurrence, attempt_index);
+CREATE INDEX effect_attempts_bulk_scope
+    ON wamn_run.effect_attempts
+       (tenant_id, connection_name, connection_generation, attempt_started_at);
+ALTER TABLE wamn_run.effect_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY;
+CREATE POLICY effect_attempts_tenant ON wamn_run.effect_attempts
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
+REVOKE INSERT ON wamn_run.effect_attempts FROM wamn_app;
+CREATE TRIGGER effect_attempts_insert_guard
+BEFORE INSERT ON wamn_run.effect_attempts
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+CREATE TRIGGER effect_attempts_update_immutable
+BEFORE UPDATE ON wamn_run.effect_attempts
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+CREATE TRIGGER effect_attempts_delete_immutable
+BEFORE DELETE ON wamn_run.effect_attempts
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+
+CREATE TABLE wamn_run.effect_attempt_dispatches (
+    tenant_id       text NOT NULL,
+    attempt_id      uuid NOT NULL,
+    attempt_started_at timestamptz NOT NULL,
+    dispatched_at   timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT effect_attempt_dispatches_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempt_dispatches_time_check
+        CHECK (attempt_started_at <= dispatched_at),
+    PRIMARY KEY (tenant_id, attempt_id),
+    UNIQUE (tenant_id, attempt_id, dispatched_at),
+    CONSTRAINT effect_attempt_dispatches_attempt_fk
+        FOREIGN KEY (tenant_id, attempt_id, attempt_started_at)
+        REFERENCES wamn_run.effect_attempts
+            (tenant_id, attempt_id, attempt_started_at)
+);
+ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
+CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
+REVOKE INSERT ON wamn_run.effect_attempt_dispatches FROM wamn_app;
+CREATE TRIGGER effect_attempt_dispatches_insert_guard
+BEFORE INSERT ON wamn_run.effect_attempt_dispatches
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+CREATE TRIGGER effect_attempt_dispatches_update_immutable
+BEFORE UPDATE ON wamn_run.effect_attempt_dispatches
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+CREATE TRIGGER effect_attempt_dispatches_delete_immutable
+BEFORE DELETE ON wamn_run.effect_attempt_dispatches
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+
+CREATE TABLE wamn_run.effect_attempt_outcomes (
+    tenant_id       text NOT NULL,
+    attempt_id      uuid NOT NULL,
+    dispatched_at   timestamptz NOT NULL,
+    outcome_status  text NOT NULL,
+    recorded_at     timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT effect_attempt_outcomes_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempt_outcomes_status_check
+        CHECK (outcome_status IN ('success', 'error')),
+    CONSTRAINT effect_attempt_outcomes_time_check
+        CHECK (dispatched_at <= recorded_at),
+    PRIMARY KEY (tenant_id, attempt_id),
+    CONSTRAINT effect_attempt_outcomes_dispatch_fk
+        FOREIGN KEY (tenant_id, attempt_id, dispatched_at)
+        REFERENCES wamn_run.effect_attempt_dispatches
+            (tenant_id, attempt_id, dispatched_at)
+);
+ALTER TABLE wamn_run.effect_attempt_outcomes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
+CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;
+REVOKE INSERT ON wamn_run.effect_attempt_outcomes FROM wamn_app;
+CREATE TRIGGER effect_attempt_outcomes_insert_guard
+BEFORE INSERT ON wamn_run.effect_attempt_outcomes
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+CREATE TRIGGER effect_attempt_outcomes_update_immutable
+BEFORE UPDATE ON wamn_run.effect_attempt_outcomes
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+CREATE TRIGGER effect_attempt_outcomes_delete_immutable
+BEFORE DELETE ON wamn_run.effect_attempt_outcomes
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+
+-- ---------------------------------------------------------------------------
+-- Effect disposition: immutable request envelope + exact materialized attempt
+-- set. A resolution wakes the run; the runner consumes the complete asserted
+-- outcome through the normal atomic completion/checkpoint transition, leaving
+-- this audit ledger immutable. `selection_kind = bulk` records the required
+-- stable query bounds; the per-attempt rows are the set actually authorized.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.effect_disposition_requests (
+    tenant_id       text NOT NULL,
+    request_id      uuid NOT NULL DEFAULT gen_random_uuid(),
+    action          text NOT NULL,
+    selection_kind  text NOT NULL,
+    principal       text NOT NULL,
+    effective_role  text NOT NULL,
+    basis           text,
+    evidence_ref    text,
+    correlation_id  text NOT NULL,
+    break_glass_reason text,
+    connection_name text,
+    connection_generation text,
+    flow_id         text,
+    window_start    timestamptz,
+    window_end      timestamptz,
+    -- Wall-clock audit time only. Per-attempt append order is carried by the
+    -- immutable effect_dispositions.append_ordinal identity.
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT effect_disposition_requests_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_disposition_requests_action_check
+        CHECK (action IN ('park', 'release', 'resolve')),
+    CONSTRAINT effect_disposition_requests_selection_check
+        CHECK (selection_kind IN ('single', 'bulk')),
+    CONSTRAINT effect_disposition_requests_principal_check CHECK (principal <> ''),
+    CONSTRAINT effect_disposition_requests_role_check
+        CHECK (effective_role IN ('system', 'project-deployer', 'project-admin',
+                                  'platform-admin-break-glass')),
+    CONSTRAINT effect_disposition_requests_role_action_check CHECK (
+        (effective_role = 'system'
+         AND action = 'park' AND selection_kind = 'single')
+        OR
+        (effective_role = 'project-deployer'
+         AND action IN ('park', 'release'))
+        OR effective_role IN ('project-admin', 'platform-admin-break-glass')
+    ),
+    CONSTRAINT effect_disposition_requests_basis_check
+        CHECK (basis IS NULL OR basis IN ('external-evidence',
+                                          'counterparty-confirmation',
+                                          'operator-judgment')),
+    CONSTRAINT effect_disposition_requests_correlation_check CHECK (correlation_id <> ''),
+    CONSTRAINT effect_disposition_requests_resolution_audit_check CHECK (
+        (action = 'resolve' AND basis IS NOT NULL
+                            AND evidence_ref IS NOT NULL AND evidence_ref <> '')
+        OR (action <> 'resolve' AND basis IS NULL)
+    ),
+    CONSTRAINT effect_disposition_requests_break_glass_check CHECK (
+        (effective_role = 'platform-admin-break-glass'
+         AND break_glass_reason IS NOT NULL AND break_glass_reason <> '')
+        OR (effective_role <> 'platform-admin-break-glass'
+            AND break_glass_reason IS NULL)
+    ),
+    CONSTRAINT effect_disposition_requests_bulk_bounds_check CHECK (
+        selection_kind <> 'bulk'
+        OR (connection_name IS NOT NULL AND connection_name <> ''
+            AND connection_generation IS NOT NULL AND connection_generation <> ''
+            AND window_start IS NOT NULL AND window_end IS NOT NULL
+            AND isfinite(window_start) AND isfinite(window_end)
+            AND window_start < window_end)
+    ),
+    CONSTRAINT effect_disposition_requests_single_filters_check CHECK (
+        selection_kind <> 'single'
+        OR (connection_name IS NULL AND connection_generation IS NULL
+            AND flow_id IS NULL AND window_start IS NULL AND window_end IS NULL)
+    ),
+    PRIMARY KEY (tenant_id, request_id),
+    UNIQUE (tenant_id, request_id, action)
+);
+ALTER TABLE wamn_run.effect_disposition_requests ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.effect_disposition_requests FORCE ROW LEVEL SECURITY;
+CREATE POLICY effect_disposition_requests_tenant
+    ON wamn_run.effect_disposition_requests
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON wamn_run.effect_disposition_requests TO wamn_app;
+REVOKE INSERT ON wamn_run.effect_disposition_requests FROM wamn_app;
+CREATE TRIGGER effect_disposition_requests_insert_guard
+BEFORE INSERT ON wamn_run.effect_disposition_requests
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append();
+CREATE TRIGGER effect_disposition_requests_update_immutable
+BEFORE UPDATE ON wamn_run.effect_disposition_requests
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+CREATE TRIGGER effect_disposition_requests_delete_immutable
+BEFORE DELETE ON wamn_run.effect_disposition_requests
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+
+CREATE TABLE wamn_run.effect_dispositions (
+    tenant_id       text NOT NULL,
+    request_id      uuid NOT NULL,
+    attempt_id      uuid NOT NULL,
+    -- Global immutable append order. This is the sole latest-history key;
+    -- created_at below remains an audit timestamp and is never ordering truth.
+    append_ordinal  bigint GENERATED ALWAYS AS IDENTITY,
+    -- Stable position in the request's materialized exact attempt set. Single
+    -- and automatic requests use zero; bulk orders by immutable attempt facts.
+    selection_ordinal int NOT NULL DEFAULT 0,
+    action          text NOT NULL,
+    resolution_status text,
+    success_payload jsonb,
+    success_port    text,
+    success_context jsonb,
+    failure_kind    text,
+    failure_detail  jsonb,
+    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CONSTRAINT effect_dispositions_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_dispositions_selection_ordinal_check
+        CHECK (selection_ordinal >= 0),
+    CONSTRAINT effect_dispositions_action_check
+        CHECK (action IN ('park', 'release', 'resolve')),
+    CONSTRAINT effect_dispositions_resolution_status_check
+        CHECK (resolution_status IS NULL OR resolution_status IN ('succeeded', 'failed')),
+    CONSTRAINT effect_dispositions_failure_kind_check
+        CHECK (failure_kind IS NULL OR failure_kind IN ('terminal', 'invalid-input')),
+    CONSTRAINT effect_dispositions_outcome_check CHECK ((
+        (action <> 'resolve' AND resolution_status IS NULL
+         AND success_payload IS NULL AND success_port IS NULL
+         AND success_context IS NULL AND failure_kind IS NULL
+         AND failure_detail IS NULL)
+        OR
+        (action = 'resolve' AND resolution_status = 'succeeded'
+         AND success_payload IS NOT NULL
+         AND success_port IS NOT NULL AND success_port <> ''
+         AND (success_context IS NULL OR jsonb_typeof(success_context) = 'object')
+         AND failure_kind IS NULL AND failure_detail IS NULL)
+        OR
+        (action = 'resolve' AND resolution_status = 'failed'
+         AND success_payload IS NULL AND success_port IS NULL
+         AND success_context IS NULL
+         AND failure_kind IN ('terminal', 'invalid-input')
+         AND failure_detail IS NOT NULL
+         AND jsonb_typeof(failure_detail) = 'object'
+         AND failure_detail ? 'message'
+         AND jsonb_typeof(failure_detail -> 'message') = 'string'
+         AND (NOT (failure_detail ? 'code')
+              OR failure_detail -> 'code' = 'null'::jsonb
+              OR jsonb_typeof(failure_detail -> 'code') = 'string'))
+    ) IS TRUE),
+    PRIMARY KEY (tenant_id, request_id, attempt_id),
+    FOREIGN KEY (tenant_id, request_id, action)
+        REFERENCES wamn_run.effect_disposition_requests (tenant_id, request_id, action),
+    FOREIGN KEY (tenant_id, attempt_id)
+        REFERENCES wamn_run.effect_attempts (tenant_id, attempt_id)
+);
+CREATE UNIQUE INDEX effect_dispositions_one_resolution
+    ON wamn_run.effect_dispositions (tenant_id, attempt_id)
+    WHERE action = 'resolve';
+CREATE UNIQUE INDEX effect_dispositions_request_ordinal
+    ON wamn_run.effect_dispositions (tenant_id, request_id, selection_ordinal);
+CREATE UNIQUE INDEX effect_dispositions_append_order
+    ON wamn_run.effect_dispositions (append_ordinal);
+CREATE INDEX effect_dispositions_attempt_history
+    ON wamn_run.effect_dispositions (tenant_id, attempt_id, append_ordinal DESC);
+ALTER TABLE wamn_run.effect_dispositions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.effect_dispositions FORCE ROW LEVEL SECURITY;
+CREATE POLICY effect_dispositions_tenant ON wamn_run.effect_dispositions
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON wamn_run.effect_dispositions TO wamn_app;
+REVOKE INSERT ON wamn_run.effect_dispositions FROM wamn_app;
+CREATE TRIGGER effect_dispositions_insert_guard
+BEFORE INSERT ON wamn_run.effect_dispositions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append();
+CREATE TRIGGER effect_dispositions_update_immutable
+BEFORE UPDATE ON wamn_run.effect_dispositions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+CREATE TRIGGER effect_dispositions_delete_immutable
+BEFORE DELETE ON wamn_run.effect_dispositions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+
+-- BEGIN POST-TABLE CONSTRAINTS
+-- The full occurrence identity makes a cross-run/node pointer structurally
+-- impossible. This lives after both tables so from-zero apply and additive
+-- reconciliation can establish it without weakening the append-only ledger.
+ALTER TABLE wamn_run.node_runs
+    ADD CONSTRAINT node_runs_current_effect_attempt_fk
+    FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence)
+    REFERENCES wamn_run.effect_attempts
+        (tenant_id, attempt_id, run_id, node_id, occurrence);
+-- END POST-TABLE CONSTRAINTS

@@ -29,9 +29,11 @@
 //! PostgreSQL validates each canonical CHECK against existing rows and the verb
 //! fails loudly rather than rewriting incompatible history.
 //!
-//! **Ownership:** CREATE/ALTER/DROP need table ownership — `wamn_app` cannot
-//! run them — so this connects as a **superuser** (or the schema owner), like
-//! `publish-catalog --provision` / `reconcile-replica-identity`.
+//! **Ownership:** CREATE/ALTER/DROP need table ownership, and the legacy-attempt
+//! backfill must see every tenant through forced RLS. `wamn_app` and a plain
+//! schema owner cannot safely run it, so apply requires an administrative role
+//! with `SUPERUSER` or explicit `BYPASSRLS`, like `publish-catalog --provision`
+//! / `reconcile-replica-identity`.
 //!
 //! **Scope:** strictly the `--schema` project-env schema plus the per-database
 //! `catalog` metadata schema; entity/floor tables in the schema are read for
@@ -48,17 +50,17 @@ use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
     BareSchemaName, RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
-    count_stale_registration_state_sql, plan_run_plane, select_outbox_function_present_sql,
-    select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
-    select_schema_checks_sql, select_schema_columns_sql, select_schema_indexes_sql,
-    select_schema_triggers_sql,
+    count_legacy_effect_attempt_rows_sql, count_stale_registration_state_sql, plan_run_plane,
+    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
+    select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
 #[derive(Debug, Args)]
 pub struct ReconcileRunPlaneArgs {
-    /// Superuser Postgres URL to the project database. CREATE/ALTER/DROP need
-    /// table ownership, so a superuser/schema-owner is required. Env
-    /// `WAMN_PG_ADMIN_URL`.
+    /// Administrative Postgres URL to the project database. Observation and
+    /// apply require SUPERUSER or BYPASSRLS so forced-RLS legacy rows cannot
+    /// be skipped. Env `WAMN_PG_ADMIN_URL`.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: String,
 
@@ -97,6 +99,19 @@ pub async fn reconcile(
     schema: &BareSchemaName,
     apply: bool,
 ) -> anyhow::Result<RunPlanePlan> {
+    let bypasses_forced_rls: bool = client
+        .query_one(
+            "SELECT rolsuper OR rolbypassrls FROM pg_catalog.pg_roles WHERE rolname = CURRENT_USER",
+            &[],
+        )
+        .await
+        .context("verify reconcile admin bypasses forced RLS")?
+        .get(0);
+    anyhow::ensure!(
+        bypasses_forced_rls,
+        "reconcile-run-plane requires SUPERUSER or BYPASSRLS; a plain schema owner cannot completely observe forced-RLS legacy rows"
+    );
+
     let obs = observe(client, schema).await?;
     let plan = plan_run_plane(schema, &obs);
     if apply {
@@ -142,6 +157,14 @@ async fn observe(
         obs.checks.insert((row.get(0), row.get(1)), row.get(2));
     }
     for row in client
+        .query(select_schema_foreign_keys_sql(), &[&schema.as_str()])
+        .await
+        .context("read schema foreign keys")?
+    {
+        obs.foreign_keys
+            .insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
         .query(select_schema_triggers_sql(), &[&schema.as_str()])
         .await
         .context("read schema triggers")?
@@ -168,6 +191,31 @@ async fn observe(
         .context("survey legacy outbox function")?
         .get(0);
 
+    if obs.tables.get("node_runs").is_some_and(|columns| {
+        columns.contains("current_effect_attempt_id")
+            && [
+                "attempt",
+                "selected_recovery_class",
+                "recovery_class",
+                "generation_fact_kind",
+                "connection_generation",
+                "credential_generation",
+                "attempt_started_at",
+                "attempt_dispatched_at",
+                "attempt_deadline_at",
+                "attempt_input_ref",
+                "attempt_key",
+            ]
+            .iter()
+            .all(|column| columns.contains(*column))
+    }) {
+        obs.legacy_effect_attempt_rows = client
+            .query_one(&count_legacy_effect_attempt_rows_sql(schema), &[])
+            .await
+            .context("count legacy effect-attempt rows")?
+            .get(0);
+    }
+
     obs.catalog_schema_present = client
         .query_one(catalog_schema_present_sql(), &[])
         .await
@@ -180,7 +228,17 @@ async fn observe(
             .context("read catalog tables")?
         {
             let table: String = row.get(0);
-            obs.catalog_tables.insert(table);
+            let column: String = row.get(1);
+            obs.catalog_tables.insert(table.clone());
+            obs.catalog_columns.entry(table).or_default().insert(column);
+        }
+        for row in client
+            .query(select_schema_checks_sql(), &[&"catalog"])
+            .await
+            .context("read catalog check constraints")?
+        {
+            obs.catalog_checks
+                .insert((row.get(0), row.get(1)), row.get(2));
         }
         if obs.catalog_tables.contains("event_registrations") {
             obs.stale_registration_state_rows = client

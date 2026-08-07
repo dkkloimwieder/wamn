@@ -104,6 +104,11 @@ CREATE TABLE catalog.flow_artifacts (
         CHECK (jsonb_typeof(component_digests) = 'array'),
     occurrence_recovery_json text,
     occurrence_recovery_hash text,
+    -- Nullable by design: only an authenticated application handler may
+    -- supply human-principal provenance. Operator/service publication leaves
+    -- this absent rather than attributing SESSION_USER to a human author.
+    verified_author_principal text
+        CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''),
     created_at             timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT flow_artifacts_occurrence_recovery_pair CHECK (
         (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
@@ -233,6 +238,10 @@ CREATE TABLE catalog.release_manifests (
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
     members_json    jsonb NOT NULL CHECK (jsonb_typeof(members_json) = 'array'),
+    -- Same provenance rule as flow_artifacts: never manufacture a publisher
+    -- identity from the database/service login.
+    verified_publisher_principal text
+        CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''),
     PRIMARY KEY (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
@@ -249,6 +258,25 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 CREATE TRIGGER release_manifests_delete_immutable
 BEFORE DELETE ON catalog.release_manifests
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+-- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION (wamn-4u7p.42)
+-- Additive upgrade for catalogs provisioned before verified publication
+-- provenance existed. Existing rows deliberately remain NULL/unverified.
+ALTER TABLE catalog.flow_artifacts
+    ADD COLUMN IF NOT EXISTS verified_author_principal text;
+ALTER TABLE catalog.release_manifests
+    ADD COLUMN IF NOT EXISTS verified_publisher_principal text;
+ALTER TABLE catalog.flow_artifacts
+    DROP CONSTRAINT IF EXISTS flow_artifacts_verified_author_principal_check;
+ALTER TABLE catalog.flow_artifacts
+    ADD CONSTRAINT flow_artifacts_verified_author_principal_check
+    CHECK (verified_author_principal IS NULL OR verified_author_principal <> '');
+ALTER TABLE catalog.release_manifests
+    DROP CONSTRAINT IF EXISTS release_manifests_verified_publisher_principal_check;
+ALTER TABLE catalog.release_manifests
+    ADD CONSTRAINT release_manifests_verified_publisher_principal_check
+    CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> '');
+-- END DISPOSITION PROVENANCE STORAGE MIGRATION (wamn-4u7p.42)
 
 CREATE FUNCTION catalog.register_release_manifest(
     p_tenant_id text,

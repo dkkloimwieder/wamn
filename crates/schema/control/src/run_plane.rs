@@ -285,6 +285,222 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Table,
     },
     CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_tenant_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_occurrence_check",
+        definition: "CHECK (occurrence >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_seq_check",
+        definition: "CHECK (seq >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_attempt_index_check",
+        definition: "CHECK (attempt_index >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_lineage_check",
+        definition: "CHECK (legacy_imported AND predecessor_attempt_id IS NULL OR NOT legacy_imported AND (attempt_index = 0 AND predecessor_attempt_id IS NULL OR attempt_index > 0 AND predecessor_attempt_id IS NOT NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_recovery_class_check",
+        definition: "CHECK ((selected_recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text])) AND (recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text])) AND selected_recovery_class = recovery_class)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_generation_fact_check",
+        definition: "CHECK (generation_fact_kind = ANY (ARRAY['not-required'::text, 'attested'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_generation_values_check",
+        definition: "CHECK (generation_fact_kind = 'not-required'::text AND connection_name IS NULL AND connection_generation IS NULL AND credential_generation IS NULL OR generation_fact_kind = 'attested'::text AND connection_name IS NOT NULL AND connection_name <> ''::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND credential_generation IS NOT NULL AND credential_generation <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_author_check",
+        definition: "CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_publisher_check",
+        definition: "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_deadline_check",
+        definition: "CHECK (attempt_started_at <= attempt_deadline_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_input_ref_check",
+        definition: "CHECK (attempt_input_ref <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_key_check",
+        definition: "CHECK (recovery_class <> 'idempotent-with-key'::text OR attempt_key IS NOT NULL AND attempt_key <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_dispatches",
+        name: "effect_attempt_dispatches_tenant_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_dispatches",
+        name: "effect_attempt_dispatches_time_check",
+        definition: "CHECK (attempt_started_at <= dispatched_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_outcomes",
+        name: "effect_attempt_outcomes_tenant_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_outcomes",
+        name: "effect_attempt_outcomes_status_check",
+        definition: "CHECK (outcome_status = ANY (ARRAY['success'::text, 'error'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_outcomes",
+        name: "effect_attempt_outcomes_time_check",
+        definition: "CHECK (dispatched_at <= recorded_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_tenant_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_action_check",
+        definition: "CHECK (action = ANY (ARRAY['park'::text, 'release'::text, 'resolve'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_selection_check",
+        definition: "CHECK (selection_kind = ANY (ARRAY['single'::text, 'bulk'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_principal_check",
+        definition: "CHECK (principal <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_role_check",
+        definition: "CHECK (effective_role = ANY (ARRAY['system'::text, 'project-deployer'::text, 'project-admin'::text, 'platform-admin-break-glass'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_role_action_check",
+        definition: "CHECK (effective_role = 'system'::text AND action = 'park'::text AND selection_kind = 'single'::text OR effective_role = 'project-deployer'::text AND (action = ANY (ARRAY['park'::text, 'release'::text])) OR (effective_role = ANY (ARRAY['project-admin'::text, 'platform-admin-break-glass'::text])))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_basis_check",
+        definition: "CHECK (basis IS NULL OR (basis = ANY (ARRAY['external-evidence'::text, 'counterparty-confirmation'::text, 'operator-judgment'::text])))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_correlation_check",
+        definition: "CHECK (correlation_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_resolution_audit_check",
+        definition: "CHECK (action = 'resolve'::text AND basis IS NOT NULL AND evidence_ref IS NOT NULL AND evidence_ref <> ''::text OR action <> 'resolve'::text AND basis IS NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_break_glass_check",
+        definition: "CHECK (effective_role = 'platform-admin-break-glass'::text AND break_glass_reason IS NOT NULL AND break_glass_reason <> ''::text OR effective_role <> 'platform-admin-break-glass'::text AND break_glass_reason IS NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_bulk_bounds_check",
+        definition: "CHECK (selection_kind <> 'bulk'::text OR connection_name IS NOT NULL AND connection_name <> ''::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND window_start IS NOT NULL AND window_end IS NOT NULL AND isfinite(window_start) AND isfinite(window_end) AND window_start < window_end)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_disposition_requests",
+        name: "effect_disposition_requests_single_filters_check",
+        definition: "CHECK (selection_kind <> 'single'::text OR connection_name IS NULL AND connection_generation IS NULL AND flow_id IS NULL AND window_start IS NULL AND window_end IS NULL)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_tenant_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_selection_ordinal_check",
+        definition: "CHECK (selection_ordinal >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_action_check",
+        definition: "CHECK (action = ANY (ARRAY['park'::text, 'release'::text, 'resolve'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_resolution_status_check",
+        definition: "CHECK (resolution_status IS NULL OR (resolution_status = ANY (ARRAY['succeeded'::text, 'failed'::text])))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_failure_kind_check",
+        definition: "CHECK (failure_kind IS NULL OR (failure_kind = ANY (ARRAY['terminal'::text, 'invalid-input'::text])))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_dispositions",
+        name: "effect_dispositions_outcome_check",
+        definition: "CHECK ((action <> 'resolve'::text AND resolution_status IS NULL AND success_payload IS NULL AND success_port IS NULL AND success_context IS NULL AND failure_kind IS NULL AND failure_detail IS NULL OR action = 'resolve'::text AND resolution_status = 'succeeded'::text AND success_payload IS NOT NULL AND success_port IS NOT NULL AND success_port <> ''::text AND (success_context IS NULL OR jsonb_typeof(success_context) = 'object'::text) AND failure_kind IS NULL AND failure_detail IS NULL OR action = 'resolve'::text AND resolution_status = 'failed'::text AND success_payload IS NULL AND success_port IS NULL AND success_context IS NULL AND (failure_kind = ANY (ARRAY['terminal'::text, 'invalid-input'::text])) AND failure_detail IS NOT NULL AND jsonb_typeof(failure_detail) = 'object'::text AND failure_detail ? 'message'::text AND jsonb_typeof(failure_detail -> 'message'::text) = 'string'::text AND (NOT failure_detail ? 'code'::text OR (failure_detail -> 'code'::text) = 'null'::jsonb OR jsonb_typeof(failure_detail -> 'code'::text) = 'string'::text)) IS TRUE)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
         table: "flows",
         name: "flows_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -338,6 +554,60 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
+const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-disposition-immutable';\nEND\n$function$\n";
+
+const GUARD_EFFECT_FACT_APPEND_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_fact_append()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+DECLARE
+    current_can_migrate boolean := COALESCE(
+        (SELECT candidate.rolsuper OR candidate.rolbypassrls
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_can_migrate THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-fact-append-requires-migration-authority';
+    END IF;
+    RETURN NEW;
+END
+$function$
+"#;
+
+const GUARD_EFFECT_DISPOSITION_APPEND_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SET search_path TO 'pg_catalog', 'pg_temp'
+AS $function$
+DECLARE
+    owner_name text := pg_catalog.pg_get_userbyid((
+        SELECT rel.relowner
+        FROM pg_catalog.pg_class AS rel
+        WHERE rel.oid = TG_RELID
+    ));
+    current_is_super boolean := COALESCE(
+        (SELECT candidate.rolsuper
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_is_super
+       AND NOT (CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-disposition-append-requires-trusted-adapter';
+    END IF;
+    RETURN NEW;
+END
+$function$
+"#;
+
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 
 const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
@@ -380,10 +650,439 @@ BEGIN
 END
 $$;"#;
 
+const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'effect-disposition-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;"#;
+
+const GUARD_EFFECT_FACT_APPEND_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_fact_append()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    current_can_migrate boolean := COALESCE(
+        (SELECT candidate.rolsuper OR candidate.rolbypassrls
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_can_migrate THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-fact-append-requires-migration-authority';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.guard_effect_fact_append() FROM PUBLIC;"#;
+
+const GUARD_EFFECT_DISPOSITION_APPEND_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+    owner_name text := pg_catalog.pg_get_userbyid((
+        SELECT rel.relowner
+        FROM pg_catalog.pg_class AS rel
+        WHERE rel.oid = TG_RELID
+    ));
+    current_is_super boolean := COALESCE(
+        (SELECT candidate.rolsuper
+         FROM pg_catalog.pg_roles AS candidate
+         WHERE candidate.rolname = CURRENT_USER),
+        false
+    );
+BEGIN
+    IF NOT current_is_super
+       AND NOT (CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '42501',
+            MESSAGE = 'effect-disposition-append-requires-trusted-adapter';
+    END IF;
+    RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.guard_effect_disposition_append() FROM PUBLIC;"#;
+
 const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_immutable \
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
+
+struct HelperSpec {
+    name: &'static str,
+    definition: &'static str,
+    sql: &'static str,
+}
+
+const HELPER_SPECS: &[HelperSpec] = &[
+    HelperSpec {
+        name: "lock_catalog_head",
+        definition: LOCK_CATALOG_HEAD_DEF,
+        sql: LOCK_CATALOG_HEAD_SQL,
+    },
+    HelperSpec {
+        name: "guard_event_lineage_immutable",
+        definition: GUARD_EVENT_LINEAGE_DEF,
+        sql: GUARD_EVENT_LINEAGE_SQL,
+    },
+    HelperSpec {
+        name: "reject_immutable_effect_fact_change",
+        definition: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF,
+        sql: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
+    },
+    HelperSpec {
+        name: "guard_effect_fact_append",
+        definition: GUARD_EFFECT_FACT_APPEND_DEF,
+        sql: GUARD_EFFECT_FACT_APPEND_SQL,
+    },
+    HelperSpec {
+        name: "guard_effect_disposition_append",
+        definition: GUARD_EFFECT_DISPOSITION_APPEND_DEF,
+        sql: GUARD_EFFECT_DISPOSITION_APPEND_SQL,
+    },
+];
+
+#[derive(Debug)]
+struct TriggerSpec {
+    table: String,
+    name: String,
+    definition: String,
+    sql: String,
+}
+
+fn trigger_specs() -> Vec<TriggerSpec> {
+    let mut specs = vec![TriggerSpec {
+        table: "runs".to_string(),
+        name: "runs_event_lineage_immutable".to_string(),
+        definition: RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
+        sql: RUNS_EVENT_LINEAGE_TRIGGER_SQL.to_string(),
+    }];
+    for table in [
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+        "effect_disposition_requests",
+        "effect_dispositions",
+    ] {
+        for event in ["update", "delete"] {
+            let name = format!("{table}_{event}_immutable");
+            let event_sql = event.to_ascii_uppercase();
+            specs.push(TriggerSpec {
+                table: table.to_string(),
+                name: name.clone(),
+                definition: format!(
+                    "CREATE TRIGGER {name} BEFORE {event_sql} ON wamn_run.{table} \
+                     FOR EACH ROW EXECUTE FUNCTION \
+                     wamn_run.reject_immutable_effect_fact_change()"
+                ),
+                sql: format!(
+                    "CREATE TRIGGER {name} BEFORE {event_sql} ON wamn_run.{table} \
+                     FOR EACH ROW EXECUTE FUNCTION \
+                     wamn_run.reject_immutable_effect_fact_change();"
+                ),
+            });
+        }
+    }
+    for table in [
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+    ] {
+        let name = format!("{table}_insert_guard");
+        specs.push(TriggerSpec {
+            table: table.to_string(),
+            name: name.clone(),
+            definition: format!(
+                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append()"
+            ),
+            sql: format!(
+                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();"
+            ),
+        });
+    }
+    for (table, name) in [
+        (
+            "effect_disposition_requests",
+            "effect_disposition_requests_insert_guard",
+        ),
+        ("effect_dispositions", "effect_dispositions_insert_guard"),
+    ] {
+        specs.push(TriggerSpec {
+            table: table.to_string(),
+            name: name.to_string(),
+            definition: format!(
+                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append()"
+            ),
+            sql: format!(
+                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append();"
+            ),
+        });
+    }
+    specs
+}
+
+const CURRENT_EFFECT_ATTEMPT_FK_NAME: &str = "node_runs_current_effect_attempt_fk";
+const CURRENT_EFFECT_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, run_id, node_id, occurrence)";
+const CURRENT_EFFECT_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.node_runs \
+    ADD CONSTRAINT node_runs_current_effect_attempt_fk \
+    FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence) \
+    REFERENCES wamn_run.effect_attempts \
+        (tenant_id, attempt_id, run_id, node_id, occurrence)";
+
+const PREDECESSOR_EFFECT_ATTEMPT_FK_NAME: &str = "effect_attempts_predecessor_fk";
+const PREDECESSOR_EFFECT_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, run_id, node_id, occurrence)";
+const PREDECESSOR_EFFECT_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempts \
+    ADD CONSTRAINT effect_attempts_predecessor_fk \
+    FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence) \
+    REFERENCES wamn_run.effect_attempts \
+        (tenant_id, attempt_id, run_id, node_id, occurrence)";
+const EFFECT_DISPATCH_ATTEMPT_FK_NAME: &str = "effect_attempt_dispatches_attempt_fk";
+const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, attempt_started_at)";
+const EFFECT_DISPATCH_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_dispatches \
+     ADD CONSTRAINT effect_attempt_dispatches_attempt_fk \
+     FOREIGN KEY (tenant_id, attempt_id, attempt_started_at) \
+     REFERENCES wamn_run.effect_attempts \
+         (tenant_id, attempt_id, attempt_started_at)";
+const EFFECT_OUTCOME_DISPATCH_FK_NAME: &str = "effect_attempt_outcomes_dispatch_fk";
+const EFFECT_OUTCOME_DISPATCH_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, dispatched_at) REFERENCES wamn_run.effect_attempt_dispatches(tenant_id, attempt_id, dispatched_at)";
+const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_outcomes \
+     ADD CONSTRAINT effect_attempt_outcomes_dispatch_fk \
+     FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
+     REFERENCES wamn_run.effect_attempt_dispatches \
+         (tenant_id, attempt_id, dispatched_at)";
+
+const FLOW_AUTHOR_CHECK_NAME: &str = "flow_artifacts_verified_author_principal_check";
+const FLOW_AUTHOR_CHECK_DEF: &str =
+    "CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''::text)";
+const RELEASE_PUBLISHER_CHECK_NAME: &str = "release_manifests_verified_publisher_principal_check";
+const RELEASE_PUBLISHER_CHECK_DEF: &str =
+    "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
+
+const LEGACY_EFFECT_AUTHORITY_COLUMNS: [&str; 11] = [
+    "attempt",
+    "selected_recovery_class",
+    "recovery_class",
+    "generation_fact_kind",
+    "connection_generation",
+    "credential_generation",
+    "attempt_started_at",
+    "attempt_dispatched_at",
+    "attempt_deadline_at",
+    "attempt_input_ref",
+    "attempt_key",
+];
+
+/// Count legacy node projections that still need immutable effect authority.
+/// Called only after the observer has established that every named column and
+/// `current_effect_attempt_id` exists.
+pub fn count_legacy_effect_attempt_rows_sql(schema: &BareSchemaName) -> String {
+    format!(
+        "SELECT count(*) FROM {}.node_runs \
+          WHERE current_effect_attempt_id IS NULL \
+            AND (status = 'started' OR selected_recovery_class IS NOT NULL \
+                 OR recovery_class IS NOT NULL OR generation_fact_kind IS NOT NULL \
+                 OR connection_generation IS NOT NULL OR credential_generation IS NOT NULL \
+                 OR attempt_started_at IS NOT NULL OR attempt_dispatched_at IS NOT NULL \
+                 OR attempt_deadline_at IS NOT NULL OR attempt_input_ref IS NOT NULL \
+                 OR attempt_key IS NOT NULL)",
+        schema.quoted(),
+    )
+}
+
+/// One additive, idempotent cutover from legacy mutable attempt columns to the
+/// immutable attempt/dispatch/outcome ledgers. The planner schedules it after
+/// all tables and the nullable current pointer exist, but before the composite
+/// pointer FK is installed.
+fn legacy_effect_attempt_backfill_sql(schema: &BareSchemaName) -> String {
+    let schema = schema.quoted();
+    format!(
+        r#"DO $backfill$
+DECLARE
+    backfilled_attempts bigint;
+    backfilled_dispatches bigint;
+    backfilled_outcomes bigint;
+BEGIN
+    LOCK TABLE {schema}.node_runs IN SHARE ROW EXCLUSIVE MODE;
+
+    IF EXISTS (
+        SELECT 1 FROM {schema}.node_runs AS n
+         WHERE n.current_effect_attempt_id IS NULL
+           AND (n.status = 'started' OR n.selected_recovery_class IS NOT NULL
+                OR n.recovery_class IS NOT NULL OR n.generation_fact_kind IS NOT NULL
+                OR n.connection_generation IS NOT NULL OR n.credential_generation IS NOT NULL
+                OR n.attempt_started_at IS NOT NULL OR n.attempt_dispatched_at IS NOT NULL
+                OR n.attempt_deadline_at IS NOT NULL OR n.attempt_input_ref IS NOT NULL
+                OR n.attempt_key IS NOT NULL)
+           AND (
+               n.attempt >= 0 AND n.occurrence >= 0 AND n.seq >= 0
+               AND n.selected_recovery_class IN
+                   ('replay','idempotent-with-key','never-replay')
+               AND n.recovery_class = n.selected_recovery_class
+               AND n.generation_fact_kind IN ('not-required','attested')
+               AND n.attempt_started_at IS NOT NULL
+               AND n.attempt_deadline_at IS NOT NULL
+               AND NULLIF(n.attempt_input_ref, '') IS NOT NULL
+               AND n.attempt_started_at <= n.attempt_deadline_at
+               AND (n.attempt_dispatched_at IS NULL
+                    OR n.attempt_started_at <= n.attempt_dispatched_at)
+               AND (n.status NOT IN ('success','error')
+                    OR (n.attempt_dispatched_at IS NOT NULL
+                        AND n.ended_at IS NOT NULL
+                        AND n.attempt_dispatched_at <= n.ended_at))
+               AND (n.recovery_class <> 'idempotent-with-key'
+                    OR NULLIF(n.attempt_key, '') IS NOT NULL)
+               AND ((n.generation_fact_kind = 'not-required'
+                     AND n.connection_generation IS NULL
+                     AND n.credential_generation IS NULL)
+                    OR (n.generation_fact_kind = 'attested'
+                        AND NULLIF(n.connection_generation, '') IS NOT NULL
+                        AND NULLIF(n.credential_generation, '') IS NOT NULL))
+           ) IS NOT TRUE
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'legacy-effect-attempt-incomplete';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM {schema}.node_runs AS n
+          JOIN {schema}.runs AS r
+            ON r.tenant_id = n.tenant_id AND r.run_id = n.run_id
+          LEFT JOIN catalog.flow_artifacts AS artifact
+            ON artifact.tenant_id = r.tenant_id
+           AND artifact.flow_id = r.flow_id
+           AND artifact.flow_version = r.flow_version
+           AND artifact.artifact_hash =
+               r.invocation_context #>> '{{principal,artifact-digest}}'
+          LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value)
+            ON node.value ->> 'id' = n.node_id
+         WHERE n.current_effect_attempt_id IS NULL
+           AND n.generation_fact_kind = 'attested'
+           AND NULLIF(node.value ->> 'connection', '') IS NULL
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'legacy-effect-attempt-connection-unresolved';
+    END IF;
+
+WITH candidates AS MATERIALIZED (
+    SELECT n.tenant_id, gen_random_uuid() AS attempt_id,
+           n.run_id, n.node_id, n.occurrence, n.seq,
+           n.attempt AS attempt_index,
+           n.selected_recovery_class, n.recovery_class,
+           n.generation_fact_kind,
+           CASE WHEN n.generation_fact_kind = 'attested'
+                THEN node.value ->> 'connection' END AS connection_name,
+           n.connection_generation, n.credential_generation,
+           n.attempt_started_at, n.attempt_dispatched_at,
+           n.attempt_deadline_at, n.attempt_input_ref, n.attempt_key,
+           n.status, n.ended_at
+      FROM {schema}.node_runs AS n
+      JOIN {schema}.runs AS r
+        ON r.tenant_id = n.tenant_id AND r.run_id = n.run_id
+      LEFT JOIN catalog.flow_artifacts AS artifact
+        ON artifact.tenant_id = r.tenant_id
+       AND artifact.flow_id = r.flow_id
+       AND artifact.flow_version = r.flow_version
+       AND artifact.artifact_hash =
+           r.invocation_context #>> '{{principal,artifact-digest}}'
+      LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value)
+        ON node.value ->> 'id' = n.node_id
+     WHERE n.current_effect_attempt_id IS NULL
+       AND n.selected_recovery_class IS NOT NULL
+),
+attempts AS (
+    INSERT INTO {schema}.effect_attempts
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index,
+            predecessor_attempt_id,legacy_imported,
+            selected_recovery_class,recovery_class,
+            generation_fact_kind,connection_name,connection_generation,
+            credential_generation,verified_author_principal,
+            verified_publisher_principal,attempt_started_at,attempt_deadline_at,
+            attempt_input_ref,attempt_key)
+    SELECT tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index,
+           NULL,true,selected_recovery_class,recovery_class,generation_fact_kind,
+           connection_name,connection_generation,credential_generation,
+           NULL,NULL,attempt_started_at,attempt_deadline_at,attempt_input_ref,attempt_key
+      FROM candidates
+    RETURNING tenant_id,attempt_id
+),
+dispatches AS (
+    INSERT INTO {schema}.effect_attempt_dispatches
+           (tenant_id,attempt_id,attempt_started_at,dispatched_at)
+    SELECT c.tenant_id,c.attempt_id,c.attempt_started_at,c.attempt_dispatched_at
+      FROM candidates AS c
+      JOIN attempts AS a
+        ON a.tenant_id = c.tenant_id AND a.attempt_id = c.attempt_id
+     WHERE c.attempt_dispatched_at IS NOT NULL
+    RETURNING tenant_id,attempt_id,dispatched_at
+),
+outcomes AS (
+    INSERT INTO {schema}.effect_attempt_outcomes
+           (tenant_id,attempt_id,dispatched_at,outcome_status,recorded_at)
+    SELECT c.tenant_id,c.attempt_id,d.dispatched_at,c.status,
+           c.ended_at
+      FROM candidates AS c
+      JOIN dispatches AS d
+        ON d.tenant_id = c.tenant_id AND d.attempt_id = c.attempt_id
+     WHERE c.status IN ('success','error')
+    RETURNING tenant_id,attempt_id
+),
+updated AS (
+    UPDATE {schema}.node_runs AS n
+       SET current_effect_attempt_id = c.attempt_id
+      FROM candidates AS c
+      JOIN attempts AS a
+        ON a.tenant_id = c.tenant_id AND a.attempt_id = c.attempt_id
+     WHERE n.tenant_id = c.tenant_id AND n.run_id = c.run_id
+       AND n.node_id = c.node_id AND n.occurrence = c.occurrence
+    RETURNING n.tenant_id,n.run_id
+)
+SELECT (SELECT count(*) FROM updated),
+       (SELECT count(*) FROM dispatches),
+       (SELECT count(*) FROM outcomes)
+  INTO backfilled_attempts, backfilled_dispatches, backfilled_outcomes;
+
+    IF EXISTS (
+        SELECT 1 FROM {schema}.node_runs AS n
+         WHERE n.current_effect_attempt_id IS NULL
+           AND (n.status = 'started' OR n.selected_recovery_class IS NOT NULL
+                OR n.recovery_class IS NOT NULL OR n.generation_fact_kind IS NOT NULL
+                OR n.connection_generation IS NOT NULL OR n.credential_generation IS NOT NULL
+                OR n.attempt_started_at IS NOT NULL OR n.attempt_dispatched_at IS NOT NULL
+                OR n.attempt_deadline_at IS NOT NULL OR n.attempt_input_ref IS NOT NULL
+                OR n.attempt_key IS NOT NULL)
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'legacy-effect-attempt-backfill-incomplete';
+    END IF;
+END
+$backfill$;"#,
+    )
+}
+
+fn disposition_provenance_migration_sql() -> &'static str {
+    let start = CATALOG_SCHEMA_SQL
+        .find("-- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION")
+        .expect("disposition provenance migration start");
+    let end = CATALOG_SCHEMA_SQL
+        .find("-- END DISPOSITION PROVENANCE STORAGE MIGRATION")
+        .expect("disposition provenance migration end");
+    &CATALOG_SCHEMA_SQL[start..end]
+}
 
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
 /// `runs`, which everything FKs), then the flow registry, then the 11.2 flow
@@ -509,16 +1208,27 @@ pub struct RunPlaneObservation {
     pub catalog_schema_present: bool,
     /// Tables present in the `catalog` schema (empty when the schema is absent).
     pub catalog_tables: BTreeSet<String>,
+    /// Catalog table columns used by additive cross-plane migrations.
+    pub catalog_columns: BTreeMap<String, BTreeSet<String>>,
+    /// Catalog CHECKs owned by additive cross-plane migrations.
+    pub catalog_checks: BTreeMap<(String, String), String>,
+    /// Legacy node projections still carrying effect authority without an
+    /// immutable current-attempt pointer.
+    pub legacy_effect_attempt_rows: i64,
     /// Rows in `catalog.event_registrations` still carrying the legacy `state`
     /// key (0 when the table is absent — nothing to strip).
     pub stale_registration_state_rows: i64,
     /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
     /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
     pub checks: BTreeMap<(String, String), String>,
+    /// Managed foreign keys keyed by `(table, name)`, with PostgreSQL's
+    /// canonical `pg_get_constraintdef(..., true)` definition. The planner
+    /// repairs only explicitly named record FKs; unrelated live FKs are inert.
+    pub foreign_keys: BTreeMap<(String, String), String>,
     /// Every non-internal trigger on a record table, keyed by `(table, name)`,
     /// with PostgreSQL's canonical `pg_get_triggerdef(..., true)` definition.
     pub triggers: BTreeMap<(String, String), String>,
-    /// Canonical `pg_get_functiondef` output for the two run-state helper
+    /// Canonical `pg_get_functiondef` output for the run-state helper
     /// functions, keyed by function name.
     pub helper_functions: BTreeMap<String, String>,
 }
@@ -533,8 +1243,13 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
+    /// Backfill immutable attempt/dispatch/outcome facts from the legacy
+    /// mutable node projection before readers switch authority.
+    BackfillEffectAttempts,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
     RepairConstraint,
+    /// Drop/re-add a missing or drifted named record foreign key.
+    RepairForeignKey,
     /// Remove a CHECK on a record table that is absent from the schema of record.
     DropExtraConstraint,
     /// Create or replace a missing/drifted run-state helper function.
@@ -558,6 +1273,9 @@ pub enum RunPlaneActionKind {
     EnsureCatalogSchema,
     /// Create a missing `catalog` table from its record section.
     CreateCatalogTable,
+    /// Add the nullable verified author/publisher provenance columns required
+    /// before immutable attempt writers activate.
+    EnsureCatalogProvenance,
     /// Strip the legacy `state` key from stored registrations.
     StripRegistrationState,
 }
@@ -622,7 +1340,82 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             sql: rewrite_schema(&schema_header_section(RUN_STATE_SQL, "wamn_run"), schema),
         });
     }
+    // Helpers precede table sections: missing-table sections carry triggers,
+    // and those triggers must resolve their functions at CREATE time.
+    for spec in HELPER_SPECS {
+        if obs
+            .helper_functions
+            .get(spec.name)
+            .is_none_or(|definition| {
+                normalize_observed_schema(definition, schema) != spec.definition
+            })
+        {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairHelperFunction,
+                target: spec.name.to_string(),
+                sql: rewrite_schema(spec.sql, schema),
+            });
+        }
+    }
     plan.actions.extend(creates);
+
+    // Catalog storage must converge before any legacy effect-attempt backfill:
+    // attested rows derive their portable connection name from the pinned flow
+    // graph, and the next runtime child reads the nullable provenance columns.
+    if !obs.catalog_schema_present {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::EnsureCatalogSchema,
+            target: "catalog".to_string(),
+            sql: CATALOG_SCHEMA_SQL.to_string(),
+        });
+    } else {
+        for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
+            if !obs.catalog_tables.contains(&table) {
+                plan.actions.push(RunPlaneAction {
+                    kind: RunPlaneActionKind::CreateCatalogTable,
+                    target: table.clone(),
+                    sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
+                });
+            }
+        }
+        let flow_needs_provenance = obs.catalog_tables.contains("flow_artifacts")
+            && !obs
+                .catalog_columns
+                .get("flow_artifacts")
+                .is_some_and(|columns| columns.contains("verified_author_principal"));
+        let release_needs_provenance = obs.catalog_tables.contains("release_manifests")
+            && !obs
+                .catalog_columns
+                .get("release_manifests")
+                .is_some_and(|columns| columns.contains("verified_publisher_principal"));
+        let flow_check_needs_repair = obs.catalog_tables.contains("flow_artifacts")
+            && obs
+                .catalog_checks
+                .get(&(
+                    "flow_artifacts".to_string(),
+                    FLOW_AUTHOR_CHECK_NAME.to_string(),
+                ))
+                .is_none_or(|definition| definition != FLOW_AUTHOR_CHECK_DEF);
+        let release_check_needs_repair = obs.catalog_tables.contains("release_manifests")
+            && obs
+                .catalog_checks
+                .get(&(
+                    "release_manifests".to_string(),
+                    RELEASE_PUBLISHER_CHECK_NAME.to_string(),
+                ))
+                .is_none_or(|definition| definition != RELEASE_PUBLISHER_CHECK_DEF);
+        if flow_needs_provenance
+            || release_needs_provenance
+            || flow_check_needs_repair
+            || release_check_needs_repair
+        {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::EnsureCatalogProvenance,
+                target: "catalog.disposition-provenance".to_string(),
+                sql: disposition_provenance_migration_sql().to_string(),
+            });
+        }
+    }
 
     // 2. Column drift on PRESENT record tables: add what the record has and the
     //    live table lacks (record order); surface live extras, never drop them.
@@ -714,64 +1507,143 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     }
 
-    // 2c. The functions and trigger are part of the run-state contract, not an
-    // incidental side effect of creating a missing table. CREATE OR REPLACE
-    // repairs function-body drift without dropping dependants. A missing runs
-    // table gets the guard + trigger from its canonical table section.
-    if obs
-        .helper_functions
-        .get("lock_catalog_head")
-        .is_none_or(|def| normalize_observed_schema(def, schema) != LOCK_CATALOG_HEAD_DEF)
-    {
+    // 2c. Backfill the immutable attempt boundary before the pointer FK makes
+    // it authoritative. A present legacy table with a newly added pointer is
+    // always scheduled once; subsequent observations count only rows still
+    // carrying legacy effect authority without a pointer.
+    if let Some(columns) = obs.tables.get("node_runs") {
+        let legacy_authority_present = LEGACY_EFFECT_AUTHORITY_COLUMNS
+            .iter()
+            .all(|column| columns.contains(*column));
+        let pointer_missing = !columns.contains("current_effect_attempt_id");
+        if pointer_missing || (legacy_authority_present && obs.legacy_effect_attempt_rows > 0) {
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::BackfillEffectAttempts,
+                target: "node_runs.current_effect_attempt_id".to_string(),
+                sql: legacy_effect_attempt_backfill_sql(schema),
+            });
+        }
+    }
+
+    // 2d. The composite current-attempt pointer is added only after missing
+    // tables and additive columns exist. This avoids the legacy-upgrade bug in
+    // which creating `effect_attempts` tried to reference a not-yet-added
+    // `node_runs.current_effect_attempt_id`.
+    let fk_key = (
+        "node_runs".to_string(),
+        CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
+    );
+    if obs.foreign_keys.get(&fk_key).is_none_or(|definition| {
+        normalize_observed_schema(definition, schema) != CURRENT_EFFECT_ATTEMPT_FK_DEF
+    }) {
+        let drop = if obs.foreign_keys.contains_key(&fk_key) {
+            format!(
+                "ALTER TABLE {}.{} DROP CONSTRAINT {}; ",
+                schema.quoted(),
+                quote_ident("node_runs"),
+                quote_ident(CURRENT_EFFECT_ATTEMPT_FK_NAME),
+            )
+        } else {
+            String::new()
+        };
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairHelperFunction,
-            target: "lock_catalog_head".to_string(),
-            sql: rewrite_schema(LOCK_CATALOG_HEAD_SQL, schema),
+            kind: RunPlaneActionKind::RepairForeignKey,
+            target: format!("node_runs.{CURRENT_EFFECT_ATTEMPT_FK_NAME}"),
+            sql: format!(
+                "{drop}{}",
+                rewrite_schema(CURRENT_EFFECT_ATTEMPT_FK_SQL, schema)
+            ),
         });
     }
-    if obs.tables.contains_key("runs") {
+
+    // Existing effect ledgers also converge their typed predecessor and
+    // temporal boundary FKs. A missing table's canonical CREATE section
+    // already carries these, so repair only observed live tables.
+    for (table, name, definition, sql) in [
+        (
+            "effect_attempts",
+            PREDECESSOR_EFFECT_ATTEMPT_FK_NAME,
+            PREDECESSOR_EFFECT_ATTEMPT_FK_DEF,
+            PREDECESSOR_EFFECT_ATTEMPT_FK_SQL,
+        ),
+        (
+            "effect_attempt_dispatches",
+            EFFECT_DISPATCH_ATTEMPT_FK_NAME,
+            EFFECT_DISPATCH_ATTEMPT_FK_DEF,
+            EFFECT_DISPATCH_ATTEMPT_FK_SQL,
+        ),
+        (
+            "effect_attempt_outcomes",
+            EFFECT_OUTCOME_DISPATCH_FK_NAME,
+            EFFECT_OUTCOME_DISPATCH_FK_DEF,
+            EFFECT_OUTCOME_DISPATCH_FK_SQL,
+        ),
+    ] {
+        if !obs.tables.contains_key(table) {
+            continue;
+        }
+        let key = (table.to_string(), name.to_string());
         if obs
-            .helper_functions
-            .get("guard_event_lineage_immutable")
-            .is_none_or(|def| normalize_observed_schema(def, schema) != GUARD_EVENT_LINEAGE_DEF)
+            .foreign_keys
+            .get(&key)
+            .is_some_and(|observed| normalize_observed_schema(observed, schema) == definition)
         {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairHelperFunction,
-                target: "guard_event_lineage_immutable".to_string(),
-                sql: rewrite_schema(GUARD_EVENT_LINEAGE_SQL, schema),
-            });
+            continue;
         }
-        let trigger_key = (
-            "runs".to_string(),
-            "runs_event_lineage_immutable".to_string(),
-        );
-        if obs.triggers.get(&trigger_key).is_none_or(|def| {
-            normalize_observed_schema(def, schema) != RUNS_EVENT_LINEAGE_TRIGGER_DEF
+        let drop = if obs.foreign_keys.contains_key(&key) {
+            format!(
+                "ALTER TABLE {}.{} DROP CONSTRAINT {}; ",
+                schema.quoted(),
+                quote_ident(table),
+                quote_ident(name),
+            )
+        } else {
+            String::new()
+        };
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairForeignKey,
+            target: format!("{table}.{name}"),
+            sql: format!("{drop}{}", rewrite_schema(sql, schema)),
+        });
+    }
+
+    // 2e. User triggers are explicit record objects. Missing-table sections
+    // carry their own triggers; present tables are repaired exactly, and the
+    // immutable-ledger triggers are never mistaken for extras.
+    let trigger_specs = trigger_specs();
+    let expected_triggers: BTreeSet<(&str, &str)> = trigger_specs
+        .iter()
+        .map(|spec| (spec.table.as_str(), spec.name.as_str()))
+        .collect();
+    for spec in &trigger_specs {
+        if !obs.tables.contains_key(&spec.table) {
+            continue;
+        }
+        let key = (spec.table.clone(), spec.name.clone());
+        if obs.triggers.get(&key).is_some_and(|definition| {
+            normalize_observed_schema(definition, schema) == spec.definition
         }) {
-            let drop = if obs.triggers.contains_key(&trigger_key) {
-                format!(
-                    "DROP TRIGGER {} ON {}.{}; ",
-                    quote_ident("runs_event_lineage_immutable"),
-                    schema.quoted(),
-                    quote_ident("runs"),
-                )
-            } else {
-                String::new()
-            };
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RepairTrigger,
-                target: "runs.runs_event_lineage_immutable".to_string(),
-                sql: format!(
-                    "{drop}{}",
-                    rewrite_schema(RUNS_EVENT_LINEAGE_TRIGGER_SQL, schema)
-                ),
-            });
+            continue;
         }
+        let drop = if obs.triggers.contains_key(&key) {
+            format!(
+                "DROP TRIGGER {} ON {}.{}; ",
+                quote_ident(&spec.name),
+                schema.quoted(),
+                quote_ident(&spec.table),
+            )
+        } else {
+            String::new()
+        };
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairTrigger,
+            target: format!("{}.{}", spec.table, spec.name),
+            sql: format!("{drop}{}", rewrite_schema(&spec.sql, schema)),
+        });
     }
     for (table, name) in obs.triggers.keys() {
-        let is_record_trigger = table == "runs" && name == "runs_event_lineage_immutable";
         if record_table_names().contains(table.as_str())
-            && !is_record_trigger
+            && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
         {
             plan.actions.push(RunPlaneAction {
@@ -855,26 +1727,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
-    // 5. The `catalog` metadata schema (per-database, NOT schema-rewritten):
-    //    absent → the whole record file (its CREATE SCHEMA is unguarded);
-    //    present → per-table sections for what is missing, in file order.
-    if !obs.catalog_schema_present {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::EnsureCatalogSchema,
-            target: "catalog".to_string(),
-            sql: CATALOG_SCHEMA_SQL.to_string(),
-        });
-    } else {
-        for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
-            if !obs.catalog_tables.contains(&table) {
-                plan.actions.push(RunPlaneAction {
-                    kind: RunPlaneActionKind::CreateCatalogTable,
-                    target: table.clone(),
-                    sql: table_section(CATALOG_SCHEMA_SQL, "catalog", &table),
-                });
-            }
-        }
-    }
+    // 5. Registration payload cleanup follows structural convergence.
     if obs.stale_registration_state_rows > 0 {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::StripRegistrationState,
@@ -910,10 +1763,35 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
 /// its table that the live definition does not (word-boundary token match, so
 /// `run_id` never matches inside `root_run_id`). This is deliberately the
 /// narrow, real drift class — the pre-E4 `run_queue_claimable` without
-/// `stream_seq` — not a general definition differ.
+/// `stream_seq` and the pre-hardening disposition history without
+/// `append_ordinal` — not a general definition differ.
 fn index_definition_stale(file: &str, table: &str, record_stmt: &str, live_def: &str) -> bool {
+    // Unit observations intentionally use the schema-of-record statement as
+    // the live definition. PostgreSQL's `pg_indexes` rendering is checked
+    // below; the record itself is already canonical by construction.
+    if live_def == record_stmt {
+        return false;
+    }
+
+    let live = live_def.split_whitespace().collect::<Vec<_>>().join(" ");
+    let btree_suffix = live.split_once(" USING btree ").map(|(_, suffix)| suffix);
+    let security_index_is_stale = if record_stmt.contains("effect_dispositions_append_order") {
+        !live.starts_with("CREATE UNIQUE INDEX ") || btree_suffix != Some("(append_ordinal)")
+    } else if record_stmt.contains("effect_dispositions_request_ordinal") {
+        !live.starts_with("CREATE UNIQUE INDEX ")
+            || btree_suffix != Some("(tenant_id, request_id, selection_ordinal)")
+    } else if record_stmt.contains("effect_dispositions_one_resolution") {
+        !live.starts_with("CREATE UNIQUE INDEX ")
+            || btree_suffix != Some("(tenant_id, attempt_id) WHERE (action = 'resolve'::text)")
+    } else {
+        false
+    };
+    if security_index_is_stale {
+        return true;
+    }
+
     let record_tokens = ident_tokens(record_stmt);
-    let live_tokens = ident_tokens(live_def);
+    let live_tokens = ident_tokens(&live);
     record_columns(file, "wamn_run", table)
         .iter()
         .any(|(col, _)| record_tokens.contains(col.as_str()) && !live_tokens.contains(col.as_str()))
@@ -938,7 +1816,15 @@ fn record_table_names() -> BTreeSet<String> {
 }
 
 fn normalize_observed_schema(definition: &str, schema: &BareSchemaName) -> String {
-    definition.replace(&format!("{}.", schema.as_str()), "wamn_run.")
+    definition
+        .replace(
+            &format!(
+                "SET search_path TO 'pg_catalog', '{}', 'pg_temp'",
+                schema.as_str()
+            ),
+            "SET search_path TO 'pg_catalog', 'wamn_run', 'pg_temp'",
+        )
+        .replace(&format!("{}.", schema.as_str()), "wamn_run.")
 }
 
 /// The legacy registration `state`-key strip (the l5i9.19 teardown runbook): a
@@ -980,9 +1866,24 @@ pub fn select_schema_checks_sql() -> &'static str {
      ORDER BY c.relname, con.conname"
 }
 
-/// Every non-internal trigger in `$1`: `(table, name, canonical def)`.
+/// Every named foreign key on an ordinary table in `$1`.
+pub fn select_schema_foreign_keys_sql() -> &'static str {
+    "SELECT c.relname, con.conname, pg_get_constraintdef(con.oid, true) \
+     FROM pg_constraint con \
+     JOIN pg_class c ON c.oid = con.conrelid \
+     JOIN pg_namespace n ON n.oid = c.relnamespace \
+     WHERE n.nspname = $1 AND c.relkind = 'r' AND con.contype = 'f' \
+     ORDER BY c.relname, con.conname"
+}
+
+/// Every non-internal trigger in `$1`: `(table, name, canonical def)`. A
+/// non-origin enablement mode is suffixed so disabled/replica-only guards
+/// cannot compare equal to the enabled schema of record.
 pub fn select_schema_triggers_sql() -> &'static str {
-    "SELECT c.relname, t.tgname, pg_get_triggerdef(t.oid, true) \
+    "SELECT c.relname, t.tgname, \
+            CASE WHEN t.tgenabled = 'O' THEN pg_get_triggerdef(t.oid, true) \
+                 ELSE pg_get_triggerdef(t.oid, true) || ' /* trigger-mode:' || t.tgenabled::text || ' */' \
+            END \
      FROM pg_trigger t \
      JOIN pg_class c ON c.oid = t.tgrelid \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
@@ -996,7 +1897,10 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      FROM pg_proc p \
      JOIN pg_namespace n ON n.oid = p.pronamespace \
      WHERE n.nspname = $1 \
-       AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable') \
+       AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable', \
+                         'reject_immutable_effect_fact_change', \
+                         'guard_effect_fact_append', \
+                         'guard_effect_disposition_append') \
      ORDER BY p.proname"
 }
 
@@ -1041,17 +1945,21 @@ pub fn count_stale_registration_state_sql() -> &'static str {
 /// `wamn_run_store` untouched. [`BareSchemaName`] makes the unquoted
 /// interpolation requirement explicit in the API.
 pub fn rewrite_schema(ddl: &str, schema: &BareSchemaName) -> String {
-    ddl.replace("wamn_run.", &format!("{schema}."))
-        // The guarded form FIRST: `SCHEMA wamn_run` is not a substring of it, so
-        // missing it left `CREATE SCHEMA IF NOT EXISTS wamn_run` unrewritten (the
-        // pre-wamn-1wdq bug: publish --runstate silently created a stray
-        // `wamn_run` schema on the target DB while publish pre-created the real
-        // target — caught by this verb's from-zero gate leg).
-        .replace(
-            "SCHEMA IF NOT EXISTS wamn_run",
-            &format!("SCHEMA IF NOT EXISTS {schema}"),
-        )
-        .replace("SCHEMA wamn_run", &format!("SCHEMA {schema}"))
+    ddl.replace(
+        "SET search_path = pg_catalog, wamn_run, pg_temp",
+        &format!("SET search_path = pg_catalog, {schema}, pg_temp"),
+    )
+    .replace("wamn_run.", &format!("{schema}."))
+    // The guarded form FIRST: `SCHEMA wamn_run` is not a substring of it, so
+    // missing it left `CREATE SCHEMA IF NOT EXISTS wamn_run` unrewritten (the
+    // pre-wamn-1wdq bug: publish --runstate silently created a stray
+    // `wamn_run` schema on the target DB while publish pre-created the real
+    // target — caught by this verb's from-zero gate leg).
+    .replace(
+        "SCHEMA IF NOT EXISTS wamn_run",
+        &format!("SCHEMA IF NOT EXISTS {schema}"),
+    )
+    .replace("SCHEMA wamn_run", &format!("SCHEMA {schema}"))
 }
 
 /// Every `CREATE TABLE <qualifier>.<name>` in `src`, in file order.
@@ -1111,6 +2019,9 @@ fn table_section(src: &str, qualifier: &str, table: &str) -> String {
             continue;
         }
         if t.starts_with(&any_head) {
+            break;
+        }
+        if t == "-- BEGIN POST-TABLE CONSTRAINTS" {
             break;
         }
         out.push(line);
@@ -1339,29 +2250,69 @@ CREATE INDEX event_registrations_by_entity
                 obs.indexes.insert(name, stmt);
             }
         }
-        obs.catalog_tables = record_tables(CATALOG_SCHEMA_SQL, "catalog")
-            .into_iter()
-            .collect();
+        for table in record_tables(CATALOG_SCHEMA_SQL, "catalog") {
+            let columns = record_columns(CATALOG_SCHEMA_SQL, "catalog", &table)
+                .into_iter()
+                .map(|(column, _)| column)
+                .collect();
+            obs.catalog_tables.insert(table.clone());
+            obs.catalog_columns.insert(table, columns);
+        }
+        obs.catalog_checks.insert(
+            (
+                "flow_artifacts".to_string(),
+                FLOW_AUTHOR_CHECK_NAME.to_string(),
+            ),
+            FLOW_AUTHOR_CHECK_DEF.to_string(),
+        );
+        obs.catalog_checks.insert(
+            (
+                "release_manifests".to_string(),
+                RELEASE_PUBLISHER_CHECK_NAME.to_string(),
+            ),
+            RELEASE_PUBLISHER_CHECK_DEF.to_string(),
+        );
         for spec in CHECK_SPECS {
             obs.checks.insert(
                 (spec.table.to_string(), spec.name.to_string()),
                 spec.definition.to_string(),
             );
         }
-        obs.helper_functions.insert(
-            "lock_catalog_head".to_string(),
-            LOCK_CATALOG_HEAD_DEF.to_string(),
-        );
-        obs.helper_functions.insert(
-            "guard_event_lineage_immutable".to_string(),
-            GUARD_EVENT_LINEAGE_DEF.to_string(),
-        );
-        obs.triggers.insert(
+        for spec in HELPER_SPECS {
+            obs.helper_functions
+                .insert(spec.name.to_string(), spec.definition.to_string());
+        }
+        for spec in trigger_specs() {
+            obs.triggers
+                .insert((spec.table, spec.name), spec.definition);
+        }
+        obs.foreign_keys.insert(
             (
-                "runs".to_string(),
-                "runs_event_lineage_immutable".to_string(),
+                "node_runs".to_string(),
+                CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
             ),
-            RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
+            CURRENT_EFFECT_ATTEMPT_FK_DEF.to_string(),
+        );
+        obs.foreign_keys.insert(
+            (
+                "effect_attempts".to_string(),
+                PREDECESSOR_EFFECT_ATTEMPT_FK_NAME.to_string(),
+            ),
+            PREDECESSOR_EFFECT_ATTEMPT_FK_DEF.to_string(),
+        );
+        obs.foreign_keys.insert(
+            (
+                "effect_attempt_dispatches".to_string(),
+                EFFECT_DISPATCH_ATTEMPT_FK_NAME.to_string(),
+            ),
+            EFFECT_DISPATCH_ATTEMPT_FK_DEF.to_string(),
+        );
+        obs.foreign_keys.insert(
+            (
+                "effect_attempt_outcomes".to_string(),
+                EFFECT_OUTCOME_DISPATCH_FK_NAME.to_string(),
+            ),
+            EFFECT_OUTCOME_DISPATCH_FK_DEF.to_string(),
         );
         obs
     }
@@ -1370,7 +2321,17 @@ CREATE INDEX event_registrations_by_entity
     fn record_tables_are_pinned() {
         assert_eq!(
             record_tables(RUN_STATE_SQL, "wamn_run"),
-            ["runs", "invocation_admissions", "cron_anchor", "node_runs"]
+            [
+                "runs",
+                "invocation_admissions",
+                "cron_anchor",
+                "node_runs",
+                "effect_attempts",
+                "effect_attempt_dispatches",
+                "effect_attempt_outcomes",
+                "effect_disposition_requests",
+                "effect_dispositions",
+            ]
         );
         assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
@@ -1490,6 +2451,50 @@ CREATE INDEX event_registrations_by_entity
         );
     }
 
+    #[test]
+    fn effect_disposition_append_order_and_closed_outcome_are_pinned() {
+        let columns = record_columns(RUN_STATE_SQL, "wamn_run", "effect_dispositions");
+        let append = columns
+            .iter()
+            .find(|(name, _)| name == "append_ordinal")
+            .expect("append-order column is in the schema of record");
+        assert_eq!(
+            append.1,
+            "append_ordinal bigint GENERATED ALWAYS AS IDENTITY"
+        );
+
+        let history = index_statements(RUN_STATE_SQL, "wamn_run")
+            .into_iter()
+            .find(|(name, _, _)| name == "effect_dispositions_attempt_history")
+            .expect("attempt-history index is in the schema of record")
+            .2;
+        assert!(history.contains("append_ordinal DESC"), "{history}");
+        assert!(!history.contains("created_at"), "{history}");
+        let append_order = index_statements(RUN_STATE_SQL, "wamn_run")
+            .into_iter()
+            .find(|(name, _, _)| name == "effect_dispositions_append_order")
+            .expect("global append-order uniqueness is in the schema of record")
+            .2;
+        assert!(append_order.starts_with("CREATE UNIQUE INDEX"));
+        assert!(append_order.contains("(append_ordinal)"));
+
+        let outcome = CHECK_SPECS
+            .iter()
+            .find(|spec| spec.name == "effect_dispositions_outcome_check")
+            .expect("closed outcome CHECK is observed");
+        assert!(outcome.definition.ends_with(" IS TRUE)"));
+        assert!(
+            outcome
+                .definition
+                .contains("failure_detail ? 'message'::text")
+        );
+        assert!(
+            outcome
+                .definition
+                .contains("jsonb_typeof(failure_detail -> 'message'::text) = 'string'::text")
+        );
+    }
+
     /// Sections carry the table's whole apparatus: indexes, RLS, policy, grant.
     #[test]
     fn table_sections_carry_indexes_rls_and_grants() {
@@ -1505,6 +2510,10 @@ CREATE INDEX event_registrations_by_entity
 
         let cat = table_section(CATALOG_SCHEMA_SQL, "catalog", "catalogs");
         assert!(cat.contains("catalogs_one_applied_per_env"));
+
+        let dispositions = table_section(RUN_STATE_SQL, "wamn_run", "effect_dispositions");
+        assert!(dispositions.contains("effect_dispositions_delete_immutable"));
+        assert!(!dispositions.contains("node_runs_current_effect_attempt_fk"));
 
         let hdr = header_section(RUN_STATE_SQL, "wamn_run");
         assert!(hdr.contains("CREATE SCHEMA IF NOT EXISTS wamn_run"));
@@ -1522,6 +2531,12 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(
             names,
             [
+                "effect_attempts_bulk_scope",
+                "effect_attempts_occurrence",
+                "effect_dispositions_append_order",
+                "effect_dispositions_attempt_history",
+                "effect_dispositions_one_resolution",
+                "effect_dispositions_request_ordinal",
                 "flows_active",
                 "flows_active_webhook_path",
                 "invocation_admissions_expiry",
@@ -1567,8 +2582,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            10,
-            "all ten run-plane tables at target (incl. invocation admission and test suites)"
+            15,
+            "all fifteen run-plane tables at target, including five effect ledgers"
         );
     }
 
@@ -1662,6 +2677,227 @@ CREATE INDEX event_registrations_by_entity
         assert!(!sqls.iter().any(|s| s.contains("DROP COLUMN")));
     }
 
+    #[test]
+    fn disposition_security_drift_plans_exact_additive_repairs() {
+        let mut obs = observation_at_record();
+        obs.tables
+            .get_mut("effect_dispositions")
+            .expect("record disposition table")
+            .remove("append_ordinal");
+        obs.indexes.insert(
+            "effect_dispositions_attempt_history".into(),
+            "CREATE INDEX effect_dispositions_attempt_history ON demo.effect_dispositions USING btree (tenant_id, attempt_id, created_at DESC)".into(),
+        );
+        obs.indexes.remove("effect_dispositions_append_order");
+        obs.indexes.insert(
+            "effect_dispositions_request_ordinal".into(),
+            "CREATE UNIQUE INDEX effect_dispositions_request_ordinal ON demo.effect_dispositions USING btree (tenant_id, request_id, selection_ordinal) WHERE false".into(),
+        );
+        obs.indexes.insert(
+            "effect_dispositions_one_resolution".into(),
+            "CREATE UNIQUE INDEX effect_dispositions_one_resolution ON demo.effect_dispositions USING btree (tenant_id, attempt_id) WHERE ((action = 'resolve'::text) OR true)".into(),
+        );
+        obs.checks.insert(
+            (
+                "effect_dispositions".into(),
+                "effect_dispositions_outcome_check".into(),
+            ),
+            "CHECK (true)".into(),
+        );
+        obs.helper_functions.insert(
+            "guard_effect_disposition_append".into(),
+            "CREATE OR REPLACE FUNCTION demo.guard_effect_disposition_append()".into(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::AddColumn
+                && action.target == "effect_dispositions.append_ordinal"
+                && action
+                    .sql
+                    .contains("append_ordinal bigint GENERATED ALWAYS AS IDENTITY")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RecreateIndex
+                && action.target == "effect_dispositions_attempt_history"
+                && action.sql.contains("append_ordinal DESC")
+                && !action.sql.contains("created_at DESC")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::CreateIndex
+                && action.target == "effect_dispositions_append_order"
+        }));
+        for target in [
+            "effect_dispositions_request_ordinal",
+            "effect_dispositions_one_resolution",
+        ] {
+            assert!(plan.actions.iter().any(|action| {
+                action.kind == RunPlaneActionKind::RecreateIndex && action.target == target
+            }));
+        }
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairConstraint
+                && action.target == "effect_dispositions.effect_dispositions_outcome_check"
+                && action.sql.contains("IS TRUE")
+                && action.sql.contains("failure_detail ? 'message'::text")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "guard_effect_disposition_append"
+                && action.sql.contains("SET search_path = pg_catalog, pg_temp")
+                && !action.sql.contains("pg_has_role")
+        }));
+    }
+
+    #[test]
+    fn legacy_attempt_backfill_precedes_current_pointer_fk() {
+        let mut obs = observation_at_record();
+        let node_columns = obs.tables.get_mut("node_runs").expect("record node table");
+        node_columns.remove("current_effect_attempt_id");
+        node_columns.remove("attempt_input_ref");
+        obs.foreign_keys.remove(&(
+            "node_runs".to_string(),
+            CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
+        ));
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let add_pointer = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::AddColumn
+                    && action.target == "node_runs.current_effect_attempt_id"
+            })
+            .expect("add current pointer");
+        let add_legacy_column = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::AddColumn
+                    && action.target == "node_runs.attempt_input_ref"
+            })
+            .expect("add missing legacy authority column");
+        let backfill = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::BackfillEffectAttempts)
+            .expect("legacy effect backfill");
+        let foreign_key = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
+            .expect("current pointer FK");
+        assert!(add_pointer < backfill && add_legacy_column < backfill && backfill < foreign_key);
+        let sql = &plan.actions[backfill].sql;
+        assert!(sql.contains("LOCK TABLE \"demo\".node_runs IN SHARE ROW EXCLUSIVE MODE"));
+        assert!(sql.contains("legacy-effect-attempt-incomplete"));
+        assert!(sql.contains("legacy-effect-attempt-backfill-incomplete"));
+        assert!(sql.contains(") IS NOT TRUE"), "NULL facts must refuse");
+        assert!(sql.contains("legacy-effect-attempt-connection-unresolved"));
+        assert!(sql.contains("INSERT INTO \"demo\".effect_attempts"));
+        assert!(sql.contains("INSERT INTO \"demo\".effect_attempt_dispatches"));
+        assert!(sql.contains("INSERT INTO \"demo\".effect_attempt_outcomes"));
+        assert!(sql.contains("predecessor_attempt_id,legacy_imported"));
+        assert!(sql.contains("SET current_effect_attempt_id = c.attempt_id"));
+        assert!(!sql.contains("verified_author_principal AS"));
+    }
+
+    #[test]
+    fn effect_lineage_and_temporal_fks_are_repaired_on_existing_ledgers() {
+        let mut obs = observation_at_record();
+        for (table, name) in [
+            ("effect_attempts", PREDECESSOR_EFFECT_ATTEMPT_FK_NAME),
+            ("effect_attempt_dispatches", EFFECT_DISPATCH_ATTEMPT_FK_NAME),
+            ("effect_attempt_outcomes", EFFECT_OUTCOME_DISPATCH_FK_NAME),
+        ] {
+            obs.foreign_keys
+                .remove(&(table.to_string(), name.to_string()));
+        }
+
+        let targets: BTreeSet<String> = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .filter(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
+            .map(|action| action.target)
+            .collect();
+        for target in [
+            "effect_attempts.effect_attempts_predecessor_fk",
+            "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk",
+            "effect_attempt_outcomes.effect_attempt_outcomes_dispatch_fk",
+        ] {
+            assert!(
+                targets.contains(target),
+                "missing repair for {target}: {targets:#?}"
+            );
+        }
+    }
+
+    #[test]
+    fn catalog_provenance_columns_are_reconciled_before_runtime_activation() {
+        let mut obs = observation_at_record();
+        obs.catalog_columns
+            .get_mut("flow_artifacts")
+            .expect("flow artifact columns")
+            .remove("verified_author_principal");
+        obs.catalog_columns
+            .get_mut("release_manifests")
+            .expect("release manifest columns")
+            .remove("verified_publisher_principal");
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let action = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::EnsureCatalogProvenance)
+            .expect("catalog provenance migration");
+        assert!(
+            action
+                .sql
+                .contains("ADD COLUMN IF NOT EXISTS verified_author_principal")
+        );
+        assert!(
+            action
+                .sql
+                .contains("ADD COLUMN IF NOT EXISTS verified_publisher_principal")
+        );
+    }
+
+    #[test]
+    fn catalog_provenance_check_drift_is_repaired() {
+        let mut obs = observation_at_record();
+        obs.catalog_checks.insert(
+            (
+                "flow_artifacts".to_string(),
+                FLOW_AUTHOR_CHECK_NAME.to_string(),
+            ),
+            "CHECK (true)".to_string(),
+        );
+
+        let action = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::EnsureCatalogProvenance)
+            .expect("catalog provenance CHECK repair");
+        assert!(
+            action.sql.contains(
+                "DROP CONSTRAINT IF EXISTS flow_artifacts_verified_author_principal_check"
+            )
+        );
+        assert!(
+            action
+                .sql
+                .contains("ADD CONSTRAINT flow_artifacts_verified_author_principal_check")
+        );
+    }
+
+    #[test]
+    fn legacy_attempt_observation_is_schema_scoped() {
+        let sql = count_legacy_effect_attempt_rows_sql(&schema("demo"));
+        assert!(sql.contains("FROM \"demo\".node_runs"));
+        assert!(sql.contains("current_effect_attempt_id IS NULL"));
+        assert!(sql.contains("attempt_dispatched_at IS NOT NULL"));
+    }
+
     /// From zero (an empty database): the full run-plane set in FK order behind
     /// the schema ensure, plus the whole catalog schema — the fixture-wipe
     /// restore path (manifestations 3 + 5).
@@ -1684,6 +2920,11 @@ CREATE INDEX event_registrations_by_entity
                 "invocation_admissions",
                 "cron_anchor",
                 "node_runs",
+                "effect_attempts",
+                "effect_attempt_dispatches",
+                "effect_attempt_outcomes",
+                "effect_disposition_requests",
+                "effect_dispositions",
                 "flows",
                 "test_suites",
                 "test_cases",
@@ -1700,6 +2941,7 @@ CREATE INDEX event_registrations_by_entity
         // No column/index repairs on tables being created (sections carry them).
         assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
         assert!(!kinds.contains(&RunPlaneActionKind::CreateIndex));
+        assert!(kinds.contains(&RunPlaneActionKind::RepairForeignKey));
         // The rewrite reached the sections.
         let rq = plan
             .actions
@@ -1733,8 +2975,10 @@ CREATE INDEX event_registrations_by_entity
             ("runs".to_string(), "runs_fail_kind_check".to_string()),
             "CHECK (fail_kind = 'terminal'::text)".to_string(),
         );
-        obs.checks
-            .remove(&("node_runs".to_string(), "node_runs_check".to_string()));
+        obs.checks.remove(&(
+            "effect_attempts".to_string(),
+            "effect_attempts_deadline_check".to_string(),
+        ));
 
         let plan = plan_run_plane(&schema("demo"), &obs);
         let repairs: Vec<&RunPlaneAction> = plan
@@ -1755,9 +2999,11 @@ CREATE INDEX event_registrations_by_entity
                 && action.sql.contains("effect-uncertain")
         }));
         assert!(repairs.iter().any(|action| {
-            action.target == "node_runs.node_runs_check"
+            action.target == "effect_attempts.effect_attempts_deadline_check"
                 && !action.sql.contains("DROP CONSTRAINT")
-                && action.sql.contains("attempt_input_ref IS NOT NULL")
+                && action
+                    .sql
+                    .contains("attempt_started_at <= attempt_deadline_at")
         }));
     }
 
@@ -1786,7 +3032,7 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn missing_helpers_and_trigger_are_repaired_for_present_runs() {
+    fn missing_helpers_and_record_triggers_are_repaired() {
         let mut obs = observation_at_record();
         obs.helper_functions.clear();
         obs.triggers.clear();
@@ -1796,12 +3042,55 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            2
+            5
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target == "runs.runs_event_lineage_immutable"
         }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "effect_attempts.effect_attempts_insert_guard"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target
+                    == "effect_disposition_requests.effect_disposition_requests_insert_guard"
+        }));
+        assert_eq!(
+            plan.actions
+                .iter()
+                .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
+                .count(),
+            16
+        );
+    }
+
+    #[test]
+    fn effect_fact_append_guard_is_migration_only_and_temp_safe() {
+        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("SET search_path = pg_catalog, pg_temp"));
+        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("candidate.rolsuper"));
+        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("candidate.rolbypassrls"));
+        assert!(
+            GUARD_EFFECT_FACT_APPEND_SQL
+                .contains("effect-fact-append-requires-migration-authority")
+        );
+        assert!(!GUARD_EFFECT_FACT_APPEND_SQL.contains("wamn_app"));
+    }
+
+    #[test]
+    fn disposition_append_guard_is_catalog_qualified_and_temp_safe() {
+        assert!(
+            GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("SET search_path = pg_catalog, pg_temp")
+        );
+        assert!(GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("pg_catalog.pg_class"));
+        assert!(GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("pg_catalog.pg_roles"));
+        assert!(!GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("wamn_platform_admin"));
+        assert!(!GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("pg_has_role"));
+        assert!(
+            GUARD_EFFECT_DISPOSITION_APPEND_SQL
+                .contains("CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER")
+        );
     }
 
     #[test]
@@ -1878,6 +3167,18 @@ CREATE INDEX event_registrations_by_entity
         assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("wamn_run_store"));
         assert!(rewrite_schema(RUN_STATE_SQL, &schema).contains("CREATE TABLE poc_f1.node_runs"));
         assert!(
+            rewrite_schema(RUN_STATE_SQL, &schema)
+                .contains("SET search_path = pg_catalog, pg_temp")
+        );
+        assert!(
+            !rewrite_schema(RUN_STATE_SQL, &schema)
+                .contains("SET search_path = pg_catalog, wamn_run")
+        );
+        assert!(
+            !rewrite_schema(RUN_STATE_SQL, &schema)
+                .contains("SET search_path = pg_catalog, pg_temp, poc_f1")
+        );
+        assert!(
             rewrite_schema(FLOWS_SQL, &schema)
                 .contains("CREATE UNIQUE INDEX flows_active_webhook_path ON poc_f1.flows")
         );
@@ -1894,8 +3195,15 @@ CREATE INDEX event_registrations_by_entity
         assert!(catalog_schema_present_sql().contains("'catalog'"));
         assert!(select_schema_checks_sql().contains("con.contype = 'c'"));
         assert!(select_schema_checks_sql().contains("pg_get_constraintdef"));
+        assert!(select_schema_foreign_keys_sql().contains("con.contype = 'f'"));
         assert!(select_schema_triggers_sql().contains("NOT t.tgisinternal"));
         assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
+        assert!(
+            select_run_plane_helper_functions_sql().contains("reject_immutable_effect_fact_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append")
+        );
         assert_eq!(
             strip_registration_state_sql(),
             "UPDATE catalog.event_registrations SET registration = registration - 'state' \

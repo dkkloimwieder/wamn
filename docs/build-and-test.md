@@ -3975,33 +3975,57 @@ deploy/sql schema of record (embedded `include_str!` — the same source the
 wamn-9mg8 stand-in drift guard pins) and applies the idempotent, data-preserving plan:
 create-missing tables from record sections, `ADD COLUMN` for record columns a
 present table lacks, index create/recreate (the pre-E4 claimable index), the
-exact canonical CHECK/user-trigger/helper-function apparatus, the pre-l5i9.19
-outbox-era teardown, and catalog-schema from-zero. Existing rows are never
-rewritten or deleted; PostgreSQL rejects an incompatible canonical CHECK. Pure planner
+exact canonical CHECK/FK/user-trigger/helper-function apparatus, the five
+immutable effect ledgers, catalog publication provenance, the locked legacy
+attempt/dispatch/outcome backfill plus `node_runs.current_effect_attempt_id`
+advance, the pre-l5i9.19 outbox-era teardown, and catalog-schema from-zero.
+No live column or non-legacy table is dropped, and no row in a retained table
+is deleted; the named migration steps may fill defaults, strip legacy
+registration state, append immutable facts, and update the current pointer.
+PostgreSQL rejects incompatible
+canonical constraints or incomplete legacy authority instead of guessing. Pure planner
 `wamn_schema_control::plan_run_plane` (crates/schema/control/src/run_plane.rs); thin
 shell `wamn_ctl::reconcile_run_plane` (shared `reconcile()` drives the CLI and
-the gate). `--dry-run` is strictly read-only. One-shot Job template:
+the gate). Observation and apply require a `SUPERUSER` or `BYPASSRLS` current
+role (plus DDL ownership/privileges for apply); a plain forced-RLS table owner
+is refused. `--dry-run` is strictly read-only after that visibility preflight.
+One-shot Job template:
 `deploy/platform/run-plane-reconcile.example.yaml`.
 
 ```bash
 cargo test -p wamn-schema-control run_plane   # record parse pins + planner (no-op-at-record self-consistency, drift/from-zero/queue-missing plans)
 cargo clippy -p wamn-schema-control -p wamn-ctl --all-targets
 # Live-apply matrix (throwaway PG; plain postgres:18 — no wal_level needed).
-# Six legs, hermetic under one test entry: shared-runner-legacy (the deployed
-# fixture shape -> canonical admission/causation columns, CHECKs, helpers, and
-# lineage trigger with history row counts preserved and a materializer lock
-# smoke), v1-era-drifted (E4/D20 columns +
-# old claimable index + outbox era + legacy registration state key -> full
-# parity, defaults backfill the pre-existing row, re-run no-op), queue-missing
-# (the live poc_f1 case -> 3 queue tables + FK + append-only dead-letter
-# grants), from-zero (bare DB without even wamn_app; --dry-run proven
-# read-only; then full provision + RLS smoke as wamn_app), current=no-op, and
-# fail_kind drift:
+# Nine hermetic legs: shared-runner legacy; legacy effect-attempt backfill;
+# forced-RLS owner refusal; v1-era drift; queue-missing; from-zero; current
+# no-op; effect-disposition security drift; and fail_kind CHECK drift.
 docker run --rm -d --name wamn-1wdq-pg -e POSTGRES_PASSWORD=pg -p 55461:5432 postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:pg@localhost:55461/postgres \
   cargo test -p wamn-ctl --test run_plane_live -- --nocapture
 docker rm -f wamn-1wdq-pg
 ```
+
+The live negative matrix is part of that single entry and must remain exact:
+
+- a plain forced-RLS owner is refused for both dry-run and apply, even with a
+  forged `pg_temp.pg_roles`; stale `wamn_app` INSERT grants, legacy platform
+  membership, and the same temp-shadow cannot authorize attempt or disposition
+  appends;
+- NULL-incomplete legacy authority, an attested attempt whose pinned graph has
+  no connection identity, and a join-lost legacy candidate each abort with
+  their typed refusal; the append path rolls back and leaves the pointer FK
+  inactive;
+- a cross-run current pointer and cross-occurrence predecessor are rejected by
+  their composite FKs;
+- dispatch-before-start, outcome-without-the-exact-dispatch, and
+  outcome-before-dispatch are rejected by the time/FK constraints;
+- `system` and `project-deployer` resolve requests, a NULL resolution status,
+  failure detail without a string message, and a duplicate global
+  `append_ordinal` are rejected at storage; and
+- UPDATE and DELETE are refused on all five immutable ledgers. Drift mutants
+  additionally require repair of the closed outcome CHECK, lineage FK,
+  disabled insert guard, trusted helper, and all three disposition uniqueness
+  indexes before the second reconcile can report no-op.
 
 In-cluster gate of record: rebake `wamn-ctl:dev` (`docker build --target ctl`),
 kind load, then apply `deploy/platform/run-plane-reconcile.example.yaml` to
