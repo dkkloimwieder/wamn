@@ -276,33 +276,44 @@ pub struct CommandRefusal {
 )]
 pub enum AuthoringRefusal {
     AuthorizationDenied,
+    // `schemars` 0.8 discards `rename_all_fields`, so every field-carrying
+    // variant mirrors it for the generated schema. The serde wire names are
+    // unchanged; the schema stops advertising the Rust field spelling.
+    #[schemars(rename_all = "kebab-case")]
     UnsupportedContractVersion {
         requested: String,
         supported: String,
     },
+    #[schemars(rename_all = "kebab-case")]
     RevisionConflict {
         expected_revision: u64,
         actual_revision: Option<u64>,
     },
+    #[schemars(rename_all = "kebab-case")]
     ResourceNotFound {
         resource: ResourceKind,
         id: String,
     },
+    #[schemars(rename_all = "kebab-case")]
     InvalidDraft {
         issues: Vec<ValidationIssue>,
     },
     CatalogDrift,
+    #[schemars(rename_all = "kebab-case")]
     UnresolvedNodes {
         node_types: Vec<String>,
     },
     ValidatedDraftDrift,
+    #[schemars(rename_all = "kebab-case")]
     DraftConnectionsDenied {
         connection_names: Vec<String>,
     },
+    #[schemars(rename_all = "kebab-case")]
     PublishBlockedBySuite {
         report_id: String,
     },
     PublishExecutableDrift,
+    #[schemars(rename_all = "kebab-case")]
     PublishBlockedByNonterminalRuns {
         run_ids: Vec<String>,
     },
@@ -370,7 +381,11 @@ pub struct PendingSuiteProjection {
 )]
 pub enum PendingReportReason {
     AwaitingAdmission,
-    CaptureInterrupted { run_ids: Vec<String> },
+    // Mirrors `rename_all_fields` for the generated schema; see `AuthoringRefusal`.
+    #[schemars(rename_all = "kebab-case")]
+    CaptureInterrupted {
+        run_ids: Vec<String>,
+    },
 }
 
 /// Final client-renderable result for one draft suite.
@@ -523,9 +538,16 @@ pub enum CoverageState {
     deny_unknown_fields
 )]
 pub enum SuiteExecutionRefusal {
-    UndrivableNodes { node_types: Vec<String> },
+    // Mirrors `rename_all_fields` for the generated schema; see `AuthoringRefusal`.
+    #[schemars(rename_all = "kebab-case")]
+    UndrivableNodes {
+        node_types: Vec<String>,
+    },
     ValidatedDraftDrift,
-    DraftConnectionsDenied { connection_names: Vec<String> },
+    #[schemars(rename_all = "kebab-case")]
+    DraftConnectionsDenied {
+        connection_names: Vec<String>,
+    },
 }
 
 /// Decode a contract document and reject missing, malformed, or unsupported

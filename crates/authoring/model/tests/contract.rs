@@ -7,11 +7,19 @@ use wamn_authoring_model::{
     BranchCoverageProjection, BranchIdentity, CaseResultProjection, CatalogIdentity,
     CommandRefusal, ContractDecodeError, CoverageState, DraftIdentity, DraftRun, DraftRunReceipt,
     DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity, EdgeInputPort, NodeOutcome,
-    NodeResultProjection, PassFail, PublishValidatedDraft, PublishedFlowIdentity, ResourceKind,
-    SCHEMA_VERSION, SaveFlowDraft, SuiteOutcome, SuiteProjectionState, SuiteRef, SuiteRun,
-    SuiteRunReceipt, ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef, ValidationIssue,
-    ValidationSeverity, decode_document,
+    NodeResultProjection, PassFail, PendingReportReason, PendingSuiteProjection,
+    PublishValidatedDraft, PublishedFlowIdentity, ResourceKind, SCHEMA_VERSION, SaveFlowDraft,
+    SuiteExecutionRefusal, SuiteOutcome, SuiteProjectionState, SuiteRef, SuiteRun, SuiteRunReceipt,
+    ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef, ValidationIssue, ValidationSeverity,
+    decode_document,
 };
+
+/// Definitions whose variants carry structured refusal fields.
+const REFUSAL_DEFINITIONS: [&str; 3] = [
+    "AuthoringRefusal",
+    "PendingReportReason",
+    "SuiteExecutionRefusal",
+];
 
 fn scope() -> AuthoringScope {
     AuthoringScope {
@@ -98,6 +106,137 @@ fn projection() -> DraftSuiteProjection {
             coverage: CoverageState::NotObserved,
         }],
     }
+}
+
+fn refusal_response(reason: AuthoringRefusal) -> AuthoringDocument {
+    AuthoringDocument::Response(Box::new(AuthoringResponse {
+        schema_version: SCHEMA_VERSION.into(),
+        command_id: "refusal-keys".into(),
+        outcome: AuthoringOutcome::Refused(CommandRefusal {
+            command: AuthoringCommandKind::Validate,
+            reason,
+        }),
+    }))
+}
+
+fn projection_response(state: SuiteProjectionState) -> AuthoringDocument {
+    AuthoringDocument::Response(Box::new(AuthoringResponse {
+        schema_version: SCHEMA_VERSION.into(),
+        command_id: "projection-keys".into(),
+        outcome: AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SuiteProjection(
+            Box::new(state),
+        ))),
+    }))
+}
+
+/// Every field-carrying refusal variant, paired with the schema definition
+/// that publishes it and the pointer to it inside its carrier document.
+fn structured_refusal_documents() -> Vec<(&'static str, &'static str, AuthoringDocument)> {
+    const REASON: &str = "/body/outcome/value/reason";
+    const PENDING_REASON: &str = "/body/outcome/value/result/report/reason";
+    const SUITE_REFUSAL: &str = "/body/outcome/value/result/report/outcome/refusal";
+
+    let mut cases: Vec<_> = [
+        AuthoringRefusal::UnsupportedContractVersion {
+            requested: "0.2".into(),
+            supported: SCHEMA_VERSION.into(),
+        },
+        AuthoringRefusal::RevisionConflict {
+            expected_revision: 2,
+            actual_revision: Some(3),
+        },
+        AuthoringRefusal::ResourceNotFound {
+            resource: ResourceKind::Suite,
+            id: "suite-a".into(),
+        },
+        AuthoringRefusal::InvalidDraft {
+            issues: vec![ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "missing-entry".into(),
+                path: "/nodes".into(),
+                message: "one entry node is required".into(),
+            }],
+        },
+        AuthoringRefusal::UnresolvedNodes {
+            node_types: vec!["custom-a".into()],
+        },
+        AuthoringRefusal::DraftConnectionsDenied {
+            connection_names: vec!["erp".into()],
+        },
+        AuthoringRefusal::PublishBlockedBySuite {
+            report_id: "report-5".into(),
+        },
+        AuthoringRefusal::PublishBlockedByNonterminalRuns {
+            run_ids: vec!["run-parked".into()],
+        },
+    ]
+    .into_iter()
+    .map(|reason| ("AuthoringRefusal", REASON, refusal_response(reason)))
+    .collect();
+
+    cases.push((
+        "PendingReportReason",
+        PENDING_REASON,
+        projection_response(SuiteProjectionState::Pending(PendingSuiteProjection {
+            report_id: "report-5".into(),
+            execution_id: "execution-5".into(),
+            validated_draft: validated_ref(),
+            reason: PendingReportReason::CaptureInterrupted {
+                run_ids: vec!["run-hold".into()],
+            },
+            captured_case_ids: vec!["hold".into()],
+        })),
+    ));
+
+    for refusal in [
+        SuiteExecutionRefusal::UndrivableNodes {
+            node_types: vec!["custom-a".into()],
+        },
+        SuiteExecutionRefusal::DraftConnectionsDenied {
+            connection_names: vec!["erp".into()],
+        },
+    ] {
+        let mut report = projection();
+        report.outcome = SuiteOutcome::Refused(refusal);
+        cases.push((
+            "SuiteExecutionRefusal",
+            SUITE_REFUSAL,
+            projection_response(SuiteProjectionState::Finalized(Box::new(report))),
+        ));
+    }
+
+    cases
+}
+
+/// Property names the schema publishes for one tagged variant.
+fn published_properties(schema: &Value, definition: &str, kind: &str) -> Vec<String> {
+    let variants = schema["definitions"][definition]["oneOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{definition} publishes a tagged variant list"));
+    let variant = variants
+        .iter()
+        .find(|variant| variant["properties"]["kind"]["enum"] == json!([kind]))
+        .unwrap_or_else(|| panic!("{definition} publishes no variant for kind `{kind}`"));
+    variant["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{definition} variant `{kind}` publishes properties"))
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// Field-carrying variants the schema publishes for one definition.
+fn published_structured_variants(schema: &Value, definition: &str) -> usize {
+    schema["definitions"][definition]["oneOf"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{definition} publishes a tagged variant list"))
+        .iter()
+        .filter(|variant| {
+            variant["properties"]
+                .as_object()
+                .is_some_and(|properties| properties.len() > 1)
+        })
+        .count()
 }
 
 #[test]
@@ -276,6 +415,111 @@ fn every_success_shape_and_typed_refusal_round_trips() {
         let encoded = serde_json::to_string(&document).unwrap();
         assert_eq!(decode_document(&encoded).unwrap(), document);
     }
+}
+
+#[test]
+fn structured_refusals_round_trip_the_property_names_the_schema_publishes() {
+    let schema = wamn_authoring_model::json_schema();
+    let cases = structured_refusal_documents();
+    for definition in REFUSAL_DEFINITIONS {
+        assert_eq!(
+            cases
+                .iter()
+                .filter(|(covered, ..)| *covered == definition)
+                .count(),
+            published_structured_variants(&schema, definition),
+            "{definition} publishes a field-carrying variant this table does not cover"
+        );
+    }
+
+    for (definition, pointer, document) in cases {
+        let encoded = serde_json::to_value(&document).expect("document serializes");
+        let refusal = encoded
+            .pointer(pointer)
+            .expect("carrier exposes the refusal");
+        let kind = refusal["kind"].as_str().expect("refusal is tagged by kind");
+
+        let mut published = serde_json::Map::new();
+        for property in published_properties(&schema, definition, kind) {
+            let value = refusal.get(&property).unwrap_or_else(|| {
+                panic!(
+                    "{definition} variant `{kind}` publishes `{property}`, \
+                     which the serde wire form does not emit"
+                )
+            });
+            published.insert(property, value.clone());
+        }
+        assert_eq!(
+            &Value::Object(published.clone()),
+            refusal,
+            "{definition} variant `{kind}` emits wire fields the schema does not publish"
+        );
+
+        let mut candidate = encoded.clone();
+        *candidate
+            .pointer_mut(pointer)
+            .expect("carrier exposes the refusal") = Value::Object(published);
+        let decoded = decode_document(&candidate.to_string())
+            .unwrap_or_else(|error| panic!("{definition} variant `{kind}` must decode: {error}"));
+        assert_eq!(decoded, document);
+        assert_eq!(
+            serde_json::to_value(&decoded).expect("document serializes"),
+            encoded
+        );
+    }
+}
+
+#[test]
+fn drifted_refusal_field_spelling_is_rejected() {
+    let schema = wamn_authoring_model::json_schema();
+    let published = REFUSAL_DEFINITIONS
+        .iter()
+        .flat_map(|definition| {
+            schema["definitions"][*definition]["oneOf"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{definition} publishes a tagged variant list"))
+        })
+        .flat_map(|variant| {
+            variant["properties"]
+                .as_object()
+                .expect("variant publishes properties")
+                .keys()
+        })
+        .filter(|property| property.contains('-'))
+        .count();
+    assert!(
+        published > 0,
+        "no refusal property carries the canonical multi-word spelling"
+    );
+
+    let mut mutants = 0;
+    for (definition, pointer, document) in structured_refusal_documents() {
+        let encoded = serde_json::to_value(&document).expect("document serializes");
+        let refusal = encoded
+            .pointer(pointer)
+            .and_then(Value::as_object)
+            .expect("carrier exposes the refusal")
+            .clone();
+        for field in refusal.keys().filter(|field| field.contains('-')) {
+            let mut drifted = refusal.clone();
+            let value = drifted.remove(field).expect("field is present");
+            let spelling = field.replace('-', "_");
+            drifted.insert(spelling.clone(), value);
+            let mut candidate = encoded.clone();
+            *candidate
+                .pointer_mut(pointer)
+                .expect("carrier exposes the refusal") = Value::Object(drifted);
+            assert!(
+                decode_document(&candidate.to_string()).is_err(),
+                "{definition} must reject the drifted field spelling `{spelling}`"
+            );
+            mutants += 1;
+        }
+    }
+    assert_eq!(
+        mutants, published,
+        "every published multi-word refusal property must be exercised by a drift mutant"
+    );
 }
 
 #[test]

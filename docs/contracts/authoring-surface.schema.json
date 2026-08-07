@@ -219,7 +219,7 @@
         {
           "additionalProperties": false,
           "properties": {
-            "actual_revision": {
+            "actual-revision": {
               "format": "uint64",
               "minimum": 0.0,
               "type": [
@@ -227,7 +227,7 @@
                 "null"
               ]
             },
-            "expected_revision": {
+            "expected-revision": {
               "format": "uint64",
               "minimum": 0.0,
               "type": "integer"
@@ -240,7 +240,7 @@
             }
           },
           "required": [
-            "expected_revision",
+            "expected-revision",
             "kind"
           ],
           "type": "object"
@@ -314,7 +314,7 @@
               ],
               "type": "string"
             },
-            "node_types": {
+            "node-types": {
               "items": {
                 "type": "string"
               },
@@ -323,7 +323,7 @@
           },
           "required": [
             "kind",
-            "node_types"
+            "node-types"
           ],
           "type": "object"
         },
@@ -345,7 +345,7 @@
         {
           "additionalProperties": false,
           "properties": {
-            "connection_names": {
+            "connection-names": {
               "items": {
                 "type": "string"
               },
@@ -359,7 +359,7 @@
             }
           },
           "required": [
-            "connection_names",
+            "connection-names",
             "kind"
           ],
           "type": "object"
@@ -373,13 +373,13 @@
               ],
               "type": "string"
             },
-            "report_id": {
+            "report-id": {
               "type": "string"
             }
           },
           "required": [
             "kind",
-            "report_id"
+            "report-id"
           ],
           "type": "object"
         },
@@ -407,7 +407,7 @@
               ],
               "type": "string"
             },
-            "run_ids": {
+            "run-ids": {
               "items": {
                 "type": "string"
               },
@@ -416,7 +416,7 @@
           },
           "required": [
             "kind",
-            "run_ids"
+            "run-ids"
           ],
           "type": "object"
         }
@@ -1039,7 +1039,7 @@
               ],
               "type": "string"
             },
-            "run_ids": {
+            "run-ids": {
               "items": {
                 "type": "string"
               },
@@ -1048,7 +1048,7 @@
           },
           "required": [
             "kind",
-            "run_ids"
+            "run-ids"
           ],
           "type": "object"
         }
@@ -1186,7 +1186,7 @@
               ],
               "type": "string"
             },
-            "node_types": {
+            "node-types": {
               "items": {
                 "type": "string"
               },
@@ -1195,7 +1195,7 @@
           },
           "required": [
             "kind",
-            "node_types"
+            "node-types"
           ],
           "type": "object"
         },
@@ -1217,7 +1217,7 @@
         {
           "additionalProperties": false,
           "properties": {
-            "connection_names": {
+            "connection-names": {
               "items": {
                 "type": "string"
               },
@@ -1231,7 +1231,7 @@
             }
           },
           "required": [
-            "connection_names",
+            "connection-names",
             "kind"
           ],
           "type": "object"
