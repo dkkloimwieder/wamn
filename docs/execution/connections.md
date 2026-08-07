@@ -20,8 +20,9 @@ The invariant is:
 > material, or environment identifier enters artifact or execution-bundle
 > identity.
 
-The first supported external type is HTTP. Postgres is explicitly excluded from
-the provider prototype and remains on its existing trusted execution path.
+The first supported external type is HTTP. Its production implementation is the
+trusted in-process host adapter described below. Postgres remains on its existing
+trusted execution path.
 
 ## Identity and ownership
 
@@ -342,27 +343,19 @@ part of artifact identity: which executable semantics ran, from the pinned
 resolved-node contract; and which environmental authority justified the effect,
 from the effect connection record.
 
-## Host-component provider prototype
+## Production adapter selection
 
-After the in-process adapter establishes the contract, prototype one
-feature-gated wasmCloud v2.6 host-component provider for HTTP against a local
-deterministic echo/idempotency fixture. Do not use Postgres or production
-credentials.
+The trusted in-process HTTP adapter is the selected production path. It keeps
+`wamn:connection/http@0.1.0`, canonical authority resolution, admitted invocation
+identity, call-scoped credentials, and durable attempt ordering within one host-owned
+authority lifecycle.
 
-At `on_workload_item_bind`, the provider receives exact caller identity,
-validates the resolved binding and immutable generation, rejects incompatible
-configuration, and establishes its bounded client pool before the first call.
-It exposes only `wamn:connection/http@0.1.0`. Each call still uses the canonical
-authority resolver and durable attempt identity supplied by the trusted host;
-the provider does not become a second binding authority. At
-`on_workload_unbind` it drains and destroys the pool and removes all
-caller-indexed grants and generation state. Rebinding the same workload id
-starts empty.
-
-The experiment decides only whether bind-time validation, pool lifecycle, caller
-identity, and typed capability delivery are usable at acceptable cost. It does
-not enable host-component plugins globally or make the provider the production
-default.
+Decision `wamn-ko5r.14` rejects a host-component provider. Its bind/unbind store and
+caller-indexed state would add a second lifecycle and authority surface while still
+depending on the same resolver and durable attempt authority, with no additional
+production capability. `host-component-plugins` remains disabled. This preserves D17:
+capabilities stay in-process host plugins rather than acquiring a parallel provider
+lifecycle.
 
 ## Named proof shape
 
@@ -373,7 +366,6 @@ default.
 | `connection-authority-proof` | Relative requests reach each environment's fixture through all three policy layers. | Absolute authority injection, base-path escape, cross-authority redirect, DNS rebinding, literal-IP substitution, undeclared proxy, and either outer-policy denial all fail. Bypassing the canonical resolver makes the gate fail. |
 | `connection-generation-proof` | A compatible staged generation activates atomically and a later occurrence uses it. | An incompatible or concurrently stale activation is refused and the previous generation stays active. |
 | `connection-recovery-proof` | Crash-after-send recovery uses the recorded generation, credential generation, key, and effective class; a later occurrence may use the new active generation. | Retargeting the uncertain attempt, substituting credentials, or silently downgrading recovery fails; unavailable old material produces explicit refusal. |
-| `connection-provider-proof` | The local HTTP provider validates and prewarms at bind, serves only the exact caller, and tears down at unbind. | Calls before bind, from another caller, or after unbind fail; rebind inherits no grants or pool state; the feature remains absent from normal deployed inventory. |
 | `connection-2a-integration-proof` | A capability-bearing node composes against the typed HTTP import and the same bundle runs under dev/prod bindings. | Artifact inspection finds no generic HTTP/socket import; changing only environment binding does not change artifact or bundle hash. |
 
 These proofs are gates, not documentation assertions. Each security-sensitive

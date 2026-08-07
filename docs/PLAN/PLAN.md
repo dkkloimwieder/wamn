@@ -1295,11 +1295,13 @@ The same four layers hold for in-project effects, where the connection layer is 
 `postgres` node *can* support `idempotent-with-key`, the flow declares its SQL is keyed, and
 the attestation is the author's privileged assertion rather than an environment's.
 
-*Candidate mechanism (v2.6.0):* host-component plugins let a component supply a typed
-capability from a supervised store, with workload bind/unbind hooks — validate connection
-config at bind, establish pools before the first node call, expose the typed capability,
-receive exact caller identity, tear down at unbind. Maps onto requirement/instance/binding
-well; prototype on a low-risk provider, never the Postgres path.
+**Decision (wamn-ko5r.14): do not adopt a host-component provider for connections.** The
+trusted in-process adapter already owns the typed HTTP contract, canonical authority
+resolution, one-frame admitted identity, credential installation, and durable attempt
+ordering. A provider would duplicate lifecycle and authority across bind/unbind state and
+the call path without adding production capability, increasing caller-isolation, cleanup,
+and policy-proof obligations for no production benefit. Keep `host-component-plugins`
+disabled. This applies D17's in-process-host boundary; it does not amend D17.
 
 **Decision (wamn-ko5r.2): a connection type defines claim semantics; an instance attests
 facts.** A connection type contract is portable and versioned. It fixes the protocol

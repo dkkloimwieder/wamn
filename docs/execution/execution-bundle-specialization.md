@@ -107,9 +107,9 @@ and `postgres` plug sets. That inventory proves packaging membership, patch blas
 absence from bundles that do not select a class; it does not admit every class to the runtime
 tranche. In particular, the frozen fleet selects no `postgres` class, so its full plug is built
 and inspected but must remain absent from every composed fleet bundle. Item 2B deliberately
-confines runtime provider admission to its low-risk HTTP target. The fixture's scalar HTTP and
-Postgres imports are structural class markers, not substitutes for the 2B typed connection WIT,
-host adapter, or two-environment execution proof.
+confines the runtime connection tranche to its typed HTTP target through the selected trusted
+in-process adapter. The fixture's scalar HTTP and Postgres imports are structural class markers,
+not substitutes for the 2B typed connection WIT, that adapter, or two-environment execution proof.
 
 ## Capability-class fixture invariant
 

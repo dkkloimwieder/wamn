@@ -109,10 +109,12 @@ wamn:  ExecutionHost store             (crates/execution/host)
 wamn:  NodeRuntime store               (crates/platform/node-runtime)
 ```
 
-Trigger-service and plugin stores do not exist in wamn's deployment until an
-experiment enables them. Building a general `StorePolicy` abstraction now means
-designing against paths that are off, through an API those experiments will change.
-Cover the three; let the experiments produce the generalisation.
+Trigger-service and plugin stores do not exist in wamn's deployment. The 2B
+host-component provider was a candidate experiment when this upgrade plan was
+written; decision `wamn-ko5r.14` later retired it as not selected. Building a
+general `StorePolicy` abstraction now would still mean designing against paths that
+are off, through an API a future adopted feature may change. Cover the three; let
+an adopted feature produce the generalisation.
 
 **Base-upgrade scope — preserve, do not extend:**
 
@@ -354,8 +356,9 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
    evaluation of whether it can retire `8b76869` / `eef76cd`
 2. P3 node-ABI decision, feeding item 1's bulk boundary
 3. warm-pool and P3 cross-store-stream experiments, inside 2A's bundle economics
-4. one host-component connection provider prototype, for 2B — a low-risk provider,
-   never the Postgres execution path
+4. ~~one host-component connection provider prototype, for 2B~~ — **retired / not
+   selected (`wamn-ko5r.14`)**; 2B uses the trusted in-process adapter and keeps
+   `host-component-plugins` disabled
 5. trigger services for `flow-http`, after context invocation-scoping
 6. async secrets `2.0`, only once the connection and credential contracts settle
 
@@ -369,11 +372,12 @@ share one Wasmtime type universe."* Checking the top-level crate alone is insuff
   policy for traps, cancellation, deadline interruption, and `max_invocations`.
   **Identical pooled component bytes are not proof that invocation-scoped state was
   reset** — bundle identity and instance hygiene are two separate invariants.
-- **No `host-component-plugins`.** Off by default upstream; keep it off. It is the
-  most interesting thing in the release for 2B's connection providers — validate
-  config at workload bind, establish pools before first call, expose a typed
-  capability from a component, receive exact caller identity, tear down at unbind —
-  but that is a prototype, not an upgrade.
+- **No `host-component-plugins`.** Off by default upstream; keep it off. This upgrade
+  plan originally identified a 2B provider prototype as a post-upgrade experiment.
+  Decision `wamn-ko5r.14` later retired that candidate: the trusted in-process adapter
+  already owns the connection contract, while bind/unbind state would add a second
+  lifecycle and authority surface without production benefit. The feature remains
+  disabled.
 - **No P3 migration of `flow-http`, `flowrunner`, or `node-host`.**
 - **No replacement of the durable run plane with upstream trigger services.** They
   supply component lifetime and transport, not durable admission, queue ownership,
