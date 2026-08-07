@@ -553,6 +553,14 @@ does not imply that authority.
 | **Platform admin** | Audited break-glass and cross-project | Audited break-glass and cross-project |
 | **Author/publisher by authorship alone** | No implicit grant | No self-resolution; only a separately audited platform break-glass action may override separation of duties |
 
+**Authentication boundary.** This matrix authorizes only an already-authenticated caller;
+it never permits principal, role, project, or tenant to arrive through request or CLI fields,
+`SESSION_USER`, a custom GUC, or the guest-shared database session. Until `wamn-ctc8.5`
+consumes item 5's real verified session/API-key identity, project-deployer and project-admin
+park/release/resolve verbs remain unavailable. The only pre-AuthN adapters are host-owned
+system automatic park and separately audited platform-superuser break-glass, each outside
+guest authority.
+
 Single-attempt operations name the immutable attempt id. Bulk park/release is
 project-scoped. Bulk resolve is admin-only and must select a connection **and**
 generation plus a bounded time window; a flow selector may narrow that set but
