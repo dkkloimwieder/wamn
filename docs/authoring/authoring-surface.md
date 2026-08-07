@@ -92,6 +92,45 @@ carried by the projection.
 Clients must compare these structural fields. Display labels and prose are not
 identities.
 
+## Digest ordering
+
+Every definition digest a client sees — `graph_hash`, `artifact_hash`,
+`draft-content-hash`, `validated-draft-id`, `execution-bundle-hash`, and the
+source/attachment/release definition hashes — is SHA-256 over a canonical
+preimage. Three rules are normative.
+
+1. **Preimages use canonical stable-ID ordering.** Object keys are RFC 8785:
+   UTF-16 code-unit order, no insignificant whitespace (`wamn-flow`'s
+   `canonical` module; `wamn-catalog`'s `write_json`). Repeated preimage frames
+   are ordered by the member's stable id — node type for resolved nodes
+   (`validate_interface_order`), node id for occurrence recovery
+   (`conservative_occurrence_recovery` with `validate_occurrence_recovery`),
+   logical name for execution plugs and adapters (`validate_named_order`), and
+   member id for release artifacts/sources/attachments and attachment source
+   ids (`validate_sorted_unique`). A client that supplies another sequence is
+   refused (`CatalogIdentityError::NonCanonicalInterfaceOrder` /
+   `NonCanonicalMemberOrder`, or `wamn-flow`'s `unsorted-connection-requirements`,
+   `unsorted-credentials`, `unsorted-allowed-hosts`), never silently hashed.
+2. **Author-meaningful order is an explicit order field.** Where order carries
+   meaning it is a value the client sets — `version`, `catalog-version`,
+   `draft-revision` — never an element's position in a document array. Changing
+   an explicit order value changes the digest; permuting a sequence that has no
+   explicit order must not.
+3. **Display never enters a preimage.** Labels, prose, and canvas coordinates
+   are not identity. The graph document has no coordinate field at all and
+   rejects one as an unknown field.
+
+Known deviations from rules 1 and 3 are carried as ignored proof fixtures, not
+as prose: `node_sequence_position_must_not_change_the_graph_digest`,
+`edge_sequence_position_must_not_change_the_graph_digest`, and
+`editor_labels_must_not_enter_the_graph_preimage` in
+`crates/execution/flow-model/tests/digest_ordering.rs`, plus
+`artifact_hash_must_not_depend_on_node_document_sequence` in
+`crates/catalog/model/tests/digest_ordering.rs`. Each names the follow-up that
+closes it. Until they close, a client must treat a flow document's node and
+edge array order and its `name`/`label`/`description` text as digest-affecting
+and must not reorder or relabel a graph it intends to keep identical.
+
 ## Suite projection
 
 A finalized `DraftSuiteProjection` carries:

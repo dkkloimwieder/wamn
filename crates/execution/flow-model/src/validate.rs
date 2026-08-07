@@ -242,6 +242,18 @@ fn validate_credentials(flow: &Flow, issues: &mut Vec<Issue>) {
             ));
         }
     }
+
+    if flow
+        .credentials
+        .windows(2)
+        .any(|pair| pair[0].name >= pair[1].name)
+    {
+        issues.push(Issue::error(
+            "unsorted-credentials",
+            "credentials",
+            "credentials must be sorted by unique logical name",
+        ));
+    }
 }
 
 fn validate_allowed_hosts(flow: &Flow, issues: &mut Vec<Issue>) {
@@ -260,6 +272,14 @@ fn validate_allowed_hosts(flow: &Flow, issues: &mut Vec<Issue>) {
                 format!("allowed host {host:?} is not unique"),
             ));
         }
+    }
+
+    if flow.allowed_hosts.windows(2).any(|pair| pair[0] >= pair[1]) {
+        issues.push(Issue::error(
+            "unsorted-allowed-hosts",
+            "allowed-hosts",
+            "allowed hosts must be sorted and unique",
+        ));
     }
 }
 
