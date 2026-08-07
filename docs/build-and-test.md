@@ -16,6 +16,44 @@ rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`.
 
+### Optimized native developer builds
+
+The repository toolchain remains pinned by `rust-toolchain.toml`. On
+`x86_64-unknown-linux-gnu`, `.cargo/config.toml` asks `clang` to link with
+`mold`, so both executables are host prerequisites for ordinary root-workspace
+commands:
+
+```bash
+clang --version
+mold --version
+cargo build --locked
+cargo test --locked
+```
+
+This target-specific configuration is load-bearing. It must not become global
+`build.rustflags`: native workspace builds use the LLVM codegen backend and
+clang+mold, while `wasm32-wasip2` components continue to use Rust's `rust-lld`.
+Mold is the checked-in native linker choice; there is no automatic lld
+fallback. A missing `clang` or `mold` is an environment error to fix before
+building.
+
+The root debug profile keeps workspace crates at opt-level 0 with full debug
+information. Third-party dependencies use opt-level 1 and line-table debug
+information, and build dependencies use opt-level 1. This keeps application
+debugging unchanged while avoiding fully deoptimized dependency code. If one
+dependency needs full source-level debugging, add a narrow override and remove
+it again after the investigation:
+
+```toml
+[profile.dev.package."dependency-name"]
+opt-level = 0
+debug = "full"
+```
+
+These settings apply only to the root workspace's debug profile. They do not
+change release profiles, the separate component workspace, component signing,
+or any gate's codegen backend.
+
 ### Cached kind gate image build (wamn-9ler.2)
 
 `tools/kind-gate-build` runs the ordinary `gates` Docker target with plain
@@ -31,11 +69,28 @@ builder configuration:
   --builder <buildx-builder>
 ```
 
-Use one stable mutable cache reference across builds. It is deliberately
-separate from the gate image tag: source-only edits keep the root and component
-`cargo chef cook` steps cached, while `Cargo.lock` and `components/Cargo.lock`
-key independent dependency recipes. The cache reference is never loaded into
-kind and must not be made unique per issue.
+This path requires Docker BuildKit/buildx and a builder that can read and write
+the supplied OCI cache reference. The Dockerfile pins `cargo-chef` 0.1.77 and
+prepares and cooks separate root and component recipes. Use one stable mutable
+cache reference across builds. It is deliberately separate from the gate image
+tag: source-only edits keep the root and component `cargo chef cook` steps
+cached, while `Cargo.lock` and `components/Cargo.lock` key independent
+dependency recipes. Named BuildKit mounts retain Cargo registries, Git sources,
+and root/component target state within a builder. The registry cache makes the
+cooked layers reusable by a fresh builder. The cache reference is never loaded
+into kind and must not be made unique per issue.
+
+The implemented cache path is cargo-chef plus BuildKit; sccache is not installed
+or configured. If a build unexpectedly cooks dependencies again, inspect the
+plain build log, confirm the same `--cache-ref` was used, and check builder
+registry authentication, TLS, and cache retention. A changed lockfile or
+manifest legitimately changes its workspace recipe. The ordinary uncached
+fallback remains:
+
+```bash
+docker build --target gates -t wamn-gates:<exact-issue-tag> .
+kind load docker-image wamn-gates:<exact-issue-tag> --name wamn
+```
 
 After the Job no longer references its exact image, retire that image from the
 kind nodes and the host without deleting the shared dependency cache:
@@ -45,6 +100,60 @@ kind nodes and the host without deleting the shared dependency cache:
   --image wamn-gates:<exact-issue-tag> --apply
 docker image rm wamn-gates:<exact-issue-tag>
 ```
+
+### Dependency graph outcome
+
+The locked root and component graphs retain duplicate version families only at
+upstream compatibility boundaries; no cheap, correctness-preserving
+consolidation was found. Resolver-v2 keeps the audited Tokio, Hyper, and
+`wamn-run-state` test features on development-only edges, and the normal graphs
+contain no test-only feature leak. There is no cargo-hakari workspace-hack:
+the audit found no evidence of a feature-shift rebuild avalanche, and the
+root/component cargo-chef recipes already provide stable dependency reuse.
+
+### Opt-in Cranelift native loop
+
+`cranelift-dev` is a leaf Docker stage for compatible root-workspace packages
+that benefit from a faster native debug compile. Build it from the repository
+root, then mount the source read-only and keep Cargo downloads and build output
+in named volumes:
+
+```bash
+docker build --target cranelift-dev -t wamn-cranelift-dev:dev .
+docker run --rm \
+  -e RUSTUP_HOME=/usr/local/rustup \
+  -e CARGO_HOME=/cargo-home \
+  -e CARGO_TARGET_DIR=/target \
+  -v "$PWD:/workspace:ro" \
+  -v wamn-cranelift-cargo:/cargo-home \
+  -v wamn-cranelift-target:/target \
+  wamn-cranelift-dev:dev \
+  cargo cranelift --locked -p wamn-flow-invocation
+```
+
+The image installs the current nightly available when it is built and invokes
+Cargo with exactly `RUSTFLAGS=-Zcodegen-backend=cranelift`. The helper must run
+from the mounted repository root and refuses `--release`, every `--profile`,
+`--target`, `--manifest-path`, and `--config` form before Cargo starts. First use
+requires network access to fill the named Cargo cache and can still be a cold
+compile. Not every native dependency is guaranteed to support Cranelift.
+
+Use ordinary pinned-stable `cargo build` or `cargo test` whenever the nightly
+image or a package is incompatible. Stable LLVM remains the only release,
+component, signing, Docker-gate, and shipping path. The Cranelift helper must
+never be added to those commands. To discard the opt-in image and its caches:
+
+```bash
+docker image rm wamn-cranelift-dev:dev
+docker volume rm wamn-cranelift-cargo wamn-cranelift-target
+```
+
+| Path | Toolchain and backend | Scope |
+|---|---|---|
+| Root native debug | pinned stable, LLVM, clang+mold on x86_64 GNU | ordinary developer builds and tests |
+| Docker gate/release native | pinned stable, LLVM, clang+mold | shipping binaries and gate images; cargo-chef changes caching only |
+| Components and signing | pinned stable, LLVM, `wasm32-wasip2` rust-lld | separate workspace and lockfile; native dev profiles do not apply |
+| Cranelift native debug | image-build nightly, Cranelift | opt-in compatible root packages only; never release, components, signing, or gates |
 
 ### Canonical shipped-decision gate registry (PLAN-0.2 / wamn-2jdm.2)
 
