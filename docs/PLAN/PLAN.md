@@ -1842,15 +1842,66 @@ keeps routine recovery operations project-local while reserving an assertion
 about an external outcome for the stronger role; item 1 owns the immutable
 attempt-set and audit requirements.
 
+### The identity core — first-party first, federate later
+
+**Decision (wamn-ctc8.4, 2026-08-07): the platform owns a thin first-party identity core in
+the system database; OIDC/SSO arrives later as an *additional issuer* against the same
+session seam.** Not an external IdP as the initial authority, and not a rewrite when
+federation lands.
+
+The core is deliberately small and already shipped (`crates/identity/platform`): humans and
+services are the same kind of thing — **principals** — local verification is Argon2id, roles
+are opaque canonical slugs bound at the project tier with no permissions attached, and the
+authenticated principal is a value with no public constructor and no deserialization, so no
+adapter can turn a request field into trusted invocation context. It lives beside the
+registry in the platform system database, so the principal store and `tenant_of()` answer
+from one plane.
+
+**Presenters resolve; they do not authenticate twice.** Personal access tokens (wamn-ctc8.7)
+serve CLI and agent callers, browser sessions serve the console (wamn-ctc8.9), and both
+resolve into the one principal-and-role seam above. Federation (wamn-117) maps an approved
+external subject onto an existing platform principal and reuses that same seam, revocation,
+and audit — an added issuer, not a second authority.
+
+**Ruled out.** No-auth and shared-token stopgaps: they make the admission ledger's principal
+digest a fiction, and nothing that a client already depends on comes back out. Keycloak, Ory,
+or a hosted IdP as the *initial* authority: it buys enterprise SSO that no client-POC surface
+needs and costs the org- and project-tier role model that every one of them does. JWT by
+default as a substitute for the seam: a bearer format is not an identity model, and
+self-describing tokens weaken exactly the revocation the disposition matrix above assumes.
+
+**Three identities that must not merge.** *Management identity* — the principal calling the
+management surface, authorized by org- and project-tier roles. *Per-project application
+identity* — `app_system`'s users, roles, and api_keys inside one project's own database,
+serving that client's end users. *Workload identity* — the credentials a running flow
+presents to a connection instance, owned by item 2B's environment policy. None of the three
+authorizes another.
+
+**Agents are ordinary service-principal clients.** An agent authenticates as a service
+principal and holds roles like any other caller; a link to an external session log travels as
+command metadata for provenance, never as authority.
+
+**Inbound key material and caller policy live in the system database**, beside the principal
+store. An auth source still names a credential-set handle and defines policy rather than
+carrying material; the identity core is what owns the material behind the handle and the
+policy deciding which callers it admits.
+
+The Studio authoring specification is maintained outside this repository, so its open IdP
+entry (O8) closes on the spec side when this posture is applied in v0.16 (wamn-jvzx.7).
+
 ### Still open here
 
 - **Org-tier roles.** A client admin who requests a project is **org-scoped** — above any
   project, and the role cannot live inside a project that does not exist yet. But
   `docs/schema/app-schema.md` ships `users`, `roles`, `permissions`, `api_keys` **per project**.
   The org tier is a genuine gap, and item 10's project-request API depends on it.
-- **Build or adopt the IdP** (Keycloak / Ory / hosted vs. our own).
-- **Where inbound caller policy lives** — the auth source names a credential-set handle;
-  nothing owns the material or the policy behind it.
+- ~~**Build or adopt the IdP** (Keycloak / Ory / hosted vs. our own).~~ — **Settled
+  (wamn-ctc8.4):** neither. The first-party core above is the initial authority, presented by
+  PATs (wamn-ctc8.7) and browser sessions (wamn-ctc8.9); an external IdP may federate in later
+  as an additional issuer (wamn-117).
+- ~~**Where inbound caller policy lives** — the auth source names a credential-set handle;
+  nothing owns the material or the policy behind it.~~ — **Settled (wamn-ctc8.4):** the
+  identity core in the system database owns both, beside the principal store.
 - **Org creation** is a platform-administration function and is **deferred** — it leaks
   into no architectural decision here.
 
@@ -2802,9 +2853,10 @@ Assumed to exist by work already in flight, owned by no document and no item abo
   enough for `wamn-db-<project>` to fit Postgres's 63 bytes. `My_Project` passes one and
   fails the other — the same bug class `identifiers.rs` exists to prevent, reappearing
   across crates. *Item 5's abbreviation collapses it; the finding stands regardless.*
-- **Auth-source policy** — the constraint is stated (sources define policy, never material)
-  but nothing names where key material lives, or who owns inbound caller policy. *Item 5
-  should adopt this; today it is unowned.*
+- ~~**Auth-source policy**~~ — the constraint is stated (sources define policy, never
+  material) but nothing named where key material lives, or who owns inbound caller policy.
+  *Adopted by item 5 (wamn-ctc8.4): the first-party identity core in the system database owns
+  the material and the inbound caller policy.*
 - **Deprovisioning.** `crates/control/provision` ships `backup.rs`, `dump.rs` and
   `restore.rs`; teardown appears among no subcommand. A client admin deleting a production
   project by mistake must be recoverable. *Item 10 should adopt this.*
