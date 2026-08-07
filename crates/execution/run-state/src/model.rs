@@ -86,8 +86,9 @@ impl RunRecord {
 
 /// One row of `node_runs`: a single node execution — the branch-aware
 /// reconstruction source. A node the flow LOOPS through has one row per visit,
-/// disambiguated by `occurrence`; retries of one occurrence share the row and
-/// bump `attempt`.
+/// disambiguated by `occurrence`. The public `attempt` field is a legacy
+/// history projection only; canonical effect authority and retry lineage live
+/// exclusively in the append-only effect-attempt ledger.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct NodeRunRecord {

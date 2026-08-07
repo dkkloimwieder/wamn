@@ -97,10 +97,12 @@ pub use replica_identity::{
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    catalog_schema_present_sql, count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
+    catalog_schema_present_sql, count_legacy_effect_attempt_rows_sql,
+    count_stale_registration_state_sql, plan_run_plane, rewrite_schema,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
-    select_schema_indexes_sql, select_schema_triggers_sql, strip_registration_state_sql,
+    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
+    strip_registration_state_sql,
 };
 
 // Re-exported so a driver can name the registration type the reconciler folds

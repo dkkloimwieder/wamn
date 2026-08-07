@@ -47,6 +47,8 @@ use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
+use crate::ctl_process;
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -771,6 +773,15 @@ async fn runpath_provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&crate::runnerbench::runner_ddl(RUNPATH_SCHEMA))
             .await
             .context("apply runner DDL")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            RUNPATH_SCHEMA,
+        ])
+        .await
+        .context("reconcile logbench runpath run-plane")?;
         anyhow::Ok(())
     }
     .await;

@@ -478,6 +478,14 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'flow_artifacts' \
                                AND column_name = 'occurrence_recovery_hash'), \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'flow_artifacts' \
+                               AND column_name = 'verified_author_principal'), \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'release_manifests' \
+                               AND column_name = 'verified_publisher_principal'), \
                     to_regclass('catalog.connection_requirements') IS NOT NULL, \
                     to_regclass('catalog.connection_instances') IS NOT NULL, \
                     to_regclass('catalog.connection_generations') IS NOT NULL, \
@@ -520,12 +528,32 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .await
                 .context("install occurrence recovery artifact storage")?;
         }
-        let connection_objects = [
+        let provenance_columns = [
             release_row.get::<_, bool>(13),
             release_row.get::<_, bool>(14),
+        ];
+        if !provenance_columns.iter().all(|present| *present) {
+            anyhow::ensure!(
+                provenance_columns.iter().all(|present| !*present),
+                "catalog disposition provenance storage is partially installed; reconcile it before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN DISPOSITION PROVENANCE STORAGE MIGRATION")
+                .expect("disposition provenance migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END DISPOSITION PROVENANCE STORAGE MIGRATION")
+                .expect("disposition provenance migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install verified publication provenance storage")?;
+        }
+        let connection_objects = [
             release_row.get::<_, bool>(15),
             release_row.get::<_, bool>(16),
             release_row.get::<_, bool>(17),
+            release_row.get::<_, bool>(18),
+            release_row.get::<_, bool>(19),
         ];
         if connection_objects.iter().all(|present| *present) {
             return Ok(());

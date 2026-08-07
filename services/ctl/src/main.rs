@@ -9,9 +9,9 @@ use std::str::FromStr as _;
 
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
-    copy_project_env, dump_project_env, enable_cdc_project_env, migrate_catalog, pin_run,
-    provision, provision_org, provision_project_env, prune_run_history, publish_catalog,
-    reconcile_replica_identity, reconcile_run_plane, restore_project_env,
+    copy_project_env, dump_project_env, effect_disposition, enable_cdc_project_env,
+    migrate_catalog, pin_run, provision, provision_org, provision_project_env, prune_run_history,
+    publish_catalog, reconcile_replica_identity, reconcile_run_plane, restore_project_env,
 };
 // [11.8] wamn-wvb: appended so cherry-picks compose (sibling lanes touch this use block too).
 use wamn_ctl::impact_report;
@@ -61,6 +61,10 @@ enum Command {
     ImpactReport(impact_report::ImpactReportArgs),
     /// Provision per-tenant Grafana dashboards ([9.9], wamn-b4e): --emit-sre renders the SRE dashboards-as-code JSON; otherwise enumerate registry.orgs and drive the Grafana HTTP API (one folder + a tenant-pinned dashboard per org)
     ProvisionDashboards(provision_dashboards::ProvisionDashboardsArgs),
+    /// Apply an audited platform break-glass disposition to one or a bounded set of uncertain never-replay effect attempts. Identity is the privileged database SESSION_USER; no principal flag exists.
+    EffectDispositionBreakGlass(effect_disposition::EffectDispositionBreakGlassArgs),
+    /// Read pending, parked, released, and resolved effect-attempt disposition state for one run.
+    EffectDispositionView(effect_disposition::EffectDispositionViewArgs),
 }
 
 #[tokio::main]
@@ -95,5 +99,54 @@ async fn main() -> anyhow::Result<()> {
         Command::PinRun(args) => pin_run::run(args).await,
         Command::ImpactReport(args) => impact_report::run(args).await,
         Command::ProvisionDashboards(args) => provision_dashboards::run(args).await,
+        Command::EffectDispositionBreakGlass(args) => effect_disposition::run(args).await,
+        Command::EffectDispositionView(args) => effect_disposition::view(args).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::Cli;
+
+    fn base_args() -> Vec<&'static str> {
+        vec![
+            "wamn-ctl",
+            "effect-disposition-break-glass",
+            "--admin-database-url",
+            "postgresql://operator@localhost/project",
+            "--tenant",
+            "t1",
+            "--action",
+            "park",
+            "--attempt-id",
+            "00000000-0000-0000-0000-000000000042",
+            "--correlation-id",
+            "incident:42",
+            "--reason",
+            "incident commander approved",
+        ]
+    }
+
+    #[test]
+    fn break_glass_cli_has_no_caller_selected_principal() {
+        assert!(Cli::try_parse_from(base_args()).is_ok());
+        let mut args = base_args();
+        args.extend(["--principal", "forged"]);
+        let error = Cli::try_parse_from(args)
+            .err()
+            .expect("principal must not parse");
+        assert!(error.to_string().contains("--principal"));
+    }
+
+    #[test]
+    fn break_glass_reason_is_required() {
+        let mut args = base_args();
+        args.truncate(args.len() - 2);
+        let error = Cli::try_parse_from(args)
+            .err()
+            .expect("reason must be required");
+        assert!(error.to_string().contains("--reason"));
     }
 }

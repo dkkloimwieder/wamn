@@ -65,6 +65,8 @@ pub mod capture;
 /// Occurrence-keyed child creation, parent parking, and atomic child release.
 pub mod child;
 pub mod context;
+/// Typed, immutable park/release/resolve application and store contract.
+pub mod disposition;
 /// Durable lookup, wait, and fenced-cancel queries for flow invocation.
 pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.

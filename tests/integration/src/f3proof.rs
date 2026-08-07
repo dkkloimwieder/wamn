@@ -649,6 +649,7 @@ async fn setup(args: &F3ProofArgs, admin_url: &str, app_url: &str) -> anyhow::Re
             admin
                 .batch_execute(&format!(
                     "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+                     DROP SCHEMA IF EXISTS catalog CASCADE; \
                      CREATE SCHEMA {schema} AUTHORIZATION postgres; \
                      GRANT USAGE ON SCHEMA {schema} TO wamn_app;"
                 ))
@@ -762,7 +763,10 @@ async fn teardown(
     let r = async {
         if fresh_schema {
             admin
-                .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))
+                .batch_execute(&format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+                     DROP SCHEMA IF EXISTS catalog CASCADE;"
+                ))
                 .await?;
             return anyhow::Ok(());
         }

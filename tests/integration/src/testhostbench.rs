@@ -79,6 +79,8 @@ use wamn_scenario_model::{
     RunStatus, TestCase, evaluate,
 };
 
+use crate::ctl_process;
+
 /// The virtual-clock epoch + `wasi:random` seed the test host uses (fixed for
 /// reproducibility, matching the scenario-runtime defaults).
 const TEST_EPOCH_SECS: u64 = 1_700_000_000;
@@ -119,9 +121,9 @@ pub struct TestHostBenchArgs {
     #[arg(long)]
     pub database_url: Option<String>,
 
-    /// Superuser Postgres URL used ONLY to provision/drop the ephemeral test
-    /// schema (env WAMN_PG_ADMIN_URL). Required for every gate except
-    /// `regression`.
+    /// Superuser Postgres URL used to provision/drop ephemeral schemas and to
+    /// reconcile the S3 regression fixture (env WAMN_PG_ADMIN_URL). Required
+    /// for every gate.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
@@ -497,7 +499,8 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
 
     println!("# wamn-host S6 testhostbench");
 
-    // ---- regression-only fast path: no test host / DB provisioning needed ----
+    // ---- regression-only fast path: no test-host provisioning needed; the
+    //      delegated flowbench still reconciles its S3 run plane. ----
     if args.mode == Mode::Regression {
         let ok = regression_phase(&args).await?;
         println!("\ntesthostbench complete — overall PASS: {ok}");
@@ -540,6 +543,15 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     // (RLS-bypassing; SR2 retired the guest's `seed-s6` export). Renders the
     // flow tables per case from `template_ddl`.
     let admin_url = admin_url.expect("checked above");
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        &admin_url,
+        "--schema",
+        PROD_SCHEMA,
+    ])
+    .await
+    .context("reconcile testhostbench production fixture run-plane")?;
     let provisioner = EphemeralSchemaProvisioner::connect(&admin_url, template_ddl)
         .await
         .context("connect ephemeral schema provisioner")?;
@@ -547,6 +559,15 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
         .provision_case(&ephemeral_schema)
         .await
         .context("provision ephemeral schema")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        &admin_url,
+        "--schema",
+        ephemeral_schema.as_str(),
+    ])
+    .await
+    .context("reconcile testhostbench ephemeral run-plane")?;
     println!("provisioned ephemeral schema {EPH_SCHEMA} from template DDL");
 
     // ---- shared infra: engine, echo server, virtual clock, egress recorders ----
@@ -852,6 +873,7 @@ async fn regression_phase(args: &TestHostBenchArgs) -> anyhow::Result<bool> {
     let fb = crate::flowbench::FlowBenchArgs {
         flowrunner: args.flowrunner.clone(),
         database_url: args.database_url.clone(),
+        admin_database_url: args.admin_database_url.clone(),
         mode: crate::flowbench::Mode::All,
         dispatch_iters: 200_000,
         hotreload_iters: 5,
@@ -1035,6 +1057,15 @@ async fn schemacase_phase(
             .provision_case(&schema)
             .await
             .with_context(|| format!("provision case {schema}"))?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            schema.as_str(),
+        ])
+        .await
+        .with_context(|| format!("reconcile case {schema} run-plane"))?;
 
         // A FRESH case must start empty — the isolation proof. If a prior case's
         // rows survived (schema reuse), this count would be non-zero.
@@ -1186,6 +1217,15 @@ async fn runworker_phase(
         .provision_case(&runworker_schema)
         .await
         .context("provision runworker schema")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        runworker_schema.as_str(),
+    ])
+    .await
+    .context("reconcile runworker run-plane")?;
 
     // Seed the flow + a dispatched run + its queue row (delay 0 so it drives
     // straight through: in → delay(0) → http-call(echo) → pg-write → respond).

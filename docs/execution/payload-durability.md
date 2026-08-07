@@ -112,10 +112,13 @@ The run-state adapter converts the engine's invocation-relative retry deadline
 to and from the durable queue clock; a process restart must preserve the
 remaining delay rather than treating every reclaimed wait as immediately due.
 
-`node_runs` remains authoritative for effect-attempt facts: recovery class,
-attempt number, attempt key, dispatch/commit timestamps, and the explicit
-outcome. On reclaim, the checkpoint identifies the outstanding occurrence and
-the attempt row decides what the resolved recovery class permits:
+The append-only `effect_attempts` ledger remains authoritative for recovery
+class, attempt index and predecessor, attempt key, pinned generation facts, and
+timing; separate dispatch and outcome ledgers own those boundaries.
+`node_runs.current_effect_attempt_id` is only the constrained current-occurrence
+pointer. On reclaim, the checkpoint identifies the outstanding occurrence and
+the joined immutable attempt facts decide what the resolved recovery class
+permits:
 
 | Resolved recovery class | Interrupted attempt result |
 |---|---|

@@ -83,12 +83,19 @@ fn cancellation_live() {
          VALUES ('t1','live-attempt','worker-a',now()+interval '1 minute',4); \
          INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) \
          VALUES ('t1','live-child',1); \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
+            selected_recovery_class,recovery_class,generation_fact_kind, \
+            attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000001', \
+                 'live-attempt','effect',0,1,0,'replay','replay','not-required', \
+                 now(),now()+interval '1 minute','sha256:input'); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
-            recovery_class,generation_fact_kind, \
-            attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','live-attempt','effect',0,1,'started','replay','replay','not-required', \
-                 now(),now(),now()+interval '1 minute','sha256:input');",
+           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000001', \
+                 'live-attempt','effect',0,1,'started'); \
+         INSERT INTO wamn_run.effect_attempt_dispatches (tenant_id,attempt_id) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000001');",
     );
 
     let request = request_cancellation_sql();
@@ -141,6 +148,11 @@ fn cancellation_live() {
                       'run cancelled at attempt completion'; \
                ASSERT (SELECT status FROM node_runs WHERE run_id='live-attempt') = 'success', \
                       'the in-flight effect records exactly one completion'; \
+               ASSERT (SELECT count(*) FROM effect_attempt_outcomes AS o \
+                         JOIN effect_attempts AS e \
+                           ON e.tenant_id=o.tenant_id AND e.attempt_id=o.attempt_id \
+                        WHERE e.run_id='live-attempt' AND o.outcome_status='success') = 1, \
+                      'the in-flight effect appends exactly one immutable outcome'; \
                ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='live-attempt'), \
                       'terminal cancellation dequeues'; \
                ASSERT (SELECT caller_outcome_kind FROM runs \
@@ -184,12 +196,19 @@ fn cancellation_live() {
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','completion-race','worker-race',now()+interval '1 minute',7); \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
+            selected_recovery_class,recovery_class,generation_fact_kind, \
+            attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000002', \
+                 'completion-race','effect',0,1,0,'replay','replay','not-required', \
+                 now(),now()+interval '1 minute','sha256:race'); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
-            recovery_class,generation_fact_kind, \
-            attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','completion-race','effect',0,1,'started','replay','replay','not-required', \
-                 now(),now(),now()+interval '1 minute','sha256:race');",
+           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000002', \
+                 'completion-race','effect',0,1,'started'); \
+         INSERT INTO wamn_run.effect_attempt_dispatches (tenant_id,attempt_id) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000002');",
     );
     let request_script = format!(
         "{} PREPARE request_stmt (text,text,bigint) AS {}; \
@@ -225,6 +244,11 @@ fn cancellation_live() {
                       'first durable cancellation eventually wins the race'; \
                ASSERT (SELECT status FROM node_runs WHERE run_id='completion-race') = 'success', \
                       'racing completion records exactly once'; \
+               ASSERT (SELECT count(*) FROM effect_attempt_outcomes AS o \
+                         JOIN effect_attempts AS e \
+                           ON e.tenant_id=o.tenant_id AND e.attempt_id=o.attempt_id \
+                        WHERE e.run_id='completion-race' AND o.outcome_status='success') = 1, \
+                      'racing completion appends one immutable outcome'; \
                ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='completion-race'), \
                       'race terminalization dequeues once'; \
                ASSERT NOT EXISTS (SELECT FROM race_sweep_again WHERE run_id='completion-race'), \
@@ -348,13 +372,19 @@ fn cancellation_live() {
          INSERT INTO wamn_run.run_queue (tenant_id,run_id,lease_generation) VALUES \
            ('t1','response-only',11),('t1','deadline-equal',12),('t1','run-only',13), \
            ('t1','operator-request',14),('t1','response-live-attempt',15); \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
+            selected_recovery_class,recovery_class,generation_fact_kind, \
+            attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000003', \
+                 'response-live-attempt','effect',0,1,0,'replay','replay','not-required', \
+                 now(),now()+interval '1 minute','sha256:response-live'); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
-            recovery_class,generation_fact_kind, \
-            attempt_started_at,attempt_dispatched_at,attempt_deadline_at,attempt_input_ref) \
-         VALUES ('t1','response-live-attempt','effect',0,1,'started','replay','replay', \
-                 'not-required', \
-                 now(),now(),now()+interval '1 minute','sha256:response-live'); \
+           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000003', \
+                 'response-live-attempt','effect',0,1,'started'); \
+         INSERT INTO wamn_run.effect_attempt_dispatches (tenant_id,attempt_id) \
+         VALUES ('t1','ca000000-0000-0000-0000-000000000003'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,status,caller_outcome_kind, \
             caller_outcome_json,caller_http_status,caller_release_node_id, \

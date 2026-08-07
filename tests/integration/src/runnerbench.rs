@@ -51,6 +51,8 @@ use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker}
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 
+use crate::ctl_process;
+
 /// The ephemeral schema unioning the flowrunner's flow tables with the 5.14
 /// `run_queue`, provisioned via superuser (mirrors failoverbench).
 const SCHEMA: &str = "wamn_runner_bench";
@@ -291,6 +293,15 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&runner_ddl(SCHEMA))
             .await
             .context("apply runner DDL")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            SCHEMA,
+        ])
+        .await
+        .context("reconcile runnerbench run-plane")?;
         anyhow::Ok(())
     }
     .await;
