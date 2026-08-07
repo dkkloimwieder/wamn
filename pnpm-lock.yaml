@@ -24,6 +24,8 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@22.20.1)(vite@8.2.0(@types/node@22.20.1))
 
+  clients/authoring-client: {}
+
   clients/loop-console:
     dependencies:
       solid-js:
