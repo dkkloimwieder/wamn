@@ -17,7 +17,9 @@ spec:
   selector: { matchLabels: { app: serve-node-sample-echo } }
   template:
     metadata:
-      labels: { app: serve-node-sample-echo }
+      labels:
+        app: serve-node-sample-echo
+        wamn.io/egress-role: signed-node
     spec:
       automountServiceAccountToken: false
       containers:

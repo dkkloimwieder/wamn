@@ -1381,7 +1381,7 @@ docker build --target host -t wamn-host:dev . && docker build --target gates -t 
 kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
 kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
 kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
+kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=300s
 kubectl -n wamn-system logs job/credproof   # overall PASS: true
 ```
 
@@ -4530,6 +4530,84 @@ cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 
 # Then run the existing H5-CALLABLE-WAVE1 and H5-CALLABLE-WAVE2 exact-image
 # recipes below; F3 and F4 are the deployed standard/custom connection proofs.
+```
+
+### Runner address-level egress boundary (`wamn-4q3c.12`)
+
+`deploy/platform/runner-netpol.yaml` is the default-deny address ceiling for
+runner pods. It admits DNS, project PostgreSQL, control NATS, OTLP, and signed
+custom-node transport. Business connection destinations are not part of that
+platform list: each environment adds only its approved CIDRs/ports using the
+shape in `runner-connection-egress.example.yaml`. The P0 environment uses
+`deploy/gates/runner-connection-egress.yaml` to admit `serve-echo` and keeps the
+reachable `egress-escape` control target outside the union.
+Per-project policy rendering/provisioning replaces the hand-maintained
+environment manifest under existing bead `wamn-ou1`.
+
+The gate requires kindnet's `kube-network-policies` controller to be active,
+not merely an accepted NetworkPolicy API object. The mutation tool refuses to
+run unless the kind node has the `inet kindnet-network-policies` nftables table.
+
+```bash
+cargo test --locked -p wamn-proof-system --lib credproof::tests::
+cargo test --locked -p wamn-builder --test golden_deploy
+cargo clippy --locked -p wamn-proof-integration -p wamn-proof-system \
+  --all-targets -- -D warnings
+rustfmt --edition 2024 --check \
+  services/builder/src/deploy_emit.rs tests/integration/src/credproof.rs \
+  tests/system/src/credproof.rs
+
+# Exact deployed connection_http proof. The positive environment binding reaches
+# serve-echo; the equally hostname-authorized escape binding resolves but its
+# address cannot reach egress-escape. Apply both policy owners before the Job.
+docker build --target host -t wamn-host:dev .
+docker build --target gates -t wamn-gates:dev .
+kind load docker-image wamn-host:dev --name wamn
+kind load docker-image wamn-gates:dev --name wamn
+# The control NATS selector in the platform policy must resolve to a live pod.
+kubectl -n wamn-system wait --for=condition=Ready pod \
+  -l wasmcloud.com/name=nats --timeout=120s
+kubectl -n wamn-system apply -f deploy/platform/runner-netpol.yaml
+kubectl -n wamn-system apply -f deploy/gates/runner-connection-egress.yaml
+# Fresh gate clusters need the fail-closed empty placement map. Never overwrite
+# an environment-owned populated map with this example.
+kubectl -n wamn-system get configmap wamn-node-placements >/dev/null || \
+  kubectl -n wamn-system apply -f deploy/platform/runner-node-placements.example.yaml
+kubectl -n wamn-system apply -f deploy/platform/runner.yaml
+kubectl -n wamn-system rollout status deploy/runner --timeout=180s
+kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
+kubectl -n wamn-system apply -f deploy/gates/egress-escape.yaml
+docker exec "$(kind get nodes --name wamn | head -n 1)" \
+  nft list table inet kindnet-network-policies >/dev/null
+kubectl -n wamn-system delete job credproof --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=300s
+kubectl -n wamn-system logs job/credproof
+
+# Mutation: add app=egress-escape:8091 to the P0 connection policy. The same
+# credproof turns red because the address escape reaches its target. The tool
+# restores byte-exactly and reapplies; require the clean Job to pass again.
+tools/gate-mutants/runner-egress-address.sh green
+tools/gate-mutants/runner-egress-address.sh run
+tools/gate-mutants/runner-egress-address.sh green
+
+# Real production Deployment regression: the normal F3 flow must still reach
+# its environment-admitted serve-echo connection through the policy floor.
+kubectl -n wamn-system delete job f3proof --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/f3proof-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/f3proof --timeout=300s
+kubectl -n wamn-system logs job/f3proof
+
+# Existing signed-node transport regression: nodebench's source pod carries the
+# runner profile and its unchanged cross-pod hop reaches only the labeled
+# serve-node-gate target on :8080. F4 is co-located/loopback and does not prove
+# this NetworkPolicy boundary.
+kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
+kubectl -n wamn-system rollout status deploy/serve-node-gate --timeout=120s
+kubectl -n wamn-system delete job nodebench --ignore-not-found
+kubectl -n wamn-system apply -f deploy/gates/nodebench-job.yaml
+kubectl -n wamn-system wait --for=condition=complete job/nodebench --timeout=300s
+kubectl -n wamn-system logs job/nodebench
 ```
 
 ## PLAN-2A — respond common Node ABI (`wamn-ayq7.20`)

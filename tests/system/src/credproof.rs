@@ -8,6 +8,8 @@ mod tests {
     const FLOW_ID: &str = "cred-notify";
     const DENY_FLOW_JSON: &str = include_str!("../../../deploy/cred/deny.flow.json");
     const DENY_FLOW_ID: &str = "egress-deny";
+    const ESCAPE_FLOW_JSON: &str = include_str!("../../../deploy/cred/address-escape.flow.json");
+    const ESCAPE_FLOW_ID: &str = "egress-address-escape";
     const DEMO_TOKEN: &str = "wamn-cred-proof-7f3a9b2e41d05c68";
     const DEMO_SECRET: &str = "Bearer wamn-cred-proof-7f3a9b2e41d05c68";
     const CREDENTIAL_NAME: &str = "notify-token";
@@ -31,7 +33,11 @@ mod tests {
 
     #[test]
     fn credential_fixtures_use_exactly_one_rev18_request_entry() {
-        for (name, source) in [(FLOW_ID, FLOW_JSON), (DENY_FLOW_ID, DENY_FLOW_JSON)] {
+        for (name, source) in [
+            (FLOW_ID, FLOW_JSON),
+            (DENY_FLOW_ID, DENY_FLOW_JSON),
+            (ESCAPE_FLOW_ID, ESCAPE_FLOW_JSON),
+        ] {
             let value: Value = serde_json::from_str(source).expect("fixture parses");
             assert!(value.get("trigger").is_none());
             assert!(value.get("entry").is_none());
@@ -107,6 +113,70 @@ mod tests {
         );
         assert!(value["nodes"][1]["config"].get("url").is_none());
         assert!(value["nodes"][1].get("credential").is_none());
+    }
+
+    #[test]
+    fn address_escape_fixture_keeps_the_denied_endpoint_environment_owned() {
+        let value: Value = serde_json::from_str(ESCAPE_FLOW_JSON).expect("fixture parses");
+        let flow = wamn_flow::Flow::from_json(ESCAPE_FLOW_JSON).expect("fixture is a wamn-flow");
+        flow.validate(&resolved_interfaces())
+            .expect("fixture validates");
+
+        assert_eq!(flow.flow_id, ESCAPE_FLOW_ID);
+        assert_eq!(
+            flow.connection_requirements,
+            vec![expected_connection_requirement()]
+        );
+        assert!(flow.allowed_hosts.is_empty());
+        assert!(flow.credentials.is_empty());
+        assert_eq!(value["nodes"][1]["connection"], json!(CONNECTION_NAME));
+        assert_eq!(
+            value["nodes"][1]["config"]["path-and-query"],
+            json!("/escape")
+        );
+        assert!(value["nodes"][1]["config"].get("url").is_none());
+        assert!(!ESCAPE_FLOW_JSON.contains("egress-escape"));
+    }
+
+    #[test]
+    fn runner_network_policy_has_separate_platform_and_environment_owners() {
+        let runner = include_str!("../../../deploy/platform/runner.yaml");
+        let platform = include_str!("../../../deploy/platform/runner-netpol.yaml");
+        let external =
+            include_str!("../../../deploy/platform/runner-connection-egress.example.yaml");
+        let p0 = include_str!("../../../deploy/gates/runner-connection-egress.yaml");
+        let credproof = include_str!("../../../deploy/gates/credproof-job.yaml");
+        let nodebench = include_str!("../../../deploy/gates/nodebench-job.yaml");
+        let platform_node = include_str!("../../../deploy/platform/serve-node.yaml");
+        let gate_node = include_str!("../../../deploy/gates/serve-node.yaml");
+
+        for manifest in [runner, platform, external, p0, credproof, nodebench] {
+            assert!(manifest.contains("wamn.io/egress-profile: runner"));
+        }
+        for required in [
+            "kube-dns",
+            "5432",
+            "4222",
+            "4317",
+            "wamn.io/egress-role: signed-node",
+            "8080",
+        ] {
+            assert!(
+                platform.contains(required),
+                "missing platform admission {required}"
+            );
+        }
+        assert!(external.contains("ipBlock:"));
+        assert!(external.contains("cidr:"));
+        assert!(p0.contains("app: serve-echo"));
+        assert!(!p0.contains("              app: egress-escape"));
+        assert!(credproof.contains("http://egress-escape:8091"));
+        assert!(runner.contains("apply -f deploy/platform/runner-netpol.yaml"));
+        assert!(runner.contains("RUNNER_CONNECTION_EGRESS_POLICY=/path/to/"));
+        assert!(runner.contains("omission denies all business egress"));
+        for node in [platform_node, gate_node] {
+            assert!(node.contains("wamn.io/egress-role: signed-node"));
+        }
     }
 
     #[test]

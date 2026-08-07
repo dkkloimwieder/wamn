@@ -31,16 +31,23 @@ const ENVIRONMENT: &str = "proof";
 const CATALOG_ID: &str = "credproof-catalog";
 const FLOW_ID: &str = "cred-notify";
 const DENY_FLOW_ID: &str = "egress-deny";
+const ESCAPE_FLOW_ID: &str = "egress-address-escape";
 const ATTACHMENT_ID: &str = "credproof-positive";
 const DENY_ATTACHMENT_ID: &str = "credproof-deny";
+const ESCAPE_ATTACHMENT_ID: &str = "credproof-address-escape";
 const DEFINITION_HASH: &str = "sha256:credproof-positive";
 const DENY_DEFINITION_HASH: &str = "sha256:credproof-deny";
+const ESCAPE_DEFINITION_HASH: &str = "sha256:credproof-address-escape";
 const CONNECTION_NAME: &str = "notify-endpoint";
 const INSTANCE_ID: &str = "credproof-echo";
+const ESCAPE_INSTANCE_ID: &str = "credproof-address-escape";
 const CREDENTIAL_HANDLE: &str = "notify-token";
 const DEMO_SECRET: &str = "Bearer wamn-cred-proof-7f3a9b2e41d05c68";
 const FLOW_JSON: &str = include_str!("../../../deploy/cred/notify.flow.json");
 const DENY_FLOW_JSON: &str = include_str!("../../../deploy/cred/deny.flow.json");
+// Keep the address-control fixture in this compilation unit so image rebuilds
+// cannot retain a stale embedded policy probe when the fixture changes.
+const ESCAPE_FLOW_JSON: &str = include_str!("../../../deploy/cred/address-escape.flow.json");
 
 struct ProofDriver {
     host: Arc<tokio::sync::Mutex<ExecutionHost>>,
@@ -73,6 +80,8 @@ pub struct CredProofArgs {
     pub admin_database_url: String,
     #[arg(long, default_value = "http://serve-echo:8091")]
     pub echo_url: String,
+    #[arg(long, default_value = "http://egress-escape:8091")]
+    pub escape_url: String,
     #[arg(long, default_value = DEMO_SECRET)]
     pub secret: String,
     #[arg(long, default_value_t = 60)]
@@ -216,7 +225,61 @@ async fn insert_artifact(client: &Client, flow: &Flow) -> anyhow::Result<Artifac
     Ok(artifact)
 }
 
-async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
+async fn insert_connection(
+    client: &Client,
+    instance_id: &str,
+    authority_url: &str,
+    generation_hash: &str,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            wamn_schema_control::connections::insert_connection_instance_sql(),
+            &[
+                &TENANT,
+                &ENVIRONMENT,
+                &instance_id,
+                &"http",
+                &"wamn:connection/http@0.1.0",
+            ],
+        )
+        .await?;
+    let primary = format!("{}/", authority_url.trim_end_matches('/'));
+    let definition = json!({
+        "primary-authority": primary,
+        "failover-authorities": [],
+        "tls-verification": "disabled",
+        "tls-names": [],
+        "redirect-policy": "same-authority",
+        "proxy-transport": null,
+        "credential-set-handle": CREDENTIAL_HANDLE
+    });
+    let definition_text = serde_json::to_string(&definition)?;
+    client
+        .execute(
+            wamn_schema_control::connections::insert_connection_generation_sql(),
+            &[
+                &TENANT,
+                &ENVIRONMENT,
+                &instance_id,
+                &1_i64,
+                &definition_text,
+                &generation_hash,
+                &CREDENTIAL_HANDLE,
+            ],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE catalog.connection_instances \
+                SET active_generation=1,revision=1,updated_at=now()+interval '1 microsecond' \
+              WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3",
+            &[&TENANT, &ENVIRONMENT, &instance_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn provision(admin_url: &str, echo_url: &str, escape_url: &str) -> anyhow::Result<()> {
     let (mut client, handle) = connect(admin_url).await?;
     client
         .batch_execute(concat!(
@@ -231,13 +294,17 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
 
     let positive_flow = parse_flow(FLOW_JSON)?;
     let deny_flow = parse_flow(DENY_FLOW_JSON)?;
+    let escape_flow = parse_flow(ESCAPE_FLOW_JSON)?;
     let positive = insert_artifact(&client, &positive_flow).await?;
     let deny = insert_artifact(&client, &deny_flow).await?;
+    let escape = insert_artifact(&client, &escape_flow).await?;
     let positive_hash = positive.identity().artifact_hash().as_str();
     let deny_hash = deny.identity().artifact_hash().as_str();
+    let escape_hash = escape.identity().artifact_hash().as_str();
     let members = json!([
         {"flow-id": FLOW_ID, "flow-version": 1, "artifact-hash": positive_hash},
-        {"flow-id": DENY_FLOW_ID, "flow-version": 1, "artifact-hash": deny_hash}
+        {"flow-id": DENY_FLOW_ID, "flow-version": 1, "artifact-hash": deny_hash},
+        {"flow-id": ESCAPE_FLOW_ID, "flow-version": 1, "artifact-hash": escape_hash}
     ]);
 
     client
@@ -256,7 +323,7 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
             &[&TENANT, &CATALOG_ID, &members],
         )
         .await?;
-    for flow_id in [FLOW_ID, DENY_FLOW_ID] {
+    for flow_id in [FLOW_ID, DENY_FLOW_ID, ESCAPE_FLOW_ID] {
         release
             .execute(
                 "INSERT INTO catalog.release_flows \
@@ -287,6 +354,13 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
             DENY_FLOW_ID,
             DENY_DEFINITION_HASH,
             "/deny",
+        ),
+        (
+            "escape-source",
+            ESCAPE_ATTACHMENT_ID,
+            ESCAPE_FLOW_ID,
+            ESCAPE_DEFINITION_HASH,
+            "/escape",
         ),
     ] {
         let source_hash = format!("sha256:{source}");
@@ -328,6 +402,7 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
     for (attachment, definition_hash) in [
         (ATTACHMENT_ID, DEFINITION_HASH),
         (DENY_ATTACHMENT_ID, DENY_DEFINITION_HASH),
+        (ESCAPE_ATTACHMENT_ID, ESCAPE_DEFINITION_HASH),
     ] {
         release
             .execute(
@@ -346,51 +421,20 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
     }
     release.commit().await?;
 
-    client
-        .execute(
-            wamn_schema_control::connections::insert_connection_instance_sql(),
-            &[
-                &TENANT,
-                &ENVIRONMENT,
-                &INSTANCE_ID,
-                &"http",
-                &"wamn:connection/http@0.1.0",
-            ],
-        )
-        .await?;
-    let primary = format!("{}/", echo_url.trim_end_matches('/'));
-    let definition = json!({
-        "primary-authority": primary,
-        "failover-authorities": [],
-        "tls-verification": "disabled",
-        "tls-names": [],
-        "redirect-policy": "same-authority",
-        "proxy-transport": null,
-        "credential-set-handle": CREDENTIAL_HANDLE
-    });
-    let definition_text = serde_json::to_string(&definition)?;
-    client
-        .execute(
-            wamn_schema_control::connections::insert_connection_generation_sql(),
-            &[
-                &TENANT,
-                &ENVIRONMENT,
-                &INSTANCE_ID,
-                &1_i64,
-                &definition_text,
-                &"sha256:credproof-generation",
-                &CREDENTIAL_HANDLE,
-            ],
-        )
-        .await?;
-    client
-        .execute(
-            "UPDATE catalog.connection_instances \
-                SET active_generation=1,revision=1,updated_at=now()+interval '1 microsecond' \
-              WHERE tenant_id=$1 AND environment=$2 AND instance_id=$3",
-            &[&TENANT, &ENVIRONMENT, &INSTANCE_ID],
-        )
-        .await?;
+    insert_connection(
+        &client,
+        INSTANCE_ID,
+        echo_url,
+        "sha256:credproof-generation",
+    )
+    .await?;
+    insert_connection(
+        &client,
+        ESCAPE_INSTANCE_ID,
+        escape_url,
+        "sha256:credproof-address-escape-generation",
+    )
+    .await?;
     client
         .execute(
             wamn_schema_control::connections::insert_connection_binding_sql(),
@@ -405,6 +449,23 @@ async fn provision(admin_url: &str, echo_url: &str) -> anyhow::Result<()> {
                 &"active",
                 &"valid",
                 &"sha256:credproof-binding",
+            ],
+        )
+        .await?;
+    client
+        .execute(
+            wamn_schema_control::connections::insert_connection_binding_sql(),
+            &[
+                &TENANT,
+                &CATALOG_ID,
+                &1_i32,
+                &escape_hash,
+                &CONNECTION_NAME,
+                &ENVIRONMENT,
+                &ESCAPE_INSTANCE_ID,
+                &"active",
+                &"valid",
+                &"sha256:credproof-address-escape-binding",
             ],
         )
         .await?;
@@ -502,7 +563,7 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
     let admin_url = database_url(&args.admin_database_url, &name)?;
     let app_url = database_url(&args.database_url, &name)?;
     let result = async {
-        provision(&admin_url, &args.echo_url).await?;
+        provision(&admin_url, &args.echo_url, &args.escape_url).await?;
         let guest = std::fs::read(&args.flowrunner)
             .with_context(|| format!("read {}", args.flowrunner.display()))?;
         let engine = build_engine(&[])?;
@@ -521,6 +582,17 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
         let uri: hyper::Uri = args.echo_url.parse().context("parse --echo-url")?;
         let authority = uri.authority().context("--echo-url has no authority")?;
         let allowed: AllowedHost = authority.as_str().parse().context("allow echo authority")?;
+        let escape_uri: hyper::Uri = args
+            .escape_url
+            .parse()
+            .context("parse --escape-url")?;
+        let escape_authority = escape_uri
+            .authority()
+            .context("--escape-url has no authority")?;
+        let escape_allowed: AllowedHost = escape_authority
+            .as_str()
+            .parse()
+            .context("allow escape authority through the hostname ceiling")?;
         let host = ExecutionHost::instantiate(
             &engine,
             &guest,
@@ -534,7 +606,7 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
                 project: PROJECT,
             },
             production_capabilities(
-                Arc::from([allowed]),
+                Arc::from([allowed, escape_allowed]),
                 Arc::new(RunnerEgressPolicy::default()),
             ),
             30_000,
@@ -601,9 +673,30 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
                     .is_some_and(|message| message.contains("unbound")),
             "deny failure was not the typed unbound refusal: {failure:?}"
         );
+
+        let BeginResult::Admitted(escape) = service
+            .begin(request(
+                ESCAPE_ATTACHMENT_ID,
+                ESCAPE_DEFINITION_HASH,
+                "credproof-address-escape",
+            ))
+            .await?
+        else {
+            bail!("address-escape credproof admission was refused before dispatch");
+        };
+        let escape_result = service.wait(escape.run_id.clone(), timeout_ms).await?;
         ticker.abort();
+        match escape_result {
+            None | Some(InvokeResult::Failed(_)) => {}
+            Some(InvokeResult::Responded(_)) => {
+                bail!("address escape reached the environment-owned denied target");
+            }
+            Some(InvokeResult::Cancelled(failure)) => {
+                bail!("address-escape run was unexpectedly cancelled: {failure:?}");
+            }
+        }
         println!(
-            "credproof PASS: admitted binding delivered credentials; unbound artifact denied; containment held"
+            "credproof PASS: admitted binding delivered credentials; unbound artifact denied; address escape blocked; containment held"
         );
         anyhow::Ok(())
     }

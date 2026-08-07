@@ -7,6 +7,10 @@
 #
 #   kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml   # once (per project)
 #   kubectl -n wamn-system apply -f deploy/platform/runner-node-placements.example.yaml # once; populate exact digests
+#   kubectl -n wamn-system apply -f deploy/platform/runner-netpol.yaml
+#   RUNNER_CONNECTION_EGRESS_POLICY=/path/to/runner-connection-egress.yaml # render from the checked-in .example
+#   test -n "$RUNNER_CONNECTION_EGRESS_POLICY" # REQUIRED; omission denies all business egress
+#   kubectl -n wamn-system apply -f "$RUNNER_CONNECTION_EGRESS_POLICY"
 #   kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 #   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   kubectl -n wamn-system logs -l app=runner --tail=20
@@ -62,7 +66,11 @@ spec:
   minReadySeconds: 30
   template:
     metadata:
-      labels: { app: runner }
+      labels:
+        app: runner
+        # Selected by runner-netpol.yaml. Environment connection policies use
+        # the same stable profile label and add only approved address ranges.
+        wamn.io/egress-profile: runner
     spec:
       # The runner never talks to the Kubernetes API — don't hand each replica
       # the default ServiceAccount token as idle attack surface.

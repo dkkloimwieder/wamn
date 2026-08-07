@@ -21,7 +21,9 @@ spec:
     matchLabels: { app: serve-node-gate }
   template:
     metadata:
-      labels: { app: serve-node-gate }
+      labels:
+        app: serve-node-gate
+        wamn.io/egress-role: signed-node
     spec:
       containers:
         - name: serve-node-gate

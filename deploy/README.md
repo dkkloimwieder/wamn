@@ -9,10 +9,11 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
 - **`platform/`** — long-lived production/platform manifests the control plane
   or an operator owns: dispatcher, production executor (`runner`), registry, wamn-sysdb,
   api-gateway/trace-relay workloads, credential `*.example` Secrets, the shared
-  postgres fixture, `event-reader.example.yaml`, `hello-workload.yaml`.
+  postgres fixture, runner NetworkPolicy + environment connection-policy example,
+  `event-reader.example.yaml`, `hello-workload.yaml`.
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
-  Deployments (`serve-echo`, `serve-node-gate`). Applied per gate run, deleted
-  after.
+  Deployments (`serve-echo`, `egress-escape`, `serve-node-gate`). Applied per
+  gate run, deleted after.
 - **`poc/`** — POC assets (f1 flow/seed/workloads/provision Job, the
   material-receiving catalog/RLS/seed JSON, `proof-catalog.json`).
 - **`sql/`** — the standalone SQL schemas (`postgres-init`, `app-schema`,

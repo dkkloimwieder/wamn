@@ -75,7 +75,9 @@ pub fn render_serve_node_deployment(
          \x20 selector: {{ matchLabels: {{ app: {name} }} }}\n\
          \x20 template:\n\
          \x20\x20\x20 metadata:\n\
-         \x20\x20\x20\x20\x20 labels: {{ app: {name} }}\n\
+         \x20\x20\x20\x20\x20 labels:\n\
+         \x20\x20\x20\x20\x20\x20\x20 app: {name}\n\
+         \x20\x20\x20\x20\x20\x20\x20 wamn.io/egress-role: signed-node\n\
          \x20\x20\x20 spec:\n\
          \x20\x20\x20\x20\x20 automountServiceAccountToken: false\n\
          \x20\x20\x20\x20\x20 containers:\n\

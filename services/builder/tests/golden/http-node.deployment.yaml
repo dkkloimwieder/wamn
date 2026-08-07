@@ -17,7 +17,9 @@ spec:
   selector: { matchLabels: { app: serve-node-http-caller } }
   template:
     metadata:
-      labels: { app: serve-node-http-caller }
+      labels:
+        app: serve-node-http-caller
+        wamn.io/egress-role: signed-node
     spec:
       automountServiceAccountToken: false
       containers:

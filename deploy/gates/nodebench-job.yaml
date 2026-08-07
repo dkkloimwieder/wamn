@@ -5,6 +5,8 @@
 # The hop gate points at the serve-node-gate Service, so it measures a REAL cross-pod
 # HTTP round trip (apply deploy/gates/serve-node.yaml first). The gap (interpreted vs
 # composed) and config-parse gates run in-pod (no external dependency). No DB.
+# The runner egress profile makes that hop a regression for runner-netpol.yaml;
+# serve-node-gate carries the corresponding signed-node destination label.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/serve-node.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-node-gate --timeout=120s
@@ -20,7 +22,9 @@ spec:
   backoffLimit: 0
   template:
     metadata:
-      labels: { app: nodebench }
+      labels:
+        app: nodebench
+        wamn.io/egress-profile: runner
     spec:
       restartPolicy: Never
       # Wait for serve-node-gate to accept connections before the hop gate runs.

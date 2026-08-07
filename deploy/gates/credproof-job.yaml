@@ -7,7 +7,7 @@
 # while the database scan proves containment.
 #
 #   kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
-#   kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=180s
+#   kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=300s
 #   kubectl -n wamn-system logs job/credproof
 apiVersion: batch/v1
 kind: Job
@@ -18,7 +18,10 @@ spec:
   backoffLimit: 0
   template:
     metadata:
-      labels: { app: credproof }
+      labels:
+        app: credproof
+        # Exercise the exact runner address ceiling around ExecutionHost.
+        wamn.io/egress-profile: runner
     spec:
       restartPolicy: Never
       initContainers:
@@ -57,6 +60,8 @@ spec:
             - "postgres://$(PGUSER):$(PGPASSWORD)@$(PGHOST):$(PGPORT)/postgres"
             - "--echo-url"
             - "http://serve-echo:8091"
+            - "--escape-url"
+            - "http://egress-escape:8091"
             - "--timeout-secs"
             - "60"
           resources:

@@ -17,7 +17,9 @@ spec:
   selector: { matchLabels: { app: serve-node-disposition-recommendation } }
   template:
     metadata:
-      labels: { app: serve-node-disposition-recommendation }
+      labels:
+        app: serve-node-disposition-recommendation
+        wamn.io/egress-role: signed-node
     spec:
       automountServiceAccountToken: false
       containers:

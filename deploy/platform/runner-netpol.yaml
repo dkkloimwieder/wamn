@@ -1,0 +1,66 @@
+# Runner address-level egress floor. The trusted HTTP adapter resolves once and
+# pins the selected address while preserving the logical host for Host/TLS;
+# this policy is the outer address ceiling on that actual connect.
+#
+# Multiple NetworkPolicies are additive. This base admits only platform-plane
+# dependencies. Each environment separately owns business connection address
+# ranges through runner-connection-egress.example.yaml (or an equivalent
+# generated policy); a connection binding never widens this policy itself.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: runner-egress-platform
+  namespace: wamn-system
+spec:
+  podSelector:
+    matchLabels:
+      wamn.io/egress-profile: runner
+  policyTypes:
+    - Egress
+  egress:
+    # Kubernetes DNS. Restrict both namespace and pod identity.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Per-project PostgreSQL: the checked-in demo and provisioned CNPG shapes.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+        - podSelector:
+            matchExpressions:
+              - key: cnpg.io/cluster
+                operator: Exists
+              - key: cnpg.io/podRole
+                operator: In
+                values: [instance]
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # Control-plane doorbell hints (the DB polling path remains authoritative).
+    - to:
+        - podSelector:
+            matchLabels:
+              wasmcloud.com/name: nats
+      ports:
+        - { protocol: TCP, port: 4222 }
+    # Runner logs and metrics.
+    - to:
+        - podSelector:
+            matchLabels:
+              app: otel-collector
+      ports:
+        - { protocol: TCP, port: 4317 }
+    # Environment-owned, digest-pinned signed custom-node placements.
+    - to:
+        - podSelector:
+            matchLabels:
+              wamn.io/egress-role: signed-node
+      ports:
+        - { protocol: TCP, port: 8080 }
