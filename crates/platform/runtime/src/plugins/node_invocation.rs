@@ -183,7 +183,7 @@ pub struct NodeInvocationSnapshot {
     pub catalog_version: Option<i64>,
     pub environment: Option<String>,
     pub admitted_artifact_digest: Option<String>,
-    pub release_member: bool,
+    pub admitted_artifact: bool,
     pub attempt_matches: bool,
     pub node_type: Option<String>,
     pub executable_kind: Option<String>,
@@ -342,7 +342,7 @@ fn authorize_snapshot(
         || snapshot.catalog_version != Some(i64::from(context.catalog_version))
         || snapshot.environment.as_deref() != Some(context.environment.as_str())
         || snapshot.admitted_artifact_digest.as_deref() != Some(context.artifact_digest.as_str())
-        || !snapshot.release_member
+        || !snapshot.admitted_artifact
         || !snapshot.attempt_matches
     {
         return Err(EffectError::InvalidContext);
@@ -518,7 +518,7 @@ mod tests {
             catalog_version: Some(i64::from(context.catalog_version)),
             environment: Some(context.environment.clone()),
             admitted_artifact_digest: Some(context.artifact_digest.clone()),
-            release_member: true,
+            admitted_artifact: true,
             attempt_matches: true,
             node_type: Some("custom".into()),
             executable_kind: Some("component".into()),

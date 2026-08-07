@@ -40,6 +40,7 @@ pub fn fail_kind_from_store(kind: StoredFailKind) -> FailKind {
         StoredFailKind::RetryExhausted => FailKind::RetryExhausted,
         StoredFailKind::InvalidInput => FailKind::InvalidInput,
         StoredFailKind::RunawayBudget => FailKind::RunawayBudget,
+        StoredFailKind::EffectUncertain => FailKind::EffectUncertain,
     }
 }
 
@@ -50,6 +51,7 @@ pub fn fail_kind_to_store(kind: FailKind) -> StoredFailKind {
         FailKind::RetryExhausted => StoredFailKind::RetryExhausted,
         FailKind::InvalidInput => StoredFailKind::InvalidInput,
         FailKind::RunawayBudget => StoredFailKind::RunawayBudget,
+        FailKind::EffectUncertain => StoredFailKind::EffectUncertain,
     }
 }
 

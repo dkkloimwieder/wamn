@@ -80,14 +80,18 @@ pub enum FailKind {
     /// The run spent its per-invocation node-execution budget (cjv.4) — a
     /// permitted loop that never terminated.
     RunawayBudget,
+    /// A never-replay effect may have escaped before its durable completion
+    /// record was written, so repeating it would be unsafe.
+    EffectUncertain,
 }
 
 impl FailKind {
-    pub const ALL: [FailKind; 4] = [
+    pub const ALL: [FailKind; 5] = [
         FailKind::Terminal,
         FailKind::RetryExhausted,
         FailKind::InvalidInput,
         FailKind::RunawayBudget,
+        FailKind::EffectUncertain,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -96,6 +100,7 @@ impl FailKind {
             FailKind::RetryExhausted => "retry-exhausted",
             FailKind::InvalidInput => "invalid-input",
             FailKind::RunawayBudget => "runaway-budget",
+            FailKind::EffectUncertain => "effect-uncertain",
         }
     }
 

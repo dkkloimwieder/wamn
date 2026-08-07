@@ -431,6 +431,7 @@ async fn finish_publication_transaction(
 
 /// Install or additively upgrade the catalog persistence schema.
 pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::Result<()> {
+    ensure_wamn_app_role(client).await?;
     let baseline_present: bool = client
         .query_one("SELECT to_regclass('catalog.catalogs') IS NOT NULL", &[])
         .await?
@@ -506,7 +507,10 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.connection_instances') IS NOT NULL, \
                     to_regclass('catalog.connection_generations') IS NOT NULL, \
                     to_regclass('catalog.connection_bindings') IS NOT NULL, \
-                    to_regclass('catalog.connection_generation_retention') IS NOT NULL",
+                    to_regclass('catalog.connection_generation_retention') IS NOT NULL, \
+                    to_regclass('catalog.flow_drafts') IS NOT NULL, \
+                    to_regclass('catalog.validated_flow_drafts') IS NOT NULL, \
+                    to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL",
             &[],
         )
         .await?;
@@ -569,23 +573,57 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
             release_row.get::<_, bool>(20),
             release_row.get::<_, bool>(21),
         ];
-        if connection_objects.iter().all(|present| *present) {
-            return Ok(());
+        if !connection_objects.iter().all(|present| *present) {
+            anyhow::ensure!(
+                connection_objects.iter().all(|present| !*present),
+                "catalog connection storage is partially installed; reconcile it before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN CONNECTION STORAGE MIGRATION")
+                .expect("connection storage migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END CONNECTION STORAGE MIGRATION")
+                .expect("connection storage migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install connection storage")?;
         }
-        anyhow::ensure!(
-            connection_objects.iter().all(|present| !*present),
-            "catalog connection storage is partially installed; reconcile it before publication"
-        );
-        let start = CATALOG_SCHEMA_SQL
-            .find("-- BEGIN CONNECTION STORAGE MIGRATION")
-            .expect("connection storage migration start");
-        let end = CATALOG_SCHEMA_SQL
-            .find("-- END CONNECTION STORAGE MIGRATION")
-            .expect("connection storage migration end");
-        client
-            .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-            .await
-            .context("install connection storage")?;
+
+        let authoring_draft_objects = [
+            release_row.get::<_, bool>(22),
+            release_row.get::<_, bool>(23),
+        ];
+        if !authoring_draft_objects.iter().all(|present| *present) {
+            anyhow::ensure!(
+                authoring_draft_objects.iter().all(|present| !*present),
+                "catalog authoring draft storage is partially installed; reconcile it before publication"
+            );
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN AUTHORING DRAFT STORAGE MIGRATION")
+                .expect("authoring draft storage migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END AUTHORING DRAFT STORAGE MIGRATION")
+                .expect("authoring draft storage migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install authoring draft storage")?;
+        }
+
+        if !release_row.get::<_, bool>(24) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION")
+                .expect("authoring connection authority migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END AUTHORING CONNECTION AUTHORITY MIGRATION")
+                .expect("authoring connection authority migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install authoring connection authority")?;
+        }
+        ensure_authoring_catalog_privileges(client).await?;
         return Ok(());
     }
     anyhow::ensure!(
@@ -602,7 +640,64 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
         .await
         .context("install catalog release storage into baseline catalog")?;
+    ensure_authoring_catalog_privileges(client).await?;
     Ok(())
+}
+
+async fn ensure_authoring_catalog_privileges(
+    client: &tokio_postgres::Client,
+) -> anyhow::Result<()> {
+    client
+        .batch_execute(
+            "REVOKE wamn_scenario_author FROM wamn_app; \
+             GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.catalogs FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app; \
+             REVOKE ALL PRIVILEGES ON catalog.flow_artifacts FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.flow_artifacts TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.release_manifests FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_manifests TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.release_flows FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.release_flows TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.catalog_heads FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.catalog_heads TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.connection_requirements FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_requirements TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.connection_instances FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_instances TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.connection_generations FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_generations TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.connection_bindings FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.connection_bindings TO wamn_app, wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.flow_drafts FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.validated_flow_drafts TO wamn_app; \
+             GRANT SELECT, INSERT ON catalog.validated_flow_drafts TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.draft_safe_connection_grants FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app; \
+             GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants TO wamn_scenario_author; \
+             DO $effective_acl$ BEGIN \
+               IF has_table_privilege('wamn_app', 'catalog.flow_drafts', 'INSERT') \
+                  OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'UPDATE') \
+                  OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'DELETE') \
+                  OR has_table_privilege('wamn_app', 'catalog.validated_flow_drafts', 'INSERT') \
+                  OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'INSERT') \
+                  OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.flow_artifacts', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_manifests', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.release_flows', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.catalog_heads', 'UPDATE') THEN \
+                 RAISE EXCEPTION USING ERRCODE = '42501', \
+                   MESSAGE = 'authoring-effective-privilege-out-of-bounds:catalog'; \
+               END IF; \
+             END $effective_acl$;",
+        )
+        .await
+        .context("converge host-only catalog authoring privileges")
 }
 
 /// Lock the stable head for a release, initializing it from an applied legacy
@@ -1153,7 +1248,15 @@ pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> any
              END $$;",
         )
         .await
-        .context("ensure wamn_app role")
+        .context("ensure wamn_app role")?;
+    client
+        .batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .context("ensure host-only wamn_scenario_author role")?;
+    client
+        .batch_execute("REVOKE wamn_scenario_author FROM wamn_app")
+        .await
+        .context("separate guest and scenario-author roles")
 }
 
 /// Apply `deploy/sql/run-state.sql` (runs + node_runs) into `schema` when its
@@ -1162,6 +1265,7 @@ pub async fn ensure_runstate(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
+    ensure_wamn_app_role(client).await?;
     if table_exists(client, schema, "runs").await? {
         return Ok(false);
     }
@@ -1198,15 +1302,93 @@ pub async fn ensure_flow_tests(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
-    if table_exists(client, schema, "test_suites").await? {
-        return Ok(false);
+    ensure_wamn_app_role(client).await?;
+    let suites_present = table_exists(client, schema, "test_suites").await?;
+    let cases_present = table_exists(client, schema, "test_cases").await?;
+    anyhow::ensure!(
+        suites_present == cases_present,
+        "flow test-suite storage is partially installed; reconcile it before publication"
+    );
+    if !suites_present {
+        let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
+        client
+            .batch_execute(&ddl)
+            .await
+            .context("apply flow test-suite tables")?;
+        ensure_authoring_run_privileges(client, schema).await?;
+        return Ok(true);
     }
-    let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
-    client
-        .batch_execute(&ddl)
+
+    let authoring_storage = client
+        .query_one(
+            &format!(
+                "SELECT to_regclass('{}.authoring_report_reservations') IS NOT NULL, \
+                        to_regclass('{}.authoring_suite_case_facts') IS NOT NULL, \
+                        to_regclass('{}.authoring_suite_reports') IS NOT NULL",
+                schema.as_str(),
+                schema.as_str(),
+                schema.as_str(),
+            ),
+            &[],
+        )
         .await
-        .context("apply flow test-suite tables")?;
-    Ok(true)
+        .context("probe authoring report storage")?;
+    let authoring_objects = [
+        authoring_storage.get::<_, bool>(0),
+        authoring_storage.get::<_, bool>(1),
+        authoring_storage.get::<_, bool>(2),
+    ];
+    let installed = if authoring_objects.iter().all(|present| *present) {
+        false
+    } else {
+        anyhow::ensure!(
+            authoring_objects.iter().all(|present| !*present),
+            "authoring report storage is partially installed; reconcile it before publication"
+        );
+        let source = include_str!("../../../deploy/sql/flow-tests.sql");
+        let start = source
+            .find("-- BEGIN AUTHORING REPORT STORAGE MIGRATION")
+            .expect("authoring report storage migration start");
+        let end = source
+            .find("-- END AUTHORING REPORT STORAGE MIGRATION")
+            .expect("authoring report storage migration end");
+        client
+            .batch_execute(&rewrite_schema(&source[start..end], schema))
+            .await
+            .context("install authoring report storage")?;
+        true
+    };
+    ensure_authoring_run_privileges(client, schema).await?;
+    Ok(installed)
+}
+
+async fn ensure_authoring_run_privileges(
+    client: &tokio_postgres::Client,
+    schema: &BareSchemaName,
+) -> anyhow::Result<()> {
+    let schema_name = schema.quoted();
+    client
+        .batch_execute(&format!(
+            "REVOKE wamn_scenario_author FROM wamn_app; \
+             GRANT USAGE ON SCHEMA {schema_name} TO wamn_scenario_author; \
+             GRANT SELECT ON {schema_name}.runs, {schema_name}.test_suites, \
+                 {schema_name}.test_cases \
+                 TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_report_reservations \
+                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_report_reservations \
+                 TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_suite_case_facts \
+                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT ON {schema_name}.authoring_suite_case_facts \
+                 TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_suite_reports \
+                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT ON {schema_name}.authoring_suite_reports \
+                 TO wamn_scenario_author;"
+        ))
+        .await
+        .context("converge host-only authoring report privileges")
 }
 
 async fn table_exists(

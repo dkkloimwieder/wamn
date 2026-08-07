@@ -91,6 +91,8 @@ pub struct ConnectionEffectSnapshot {
     pub catalog_version: Option<i64>,
     pub environment: Option<String>,
     pub admitted_artifact_digest: Option<String>,
+    /// The run's closed release/draft source arm resolved every exact pin.
+    pub source_admitted: bool,
     pub attempt_matches: bool,
     pub requirement_json: Option<serde_json::Value>,
     pub node_connection: Option<String>,
@@ -106,12 +108,60 @@ pub struct ConnectionEffectSnapshot {
     pub definition: Option<serde_json::Value>,
     pub definition_hash: Option<String>,
     pub credential_handle: Option<String>,
+    /// True for release runs; draft runs require an exact current unrevoked
+    /// generation grant at this immediate pre-network snapshot.
+    pub draft_generation_granted: bool,
     pub attempt_recorded: bool,
 }
 
 const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
+WITH admitted_artifact AS MATERIALIZED ( \
+    SELECT artifact.graph_json, artifact.interface_bundle_json, \
+           artifact.artifact_hash AS execution_artifact_hash, \
+           artifact.artifact_hash AS binding_artifact_hash, false AS is_draft \
+      FROM runs AS source_run \
+      JOIN catalog.flow_artifacts AS artifact \
+        ON artifact.tenant_id = source_run.tenant_id \
+       AND artifact.flow_id = source_run.flow_id \
+       AND artifact.flow_version = source_run.flow_version \
+       AND artifact.artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
+     WHERE source_run.run_id = $1 \
+       AND source_run.trigger_source IS DISTINCT FROM 'scenario-draft' \
+       AND source_run.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
+    UNION ALL \
+    SELECT draft.graph_json, draft.interface_bundle_json::text, \
+           draft.draft_artifact_hash, draft.binding_base_artifact_hash, true \
+      FROM runs AS source_run \
+      JOIN catalog.validated_flow_drafts AS draft \
+        ON draft.tenant_id = source_run.tenant_id \
+       AND draft.flow_id = source_run.flow_id \
+       AND draft.runtime_flow_version = source_run.flow_version \
+       AND draft.catalog_id = source_run.catalog_id \
+       AND draft.catalog_version = source_run.catalog_version \
+       AND draft.environment = source_run.environment \
+       AND draft.draft_artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
+       AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
+       AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
+       AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
+       AND draft.execution_bundle_hash = source_run.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
+       AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
+     WHERE source_run.run_id = $1 \
+       AND source_run.trigger_source = 'scenario-draft' \
+       AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+       AND source_run.admission_context_version = 1 \
+       AND source_run.invocation_context ->> 'version' = '1' \
+       AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
+       AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
+       AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
+       AND source_run.invocation_context #>> '{principal,catalog-version}' = source_run.catalog_version::text \
+       AND source_run.invocation_context #>> '{principal,run-id}' = source_run.run_id \
+       AND source_run.invocation_context #>> '{principal,flow-id}' = source_run.flow_id \
+       AND source_run.invocation_context #>> '{principal,flow-version}' = source_run.flow_version::text \
+) \
 SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
        r.invocation_context #>> '{principal,artifact-digest}', \
+       artifact.execution_artifact_hash IS NOT NULL, \
        (nr.status = 'started' AND nr.attempt = $4), \
        requirement.requirement_json::text, node.value ->> 'connection', \
        EXISTS (SELECT 1 \
@@ -125,6 +175,8 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
        instance.lifecycle_status = 'enabled', instance.active_generation, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle, \
+       COALESCE(NOT artifact.is_draft \
+                OR (grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL), false), \
        (nr.attempt = $4 AND nr.generation_fact_kind = 'attested' \
         AND nr.connection_generation = instance.instance_id || ':' || generation.generation::text \
         AND nr.credential_generation = generation.credential_set_handle \
@@ -134,21 +186,25 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
   LEFT JOIN node_runs AS nr \
     ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
    AND nr.node_id = $2 AND nr.occurrence = $3 \
+  LEFT JOIN admitted_artifact AS artifact ON true \
+  LEFT JOIN LATERAL jsonb_array_elements( \
+      COALESCE(artifact.graph_json -> 'connection-requirements', '[]'::jsonb) \
+  ) AS declared_requirement(value) \
+    ON declared_requirement.value ->> 'name' = $5 \
   LEFT JOIN catalog.connection_requirements AS requirement \
     ON requirement.tenant_id = r.tenant_id \
-   AND requirement.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+   AND requirement.artifact_hash = artifact.binding_artifact_hash \
    AND requirement.requirement_name = $5 \
-  LEFT JOIN catalog.flow_artifacts AS artifact \
-    ON artifact.tenant_id = r.tenant_id \
-   AND artifact.flow_id = r.flow_id AND artifact.flow_version = r.flow_version \
-   AND artifact.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+   AND (NOT artifact.is_draft \
+        OR requirement.requirement_json = declared_requirement.value -> 'requirement') \
   LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
     ON node.value ->> 'id' = $2 \
   LEFT JOIN catalog.connection_bindings AS binding \
     ON binding.tenant_id = r.tenant_id AND binding.catalog_id = r.catalog_id \
    AND binding.catalog_version = r.catalog_version \
-   AND binding.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+   AND binding.artifact_hash = artifact.binding_artifact_hash \
    AND binding.requirement_name = $5 \
+   AND binding.environment = r.environment \
   LEFT JOIN catalog.connection_instances AS instance \
     ON instance.tenant_id = binding.tenant_id \
    AND instance.environment = binding.environment \
@@ -158,30 +214,73 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
    AND generation.environment = instance.environment \
    AND generation.instance_id = instance.instance_id \
    AND generation.generation = instance.active_generation \
+  LEFT JOIN catalog.draft_safe_connection_grants AS grant_row \
+    ON grant_row.tenant_id = generation.tenant_id \
+   AND grant_row.environment = generation.environment \
+   AND grant_row.instance_id = generation.instance_id \
+   AND grant_row.generation = generation.generation \
  WHERE r.run_id = $1";
 
 const NODE_INVOCATION_SNAPSHOT_SQL: &str = "\
+WITH admitted_artifact AS MATERIALIZED ( \
+    SELECT artifact.graph_json, artifact.interface_bundle_json, artifact.artifact_hash \
+      FROM runs AS source_run \
+      JOIN catalog.flow_artifacts AS artifact \
+        ON artifact.tenant_id = source_run.tenant_id \
+       AND artifact.flow_id = source_run.flow_id \
+       AND artifact.flow_version = source_run.flow_version \
+       AND artifact.artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
+     WHERE source_run.run_id = $1 \
+       AND source_run.trigger_source IS DISTINCT FROM 'scenario-draft' \
+       AND source_run.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
+       AND EXISTS ( \
+           SELECT 1 FROM catalog.release_flows AS rf \
+           JOIN catalog.release_manifests AS rm \
+             ON rm.tenant_id = rf.tenant_id AND rm.catalog_id = rf.catalog_id \
+            AND rm.catalog_version = rf.catalog_version \
+          WHERE rf.tenant_id = source_run.tenant_id \
+            AND rf.catalog_id = source_run.catalog_id \
+            AND rf.catalog_version = source_run.catalog_version \
+            AND rf.flow_id = source_run.flow_id \
+            AND rf.flow_version = source_run.flow_version \
+            AND EXISTS (SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
+                         WHERE member ->> 'flow-id' = rf.flow_id \
+                           AND (member ->> 'flow-version')::int = rf.flow_version \
+                           AND member ->> 'artifact-hash' = artifact.artifact_hash) \
+       ) \
+    UNION ALL \
+    SELECT draft.graph_json, draft.interface_bundle_json::text, draft.draft_artifact_hash \
+      FROM runs AS source_run \
+      JOIN catalog.validated_flow_drafts AS draft \
+        ON draft.tenant_id = source_run.tenant_id \
+       AND draft.flow_id = source_run.flow_id \
+       AND draft.runtime_flow_version = source_run.flow_version \
+       AND draft.catalog_id = source_run.catalog_id \
+       AND draft.catalog_version = source_run.catalog_version \
+       AND draft.environment = source_run.environment \
+       AND draft.draft_artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
+       AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
+       AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
+       AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
+       AND draft.execution_bundle_hash = source_run.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
+       AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
+     WHERE source_run.run_id = $1 \
+       AND source_run.trigger_source = 'scenario-draft' \
+       AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+       AND source_run.admission_context_version = 1 \
+       AND source_run.invocation_context ->> 'version' = '1' \
+       AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
+       AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
+       AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
+       AND source_run.invocation_context #>> '{principal,catalog-version}' = source_run.catalog_version::text \
+       AND source_run.invocation_context #>> '{principal,run-id}' = source_run.run_id \
+       AND source_run.invocation_context #>> '{principal,flow-id}' = source_run.flow_id \
+       AND source_run.invocation_context #>> '{principal,flow-version}' = source_run.flow_version::text \
+) \
 SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
        r.invocation_context #>> '{principal,artifact-digest}', \
-       EXISTS ( \
-           SELECT 1 \
-             FROM catalog.release_flows AS rf \
-             JOIN catalog.release_manifests AS rm \
-               ON rm.tenant_id = rf.tenant_id \
-              AND rm.catalog_id = rf.catalog_id \
-              AND rm.catalog_version = rf.catalog_version \
-            WHERE rf.tenant_id = r.tenant_id \
-              AND rf.catalog_id = r.catalog_id \
-              AND rf.catalog_version = r.catalog_version \
-              AND rf.flow_id = r.flow_id \
-              AND rf.flow_version = r.flow_version \
-              AND EXISTS ( \
-                  SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
-                   WHERE member ->> 'flow-id' = rf.flow_id \
-                     AND (member ->> 'flow-version')::int = rf.flow_version \
-                     AND member ->> 'artifact-hash' = artifact.artifact_hash \
-              ) \
-       ), \
+       artifact.artifact_hash IS NOT NULL, \
        (nr.status = 'started' AND nr.attempt = $4 \
         AND nr.attempt_dispatched_at IS NOT NULL), \
        node.value ->> 'type', contract.value #>> '{executable,kind}', \
@@ -193,10 +292,7 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
   LEFT JOIN node_runs AS nr \
     ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
    AND nr.node_id = $2 AND nr.occurrence = $3 \
-  LEFT JOIN catalog.flow_artifacts AS artifact \
-    ON artifact.tenant_id = r.tenant_id \
-   AND artifact.flow_id = r.flow_id AND artifact.flow_version = r.flow_version \
-   AND artifact.artifact_hash = r.invocation_context #>> '{principal,artifact-digest}' \
+  LEFT JOIN admitted_artifact AS artifact ON true \
   LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
     ON node.value ->> 'id' = $2 \
   LEFT JOIN LATERAL jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS contract(value) \
@@ -826,22 +922,24 @@ impl WamnPostgres {
                 catalog_version: row.try_get(4)?,
                 environment: row.try_get(5)?,
                 admitted_artifact_digest: row.try_get(6)?,
-                attempt_matches: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                requirement_json: json(8)?,
-                node_connection: row.try_get(9)?,
-                node_permitted: row.try_get(10)?,
-                binding_active: row.try_get::<_, Option<bool>>(11)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
-                instance_id: row.try_get(13)?,
-                requirement_type: row.try_get(14)?,
-                contract: row.try_get(15)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(16)?.unwrap_or(false),
-                active_generation: row.try_get(17)?,
-                generation: row.try_get(18)?,
-                definition: json(19)?,
-                definition_hash: row.try_get(20)?,
-                credential_handle: row.try_get(21)?,
-                attempt_recorded: row.try_get::<_, Option<bool>>(22)?.unwrap_or(false),
+                source_admitted: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                attempt_matches: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
+                requirement_json: json(9)?,
+                node_connection: row.try_get(10)?,
+                node_permitted: row.try_get(11)?,
+                binding_active: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(13)?.unwrap_or(false),
+                instance_id: row.try_get(14)?,
+                requirement_type: row.try_get(15)?,
+                contract: row.try_get(16)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(17)?.unwrap_or(false),
+                active_generation: row.try_get(18)?,
+                generation: row.try_get(19)?,
+                definition: json(20)?,
+                definition_hash: row.try_get(21)?,
+                credential_handle: row.try_get(22)?,
+                draft_generation_granted: row.try_get::<_, Option<bool>>(23)?.unwrap_or(false),
+                attempt_recorded: row.try_get::<_, Option<bool>>(24)?.unwrap_or(false),
             };
             Ok(Some(snapshot))
         }
@@ -913,7 +1011,7 @@ impl WamnPostgres {
                 catalog_version: row.try_get(4)?,
                 environment: row.try_get(5)?,
                 admitted_artifact_digest: row.try_get(6)?,
-                release_member: row.try_get(7)?,
+                admitted_artifact: row.try_get(7)?,
                 attempt_matches: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
                 node_type: row.try_get(9)?,
                 executable_kind: row.try_get(10)?,
@@ -1235,6 +1333,43 @@ mod tests {
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("FROM runs AS r"));
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("LEFT JOIN node_runs AS nr"));
         assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("wamn_run."));
+    }
+
+    #[test]
+    fn effect_snapshots_use_closed_release_and_exact_draft_source_arms() {
+        for sql in [CONNECTION_EFFECT_SNAPSHOT_SQL, NODE_INVOCATION_SNAPSHOT_SQL] {
+            assert!(sql.contains("WITH admitted_artifact AS MATERIALIZED"));
+            assert!(sql.contains("UNION ALL"));
+            assert!(sql.contains("source_run.trigger_source = 'scenario-draft'"));
+            assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
+            assert!(sql.contains("source_run.admission_context_version = 1"));
+            assert!(sql.contains("source_run.invocation_context ->> 'version' = '1'"));
+            assert!(sql.contains("trigger_source IS DISTINCT FROM 'scenario-draft'"));
+            assert!(sql.contains("#>> '{source,producer}' IS DISTINCT FROM 'draft-scenario'"));
+            for pin in [
+                "draft-id",
+                "draft-revision",
+                "validated-draft-hash",
+                "execution-bundle-hash",
+                "binding-base-artifact-hash",
+                "suite-flow-version",
+            ] {
+                assert!(sql.contains(pin), "draft snapshot omits {pin}");
+            }
+        }
+
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(
+            "requirement.requirement_json = declared_requirement.value -> 'requirement'"
+        ));
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL
+                .contains("catalog.draft_safe_connection_grants AS grant_row")
+        );
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("grant_row.revoked_at IS NULL"));
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL
+                .contains("binding.artifact_hash = artifact.binding_artifact_hash")
+        );
     }
 
     // R16 — the validators stay as the identity-format contract (demoted from the
@@ -1562,6 +1697,8 @@ mod tests {
             .await
             .unwrap()
             .expect("admitted run exists");
+        assert!(snapshot.source_admitted);
+        assert!(snapshot.draft_generation_granted);
         assert!(snapshot.attempt_matches);
         assert!(snapshot.attempt_recorded);
         assert_eq!(snapshot.active_generation, Some(1));
@@ -1583,6 +1720,107 @@ mod tests {
             .expect("run still exists");
         assert!(!snapshot.attempt_matches);
         assert!(!snapshot.attempt_recorded);
+
+        let draft_lookup = ConnectionEffectLookup {
+            run_id: "draft-http-granted",
+            node_id: "notify",
+            occurrence: 0,
+            attempt: 0,
+            requirement_name: "manager",
+            flow_id: "http-flow",
+            flow_version: 2,
+            catalog_id: "c-http",
+            catalog_version: 1,
+            environment: "dev",
+            artifact_digest: "artifact-http-draft",
+            operation_fingerprint: "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79",
+            stable_key: "draft-http-granted:notify:0",
+        };
+        let draft_snapshot = pg
+            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &draft_lookup)
+            .await
+            .unwrap()
+            .expect("exact validated draft exists");
+        assert!(draft_snapshot.source_admitted);
+        assert!(draft_snapshot.attempt_matches);
+        assert!(draft_snapshot.attempt_recorded);
+        assert_eq!(draft_snapshot.active_generation, Some(1));
+        assert_eq!(draft_snapshot.generation, Some(1));
+        assert_eq!(draft_snapshot.instance_id.as_deref(), Some("manager-dev"));
+        assert_eq!(
+            draft_snapshot.credential_handle.as_deref(),
+            Some("manager-credential-v1")
+        );
+        assert!(
+            !draft_snapshot.draft_generation_granted,
+            "the immediate snapshot must observe revocation after durable intent"
+        );
+
+        let mismatched_draft = ConnectionEffectLookup {
+            run_id: "draft-http-mismatch",
+            operation_fingerprint: "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79",
+            stable_key: "draft-http-mismatch:notify:0",
+            ..draft_lookup
+        };
+        let mismatch_snapshot = pg
+            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &mismatched_draft)
+            .await
+            .unwrap()
+            .expect("mismatched draft run still exists");
+        assert!(!mismatch_snapshot.source_admitted);
+        assert!(!mismatch_snapshot.attempt_matches);
+        assert!(!mismatch_snapshot.attempt_recorded);
+        assert!(!mismatch_snapshot.draft_generation_granted);
+
+        let exact_node = pg
+            .node_invocation_snapshot(
+                "http-runner",
+                DEFAULT_PROJECT,
+                "t1",
+                &NodeInvocationLookup {
+                    run_id: "draft-http-granted",
+                    node_id: "notify",
+                    occurrence: 0,
+                    attempt: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .expect("exact validated draft node exists");
+        assert!(exact_node.admitted_artifact);
+        assert!(exact_node.attempt_matches);
+        assert_eq!(exact_node.node_type.as_deref(), Some("http-request"));
+        assert_eq!(exact_node.executable_kind.as_deref(), Some("component"));
+        assert_eq!(
+            exact_node.admitted_implementation_digest.as_deref(),
+            Some("sha256:http-node-draft")
+        );
+        assert_eq!(
+            exact_node.attempt_input_ref.as_deref(),
+            Some("sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79")
+        );
+        assert_eq!(
+            exact_node.attempt_key.as_deref(),
+            Some("draft-http-granted:notify:0")
+        );
+
+        let mismatched_node = pg
+            .node_invocation_snapshot(
+                "http-runner",
+                DEFAULT_PROJECT,
+                "t1",
+                &NodeInvocationLookup {
+                    run_id: "draft-http-mismatch",
+                    node_id: "notify",
+                    occurrence: 0,
+                    attempt: 0,
+                },
+            )
+            .await
+            .unwrap()
+            .expect("mismatched draft run still exists");
+        assert!(!mismatched_node.admitted_artifact);
+        assert!(!mismatched_node.attempt_matches);
     }
 
     // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL

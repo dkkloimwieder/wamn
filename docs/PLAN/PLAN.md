@@ -2080,9 +2080,16 @@ So:
   incomplete graphs while worked example D says an invalid graph produces no artifact. Both
   are true only with the split. Fix it before the management model hardens; the schema can
   wait.
-- **Draft artifacts keyed by content hash, not version** — no `flow_version`. Publishing
-  copies the chosen bytes into `flow_artifacts` with the author's version. No version
-  explosion, no release churn.
+- **Draft documents and composition-cache candidates use a version-independent
+  `DraftContentHash`; executable drafts do not.** The document/cache key excludes the
+  proposed publish version, so changing only that proposal does not duplicate mutable
+  authoring state or composition work. A validated runnable draft nevertheless pins the
+  exact proposed runtime/publish version and the ordinary `Artifact` hash (whose identity
+  includes that version), together with the execution-bundle hash. Publication must reuse
+  that exact version/artifact/bundle tuple; selecting another version requires revalidation.
+  This distinction preserves H1 instead of treating a version-independent cache key as an
+  executable identity. The stored suite's source version remains independent: it selects
+  the immutable suite and binding base, never executable draft membership.
 - **A validated draft artifact pins the execution bundle, not only the graph.** Otherwise
   "publishing never changes the executable" is false: a draft tested under platform revision
   P1, with platform nodes updated to P2 before publish, produces identical flow bytes running
@@ -2108,10 +2115,14 @@ So:
   runs against) and the draft artifact hash, so it is reproducible, and the tested bytes
   are byte-identical to what publishing deploys.
 - **Exposure reuses the studio attachment** — pre-confirmed, dev only. The invocation names
-  the artifact hash directly instead of resolving a route through `release_flows`.
-  Mechanically a **fourth producer variant** in `admit()` beside http/cron/event: identity
-  `(studio attachment, artifact hash, nonce)`, definition check "env policy permits
-  drafting."
+  the validated draft identity directly instead of resolving executable membership through
+  `release_flows`. Draft lineage is a closed source pair:
+  `runs.trigger_source = 'scenario-draft'` and
+  `invocation_context.source.producer = 'draft-scenario'`. Either draft marker without its
+  matching counterpart refuses before artifact load; arbitrary non-draft producer strings
+  cannot grant draft access. When neither draft marker is present, the existing heterogeneous
+  release producers retain the release-membership path — `.11` does not enumerate or narrow
+  every legacy release source pair.
 - **No activation confirmation**, because nothing about the release changed.
 
 **Decision (wamn-ftfc.6): 6A's fast loop is flow-draft only.** The workspace used by 6A and
@@ -2160,10 +2171,11 @@ draft-run   studio attachment, dev env, real dev Postgres
 observe     2 holds created; per-node emissions in the run view
 ```
 
-**Nothing was deployed.** No flow version, no release, no activation, no composition. The
-author sees a durable run in history flagged as a draft, pinned to the draft artifact hash
-and the applied catalog version. Twenty of these before lunch cost twenty artifact rows and
-twenty runs.
+**Nothing was deployed.** No released flow version or release membership was minted; there
+was no activation or composition. The validated executable still carries the exact proposed
+runtime/publish version that publication must reuse. The author sees a durable run in history
+flagged as a draft, pinned to the draft artifact hash and the applied catalog version. Twenty
+of these before lunch cost twenty immutable validated-draft rows and twenty runs.
 
 #### Worked example B — adding a capability (the edit that should feel consequential)
 
@@ -2329,6 +2341,14 @@ needs revisiting.
   pass-fail display, and report link — no full UI or canvas overlays. Until item 5, only an
   internal adapter under the existing development administrator may invoke this surface;
   there is no public or client-facing API and no retained client identity.
+
+  The internal loop reserves a deterministic report identity before its first admission and
+  appends immutable observed case facts. It finalizes the immutable summary only from all
+  expected facts, or from an explicitly refused contiguous prefix. If a deterministic run
+  exists without a captured fact after process loss, the same identity remains visibly
+  pending as capture-interrupted: retry never reruns, resumes, fabricates, or finalizes it.
+  This is the honest durability boundary; the end-to-end command path is not described as
+  crash-safe.
 
 **Alternatives**
 

@@ -843,6 +843,38 @@ WAMN_DB_STATE_TEST_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55439/postgr
 docker rm -f wamn-dbstate-proof
 ```
 
+#### [PLAN-6A / wamn-ftfc.11] flow-authoring loop
+
+This ignored gate owns one disposable PostgreSQL database. It provisions the
+canonical `wamn_app` login and a distinct login inheriting only the NOLOGIN
+`wamn_scenario_author` role, then drives the public process-local authoring
+backend through save, validation, draft and release execution, exact retry,
+catalog-head drift, and capture-interrupted recovery. Validation and execution
+consume the same flowrunner component compiled from the current checkout. On a
+green run the test drops its two run schemas, `catalog`, and all three roles;
+removing the disposable container is the failure-path cleanup.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-11 \
+  cargo build --locked --offline --manifest-path components/Cargo.toml \
+  --target wasm32-wasip2 -p flowrunner
+
+docker run --rm -d --name wamn-ftfc11-pg \
+  -p 127.0.0.1:15623:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-ftfc11-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
+WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15623/wamn \
+WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15623/wamn \
+WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-ftfc-11/wasm32-wasip2/debug/flowrunner.wasm \
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-11 \
+  cargo test --locked --offline -p wamn-scenario-worker \
+  --test authoring_loop_live authoring_loop_live -- --ignored --exact --nocapture
+
+docker stop wamn-ftfc11-pg
+```
+
 The retained `testkitbench --suite / --impact-report` path is the compatibility
 and integration proof for previously shipped gates:
 
@@ -3996,9 +4028,10 @@ One-shot Job template:
 cargo test -p wamn-schema-control run_plane   # record parse pins + planner (no-op-at-record self-consistency, drift/from-zero/queue-missing plans)
 cargo clippy -p wamn-schema-control -p wamn-ctl --all-targets
 # Live-apply matrix (throwaway PG; plain postgres:18 — no wal_level needed).
-# Nine hermetic legs: shared-runner legacy; legacy effect-attempt backfill;
+# Eleven hermetic legs: shared-runner legacy; legacy effect-attempt backfill;
 # forced-RLS owner refusal; v1-era drift; queue-missing; from-zero; current
-# no-op; effect-disposition security drift; and fail_kind CHECK drift.
+# no-op; authoring additive upgrade/authority repair; catalog-head SHARE-lock
+# concurrency; effect-disposition security drift; and fail_kind CHECK drift.
 docker run --rm -d --name wamn-1wdq-pg -e POSTGRES_PASSWORD=pg -p 55461:5432 postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:pg@localhost:55461/postgres \
   cargo test -p wamn-ctl --test run_plane_live -- --nocapture

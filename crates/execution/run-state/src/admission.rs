@@ -660,7 +660,7 @@ mod tests {
         assert!(sql.contains("FROM catalog.catalog_heads AS h"));
         assert!(recipe.lock_head().contains("wamn_run.lock_catalog_head"));
         let ddl = include_str!("../../../../deploy/sql/run-state.sql");
-        assert!(ddl.contains("FOR KEY SHARE OF head"));
+        assert!(ddl.contains("FOR SHARE OF head"));
         assert!(ddl.contains("SECURITY DEFINER"));
         assert!(sql.contains("INSERT INTO wamn_run.runs"));
         assert!(sql.contains("INSERT INTO wamn_run.run_queue"));

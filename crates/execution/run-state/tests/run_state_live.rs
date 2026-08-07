@@ -1,6 +1,7 @@
 //! Ignored live gate for the fenced run-state transitions.
 
-use std::process::{Command, Output};
+use std::io::Write as _;
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -10,10 +11,19 @@ use wamn_run_state::transitions::{
 };
 
 fn psql(url: &str, script: &str) -> Output {
-    Command::new("psql")
-        .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", url, "-c", script])
-        .output()
-        .expect("run psql")
+    let mut child = Command::new("psql")
+        .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", "-1", url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start psql");
+    let mut stdin = child.stdin.take().expect("open psql stdin");
+    if let Err(error) = stdin.write_all(script.as_bytes()) {
+        eprintln!("psql closed stdin before the full script was written: {error}");
+    }
+    drop(stdin);
+    child.wait_with_output().expect("run psql")
 }
 
 fn success(url: &str, script: &str) -> String {
@@ -51,6 +61,10 @@ fn run_state_live() {
             "DO $$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
@@ -488,8 +502,8 @@ fn run_state_live() {
            ('t1','http-flow',1,'0.1', \
             '{\"nodes\":[{\"id\":\"notify\",\"type\":\"http-request\",\"connection\":\"manager\"}]}', \
             'graph-http','artifact-http', \
-            '[{\"interface\":{\"node-type\":\"http-request\",\"connection-requirements\":[{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}]}}]', \
-            'interfaces-http','[]'); \
+            '[{\"executable\":{\"kind\":\"component\",\"digest\":\"sha256:http-node\"},\"interface\":{\"node-type\":\"http-request\",\"connection-requirements\":[{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}]}}]', \
+            'interfaces-http','[\"sha256:http-node\"]'); \
          INSERT INTO catalog.release_manifests \
            (tenant_id,catalog_id,catalog_version,members_json) VALUES \
            ('t1','c-http',1,'[{\"flow-id\":\"http-flow\",\"flow-version\":1,\"artifact-hash\":\"artifact-http\"}]'); \
@@ -507,7 +521,9 @@ fn run_state_live() {
          INSERT INTO catalog.connection_generations \
            (tenant_id,environment,instance_id,generation,definition_json,definition_hash, \
             credential_set_handle) VALUES \
-           ('t1','dev','manager-dev',1,'{}','definition-http','manager-credential-v1'); \
+           ('t1','dev','manager-dev',1, \
+            '{\"primary-authority\":\"http://127.0.0.1:18081\",\"tls-verification\":\"disabled\",\"proxy-transport\":null}', \
+            'definition-http','manager-credential-v1'); \
          UPDATE catalog.connection_instances \
             SET active_generation=1,revision=1,updated_at=now()+interval '1 microsecond' \
           WHERE tenant_id='t1' AND environment='dev' AND instance_id='manager-dev'; \
@@ -516,17 +532,42 @@ fn run_state_live() {
             instance_id,binding_status,validation_status,validation_hash) VALUES \
            ('t1','c-http',1,'artifact-http','manager','dev','manager-dev','active','valid', \
             'binding-http'); \
+         INSERT INTO catalog.validated_flow_drafts \
+           (tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash, \
+            catalog_id,catalog_version,environment,suite_flow_version,flow_id, \
+            runtime_flow_version,graph_json,graph_hash,draft_artifact_hash, \
+            interface_bundle_json,interface_bundle_hash,component_digests, \
+            execution_bundle_bytes,execution_bundle_hash,binding_base_artifact_hash, \
+            validated_draft_hash) VALUES \
+           ('t1','draft-http',1,clock_timestamp(),'draft-content-http', \
+            'c-http',1,'dev',1,'http-flow',2, \
+            '{\"nodes\":[{\"id\":\"notify\",\"type\":\"http-request\",\"connection\":\"manager\"}],\"connection-requirements\":[{\"name\":\"manager\",\"requirement\":{\"descriptor\":{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}}}]}', \
+            'graph-http-draft','artifact-http-draft', \
+            '[{\"executable\":{\"kind\":\"component\",\"digest\":\"sha256:http-node-draft\"},\"interface\":{\"node-type\":\"http-request\",\"connection-requirements\":[{\"requirement-type\":\"http\",\"contract\":\"wamn:connection/http@0.1.0\"}]}}]', \
+            'interfaces-http-draft','[\"sha256:http-node-draft\"]',decode('01','hex'), \
+            'bundle-http-draft','artifact-http','validated-http-draft'); \
+         INSERT INTO catalog.draft_safe_connection_grants \
+           (tenant_id,environment,instance_id,generation,reason) VALUES \
+           ('t1','dev','manager-dev',1,'run-state live exact-generation control'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status, \
-            invocation_context) VALUES \
+            trigger_source,invocation_context,admission_context_version) VALUES \
            ('t1','http-intent','http-flow',1,'c-http',1,'dev','running', \
-            '{\"principal\":{\"artifact-digest\":\"artifact-http\"}}'), \
+            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}',1), \
            ('t1','http-wrong-node','http-flow',1,'c-http',1,'dev','running', \
-            '{\"principal\":{\"artifact-digest\":\"artifact-http\"}}'); \
+            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}',1), \
+           ('t1','draft-http-granted','http-flow',2,'c-http',1,'dev','running', \
+            'scenario-draft', \
+            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-granted\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-granted\"}}',1), \
+           ('t1','draft-http-mismatch','http-flow',2,'c-http',1,'dev','running', \
+            'scenario-draft', \
+            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-mismatch\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-mutant\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-mismatch\"}}',1); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','http-intent','worker-http',now()+interval '1 minute',1), \
-           ('t1','http-wrong-node','worker-http',now()+interval '1 minute',1);",
+           ('t1','http-wrong-node','worker-http',now()+interval '1 minute',1), \
+           ('t1','draft-http-granted','worker-http',now()+interval '1 minute',1), \
+           ('t1','draft-http-mismatch','worker-http',now()+interval '1 minute',1);",
     );
     let connection_intent_script = format!(
         "{} PREPARE begin_http \
@@ -567,6 +608,132 @@ fn run_state_live() {
         mark_attempt
     );
     success(&url, &connection_intent_script);
+
+    // A validated draft may use only the exact active generation carrying a
+    // live draft-safe grant. Revocation and pointer advance are independently
+    // default-deny, and a mismatched validated-draft pin creates no intent.
+    let draft_connection_script = format!(
+        "{} PREPARE begin_draft_http \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
+         PREPARE mark_draft_http (text,text,text,bigint,text,int,bigint) AS {}; \
+         CREATE TEMP TABLE draft_granted AS \
+           EXECUTE begin_draft_http('draft-http-granted','draft-http-granted','worker-http',1, \
+                                    'notify',0,8,'never-replay','never-replay','attested', \
+                                    NULL,NULL,'sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79', \
+                                    'draft-http-granted:notify:0',30000,'manager'); \
+         CREATE TEMP TABLE draft_mismatch AS \
+           EXECUTE begin_draft_http('draft-http-mismatch','draft-http-mismatch','worker-http',1, \
+                                    'notify',0,8,'never-replay','never-replay','attested', \
+                                    NULL,NULL,'sha256:draft-operation', \
+                                    'draft-http-mismatch:notify:0',30000,'manager'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM draft_granted) = 'started', \
+                  'exact validated draft and generation grant start'; \
+           ASSERT (SELECT generation_fact_kind = 'attested' \
+                          AND connection_generation = 'manager-dev:1' \
+                          AND credential_generation = 'manager-credential-v1' \
+                          AND attempt_input_ref = \
+                              'sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79' \
+                     FROM node_runs \
+                    WHERE run_id='draft-http-granted' AND node_id='notify'), \
+                  'draft attempt records the exact granted generation'; \
+           ASSERT (SELECT result_code FROM draft_mismatch) = 'undeclared-requirement', \
+                  'mismatched validated-draft pin is refused'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='draft-http-mismatch'), \
+                  'mismatched draft pin writes no attempt'; \
+         END $$; \
+         CREATE TEMP TABLE draft_marked AS \
+           EXECUTE mark_draft_http('draft-http-granted','draft-http-granted','worker-http',1, \
+                                   'notify',0,30000); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM draft_marked) = 'marked', \
+                  'granted draft intent crosses the send boundary only after insertion'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        begin_attempt,
+        mark_attempt
+    );
+    success(&url, &draft_connection_script);
+
+    success(
+        &url,
+        "UPDATE catalog.draft_safe_connection_grants \
+            SET revoked_at=clock_timestamp() \
+          WHERE tenant_id='t1' AND environment='dev' AND instance_id='manager-dev' \
+            AND generation=1; \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status, \
+            trigger_source,invocation_context,admission_context_version) VALUES \
+           ('t1','draft-http-revoked','http-flow',2,'c-http',1,'dev','running', \
+            'scenario-draft', \
+            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-revoked\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-revoked\"}}',1); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','draft-http-revoked','worker-http',now()+interval '1 minute',1);",
+    );
+    let revoked_draft_script = format!(
+        "{} PREPARE begin_revoked_draft \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
+         CREATE TEMP TABLE revoked_draft AS \
+           EXECUTE begin_revoked_draft('draft-http-revoked','draft-http-revoked','worker-http',1, \
+                                       'notify',0,9,'never-replay','never-replay','attested', \
+                                       NULL,NULL,'sha256:draft-operation', \
+                                       'draft-http-revoked:notify:0',30000,'manager'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM revoked_draft) = 'authority-denied', \
+                  'revoked draft-safe generation is refused'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='draft-http-revoked'), \
+                  'revoked generation writes no attempt'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        begin_attempt
+    );
+    success(&url, &revoked_draft_script);
+
+    success(
+        &url,
+        "INSERT INTO catalog.connection_generations \
+           (tenant_id,environment,instance_id,generation,definition_json,definition_hash, \
+            credential_set_handle) VALUES \
+           ('t1','dev','manager-dev',2,'{}','definition-http-v2','manager-credential-v2'); \
+         UPDATE catalog.connection_instances \
+            SET active_generation=2,revision=revision+1,updated_at=clock_timestamp()+interval '1 microsecond' \
+          WHERE tenant_id='t1' AND environment='dev' AND instance_id='manager-dev'; \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status, \
+            trigger_source,invocation_context,admission_context_version) VALUES \
+           ('t1','draft-http-successor','http-flow',2,'c-http',1,'dev','running', \
+            'scenario-draft', \
+            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-successor\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-successor\"}}',1); \
+         INSERT INTO wamn_run.run_queue \
+           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
+           ('t1','draft-http-successor','worker-http',now()+interval '1 minute',1);",
+    );
+    let successor_draft_script = format!(
+        "{} PREPARE begin_successor_draft \
+           (text,text,text,bigint,text,int,int,text,text,text,text,text,text,text,bigint,text) AS {}; \
+         CREATE TEMP TABLE successor_draft AS \
+           EXECUTE begin_successor_draft('draft-http-successor','draft-http-successor','worker-http',1, \
+                                         'notify',0,10,'never-replay','never-replay','attested', \
+                                         NULL,NULL,'sha256:draft-operation', \
+                                         'draft-http-successor:notify:0',30000,'manager'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM successor_draft) = 'authority-denied', \
+                  'an ungranted successor does not inherit draft-safe authority'; \
+           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='draft-http-successor'), \
+                  'ungranted successor writes no attempt'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        begin_attempt
+    );
+    success(&url, &successor_draft_script);
+
+    success(
+        &url,
+        "UPDATE catalog.connection_instances \
+            SET active_generation=1,revision=revision+1,updated_at=clock_timestamp()+interval '1 microsecond' \
+          WHERE tenant_id='t1' AND environment='dev' AND instance_id='manager-dev';",
+    );
 
     // The final host-side send marker refuses both expired authority windows
     // and performs no dispatch-state write.

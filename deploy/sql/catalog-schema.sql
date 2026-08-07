@@ -12,9 +12,10 @@
 -- shipping it here keeps the 3.1 model and its storage shape reviewable in one
 -- place without touching the S2–S6 gate fixtures.
 --
--- Security shape mirrors the rest of the platform (s2/s3): one application role
--- (wamn_app, not owner, no BYPASSRLS) and tenant separation purely via the
--- `app.tenant` claim the wamn:postgres plugin injects with SET LOCAL. Every
+-- Security shape mirrors the rest of the platform (s2/s3): the guest-visible
+-- application role (`wamn_app`, not owner, no BYPASSRLS) and the distinct
+-- host-only `wamn_scenario_author` NOLOGIN role are provisioned before this
+-- file. Tenant separation is the `app.tenant` claim injected with SET LOCAL. Every
 -- table FORCEs RLS keyed on NULLIF(current_setting('app.tenant', true), ''),
 -- which is NULL (=> zero rows) when no claim was injected — Postgres resets a
 -- custom GUC to '' (not NULL) after SET LOCAL, and CHECK (tenant_id <> '')
@@ -25,6 +26,7 @@
 
 CREATE SCHEMA catalog AUTHORIZATION postgres;
 GRANT USAGE ON SCHEMA catalog TO wamn_app;
+GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author;
 
 -- ---------------------------------------------------------------------------
 -- Catalog header: one row per (catalog_id, version) — the unit versioned and
@@ -124,6 +126,7 @@ CREATE POLICY flow_artifacts_tenant ON catalog.flow_artifacts
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.flow_artifacts TO wamn_app;
+GRANT SELECT ON catalog.flow_artifacts TO wamn_scenario_author;
 
 CREATE FUNCTION catalog.reject_immutable_row_change()
 RETURNS trigger
@@ -252,6 +255,7 @@ CREATE POLICY release_manifests_tenant ON catalog.release_manifests
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.release_manifests TO wamn_app;
+GRANT SELECT ON catalog.release_manifests TO wamn_scenario_author;
 CREATE TRIGGER release_manifests_immutable
 BEFORE UPDATE ON catalog.release_manifests
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -330,6 +334,7 @@ CREATE POLICY release_flows_tenant ON catalog.release_flows
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.release_flows TO wamn_app;
+GRANT SELECT ON catalog.release_flows TO wamn_scenario_author;
 CREATE TRIGGER release_flows_immutable
 BEFORE UPDATE ON catalog.release_flows
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -432,6 +437,111 @@ CREATE POLICY catalog_heads_tenant ON catalog.catalog_heads
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.catalog_heads TO wamn_app;
+GRANT SELECT ON catalog.catalog_heads TO wamn_scenario_author;
+
+-- ---------------------------------------------------------------------------
+-- Flow authoring workspace and immutable validated-draft artifacts (PLAN 6A,
+-- wamn-ftfc.11). A workspace row is the one mutable optimistic head. Each
+-- validation copies the exact head revision and edit timestamp into an
+-- immutable, content-addressed row; later edits never move that execution pin.
+-- Validating a draft does not register a release flow or mint release lineage.
+-- ---------------------------------------------------------------------------
+-- BEGIN AUTHORING DRAFT STORAGE MIGRATION (wamn-ftfc.11)
+CREATE TABLE catalog.flow_drafts (
+    tenant_id  text NOT NULL CHECK (tenant_id <> ''),
+    draft_id   text NOT NULL CHECK (draft_id <> ''),
+    flow_id    text NOT NULL CHECK (flow_id <> ''),
+    revision   bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
+    graph_json jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    edited_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, draft_id)
+);
+ALTER TABLE catalog.flow_drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.flow_drafts FORCE ROW LEVEL SECURITY;
+CREATE POLICY flow_drafts_tenant ON catalog.flow_drafts
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_scenario_author;
+
+CREATE FUNCTION catalog.guard_flow_draft_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (NEW.tenant_id, NEW.draft_id, NEW.flow_id, NEW.created_at)
+       IS DISTINCT FROM
+       (OLD.tenant_id, OLD.draft_id, OLD.flow_id, OLD.created_at)
+       OR NEW.revision <> OLD.revision + 1
+       OR NEW.edited_at <= OLD.edited_at THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'flow-draft-uncontrolled-update';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER flow_drafts_controlled_update
+BEFORE UPDATE ON catalog.flow_drafts
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_flow_draft_update();
+CREATE TRIGGER flow_drafts_delete_immutable
+BEFORE DELETE ON catalog.flow_drafts
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+CREATE TABLE catalog.validated_flow_drafts (
+    tenant_id                 text NOT NULL CHECK (tenant_id <> ''),
+    draft_id                  text NOT NULL CHECK (draft_id <> ''),
+    draft_revision            bigint NOT NULL CHECK (draft_revision > 0),
+    draft_edited_at           timestamptz NOT NULL,
+    draft_content_hash        text NOT NULL CHECK (draft_content_hash <> ''),
+    catalog_id                text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version           int NOT NULL CHECK (catalog_version > 0),
+    environment               text NOT NULL CHECK (environment <> ''),
+    suite_flow_version        int NOT NULL CHECK (suite_flow_version > 0),
+    flow_id                   text NOT NULL CHECK (flow_id <> ''),
+    runtime_flow_version      int NOT NULL CHECK (runtime_flow_version > 0),
+    graph_json                jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
+    graph_hash                text NOT NULL CHECK (graph_hash <> ''),
+    draft_artifact_hash       text NOT NULL CHECK (draft_artifact_hash <> ''),
+    interface_bundle_json     text NOT NULL
+        CHECK (jsonb_typeof(interface_bundle_json::jsonb) = 'array'),
+    interface_bundle_hash     text NOT NULL CHECK (interface_bundle_hash <> ''),
+    component_digests         jsonb NOT NULL
+        CHECK (jsonb_typeof(component_digests) = 'array'),
+    occurrence_recovery_json  text,
+    occurrence_recovery_hash  text,
+    execution_bundle_bytes    bytea NOT NULL CHECK (octet_length(execution_bundle_bytes) > 0),
+    execution_bundle_hash     text NOT NULL CHECK (execution_bundle_hash <> ''),
+    binding_base_artifact_hash text NOT NULL CHECK (binding_base_artifact_hash <> ''),
+    validated_draft_hash      text NOT NULL CHECK (validated_draft_hash <> ''),
+    validated_at              timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT validated_flow_drafts_occurrence_recovery_pair CHECK (
+        (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
+        OR (occurrence_recovery_json IS NOT NULL
+            AND occurrence_recovery_hash IS NOT NULL
+            AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
+    ),
+    PRIMARY KEY (tenant_id, validated_draft_hash),
+    CONSTRAINT validated_flow_drafts_exact_pin UNIQUE (
+        tenant_id, draft_id, draft_revision, draft_content_hash,
+        catalog_id, catalog_version, environment, suite_flow_version,
+        runtime_flow_version, draft_artifact_hash, execution_bundle_hash,
+        binding_base_artifact_hash
+    ),
+    FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+ALTER TABLE catalog.validated_flow_drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.validated_flow_drafts FORCE ROW LEVEL SECURITY;
+CREATE POLICY validated_flow_drafts_tenant ON catalog.validated_flow_drafts
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.validated_flow_drafts TO wamn_app;
+GRANT SELECT, INSERT ON catalog.validated_flow_drafts TO wamn_scenario_author;
+CREATE TRIGGER validated_flow_drafts_immutable
+BEFORE UPDATE OR DELETE ON catalog.validated_flow_drafts
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+-- END AUTHORING DRAFT STORAGE MIGRATION (wamn-ftfc.11)
 
 -- ---------------------------------------------------------------------------
 -- Callable-flow sources, attachments, and activation (FLOW-SPEC rev18
@@ -960,6 +1070,7 @@ CREATE POLICY connection_requirements_tenant ON catalog.connection_requirements
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.connection_requirements TO wamn_app;
+GRANT SELECT ON catalog.connection_requirements TO wamn_scenario_author;
 CREATE TRIGGER connection_requirements_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_requirements
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -1008,6 +1119,7 @@ CREATE POLICY connection_instances_tenant ON catalog.connection_instances
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.connection_instances TO wamn_app;
+GRANT SELECT ON catalog.connection_instances TO wamn_scenario_author;
 
 CREATE FUNCTION catalog.guard_connection_instance_update()
 RETURNS trigger
@@ -1055,6 +1167,7 @@ CREATE POLICY connection_generations_tenant ON catalog.connection_generations
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.connection_generations TO wamn_app;
+GRANT SELECT ON catalog.connection_generations TO wamn_scenario_author;
 CREATE TRIGGER connection_generations_update_immutable
 BEFORE UPDATE ON catalog.connection_generations
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -1095,6 +1208,7 @@ CREATE POLICY connection_bindings_tenant ON catalog.connection_bindings
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
 GRANT SELECT ON catalog.connection_bindings TO wamn_app;
+GRANT SELECT ON catalog.connection_bindings TO wamn_scenario_author;
 CREATE TRIGGER connection_bindings_immutable
 BEFORE UPDATE OR DELETE ON catalog.connection_bindings
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
@@ -1207,6 +1321,75 @@ CREATE TRIGGER connection_generations_delete_retained
 BEFORE DELETE ON catalog.connection_generations
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_delete();
 -- END CONNECTION STORAGE MIGRATION (wamn-ko5r.6)
+
+-- Draft execution is default-deny at one exact environment-owned connection
+-- generation. A grant never follows the instance's active-generation pointer:
+-- a successor generation needs its own row. The trusted development-admin
+-- adapter may revoke or explicitly re-grant the same exact row; identity and
+-- history timestamps cannot be rewritten by an ordinary update.
+-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION (wamn-ftfc.11)
+CREATE TABLE catalog.draft_safe_connection_grants (
+    tenant_id    text NOT NULL CHECK (tenant_id <> ''),
+    environment  text NOT NULL CHECK (environment <> ''),
+    instance_id  text NOT NULL CHECK (instance_id <> ''),
+    generation   bigint NOT NULL CHECK (generation > 0),
+    reason       text NOT NULL CHECK (reason <> ''),
+    granted_at   timestamptz NOT NULL DEFAULT now(),
+    revoked_at   timestamptz,
+    PRIMARY KEY (tenant_id, environment, instance_id, generation),
+    FOREIGN KEY (tenant_id, environment, instance_id, generation)
+        REFERENCES catalog.connection_generations
+            (tenant_id, environment, instance_id, generation),
+    CONSTRAINT draft_safe_connection_grants_revocation_time CHECK (
+        revoked_at IS NULL OR revoked_at >= granted_at
+    )
+);
+ALTER TABLE catalog.draft_safe_connection_grants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.draft_safe_connection_grants FORCE ROW LEVEL SECURITY;
+CREATE POLICY draft_safe_connection_grants_tenant
+    ON catalog.draft_safe_connection_grants
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app;
+GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants
+    TO wamn_scenario_author;
+
+CREATE FUNCTION catalog.guard_draft_safe_connection_grant_update()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF (NEW.tenant_id, NEW.environment, NEW.instance_id, NEW.generation)
+       IS DISTINCT FROM
+       (OLD.tenant_id, OLD.environment, OLD.instance_id, OLD.generation)
+       OR NOT (
+           -- Revoke: preserve the grant event and attach one revocation time.
+           (OLD.revoked_at IS NULL
+            AND NEW.revoked_at IS NOT NULL
+            AND NEW.reason IS NOT DISTINCT FROM OLD.reason
+            AND NEW.granted_at IS NOT DISTINCT FROM OLD.granted_at)
+           OR
+           -- Re-grant: clear the revocation and create a strictly later grant
+           -- event, even when both operations occur inside one clock tick.
+           (OLD.revoked_at IS NOT NULL
+            AND NEW.revoked_at IS NULL
+            AND NEW.granted_at > OLD.granted_at
+            AND NEW.granted_at > OLD.revoked_at)
+       ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'draft-safe-connection-grant-uncontrolled-update';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER draft_safe_connection_grants_controlled_update
+BEFORE UPDATE ON catalog.draft_safe_connection_grants
+FOR EACH ROW EXECUTE FUNCTION catalog.guard_draft_safe_connection_grant_update();
+CREATE TRIGGER draft_safe_connection_grants_delete_immutable
+BEFORE DELETE ON catalog.draft_safe_connection_grants
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+-- END AUTHORING CONNECTION AUTHORITY MIGRATION (wamn-ftfc.11)
 
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied

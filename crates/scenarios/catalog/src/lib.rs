@@ -4,6 +4,7 @@
 //! owns the `test_suites` / `test_cases` SQL contract and the application
 //! transform from durable run records into a replayable scenario case.
 
+pub mod authoring;
 pub mod compat;
 pub mod pin;
 pub mod sql;

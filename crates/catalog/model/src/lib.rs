@@ -49,6 +49,8 @@ pub enum CatalogIdentityError {
     InterfaceBundleHashMismatch,
     OccurrenceRecoveryHashMismatch,
     GraphHashMismatch,
+    DraftContentHashMismatch,
+    ValidatedDraftIdentityMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
     UnresolvedInterface { node_type: String },
@@ -107,6 +109,18 @@ impl fmt::Display for CatalogIdentityError {
                 write!(formatter, "occurrence recovery hash does not match")
             }
             Self::GraphHashMismatch => write!(formatter, "flow graph hash does not match"),
+            Self::DraftContentHashMismatch => {
+                write!(
+                    formatter,
+                    "draft content hash does not match draft document"
+                )
+            }
+            Self::ValidatedDraftIdentityMismatch => {
+                write!(
+                    formatter,
+                    "validated draft identity does not match its exact pins"
+                )
+            }
             Self::ArtifactIdMismatch => {
                 write!(
                     formatter,
@@ -737,6 +751,207 @@ impl Artifact {
     }
 }
 
+/// Version-independent content address of a mutable flow document after validation.
+///
+/// This is an internal document/cache identity, not the executable draft-artifact
+/// identity. Execution and publication use the ordinary exact [`ArtifactHash`],
+/// including the draft's proposed runtime/publish version.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct DraftContentHash(String);
+
+impl DraftContentHash {
+    /// Compute the version-independent content address for a parsed flow draft.
+    pub fn for_flow(flow: &Flow) -> Self {
+        let mut value = serde_json::to_value(flow).expect("Flow serializes");
+        value
+            .as_object_mut()
+            .expect("Flow serializes as an object")
+            .remove("version");
+        Self(digest(&frames(
+            "flow-draft",
+            [("graph", canonical_json(&value).as_slice())],
+        )))
+    }
+
+    /// Parse and validate a persisted draft content address.
+    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
+        let value = value.into();
+        validate_digest(&value, "draft-content-hash")?;
+        Ok(Self(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Exact inputs bound by one validated draft execution identity.
+#[derive(Debug, Clone, Copy)]
+pub struct ValidatedDraftIdentityInput<'a> {
+    pub tenant_id: &'a str,
+    pub draft_id: &'a str,
+    pub draft_revision: u64,
+    pub flow_id: &'a str,
+    pub runtime_flow_version: u32,
+    pub draft_content_hash: &'a str,
+    pub draft_artifact_hash: &'a str,
+    pub execution_bundle_hash: &'a str,
+    pub catalog_id: &'a str,
+    pub catalog_version: u32,
+    pub environment: &'a str,
+    pub suite_flow_version: u32,
+    pub binding_base_artifact_hash: &'a str,
+}
+
+/// Content address binding a validated graph to its exact executable and environment view.
+///
+/// The bundle and artifact hashes are independently reverified at load, then this identity
+/// prevents either valid value from being transplanted onto a different validated draft.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ValidatedDraftIdentity(String);
+
+impl ValidatedDraftIdentity {
+    pub fn new(input: ValidatedDraftIdentityInput<'_>) -> Result<Self, CatalogIdentityError> {
+        for (value, field) in [
+            (input.tenant_id, "tenant-id"),
+            (input.draft_id, "draft-id"),
+            (input.flow_id, "flow-id"),
+            (input.catalog_id, "catalog-id"),
+            (input.environment, "environment"),
+        ] {
+            validate_text(value, field)?;
+        }
+        for (value, field) in [
+            (input.draft_content_hash, "draft-content-hash"),
+            (input.draft_artifact_hash, "draft-artifact-hash"),
+            (input.execution_bundle_hash, "execution-bundle-hash"),
+            (
+                input.binding_base_artifact_hash,
+                "binding-base-artifact-hash",
+            ),
+        ] {
+            validate_digest(value, field)?;
+        }
+        if input.runtime_flow_version == 0 {
+            return Err(CatalogIdentityError::ZeroVersion {
+                field: "runtime-flow-version",
+            });
+        }
+        if input.draft_revision == 0 {
+            return Err(CatalogIdentityError::ZeroVersion {
+                field: "draft-revision",
+            });
+        }
+        if input.catalog_version == 0 {
+            return Err(CatalogIdentityError::ZeroVersion {
+                field: "catalog-version",
+            });
+        }
+        if input.suite_flow_version == 0 {
+            return Err(CatalogIdentityError::ZeroVersion {
+                field: "suite-flow-version",
+            });
+        }
+
+        let runtime_flow_version = input.runtime_flow_version.to_be_bytes();
+        let draft_revision = input.draft_revision.to_be_bytes();
+        let catalog_version = input.catalog_version.to_be_bytes();
+        let suite_flow_version = input.suite_flow_version.to_be_bytes();
+        Ok(Self(digest(&frames(
+            "validated-flow-draft",
+            [
+                ("tenant-id", input.tenant_id.as_bytes()),
+                ("draft-id", input.draft_id.as_bytes()),
+                ("draft-revision", draft_revision.as_slice()),
+                ("flow-id", input.flow_id.as_bytes()),
+                ("runtime-flow-version", runtime_flow_version.as_slice()),
+                ("draft-content-hash", input.draft_content_hash.as_bytes()),
+                ("draft-artifact-hash", input.draft_artifact_hash.as_bytes()),
+                (
+                    "execution-bundle-hash",
+                    input.execution_bundle_hash.as_bytes(),
+                ),
+                ("catalog-id", input.catalog_id.as_bytes()),
+                ("catalog-version", catalog_version.as_slice()),
+                ("environment", input.environment.as_bytes()),
+                ("suite-flow-version", suite_flow_version.as_slice()),
+                (
+                    "binding-base-artifact-hash",
+                    input.binding_base_artifact_hash.as_bytes(),
+                ),
+            ],
+        ))))
+    }
+
+    pub fn from_storage(
+        expected_hash: &str,
+        input: ValidatedDraftIdentityInput<'_>,
+    ) -> Result<Self, CatalogIdentityError> {
+        validate_digest(expected_hash, "validated-draft-identity")?;
+        let identity = Self::new(input)?;
+        if identity.as_str() != expected_hash {
+            return Err(CatalogIdentityError::ValidatedDraftIdentityMismatch);
+        }
+        Ok(identity)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ValidatedDraftIdentity {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl fmt::Display for DraftContentHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// One validated flow draft pinned to its exact executable bundle.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DraftArtifact {
+    content_hash: DraftContentHash,
+    artifact: Artifact,
+    execution_bundle: ExecutionBundleIdentity,
+}
+
+impl DraftArtifact {
+    /// Validate a draft against resolved implementations and pin its bundle.
+    pub fn new(
+        tenant_id: impl Into<String>,
+        flow: &Flow,
+        implementations: Vec<NodeImplementation>,
+        execution_bundle: ExecutionBundleIdentity,
+    ) -> Result<Self, CatalogIdentityError> {
+        let content_hash = DraftContentHash::for_flow(flow);
+        let artifact = Artifact::new(tenant_id, flow, implementations)?;
+        Ok(Self {
+            content_hash,
+            artifact,
+            execution_bundle,
+        })
+    }
+
+    pub fn content_hash(&self) -> &DraftContentHash {
+        &self.content_hash
+    }
+
+    pub fn artifact(&self) -> &Artifact {
+        &self.artifact
+    }
+
+    pub fn execution_bundle(&self) -> &ExecutionBundleIdentity {
+        &self.execution_bundle
+    }
+}
+
 /// Persisted resolved-interface shape used before the canonical node contract landed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -875,7 +1090,7 @@ impl ExecutionBundlePackaging {
 }
 
 /// Immutable named bytes participating in execution-bundle composition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ExecutionBundleInput {
     identity: String,
@@ -1045,6 +1260,57 @@ impl ExecutionBundleIdentity {
 
     pub fn canonical_bytes(&self) -> &[u8] {
         &self.canonical_bytes
+    }
+
+    /// Recover and validate the exact runner input carried by this bundle.
+    ///
+    /// Execution uses this at the last trusted boundary to compare the bytes
+    /// it is about to instantiate with the runner digest admitted during
+    /// composition. The tagged framing is parsed instead of substring-matched
+    /// so another input cannot impersonate the runner field.
+    pub fn runner_input(&self) -> Result<ExecutionBundleInput, CatalogIdentityError> {
+        let mut cursor = 0;
+        if read_frame(&self.canonical_bytes, &mut cursor) != Some(IDENTITY_FORMAT)
+            || read_frame(&self.canonical_bytes, &mut cursor) != Some(b"execution-bundle")
+        {
+            return Err(CatalogIdentityError::ExecutionBundleIdentityMismatch);
+        }
+        let mut runner = None;
+        while cursor < self.canonical_bytes.len() {
+            let tag = read_frame(&self.canonical_bytes, &mut cursor)
+                .ok_or(CatalogIdentityError::ExecutionBundleIdentityMismatch)?;
+            let value = read_frame(&self.canonical_bytes, &mut cursor)
+                .ok_or(CatalogIdentityError::ExecutionBundleIdentityMismatch)?;
+            if tag == b"runner" {
+                if runner.is_some() {
+                    return Err(CatalogIdentityError::ExecutionBundleIdentityMismatch);
+                }
+                let stored: ExecutionBundleInput = serde_json::from_slice(value)
+                    .map_err(|_| CatalogIdentityError::ExecutionBundleIdentityMismatch)?;
+                let verified = ExecutionBundleInput::new(stored.identity, stored.digest)?;
+                if canonical_serialized(&verified) != value {
+                    return Err(CatalogIdentityError::ExecutionBundleIdentityMismatch);
+                }
+                runner = Some(verified);
+            }
+        }
+        runner.ok_or(CatalogIdentityError::ExecutionBundleIdentityMismatch)
+    }
+
+    /// Verify a persisted execution-bundle identity before it is used as a pin.
+    pub fn from_storage(
+        canonical_bytes: impl Into<Box<[u8]>>,
+        expected_hash: &str,
+    ) -> Result<Self, CatalogIdentityError> {
+        validate_digest(expected_hash, "execution-bundle-hash")?;
+        let canonical_bytes = canonical_bytes.into();
+        if digest(&canonical_bytes) != expected_hash {
+            return Err(CatalogIdentityError::ExecutionBundleIdentityMismatch);
+        }
+        Ok(Self {
+            hash: expected_hash.to_string(),
+            canonical_bytes,
+        })
     }
 
     /// Record the exact inputs and output digest needed to verify a rebuild.
@@ -1621,6 +1887,113 @@ impl PinnedArtifact {
 
     pub fn occurrence_recovery(&self) -> &[OccurrenceRecoverySelection] {
         &self.occurrence_recovery
+    }
+}
+
+/// A persisted validated draft reverified at the execution boundary.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PinnedDraftArtifact {
+    content_hash: DraftContentHash,
+    artifact: PinnedArtifact,
+    execution_bundle: ExecutionBundleIdentity,
+    validated_identity: ValidatedDraftIdentity,
+}
+
+/// Environment and source-suite pins needed to verify a persisted validated draft row.
+#[derive(Debug, Clone, Copy)]
+pub struct StoredValidatedDraftContext<'a> {
+    pub expected_identity_hash: &'a str,
+    pub draft_id: &'a str,
+    pub draft_revision: u64,
+    pub catalog_id: &'a str,
+    pub catalog_version: u32,
+    pub environment: &'a str,
+    pub suite_flow_version: u32,
+    pub binding_base_artifact_hash: &'a str,
+}
+
+impl PinnedDraftArtifact {
+    /// Verify every persisted draft-artifact and bundle identity field together.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the immutable draft row's content, resolution, and bundle pins are verified together"
+    )]
+    pub fn from_storage(
+        expected_tenant_id: &str,
+        expected_flow_id: &str,
+        runtime_flow_version: u32,
+        draft_content_hash: &str,
+        graph_json: &str,
+        graph_hash: &str,
+        draft_artifact_hash: &str,
+        interface_bundle_json: &str,
+        interface_bundle_hash: &str,
+        component_digests_json: &str,
+        occurrence_recovery_json: Option<&str>,
+        occurrence_recovery_hash: Option<&str>,
+        execution_bundle_bytes: impl Into<Box<[u8]>>,
+        execution_bundle_hash: &str,
+        context: StoredValidatedDraftContext<'_>,
+    ) -> Result<Self, CatalogIdentityError> {
+        let artifact = PinnedArtifact::from_storage(
+            expected_tenant_id,
+            expected_flow_id,
+            runtime_flow_version,
+            graph_json,
+            graph_hash,
+            draft_artifact_hash,
+            interface_bundle_json,
+            interface_bundle_hash,
+            component_digests_json,
+            occurrence_recovery_json,
+            occurrence_recovery_hash,
+        )?;
+        let content_hash = DraftContentHash::parse(draft_content_hash)?;
+        if content_hash != DraftContentHash::for_flow(artifact.flow()) {
+            return Err(CatalogIdentityError::DraftContentHashMismatch);
+        }
+        let execution_bundle =
+            ExecutionBundleIdentity::from_storage(execution_bundle_bytes, execution_bundle_hash)?;
+        let validated_identity = ValidatedDraftIdentity::from_storage(
+            context.expected_identity_hash,
+            ValidatedDraftIdentityInput {
+                tenant_id: expected_tenant_id,
+                draft_id: context.draft_id,
+                draft_revision: context.draft_revision,
+                flow_id: expected_flow_id,
+                runtime_flow_version,
+                draft_content_hash: content_hash.as_str(),
+                draft_artifact_hash,
+                execution_bundle_hash: execution_bundle.hash(),
+                catalog_id: context.catalog_id,
+                catalog_version: context.catalog_version,
+                environment: context.environment,
+                suite_flow_version: context.suite_flow_version,
+                binding_base_artifact_hash: context.binding_base_artifact_hash,
+            },
+        )?;
+        Ok(Self {
+            content_hash,
+            artifact,
+            execution_bundle,
+            validated_identity,
+        })
+    }
+
+    pub fn content_hash(&self) -> &DraftContentHash {
+        &self.content_hash
+    }
+
+    pub fn artifact(&self) -> &PinnedArtifact {
+        &self.artifact
+    }
+
+    pub fn execution_bundle(&self) -> &ExecutionBundleIdentity {
+        &self.execution_bundle
+    }
+
+    pub fn validated_identity(&self) -> &ValidatedDraftIdentity {
+        &self.validated_identity
     }
 }
 
@@ -2903,6 +3276,16 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
     let length = u64::try_from(value.len()).expect("identity field length fits u64");
     output.extend_from_slice(&length.to_be_bytes());
     output.extend_from_slice(value);
+}
+
+fn read_frame<'a>(input: &'a [u8], cursor: &mut usize) -> Option<&'a [u8]> {
+    let length_end = cursor.checked_add(8)?;
+    let length_bytes: [u8; 8] = input.get(*cursor..length_end)?.try_into().ok()?;
+    let length = usize::try_from(u64::from_be_bytes(length_bytes)).ok()?;
+    let value_end = length_end.checked_add(length)?;
+    let value = input.get(length_end..value_end)?;
+    *cursor = value_end;
+    Some(value)
 }
 
 fn canonical_json(value: &Value) -> Vec<u8> {

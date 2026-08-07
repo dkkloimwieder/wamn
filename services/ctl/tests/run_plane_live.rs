@@ -4,7 +4,7 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
 //! throwaway Postgres (recipe: docs/build-and-test.md [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. Nine legs, sequential under one test entry
+//! skipped cleanly when unset. Eleven legs, sequential under one test entry
 //! (they share the `catalog` schema and the `wamn_app` role):
 //!
 //! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
@@ -36,6 +36,14 @@
 //!   sections' grants + RLS isolation end-to-end.
 //! - **current = no-op**: a schema at the schema of record plans NOTHING, in
 //!   both dry-run and apply mode (the idempotence contract).
+//! - **authoring additive upgrade + authority repair**: the pre-6A catalog and
+//!   suite schemas gain draft/report/grant storage; stale guest grants and
+//!   membership are removed; real author-role writes, rapid exact-generation
+//!   revoke/re-grant, report finalization, and guest/release-write refusals are
+//!   exercised.
+//! - **catalog-head lock concurrency**: both runtime and author admission call
+//!   the tenant-checking SECURITY DEFINER bridge; its SHARE lock blocks the
+//!   publisher's pointer UPDATE until admission commits.
 //! - **effect-disposition security drift**: a pre-hardening ledger gains its
 //!   identity append order, closed outcome CHECK, trusted-only insert guard,
 //!   and pg_temp-last relocated search paths.
@@ -70,6 +78,16 @@ async fn connect(url: &str) -> Client {
     client
 }
 
+async fn connect_as(url: &str, role: &str, password: &str) -> Client {
+    let mut config: tokio_postgres::Config = url.parse().expect("parse Postgres URL");
+    config.user(role).password(password);
+    let (client, conn) = config.connect(NoTls).await.expect("connect as role");
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+    client
+}
+
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
 /// ensure the `wamn_app` role, so every leg builds its own starting state.
 async fn reset(su: &Client) {
@@ -78,7 +96,17 @@ async fn reset(su: &Client) {
          DROP SCHEMA IF EXISTS catalog CASCADE; \
          DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
            THEN CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOBYPASSRLS; \
-         END IF; END $$;"
+         END IF; END $$; \
+         DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+             CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           ELSE \
+             ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$; \
+         REVOKE wamn_scenario_author FROM wamn_app;"
     ))
     .await
     .expect("hermetic reset");
@@ -116,6 +144,23 @@ async fn indexdef(su: &Client, name: &str) -> Option<String> {
     .map(|r| r.get(0))
 }
 
+fn without_marked_section(source: &str, begin: &str, end: &str) -> String {
+    let start = source.find(begin).expect("migration start marker");
+    let end_start = source.find(end).expect("migration end marker");
+    let end = source[end_start..]
+        .find('\n')
+        .map_or(source.len(), |offset| end_start + offset + 1);
+    format!("{}{}", &source[..start], &source[end..])
+}
+
+fn assert_db_code(error: tokio_postgres::Error, expected: &str, context: &str) {
+    let actual = error
+        .as_db_error()
+        .map(|database| database.code().code())
+        .unwrap_or("non-database-error");
+    assert_eq!(actual, expected, "{context}: {error}");
+}
+
 #[tokio::test]
 async fn run_plane_reconcile_live() {
     let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
@@ -130,6 +175,8 @@ async fn run_plane_reconcile_live() {
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     current_noop_leg(&su).await;
+    authoring_storage_authority_leg(&su, &url).await;
+    catalog_head_share_lock_leg(&su, &url).await;
     effect_disposition_security_drift_leg(&su).await;
     fail_kind_check_drift_leg(&su).await;
 }
@@ -1066,7 +1113,8 @@ async fn queue_missing_leg(su: &Client) {
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a bare database —
-/// not even the `wamn_app` role. Dry-run first (strictly read-only), then the
+/// neither the `wamn_app` nor host-only author role. Dry-run first (strictly
+/// read-only), then the
 /// apply provisions run plane + `catalog`, and a functional smoke as
 /// `wamn_app` proves grants + RLS isolation from the applied sections.
 async fn from_zero_leg(su: &Client) {
@@ -1074,7 +1122,9 @@ async fn from_zero_leg(su: &Client) {
     let schema = schema();
     su.batch_execute(
         "DROP OWNED BY wamn_app; \
-         DROP ROLE wamn_app;",
+         DROP ROLE wamn_app; \
+         DROP OWNED BY wamn_scenario_author; \
+         DROP ROLE wamn_scenario_author;",
     )
     .await
     .expect("remove the runtime role (bare database)");
@@ -1093,6 +1143,19 @@ async fn from_zero_leg(su: &Client) {
         .expect("probe role")
         .get(0);
     assert!(!role_exists, "dry-run does not create the role");
+    let author_role_exists: bool = su
+        .query_one(
+            "SELECT EXISTS (SELECT FROM pg_roles \
+             WHERE rolname = 'wamn_scenario_author')",
+            &[],
+        )
+        .await
+        .expect("probe author role")
+        .get(0);
+    assert!(
+        !author_role_exists,
+        "dry-run does not create the author role"
+    );
     assert!(
         !table_exists(su, SCHEMA, "runs").await,
         "dry-run creates nothing"
@@ -1112,6 +1175,11 @@ async fn from_zero_leg(su: &Client) {
         "effect_disposition_requests",
         "effect_dispositions",
         "flows",
+        "test_suites",
+        "test_cases",
+        "authoring_report_reservations",
+        "authoring_suite_case_facts",
+        "authoring_suite_reports",
         "run_queue",
         "partition_owner",
         "run_dead_letters",
@@ -1125,6 +1193,16 @@ async fn from_zero_leg(su: &Client) {
         table_exists(su, "catalog", "event_registrations").await,
         "catalog schema provisioned"
     );
+    for table in [
+        "flow_drafts",
+        "validated_flow_drafts",
+        "draft_safe_connection_grants",
+    ] {
+        assert!(
+            table_exists(su, "catalog", table).await,
+            "catalog authoring table {table} provisioned"
+        );
+    }
 
     // Functional smoke as the runtime role: the sections' grants + RLS hold.
     su.batch_execute(&format!(
@@ -1187,8 +1265,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        15,
-        "all fifteen run-plane tables at target"
+        18,
+        "all eighteen run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -1199,6 +1277,657 @@ async fn current_noop_leg(su: &Client) {
         "current schema apply is a no-op: {:#?}",
         apply.actions
     );
+}
+
+/// PLAN 6A additive storage and the host/guest authority boundary. This starts
+/// from the immediately preceding catalog/suite record, proves both ctl
+/// provisioning paths add only the new sections, then exercises adversarial
+/// direct, inherited, membership, and ownership authority drift.
+async fn authoring_storage_authority_leg(su: &Client, url: &str) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply run-state before authoring additive upgrade");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
+        .await
+        .expect("apply flows before authoring additive upgrade");
+
+    let legacy_flow_tests = without_marked_section(
+        FLOW_TESTS_SQL,
+        "-- BEGIN AUTHORING REPORT STORAGE MIGRATION",
+        "-- END AUTHORING REPORT STORAGE MIGRATION",
+    );
+    su.batch_execute(&rewrite_schema(&legacy_flow_tests, &schema))
+        .await
+        .expect("apply pre-authoring flow-test storage");
+    let legacy_catalog = without_marked_section(
+        CATALOG_SCHEMA_SQL,
+        "-- BEGIN AUTHORING DRAFT STORAGE MIGRATION",
+        "-- END AUTHORING DRAFT STORAGE MIGRATION",
+    );
+    let legacy_catalog = without_marked_section(
+        &legacy_catalog,
+        "-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION",
+        "-- END AUTHORING CONNECTION AUTHORITY MIGRATION",
+    );
+    su.batch_execute(&legacy_catalog)
+        .await
+        .expect("apply pre-authoring catalog storage");
+
+    for table in [
+        "flow_drafts",
+        "validated_flow_drafts",
+        "draft_safe_connection_grants",
+    ] {
+        assert!(
+            !table_exists(su, "catalog", table).await,
+            "legacy catalog omits {table}"
+        );
+    }
+    for table in [
+        "authoring_report_reservations",
+        "authoring_suite_case_facts",
+        "authoring_suite_reports",
+    ] {
+        assert!(
+            !table_exists(su, SCHEMA, table).await,
+            "legacy run plane omits {table}"
+        );
+    }
+
+    wamn_ctl::publish_catalog::ensure_catalog_storage(su)
+        .await
+        .expect("additively install catalog authoring storage");
+    assert!(
+        wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
+            .await
+            .expect("additively install authoring report storage"),
+        "the first additive flow-test upgrade reports installation"
+    );
+    assert!(
+        !wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
+            .await
+            .expect("reapply authoring report storage"),
+        "the additive flow-test upgrade is idempotent"
+    );
+    for table in [
+        "flow_drafts",
+        "validated_flow_drafts",
+        "draft_safe_connection_grants",
+    ] {
+        assert!(
+            table_exists(su, "catalog", table).await,
+            "upgrade creates {table}"
+        );
+    }
+    for table in [
+        "authoring_report_reservations",
+        "authoring_suite_case_facts",
+        "authoring_suite_reports",
+    ] {
+        assert!(
+            table_exists(su, SCHEMA, table).await,
+            "upgrade creates {table}"
+        );
+    }
+
+    // Inject every repairable stale shape plus an unrepairable inherited path.
+    // Reconciliation may revoke known direct grants/membership, but it must not
+    // silently alter an unrelated group role; the effective postcondition
+    // therefore aborts until the platform administrator removes that source.
+    su.batch_execute(&format!(
+        "ALTER ROLE wamn_scenario_author LOGIN INHERIT CREATEDB; \
+         GRANT wamn_scenario_author TO wamn_app; \
+         GRANT INSERT, UPDATE, DELETE ON catalog.validated_flow_drafts TO wamn_app; \
+         GRANT INSERT, UPDATE, DELETE ON catalog.release_manifests TO wamn_scenario_author; \
+         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_report_reservations TO wamn_app; \
+         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_suite_case_facts TO PUBLIC; \
+         REVOKE EXECUTE ON FUNCTION {SCHEMA}.lock_catalog_head(text,text,text) \
+           FROM wamn_scenario_author; \
+         DO $role$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'rp_guest_writer') THEN \
+             CREATE ROLE rp_guest_writer NOLOGIN; \
+           END IF; \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'rp_guest_column_writer') THEN \
+             CREATE ROLE rp_guest_column_writer NOLOGIN; \
+           END IF; \
+         END $role$; \
+         GRANT INSERT ON catalog.flow_drafts TO rp_guest_writer; \
+         GRANT UPDATE (graph_hash) ON catalog.validated_flow_drafts \
+           TO rp_guest_column_writer; \
+         GRANT rp_guest_writer, rp_guest_column_writer TO wamn_app;"
+    ))
+    .await
+    .expect("inject stale direct and inherited authoring authority");
+
+    let drift = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("observe stale authoring authority");
+    assert!(
+        !drift.is_noop(),
+        "effective inherited write is never false-clean"
+    );
+    assert!(drift.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+            && action.target == "catalog.flow_drafts"
+            && action.sql.contains("has_table_privilege")
+    }));
+    let inherited_error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("an unrelated inherited guest writer cannot be auto-repaired safely");
+    assert!(
+        format!("{inherited_error:#}")
+            .contains("authoring-effective-privilege-out-of-bounds:catalog.flow_drafts"),
+        "effective privilege refusal is explicit: {inherited_error:#}"
+    );
+    su.batch_execute(
+        "REVOKE rp_guest_writer FROM wamn_app; \
+         REVOKE ALL PRIVILEGES ON catalog.flow_drafts FROM rp_guest_writer; \
+         DROP ROLE rp_guest_writer;",
+    )
+    .await
+    .expect("platform administrator removes unrelated inherited authority");
+    let column_error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("a surviving column grant cannot be repaired as a table ACL");
+    assert!(
+        format!("{column_error:#}")
+            .contains("authoring-effective-privilege-out-of-bounds:catalog.validated_flow_drafts"),
+        "column-derived authority is explicit: {column_error:#}"
+    );
+    su.batch_execute(
+        "REVOKE rp_guest_column_writer FROM wamn_app; \
+         REVOKE UPDATE (graph_hash) ON catalog.validated_flow_drafts \
+           FROM rp_guest_column_writer; \
+         DROP ROLE rp_guest_column_writer;",
+    )
+    .await
+    .expect("platform administrator removes the unexpected column grant");
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("known direct ACL and membership drift converges");
+
+    // Ownership is another implicit privilege source absent from direct ACL
+    // rows. It is surfaced and refused, never reassigned to a guessed owner.
+    su.batch_execute("ALTER TABLE catalog.flow_drafts OWNER TO wamn_app")
+        .await
+        .expect("inject guest ownership mutant");
+    let owner_plan = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("observe guest ownership authority");
+    assert!(
+        !owner_plan.is_noop(),
+        "guest table ownership is not false-clean"
+    );
+    let owner_error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("reconciler must not guess a replacement table owner");
+    assert!(
+        format!("{owner_error:#}").contains("authoring-effective-privilege-out-of-bounds"),
+        "ownership-derived authority is explicit: {owner_error:#}"
+    );
+    su.batch_execute("ALTER TABLE catalog.flow_drafts OWNER TO SESSION_USER")
+        .await
+        .expect("platform administrator restores table ownership");
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("ownership repair plus exact ACL convergence");
+
+    let role = su
+        .query_one(
+            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, \
+                    rolreplication, rolbypassrls \
+               FROM pg_roles WHERE rolname = 'wamn_scenario_author'",
+            &[],
+        )
+        .await
+        .expect("read hardened author role");
+    for index in 0..7 {
+        assert!(
+            !role.get::<_, bool>(index),
+            "author role attribute {index} is disabled"
+        );
+    }
+    let app_is_member: bool = su
+        .query_one(
+            "SELECT pg_has_role('wamn_app', 'wamn_scenario_author', 'MEMBER')",
+            &[],
+        )
+        .await
+        .expect("read repaired membership")
+        .get(0);
+    assert!(
+        !app_is_member,
+        "guest is not a member of the host author role"
+    );
+    let author_can_lock: bool = su
+        .query_one(
+            &format!(
+                "SELECT has_function_privilege( \
+                   'wamn_scenario_author', \
+                   '{SCHEMA}.lock_catalog_head(text,text,text)', 'EXECUTE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read repaired catalog-lock grant")
+        .get(0);
+    assert!(
+        author_can_lock,
+        "author receives only the narrow lock function"
+    );
+
+    // Environment-owned connection generations are provisioned by the
+    // platform. The author may grant/revoke only the exact already-provisioned
+    // generation, and a successor generation never inherits that authority.
+    su.batch_execute(
+        "INSERT INTO catalog.connection_instances \
+           (tenant_id,environment,instance_id,requirement_type,contract) \
+         VALUES ('t1','dev','erp','http','v1'); \
+         INSERT INTO catalog.connection_generations \
+           (tenant_id,environment,instance_id,generation,definition_json, \
+            definition_hash,credential_set_handle) VALUES \
+           ('t1','dev','erp',1,'{}','sha256:g1','cred:g1'), \
+           ('t1','dev','erp',2,'{}','sha256:g2','cred:g2');",
+    )
+    .await
+    .expect("seed platform-owned connection generations");
+
+    su.batch_execute(&format!(
+        "SET ROLE wamn_scenario_author; \
+         SELECT set_config('app.tenant','t1',false); \
+         INSERT INTO catalog.flow_drafts \
+           (tenant_id,draft_id,flow_id,graph_json) \
+         VALUES ('t1','draft-a','flow-a','{{}}');"
+    ))
+    .await
+    .expect("host author can write the mutable draft surface");
+    su.execute(
+        wamn_scenario_catalog::authoring::grant_draft_safe_generation_sql(),
+        &[&"t1", &"dev", &"erp", &1_i64, &"initial review"],
+    )
+    .await
+    .expect("real author role grants exact generation");
+    let initial_granted: std::time::SystemTime = su
+        .query_one(
+            "SELECT granted_at FROM catalog.draft_safe_connection_grants \
+             WHERE tenant_id='t1' AND environment='dev' \
+               AND instance_id='erp' AND generation=1",
+            &[],
+        )
+        .await
+        .expect("read initial grant time")
+        .get(0);
+    su.execute(
+        wamn_scenario_catalog::authoring::revoke_draft_safe_generation_sql(),
+        &[&"t1", &"dev", &"erp", &1_i64],
+    )
+    .await
+    .expect("real author role revokes exact generation");
+    let revoked_at: std::time::SystemTime = su
+        .query_one(
+            "SELECT revoked_at FROM catalog.draft_safe_connection_grants \
+             WHERE tenant_id='t1' AND environment='dev' \
+               AND instance_id='erp' AND generation=1",
+            &[],
+        )
+        .await
+        .expect("read rapid revocation time")
+        .get(0);
+    assert!(revoked_at >= initial_granted);
+    su.execute(
+        wamn_scenario_catalog::authoring::grant_draft_safe_generation_sql(),
+        &[&"t1", &"dev", &"erp", &1_i64, &"review renewed"],
+    )
+    .await
+    .expect("real author role rapidly re-grants the same generation");
+    let regranted_at: std::time::SystemTime = su
+        .query_one(
+            "SELECT granted_at FROM catalog.draft_safe_connection_grants \
+             WHERE tenant_id='t1' AND environment='dev' \
+               AND instance_id='erp' AND generation=1 AND revoked_at IS NULL",
+            &[],
+        )
+        .await
+        .expect("read monotonic regrant time")
+        .get(0);
+    assert!(
+        regranted_at > revoked_at,
+        "same-generation rapid regrant creates a strictly later grant event"
+    );
+    let successor_grants: i64 = su
+        .query_one(
+            "SELECT count(*) FROM catalog.draft_safe_connection_grants \
+             WHERE tenant_id='t1' AND environment='dev' \
+               AND instance_id='erp' AND generation=2",
+            &[],
+        )
+        .await
+        .expect("check successor generation authority")
+        .get(0);
+    assert_eq!(
+        successor_grants, 0,
+        "a successor generation never inherits a grant"
+    );
+    let uncontrolled = su
+        .execute(
+            "UPDATE catalog.draft_safe_connection_grants SET reason='rewritten' \
+             WHERE tenant_id='t1' AND environment='dev' \
+               AND instance_id='erp' AND generation=1",
+            &[],
+        )
+        .await
+        .expect_err("an active grant cannot be rewritten outside revoke/regrant");
+    assert_db_code(uncontrolled, "55000", "uncontrolled grant mutation");
+
+    // Reservation command is the one-snapshot authority for ordered cases.
+    // Its array positions are zero-based report ordinals; each fact must match
+    // the reserved case/content identity and deterministic run id.
+    let command = r#"{"target":{"kind":"draft"},"observation-options":{},"cases":[{"case-id":"case-a","case-content-hash":"sha256:case-a","run-id":"run-a","execution-schema":"rp_live"},{"case-id":"case-b","case-content-hash":"sha256:case-b","run-id":"run-b","execution-schema":"rp_live"}]}"#;
+    let lineage = r#"{"kind":"draft","validated-draft-hash":"sha256:validated"}"#;
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.authoring_report_reservations \
+               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                command_json,command_hash,lineage_json,lineage_hash) \
+             VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a', \
+                     $1::text::jsonb,'sha256:command-a',$2::text::jsonb,'sha256:lineage-a')"
+        ),
+        &[&command, &lineage],
+    )
+    .await
+    .expect("reserve report before first admission");
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
+               (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
+             VALUES ('t1','report-a',0,'case-a','run-a',true,'completed','{{}}')"
+        ),
+        &[],
+    )
+    .await
+    .expect("append first exact case fact");
+
+    for (ordinal, case_id, run_id, label) in [
+        (0, "wrong-case", "run-a", "wrong case"),
+        (1, "case-a", "run-a", "wrong ordinal"),
+        (2, "case-extra", "run-extra", "extra case"),
+    ] {
+        let error = su
+            .execute(
+                &format!(
+                    "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
+                       (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
+                     VALUES ('t1','report-a',$1,$2,$3,true,'completed','{{}}')"
+                ),
+                &[&ordinal, &case_id, &run_id],
+            )
+            .await
+            .expect_err("command-mismatched case fact must be refused");
+        assert_db_code(error, "23514", label);
+    }
+    let missing = su
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.authoring_suite_reports \
+                   (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                    passed,lineage_json,lineage_hash) \
+                 VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a',true, \
+                         $1::text::jsonb,'sha256:lineage-a')"
+            ),
+            &[&lineage],
+        )
+        .await
+        .expect_err("non-refusal final report requires every reserved case");
+    assert_db_code(missing, "23514", "missing case finalization");
+
+    let gap_command = r#"{"cases":[{"case-id":"g0","case-content-hash":"sha256:g0","run-id":"gr0","execution-schema":"rp_live"},{"case-id":"g1","case-content-hash":"sha256:g1","run-id":"gr1","execution-schema":"rp_live"},{"case-id":"g2","case-content-hash":"sha256:g2","run-id":"gr2","execution-schema":"rp_live"}]}"#;
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.authoring_report_reservations \
+               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                command_json,command_hash,lineage_json,lineage_hash) \
+             VALUES ('t1','report-gap','execution-gap','flow-a',1,'suite-a', \
+                     $1::text::jsonb,'sha256:command-gap',$2::text::jsonb,'sha256:lineage-a')"
+        ),
+        &[&gap_command, &lineage],
+    )
+    .await
+    .expect("reserve gap mutant report");
+    for (ordinal, case_id, run_id) in [(0, "g0", "gr0"), (2, "g2", "gr2")] {
+        su.execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
+                   (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
+                 VALUES ('t1','report-gap',$1,$2,$3,false,'failed','{{}}')"
+            ),
+            &[&ordinal, &case_id, &run_id],
+        )
+        .await
+        .expect("individual gap mutant fact still matches its command entry");
+    }
+    let gap = su
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.authoring_suite_reports \
+                   (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                    passed,lineage_json,lineage_hash,refusal) \
+                 VALUES ('t1','report-gap','execution-gap','flow-a',1,'suite-a',false, \
+                         $1::text::jsonb,'sha256:lineage-a', \
+                         '{{\"kind\":\"capture-interrupted\"}}')"
+            ),
+            &[&lineage],
+        )
+        .await
+        .expect_err("a refusal may retain only a contiguous observed prefix");
+    assert_db_code(gap, "23514", "gapped refusal finalization");
+
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
+               (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
+             VALUES ('t1','report-a',1,'case-b','run-b',true,'completed','{{}}')"
+        ),
+        &[],
+    )
+    .await
+    .expect("append second exact case fact");
+    su.batch_execute("BEGIN")
+        .await
+        .expect("begin final report transaction");
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.authoring_suite_reports \
+               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                passed,lineage_json,lineage_hash) \
+             VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a',true, \
+                     $1::text::jsonb,'sha256:lineage-a')"
+        ),
+        &[&lineage],
+    )
+    .await
+    .expect("insert complete immutable final report");
+    su.execute(
+        &format!(
+            "UPDATE {SCHEMA}.authoring_report_reservations \
+             SET state='finalized', finalized_at=clock_timestamp() \
+             WHERE tenant_id='t1' AND report_id='report-a'"
+        ),
+        &[],
+    )
+    .await
+    .expect("finalize reservation after final report exists");
+    su.batch_execute("COMMIT")
+        .await
+        .expect("commit report insert and finalization atomically");
+    let late_fact = su
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
+                   (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
+                 VALUES ('t1','report-a',1,'case-b','run-b',true,'completed','{{}}')"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("finalized report facts cannot be appended");
+    assert_db_code(late_fact, "23514", "post-finalization fact append");
+
+    // The host author can read release source facts and tenant runs, but has no
+    // release publication mutation surface.
+    let author_reads: bool = su
+        .query_one(
+            &format!(
+                "SELECT has_table_privilege(current_user,'catalog.release_manifests','SELECT') \
+                    AND has_table_privilege(current_user,'catalog.release_flows','SELECT') \
+                    AND has_table_privilege(current_user,'catalog.catalog_heads','SELECT') \
+                    AND has_table_privilege(current_user,'{SCHEMA}.runs','SELECT')"
+            ),
+            &[],
+        )
+        .await
+        .expect("probe narrow author reads")
+        .get(0);
+    assert!(author_reads);
+    let release_write = su
+        .execute(
+            "UPDATE catalog.catalog_heads SET updated_at=clock_timestamp() WHERE false",
+            &[],
+        )
+        .await
+        .expect_err("author cannot mutate a release head");
+    assert_db_code(release_write, "42501", "author release-write refusal");
+
+    su.batch_execute("RESET ROLE; SELECT set_config('app.tenant','',false)")
+        .await
+        .expect("leave host-author role");
+    let immutable = su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.authoring_suite_case_facts SET passed=false \
+                 WHERE tenant_id='t1' AND report_id='report-a' AND ordinal=0"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("even migration authority hits immutable report triggers");
+    assert_db_code(immutable, "55000", "immutable case fact update");
+
+    // Use a real guest login here: a superuser session that executes
+    // `SET ROLE wamn_app` retains its session-user right to assume any role,
+    // which cannot prove the membership boundary.
+    let guest = connect_as(url, "wamn_app", "wamn_app").await;
+    guest
+        .batch_execute("SELECT set_config('app.tenant','t1',false)")
+        .await
+        .expect("enter guest role for negative probes");
+    let guest_draft = guest
+        .execute(
+            "INSERT INTO catalog.flow_drafts \
+             (tenant_id,draft_id,flow_id,graph_json) \
+             VALUES ('t1','forged','flow-a','{}')",
+            &[],
+        )
+        .await
+        .expect_err("guest cannot forge a draft write");
+    assert_db_code(guest_draft, "42501", "guest draft forgery");
+    let guest_report = guest
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.authoring_report_reservations \
+                 (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
+                  command_json,command_hash,lineage_json,lineage_hash) VALUES \
+                 ('t1','forged','forged','flow-a',1,'suite-a', \
+                  '{{\"cases\":[]}}','x','{{\"kind\":\"draft\"}}','x')"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("guest cannot forge a report reservation");
+    assert_db_code(guest_report, "42501", "guest report forgery");
+    let assume_author = guest
+        .batch_execute("SET ROLE wamn_scenario_author")
+        .await
+        .expect_err("guest cannot assume the host-only author role");
+    assert_db_code(assume_author, "42501", "guest author-role assumption");
+    drop(guest);
+
+    let final_plan = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("re-plan hardened authoring storage");
+    assert!(
+        final_plan.is_noop(),
+        "authoring storage converged: {:#?}",
+        final_plan.actions
+    );
+}
+
+/// SHARE, rather than KEY SHARE, is required because publication advances a
+/// non-key column. Both host-author and runtime callers use the same narrow
+/// tenant-checking SECURITY DEFINER bridge and hold the lock to transaction end.
+async fn catalog_head_share_lock_leg(su: &Client, url: &str) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply lock bridge");
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog storage for lock probe");
+    su.batch_execute(
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) VALUES \
+           ('t1','cat',1,'dev','1','applied'), \
+           ('t1','cat',2,'dev','1','staged'); \
+         INSERT INTO catalog.catalog_heads \
+           (tenant_id,catalog_id,environment,applied_catalog_version) \
+         VALUES ('t1','cat','dev',1);",
+    )
+    .await
+    .expect("seed two catalog versions and stable head");
+
+    for role_name in ["wamn_app", "wamn_scenario_author"] {
+        let holder = connect(url).await;
+        holder
+            .batch_execute(&format!(
+                "BEGIN; SET ROLE {role_name}; \
+                 SELECT set_config('app.tenant','t1',true); \
+                 SELECT {SCHEMA}.lock_catalog_head('t1','cat','dev');"
+            ))
+            .await
+            .expect("admission role acquires catalog-head SHARE lock");
+        let contender = connect(url).await;
+        contender
+            .batch_execute("SET lock_timeout='100ms'")
+            .await
+            .expect("bound lock probe wait");
+        let blocked = contender
+            .execute(
+                "UPDATE catalog.catalog_heads SET applied_catalog_version=2 \
+                 WHERE tenant_id='t1' AND catalog_id='cat' AND environment='dev'",
+                &[],
+            )
+            .await
+            .expect_err("publisher pointer update must block behind admission");
+        assert_db_code(blocked, "55P03", "catalog-head SHARE lock conflict");
+        holder
+            .batch_execute("ROLLBACK")
+            .await
+            .expect("release admission lock");
+        contender
+            .batch_execute("SET lock_timeout=0")
+            .await
+            .expect("restore publisher lock timeout");
+        contender
+            .execute(
+                "UPDATE catalog.catalog_heads SET updated_at=clock_timestamp() \
+                 WHERE tenant_id='t1' AND catalog_id='cat' AND environment='dev'",
+                &[],
+            )
+            .await
+            .expect("publisher update proceeds after admission ends");
+    }
 }
 
 /// wamn-4u7p.42: repair the pre-hardening disposition ledger without replacing

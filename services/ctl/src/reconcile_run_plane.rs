@@ -49,10 +49,15 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
-    BareSchemaName, RunPlaneObservation, RunPlanePlan, catalog_schema_present_sql,
-    count_legacy_effect_attempt_rows_sql, count_stale_registration_state_sql, plan_run_plane,
-    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
-    select_run_plane_helper_functions_sql, select_schema_checks_sql, select_schema_columns_sql,
+    BareSchemaName, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
+    catalog_schema_present_sql, count_legacy_effect_attempt_rows_sql,
+    count_stale_registration_state_sql, plan_run_plane, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
+    select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
+    select_authoring_table_privileges_sql, select_outbox_function_present_sql,
+    select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
+    select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
+    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
@@ -132,6 +137,91 @@ async fn observe(
     schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
     let mut obs = RunPlaneObservation::default();
+
+    obs.scenario_author_role = client
+        .query_opt(select_scenario_author_role_sql(), &[])
+        .await
+        .context("read scenario-author role attributes")?
+        .map(|row| ScenarioAuthorRoleObservation {
+            can_login: row.get(0),
+            is_superuser: row.get(1),
+            can_create_database: row.get(2),
+            can_create_role: row.get(3),
+            inherits_roles: row.get(4),
+            can_replicate: row.get(5),
+            bypasses_rls: row.get(6),
+        });
+    obs.app_is_scenario_author_member = client
+        .query_one(select_app_scenario_author_membership_sql(), &[])
+        .await
+        .context("read guest scenario-author membership")?
+        .get(0);
+    obs.scenario_author_can_lock_catalog_head = client
+        .query_one(
+            select_scenario_author_catalog_lock_privilege_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read scenario-author catalog-lock privilege")?
+        .get(0);
+    for row in client
+        .query(select_authoring_table_privileges_sql(), &[&schema.as_str()])
+        .await
+        .context("read authoring table privileges")?
+    {
+        obs.authoring_table_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(
+            select_authoring_effective_table_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective authoring table privileges")?
+    {
+        obs.authoring_effective_table_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(
+            select_authoring_effective_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective authoring column privileges")?
+    {
+        obs.authoring_effective_column_privileges
+            .entry((row.get(0), row.get(1), row.get(2)))
+            .or_default()
+            .insert(row.get(3));
+    }
+    for row in client
+        .query(select_authoring_table_owners_sql(), &[&schema.as_str()])
+        .await
+        .context("read authoring table owners")?
+    {
+        obs.authoring_table_owners
+            .insert((row.get(0), row.get(1)), row.get(2));
+    }
+    for row in client
+        .query(
+            select_scenario_author_schema_usage_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read scenario-author schema usage")?
+    {
+        let schema_name: String = row.get(0);
+        let has_usage: bool = row.get(1);
+        if has_usage {
+            obs.scenario_author_schema_usage.insert(schema_name);
+        }
+    }
 
     for row in client
         .query(select_schema_columns_sql(), &[&schema.as_str()])

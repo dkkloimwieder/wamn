@@ -27,6 +27,19 @@ impl ScenarioCredentials {
     }
 }
 
+/// Parse one already captured credential-vault snapshot.
+///
+/// Callers that bind the bytes into a durable command must execute from this
+/// same snapshot rather than reopening a mutable path after reservation.
+pub fn scenario_credentials_from_bytes(bytes: &[u8]) -> anyhow::Result<ScenarioCredentials> {
+    let text = std::str::from_utf8(bytes).context("scenario credentials are not UTF-8")?;
+    let projects =
+        WamnCredentials::projects_from_json(text).context("parse scenario credentials")?;
+    Ok(ScenarioCredentials {
+        plugin: Arc::new(WamnCredentials::from_projects(projects)),
+    })
+}
+
 /// Load scenario credentials from an explicit product-scenario source.
 ///
 /// An absent source produces an empty, fail-closed vault. A specified source
@@ -35,11 +48,9 @@ impl ScenarioCredentials {
 pub fn load_scenario_credentials(path: Option<&Path>) -> anyhow::Result<ScenarioCredentials> {
     let plugin = match path {
         Some(path) => {
-            let text = std::fs::read_to_string(path)
+            let bytes = std::fs::read(path)
                 .with_context(|| format!("read scenario credentials file {}", path.display()))?;
-            let projects =
-                WamnCredentials::projects_from_json(&text).context("parse scenario credentials")?;
-            WamnCredentials::from_projects(projects)
+            return scenario_credentials_from_bytes(&bytes);
         }
         None => WamnCredentials::empty(),
     };

@@ -71,6 +71,7 @@ pub enum AttemptStartResult {
     NodeNotPermitted,
     Unbound,
     InactiveGeneration,
+    AuthorityDenied,
     Incompatible,
     AttemptNotStarted,
     RunTerminal,
@@ -128,6 +129,7 @@ impl AttemptStartResult {
             "node-not-permitted" => Some(Self::NodeNotPermitted),
             "unbound" => Some(Self::Unbound),
             "inactive-generation" => Some(Self::InactiveGeneration),
+            "authority-denied" => Some(Self::AuthorityDenied),
             "incompatible" => Some(Self::Incompatible),
             "attempt-not-started" => Some(Self::AttemptNotStarted),
             "run-terminal" => Some(Self::RunTerminal),
@@ -180,6 +182,10 @@ mod tests {
         assert!(!AttemptStartResult::EffectUncertain.permits_dispatch());
         assert!(!AttemptStartResult::MissingAttemptKey.permits_dispatch());
         assert!(!AttemptStartResult::AlreadyCompleted.permits_dispatch());
+        assert_eq!(
+            AttemptStartResult::from_code("authority-denied"),
+            Some(AttemptStartResult::AuthorityDenied)
+        );
         assert!(!AttemptStartResult::FenceLost.permits_access());
         assert!(AttemptDispatchResult::Marked.permits_dispatch());
         assert!(!AttemptDispatchResult::AlreadyDispatched.permits_dispatch());

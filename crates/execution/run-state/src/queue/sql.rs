@@ -606,6 +606,133 @@ pub fn admit_pinned_triggered_run_sql() -> String {
     )
 }
 
+/// Admit one stored-suite case against an exact validated draft and enqueue it
+/// atomically, without consulting release membership for executable selection.
+///
+/// The authoritative run discriminator is `trigger_source = 'scenario-draft'`;
+/// its trusted invocation source is the matching `producer = 'draft-scenario'`.
+/// Every portable connection requirement must exactly equal the immutable base
+/// requirement and resolve to an active generation carrying an unrevoked
+/// draft-safe grant. The effect path rechecks that authority immediately before
+/// network access.
+///
+/// Params: `$1` run id, `$2` flow id, `$3` proposed runtime/publish version,
+/// `$4` catalog id, `$5` catalog version, `$6` environment, `$7` input JSON text,
+/// `$8` suite id, `$9` case id, `$10` draft id, `$11` draft revision,
+/// `$12` internal draft-content hash, `$13` exact ordinary draft artifact hash,
+/// `$14` execution-bundle hash, `$15` immutable binding-base artifact hash,
+/// `$16` source-suite flow version, `$17` validated-draft hash,
+/// `$18` platform revision.
+pub fn admit_pinned_draft_scenario_run_sql() -> String {
+    format!(
+        "WITH draft AS MATERIALIZED ( \
+           SELECT d.* \
+             FROM catalog.validated_flow_drafts AS d \
+            WHERE d.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+              AND d.draft_id = $10 AND d.draft_revision = $11 \
+              AND d.draft_content_hash = $12 AND d.flow_id = $2 \
+              AND d.runtime_flow_version = $3 AND d.catalog_id = $4 \
+              AND d.catalog_version = $5::int AND d.environment = $6 \
+              AND d.draft_artifact_hash = $13 AND d.execution_bundle_hash = $14 \
+              AND d.binding_base_artifact_hash = $15 \
+              AND d.suite_flow_version = $16 AND d.validated_draft_hash = $17 \
+              AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $18 <> '' \
+         ), connection_decisions AS MATERIALIZED ( \
+           SELECT requirement.value ->> 'name' AS requirement_name, \
+                  (base_requirement.requirement_name IS NOT NULL \
+                   AND binding.requirement_name IS NOT NULL \
+                   AND instance.instance_id IS NOT NULL \
+                   AND generation.generation IS NOT NULL \
+                   AND grant_row.generation IS NOT NULL \
+                   AND grant_row.revoked_at IS NULL) AS authorized \
+             FROM draft AS d \
+             CROSS JOIN LATERAL jsonb_array_elements( \
+                 COALESCE(d.graph_json -> 'connection-requirements', '[]'::jsonb) \
+             ) AS requirement(value) \
+             LEFT JOIN catalog.connection_requirements AS base_requirement \
+               ON base_requirement.tenant_id = d.tenant_id \
+              AND base_requirement.artifact_hash = d.binding_base_artifact_hash \
+              AND base_requirement.requirement_name = requirement.value ->> 'name' \
+              AND base_requirement.requirement_json = requirement.value -> 'requirement' \
+             LEFT JOIN catalog.connection_bindings AS binding \
+               ON binding.tenant_id = d.tenant_id \
+              AND binding.catalog_id = d.catalog_id \
+              AND binding.catalog_version = d.catalog_version \
+              AND binding.artifact_hash = d.binding_base_artifact_hash \
+              AND binding.requirement_name = base_requirement.requirement_name \
+              AND binding.environment = d.environment \
+              AND binding.binding_status = 'active' \
+              AND binding.validation_status = 'valid' \
+             LEFT JOIN catalog.connection_instances AS instance \
+               ON instance.tenant_id = binding.tenant_id \
+              AND instance.environment = d.environment \
+              AND instance.instance_id = binding.instance_id \
+              AND instance.requirement_type \
+                  = requirement.value #>> '{{requirement,descriptor,requirement-type}}' \
+              AND instance.contract \
+                  = requirement.value #>> '{{requirement,descriptor,contract}}' \
+              AND instance.lifecycle_status = 'enabled' \
+             LEFT JOIN catalog.connection_generations AS generation \
+               ON generation.tenant_id = instance.tenant_id \
+              AND generation.environment = instance.environment \
+              AND generation.instance_id = instance.instance_id \
+              AND generation.generation = instance.active_generation \
+             LEFT JOIN catalog.draft_safe_connection_grants AS grant_row \
+               ON grant_row.tenant_id = generation.tenant_id \
+              AND grant_row.environment = generation.environment \
+              AND grant_row.instance_id = generation.instance_id \
+              AND grant_row.generation = generation.generation \
+         ), authorized_draft AS MATERIALIZED ( \
+           SELECT d.* FROM draft AS d \
+            WHERE NOT EXISTS ( \
+              SELECT 1 FROM connection_decisions AS decision \
+               WHERE NOT decision.authorized \
+            ) \
+         ), inserted_run AS ( \
+           INSERT INTO runs \
+             (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+              environment, status, trigger_source, input_json, invocation_context, \
+              admission_context_version, platform_revision) \
+           SELECT d.tenant_id, $1, d.flow_id, d.runtime_flow_version, d.catalog_id, \
+                  d.catalog_version, d.environment, '{dispatched}', 'scenario-draft', \
+                  $7::text::jsonb, \
+                  jsonb_build_object( \
+                    'version', 1, \
+                    'principal', jsonb_build_object( \
+                      'tenant-id', d.tenant_id, 'environment', d.environment, \
+                      'catalog-id', d.catalog_id, 'catalog-version', d.catalog_version, \
+                      'run-id', $1::text, 'flow-id', d.flow_id, \
+                      'flow-version', d.runtime_flow_version, \
+                      'artifact-digest', d.draft_artifact_hash, \
+                      'draft-id', d.draft_id, 'draft-revision', d.draft_revision, \
+                      'validated-draft-hash', d.validated_draft_hash, \
+                      'execution-bundle-hash', d.execution_bundle_hash, \
+                      'binding-base-artifact-hash', d.binding_base_artifact_hash, \
+                      'suite-flow-version', d.suite_flow_version), \
+                    'source', jsonb_build_object( \
+                      'producer', 'draft-scenario', 'suite-id', $8::text, \
+                      'case-id', $9::text)), \
+                  1, $18 \
+             FROM authorized_draft AS d \
+           ON CONFLICT (tenant_id, run_id) DO NOTHING \
+           RETURNING tenant_id, run_id \
+         ), inserted_queue AS ( \
+           INSERT INTO run_queue \
+             (tenant_id, run_id, partition_key, priority, available_at) \
+           SELECT tenant_id, run_id, NULL, 0, now() FROM inserted_run \
+           RETURNING run_id \
+         ) \
+         SELECT CASE \
+                  WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted' \
+                  WHEN NOT EXISTS (SELECT 1 FROM draft) THEN 'draft-drift' \
+                  WHEN NOT EXISTS (SELECT 1 FROM authorized_draft) \
+                    THEN 'draft-connections-denied' \
+                  ELSE 'duplicate' \
+                END AS result_code",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
 /// The dispatcher's trigger-registry scan: every active flow's graph JSON. The
 /// trigger lives INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no
 /// trigger column — so the driver parses each flow and registers the `cron` /

@@ -25,6 +25,7 @@ pub enum FailKind {
     RetryExhausted,
     InvalidInput,
     RunawayBudget,
+    EffectUncertain,
 }
 
 /// A captured node failure classification.
@@ -60,6 +61,7 @@ mod tests {
             (FailKind::RetryExhausted, "retry-exhausted"),
             (FailKind::InvalidInput, "invalid-input"),
             (FailKind::RunawayBudget, "runaway-budget"),
+            (FailKind::EffectUncertain, "effect-uncertain"),
         ] {
             assert_eq!(serde_json::to_value(kind).unwrap(), json!(wire));
         }

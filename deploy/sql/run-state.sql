@@ -33,11 +33,14 @@
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
+GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 
 -- Final admission must share-lock the stable catalog head, but the application
 -- role must never gain UPDATE privilege on that control-plane row. This narrow
--- SECURITY DEFINER bridge takes only the key-share lock and returns the applied
+-- SECURITY DEFINER bridge takes only the row-share lock and returns the applied
 -- version while rechecking the session tenant claim.
+-- SHARE deliberately conflicts with the publisher's non-key pointer UPDATE;
+-- KEY SHARE would allow admission to commit after the applied head moved.
 CREATE FUNCTION wamn_run.lock_catalog_head(
     p_tenant_id text,
     p_catalog_id text,
@@ -57,12 +60,14 @@ BEGIN
       AND head.tenant_id = p_tenant_id
       AND head.catalog_id = p_catalog_id
       AND head.environment = p_environment
-    FOR KEY SHARE OF head;
+    FOR SHARE OF head;
     RETURN applied_version;
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_app;
+GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
+    TO wamn_scenario_author;
 
 -- Disposition requests and per-attempt entries are append-only even for the
 -- owning role; retention must remove them only through an explicit future
@@ -295,6 +300,7 @@ BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
+GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 
 -- HTTP invocation idempotency ledger (§6.2). The identity is intentionally
 -- definition-independent: reusing a client key after a definition change must

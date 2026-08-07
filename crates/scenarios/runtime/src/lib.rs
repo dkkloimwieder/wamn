@@ -36,7 +36,9 @@ use wash_runtime::host::http::HostHandler;
 use wasmtime_wasi::WasiCtx;
 
 pub use clock::{DatabaseClockBoundary, ScenarioClock, VirtualWallClock};
-pub use credentials::{ScenarioCredentials, load_scenario_credentials};
+pub use credentials::{
+    ScenarioCredentials, load_scenario_credentials, scenario_credentials_from_bytes,
+};
 pub use db::{
     DbStateCaptureFailure, DbStateCaptureFailureKind, DbStateCaptureLimits, capture_db_assertions,
     capture_db_assertions_with_limits,

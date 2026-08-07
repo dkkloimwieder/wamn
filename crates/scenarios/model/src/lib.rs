@@ -43,6 +43,7 @@
 //! sibling lanes' reconcile is a re-import, not a rewrite.
 
 mod assertion;
+mod authoring_report;
 mod captured;
 mod context;
 mod evaluate;
@@ -55,6 +56,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use assertion::{Assertion, DbExpect, EgressAssertion, EgressMatcher};
+pub use authoring_report::{
+    AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
+    ExecutionLineage, PendingAuthoringReport, PendingAuthoringReportReason,
+};
 pub use captured::{Captured, DbCapture, EgressObservation, RunFacts};
 pub use context::RunContext;
 pub use evaluate::{AssertionResult, Outcome, evaluate, subset_match};

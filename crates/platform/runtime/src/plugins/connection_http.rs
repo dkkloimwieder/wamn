@@ -274,6 +274,7 @@ fn authorize_snapshot(
         || snapshot.catalog_version != Some(i64::from(context.catalog_version))
         || snapshot.environment.as_deref() != Some(context.environment.as_str())
         || snapshot.admitted_artifact_digest.as_deref() != Some(context.artifact_digest.as_str())
+        || !snapshot.source_admitted
         || !snapshot.attempt_matches
     {
         return Err(EffectError::InvalidContext);
@@ -292,6 +293,9 @@ fn authorize_snapshot(
         || snapshot.active_generation != snapshot.generation
     {
         return Err(EffectError::InactiveGeneration);
+    }
+    if !snapshot.draft_generation_granted {
+        return Err(EffectError::AuthorityDenied);
     }
     if snapshot.requirement_type.as_deref() != Some("http")
         || snapshot.contract.as_deref() != Some(HTTP_CONTRACT)
@@ -554,6 +558,7 @@ mod tests {
             catalog_version: Some(3),
             environment: Some("prod".into()),
             admitted_artifact_digest: Some("sha256:artifact".into()),
+            source_admitted: true,
             attempt_matches: true,
             requirement_json: Some(serde_json::json!({
                 "descriptor": {
@@ -574,6 +579,7 @@ mod tests {
             definition: Some(serde_json::json!({})),
             definition_hash: Some("sha256:def".into()),
             credential_handle: Some("notify-auth".into()),
+            draft_generation_granted: true,
             attempt_recorded: true,
         }
     }
@@ -649,6 +655,160 @@ mod tests {
             Err(EffectError::InvalidContext)
         ));
         assert!(authorize_snapshot(&context, "manager-notifications", &snapshot()).is_ok());
+    }
+
+    #[test]
+    fn mismatched_source_or_revoked_draft_generation_is_denied_before_network_data() {
+        let context = context();
+        let mut mismatched_source = snapshot();
+        mismatched_source.source_admitted = false;
+        assert!(matches!(
+            authorize_snapshot(&context, "manager-notifications", &mismatched_source),
+            Err(EffectError::InvalidContext)
+        ));
+
+        let mut revoked = snapshot();
+        revoked.draft_generation_granted = false;
+        assert!(matches!(
+            authorize_snapshot(&context, "manager-notifications", &revoked),
+            Err(EffectError::AuthorityDenied)
+        ));
+    }
+
+    /// The live `run_state_live` fixture leaves an exact, already-dispatched
+    /// draft attempt on generation 1, then revokes that generation. Exercise
+    /// the production `send` path against a real snapshot and prove that the
+    /// revocation is observed before a socket reaches the local listener.
+    #[tokio::test]
+    async fn live_revoked_draft_generation_is_denied_before_wire() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use tokio::io::AsyncWriteExt as _;
+
+        use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, WamnPostgresConfig};
+
+        const OPERATION_FINGERPRINT: &str =
+            "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79";
+        const PROBE_AUTHORITY: &str = "127.0.0.1:18081";
+
+        let Some(url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
+            return;
+        };
+        let listener = tokio::net::TcpListener::bind(PROBE_AUTHORITY)
+            .await
+            .expect("bind revoked-draft zero-wire probe");
+        let wire_count = Arc::new(AtomicUsize::new(0));
+        let server_wire_count = Arc::clone(&wire_count);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept probe request");
+            server_wire_count.fetch_add(1, Ordering::SeqCst);
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .expect("write probe response");
+        });
+
+        let postgres = Arc::new(
+            WamnPostgres::new(WamnPostgresConfig {
+                database_url: Some(url),
+                pool_max_size: 1,
+                wait_timeout_ms: 2_000,
+                statement_timeout_ms: 5_000,
+                row_limit: 1_000,
+            })
+            .expect("build live Postgres adapter"),
+        );
+        postgres
+            .set_schema("draft-http-runner", "wamn_run")
+            .expect("set live run schema");
+
+        let request = RelativeRequest {
+            method: "POST".into(),
+            path_and_query: "/probe".into(),
+            headers: Vec::new(),
+            body: None,
+        };
+        let target = normalize_portable_http_target(&request.path_and_query)
+            .expect("canonical probe target");
+        assert_eq!(
+            operation_fingerprint(&request, target).expect("probe operation fingerprint"),
+            OPERATION_FINGERPRINT,
+            "the live fixture's durable intent must pin this exact request"
+        );
+        let lookup = ConnectionEffectLookup {
+            run_id: "draft-http-granted",
+            node_id: "notify",
+            occurrence: 0,
+            attempt: 0,
+            requirement_name: "manager",
+            flow_id: "http-flow",
+            flow_version: 2,
+            catalog_id: "c-http",
+            catalog_version: 1,
+            environment: "dev",
+            artifact_digest: "artifact-http-draft",
+            operation_fingerprint: OPERATION_FINGERPRINT,
+            stable_key: "draft-http-granted:notify:0",
+        };
+        let snapshot = postgres
+            .connection_effect_snapshot("draft-http-runner", DEFAULT_PROJECT, "t1", &lookup)
+            .await
+            .expect("load live draft authorization snapshot")
+            .expect("live exact draft run exists");
+        assert!(snapshot.source_admitted);
+        assert!(snapshot.attempt_matches);
+        assert!(snapshot.attempt_recorded);
+        assert_eq!(snapshot.active_generation, Some(1));
+        assert_eq!(snapshot.generation, Some(1));
+        assert!(!snapshot.draft_generation_granted);
+
+        let vault = Arc::new(WamnCredentials::from_projects(HashMap::from([(
+            DEFAULT_PROJECT.to_string(),
+            HashMap::from([(
+                "manager-credential-v1".to_string(),
+                r#"{"headers":{}}"#.to_string(),
+            )]),
+        )])));
+        let allowed_hosts: Arc<[AllowedHost]> =
+            vec![PROBE_AUTHORITY.parse().expect("parse probe host policy")].into();
+        let connection = ConnectionHttp::new(
+            postgres,
+            vault,
+            Arc::new(RunnerEgressPolicy::default()),
+            "t1",
+            DEFAULT_PROJECT,
+            allowed_hosts,
+        );
+        let context = InvocationContext {
+            version: 1,
+            tenant_id: "t1".into(),
+            environment: "dev".into(),
+            catalog_id: "c-http".into(),
+            catalog_version: 1,
+            run_id: "draft-http-granted".into(),
+            flow_id: "http-flow".into(),
+            flow_version: 2,
+            artifact_digest: "artifact-http-draft".into(),
+            node_id: "notify".into(),
+            occurrence: 0,
+            attempt: 0,
+            requirement_name: "manager".into(),
+        };
+
+        let result = connection
+            .send("draft-http-runner", &context, "manager", &request)
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let observed_wires = wire_count.load(Ordering::SeqCst);
+        server.abort();
+
+        assert!(matches!(result, Err(EffectError::AuthorityDenied)));
+        assert_eq!(
+            observed_wires, 0,
+            "revoked draft authority must be denied before any network access"
+        );
     }
 
     #[test]

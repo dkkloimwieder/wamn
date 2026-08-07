@@ -295,46 +295,169 @@ fn load_flow_at(flow_id: &str, version: u32) -> Result<Flow, String> {
     Flow::from_json(&raw).map_err(|e| format!("flow parse: {e}"))
 }
 
-/// Read and verify the graph, resolved interfaces, and occurrence recovery
-/// selections from the exact release artifact pinned on `runs`. The joins make
-/// mixed identities unrepresentable in the result, and there is deliberately
-/// no mutable catalog fallback.
+const DRAFT_TRIGGER_SOURCE: &str = "scenario-draft";
+const DRAFT_SOURCE_PRODUCER: &str = "draft-scenario";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PinnedArtifactLineage {
+    Release,
+    Draft,
+}
+
+/// Classify the two independently persisted source claims as one closed pair.
+/// A one-sided draft marker is never allowed to fall through to release lookup.
+fn classify_pinned_artifact_lineage(
+    trigger_source: Option<&str>,
+    source_producer: Option<&str>,
+) -> Result<PinnedArtifactLineage, String> {
+    match (
+        trigger_source == Some(DRAFT_TRIGGER_SOURCE),
+        source_producer == Some(DRAFT_SOURCE_PRODUCER),
+    ) {
+        (true, true) => Ok(PinnedArtifactLineage::Draft),
+        (false, false) => Ok(PinnedArtifactLineage::Release),
+        _ => Err("run has mismatched draft source identity".to_string()),
+    }
+}
+
+/// Read and verify the exact immutable artifact selected at admission.
+///
+/// `scenario-draft` + `draft-scenario` is one closed lineage branch. A
+/// one-sided marker returns only the invalid-source row, so it cannot fall
+/// through to release membership. The draft branch rebinds every persisted run
+/// claim to one immutable `validated_flow_drafts` row and reconstructs
+/// [`wamn_catalog::PinnedDraftArtifact`], which verifies the graph, resolved
+/// interfaces, occurrence recovery, execution-bundle bytes, and validated
+/// identity together. The release branch remains the existing exact immutable
+/// release-member lookup. Neither branch reads the mutable `flows` or
+/// `flow_drafts` heads.
 const PINNED_ARTIFACT_SQL: &str = "\
-SELECT r.tenant_id, r.flow_id, r.flow_version, a.graph_json::text, a.graph_hash, \
-       a.artifact_hash, a.interface_bundle_json, a.interface_bundle_hash, \
-       a.component_digests::text, a.occurrence_recovery_json, \
-       a.occurrence_recovery_hash \
-  FROM runs AS r \
-  JOIN catalog.release_flows AS rf \
-    ON rf.tenant_id = r.tenant_id \
-   AND rf.catalog_id = r.catalog_id \
-   AND rf.catalog_version = r.catalog_version \
-   AND rf.flow_id = r.flow_id \
-   AND rf.flow_version = r.flow_version \
-  JOIN catalog.release_manifests AS rm \
-    ON rm.tenant_id = rf.tenant_id \
-   AND rm.catalog_id = rf.catalog_id \
-   AND rm.catalog_version = rf.catalog_version \
-  JOIN catalog.flow_artifacts AS a \
-    ON a.tenant_id = rf.tenant_id \
-   AND a.flow_id = rf.flow_id \
-   AND a.flow_version = rf.flow_version \
- WHERE EXISTS ( \
-       SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
-        WHERE member ->> 'flow-id' = rf.flow_id \
-          AND (member ->> 'flow-version')::int = rf.flow_version \
-          AND member ->> 'artifact-hash' = a.artifact_hash \
-   ) \
-   AND r.run_id = $1 \
-   AND r.catalog_id IS NOT NULL \
-   AND r.catalog_version IS NOT NULL";
+WITH classified_run AS MATERIALIZED ( \
+    SELECT r.*, \
+           r.invocation_context #>> '{source,producer}' AS source_producer, \
+           CASE \
+             WHEN r.trigger_source = 'scenario-draft' \
+              AND r.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+               THEN 'draft' \
+             WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
+              AND r.invocation_context #>> '{source,producer}' \
+                    IS DISTINCT FROM 'draft-scenario' \
+               THEN 'release' \
+             ELSE 'invalid' \
+           END AS artifact_lineage \
+      FROM runs AS r \
+     WHERE r.run_id = $1 \
+), invalid_source AS ( \
+    SELECT r.trigger_source, r.source_producer, \
+           NULL::text AS tenant_id, NULL::text AS flow_id, \
+           NULL::int AS flow_version, NULL::text AS graph_json, \
+           NULL::text AS graph_hash, NULL::text AS artifact_hash, \
+           NULL::text AS interface_bundle_json, \
+           NULL::text AS interface_bundle_hash, \
+           NULL::text AS component_digests, \
+           NULL::text AS occurrence_recovery_json, \
+           NULL::text AS occurrence_recovery_hash, \
+           NULL::text AS draft_content_hash, \
+           NULL::bytea AS execution_bundle_bytes, \
+           NULL::text AS execution_bundle_hash, \
+           NULL::text AS validated_draft_hash, NULL::text AS draft_id, \
+           NULL::bigint AS draft_revision, NULL::text AS catalog_id, \
+           NULL::int AS catalog_version, NULL::text AS environment, \
+           NULL::int AS suite_flow_version, \
+           NULL::text AS binding_base_artifact_hash \
+      FROM classified_run AS r \
+     WHERE r.artifact_lineage = 'invalid' \
+), release_artifact AS ( \
+    SELECT r.trigger_source, r.source_producer, r.tenant_id, r.flow_id, \
+           r.flow_version, a.graph_json::text, a.graph_hash, a.artifact_hash, \
+           a.interface_bundle_json::text, a.interface_bundle_hash, \
+           a.component_digests::text, a.occurrence_recovery_json::text, \
+           a.occurrence_recovery_hash, NULL::text AS draft_content_hash, \
+           NULL::bytea AS execution_bundle_bytes, \
+           NULL::text AS execution_bundle_hash, \
+           NULL::text AS validated_draft_hash, NULL::text AS draft_id, \
+           NULL::bigint AS draft_revision, NULL::text AS draft_catalog_id, \
+           NULL::int AS draft_catalog_version, NULL::text AS draft_environment, \
+           NULL::int AS suite_flow_version, \
+           NULL::text AS binding_base_artifact_hash \
+      FROM classified_run AS r \
+      JOIN catalog.release_flows AS rf \
+        ON rf.tenant_id = r.tenant_id \
+       AND rf.catalog_id = r.catalog_id \
+       AND rf.catalog_version = r.catalog_version \
+       AND rf.flow_id = r.flow_id \
+       AND rf.flow_version = r.flow_version \
+      JOIN catalog.release_manifests AS rm \
+        ON rm.tenant_id = rf.tenant_id \
+       AND rm.catalog_id = rf.catalog_id \
+       AND rm.catalog_version = rf.catalog_version \
+      JOIN catalog.flow_artifacts AS a \
+        ON a.tenant_id = rf.tenant_id \
+       AND a.flow_id = rf.flow_id \
+       AND a.flow_version = rf.flow_version \
+     WHERE r.artifact_lineage = 'release' \
+       AND EXISTS ( \
+           SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
+            WHERE member ->> 'flow-id' = rf.flow_id \
+              AND (member ->> 'flow-version')::int = rf.flow_version \
+              AND member ->> 'artifact-hash' = a.artifact_hash \
+       ) \
+       AND r.catalog_id IS NOT NULL \
+       AND r.catalog_version IS NOT NULL \
+), draft_artifact AS ( \
+    SELECT r.trigger_source, r.source_producer, d.tenant_id, d.flow_id, \
+           d.runtime_flow_version, d.graph_json::text, d.graph_hash, \
+           d.draft_artifact_hash, d.interface_bundle_json::text, \
+           d.interface_bundle_hash, d.component_digests::text, \
+           d.occurrence_recovery_json::text, d.occurrence_recovery_hash, \
+           d.draft_content_hash, d.execution_bundle_bytes, \
+           d.execution_bundle_hash, d.validated_draft_hash, d.draft_id, \
+           d.draft_revision, d.catalog_id, d.catalog_version, d.environment, \
+           d.suite_flow_version, d.binding_base_artifact_hash \
+      FROM classified_run AS r \
+      JOIN catalog.validated_flow_drafts AS d \
+        ON d.tenant_id = r.tenant_id \
+       AND d.flow_id = r.flow_id \
+       AND d.runtime_flow_version = r.flow_version \
+       AND d.catalog_id = r.catalog_id \
+       AND d.catalog_version = r.catalog_version \
+       AND d.environment = r.environment \
+       AND d.draft_artifact_hash = \
+             r.invocation_context #>> '{principal,artifact-digest}' \
+       AND d.draft_id = r.invocation_context #>> '{principal,draft-id}' \
+       AND d.draft_revision::text = \
+             r.invocation_context #>> '{principal,draft-revision}' \
+       AND d.validated_draft_hash = \
+             r.invocation_context #>> '{principal,validated-draft-hash}' \
+       AND d.execution_bundle_hash = \
+             r.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND d.binding_base_artifact_hash = \
+             r.invocation_context #>> '{principal,binding-base-artifact-hash}' \
+       AND d.suite_flow_version::text = \
+             r.invocation_context #>> '{principal,suite-flow-version}' \
+     WHERE r.artifact_lineage = 'draft' \
+       AND r.admission_context_version = 1 \
+       AND r.invocation_context ->> 'version' = '1' \
+       AND r.invocation_context #>> '{principal,tenant-id}' = r.tenant_id \
+       AND r.invocation_context #>> '{principal,environment}' = r.environment \
+       AND r.invocation_context #>> '{principal,catalog-id}' = r.catalog_id \
+       AND r.invocation_context #>> '{principal,catalog-version}' = \
+             r.catalog_version::text \
+       AND r.invocation_context #>> '{principal,run-id}' = r.run_id \
+       AND r.invocation_context #>> '{principal,flow-id}' = r.flow_id \
+       AND r.invocation_context #>> '{principal,flow-version}' = \
+             r.flow_version::text \
+) \
+SELECT * FROM invalid_source \
+UNION ALL SELECT * FROM release_artifact \
+UNION ALL SELECT * FROM draft_artifact";
 
 fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, String> {
     let rs = client::query(PINNED_ARTIFACT_SQL, &[text(run_id)]).map_err(|e| err_name(&e))?;
-    let row = rs
-        .rows
-        .first()
-        .ok_or("run has no immutable pinned flow artifact")?;
+    if rs.rows.len() != 1 {
+        return Err("run does not resolve to exactly one immutable pinned flow artifact".into());
+    }
+    let row = &rs.rows[0];
     let string = |index: usize, name: &str| match row.get(index) {
         Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.as_str()),
         other => Err(format!("{name} shape: {other:?}")),
@@ -344,34 +467,105 @@ fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, St
         Some(SqlValue::Null) => Ok(None),
         other => Err(format!("{name} shape: {other:?}")),
     };
-    let tenant_id = string(0, "runs.tenant_id")?;
-    let flow_id = string(1, "runs.flow_id")?;
+    let lineage = classify_pinned_artifact_lineage(
+        optional_string(0, "runs.trigger_source")?,
+        optional_string(1, "invocation_context.source.producer")?,
+    )?;
+    let tenant_id = string(2, "runs.tenant_id")?;
+    let flow_id = string(3, "runs.flow_id")?;
     let flow_version =
-        match row.get(2) {
+        match row.get(4) {
             Some(SqlValue::Int32(value)) => u32::try_from(*value)
                 .map_err(|_| "runs.flow_version is not positive".to_string())?,
             Some(SqlValue::Int64(value)) => u32::try_from(*value)
                 .map_err(|_| "runs.flow_version is not positive".to_string())?,
             other => return Err(format!("runs.flow_version shape: {other:?}")),
         };
-    let occurrence_recovery_json = optional_string(9, "flow_artifacts.occurrence_recovery_json")?
+    let occurrence_recovery_json = optional_string(11, "artifact.occurrence_recovery_json")?
         .ok_or("pinned artifact omits occurrence recovery selections")?;
-    let occurrence_recovery_hash = optional_string(10, "flow_artifacts.occurrence_recovery_hash")?
+    let occurrence_recovery_hash = optional_string(12, "artifact.occurrence_recovery_hash")?
         .ok_or("pinned artifact omits occurrence recovery selection hash")?;
-    wamn_catalog::PinnedArtifact::from_storage(
-        tenant_id,
-        flow_id,
-        flow_version,
-        string(3, "flow_artifacts.graph_json")?,
-        string(4, "flow_artifacts.graph_hash")?,
-        string(5, "flow_artifacts.artifact_hash")?,
-        string(6, "flow_artifacts.interface_bundle_json")?,
-        string(7, "flow_artifacts.interface_bundle_hash")?,
-        string(8, "flow_artifacts.component_digests")?,
-        Some(occurrence_recovery_json),
-        Some(occurrence_recovery_hash),
-    )
-    .map_err(|error| format!("pinned flow artifact verification: {error}"))
+    match lineage {
+        PinnedArtifactLineage::Release => wamn_catalog::PinnedArtifact::from_storage(
+            tenant_id,
+            flow_id,
+            flow_version,
+            string(5, "flow_artifacts.graph_json")?,
+            string(6, "flow_artifacts.graph_hash")?,
+            string(7, "flow_artifacts.artifact_hash")?,
+            string(8, "flow_artifacts.interface_bundle_json")?,
+            string(9, "flow_artifacts.interface_bundle_hash")?,
+            string(10, "flow_artifacts.component_digests")?,
+            Some(occurrence_recovery_json),
+            Some(occurrence_recovery_hash),
+        )
+        .map_err(|error| format!("pinned release artifact verification: {error}")),
+        PinnedArtifactLineage::Draft => {
+            let execution_bundle_bytes = match row.get(14) {
+                Some(SqlValue::Bytes(value)) => value.clone(),
+                other => {
+                    return Err(format!(
+                        "validated_flow_drafts.execution_bundle_bytes shape: {other:?}"
+                    ));
+                }
+            };
+            let draft_revision = match row.get(18) {
+                Some(SqlValue::Int64(value)) => u64::try_from(*value)
+                    .map_err(|_| "draft revision is not positive".to_string())?,
+                Some(SqlValue::Int32(value)) => u64::try_from(*value)
+                    .map_err(|_| "draft revision is not positive".to_string())?,
+                other => return Err(format!("draft revision shape: {other:?}")),
+            };
+            let catalog_version = match row.get(20) {
+                Some(SqlValue::Int32(value)) => u32::try_from(*value)
+                    .map_err(|_| "draft catalog version is not positive".to_string())?,
+                Some(SqlValue::Int64(value)) => u32::try_from(*value)
+                    .map_err(|_| "draft catalog version is not positive".to_string())?,
+                other => return Err(format!("draft catalog version shape: {other:?}")),
+            };
+            let suite_flow_version = match row.get(22) {
+                Some(SqlValue::Int32(value)) => u32::try_from(*value)
+                    .map_err(|_| "suite flow version is not positive".to_string())?,
+                Some(SqlValue::Int64(value)) => u32::try_from(*value)
+                    .map_err(|_| "suite flow version is not positive".to_string())?,
+                other => return Err(format!("suite flow version shape: {other:?}")),
+            };
+            let draft = wamn_catalog::PinnedDraftArtifact::from_storage(
+                tenant_id,
+                flow_id,
+                flow_version,
+                string(13, "validated_flow_drafts.draft_content_hash")?,
+                string(5, "validated_flow_drafts.graph_json")?,
+                string(6, "validated_flow_drafts.graph_hash")?,
+                string(7, "validated_flow_drafts.draft_artifact_hash")?,
+                string(8, "validated_flow_drafts.interface_bundle_json")?,
+                string(9, "validated_flow_drafts.interface_bundle_hash")?,
+                string(10, "validated_flow_drafts.component_digests")?,
+                Some(occurrence_recovery_json),
+                Some(occurrence_recovery_hash),
+                execution_bundle_bytes,
+                string(15, "validated_flow_drafts.execution_bundle_hash")?,
+                wamn_catalog::StoredValidatedDraftContext {
+                    expected_identity_hash: string(
+                        16,
+                        "validated_flow_drafts.validated_draft_hash",
+                    )?,
+                    draft_id: string(17, "validated_flow_drafts.draft_id")?,
+                    draft_revision,
+                    catalog_id: string(19, "validated_flow_drafts.catalog_id")?,
+                    catalog_version,
+                    environment: string(21, "validated_flow_drafts.environment")?,
+                    suite_flow_version,
+                    binding_base_artifact_hash: string(
+                        23,
+                        "validated_flow_drafts.binding_base_artifact_hash",
+                    )?,
+                },
+            )
+            .map_err(|error| format!("pinned draft artifact verification: {error}"))?;
+            Ok(draft.artifact().clone())
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3473,12 +3667,14 @@ fn execute_claimed(
                     | AttemptStartResult::NodeNotPermitted
                     | AttemptStartResult::Unbound
                     | AttemptStartResult::InactiveGeneration
+                    | AttemptStartResult::AuthorityDenied
                     | AttemptStartResult::Incompatible) => {
                         let refusal = match refusal {
                             AttemptStartResult::UndeclaredRequirement => "undeclared-requirement",
                             AttemptStartResult::NodeNotPermitted => "node-not-permitted",
                             AttemptStartResult::Unbound => "unbound",
                             AttemptStartResult::InactiveGeneration => "inactive-generation",
+                            AttemptStartResult::AuthorityDenied => "authority-denied",
                             AttemptStartResult::Incompatible => "incompatible",
                             _ => unreachable!("the pattern above contains every typed refusal"),
                         };
@@ -4378,15 +4574,42 @@ mod tests {
     }
 
     #[test]
-    fn production_lookup_fail_closes_missing_or_mismatched_authoritative_identity() {
-        assert_eq!(PINNED_ARTIFACT_SQL.matches("SELECT r.tenant_id").count(), 1);
+    fn draft_source_identity_is_an_exact_pair() {
+        assert_eq!(
+            classify_pinned_artifact_lineage(
+                Some(DRAFT_TRIGGER_SOURCE),
+                Some(DRAFT_SOURCE_PRODUCER),
+            ),
+            Ok(PinnedArtifactLineage::Draft)
+        );
+        for release_pair in [(None, None), (Some("scenario"), Some("scenario"))] {
+            assert_eq!(
+                classify_pinned_artifact_lineage(release_pair.0, release_pair.1),
+                Ok(PinnedArtifactLineage::Release)
+            );
+        }
+        for mismatched_pair in [
+            (Some(DRAFT_TRIGGER_SOURCE), None),
+            (Some(DRAFT_TRIGGER_SOURCE), Some("scenario")),
+            (None, Some(DRAFT_SOURCE_PRODUCER)),
+            (Some("scenario"), Some(DRAFT_SOURCE_PRODUCER)),
+        ] {
+            assert!(
+                classify_pinned_artifact_lineage(mismatched_pair.0, mismatched_pair.1).is_err(),
+                "one-sided draft source marker must refuse: {mismatched_pair:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn release_lookup_remains_an_exact_immutable_member_branch() {
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_flows AS rf"));
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_manifests AS rm"));
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.flow_artifacts AS a"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.graph_json::text"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_json::text"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_hash"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_json::text"));
         assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_hash"));
         for join in [
             "rf.tenant_id = r.tenant_id",
@@ -4407,9 +4630,67 @@ mod tests {
                 "pinned identity join missing {join}"
             );
         }
+        assert!(PINNED_ARTIFACT_SQL.contains("r.artifact_lineage = 'release'"));
         assert!(!PINNED_ARTIFACT_SQL.contains("LEFT JOIN"));
         assert!(!PINNED_ARTIFACT_SQL.contains(" OR "));
-        assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows "));
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_drafts AS"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
+    }
+
+    #[test]
+    fn draft_lookup_rebinds_every_admitted_claim_to_one_validated_artifact() {
+        for predicate in [
+            "r.trigger_source = 'scenario-draft'",
+            "r.invocation_context #>> '{source,producer}' = 'draft-scenario'",
+            "r.artifact_lineage = 'draft'",
+            "JOIN catalog.validated_flow_drafts AS d",
+            "d.tenant_id = r.tenant_id",
+            "d.flow_id = r.flow_id",
+            "d.runtime_flow_version = r.flow_version",
+            "d.catalog_id = r.catalog_id",
+            "d.catalog_version = r.catalog_version",
+            "d.environment = r.environment",
+            "d.draft_artifact_hash =",
+            "'{principal,artifact-digest}'",
+            "d.draft_id = r.invocation_context #>> '{principal,draft-id}'",
+            "d.draft_revision::text =",
+            "'{principal,draft-revision}'",
+            "d.validated_draft_hash =",
+            "'{principal,validated-draft-hash}'",
+            "d.execution_bundle_hash =",
+            "'{principal,execution-bundle-hash}'",
+            "d.binding_base_artifact_hash =",
+            "'{principal,binding-base-artifact-hash}'",
+            "d.suite_flow_version::text =",
+            "'{principal,suite-flow-version}'",
+            "r.admission_context_version = 1",
+            "r.invocation_context ->> 'version' = '1'",
+            "'{principal,tenant-id}' = r.tenant_id",
+            "'{principal,environment}' = r.environment",
+            "'{principal,catalog-id}' = r.catalog_id",
+            "'{principal,catalog-version}' =",
+            "'{principal,run-id}' = r.run_id",
+            "'{principal,flow-id}' = r.flow_id",
+            "'{principal,flow-version}' =",
+            "d.execution_bundle_bytes",
+            "d.draft_content_hash",
+            "d.interface_bundle_json::text",
+            "d.occurrence_recovery_json::text",
+        ] {
+            assert!(
+                PINNED_ARTIFACT_SQL.contains(predicate),
+                "validated draft lookup omits {predicate}"
+            );
+        }
+        assert!(PINNED_ARTIFACT_SQL.contains("r.artifact_lineage = 'invalid'"));
+        assert!(PINNED_ARTIFACT_SQL.contains("NULL::text AS interface_bundle_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("NULL::text AS occurrence_recovery_json"));
+        assert!(PINNED_ARTIFACT_SQL.contains("UNION ALL SELECT * FROM release_artifact"));
+        assert!(PINNED_ARTIFACT_SQL.contains("UNION ALL SELECT * FROM draft_artifact"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("LEFT JOIN"));
+        assert!(!PINNED_ARTIFACT_SQL.contains(" OR "));
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_drafts AS"));
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
     }
 

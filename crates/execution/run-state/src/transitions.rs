@@ -74,7 +74,7 @@ pub fn begin_attempt_sql() -> String {
          connection_facts AS MATERIALIZED ( \
              SELECT CASE \
                       WHEN $16::text IS NULL THEN 'ready' \
-                      WHEN resolved.artifact_hash IS NULL \
+                      WHEN NOT COALESCE(resolved.source_admitted, false) \
                         OR resolved.requirement_json IS NULL THEN 'undeclared-requirement' \
                       WHEN resolved.node_connection IS DISTINCT FROM $16::text \
                         OR NOT COALESCE(resolved.node_permitted, false) \
@@ -88,6 +88,8 @@ pub fn begin_attempt_sql() -> String {
                         OR resolved.generation IS NULL \
                         OR resolved.active_generation IS DISTINCT FROM resolved.generation \
                         THEN 'inactive-generation' \
+                      WHEN NOT COALESCE(resolved.draft_generation_granted, false) \
+                        THEN 'authority-denied' \
                       WHEN resolved.requirement_json #>> '{{descriptor,requirement-type}}' \
                              IS DISTINCT FROM 'http' \
                         OR resolved.requirement_json #>> '{{descriptor,contract}}' \
@@ -107,7 +109,7 @@ pub fn begin_attempt_sql() -> String {
                FROM authority AS a \
                LEFT JOIN locked_run AS r ON true \
                LEFT JOIN LATERAL ( \
-                   SELECT artifact.artifact_hash, requirement.requirement_json, \
+                   SELECT true AS source_admitted, requirement.requirement_json, \
                           node.value ->> 'connection' AS node_connection, \
                           EXISTS ( \
                               SELECT 1 \
@@ -125,19 +127,82 @@ pub fn begin_attempt_sql() -> String {
                           binding.instance_id AS binding_instance_id, \
                           instance.instance_id, instance.requirement_type, instance.contract, \
                           instance.lifecycle_status, instance.active_generation, \
-                          generation.generation, generation.credential_set_handle \
-                     FROM catalog.flow_artifacts AS artifact \
+                          generation.generation, generation.credential_set_handle, \
+                          COALESCE(NOT artifact.is_draft \
+                                   OR (grant_row.generation IS NOT NULL \
+                                       AND grant_row.revoked_at IS NULL), false) \
+                              AS draft_generation_granted \
+                     FROM ( \
+                         SELECT released.tenant_id, released.graph_json, \
+                                released.interface_bundle_json, \
+                                released.artifact_hash AS execution_artifact_hash, \
+                                released.artifact_hash AS binding_artifact_hash, \
+                                false AS is_draft \
+                           FROM catalog.flow_artifacts AS released \
+                          WHERE released.tenant_id = r.tenant_id \
+                            AND released.flow_id = r.flow_id \
+                            AND released.flow_version = r.flow_version \
+                            AND released.artifact_hash = r.invocation_context \
+                                #>> '{{principal,artifact-digest}}' \
+                            AND r.trigger_source IS DISTINCT FROM 'scenario-draft' \
+                            AND r.invocation_context #>> '{{source,producer}}' \
+                                IS DISTINCT FROM 'draft-scenario' \
+                         UNION ALL \
+                         SELECT draft.tenant_id, draft.graph_json, \
+                                draft.interface_bundle_json::text, draft.draft_artifact_hash, \
+                                draft.binding_base_artifact_hash, true \
+                           FROM catalog.validated_flow_drafts AS draft \
+                          WHERE draft.tenant_id = r.tenant_id \
+                            AND draft.flow_id = r.flow_id \
+                            AND draft.runtime_flow_version = r.flow_version \
+                            AND draft.catalog_id = r.catalog_id \
+                            AND draft.catalog_version = r.catalog_version \
+                            AND draft.environment = r.environment \
+                            AND draft.draft_artifact_hash = r.invocation_context \
+                                #>> '{{principal,artifact-digest}}' \
+                            AND draft.draft_id = r.invocation_context \
+                                #>> '{{principal,draft-id}}' \
+                            AND draft.draft_revision::text = r.invocation_context \
+                                #>> '{{principal,draft-revision}}' \
+                            AND draft.validated_draft_hash = r.invocation_context \
+                                #>> '{{principal,validated-draft-hash}}' \
+                            AND draft.execution_bundle_hash = r.invocation_context \
+                                #>> '{{principal,execution-bundle-hash}}' \
+                            AND draft.binding_base_artifact_hash = r.invocation_context \
+                                #>> '{{principal,binding-base-artifact-hash}}' \
+                            AND draft.suite_flow_version::text = r.invocation_context \
+                                #>> '{{principal,suite-flow-version}}' \
+                            AND r.trigger_source = 'scenario-draft' \
+                            AND r.invocation_context #>> '{{source,producer}}' = 'draft-scenario' \
+                            AND r.admission_context_version = 1 \
+                            AND r.invocation_context ->> 'version' = '1' \
+                            AND r.invocation_context #>> '{{principal,tenant-id}}' = r.tenant_id \
+                            AND r.invocation_context #>> '{{principal,environment}}' = r.environment \
+                            AND r.invocation_context #>> '{{principal,catalog-id}}' = r.catalog_id \
+                            AND r.invocation_context #>> '{{principal,catalog-version}}' \
+                                = r.catalog_version::text \
+                            AND r.invocation_context #>> '{{principal,run-id}}' = r.run_id \
+                            AND r.invocation_context #>> '{{principal,flow-id}}' = r.flow_id \
+                            AND r.invocation_context #>> '{{principal,flow-version}}' \
+                                = r.flow_version::text \
+                     ) AS artifact \
+                     LEFT JOIN LATERAL jsonb_array_elements( \
+                         COALESCE(artifact.graph_json -> 'connection-requirements', '[]'::jsonb) \
+                     ) AS declared_requirement(value) \
+                       ON declared_requirement.value ->> 'name' = $16 \
                      LEFT JOIN catalog.connection_requirements AS requirement \
                        ON requirement.tenant_id = artifact.tenant_id \
-                      AND requirement.artifact_hash = artifact.artifact_hash \
+                      AND requirement.artifact_hash = artifact.binding_artifact_hash \
                       AND requirement.requirement_name = $16 \
+                      AND (NOT artifact.is_draft OR requirement.requirement_json \
+                           = declared_requirement.value -> 'requirement') \
                      LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') \
                           AS node(value) ON node.value ->> 'id' = $5 \
                      LEFT JOIN catalog.connection_bindings AS binding \
                        ON binding.tenant_id = r.tenant_id \
                       AND binding.catalog_id = r.catalog_id \
                       AND binding.catalog_version = r.catalog_version \
-                      AND binding.artifact_hash = artifact.artifact_hash \
+                      AND binding.artifact_hash = artifact.binding_artifact_hash \
                       AND binding.requirement_name = $16 \
                       AND binding.environment = r.environment \
                      LEFT JOIN catalog.connection_instances AS instance \
@@ -149,10 +214,11 @@ pub fn begin_attempt_sql() -> String {
                       AND generation.environment = instance.environment \
                       AND generation.instance_id = instance.instance_id \
                       AND generation.generation = instance.active_generation \
-                    WHERE artifact.tenant_id = r.tenant_id \
-                      AND artifact.flow_id = r.flow_id \
-                      AND artifact.flow_version = r.flow_version \
-                      AND artifact.artifact_hash = r.invocation_context #>> '{{principal,artifact-digest}}' \
+                     LEFT JOIN catalog.draft_safe_connection_grants AS grant_row \
+                       ON grant_row.tenant_id = generation.tenant_id \
+                      AND grant_row.environment = generation.environment \
+                      AND grant_row.instance_id = generation.instance_id \
+                      AND grant_row.generation = generation.generation \
                ) AS resolved ON $16::text IS NOT NULL \
          ), \
          classified AS ( \
@@ -1183,11 +1249,35 @@ mod tests {
         assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
         assert!(sql.contains("connection_facts AS MATERIALIZED"));
         assert!(sql.contains("artifact.interface_bundle_json::jsonb"));
+        assert!(sql.contains("FROM catalog.flow_artifacts AS released"));
+        assert!(sql.contains("UNION ALL"));
+        assert!(sql.contains("FROM catalog.validated_flow_drafts AS draft"));
+        assert!(sql.contains("r.trigger_source = 'scenario-draft'"));
+        assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
+        assert!(sql.contains("r.admission_context_version = 1"));
+        assert!(sql.contains("r.invocation_context ->> 'version' = '1'"));
+        for pin in [
+            "draft-id",
+            "draft-revision",
+            "validated-draft-hash",
+            "execution-bundle-hash",
+            "binding-base-artifact-hash",
+            "suite-flow-version",
+        ] {
+            assert!(sql.contains(pin), "draft effect recheck omits {pin}");
+        }
+        assert!(sql.contains("requirement.requirement_json "));
+        assert!(sql.contains("= declared_requirement.value -> 'requirement'"));
+        assert!(sql.contains("catalog.draft_safe_connection_grants AS grant_row"));
+        assert!(sql.contains("grant_row.revoked_at IS NULL"));
+        assert!(sql.contains("WHEN NOT COALESCE(resolved.draft_generation_granted, false)"));
+        assert!(sql.contains("THEN 'authority-denied'"));
         for refusal in [
             "undeclared-requirement",
             "node-not-permitted",
             "unbound",
             "inactive-generation",
+            "authority-denied",
             "incompatible",
         ] {
             assert!(sql.contains(refusal), "missing typed refusal {refusal}");

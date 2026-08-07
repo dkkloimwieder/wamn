@@ -50,6 +50,10 @@ pub struct CaseReport {
 pub enum ScenarioRefusal {
     /// The compiled flowrunner cannot dispatch these sorted, unique node types.
     UndrivableNodes { node_types: Vec<String> },
+    /// The exact immutable validated-draft row no longer matches admission pins.
+    ValidatedDraftDrift,
+    /// At least one exact active connection generation lacks draft-safe authority.
+    DraftConnectionsDenied,
 }
 
 #[cfg(test)]
