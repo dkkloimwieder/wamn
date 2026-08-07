@@ -1835,6 +1835,10 @@ editing can begin before. Given the industrial positioning, the first vertical a
 certainly has outbound integration, so treat 2B as required for 6A's *acceptance*, not its
 *start*. The studio's dependency on item 9 is a decision point below.
 
+**2A/6A seam.** 6A builds ABI-facing against the frozen `wamn:node@0.1.x`
+contract and treats linked versus composed execution as an implementation choice until
+2A's exit decisions close.
+
 **Split, because three deliverables should not share one completion gate:**
 
 | | Scope |
@@ -1842,10 +1846,31 @@ certainly has outbound integration, so treat 2B as required for 6A's *acceptance
 | **6A** minimum authoring loop | definition read/write path, structured validation, draft run, author-facing run status and failure visibility, an editor sufficient to build the first vertical |
 | **6B** complete studio | canvas, palette, exposure and credential UX, uniform platform/client authoring, template export |
 
-**One command model beneath every front end.** Git-as-write-path and a management API can
-both be surfaces, but they must share one command/application model underneath — otherwise
-they grow divergent validation, lifecycle, and authorization semantics. Decide the canonical
-model early even if only one surface ships.
+**Decided (wamn-ftfc.1): one transport-neutral application model beneath every front
+end.** The canonical 6A model is a transport-neutral application layer of typed per-use-case
+requests and results whose handlers perform validation, authorization, optimistic lifecycle
+transition, and audit attribution once; Git/CI, the org-scoped management API, and CLI
+commands are adapters that supply authenticated principal and provenance to those handlers,
+while `wamn-ctl`'s platform-operator and recovery effects remain outside the authoring model.
+The current tool is already classified as a native operator tool, and its Clap root dispatches
+directly to one-shot verbs (`architecture/package-roles.json:104-119`;
+`services/ctl/src/main.rs:21-98`; accepted disposition `docs/findings.md:4189` and
+`docs/findings.md:4218`).
+
+This is a semantic boundary, not a package or process decision. A CLI adapter may remain in
+the existing binary, but it receives the same application-scoped authority and invokes the
+same handler as the API; it does not turn a Clap argument type, file path, stdout contract,
+superuser connection, or cross-system operator effect into the product model. Item 6A's
+handlers preserve the existing PostgreSQL authorities rather than adding a command journal.
+The Git-path decision and item 5 still own how a verified commit identity maps to principal
+versus attribution — Git provenance never bypasses handler authorization.
+
+Making either the current `wamn-ctl` modules or the management HTTP schema canonical is
+rejected: the first leaks operator privilege and effect-shell concerns into an org-scoped
+surface, while the second makes transport own application semantics. A whole desired-state
+reconciler is also rejected as the umbrella model because draft execution, suite execution,
+audit reconstruction, Replay, Run again, and disable are distinct use cases; a definition
+command may still reconcile desired state behind its application handler.
 
 **Studio hosting must not gate studio usefulness.** A native SPA over the management API is
 the lower-risk first route. Uniform authoring means the same model and API — not
@@ -1871,10 +1896,11 @@ own consumption surfaces.
   fronting item 10's provisioning workflow. Org-scoped, so it depends on item 5's org tier.
 
 **Recorded candidate — git as the definition write path.** Clients push files, CI runs
-`ctl`, `changed_by` is the commit author. It covers definition writes and defers
-control-plane auth by borrowing git's, which would shrink the management plane (a) from a
-full CRUD API to **the read surface plus the fast lever (disable)** — the two things git
-cannot serve. Materially smaller and sooner if adopted; the decision belongs here.
+`ctl`, Git authentication establishes the adapter principal, and commit metadata supplies
+`changed_by` provenance; the shared handler still authorizes every command. It covers
+definition writes and would shrink the management plane (a) from a full CRUD API to **the
+read surface plus the fast lever (disable)** — the two things git cannot serve. Materially
+smaller and sooner if adopted; the decision belongs here.
 
 ### The uniform-authoring bar (owner decision)
 
@@ -2620,7 +2646,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Replay classification for standard nodes~~ | **Settled (wamn-4u7p.2):** standard descriptors and custom manifests resolve to one versioned executable recovery contract; an artifact pins each occurrence's selected class/claim; an attempt records what the environment admitted. Complete standard descriptors enter identity through the canonical contract, and runtime tables may not reclassify it | — |
 | ~~Fanout after a nondeterministic producer~~ | **Not a gate:** the engine cannot fan out (one port per emission, one edge per port), so the hazard needs a feature that does not exist. Recovery must stay fan-out-addable | — |
 | ~~Node ABI: implement 0.1's existing P2 streaming contract, or introduce a P3-native 0.2?~~ | **Settled (wamn-4u7p.3):** activate `wamn:node@0.1.x`'s existing P2 `streamed(payload-ref)` + `payloads` contract. The opaque reference already moves storage identity without bytes; the pinned fork's P3 cross-store bridge is a backpressured element pump, not zero-copy object-handle relocation. Defer the breaking 0.2/WASI 0.3 migration to `wamn-72i` | — |
-| **The canonical command model beneath git and the management API** | Two front ends over two models grow divergent validation and authorization | 6A |
+| ~~The canonical command model beneath git and the management API~~ | **Settled (wamn-ftfc.1):** typed transport-neutral application handlers own validation, authorization, optimistic lifecycle transition, and audit attribution; Git/CI, management API, and CLI are adapters, while privileged `wamn-ctl` operator/recovery effects remain outside the authoring model | — |
 | **Org-tier roles** | A client admin who requests a project is org-scoped, but the shipped auth schema is per-project; item 10's request API depends on this | 5 |
 | **Template binding: what does "linked" enforce?** | Extension points and upgrade reconciliation — blocks **only the future managed/static mode**, not item 10's first implementation, which is an instantiated copy with provenance | later |
 | ~~Is composition the default, or an opt-in backend?~~ | **Direction, gated by 2A:** execution-bundle specialization is the intended default because it makes capability narrowing structural — the ABI is frozen and the composed arm is gated (`nodebench`, `flow-composed.wasm`). It becomes *committed* when packaging granularity is chosen and the economics hold | 2A |
