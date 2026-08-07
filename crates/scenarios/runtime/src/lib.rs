@@ -12,7 +12,7 @@
 //! - [`RecordingEgress`] — record every outbound request after enforcing the
 //!   trusted host/flow authorization intersection (delta 3).
 //! - [`EphemeralSchemaProvisioner`] / [`case_pool`] — an isolated schema and app
-//!   pool per scenario.
+//!   pool per root scenario run.
 //! - [`SeededRng`] / [`build_virtual_wasi`] — a deterministic `wasi:random`
 //!   seed adapter (a forward hook; no guest consumes randomness yet).
 //!

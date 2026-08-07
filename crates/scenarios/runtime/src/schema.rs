@@ -8,11 +8,11 @@
 //! on the same superuser session ([`admin`](EphemeralSchemaProvisioner::admin),
 //! RLS-bypassing; the caller re-scopes `search_path` per case).
 //!
-//! Per-scenario isolation has a second half: [`case_pool`] builds a fresh
-//! `wamn_app` pool bound to the scenario schema. A new plugin per case means the pool's
-//! cached prepared-statement plans never alias a prior case's schema (a plan
-//! pins its `search_path`), so N sequential `create schema_case_i → run → drop`
-//! cases stay isolated.
+//! Per-root-run isolation has a second half: [`case_pool`] builds a fresh
+//! `wamn_app` pool bound to the scenario schema. A new plugin per root run means
+//! the pool's cached prepared-statement plans never alias a prior run's schema
+//! (a plan pins its `search_path`), so N sequential
+//! `create schema_run_i → run → drop` cases stay isolated.
 
 use std::fmt;
 use std::sync::Arc;
@@ -170,11 +170,11 @@ impl EphemeralSchemaProvisioner {
     }
 }
 
-/// Build a fresh `wamn_app` pool bound to `schema` for one scenario, keyed to
-/// `component_id` with the `tenant` claim. A new plugin per case keeps the
-/// pool's cached prepared statements from aliasing a prior case's schema, so
-/// per-case isolation holds. `cfg` carries the app-role connection URL + pool
-/// sizing (its `database_url` must be the NOSUPERUSER `wamn_app` URL).
+/// Build a fresh `wamn_app` pool bound to `schema` for one root scenario run,
+/// keyed to `component_id` with the `tenant` claim. A new plugin per run keeps
+/// the pool's cached prepared statements from aliasing a prior run's schema.
+/// `cfg` carries the app-role connection URL + pool sizing (its `database_url`
+/// must be the NOSUPERUSER `wamn_app` URL).
 pub fn case_pool(
     cfg: &WamnPostgresConfig,
     tenant: &str,
@@ -274,6 +274,27 @@ mod tests {
         assert_eq!(
             drop_schema_sql(&schema),
             "DROP SCHEMA IF EXISTS \"scenario_case_1\" CASCADE;"
+        );
+    }
+
+    #[test]
+    fn root_runs_get_distinct_plugin_owned_pools() {
+        let config = WamnPostgresConfig {
+            database_url: None,
+            pool_max_size: 1,
+            wait_timeout_ms: 1,
+            statement_timeout_ms: 1,
+            row_limit: 1,
+        };
+        let first_schema = ScenarioSchemaName::new("scenario_run_0").unwrap();
+        let second_schema = ScenarioSchemaName::new("scenario_run_1").unwrap();
+
+        let first = case_pool(&config, "tenant", &first_schema, "flow").unwrap();
+        let second = case_pool(&config, "tenant", &second_schema, "flow").unwrap();
+
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "each root run must own a fresh plugin and its prepared-statement pool"
         );
     }
 }

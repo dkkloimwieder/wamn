@@ -926,27 +926,39 @@ async fn seed_suite_cases(
 
 fn success_cases(demo_flow_id: &str) -> Vec<(&'static str, i32, String)> {
     vec![
-        ("success", 0, completion_case("success", demo_flow_id)),
+        (
+            "success",
+            0,
+            isolated_db_case("success", demo_flow_id, serde_json::json!({})),
+        ),
         (
             "db-state",
             1,
-            serde_json::json!({
-                "schema-version": "0.1",
-                "name": "db-state",
-                "flow-ref": {"flow-id": demo_flow_id, "version": 1},
-                "input": {"receipt": "demo"},
-                "expect": [
-                    {"run-outcome": {"status": "completed"}},
-                    {"db-state": {
-                        "query": "SELECT to_jsonb(sink) FROM sink",
-                        "params": [],
-                        "expect": {"row-count": 1}
-                    }}
-                ]
-            })
-            .to_string(),
+            isolated_db_case(
+                "db-state",
+                demo_flow_id,
+                serde_json::json!({"receipt": "demo"}),
+            ),
         ),
     ]
+}
+
+fn isolated_db_case(name: &str, flow_id: &str, input: serde_json::Value) -> String {
+    serde_json::json!({
+        "schema-version": "0.1",
+        "name": name,
+        "flow-ref": {"flow-id": flow_id, "version": 1},
+        "input": input,
+        "expect": [
+            {"run-outcome": {"status": "completed"}},
+            {"db-state": {
+                "query": "SELECT to_jsonb(sink) FROM sink",
+                "params": [],
+                "expect": {"row-count": 1}
+            }}
+        ]
+    })
+    .to_string()
 }
 
 fn completion_case(name: &str, flow_id: &str) -> String {
@@ -1101,5 +1113,20 @@ mod tests {
             ),
             Some(1)
         );
+    }
+
+    #[test]
+    fn success_suite_observes_each_root_runs_private_database_state() {
+        let cases = success_cases("demo");
+
+        assert_eq!(cases.len(), 2);
+        for (_, _, body) in cases {
+            let case: wamn_scenario_model::TestCase = serde_json::from_str(&body).unwrap();
+            assert!(case.expect.iter().any(|assertion| matches!(
+                assertion,
+                wamn_scenario_model::Assertion::DbState { expect, .. }
+                    if *expect == wamn_scenario_model::DbExpect::RowCount(1)
+            )));
+        }
     }
 }

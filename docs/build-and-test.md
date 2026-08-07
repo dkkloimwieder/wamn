@@ -804,8 +804,12 @@ kubectl -n wamn-system logs -f job/testkitbench
 #### [11.2-exec / wamn-0lfu] stored scenarios
 
 `wamn-scenario-worker` is the product artifact. It reads one stored suite and
-executes each case in a distinct caller-provisioned run schema through the same
-flowrunner component used by the production executor. The required
+executes each root case run in a distinct caller-provisioned run schema through
+the same flowrunner component used by the production executor. Every root run
+also gets a fresh Postgres plugin/pool and `ExecutionHost`; a pool therefore
+never reuses prepared statements across run schemas. Callable child subflows
+remain inside their root case run's schema/pool/host; this boundary does not
+provision a separate schema for each child `runs` row. The required
 `--execution-schema-template` contains `{ordinal}` exactly once (for example,
 `scenario_run_{ordinal}`), so case isolation is structural without giving the
 worker schema-creation credentials. It resumes parked work with virtual time,
@@ -851,7 +855,9 @@ catalog release member,
 `ScenarioCapabilities::virtualized` + `RecordingEgress` (trusted
 `--allowed-hosts` outer policy intersected with the flow's declared policy;
 case assertions never authorize) + `ExecutionHost` + drain, then
-`wamn_scenario_model::evaluate` per case. One `check` line per assertion + a
+`wamn_scenario_model::evaluate` per case. The hermetic success suite contains
+two root runs and requires each run's private `sink` to contain exactly one row,
+so collapsing both runs onto one schema turns the gate red. One `check` line per assertion + a
 per-suite/summary line; nonzero exit on any failure. This is the future callee
 of the 12g migrate-catalog auto-run seam.
 
@@ -959,13 +965,17 @@ kubectl -n wamn-system logs job/suiteexec
 # real egress (ERP/notify) need a reachable target or the case's egress asserts
 # to expect the exact authority — see (h) in the executor docs.
 
-# PER-CASE ISOLATION: a fresh exec schema per CASE (db-state asserts see only
-# that run's writes). Suites are small; provision_case (~5 runner_ddl tables)
-# is sub-second/case locally. Fall back to per-suite schema + unique run ids only
-# if a large suite makes provisioning dominate.
+# ROOT-RUN ISOLATION: a fresh exec schema, plugin/pool, and host per stored-suite
+# CASE/root run (db-state asserts see only that run's writes). Child subflows
+# share the root case run's isolation boundary. Suites are small; canonical
+# run-plane provisioning remains sub-second per case locally.
 # The checked-in scenario/replay/impact campaign above owns the suite-selection,
 # case-isolation, aggregate-fold, RLS, replay, and impact-traversal mutants and
 # their immutable green/red evidence.
+# wamn-jole's focused mutation collapses two root runs onto ordinal 0; the
+# named identity test must turn red and the source is restored byte-exactly.
+CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target \
+  tools/gate-mutants/scenario-run-isolation.sh run
 ```
 
 ### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)

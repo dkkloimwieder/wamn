@@ -191,6 +191,10 @@ fn execution_schema_for_case(template: &str, ordinal: i32) -> anyhow::Result<Sce
     })
 }
 
+fn scenario_run_id(execution_id: &str, ordinal: i32) -> String {
+    format!("scenario-{execution_id}-{ordinal}")
+}
+
 fn execution_schemas_for_cases(
     template: &str,
     source_schema: &ScenarioSchemaName,
@@ -635,6 +639,9 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
         let (scenario, clock) =
             ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, recorder.clone());
+        // The plugin owns its connection pools. Constructing it inside this
+        // loop keeps prepared statements bound to exactly this root run's
+        // schema for the complete host lifetime.
         let postgres = case_pool(
             &postgres_config,
             &args.tenant,
@@ -686,7 +693,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         }
 
         scope_session(&client, &args.tenant, &execution_schema).await?;
-        let run_id = format!("scenario-{}-{ordinal}", args.execution_id);
+        let run_id = scenario_run_id(&args.execution_id, ordinal);
         let input = case.input.to_string();
         let database_origin: SystemTime = client
             .query_one("SELECT now()", &[])
@@ -1027,6 +1034,23 @@ mod tests {
         assert!(execution_schema_for_case("{ordinal}_{ordinal}", 0).is_err());
         assert!(execution_schema_for_case("scenario-exec-{ordinal}", 0).is_err());
         assert!(execution_schema_for_case("scenario_exec_{ordinal}", -1).is_err());
+    }
+
+    #[test]
+    fn root_runs_in_one_invocation_have_distinct_schema_and_run_identity() {
+        let source = ScenarioSchemaName::new("wamn_run").unwrap();
+        let schemas =
+            execution_schemas_for_cases("scenario_exec_{ordinal}", &source, [0, 1]).unwrap();
+        let run_ids = [
+            scenario_run_id("editor-42", 0),
+            scenario_run_id("editor-42", 1),
+        ];
+
+        assert_eq!(schemas[0].as_str(), "scenario_exec_0");
+        assert_eq!(schemas[1].as_str(), "scenario_exec_1");
+        assert_ne!(schemas[0], schemas[1]);
+        assert_eq!(run_ids, ["scenario-editor-42-0", "scenario-editor-42-1"]);
+        assert_ne!(run_ids[0], run_ids[1]);
     }
 
     #[test]
