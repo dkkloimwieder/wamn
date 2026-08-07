@@ -221,6 +221,7 @@
           "properties": {
             "actual-revision": {
               "format": "uint64",
+              "maximum": 9007199254740991,
               "minimum": 0.0,
               "type": [
                 "integer",
@@ -229,6 +230,7 @@
             },
             "expected-revision": {
               "format": "uint64",
+              "maximum": 9007199254740991,
               "minimum": 0.0,
               "type": "integer"
             },
@@ -746,6 +748,7 @@
         },
         "revision": {
           "format": "uint64",
+          "maximum": 9007199254740991,
           "minimum": 0.0,
           "type": "integer"
         }
@@ -766,6 +769,7 @@
         },
         "revision": {
           "format": "uint64",
+          "maximum": 9007199254740991,
           "minimum": 0.0,
           "type": "integer"
         }
@@ -839,6 +843,7 @@
         },
         "edit-to-run-ms": {
           "format": "uint64",
+          "maximum": 9007199254740991,
           "minimum": 0.0,
           "type": [
             "integer",
@@ -1155,6 +1160,7 @@
         "expected-revision": {
           "description": "Zero creates a draft; a positive value replaces exactly that revision.",
           "format": "uint64",
+          "maximum": 9007199254740991,
           "minimum": 0.0,
           "type": "integer"
         },

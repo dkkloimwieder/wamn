@@ -33,7 +33,7 @@ use tokio_postgres::{Client, GenericClient, NoTls};
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringRefusal,
     AuthoringRequest, AuthoringResponse, AuthoringSuccess, CommandRefusal, ContractDecodeError,
-    DraftIdentity, SCHEMA_VERSION, decode_document,
+    DraftIdentity, SCHEMA_VERSION, SafeUint64, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, IdentityErrorKind, PrincipalKind, ProjectRole, authenticate_pat,
@@ -631,9 +631,9 @@ async fn dispatch(
     else {
         return Ok(authorization_denied());
     };
-    let Ok(expected_revision) = i64::try_from(input.expected_revision) else {
-        return Ok(empty(StatusCode::BAD_REQUEST));
-    };
+    // The contract bounds `expected-revision` to the exactly representable wire
+    // domain, so it always fits the `bigint` column behind it (wamn-ftfc.21).
+    let expected_revision = i64::from(input.expected_revision);
     if input.draft_id.is_empty() || input.flow_id.is_empty() || command.command_id.is_empty() {
         return Ok(empty(StatusCode::BAD_REQUEST));
     }
@@ -652,7 +652,8 @@ async fn dispatch(
 
     let outcome = match saved {
         SaveFlowDraftResult::Saved { revision, .. } => {
-            let revision = u64::try_from(revision).context("stored revision exceeds u64")?;
+            let revision = SafeUint64::try_from(revision)
+                .context("stored revision exceeds the exactly representable wire domain")?;
             AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SaveFlowDraft(DraftIdentity {
                 draft_id: input.draft_id.clone(),
                 flow_id: input.flow_id.clone(),

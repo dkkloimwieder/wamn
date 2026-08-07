@@ -104,8 +104,9 @@ function validateType(value: unknown, expected: string, path: string): void {
       if (!Array.isArray(value)) fail(path, "must be an array");
       return;
     case "integer":
-      // The upstream uint64 representation decision is tracked by wamn-ftfc.21. Until then,
-      // reject wire integers JavaScript cannot represent exactly instead of returning rounded IDs.
+      // Normative, not a stopgap: wamn-ftfc.21 settled the wire domain for every
+      // authoring integer at [0, 2^53-1], so `Number.isSafeInteger` is exactly the
+      // contract. A value outside it is refused, never rounded into a wrong identity.
       if (typeof value !== "number" || !Number.isSafeInteger(value)) {
         fail(path, "must be an exactly representable integer");
       }
@@ -128,6 +129,9 @@ function validateType(value: unknown, expected: string, path: string): void {
 
 function validateFormat(value: unknown, format: string, path: string): void {
   if (value === null) return;
+  // The final uint64 contract (wamn-ftfc.21): the schema carries `maximum`
+  // 9007199254740991 on every uint64 site and the Rust boundary refuses anything
+  // above it, so this check agrees with the server rather than papering over it.
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     fail(path, `must be an exactly representable ${format}`);
   }

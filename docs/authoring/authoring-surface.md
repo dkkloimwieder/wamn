@@ -92,6 +92,50 @@ carried by the projection.
 Clients must compare these structural fields. Display labels and prose are not
 identities.
 
+## Integer wire domain
+
+The normative wire domain for every `format: uint64` field on this contract is
+`[0, 2^53-1]` — inclusive, with `2^53-1 = 9007199254740991`. This is the whole
+domain, not a client-side accommodation: the schema publishes `maximum`
+`9007199254740991` on all six uint64 sites (`SaveFlowDraft.expected-revision`,
+`DraftRevisionRef.revision`, `DraftIdentity.revision`,
+`AuthoringRefusal.revision-conflict`'s `expected-revision` and
+`actual-revision`, and `DraftSuiteProjection.edit-to-run-ms`).
+
+The bound is `Number.MAX_SAFE_INTEGER`, the largest integer an IEEE-754 double
+holds exactly, so a JavaScript client reproduces the exact value every time
+without a lossless-number parser. Nothing is string-encoded, and no field has a
+second spelling.
+
+`maximum` is published as an integer literal, never as `9007199254740991.0`:
+`serde_json` reads that float form back as `9007199254740990`, which would move
+the contract one below the value it admits.
+
+Boundary behaviour is deterministic in both directions:
+
+| Value | Accept (decode) | Emit (encode) |
+| --- | --- | --- |
+| `9007199254740991` (`2^53-1`) | accepted, round-trips exactly | emitted |
+| `9007199254740992` (`2^53`) | refused | unrepresentable |
+| `18446744073709551615` (`u64::MAX`) | refused | unrepresentable |
+
+`wamn_authoring_model::SafeUint64` is that boundary. Its `Deserialize` refuses
+an out-of-domain integer rather than rounding it, so a refusal surfaces through
+the existing `ContractDecodeError::Json` decode rejection — a malformed body,
+answered `400`, with no new wire vocabulary. In the emit direction the type
+itself is the guard: `TryFrom<u64>` and `TryFrom<i64>` are the only ways to
+build one, so a server value outside the domain cannot reach a serializer at
+all. The TypeScript client's `Number.isSafeInteger` check in
+`clients/authoring-client/src/validate.ts` is the same contract stated on the
+client side; it is final, not a stopgap.
+
+Compatibility: this narrows the published schema and is recorded as such.
+No valid traffic changes. Storage behind every one of these fields is
+PostgreSQL `bigint` (`i64`), and each field carries a server-assigned counter
+(draft revisions) or a measured latency (`edit-to-run-ms`) — none can
+legitimately approach `2^53`, so no producer that was previously correct can
+emit a value the bound now refuses. Settled by `wamn-ftfc.21`.
+
 ## Digest ordering
 
 Every definition digest a client sees — `graph_hash`, `artifact_hash`,

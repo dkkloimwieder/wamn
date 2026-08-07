@@ -8,10 +8,10 @@ use wamn_authoring_model::{
     CommandRefusal, ContractDecodeError, CoverageState, DraftIdentity, DraftRun, DraftRunReceipt,
     DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity, EdgeInputPort, NodeOutcome,
     NodeResultProjection, PassFail, PendingReportReason, PendingSuiteProjection,
-    PublishValidatedDraft, PublishedFlowIdentity, ResourceKind, SCHEMA_VERSION, SaveFlowDraft,
-    SuiteExecutionRefusal, SuiteOutcome, SuiteProjectionState, SuiteRef, SuiteRun, SuiteRunReceipt,
-    ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef, ValidationIssue, ValidationSeverity,
-    decode_document,
+    PublishValidatedDraft, PublishedFlowIdentity, ResourceKind, SAFE_INTEGER_MAX, SCHEMA_VERSION,
+    SafeUint64, SaveFlowDraft, SuiteExecutionRefusal, SuiteOutcome, SuiteProjectionState, SuiteRef,
+    SuiteRun, SuiteRunReceipt, ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef,
+    ValidationIssue, ValidationSeverity, decode_document,
 };
 
 /// Definitions whose variants carry structured refusal fields.
@@ -20,6 +20,11 @@ const REFUSAL_DEFINITIONS: [&str; 3] = [
     "PendingReportReason",
     "SuiteExecutionRefusal",
 ];
+
+/// A literal known to sit inside the exactly representable wire domain.
+fn exact(value: u64) -> SafeUint64 {
+    SafeUint64::try_from(value).expect("test literal is inside the wire domain")
+}
 
 fn scope() -> AuthoringScope {
     AuthoringScope {
@@ -32,7 +37,7 @@ fn draft() -> DraftIdentity {
     DraftIdentity {
         draft_id: "draft-7".into(),
         flow_id: "receive-material".into(),
-        revision: 3,
+        revision: exact(3),
     }
 }
 
@@ -76,7 +81,7 @@ fn projection() -> DraftSuiteProjection {
             flow_version: 3,
         },
         outcome: SuiteOutcome::Failed,
-        edit_to_run_ms: Some(41),
+        edit_to_run_ms: Some(exact(41)),
         cases: vec![CaseResultProjection {
             case_id: "hold".into(),
             run_id: "run-hold".into(),
@@ -142,8 +147,8 @@ fn structured_refusal_documents() -> Vec<(&'static str, &'static str, AuthoringD
             supported: SCHEMA_VERSION.into(),
         },
         AuthoringRefusal::RevisionConflict {
-            expected_revision: 2,
-            actual_revision: Some(3),
+            expected_revision: exact(2),
+            actual_revision: Some(exact(3)),
         },
         AuthoringRefusal::ResourceNotFound {
             resource: ResourceKind::Suite,
@@ -252,7 +257,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
                 scope: scope(),
                 draft_id: "draft-7".into(),
                 flow_id: "receive-material".into(),
-                expected_revision: 2,
+                expected_revision: exact(2),
                 definition: "{invalid intermediate flow text".into(),
             }),
         ),
@@ -262,7 +267,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
                 scope: scope(),
                 draft: wamn_authoring_model::DraftRevisionRef {
                     draft_id: "draft-7".into(),
-                    revision: 3,
+                    revision: exact(3),
                 },
                 suite: suite.clone(),
             }),
@@ -371,8 +376,8 @@ fn every_success_shape_and_typed_refusal_round_trips() {
             supported: SCHEMA_VERSION.into(),
         },
         AuthoringRefusal::RevisionConflict {
-            expected_revision: 2,
-            actual_revision: Some(3),
+            expected_revision: exact(2),
+            actual_revision: Some(exact(3)),
         },
         AuthoringRefusal::ResourceNotFound {
             resource: ResourceKind::Suite,
@@ -543,7 +548,7 @@ fn versions_and_privileged_or_frontend_fields_fail_closed() {
             scope: scope(),
             draft: wamn_authoring_model::DraftRevisionRef {
                 draft_id: "draft-7".into(),
-                revision: 3,
+                revision: exact(3),
             },
             suite: SuiteRef {
                 suite_id: "suite-a".into(),
@@ -648,6 +653,166 @@ fn projection_identity_and_observation_states_are_never_implicit() {
     ] {
         assert_eq!(serde_json::to_value(state).unwrap(), wire);
     }
+}
+
+/// Collect every `format: uint64` site with the `maximum` it publishes, keyed
+/// by a readable path.
+fn uint64_sites(schema: &Value, path: String, found: &mut Vec<(String, Option<Value>)>) {
+    match schema {
+        Value::Object(members) => {
+            if members.get("format") == Some(&json!("uint64")) {
+                found.push((path.clone(), members.get("maximum").cloned()));
+            }
+            for (name, member) in members {
+                uint64_sites(member, format!("{path}/{name}"), found);
+            }
+        }
+        Value::Array(members) => {
+            for (index, member) in members.iter().enumerate() {
+                uint64_sites(member, format!("{path}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The published schema is the contract a non-Rust client compiles against, so
+/// every uint64 site must carry the bound the Rust boundary enforces — read
+/// back from the committed bytes, as an exact integer.
+///
+/// `as_u64` is the assertion that matters: a float bound would be written
+/// `9007199254740991.0`, which `serde_json` reads back as `9007199254740990`,
+/// silently moving the contract one below the value it is meant to admit.
+#[test]
+fn every_uint64_schema_site_publishes_the_safe_integer_maximum() {
+    let committed: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../docs/contracts/authoring-surface.schema.json"),
+        )
+        .expect("read committed authoring schema"),
+    )
+    .expect("parse committed authoring schema");
+
+    let mut found = Vec::new();
+    uint64_sites(&committed, "#".to_owned(), &mut found);
+
+    assert_eq!(
+        found.len(),
+        6,
+        "expected the six known uint64 sites, found {found:?}"
+    );
+    for (path, maximum) in &found {
+        assert_eq!(
+            maximum.as_ref().and_then(Value::as_u64),
+            Some(SAFE_INTEGER_MAX),
+            "{path} must publish an exact integer maximum {SAFE_INTEGER_MAX} so every client refuses what Rust refuses"
+        );
+    }
+}
+
+/// `2^53-1` is inside the domain: it survives both directions unchanged.
+#[test]
+fn safe_integer_maximum_round_trips_exactly_in_both_directions() {
+    let document = request(
+        "save-boundary",
+        AuthoringCommand::SaveFlowDraft(SaveFlowDraft {
+            scope: scope(),
+            draft_id: "draft-7".into(),
+            flow_id: "receive-material".into(),
+            expected_revision: exact(SAFE_INTEGER_MAX),
+            definition: "{}".into(),
+        }),
+    );
+    let text = serde_json::to_string(&document).expect("emit the boundary revision");
+    assert!(
+        text.contains("9007199254740991"),
+        "the emitted document must carry the exact integer, not a rounded one"
+    );
+    assert_eq!(
+        decode_document(&text).expect("accept the boundary"),
+        document
+    );
+
+    let projection = DraftSuiteProjection {
+        edit_to_run_ms: Some(exact(SAFE_INTEGER_MAX)),
+        ..projection()
+    };
+    let text = serde_json::to_string(&projection).expect("emit the boundary latency");
+    let decoded: DraftSuiteProjection = serde_json::from_str(&text).expect("accept the boundary");
+    assert_eq!(decoded.edit_to_run_ms, Some(exact(SAFE_INTEGER_MAX)));
+    assert_eq!(u64::from(decoded.edit_to_run_ms.unwrap()), SAFE_INTEGER_MAX);
+}
+
+/// `2^53` is the first value JavaScript cannot hold exactly, so the contract
+/// refuses it on decode and cannot construct it for encode.
+#[test]
+fn two_to_the_fifty_third_is_refused_in_both_directions() {
+    assert_out_of_domain_refuses(9_007_199_254_740_992);
+}
+
+/// `u64::MAX` is refused by the same boundary; nothing rounds it into an
+/// identity a client would then echo back.
+#[test]
+fn u64_max_is_refused_in_both_directions() {
+    assert_out_of_domain_refuses(u64::MAX);
+}
+
+/// Both wire directions refuse `value`: decode rejects the document, and the
+/// bounded type cannot be built, so no serializer can ever emit it.
+fn assert_out_of_domain_refuses(value: u64) {
+    assert!(
+        value > SAFE_INTEGER_MAX,
+        "the fixture must sit outside the wire domain"
+    );
+
+    // Emit: the type is the guard, from a `u64` and from a `bigint` column.
+    assert!(SafeUint64::try_from(value).is_err());
+    if let Ok(stored) = i64::try_from(value) {
+        assert!(SafeUint64::try_from(stored).is_err());
+    }
+
+    // Accept: every uint64 site refuses through the existing decode rejection.
+    let document = request(
+        "save-out-of-domain",
+        AuthoringCommand::SaveFlowDraft(SaveFlowDraft {
+            scope: scope(),
+            draft_id: "draft-7".into(),
+            flow_id: "receive-material".into(),
+            expected_revision: exact(0),
+            definition: "{}".into(),
+        }),
+    );
+    let mut wire = serde_json::to_value(&document).unwrap();
+    wire["body"]["command"]["input"]["expected-revision"] = json!(value);
+    assert!(
+        matches!(
+            decode_document(&wire.to_string()),
+            Err(ContractDecodeError::Json(_))
+        ),
+        "expected-revision {value} must be refused, never rounded"
+    );
+
+    let mut wire = serde_json::to_value(projection()).unwrap();
+    wire["edit-to-run-ms"] = json!(value);
+    assert!(
+        serde_json::from_value::<DraftSuiteProjection>(wire).is_err(),
+        "edit-to-run-ms {value} must be refused, never rounded"
+    );
+
+    let mut wire = serde_json::to_value(refusal_response(AuthoringRefusal::RevisionConflict {
+        expected_revision: exact(2),
+        actual_revision: Some(exact(3)),
+    }))
+    .unwrap();
+    wire["body"]["outcome"]["value"]["reason"]["actual-revision"] = json!(value);
+    assert!(
+        matches!(
+            decode_document(&wire.to_string()),
+            Err(ContractDecodeError::Json(_))
+        ),
+        "actual-revision {value} must be refused, never rounded"
+    );
 }
 
 #[test]

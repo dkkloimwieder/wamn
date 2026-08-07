@@ -8,7 +8,7 @@
 use std::fmt;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
 /// Authoring contract version implemented by this crate.
@@ -16,6 +16,125 @@ use serde_json::Value;
 /// `0.1.x` changes may only add compatible semantics. A breaking wire change
 /// requires a new minor contract and an explicit compatibility path.
 pub const SCHEMA_VERSION: &str = "0.1";
+
+/// Largest integer every `format: uint64` field on this contract may carry.
+///
+/// `2^53 - 1` is the largest integer an IEEE-754 double holds exactly, so it is
+/// the whole wire domain a JavaScript `Number` can round-trip without loss. The
+/// schema publishes it as `maximum`; see `docs/authoring/authoring-surface.md`.
+pub const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
+
+/// A `uint64` wire value inside the exactly representable domain `[0, 2^53-1]`.
+///
+/// The type is the boundary: an out-of-domain integer is refused on decode and
+/// is unrepresentable on encode, so no client ever receives a rounded counter.
+/// Storage behind every one of these fields is PostgreSQL `bigint`, and each
+/// one carries a server-assigned counter or a latency that cannot legitimately
+/// approach the bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct SafeUint64(u64);
+
+impl fmt::Display for SafeUint64 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
+impl TryFrom<u64> for SafeUint64 {
+    type Error = SafeIntegerError;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        if value > SAFE_INTEGER_MAX {
+            return Err(SafeIntegerError {
+                value: i128::from(value),
+            });
+        }
+        Ok(Self(value))
+    }
+}
+
+/// Accepts the `bigint` column values these fields are stored in.
+impl TryFrom<i64> for SafeUint64 {
+    type Error = SafeIntegerError;
+
+    fn try_from(value: i64) -> Result<Self, Self::Error> {
+        u64::try_from(value)
+            .map_err(|_| SafeIntegerError {
+                value: i128::from(value),
+            })
+            .and_then(Self::try_from)
+    }
+}
+
+impl From<SafeUint64> for u64 {
+    fn from(value: SafeUint64) -> Self {
+        value.0
+    }
+}
+
+/// The domain fits `bigint`, so the storage conversion is total.
+impl From<SafeUint64> for i64 {
+    fn from(value: SafeUint64) -> Self {
+        // `SAFE_INTEGER_MAX` is `2^53 - 1`, well inside `i64`.
+        value.0 as Self
+    }
+}
+
+impl Serialize for SafeUint64 {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u64(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for SafeUint64 {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = u64::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for SafeUint64 {
+    /// Inlined so each `format: uint64` site publishes `maximum` in place.
+    fn is_referenceable() -> bool {
+        false
+    }
+
+    fn schema_name() -> String {
+        "SafeUint64".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let mut schema = <u64 as JsonSchema>::json_schema(generator).into_object();
+        // `NumberValidation::maximum` is `f64`, and an `f64` bound serializes as
+        // `9007199254740991.0` — which `serde_json` reads back as
+        // `9007199254740990`, one below the bound this contract exists to state
+        // exactly. Publishing through `extensions` keeps `maximum` an integer
+        // literal that every parser reproduces exactly.
+        schema
+            .extensions
+            .insert("maximum".to_owned(), Value::from(SAFE_INTEGER_MAX));
+        schemars::schema::Schema::Object(schema)
+    }
+}
+
+/// An integer outside the exactly representable `uint64` wire domain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SafeIntegerError {
+    /// The refused value, as read from the wire or from `bigint` storage.
+    pub value: i128,
+}
+
+impl fmt::Display for SafeIntegerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = self.value;
+        write!(
+            formatter,
+            "uint64 value {value} is outside the exactly representable authoring wire domain [0, {SAFE_INTEGER_MAX}]"
+        )
+    }
+}
+
+impl std::error::Error for SafeIntegerError {}
 
 /// A complete request or response document on the authoring contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -129,7 +248,7 @@ pub struct SaveFlowDraft {
     pub draft_id: String,
     pub flow_id: String,
     /// Zero creates a draft; a positive value replaces exactly that revision.
-    pub expected_revision: u64,
+    pub expected_revision: SafeUint64,
     /// Exact UTF-8 flow document text. Save does not parse or validate it;
     /// [`AuthoringCommand::Validate`] owns that boundary.
     pub definition: String,
@@ -140,7 +259,7 @@ pub struct SaveFlowDraft {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DraftRevisionRef {
     pub draft_id: String,
-    pub revision: u64,
+    pub revision: SafeUint64,
 }
 
 /// Select one stored suite without exposing its storage location.
@@ -208,7 +327,7 @@ pub struct AuthoringReportQuery {
 pub struct DraftIdentity {
     pub draft_id: String,
     pub flow_id: String,
-    pub revision: u64,
+    pub revision: SafeUint64,
 }
 
 /// Applied catalog identity pinned by validation.
@@ -286,8 +405,8 @@ pub enum AuthoringRefusal {
     },
     #[schemars(rename_all = "kebab-case")]
     RevisionConflict {
-        expected_revision: u64,
-        actual_revision: Option<u64>,
+        expected_revision: SafeUint64,
+        actual_revision: Option<SafeUint64>,
     },
     #[schemars(rename_all = "kebab-case")]
     ResourceNotFound {
@@ -399,7 +518,7 @@ pub struct DraftSuiteProjection {
     pub draft: ValidatedDraftIdentity,
     pub suite: SuiteRef,
     pub outcome: SuiteOutcome,
-    pub edit_to_run_ms: Option<u64>,
+    pub edit_to_run_ms: Option<SafeUint64>,
     pub cases: Vec<CaseResultProjection>,
     pub nodes: Vec<NodeResultProjection>,
     pub branches: Vec<BranchCoverageProjection>,

@@ -240,6 +240,40 @@ test("unsafe request and response integers fail instead of returning rounded val
   );
 });
 
+test("uint64 wire domain accepts 2^53-1 and refuses 2^53 and u64 max", async () => {
+  // wamn-ftfc.21 settled the domain at [0, 2^53-1]. `u64::MAX` is written as a
+  // JavaScript literal on purpose: the parse is already lossy, which is exactly
+  // what the contract refuses to let reach an identity.
+  const exact = structuredClone(request);
+  exact.command.input["expected-revision"] = 9007199254740991;
+  assert.equal(parseAuthoringRequest(exact).command.input["expected-revision"], 9007199254740991);
+
+  for (const refused of [9007199254740992, 18446744073709551615]) {
+    const outOfDomain = structuredClone(request);
+    outOfDomain.command.input["expected-revision"] = refused;
+    assert.throws(() => parseAuthoringRequest(outOfDomain), AuthoringPayloadError);
+  }
+
+  const identityFor = (revision) =>
+    response({
+      status: "completed",
+      value: {
+        command: "save-flow-draft",
+        result: { "draft-id": "draft-1", "flow-id": "flow-1", revision },
+      },
+    });
+  const client = (revision) =>
+    new AuthoringClient({ async execute() { return identityFor(revision); } });
+
+  assert.equal(
+    (await client(9007199254740991).execute(request)).value.result.revision,
+    9007199254740991,
+  );
+  for (const refused of [9007199254740992, 18446744073709551615]) {
+    await assert.rejects(client(refused).execute(request), AuthoringProtocolError);
+  }
+});
+
 test("uint32 request format accepts its boundary and rejects canonical flow-version overflow", () => {
   assert.doesNotThrow(() => parseAuthoringRequest(validateRequest(4_294_967_295)));
   assert.throws(() => parseAuthoringRequest(validateRequest(4_294_967_296)), AuthoringPayloadError);
