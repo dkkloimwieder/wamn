@@ -41,12 +41,14 @@
 --       data-plane workload (gateway/runner/dispatcher/webhook) may reference
 --       this cluster or DB; only control-plane tooling connects here. A static
 --       manifest grep (crates/control/registry/tests/storage.rs) guards it.
---   (2) no credentials (R8b) — `project_envs` stores a Secret *reference*
---       (secret_name + optional secret_namespace) and NO credential column
---       (no url/password/dsn). Asserted by the drift-guard + the live-apply gate.
+--   (2) no tenant-database credentials (R8b) — `project_envs` stores a Secret
+--       *reference* (secret_name + optional secret_namespace) and NO tenant DB
+--       credential column (no url/password/dsn). First-party human login hashes
+--       live separately under `identity`; plaintext secrets never do.
 --   (3) no tenant data — the only tables here are the control-plane set below
---       (registry + provisioning). No catalogs, run state, payloads, or
---       application users. The live-apply gate asserts the exact table set.
+--       (registry + provisioning + first-party platform identity). No catalogs,
+--       run state, payloads, or per-project application users. The live-apply
+--       gate asserts the exact table set.
 --   (4) dev ≠ prod recovery domain — under D18 this is enforced by the DERIVATION
 --       plus crates/control/registry validate(), not a per-org DB CHECK: two
 --       own-domain envs (dev, prod) derive distinct clusters (<org>-dev vs
@@ -64,19 +66,21 @@
 -- `pooled ⟺ pool_cluster present` plus that charset/length backstop.
 
 -- ---------------------------------------------------------------------------
--- Schemas. `registry` = the identity/placement model (wamn-q3n.1); `provisioning`
--- = the saga state that orchestrates it (10.1's exactly-once/resumable steps).
--- Distinct schemas so each control-plane subsystem is namespaced, and the
--- no-tenant-data table set (invariant 3) is exactly what these two hold.
+-- Schemas. `registry` = the org/project placement model (wamn-q3n.1);
+-- `provisioning` = the saga state that orchestrates it (10.1's
+-- exactly-once/resumable steps); `identity` = first-party platform principals,
+-- local human credential hashes, and project-role assignments (wamn-ctc8.6).
+-- Distinct schemas keep each control-plane subsystem namespaced.
 -- Owned by the `wamn_system` role the T1 cluster bootstraps (wamn-q3n.2).
 -- ---------------------------------------------------------------------------
 CREATE SCHEMA registry AUTHORIZATION wamn_system;
 CREATE SCHEMA provisioning AUTHORIZATION wamn_system;
+CREATE SCHEMA identity AUTHORIZATION wamn_system;
 
 -- RBAC seam (8.1): a future least-privilege control-plane role (builder/admin/
 -- viewer, distinct from the tenant `wamn_app`) is GRANTed here. The `wamn_system`
 -- owner needs no grant. Left as a documented seam — RBAC is a separate subsystem.
---   GRANT USAGE ON SCHEMA registry, provisioning TO wamn_control;
+--   GRANT USAGE ON SCHEMA registry, provisioning, identity TO wamn_control;
 --   GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA registry TO wamn_control;
 
 -- ---------------------------------------------------------------------------
@@ -181,6 +185,64 @@ CREATE TABLE registry.projects (
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
+);
+
+-- ---------------------------------------------------------------------------
+-- First-party platform identity (wamn-ctc8.6). This is platform-plane
+-- authentication state, distinct from per-project `app_system` identities.
+-- Humans may have one Argon2id PHC credential; services deliberately have no
+-- local password row and gain presenters in later work. Role slugs are opaque:
+-- permission meaning belongs to the management authorization boundary.
+-- ---------------------------------------------------------------------------
+CREATE TABLE identity.principals (
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    kind         text NOT NULL,
+    subject      text NOT NULL,
+    display_name text NOT NULL,
+    status       text NOT NULL DEFAULT 'active',
+    disabled_at  timestamptz,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (id, kind),
+    UNIQUE (kind, subject),
+    CONSTRAINT principals_kind_check
+        CHECK (kind IN ('human', 'service')),
+    CONSTRAINT principals_subject_check
+        CHECK (subject ~ '^[a-z0-9][a-z0-9._@+-]*$'
+               AND char_length(subject) <= 254),
+    CONSTRAINT principals_display_name_check
+        CHECK (btrim(display_name) <> '' AND char_length(display_name) <= 200),
+    CONSTRAINT principals_status_check
+        CHECK (status IN ('active', 'disabled')),
+    CONSTRAINT principals_disabled_at_check
+        CHECK ((status = 'disabled') = (disabled_at IS NOT NULL))
+);
+
+CREATE TABLE identity.local_credentials (
+    principal_id uuid PRIMARY KEY,
+    principal_kind text NOT NULL DEFAULT 'human',
+    password_hash text NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    FOREIGN KEY (principal_id, principal_kind)
+        REFERENCES identity.principals (id, kind) ON DELETE CASCADE,
+    CONSTRAINT local_credentials_human_only_check
+        CHECK (principal_kind = 'human'),
+    CONSTRAINT local_credentials_argon2id_check
+        CHECK (password_hash LIKE '$argon2id$%')
+);
+
+CREATE TABLE identity.project_roles (
+    principal_id uuid NOT NULL
+        REFERENCES identity.principals (id) ON DELETE CASCADE,
+    org          text NOT NULL,
+    project      text NOT NULL,
+    role         text NOT NULL,
+    assigned_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (principal_id, org, project, role),
+    FOREIGN KEY (org, project)
+        REFERENCES registry.projects (org, id) ON DELETE CASCADE,
+    CONSTRAINT project_roles_role_check
+        CHECK (role ~ '^[a-z0-9][a-z0-9-]*$' AND char_length(role) <= 64)
 );
 
 -- ---------------------------------------------------------------------------

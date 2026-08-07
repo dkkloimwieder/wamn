@@ -358,6 +358,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-platform-identity",
+      "manifest_path": "crates/identity/platform/Cargo.toml",
+      "role": "core",
+      "target_class": "native",
+      "bounded_context": "identity",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-project-state",
       "manifest_path": "crates/identity/project-state/Cargo.toml",
       "role": "contract",

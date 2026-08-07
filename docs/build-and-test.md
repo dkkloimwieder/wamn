@@ -213,7 +213,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **50 root + 29 component packages**. The selection
+selection for the current **51 root + 29 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -222,10 +222,10 @@ The selected package roots are:
 
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
-| fast developer/native | 40 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
+| fast developer/native | 41 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
 | product components | 0 | 7 | `api-gateway`, `evaluate-specs`, `flow-http`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
 | contract/conformance | 13 | 0 | all 12 contract packages plus `wamn-proof-conformance` |
-| full CI | 50 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| full CI | 51 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
 | deployed-system proof | 16 | 29 | deployable native/proof owners plus every guest proof input and `node-ts` |
 | release | 10 | 7 | every package classified `deployable: true` |
 
@@ -263,7 +263,7 @@ membership never constitutes deployed proof or release admission.
 There are no `default-members` in either virtual workspace. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select all 50 root members. Bare `cargo test` uses each package's default
+  select all 51 root members. Bare `cargo test` uses each package's default
   test targets.
 - From `components/`, the same bare commands select all 29 component members.
   The production guest build remains
@@ -3430,6 +3430,26 @@ kubectl apply -f /tmp/e1-sb.json                             # ScheduledBackup A
 kubectl -n wamn-system delete cluster e1gate-restore e1gate-prod e1gate-dev
 kubectl -n wamn-system delete objectstore e1gate-prod-store
 kubectl -n wamn-system delete scheduledbackup e1gate-prod-backup
+```
+
+### [5 / wamn-ctc8.6] first-party platform identity core
+
+This gate covers the platform-plane `identity` schema, human and service
+principals, Argon2id local-human verification, disabled-principal refusal,
+opaque project roles, and the non-deserializable authenticated-principal seam.
+It does not cover PATs, cookies, OIDC, middleware, or per-project `app_system`
+identity.
+
+```bash
+cargo test --locked -p wamn-platform-identity
+cargo clippy --locked -p wamn-platform-identity --all-targets -- -D warnings
+cargo fmt -p wamn-platform-identity --check
+# Live gate of record (throwaway postgres:18 only):
+docker run -d --rm --name wamn-platform-identity-pg -p 5471:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5471/wamn \
+  cargo test --locked -p wamn-platform-identity --test identity_live -- --nocapture
+docker stop wamn-platform-identity-pg
 ```
 
 ### [2.4] per-project system schema v1

@@ -432,12 +432,24 @@ fn charset_length_checks_backstop_the_stored_slug_names() {
     );
 }
 
-/// Invariant 2 (no credentials, R8b): the schema stores Secret *references* and
-/// must not introduce a credential column (a text-level backstop; the live-apply
-/// gate asserts the actual column set).
+/// Invariant 2 (no tenant-database credentials, R8b): every system table must
+/// remain free of credential material except the explicitly admitted
+/// `identity.local_credentials` table, whose separate owner gate permits only
+/// first-party Argon2id hashes. The exemption is one exact table body, not a
+/// weakening for the rest of registry, provisioning, or identity storage.
 #[test]
 fn schema_holds_no_credential_column() {
     let sql = code_only(&system_schema_sql()).to_lowercase();
+    let admitted_start = sql
+        .find("create table identity.local_credentials")
+        .expect("identity.local_credentials table body");
+    let admitted_end = admitted_start
+        + sql[admitted_start..]
+            .find(';')
+            .expect("identity.local_credentials terminator")
+        + 1;
+    let guarded_storage = [&sql[..admitted_start], &sql[admitted_end..]].concat();
+
     for bad in [
         "password",
         "secret_value",
@@ -446,8 +458,8 @@ fn schema_holds_no_credential_column() {
         "connection_string",
     ] {
         assert!(
-            !sql.contains(bad),
-            "the system DB must hold NO credential material (found {bad:?}) — references only (R8b)"
+            !guarded_storage.contains(bad),
+            "system storage outside identity.local_credentials must hold no tenant DB credential material {bad:?} (R8b)"
         );
     }
 }
@@ -523,6 +535,7 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          CREATE ROLE wamn_system LOGIN PASSWORD 'wamn_system' NOSUPERUSER; END IF; END $$;\n\
          DROP SCHEMA IF EXISTS registry CASCADE;\n\
          DROP SCHEMA IF EXISTS provisioning CASCADE;\n\
+         DROP SCHEMA IF EXISTS identity CASCADE;\n\
          DO $$ BEGIN EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;\n\
          SET ROLE wamn_system;\n",
     );
@@ -982,12 +995,12 @@ DO $$ DECLARE bad int; BEGIN
 END $$;
 
 -- Invariant 3 (no tenant data): the ONLY tables in the system DB are the
--- control-plane set (now including env_policies + event_readers).
+-- control-plane registry, provisioning, and first-party identity set.
 DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
-    WHERE table_schema IN ('registry','provisioning') AND table_type='BASE TABLE';
-  ASSERT tbls = 'provisioning.dumps,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects',
+    WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
+  ASSERT tbls = 'identity.local_credentials,identity.principals,identity.project_roles,provisioning.dumps,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
