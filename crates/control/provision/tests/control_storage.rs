@@ -474,7 +474,17 @@ fn schema_holds_no_credential_column() {
 fn no_data_plane_manifest_references_the_system_cluster() {
     // dashproof-job.yaml is control-plane tooling: it enumerates registry.orgs
     // (like `wamn-ctl provision-dashboards`) to assert per-tenant Grafana folders.
-    const ALLOWLIST: &[&str] = &["wamn-sysdb.yaml", "dashproof-job.yaml"];
+    // causation-e2e-job.yaml is control-plane tooling: its WAMN_SYSTEM_ADMIN_URL
+    // only seeds, deletes, and residue-checks the gate's own registry rows (org
+    // `ec7j`) through the `wamn_control_registry::sql` provisioning builders, and
+    // hands the spawned WAL reader the SELECT-only WAMN_SYSTEM_URL its deployed
+    // Deployment already carries. The path this gate proves — admission, runner,
+    // sink write, evt-nats R3 — runs on WAMN_PG_URL / WAMN_EVT_NATS_URL alone.
+    const ALLOWLIST: &[&str] = &[
+        "wamn-sysdb.yaml",
+        "dashproof-job.yaml",
+        "causation-e2e-job.yaml",
+    ];
 
     let mut offenders = Vec::new();
     let mut scanned = 0usize;
