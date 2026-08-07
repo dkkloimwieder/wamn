@@ -2106,16 +2106,15 @@ So:
   drafting."
 - **No activation confirmation**, because nothing about the release changed.
 
-**This is a *flow*-draft loop, not a project-definition one.** A draft run pins the
-**applied** catalog version, so it cannot exercise an unapplied schema change, and the
-outbound example assumes connection `erp` already exists in the environment. 6A's goal also
-says the client designs a schema — so the scope needs stating rather than implying:
-
-> **Direction:** 6A's fast loop covers **flow edits against the applied project
-> definition**. Schema, connection, and attachment changes go through ordinary dev releases —
-> acceptance requires schema design to be *possible*, not *fast*. A **project-definition
-> draft workspace**, able to test schema + connections + attachments + flows together, needs
-> an isolated or provisional definition world and is a recorded candidate for later.
+**Decision (wamn-ftfc.6): 6A's fast loop is flow-draft only.** The workspace used by 6A and
+`wamn-ftfc.11` contains a mutable flow document, its validated artifact, and stored-suite
+and report state, all evaluated against exactly one applied catalog version and the existing
+environment attachments and connections. It has no provisional schema, connection,
+attachment, or project-definition world. An applied-catalog change requires revalidation
+and another run against the new applied version; schema, connection, and attachment edits
+continue through ordinary dev releases. Acceptance requires schema design to be possible,
+not fast. A full project-definition draft workspace that tests those definitions together
+remains a recorded candidate for later, not a dependency of 6A or `wamn-ftfc.11`.
 
 The steady-state loop becomes *edit → validate (~ms) → run → observe*, with composition
 (item 2A) invisible because it is keyed by execution-bundle identity and cached — an author waits only when
@@ -2705,7 +2704,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Packaging granularity and capability worlds** | The plug boundary is the fault-isolation, patch-blast-radius and revocation unit, not just a cache key; which worlds are composition targets | 2A |
 | ~~Draft retention and cache eviction~~ | **Settled (wamn-ftfc.4):** 6A publishes authoritative draft and retained-run/report roots over the exact artifact, bundle, catalog, captures, and payloads; expiry or deletion removes publishability before zero-root GC; 2A evicts only unrooted bundle-cache entries; published artifacts are outside draft GC. The internal proof retains all draft/report state with no automatic expiry or sweeper | — |
 | ~~Which connections are draft-safe?~~ | **Settled (wamn-ftfc.5):** draft access is default-deny and requires a revocable environment-admin grant on the exact immutable connection-instance generation, checked at admission and again before effect or network access. The grant is environment policy, not portable or author-settable, and is neither inferred nor inherited; author confirmation can narrow but never grant. The internal proof may use the existing development administrator while item 5 gates client exposure | — |
-| **Flow-draft loop only, or a project-definition draft workspace?** | 6A's fast loop pins the applied catalog, so schema/connection changes go through ordinary releases unless a provisional definition world is built | 6A |
+| ~~Flow-draft loop only, or a project-definition draft workspace?~~ | **Settled (wamn-ftfc.6):** the 6A/`wamn-ftfc.11` workspace holds a mutable flow document, validated artifact, and suite/report state against one applied catalog version and existing environment attachments/connections; it has no provisional schema, connection, attachment, or project world. A catalog change requires revalidation and another run; schema/connection/attachment edits use ordinary dev releases. A full project-definition draft workspace remains a later candidate, not a dependency | — |
 | ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1; implementation deferred 2026-08-04:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Both protocols resume behind item 1's reactivation condition | — |
 | **Do custom nodes compose in, or keep D7's signed hop?** | Removes a round trip and preserves memory isolation, but moves the supply-chain signature to the composition | 2D |
 | **Node digest pinning versus patchability** | A platform node's security patch would otherwise need every client flow republished | 2D |
