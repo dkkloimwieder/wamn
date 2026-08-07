@@ -164,3 +164,38 @@ cargo test --locked --offline -p wamn-authoring-model
 The package test compares the generated schema byte-for-byte with the checked-in
 file and guards the command inventory, typed refusals, explicit coverage states,
 full edge key, version checks, and privileged/frontend-field rejection.
+
+## Schema-first request collection
+
+[`authoring-surface.v0.1.http`](../contracts/authoring-surface.v0.1.http) is the
+transport-neutral request console for the six commands in schema version 0.1.
+Its paired
+[`authoring-surface.v0.1.examples.json`](../contracts/authoring-surface.v0.1.examples.json)
+contains one typed success and refusal for every command. The collection sends
+every document to the complete adapter endpoint supplied in
+`WAMN_AUTHORING_ENDPOINT`; it does not define a route. Each request requires
+`WAMN_AUTHORING_BEARER_TOKEN`, supplied for the current principal by the caller.
+There is no checked-in token, fallback token, or unauthenticated request.
+
+For a human, export those two variables in a private shell and run an individual
+section with an HTTP-file client. For an agent, preserve each `command-id`,
+consume responses as `AuthoringDocument`, and never insert principal, token,
+database, endpoint, or operator authority into a JSON body. For CI, run the
+static, network-free gate:
+
+```bash
+cargo test --locked --offline -p wamn-authoring-model \
+  --test request_collection
+```
+
+The gate decodes every request, success, and refusal through the Rust source of
+truth, compares the collection inventory with the generated and checked-in
+schema, requires the environment-only Bearer header on every executable
+request, and rejects privileged fields. A later authenticated smoke is owned by
+`wamn-jvzx.4`.
+
+The headless CLI word `promote` maps to the public `publish` command. Login and
+token issuance and a generic `runs` route are intentionally absent: the current
+public schema defines neither, and `wamn-jvzx.13` owns their collection entries
+after those contracts land. Report reads use the schema's `suite-projection`
+command.

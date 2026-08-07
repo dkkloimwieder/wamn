@@ -1,0 +1,315 @@
+{
+  "schema": "authoring-surface.schema.json",
+  "schema-version": "0.1",
+  "examples": [
+    {
+      "command": "save-flow-draft",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "save-receiving-draft-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "save-flow-draft",
+              "result": {
+                "draft-id": "draft-receiving",
+                "flow-id": "receive-material",
+                "revision": 3
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "save-receiving-draft-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "save-flow-draft",
+              "reason": {
+                "kind": "authorization-denied"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "command": "validate",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "validate-receiving-draft-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "validate",
+              "result": {
+                "validated-draft-id": "sha256:validated-draft-v4",
+                "draft": {
+                  "draft-id": "draft-receiving",
+                  "flow-id": "receive-material",
+                  "revision": 3
+                },
+                "runtime-flow-version": 4,
+                "artifact-hash": "sha256:artifact-v4",
+                "execution-bundle-hash": "sha256:bundle-v4",
+                "catalog": {
+                  "catalog-id": "receiving-catalog",
+                  "version": 9
+                },
+                "environment": "dev"
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "validate-receiving-draft-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "validate",
+              "reason": {
+                "kind": "catalog-drift"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "command": "draft-run",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "run-receiving-draft-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "draft-run",
+              "result": {
+                "run-id": "run-receiving-1042",
+                "validated-draft": {
+                  "validated-draft-id": "sha256:validated-draft-v4"
+                }
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "run-receiving-draft-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "draft-run",
+              "reason": {
+                "kind": "validated-draft-drift"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "command": "suite-run",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "suite-receiving-draft-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "suite-run",
+              "result": {
+                "report-id": "report-receiving-3",
+                "execution-id": "execution-receiving-3",
+                "validated-draft": {
+                  "validated-draft-id": "sha256:validated-draft-v4"
+                }
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "suite-receiving-draft-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "suite-run",
+              "reason": {
+                "kind": "validated-draft-drift"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "command": "publish",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "publish-receiving-draft-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "publish",
+              "result": {
+                "flow-id": "receive-material",
+                "version": 4,
+                "artifact-hash": "sha256:artifact-v4"
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "publish-receiving-draft-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "publish",
+              "reason": {
+                "kind": "publish-executable-drift"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "command": "suite-projection",
+      "success": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "read-receiving-report-3",
+          "outcome": {
+            "status": "completed",
+            "value": {
+              "command": "suite-projection",
+              "result": {
+                "state": "finalized",
+                "report": {
+                  "projection-version": "0.1",
+                  "report-id": "report-receiving-3",
+                  "execution-id": "execution-receiving-3",
+                  "draft": {
+                    "validated-draft-id": "sha256:validated-draft-v4",
+                    "draft": {
+                      "draft-id": "draft-receiving",
+                      "flow-id": "receive-material",
+                      "revision": 3
+                    },
+                    "runtime-flow-version": 4,
+                    "artifact-hash": "sha256:artifact-v4",
+                    "execution-bundle-hash": "sha256:bundle-v4",
+                    "catalog": {
+                      "catalog-id": "receiving-catalog",
+                      "version": 9
+                    },
+                    "environment": "dev"
+                  },
+                  "suite": {
+                    "suite-id": "receiving-happy-path",
+                    "flow-version": 3
+                  },
+                  "outcome": {
+                    "state": "passed"
+                  },
+                  "edit-to-run-ms": 41,
+                  "cases": [
+                    {
+                      "case-id": "happy-path",
+                      "run-id": "run-receiving-1042",
+                      "outcome": "passed",
+                      "failure": null
+                    }
+                  ],
+                  "nodes": [
+                    {
+                      "node-id": "request",
+                      "outcome": "passed",
+                      "observed-case-ids": [
+                        "happy-path"
+                      ],
+                      "failed-case-ids": []
+                    },
+                    {
+                      "node-id": "respond",
+                      "outcome": "passed",
+                      "observed-case-ids": [
+                        "happy-path"
+                      ],
+                      "failed-case-ids": []
+                    }
+                  ],
+                  "branches": [
+                    {
+                      "branch": {
+                        "from-node-id": "request",
+                        "from-port": "main"
+                      },
+                      "coverage": "covered"
+                    }
+                  ],
+                  "edges": [
+                    {
+                      "edge": {
+                        "from-node-id": "request",
+                        "from-port": "main",
+                        "to-node-id": "respond",
+                        "to-port": null
+                      },
+                      "coverage": "covered"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "refusal": {
+        "document": "response",
+        "body": {
+          "schema-version": "0.1",
+          "command-id": "read-receiving-report-3",
+          "outcome": {
+            "status": "refused",
+            "value": {
+              "command": "suite-projection",
+              "reason": {
+                "kind": "authorization-denied"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

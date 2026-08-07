@@ -1,0 +1,176 @@
+# Schema-first request collection for authoring-surface.schema.json version 0.1.
+#
+# The caller supplies the complete adapter endpoint and one principal's bearer
+# token. Neither value has a checked-in default. The POST method is this
+# collection's runner convention, not an additional route contract.
+#
+# CLI naming: `promote` sends the public schema command `publish`.
+
+### save-flow-draft
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "save-receiving-draft-3",
+    "command": {
+      "kind": "save-flow-draft",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "draft-id": "draft-receiving",
+        "flow-id": "receive-material",
+        "expected-revision": 2,
+        "definition": "{\"schema-version\":\"0.1\",\"flow-id\":\"receive-material\",\"version\":4,\"nodes\":[{\"id\":\"request\",\"type\":\"request\",\"config\":{\"input-schema\":true}},{\"id\":\"respond\",\"type\":\"respond\",\"config\":{\"status\":200}}],\"edges\":[{\"from\":\"request\",\"to\":\"respond\"}]}"
+      }
+    }
+  }
+}
+
+### validate
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "validate-receiving-draft-3",
+    "command": {
+      "kind": "validate",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "draft": {
+          "draft-id": "draft-receiving",
+          "revision": 3
+        },
+        "suite": {
+          "suite-id": "receiving-happy-path",
+          "flow-version": 3
+        }
+      }
+    }
+  }
+}
+
+### draft-run
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "run-receiving-draft-3",
+    "command": {
+      "kind": "draft-run",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "validated-draft": {
+          "validated-draft-id": "sha256:validated-draft-v4"
+        },
+        "input": {
+          "receipt-id": "receipt-1042",
+          "material": "aluminum"
+        }
+      }
+    }
+  }
+}
+
+### suite-run
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "suite-receiving-draft-3",
+    "command": {
+      "kind": "suite-run",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "validated-draft": {
+          "validated-draft-id": "sha256:validated-draft-v4"
+        },
+        "suite": {
+          "suite-id": "receiving-happy-path",
+          "flow-version": 3
+        }
+      }
+    }
+  }
+}
+
+### publish
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "publish-receiving-draft-3",
+    "command": {
+      "kind": "publish",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "validated-draft": {
+          "validated-draft-id": "sha256:validated-draft-v4"
+        },
+        "successful-report-id": "report-receiving-3"
+      }
+    }
+  }
+}
+
+### suite-projection
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{
+  "document": "request",
+  "body": {
+    "schema-version": "0.1",
+    "command-id": "read-receiving-report-3",
+    "command": {
+      "kind": "suite-projection",
+      "input": {
+        "scope": {
+          "project-id": "receiving",
+          "environment": "dev"
+        },
+        "report-id": "report-receiving-3"
+      }
+    }
+  }
+}
