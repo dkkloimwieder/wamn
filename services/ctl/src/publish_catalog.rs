@@ -2512,14 +2512,27 @@ mod tests {
         );
         assert_eq!(
             recovery.supported_classes,
-            [wamn_node_manifest::RecoveryClass::NeverReplay]
+            [
+                wamn_node_manifest::RecoveryClass::IdempotentWithKey,
+                wamn_node_manifest::RecoveryClass::NeverReplay
+            ],
+            "the executable declares the modes its bytes implement, not the mode this flow selects"
         );
         assert_eq!(contract.connection_recovery_support.len(), 1);
-        assert_eq!(contract.portable_connections.len(), 1);
+        assert_eq!(contract.portable_connections.len(), 2);
         assert_eq!(
             prepared.artifact.occurrence_recovery()[0].recovery_class,
             wamn_node_manifest::RecoveryClass::NeverReplay,
             "GET config is not a publication recovery authority"
+        );
+        assert_eq!(
+            prepared.artifact.occurrence_recovery()[0].portable_connection,
+            Some(
+                wamn_node_manifest::PortableConnectionRequirement::never_replay(
+                    wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
+                )
+            ),
+            "the declared never-replay claim is pinned even though the executable offers stable-key-dedup-v1"
         );
     }
 
