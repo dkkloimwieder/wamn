@@ -653,6 +653,24 @@
     },
     {
       "workspace": "components",
+      "name": "connection-http-custom",
+      "manifest_path": "components/fixtures/connection-http-custom/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
+      "name": "connection-http-standard",
+      "manifest_path": "components/fixtures/connection-http-standard/Cargo.toml",
+      "role": "test",
+      "target_class": "guest",
+      "bounded_context": "proof",
+      "deployable": false
+    },
+    {
+      "workspace": "components",
       "name": "cred-probe",
       "manifest_path": "components/fixtures/cred-probe/Cargo.toml",
       "role": "test",
