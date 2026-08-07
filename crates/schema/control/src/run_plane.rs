@@ -1750,6 +1750,15 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         app: &["SELECT"],
         author: &["SELECT", "INSERT", "UPDATE"],
     },
+    // The command ledger is append-only management-plane evidence: the author
+    // adds and reads rows, the guest runtime credential never sees it, and
+    // nobody gets UPDATE or DELETE.
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::Catalog,
+        table: "authoring_command_audit",
+        app: &[],
+        author: &["SELECT", "INSERT"],
+    },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "connection_requirements",
@@ -2873,7 +2882,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants')) \
+               'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
               ('runs', 'test_suites', 'test_cases', \
                'authoring_report_reservations', \
@@ -2903,7 +2912,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants')) \
+               'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
                'authoring_report_reservations', \
@@ -2931,7 +2940,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants')) \
+               'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
                'authoring_report_reservations', \
@@ -2957,7 +2966,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
                'connection_generations', 'connection_bindings', \
-               'draft_safe_connection_grants')) \
+               'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
                'authoring_report_reservations', \
@@ -3573,12 +3582,16 @@ CREATE INDEX event_registrations_by_entity
         ] {
             assert!(catalog.contains(&connection_table.to_string()));
         }
-        for authoring_table in ["flow_drafts", "validated_flow_drafts"] {
+        for authoring_table in [
+            "flow_drafts",
+            "validated_flow_drafts",
+            "authoring_command_audit",
+        ] {
             assert!(catalog.contains(&authoring_table.to_string()));
         }
         assert_eq!(
             catalog.len(),
-            28,
+            29,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }
@@ -4505,6 +4518,19 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_app_scenario_author_membership_sql().contains("'MEMBER'"));
         assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
         assert!(select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
+        // Every observation query must see the ledger, or the planner reads an
+        // empty privilege set and plans a repair that can never converge.
+        for observation in [
+            select_authoring_table_privileges_sql(),
+            select_authoring_effective_table_privileges_sql(),
+            select_authoring_effective_column_privileges_sql(),
+            select_authoring_table_owners_sql(),
+        ] {
+            assert!(
+                observation.contains("authoring_command_audit"),
+                "{observation}"
+            );
+        }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
         assert!(select_authoring_effective_table_privileges_sql().contains("release_manifests"));
         assert!(select_authoring_table_owners_sql().contains("relation.relowner"));

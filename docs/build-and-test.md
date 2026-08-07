@@ -3473,6 +3473,51 @@ WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5471/wamn \
 docker stop wamn-platform-identity-pg
 ```
 
+### [5 / wamn-ctc8.8] authenticated management authoring surface
+
+This gate covers the management HTTP boundary in front of the canonical
+authoring commands: the `POST /authoring` and `POST /login` routes, PAT
+verification against the T1 system database, the project-role check, the
+append-only `catalog.authoring_command_audit` ledger that attributes every
+authorized command to its principal, and the one frozen
+`{"kind":"authorization-denied"}` refusal that absent, malformed, forged,
+expired, revoked, cross-project, and unroled presenters all receive. It also
+covers the ledger's schema-control drift entries (table count, privilege spec,
+the four observation queries) and the adapter authority probe's allow-list. It
+does not cover cookies, CSRF, OIDC, or the five contract commands this transport
+answers `501` for — those ride wamn-ctc8.9, wamn-ftfc.2, and wamn-ftfc.14.
+
+⚠️ The `wamn-scenario-worker` clippy leg is RED for reasons that predate this
+bead: six findings in `services/scenario-worker/src/lib.rs` (one
+`large_enum_variant` on `ScenarioTarget`, five `needless_borrow` in
+`execute_case`) reproduce unchanged at `origin/main` 8546de5. `wamn-ctl` is red
+the same way. Neither is in a file wamn-ctc8.8 touched, and neither was fixed
+here; both need their own bead.
+
+```bash
+cargo test --locked -p wamn-scenario-worker -p wamn-schema-control -p wamn-ctl
+cargo clippy --locked -p wamn-scenario-worker -p wamn-schema-control \
+  --all-targets -- -D warnings
+rustfmt --check --edition 2024 \
+  services/scenario-worker/src/management.rs \
+  services/scenario-worker/src/authoring.rs \
+  services/scenario-worker/src/lib.rs \
+  services/scenario-worker/src/main.rs \
+  services/scenario-worker/tests/management_live.rs \
+  crates/schema/control/src/run_plane.rs \
+  services/ctl/src/publish_catalog.rs \
+  services/ctl/tests/run_plane_live.rs
+# Live gate of record (throwaway postgres:18 only). `pg_isready` reports ready
+# during socket-only init, before the TCP listener binds — the sleep is load
+# bearing, not superstition.
+docker run -d --rm --name wamn-ctc88-pg -p 5472:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-ctc88-pg pg_isready -U postgres; do sleep 1; done; sleep 3
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5472/wamn \
+  cargo test --locked -p wamn-scenario-worker --test management_live -- --nocapture
+docker stop wamn-ctc88-pg
+```
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md

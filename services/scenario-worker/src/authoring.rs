@@ -37,6 +37,7 @@ WITH session_role AS ( \
            ('catalog', 'validated_flow_drafts', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
+           ('catalog', 'authoring_command_audit', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'UPDATE'), \
            ($1::text, 'authoring_suite_case_facts', 'INSERT'), \
@@ -73,6 +74,12 @@ SELECT current_user = session_user, \
        pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'INSERT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'UPDATE'), \
+       pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'SELECT') \
+         AND pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.authoring_command_audit', 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.authoring_command_audit', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, $2, 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, $2, 'INSERT') \
          AND pg_catalog.has_table_privilege(current_user, $2, 'UPDATE'), \
@@ -562,6 +569,21 @@ impl InternalAuthoringBackend {
             report_id,
         )
         .await
+    }
+
+    /// Record one authorized management command on the append-only ledger.
+    ///
+    /// The row is written with the same author credential and fixed tenant
+    /// scope as the command it attributes. This adapter never learns a
+    /// principal any other way: the management transport owns that context and
+    /// hands over an already-built row.
+    pub(crate) async fn record_command_audit(
+        &mut self,
+        audit: &crate::management::CommandAudit,
+    ) -> anyhow::Result<()> {
+        self.require_tenant(audit.tenant_id())?;
+        self.scope().await?;
+        crate::management::insert_command_audit(&self.client, audit).await
     }
 
     /// Read one missing, pending, or finalized immutable authoring report.

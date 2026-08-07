@@ -510,7 +510,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.connection_generation_retention') IS NOT NULL, \
                     to_regclass('catalog.flow_drafts') IS NOT NULL, \
                     to_regclass('catalog.validated_flow_drafts') IS NOT NULL, \
-                    to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL",
+                    to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL, \
+                    to_regclass('catalog.authoring_command_audit') IS NOT NULL",
             &[],
         )
         .await?;
@@ -623,6 +624,22 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .await
                 .context("install authoring connection authority")?;
         }
+
+        // The adapter's startup authority probe hard-requires the ledger, so an
+        // existing catalog that predates wamn-ctc8.8 must gain it here or the
+        // management surface refuses to start against that project.
+        if !release_row.get::<_, bool>(25) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN AUTHORING COMMAND AUDIT MIGRATION")
+                .expect("authoring command audit migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END AUTHORING COMMAND AUDIT MIGRATION")
+                .expect("authoring command audit migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install authoring command audit")?;
+        }
         ensure_authoring_catalog_privileges(client).await?;
         return Ok(());
     }
@@ -677,6 +694,8 @@ async fn ensure_authoring_catalog_privileges(
              REVOKE ALL PRIVILEGES ON catalog.draft_safe_connection_grants FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app; \
              GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
                IF has_table_privilege('wamn_app', 'catalog.flow_drafts', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'UPDATE') \
@@ -684,6 +703,10 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_app', 'catalog.validated_flow_drafts', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'UPDATE') \
+                  OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'SELECT') \
+                  OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'DELETE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \

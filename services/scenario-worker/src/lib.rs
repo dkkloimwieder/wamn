@@ -1,6 +1,7 @@
 //! Product composition for executing stored deterministic flow scenarios.
 
 pub mod authoring;
+pub mod management;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

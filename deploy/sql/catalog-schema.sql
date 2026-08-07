@@ -1391,6 +1391,77 @@ BEFORE DELETE ON catalog.draft_safe_connection_grants
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- END AUTHORING CONNECTION AUTHORITY MIGRATION (wamn-ftfc.11)
 
+-- BEGIN AUTHORING COMMAND AUDIT MIGRATION (wamn-ctc8.8)
+-- ---------------------------------------------------------------------------
+-- Authoring command ledger — WHO ran each authoring command, recorded by the
+-- management transport (services/scenario-worker/src/management.rs) before the
+-- command runs. Every canonical authoring mutation lands one row here, so two
+-- principals issuing the same command stay distinguishable afterwards even
+-- though the command's own storage keeps no history (catalog.flow_drafts is a
+-- destructive upsert).
+--
+-- CROSS-PLANE PRINCIPAL, DELIBERATELY NOT AN FK: principals live in the T1
+-- system database (identity.principals) and this ledger lives in the project
+-- database, so the attribution columns are denormalized text that stand alone —
+-- the same shape, for the same reason, as wamn_run.effect_disposition_requests.
+-- `principal_id` is the opaque T1 uuid as text; keeping the subject beside it
+-- leaves the row readable after a subject is renamed upstream.
+--
+-- `effective_role` is the MANAGEMENT vocabulary, not identity storage's: role
+-- slugs are opaque in identity.project_roles by design and gain meaning only at
+-- the authorization boundary, which is what this CHECK pins.
+--
+-- `command_kind` carries the wire-contract spelling (crates/authoring/model
+-- AuthoringCommandKind) plus the two host-side connection-generation mutations
+-- that have no client command. `command_id` is the client's own retry and
+-- correlation identity from the request envelope — this is the only place it is
+-- persisted, so a client can tie a retry back to the attempt it repeats.
+--
+-- APPEND-ONLY: insert-once, with UPDATE and DELETE both refused by the shared
+-- immutability trigger. Audit evidence a careless writer can rewrite is not
+-- evidence. Only the author role is granted anything; `wamn_app` (the guest
+-- runtime credential) gets nothing at all — the ledger is management-plane state
+-- and no flow may read or forge it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.authoring_command_audit (
+    tenant_id         text NOT NULL CHECK (tenant_id <> ''),
+    audit_id          uuid NOT NULL DEFAULT gen_random_uuid(),
+    command_id        text NOT NULL CHECK (command_id <> ''),
+    command_kind      text NOT NULL,
+    principal_id      text NOT NULL CHECK (principal_id <> ''),
+    principal_kind    text NOT NULL,
+    principal_subject text NOT NULL CHECK (principal_subject <> ''),
+    effective_role    text NOT NULL,
+    org               text NOT NULL CHECK (org <> ''),
+    project           text NOT NULL CHECK (project <> ''),
+    environment       text NOT NULL CHECK (environment <> ''),
+    target_ref        text NOT NULL CHECK (target_ref <> ''),
+    -- Wall-clock audit time: two rows written in one transaction still order.
+    recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, audit_id),
+    CONSTRAINT authoring_command_audit_command_kind_check
+        CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run',
+                                'suite-run', 'publish', 'suite-projection',
+                                'grant-draft-safe-generation',
+                                'revoke-draft-safe-generation')),
+    CONSTRAINT authoring_command_audit_principal_kind_check
+        CHECK (principal_kind IN ('human', 'service')),
+    CONSTRAINT authoring_command_audit_effective_role_check
+        CHECK (effective_role IN ('project-author', 'project-admin'))
+);
+ALTER TABLE catalog.authoring_command_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.authoring_command_audit FORCE ROW LEVEL SECURITY;
+CREATE POLICY authoring_command_audit_tenant ON catalog.authoring_command_audit
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author;
+CREATE TRIGGER authoring_command_audit_immutable
+BEFORE UPDATE OR DELETE ON catalog.authoring_command_audit
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE INDEX authoring_command_audit_recorded
+    ON catalog.authoring_command_audit (tenant_id, recorded_at);
+-- END AUTHORING COMMAND AUDIT MIGRATION (wamn-ctc8.8)
+
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine

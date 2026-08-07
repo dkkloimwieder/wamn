@@ -1197,6 +1197,7 @@ async fn from_zero_leg(su: &Client) {
         "flow_drafts",
         "validated_flow_drafts",
         "draft_safe_connection_grants",
+        "authoring_command_audit",
     ] {
         assert!(
             table_exists(su, "catalog", table).await,
@@ -1311,6 +1312,11 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION",
         "-- END AUTHORING CONNECTION AUTHORITY MIGRATION",
     );
+    let legacy_catalog = without_marked_section(
+        &legacy_catalog,
+        "-- BEGIN AUTHORING COMMAND AUDIT MIGRATION",
+        "-- END AUTHORING COMMAND AUDIT MIGRATION",
+    );
     su.batch_execute(&legacy_catalog)
         .await
         .expect("apply pre-authoring catalog storage");
@@ -1319,6 +1325,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "flow_drafts",
         "validated_flow_drafts",
         "draft_safe_connection_grants",
+        "authoring_command_audit",
     ] {
         assert!(
             !table_exists(su, "catalog", table).await,
@@ -1355,6 +1362,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "flow_drafts",
         "validated_flow_drafts",
         "draft_safe_connection_grants",
+        "authoring_command_audit",
     ] {
         assert!(
             table_exists(su, "catalog", table).await,

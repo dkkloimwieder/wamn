@@ -1,0 +1,99 @@
+# wamn-ctc8.8 management authoring surface — the authenticated HTTP boundary in
+# front of the canonical authoring commands. Runs the SAME wamn-scenario-worker
+# binary the suiteexec gate runs, under its `serve` subcommand; the bare
+# invocation (one stored suite, then exit) is unchanged.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/scenario-worker.yaml
+#   kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=120s
+#
+# PER-PROJECT INSTANTIATION: --org / --project / --tenant and the authoring
+# Secret name below are per-(org, project, env) config, like
+# event-reader.example.yaml. One surface serves exactly one project: a token
+# whose principal holds no role in THAT project is refused, and a request naming
+# any other project is refused identically.
+#
+# TWO CREDENTIALS, TWO PLANES (R8b — both are Secret REFERENCES, never inline):
+#   WAMN_SYSTEM_URL      the T1 system database, read-only for identity: it
+#                        verifies personal access tokens and reads
+#                        identity.project_roles. This is control-plane tooling
+#                        reading first-party identity by ctc8.6 design, not a
+#                        data-plane request path. `wamn-system-db` is the same
+#                        operator-provided Secret event-reader.example.yaml uses.
+#   WAMN_AUTHORING_PG_URL the project database, as the dedicated host-author
+#                        login. The adapter's startup probe REFUSES to run
+#                        unless that credential is unprivileged, a member of
+#                        nothing but wamn_scenario_author, denied wamn_app, and
+#                        holds no mutation privilege beyond its allow-list — so
+#                        a mis-scoped Secret crash-loops instead of serving.
+#
+# NETWORK POSTURE: wamn-system ships egress policies only (runner-netpol.yaml,
+# builder-netpol.yaml); there is no ingress policy, so this listener adds no
+# ingress exception and widens nothing. It is deliberately NOT labelled
+# `wamn.io/egress-profile: runner` — adopting the runner's egress ceiling for a
+# management workload is an owner posture decision, not this bead's.
+#
+# ONE REPLICA, NO LEADER: the surface holds one pooled author connection and
+# serializes commands behind it. Horizontal scale-out needs a connection-pool
+# decision first; a second replica would double the author sessions with no
+# coordination benefit. Rolling to a new pod is safe — every command is a single
+# request and the ledger is append-only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scenario-worker
+  namespace: wamn-system
+  labels: { app: scenario-worker, wamn.org: acme, wamn.project: receiving, wamn.env: dev }
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: scenario-worker }
+  template:
+    metadata:
+      labels: { app: scenario-worker, wamn.org: acme, wamn.project: receiving, wamn.env: dev }
+    spec:
+      # The surface never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      containers:
+        - name: scenario-worker
+          image: wamn-scenario-worker:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --org=acme
+            - --project=receiving
+            - --tenant=receiving
+            - --source-schema=wamn_run
+          env:
+            - name: WAMN_MANAGEMENT_BIND
+              value: "0.0.0.0:8088"
+            - name: WAMN_SYSTEM_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-system-db
+                  key: url
+            - name: WAMN_AUTHORING_PG_URL
+              valueFrom:
+                secretKeyRef:
+                  name: wamn-authoring-acme--receiving--dev
+                  key: url
+          ports:
+            - name: management
+              containerPort: 8088
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scenario-worker
+  namespace: wamn-system
+  labels: { app: scenario-worker }
+spec:
+  selector: { app: scenario-worker }
+  ports:
+    - name: management
+      port: 8088
+      targetPort: management
