@@ -42,6 +42,8 @@ use wamn_gate_harness::{percentile, scope_session, seed_flow_version, set_active
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
+use crate::ctl_process;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
     /// Standard-node dispatch overhead (no DB).
@@ -64,6 +66,11 @@ pub struct FlowBenchArgs {
     /// needed for `--mode dispatch`, which never touches the database.
     #[arg(long)]
     pub database_url: Option<String>,
+
+    /// Superuser Postgres URL used to reconcile the S3 run plane before DB
+    /// gates execute (env WAMN_PG_ADMIN_URL). Not needed for `--mode dispatch`.
+    #[arg(long, env = "WAMN_PG_ADMIN_URL")]
+    pub admin_database_url: Option<String>,
 
     /// Which gate to run
     #[arg(long, value_enum, default_value_t = Mode::All)]
@@ -385,10 +392,29 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
     if db_needed && cfg.database_url.is_none() {
         bail!("no database url: pass --database-url or set DATABASE_URL / WAMN_PG_URL");
     }
+    if db_needed && args.admin_database_url.is_none() {
+        bail!("no admin database url: pass --admin-database-url or set WAMN_PG_ADMIN_URL");
+    }
     // The resolved URL (args OR env) — the host-side fixture seeding (SR2) opens
     // its own connection with it, so it must accept the env form the in-cluster
     // Jobs use, not just the --database-url flag.
     let db_url = cfg.database_url.clone();
+
+    if db_needed {
+        let admin_url = args
+            .admin_database_url
+            .as_deref()
+            .expect("db_needed guarantees an admin url");
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            "s3",
+        ])
+        .await
+        .context("reconcile flowbench run-plane")?;
+    }
 
     println!("# wamn-host S3 flowbench");
 
@@ -669,6 +695,25 @@ async fn resume_phase(
 #[cfg(test)]
 mod fixture_tests {
     use super::{FIXTURE_FLOW_ID, flow_json, flow_json_s6, flow_json_s6_twodelay};
+
+    #[test]
+    fn database_gates_reconcile_s3_before_app_pool_use() {
+        let source = include_str!("flowbench.rs");
+        let reconcile = source
+            .find("\"reconcile-run-plane\"")
+            .expect("flowbench invokes the run-plane reconciler");
+        let schema = source[reconcile..]
+            .find("\"s3\"")
+            .map(|offset| reconcile + offset)
+            .expect("flowbench reconciles the S3 schema");
+        let app_pool = source
+            .find("WamnPostgres::new")
+            .expect("flowbench creates the application pool");
+
+        assert!(source.contains("env = \"WAMN_PG_ADMIN_URL\""));
+        assert!(reconcile < schema);
+        assert!(schema < app_pool);
+    }
 
     fn assert_no_legacy_entry_fields(definition: &serde_json::Value) {
         assert!(definition.get("trigger").is_none());

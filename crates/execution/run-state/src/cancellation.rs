@@ -122,8 +122,15 @@ eligible AS MATERIALIZED ( \
      WHERE r.status IN ('dispatched','running') \
        AND NOT EXISTS ( \
            SELECT 1 FROM node_runs AS n \
+             JOIN effect_attempts AS e \
+               ON e.tenant_id = n.tenant_id \
+              AND e.attempt_id = n.current_effect_attempt_id \
+              AND e.run_id = n.run_id AND e.node_id = n.node_id \
+              AND e.occurrence = n.occurrence \
+             JOIN effect_attempt_dispatches AS d \
+               ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
             WHERE n.tenant_id = r.tenant_id AND n.run_id = r.run_id \
-              AND n.status = 'started' AND n.attempt_deadline_at > now() \
+              AND n.status = 'started' AND e.attempt_deadline_at > now() \
        ) \
 ), \
 outcomes AS MATERIALIZED ( \
@@ -228,7 +235,8 @@ mod tests {
         let sql = cancellation_sweep_sql();
         assert!(sql.contains("LIMIT $1"));
         assert!(sql.contains("FOR UPDATE SKIP LOCKED"));
-        assert!(sql.contains("n.attempt_deadline_at > now()"));
+        assert!(sql.contains("e.attempt_deadline_at > now()"));
+        assert!(sql.contains("JOIN effect_attempt_dispatches AS d"));
         assert!(sql.contains("q.lease_generation + 1 AS seized_generation"));
         assert!(sql.contains("DELETE FROM run_queue"));
         assert!(sql.contains("status = 'cancelled'"));

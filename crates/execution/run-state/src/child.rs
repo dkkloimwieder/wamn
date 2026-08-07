@@ -169,8 +169,15 @@ classified AS ( \
       WHEN q.run_id IS NULL OR q.lease_generation <> i.expected_generation \
         THEN 'stale-generation' \
       WHEN EXISTS (SELECT FROM node_runs AS n \
+                    JOIN effect_attempts AS e \
+                      ON e.tenant_id = n.tenant_id \
+                     AND e.attempt_id = n.current_effect_attempt_id \
+                     AND e.run_id = n.run_id AND e.node_id = n.node_id \
+                     AND e.occurrence = n.occurrence \
+                    JOIN effect_attempt_dispatches AS d \
+                      ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
                     WHERE n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                      AND n.status = 'started' AND n.attempt_deadline_at > now()) \
+                      AND n.status = 'started' AND e.attempt_deadline_at > now()) \
         THEN 'live-attempt' \
       WHEN i.cancel_kind IS NULL OR i.cancel_kind = '' THEN 'state-conflict' \
       ELSE 'ready' END AS result_code, c.tenant_id, c.run_id, c.status, \
@@ -689,7 +696,8 @@ mod tests {
         let sql = cancel_unreleased_child_sql();
         assert!(sql.contains("c.caller_released_at IS NOT NULL THEN 'already-released'"));
         assert!(sql.contains("q.lease_generation <> i.expected_generation"));
-        assert!(sql.contains("n.attempt_deadline_at > now()"));
+        assert!(sql.contains("e.attempt_deadline_at > now()"));
+        assert!(sql.contains("JOIN effect_attempt_dispatches AS d"));
         assert!(sql.contains("q.lease_generation + 1 AS seized_generation"));
         assert!(sql.contains("DELETE FROM run_queue"));
         assert_eq!(

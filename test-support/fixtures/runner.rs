@@ -15,82 +15,18 @@ pub fn valid_ident(value: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Flow, run, node-run, queue, and partition tables used by deployed-runner
-/// system and integration proofs.
+/// Canonical flow and run-plane schema used by deployed-runner system and
+/// integration proofs. The fixture intentionally rewrites the production DDL
+/// instead of maintaining a second attempt/disposition protocol.
 pub fn ladder_ddl(schema: &str) -> String {
-    format!(
-        "CREATE TABLE {schema}.flows (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
-            active boolean NOT NULL DEFAULT false, graph_json jsonb NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id, version));\
-         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flows_tenant ON {schema}.flows \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;\
-         CREATE TABLE {schema}.runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, \
-            status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
-            updated_at timestamptz NOT NULL DEFAULT now(), \
-            idempotency_key text, replay_of text, root_run_id text, \
-            fail_kind text, fail_node text, fail_reason text, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY runs_tenant ON {schema}.runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
-         CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
-            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY node_runs_tenant ON {schema}.node_runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
-         CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')), \
-            priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
-            lease_owner text, lease_expires_at timestamptz, \
-            lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0), \
-            attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
-            enqueued_at timestamptz NOT NULL DEFAULT now(), \
-            stream_seq bigint NOT NULL DEFAULT 0, \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
-         ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_queue_tenant ON {schema}.run_queue \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.partition_owner (\
-            tenant_id text NOT NULL, partition_key text NOT NULL, \
-            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
-            acquired_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, partition_key));\
-         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
-    )
+    [
+        include_str!("../../deploy/sql/catalog-schema.sql"),
+        include_str!("../../deploy/sql/run-state.sql"),
+        include_str!("../../deploy/sql/flows.sql"),
+        include_str!("../../deploy/sql/run-queue.sql"),
+    ]
+    .join("\n")
+    .replace("wamn_run", schema)
 }
 
 /// Connect as the application role and bind its schema and tenant claims.
@@ -139,6 +75,27 @@ pub fn is_terminal(status: &str) -> bool {
         status,
         "completed" | "failed" | "cancelled" | "infrastructure-failure"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ladder_ddl;
+
+    #[test]
+    fn runner_fixture_carries_the_canonical_attempt_and_disposition_protocol() {
+        let ddl = ladder_ddl("fixture_run");
+        for required in [
+            "CREATE TABLE fixture_run.effect_attempts",
+            "CREATE TABLE fixture_run.effect_disposition_requests",
+            "CREATE FUNCTION fixture_run.park_effect_uncertain(",
+            "SET search_path = pg_catalog, fixture_run",
+            "CREATE TABLE fixture_run.run_queue",
+            "CREATE SCHEMA IF NOT EXISTS catalog",
+        ] {
+            assert!(ddl.contains(required), "fixture DDL lost {required:?}");
+        }
+        assert!(!ddl.contains("wamn_run."));
+    }
 }
 
 /// Poll a durable run until it is terminal or the deadline expires.

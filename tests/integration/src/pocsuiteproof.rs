@@ -824,10 +824,20 @@ async fn drive_f3(
     let (echo_addr, echo_task) = crate::testhostbench::spawn_echo().await?;
     let echo_authority = format!("127.0.0.1:{}", echo_addr.port());
 
-    // Provision: run-state (runner_ddl) + the holds world + catalog snapshot.
+    // Provision the legacy harness extras, reconcile the canonical run plane,
+    // then add the holds world + catalog snapshot.
     let provisioner =
         EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl).await?;
     provisioner.provision_case(&schema).await?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema.as_str(),
+    ])
+    .await
+    .context("reconcile F3 execution run-plane")?;
     let admin = provisioner.admin();
     admin
         .batch_execute(&f3_holds_ddl(schema.as_str()))
@@ -957,53 +967,6 @@ async fn drive_f3(
 // F4 drive — flowrunner doubles + a real serve-node hop + a loopback ERP sink
 // ---------------------------------------------------------------------------
 
-/// The legacy pocsuite harness schema plus the authoritative invocation fields
-/// consumed by the current runner and host-owned custom-node transport. This is
-/// F4-only so the F3/nodeinvoke migration lanes remain untouched.
-fn f4_runner_ddl(schema: &str) -> String {
-    format!(
-        "{} \
-         ALTER TABLE {schema}.runs ADD COLUMN catalog_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN catalog_version bigint; \
-         ALTER TABLE {schema}.runs ADD COLUMN environment text; \
-         ALTER TABLE {schema}.runs ADD COLUMN attachment_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN registration_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_source_run_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_root_run_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_depth int; \
-         ALTER TABLE {schema}.runs ADD COLUMN invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb; \
-         ALTER TABLE {schema}.runs ADD COLUMN admission_context_version int NOT NULL DEFAULT 1; \
-         ALTER TABLE {schema}.runs ADD COLUMN platform_revision text NOT NULL DEFAULT 'pocsuite'; \
-         ALTER TABLE {schema}.runs ADD COLUMN response_deadline_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN run_deadline_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_kind text; \
-         ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN cancel_kind text; \
-         ALTER TABLE {schema}.runs ADD COLUMN terminal_reason text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_kind text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_json jsonb; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_http_status int; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_release_node_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_hash text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_released_at timestamptz; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN selected_recovery_class text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN recovery_class text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN generation_fact_kind text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN connection_generation text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN credential_generation text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_started_at timestamptz; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_dispatched_at timestamptz; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_deadline_at timestamptz; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_input_ref text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN attempt_key text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN input_ref text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN output_ref text; \
-         ALTER TABLE {schema}.node_runs ADD COLUMN started_at timestamptz NOT NULL DEFAULT now(); \
-         ALTER TABLE {schema}.node_runs ADD COLUMN ended_at timestamptz;",
-        crate::runnerbench::runner_ddl(schema)
-    )
-}
-
 async fn drive_f4(
     engine: &wash_runtime::engine::Engine,
     args: &PocSuiteProofArgs,
@@ -1042,9 +1005,20 @@ async fn drive_f4(
     drop(catalog_admin);
     let _ = catalog_task.await;
 
-    // Provision run-state (no business tables — F4's flow touches none).
-    let provisioner = EphemeralSchemaProvisioner::connect(admin_url, f4_runner_ddl).await?;
+    // Provision the legacy harness extras, then reconcile the canonical run
+    // plane (no business tables — F4's flow touches none).
+    let provisioner =
+        EphemeralSchemaProvisioner::connect(admin_url, crate::runnerbench::runner_ddl).await?;
     provisioner.provision_case(&schema).await?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        admin_url,
+        "--schema",
+        schema.as_str(),
+    ])
+    .await
+    .context("reconcile F4 execution run-plane")?;
     let admin = provisioner.admin();
     scope_session(admin, tenant, schema.as_str()).await?;
     let case = &cases[0];

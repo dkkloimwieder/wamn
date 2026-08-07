@@ -27,13 +27,31 @@ evaluation, and adaptive cadence are separate pure decisions in
 (`replay_of` / `root_run_id`), and the `fail_kind`/`fail_node`/`fail_reason`
 mirrored from the engine `ExecutionFailureKind`.
 
-`node_runs` — one row per node execution, the **reconstruction source**. Its key
+`node_runs` — one row per node execution, the mutable **completion and current
+occurrence projection**. Its key
 `(tenant_id, run_id, node_id, occurrence)` is loop-safe: `occurrence` disambiguates
-a node the flow revisits (0 = first visit), while retries of one occurrence share
-the row and bump `attempt` — they never create new rows. A completed row carries
-`status` (`success`/`error`), the emission (`output_port` + `output_json`), and the
-node `input_json` (what a partial re-run seeds). `running`/`parked` rows are
-outstanding nodes.
+a node the flow revisits (0 = first visit). A completed row carries `status`
+(`success`/`error`), the emission (`output_port` + `output_json`), and the node
+`input_json` (what a partial re-run seeds). `started`/`parked` rows are
+outstanding nodes. Its only attempt-authority field is
+`current_effect_attempt_id`, whose composite FK includes tenant, run, node, and
+occurrence.
+
+`effect_attempts`, `effect_attempt_dispatches`, and `effect_attempt_outcomes`
+are the append-only effect protocol. The attempt row owns the server-minted id,
+predecessor, selected/effective recovery class, pinned connection and credential
+generation facts, explicitly verified nullable author/publisher provenance,
+timing, input reference, and stable key. Separate rows record the dispatch and
+outcome boundaries. Recovery joins these immutable facts through the exact
+current pointer; mutable `node_runs` fields never reclassify an attempt. Attempt
+audit deliberately has no FK back to `runs`, so normal run-history pruning
+cannot erase it.
+
+`effect_disposition_requests` and `effect_dispositions` append the authenticated
+request envelope and its exact materialized attempt set. They are independently
+immutable and the app role is read-only: direct inserts are denied by ACL and a
+trigger guard. Automatic executor park crosses the guard only through the
+fenced `park_effect_uncertain` function.
 
 Both tables sit on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed on
 `current_setting('app.tenant', true)`, granted to the non-owner `wamn_app` role —
@@ -86,14 +104,51 @@ skew. A completed node with no captured emission (9.6 capture off) makes the run
 `ReconstructError::CaptureOff` — explicitly non-replayable rather than silently
 wrong.
 
-### At-least-once, exactly-once effect
+### Effect recovery and disposition
 
-An effectful node runs its effect when it is *outstanding* (no record yet). If the
-runner is killed in the window between a node's DB write and its `node_runs` row,
-the node is outstanding on resume and re-runs — an at-least-once replay absorbed by
-the node's own idempotency (`pg-write`'s `sink` `ON CONFLICT DO NOTHING`), so a
-killed-and-resumed run leaves exactly one side effect. This is the kill-mid-run
-gate, now flowing through reconstruction rather than `step_seq`.
+The runner appends attempt intent before dispatch, appends the dispatch fact at
+the external-effect boundary, and appends the outcome with normal completion.
+An undispatched prepared attempt is safe to resume. A dispatched attempt uses
+only its admitted recovery class and pinned facts: `replay` may send again,
+`idempotent-with-key` must reuse the same key, and a dispatched
+`never-replay` attempt with no outcome becomes `effect-uncertain` without a
+second send.
+
+`effect-uncertain` checkpoints the complete run state and sets the existing
+queue wake to infinity while releasing the executor lease. It does not fail the
+run or mint a new state. Release makes the row claimable but grants no dispatch
+permission, so an unresolved attempt parks again. Resolve appends either a
+complete success (payload, pinned-valid explicit port, optional object context)
+or a non-retrying `terminal`/`invalid-input` failure; the runner consumes it
+before any dispatch and uses the ordinary completion/error-route checkpoint.
+
+All bulk actions require connection, pinned generation, and a bounded time
+window; flow id can only narrow. The store locks run, queue, then occurrence,
+materializes deterministic ordinals, and applies the exact set all-or-none.
+Manual adapters run at `SERIALIZABLE` and retry SQLSTATE `40001` from a fresh
+transaction; weaker isolation and terminal runs refuse before append. The CTE
+dependency graph enforces the lock order, while a database-generated append
+ordinal—never wall-clock/UUID order—selects the latest immutable disposition.
+Project resolution also requires verified author and publisher provenance and
+refuses self-resolution. Until the authenticated project adapter ships, only
+the superuser platform break-glass CLI is executable: it derives its actor from
+PostgreSQL `SESSION_USER`, requires an explicit reason, performs bounded
+serialization retries, and exposes no `--principal` flag. A non-super platform
+role requires a narrow future security-definer adapter; raw table grants are
+not an adapter. Project verbs remain unavailable until wamn-ctc8.5 has real
+authenticated claims from wamn-0xd/wamn-117 (or an approved narrower real-auth
+slice). The read-only view is available independently:
+
+```bash
+wamn-ctl effect-disposition-view \
+  --database-url "$WAMN_DATABASE_URL" --schema wamn_run \
+  --tenant tenant-id --run-id run-id
+
+wamn-ctl effect-disposition-break-glass \
+  --admin-database-url "$WAMN_ADMIN_DATABASE_URL" --schema wamn_run \
+  --tenant tenant-id --action park --attempt-id attempt-uuid \
+  --correlation-id incident:42 --reason "incident commander approved"
+```
 
 The same reconstruction is the resume half of **checkpoint/resume on replica loss**
 (5.14): when a runner dies, a second replica reclaims the run from the durable queue

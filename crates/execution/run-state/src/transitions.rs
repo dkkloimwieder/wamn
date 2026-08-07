@@ -71,6 +71,38 @@ pub fn begin_attempt_sql() -> String {
                 AND n.node_id = $5 AND n.occurrence = $6 \
               FOR UPDATE OF n \
          ), \
+         release_provenance AS MATERIALIZED ( \
+             SELECT pinned.verified_author_principal, \
+                    pinned.verified_publisher_principal \
+               FROM authority AS a \
+               LEFT JOIN locked_run AS r ON true \
+               LEFT JOIN LATERAL ( \
+                   SELECT artifact.verified_author_principal, \
+                          manifest.verified_publisher_principal \
+                     FROM catalog.release_flows AS release_flow \
+                     JOIN catalog.release_manifests AS manifest \
+                       ON manifest.tenant_id = release_flow.tenant_id \
+                      AND manifest.catalog_id = release_flow.catalog_id \
+                      AND manifest.catalog_version = release_flow.catalog_version \
+                     JOIN catalog.flow_artifacts AS artifact \
+                       ON artifact.tenant_id = release_flow.tenant_id \
+                      AND artifact.flow_id = release_flow.flow_id \
+                      AND artifact.flow_version = release_flow.flow_version \
+                    WHERE release_flow.tenant_id = r.tenant_id \
+                      AND release_flow.catalog_id = r.catalog_id \
+                      AND release_flow.catalog_version = r.catalog_version \
+                      AND release_flow.flow_id = r.flow_id \
+                      AND release_flow.flow_version = r.flow_version \
+                      AND artifact.artifact_hash = \
+                          r.invocation_context #>> '{{principal,artifact-digest}}' \
+                      AND EXISTS ( \
+                          SELECT 1 FROM jsonb_array_elements(manifest.members_json) AS member \
+                           WHERE member ->> 'flow-id' = release_flow.flow_id \
+                             AND (member ->> 'flow-version')::int = release_flow.flow_version \
+                             AND member ->> 'artifact-hash' = artifact.artifact_hash \
+                      ) \
+               ) AS pinned ON true \
+         ), \
          connection_facts AS MATERIALIZED ( \
              SELECT CASE \
                       WHEN $16::text IS NULL THEN 'ready' \
@@ -163,68 +195,103 @@ pub fn begin_attempt_sql() -> String {
                        AND ($14::text IS NULL OR $14::text = '') \
                         THEN 'missing-attempt-key' \
                       WHEN n.run_id IS NULL THEN 'new' \
-                      WHEN n.selected_recovery_class IS DISTINCT FROM $8::text \
-                        OR n.recovery_class IS DISTINCT FROM $9::text \
-                        OR n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind \
-                        OR n.connection_generation IS DISTINCT FROM f.connection_generation \
-                        OR n.credential_generation IS DISTINCT FROM f.credential_generation \
+                      WHEN e.attempt_id IS NULL THEN 'attempt-ledger-missing' \
+                      WHEN e.selected_recovery_class IS DISTINCT FROM $8::text \
+                        OR e.recovery_class IS DISTINCT FROM $9::text \
+                        OR e.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind \
+                        OR e.connection_generation IS DISTINCT FROM f.connection_generation \
+                        OR e.credential_generation IS DISTINCT FROM f.credential_generation \
                         THEN 'effect-uncertain' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      WHEN n.recovery_class = 'idempotent-with-key' \
-                       AND (n.attempt_key IS NULL OR n.attempt_key = '' \
+                      WHEN e.recovery_class = 'idempotent-with-key' \
+                       AND (e.attempt_key IS NULL OR e.attempt_key = '' \
                             OR $14::text IS NULL OR $14::text = '' \
-                            OR n.attempt_key <> $14::text) THEN 'missing-attempt-key' \
-                      WHEN n.attempt_dispatched_at IS NULL THEN 'prepared' \
-                      WHEN n.recovery_class = 'never-replay' THEN 'effect-uncertain' \
-                      WHEN n.recovery_class IN ('replay', 'idempotent-with-key') \
+                            OR e.attempt_key <> $14::text) THEN 'missing-attempt-key' \
+                      WHEN d.attempt_id IS NULL THEN 'prepared' \
+                      WHEN e.recovery_class = 'never-replay' THEN 'effect-uncertain' \
+                      WHEN e.recovery_class IN ('replay', 'idempotent-with-key') \
                         THEN 'redispatch' \
                       ELSE 'effect-uncertain' \
                     END AS result_code, a.tenant_id, a.run_id, a.status, \
-                    a.run_deadline_at \
+                    a.run_deadline_at, e.attempt_id AS current_attempt_id, \
+                    e.attempt_index AS current_attempt_index \
                FROM authority AS a \
                LEFT JOIN locked_attempt AS n ON true \
+               LEFT JOIN effect_attempts AS e \
+                 ON e.tenant_id = n.tenant_id \
+                AND e.attempt_id = n.current_effect_attempt_id \
+               LEFT JOIN effect_attempt_dispatches AS d \
+                 ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
                CROSS JOIN connection_facts AS f \
+         ), \
+         attempt_identity AS MATERIALIZED ( \
+             SELECT c.*, \
+                    CASE WHEN c.result_code IN ('new', 'redispatch') \
+                         THEN gen_random_uuid() ELSE c.current_attempt_id END AS attempt_id, \
+                    CASE WHEN c.result_code = 'new' THEN 0 \
+                         WHEN c.result_code = 'redispatch' THEN c.current_attempt_index + 1 \
+                         ELSE c.current_attempt_index END AS attempt_index, \
+                    CASE WHEN c.result_code = 'redispatch' \
+                         THEN c.current_attempt_id END AS predecessor_attempt_id, \
+                    now() AS started_at, \
+                    LEAST(now() + ($15::bigint * interval '1 millisecond'), \
+                          COALESCE(c.run_deadline_at, 'infinity'::timestamptz)) AS deadline_at \
+               FROM classified AS c \
+         ), \
+         appended_attempt AS ( \
+             INSERT INTO effect_attempts \
+                    (tenant_id, attempt_id, run_id, node_id, occurrence, seq, \
+                     attempt_index, predecessor_attempt_id, selected_recovery_class, \
+                     recovery_class, generation_fact_kind, connection_name, \
+                     connection_generation, \
+                     credential_generation, verified_author_principal, \
+                     verified_publisher_principal, attempt_started_at, \
+                     attempt_deadline_at, attempt_input_ref, attempt_key) \
+             SELECT i.tenant_id, i.attempt_id, i.run_id, $5, $6, $7, \
+                    i.attempt_index, i.predecessor_attempt_id, $8, $9, \
+                    f.generation_fact_kind, $16, f.connection_generation, \
+                    f.credential_generation, p.verified_author_principal, \
+                    p.verified_publisher_principal, i.started_at, i.deadline_at, \
+                    $13, $14 \
+               FROM attempt_identity AS i CROSS JOIN connection_facts AS f \
+               CROSS JOIN release_provenance AS p \
+              WHERE i.result_code IN ('new', 'redispatch') \
+             RETURNING tenant_id, attempt_id, run_id \
          ), \
          inserted AS ( \
              INSERT INTO node_runs \
-                    (tenant_id, run_id, node_id, occurrence, seq, status, \
-                     selected_recovery_class, recovery_class, \
-                     generation_fact_kind, connection_generation, credential_generation, \
-                     attempt_started_at, attempt_deadline_at, attempt_input_ref, attempt_key) \
-             SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, $9, \
-                    f.generation_fact_kind, f.connection_generation, \
-                    f.credential_generation, now(), \
-                    LEAST( \
-                        now() + ($15::bigint * interval '1 millisecond'), \
-                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
-                    ), $13, $14 \
-               FROM classified AS c CROSS JOIN connection_facts AS f \
-              WHERE c.result_code = 'new' \
+                    (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence, \
+                     seq, status) \
+             SELECT i.tenant_id, i.attempt_id, i.run_id, $5, $6, $7, 'started' \
+               FROM attempt_identity AS i \
+              WHERE i.result_code = 'new' \
+                AND EXISTS (SELECT 1 FROM appended_attempt AS e \
+                             WHERE e.tenant_id = i.tenant_id \
+                               AND e.attempt_id = i.attempt_id) \
              RETURNING run_id \
          ), \
          redispatched AS ( \
              UPDATE node_runs AS n \
-                SET attempt = n.attempt + 1, attempt_started_at = now(), \
-                    attempt_dispatched_at = NULL, \
-                    attempt_deadline_at = LEAST( \
-                        now() + ($15::bigint * interval '1 millisecond'), \
-                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
-                    ) \
-               FROM classified AS c \
-              WHERE c.result_code = 'redispatch' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
+                SET current_effect_attempt_id = i.attempt_id \
+               FROM attempt_identity AS i \
+              WHERE i.result_code = 'redispatch' \
+                AND EXISTS (SELECT 1 FROM appended_attempt AS e \
+                             WHERE e.tenant_id = i.tenant_id \
+                               AND e.attempt_id = i.attempt_id) \
+                AND n.tenant_id = i.tenant_id AND n.run_id = i.run_id \
                 AND n.node_id = $5 AND n.occurrence = $6 \
              RETURNING n.run_id \
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
                 SET lease_expires_at = now() + ($15::bigint * interval '1 millisecond') \
-               FROM classified AS c \
+               FROM attempt_identity AS c \
               WHERE c.result_code IN ('new', 'prepared', 'redispatch') \
                 AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
                 AND (SELECT count(*) FROM inserted) >= 0 \
                 AND (SELECT count(*) FROM redispatched) >= 0 \
+                AND (SELECT count(*) FROM appended_attempt) >= 0 \
              RETURNING q.run_id \
          ) \
          SELECT CASE \
@@ -233,7 +300,7 @@ pub fn begin_attempt_sql() -> String {
                   WHEN d.run_id IS NOT NULL AND r.run_id IS NOT NULL THEN 'redispatch' \
                   ELSE c.result_code \
                 END AS result_code, c.status AS run_status \
-           FROM classified AS c \
+           FROM attempt_identity AS c \
            LEFT JOIN inserted AS i ON true \
            LEFT JOIN redispatched AS d ON true \
            LEFT JOIN renewed AS r ON true"
@@ -259,29 +326,34 @@ pub fn mark_attempt_dispatched_sql() -> String {
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN e.attempt_id IS NULL THEN 'attempt-ledger-missing' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      WHEN n.attempt_deadline_at <= now() \
+                      WHEN e.attempt_deadline_at <= now() \
                         THEN 'attempt-deadline-expired' \
                       WHEN a.run_deadline_at IS NOT NULL \
                        AND a.run_deadline_at <= now() THEN 'run-deadline-expired' \
-                      WHEN n.attempt_dispatched_at IS NOT NULL THEN 'already-dispatched' \
+                      WHEN d.attempt_id IS NOT NULL THEN 'already-dispatched' \
                       ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
+                    END AS result_code, a.tenant_id, a.run_id, a.status, e.attempt_id \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+               LEFT JOIN effect_attempts AS e \
+                 ON e.tenant_id = n.tenant_id \
+                AND e.attempt_id = n.current_effect_attempt_id \
+               LEFT JOIN effect_attempt_dispatches AS d \
+                 ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
          ), \
-         marked AS ( \
-             UPDATE node_runs AS n SET attempt_dispatched_at = now() \
-               FROM classified AS c \
+         dispatch_fact AS ( \
+             INSERT INTO effect_attempt_dispatches (tenant_id, attempt_id) \
+             SELECT c.tenant_id, c.attempt_id FROM classified AS c \
               WHERE c.result_code = 'ready' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.run_id \
+             RETURNING tenant_id, attempt_id, dispatched_at \
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
                 SET lease_expires_at = now() + ($7::bigint * interval '1 millisecond') \
-               FROM marked AS m, classified AS c \
-              WHERE q.tenant_id = c.tenant_id AND q.run_id = m.run_id \
+               FROM classified AS c JOIN dispatch_fact AS d \
+                 ON d.tenant_id = c.tenant_id AND d.attempt_id = c.attempt_id \
+              WHERE q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN r.run_id IS NOT NULL THEN 'marked' ELSE c.result_code END \
@@ -638,6 +710,8 @@ pub enum CheckpointResult {
     Cancelled,
     AlreadyCompleted,
     AttemptNotFound,
+    AttemptLedgerMissing,
+    AttemptNotDispatched,
     AttemptNotStarted,
     RunTerminal(RunStatus),
     FenceLost,
@@ -652,6 +726,8 @@ impl CheckpointResult {
             "cancelled" => Some(CheckpointResult::Cancelled),
             "already-completed" => Some(CheckpointResult::AlreadyCompleted),
             "attempt-not-found" => Some(CheckpointResult::AttemptNotFound),
+            "attempt-ledger-missing" => Some(CheckpointResult::AttemptLedgerMissing),
+            "attempt-not-dispatched" => Some(CheckpointResult::AttemptNotDispatched),
             "attempt-not-started" => Some(CheckpointResult::AttemptNotStarted),
             "run-terminal" => Some(CheckpointResult::RunTerminal(RunStatus::from_sql(
                 run_status,
@@ -717,17 +793,32 @@ pub fn complete_sql() -> String {
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN e.attempt_id IS NULL THEN 'attempt-ledger-missing' \
+                      WHEN d.attempt_id IS NULL THEN 'attempt-not-dispatched' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
+                    END AS result_code, a.tenant_id, a.run_id, a.status, e.attempt_id \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
+               LEFT JOIN effect_attempts AS e \
+                 ON e.tenant_id = n.tenant_id \
+                AND e.attempt_id = n.current_effect_attempt_id \
+               LEFT JOIN effect_attempt_dispatches AS d \
+                 ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
+         ), \
+         outcome_fact AS ( \
+             INSERT INTO effect_attempt_outcomes \
+                    (tenant_id, attempt_id, outcome_status) \
+             SELECT c.tenant_id, c.attempt_id, 'success' FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+             RETURNING tenant_id, attempt_id \
          ), \
          completed_attempt AS ( \
              UPDATE node_runs AS n \
                 SET status = 'success', output_port = $7, \
                     output_json = $8::text::jsonb, ended_at = now() \
-               FROM classified AS c \
+               FROM classified AS c JOIN outcome_fact AS o \
+                 ON o.tenant_id = c.tenant_id AND o.attempt_id = c.attempt_id \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
                 AND n.node_id = $5 AND n.occurrence = $6 \
@@ -765,20 +856,35 @@ pub fn complete_attempt_success_sql() -> String {
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN e.attempt_id IS NULL THEN 'attempt-ledger-missing' \
+                      WHEN d.attempt_id IS NULL THEN 'attempt-not-dispatched' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       ELSE 'ready' \
                     END AS result_code, a.tenant_id, a.run_id, a.status, \
-                    r.flow_id, r.flow_version, r.cancel_requested_kind \
+                    r.flow_id, r.flow_version, r.cancel_requested_kind, e.attempt_id \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
                LEFT JOIN locked_run AS r ON true \
+               LEFT JOIN effect_attempts AS e \
+                 ON e.tenant_id = n.tenant_id \
+                AND e.attempt_id = n.current_effect_attempt_id \
+               LEFT JOIN effect_attempt_dispatches AS d \
+                 ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
+         ), \
+         outcome_fact AS ( \
+             INSERT INTO effect_attempt_outcomes \
+                    (tenant_id, attempt_id, outcome_status) \
+             SELECT c.tenant_id, c.attempt_id, 'success' FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+             RETURNING tenant_id, attempt_id \
          ), \
          completed_attempt AS ( \
              UPDATE node_runs AS n \
                 SET status = 'success', output_port = $7, output_json = $8::text::jsonb, \
                     input_json = $9::text::jsonb, preview_head = $10, payload_size = $11, \
                     payload_hash = $12, capture_mode = $13, redacted = $14, ended_at = now() \
-               FROM classified AS c \
+               FROM classified AS c JOIN outcome_fact AS o \
+                 ON o.tenant_id = c.tenant_id AND o.attempt_id = c.attempt_id \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
                 AND n.node_id = $5 AND n.occurrence = $6 \
@@ -901,13 +1007,27 @@ pub fn complete_attempt_error_sql() -> String {
              SELECT CASE \
                       WHEN a.result_code <> 'ready' THEN a.result_code \
                       WHEN n.run_id IS NULL THEN 'attempt-not-found' \
+                      WHEN e.attempt_id IS NULL THEN 'attempt-ledger-missing' \
+                      WHEN d.attempt_id IS NULL THEN 'attempt-not-dispatched' \
                       WHEN n.status IN ('success', 'error') THEN 'already-completed' \
                       WHEN n.status <> 'started' THEN 'attempt-not-started' \
                       ELSE 'ready' \
                     END AS result_code, a.tenant_id, a.run_id, a.status, \
-                    r.flow_id, r.flow_version, r.cancel_requested_kind \
+                    r.flow_id, r.flow_version, r.cancel_requested_kind, e.attempt_id \
                FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
                LEFT JOIN locked_run AS r ON true \
+               LEFT JOIN effect_attempts AS e \
+                 ON e.tenant_id = n.tenant_id \
+                AND e.attempt_id = n.current_effect_attempt_id \
+               LEFT JOIN effect_attempt_dispatches AS d \
+                 ON d.tenant_id = e.tenant_id AND d.attempt_id = e.attempt_id \
+         ), \
+         outcome_fact AS ( \
+             INSERT INTO effect_attempt_outcomes \
+                    (tenant_id, attempt_id, outcome_status) \
+             SELECT c.tenant_id, c.attempt_id, 'error' FROM classified AS c \
+              WHERE c.result_code = 'ready' \
+             RETURNING tenant_id, attempt_id \
          ), \
          completed_attempt AS ( \
              UPDATE node_runs AS n \
@@ -916,7 +1036,8 @@ pub fn complete_attempt_error_sql() -> String {
                     error_kind = $9, error_detail = $10::text::jsonb, \
                     preview_head = $11, payload_size = $12, payload_hash = $13, \
                     capture_mode = $14, redacted = $15, ended_at = now() \
-               FROM classified AS c \
+               FROM classified AS c JOIN outcome_fact AS o \
+                 ON o.tenant_id = c.tenant_id AND o.attempt_id = c.attempt_id \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
                 AND n.node_id = $5 AND n.occurrence = $6 \
@@ -1176,11 +1297,13 @@ mod tests {
     fn attempt_intent_precedes_dispatch_and_classifies_recovery() {
         let sql = begin_attempt_sql();
         assert!(sql.contains("INSERT INTO node_runs"));
-        assert!(sql.contains("'started', $8, $9"));
+        assert!(sql.contains("INSERT INTO effect_attempts"));
+        assert!(sql.contains("seq, status)"));
+        assert!(sql.contains("$5, $6, $7, 'started'"));
         assert!(sql.contains("selected_recovery_class, recovery_class"));
-        assert!(sql.contains("generation_fact_kind, connection_generation, credential_generation"));
-        assert!(sql.contains("n.selected_recovery_class IS DISTINCT FROM $8::text"));
-        assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
+        assert!(sql.contains("generation_fact_kind, connection_name, connection_generation"));
+        assert!(sql.contains("e.selected_recovery_class IS DISTINCT FROM $8::text"));
+        assert!(sql.contains("e.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
         assert!(sql.contains("connection_facts AS MATERIALIZED"));
         assert!(sql.contains("artifact.interface_bundle_json::jsonb"));
         for refusal in [
@@ -1195,14 +1318,17 @@ mod tests {
         assert!(!sql.contains("connection-refused"));
         assert!(sql.contains("attempt_input_ref, attempt_key"));
         assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
-        assert!(sql.contains("n.recovery_class = 'never-replay'"));
-        assert!(sql.contains("n.attempt_dispatched_at IS NULL THEN 'prepared'"));
+        assert!(sql.contains("e.recovery_class = 'never-replay'"));
+        assert!(sql.contains("d.attempt_id IS NULL THEN 'prepared'"));
         assert!(sql.contains("THEN 'effect-uncertain'"));
-        assert!(sql.contains("n.recovery_class = 'idempotent-with-key'"));
+        assert!(sql.contains("e.recovery_class = 'idempotent-with-key'"));
         assert!(sql.contains("THEN 'missing-attempt-key'"));
         assert!(sql.contains("THEN 'redispatch'"));
         assert!(
-            sql.find("inserted AS").expect("intent") < sql.find("renewed AS").expect("renewal"),
+            sql.find("appended_attempt AS").expect("immutable intent")
+                < sql.find("inserted AS").expect("current projection")
+                && sql.find("inserted AS").expect("current projection")
+                    < sql.find("renewed AS").expect("renewal"),
             "intent and renewal must share one statement"
         );
         assert!(
@@ -1211,11 +1337,24 @@ mod tests {
         );
 
         let dispatched = mark_attempt_dispatched_sql();
-        assert!(dispatched.contains("SET attempt_dispatched_at = now()"));
+        assert!(dispatched.contains("INSERT INTO effect_attempt_dispatches"));
+        assert!(!dispatched.contains("SET attempt_dispatched_at"));
         assert!(dispatched.contains("THEN 'attempt-deadline-expired'"));
         assert!(dispatched.contains("THEN 'run-deadline-expired'"));
         assert!(dispatched.contains("THEN 'already-dispatched'"));
         assert!(dispatched.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
+        for duplicate in [
+            "SET attempt_started_at",
+            "SET attempt_deadline_at",
+            "SET attempt_dispatched_at",
+            "SET generation_fact_kind",
+            "SET recovery_class",
+        ] {
+            assert!(
+                !sql.contains(duplicate),
+                "mutable node projection must not own {duplicate}"
+            );
+        }
     }
 
     #[test]
@@ -1296,7 +1435,7 @@ mod tests {
             "connection_generation",
             "credential_generation",
             "attempt_started_at",
-            "attempt_dispatched_at",
+            "dispatched_at",
             "attempt_deadline_at",
             "attempt_input_ref",
             "attempt_key",

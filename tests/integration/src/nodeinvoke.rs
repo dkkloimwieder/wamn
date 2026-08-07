@@ -44,6 +44,7 @@ use wamn_node_invoke::{
 use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
+use crate::ctl_process;
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_gate_harness::check;
@@ -167,20 +168,10 @@ fn admitted_artifact(node_wasm: &[u8]) -> anyhow::Result<(Flow, Artifact, String
     Ok((flow, artifact, implementation_digest))
 }
 
-// --- ephemeral schema (the flowrunner flow tables + the run_queue) -----------
-fn runner_ddl(schema: &str) -> String {
+// --- gate-only extension to the reconciled run plane ------------------------
+fn gate_extension_ddl(schema: &str) -> String {
     format!(
-        "CREATE TABLE {schema}.flows (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
-            active boolean NOT NULL DEFAULT false, graph_json jsonb NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id, version));\
-         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flows_tenant ON {schema}.flows \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;\
-         CREATE TABLE {schema}.sink (\
+        "CREATE TABLE {schema}.sink (\
             tenant_id text NOT NULL, run_id text NOT NULL, step int NOT NULL, \
             payload text NOT NULL, \
             CONSTRAINT sink_idem UNIQUE (tenant_id, run_id, step));\
@@ -189,103 +180,7 @@ fn runner_ddl(schema: &str) -> String {
          CREATE POLICY sink_tenant ON {schema}.sink \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.sink TO wamn_app;\
-         CREATE TABLE {schema}.runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, \
-            status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
-            created_at timestamptz NOT NULL DEFAULT now(), \
-            updated_at timestamptz NOT NULL DEFAULT now(), \
-            catalog_id text, catalog_version bigint, environment text, \
-            attachment_id text, registration_id text, event_source_run_id text, \
-            event_root_run_id text, event_depth int, \
-            invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
-            admission_context_version int NOT NULL DEFAULT 1, \
-            platform_revision text NOT NULL DEFAULT 'nodeinvoke', \
-            response_deadline_at timestamptz, run_deadline_at timestamptz, \
-            cancel_requested_kind text, cancel_requested_at timestamptz, \
-            cancel_kind text, terminal_reason text, \
-            caller_outcome_kind text, caller_outcome_json jsonb, \
-            caller_http_status int, caller_release_node_id text, \
-            caller_outcome_hash text, caller_released_at timestamptz, \
-            idempotency_key text, replay_of text, root_run_id text, \
-            parent_run_id text, parent_node_id text, parent_occurrence int, \
-            invoke_depth int NOT NULL DEFAULT 0, invoke_root_run_id text, \
-            waiting_child_run_id text, waiting_child_occurrence int, wait_generation bigint, \
-            fail_kind text, fail_node text, fail_reason text, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY runs_tenant ON {schema}.runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
-         CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
-            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
-            selected_recovery_class text, recovery_class text, \
-            generation_fact_kind text, connection_generation text, credential_generation text, \
-            attempt_started_at timestamptz, attempt_dispatched_at timestamptz, \
-            attempt_deadline_at timestamptz, attempt_input_ref text, attempt_key text, \
-            input_ref text, output_ref text, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
-            started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY node_runs_tenant ON {schema}.node_runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
-         CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' \
-              CHECK (partition_policy IN ('blocking','leapfrog')), \
-            priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
-            lease_owner text, lease_expires_at timestamptz, \
-            lease_generation bigint NOT NULL DEFAULT 0, \
-            attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
-            enqueued_at timestamptz NOT NULL DEFAULT now(), \
-            stream_seq bigint NOT NULL DEFAULT 0, \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
-         ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_queue_tenant ON {schema}.run_queue \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.partition_owner (\
-            tenant_id text NOT NULL, partition_key text NOT NULL, \
-            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
-            acquired_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, partition_key));\
-         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;\
-         CREATE TABLE {schema}.run_dead_letters (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text NOT NULL, \
-            flow_id text NOT NULL, reason text NOT NULL, \
-            failed_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.run_dead_letters ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_dead_letters FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_dead_letters_tenant ON {schema}.run_dead_letters \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT ON {schema}.run_dead_letters TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.sink TO wamn_app;"
     )
 }
 
@@ -336,9 +231,18 @@ async fn provision(
             .await
             .context("create ephemeral schema")?;
         client
-            .batch_execute(&runner_ddl(SCHEMA))
+            .batch_execute(&gate_extension_ddl(SCHEMA))
             .await
-            .context("apply runner DDL")?;
+            .context("apply nodeinvoke gate extension DDL")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            SCHEMA,
+        ])
+        .await
+        .context("reconcile nodeinvoke run-plane")?;
 
         let (flow, artifact, implementation_digest) = admitted_artifact(node_wasm)?;
         let graph_json = String::from_utf8(flow.canonical_bytes())
@@ -1205,7 +1109,6 @@ async fn raw_post(port: u16, body: &str, signature: Option<&str>) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_drift::{Need, assert_stand_in};
 
     #[test]
     fn nodeinvoke_flow_uses_the_current_portable_schema() {
@@ -1213,23 +1116,15 @@ mod tests {
             .expect("nodeinvoke release graph and resolved interfaces validate");
     }
 
-    /// wamn-9mg8 [GATE-DRIFT]: nodeinvoke's `run_queue` stand-in vs the schema of
-    /// record, through the uniform guard. nodeinvoke drives the real runner over
-    /// the per-partition claim path (`partition_owner` + the `run_queue_partition`
-    /// index) and a guest that can settle terminally (`run_dead_letters`,
-    /// wamn-v8cv), so all three tables are Required.
+    /// The gate owns only its sink extension. Runner tables, immutable effect
+    /// attempts, disposition ledgers, helpers, and constraints come from the
+    /// production reconciler rather than another hand-maintained stand-in.
     #[test]
-    fn nodeinvoke_stand_in_tracks_run_queue_schema_of_record() {
-        let ddl = runner_ddl("wamn_run");
-        assert_stand_in(
-            "nodeinvoke",
-            &ddl,
-            &[
-                ("run_queue", Need::Required),
-                ("partition_owner", Need::Required),
-                ("run_dead_letters", Need::Required),
-            ],
-        );
-        assert!(ddl.contains("lease_generation bigint NOT NULL DEFAULT 0"));
+    fn nodeinvoke_gate_does_not_duplicate_the_run_plane() {
+        let ddl = gate_extension_ddl("wamn_run");
+        assert!(ddl.contains("CREATE TABLE wamn_run.sink"));
+        assert!(!ddl.contains("CREATE TABLE wamn_run.node_runs"));
+        assert!(!ddl.contains("attempt_started_at"));
+        assert!(include_str!("nodeinvoke.rs").contains("reconcile-run-plane"));
     }
 }

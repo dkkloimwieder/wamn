@@ -11,6 +11,7 @@
 
 pub mod copy_project_env;
 pub mod dump_project_env;
+pub mod effect_disposition;
 pub mod enable_cdc_project_env;
 mod env_policies;
 pub mod impact_report;

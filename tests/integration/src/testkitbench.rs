@@ -32,6 +32,7 @@ use tokio_postgres::NoTls;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 
+use crate::ctl_process;
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_gate_harness::{check, scope_session};
@@ -420,6 +421,15 @@ async fn flow_phase(
         .provision_case(&runworker_schema)
         .await
         .context("provision flow schema")?;
+    ctl_process::run_checked([
+        "reconcile-run-plane",
+        "--admin-database-url",
+        &admin_url,
+        "--schema",
+        runworker_schema.as_str(),
+    ])
+    .await
+    .context("reconcile testkit flow run-plane")?;
     let admin = provisioner.admin();
     scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
     let flow_json = crate::flowbench::flow_json_s6(0, &echo_url);

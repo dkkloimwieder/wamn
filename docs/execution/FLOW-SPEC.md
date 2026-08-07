@@ -781,13 +781,21 @@ Recovery classification is resolved once, then consumed in three layers:
    `generation_fact_kind`, `connection_generation`, and
    `credential_generation` with attempt intent.
 
-Per admitted effectful occurrence: (1) persist attempt intent — run, node,
-occurrence, input ref, selected and effective recovery classes, generation
-facts, attempt key, `attempt_deadline_at`, `status = started` — atomically with
-a lease renewal; (2) invoke, with the pre-dispatch check (§10.7); (3) persist
-output, `status = success`. Recovery by `(status, recovery_class)` remains:
-`replay` → dispatch again; `idempotent-with-key` → same key;
-`never-replay` → run fails **`effect-uncertain`**.
+Per admitted effectful occurrence: (1) append one immutable `effect_attempts`
+intent — run, node, occurrence, input ref, selected and effective recovery
+classes, generation facts, stable server-minted attempt id, nullable explicitly
+verified release-author and release-publisher principals, attempt key, and
+`attempt_deadline_at` — then point the occurrence's mutable
+`node_runs.current_effect_attempt_id` at that exact tenant/run/node/occurrence
+identity, atomically with a lease renewal; (2) append the dispatch fact at the
+pre-dispatch boundary (§10.7); (3) append the outcome fact and persist the
+normal node completion/checkpoint atomically. Recovery by the node status plus
+the joined immutable attempt/dispatch facts remains: `replay` → dispatch again;
+`idempotent-with-key` → same key; a dispatched `never-replay` attempt whose
+outcome is lost becomes **`effect-uncertain`** and is fenced onto the existing
+parked condition indefinitely, with its executor lease released, pending an
+operator disposition. It does not terminalize the run and does not mint a new
+run state.
 
 HTTP verbs do not imply any class: GET and HEAD do not authorize replay, and
 PUT or DELETE do not authorize idempotent replay. Mutable configuration cannot
@@ -795,6 +803,53 @@ strengthen a pinned selection. Capture is independently optional and has no
 role in classification or admission. Attempt state is protocol state —
 capture-exempt, retained until recovery is impossible.
 `node_runs.status` is `started | parked | success | error`.
+
+### 10.3a Effect disposition
+
+Park/release and resolve append immutable disposition records; they never
+rewrite the original effect attempt. A release makes the existing parked run
+claimable again but grants no permission to dispatch the unresolved effect;
+the runner classifies it uncertain and parks it again without a send. Resolve
+wakes the run, whose runner consumes the asserted outcome before dispatch and
+persists it through the normal atomic completion/checkpoint path. A resolved
+success carries a payload, an explicitly supplied port validated
+against the attempt's pinned node interface, and an optional object-valued
+whole-context replacement. A resolved failure is exactly `terminal` or
+`invalid-input` with the existing typed error detail and is folded through the
+engine's existing error-route-or-fail transition. No disposition can create a
+retryable, rate-limited, or cancelled outcome or dispatch a successor.
+
+Each attempt pins immutable, explicitly verified author and publisher
+principals from the release. The fields remain absent for legacy or operator
+publications; a database/service session identity is not author or publisher
+provenance. An authenticated project admin may resolve only when both are
+present and the admin matches neither. Platform-admin separation override is a distinct
+break-glass authority and records a mandatory reason. Every bulk action first
+materializes the exact immutable attempt ids and requires connection,
+generation, and a bounded time window; an optional flow only narrows that set.
+The append-only audit records authenticated principal, effective role, typed
+basis, evidence reference, correlation id, and the exact attempt set. A CLI
+argument is never principal authentication; the privileged operator CLI may
+offer only the platform break-glass adapter until an authenticated project
+adapter exists. Manual adapters must use a `SERIALIZABLE` transaction and retry
+SQLSTATE `40001` from a fresh transaction. The store refuses weaker isolation,
+terminal runs, or any set that fails authorization; locks are dependency-ordered
+run → queue → occurrence. A database-generated append ordinal is the only
+latest-disposition order.
+
+The ordinary application role can read disposition audit but cannot append it,
+even if a stale deployment leaves INSERT granted: a store guard admits only a
+trusted adapter. Automatic park uses a narrow security-definer bridge and must
+match the host-injected runner identity to the exact live lease
+owner/generation before any append or queue change. Platform break-glass is
+admitted in the shipped surface only for a superuser database session and
+records `SESSION_USER`; it has no caller-supplied principal parameter. A
+non-super platform role requires a future narrow security-definer adapter, not
+raw table grants. The project statements remain non-public substrate until an
+authenticated adapter can bind the project principal and role from a real
+verified request context. No such adapter is shipped: that path depends on
+wamn-ctc8.5 and the wamn-0xd/wamn-117 authentication chain (or an approved
+narrower real-auth slice), never on a fabricated trusted-context field.
 
 ### 10.4 Inline lease ownership
 
@@ -972,16 +1027,27 @@ release node), `response_deadline_at` / `run_deadline_at` (ordering CHECK),
 gains `http`, `internal`, `studio`. `result_json` is diagnostic; the caller's
 answer is `caller_outcome_json`.
 
-**15.2 `node_runs`** — `selected_recovery_class`, effective
-`recovery_class`, `generation_fact_kind`, `connection_generation`,
-`credential_generation`, `attempt_started_at`, `attempt_deadline_at`,
-`attempt_input_ref`, `attempt_key`; status CHECK `started | parked | success |
-error`. A started attempt requires both classes and its generation fact; the
-effective class equals the selected class.
+**15.2 `node_runs` + effect ledgers** — `node_runs` is the mutable occurrence
+and completion projection. Its only attempt-authority field is nullable
+`current_effect_attempt_id`, constrained with tenant, run, node, and occurrence
+to the append-only `effect_attempts` row; status remains `started | parked |
+success | error`. `effect_attempts` exclusively owns the immutable attempt id,
+predecessor, pinned nullable verified author/publisher principals, selected and
+effective recovery class, generation facts, connection name/generation,
+credential generation, start/deadline, input ref, and attempt key. Separate
+append-only dispatch and outcome rows record those boundaries. Attempt audit
+has an independent retention lifetime, so it deliberately has no FK to
+prunable `runs`; deleting run history cannot erase attempt facts. Append-only
+disposition requests materialize an exact attempt set, and per-attempt rows
+carry a database-generated append ordinal plus the typed action/outcome and
+audit tuple. A resolution append only wakes
+the run; the runner consumes the complete asserted outcome through the same
+atomic engine completion/checkpoint transition as a live outcome.
 
 **15.3 Definition plane** — `flow_artifacts` (DB-immutable, including paired
-`occurrence_recovery_json` + `occurrence_recovery_hash`);
-`release_flows`; `attachments` + `sources`; `catalog_heads`;
+`occurrence_recovery_json` + `occurrence_recovery_hash` and nullable verified
+author principal); `release_manifests` (including nullable verified publisher
+principal); `release_flows`; `attachments` + `sources`; `catalog_heads`;
 `attachment_activation` + `_events`; `invocation_admissions` (§6.2 shape);
 `run_queue.lease_generation`; `cron_anchor` generation columns. RLS/seed
 version keys are 2B; `event_registrations` unchanged (deferred tranche).

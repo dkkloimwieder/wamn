@@ -61,6 +61,7 @@ use wamn_run_state::attempt::{
 use wamn_run_state::child::{
     ChildCreateResult, ChildReleaseResult, create_or_recover_child_sql, release_child_sql,
 };
+use wamn_run_state::disposition::{park_effect_uncertain_sql, select_current_resolution_sql};
 use wamn_run_state::transitions::{
     CallerReleaseResult, CheckpointResult, ReservedCheckpointResult, StoredCallerOutcome,
     TerminalizeResult, begin_attempt_sql, complete_attempt_error_sql, complete_attempt_success_sql,
@@ -1051,6 +1052,110 @@ fn error_row_values(err: &NodeError) -> (&'static str, Value, Value) {
         None => Value::Null,
     };
     (kind, payload, detail_json)
+}
+
+/// Decode the immutable asserted completion for the current effect attempt.
+/// Every shape check is repeated here even though the ledger has constraints:
+/// a drifted or partially migrated store must refuse before the engine can
+/// advance a frontier from malformed operator data.
+fn decode_current_resolution(rows: &[Vec<SqlValue>]) -> Result<Option<NodeOutcome>, String> {
+    if rows.len() > 1 {
+        return Err("current effect attempt has multiple resolutions".to_string());
+    }
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let [
+        status,
+        success_payload,
+        success_port,
+        success_context,
+        failure_kind,
+        failure_detail,
+    ] = row.as_slice()
+    else {
+        return Err(format!("effect resolution row shape: {row:?}"));
+    };
+
+    match status {
+        SqlValue::Text(status) if status == "succeeded" => {
+            let payload = required_json(success_payload, "resolution success payload")?;
+            let port = match success_port {
+                SqlValue::Text(port) if !port.is_empty() => port.clone(),
+                other => return Err(format!("resolution success port shape: {other:?}")),
+            };
+            let context = optional_json(success_context, "resolution success context")?;
+            if context.as_ref().is_some_and(|value| !value.is_object()) {
+                return Err("resolution success context is not an object".to_string());
+            }
+            if !matches!(failure_kind, SqlValue::Null) || !matches!(failure_detail, SqlValue::Null)
+            {
+                return Err("resolution success carries failure fields".to_string());
+            }
+            Ok(Some(NodeOutcome::Success {
+                payload,
+                port,
+                context,
+            }))
+        }
+        SqlValue::Text(status) if status == "failed" => {
+            if !matches!(success_payload, SqlValue::Null)
+                || !matches!(success_port, SqlValue::Null)
+                || !matches!(success_context, SqlValue::Null)
+            {
+                return Err("resolution failure carries success fields".to_string());
+            }
+            let detail = decode_resolution_error_detail(required_json(
+                failure_detail,
+                "resolution failure detail",
+            )?)?;
+            let error = match failure_kind {
+                SqlValue::Text(kind) if kind == "terminal" => NodeError::Terminal(detail),
+                SqlValue::Text(kind) if kind == "invalid-input" => NodeError::InvalidInput(detail),
+                other => return Err(format!("resolution failure kind shape: {other:?}")),
+            };
+            Ok(Some(NodeOutcome::Error(error)))
+        }
+        other => Err(format!("effect resolution status shape: {other:?}")),
+    }
+}
+
+fn required_json(value: &SqlValue, field: &str) -> Result<Value, String> {
+    optional_json(value, field)?.ok_or_else(|| format!("{field} is null"))
+}
+
+fn optional_json(value: &SqlValue, field: &str) -> Result<Option<Value>, String> {
+    match value {
+        SqlValue::Null => Ok(None),
+        SqlValue::Text(encoded) | SqlValue::Json(encoded) => serde_json::from_str(encoded)
+            .map(Some)
+            .map_err(|error| format!("{field} parse: {error}")),
+        other => Err(format!("{field} shape: {other:?}")),
+    }
+}
+
+fn decode_resolution_error_detail(value: Value) -> Result<ErrorDetail, String> {
+    let object = value
+        .as_object()
+        .ok_or("resolution failure detail is not an object")?;
+    let message = object
+        .get("message")
+        .and_then(Value::as_str)
+        .ok_or("resolution failure detail.message is required")?
+        .to_string();
+    let code = match object.get("code") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(code)) => Some(code.clone()),
+        Some(other) => {
+            return Err(format!("resolution failure detail.code shape: {other:?}"));
+        }
+    };
+    let data = object.get("data").filter(|value| !value.is_null()).cloned();
+    Ok(ErrorDetail {
+        message,
+        code,
+        data,
+    })
 }
 
 /// Record the run's failure verdict (audit parity with poc-webhook-f1).
@@ -2916,14 +3021,71 @@ fn terminalize_claimed(
     }
 }
 
-/// Fenced terminalization for an incomplete attempt that cannot be replayed.
-fn terminalize_effect_uncertain(
+/// Read an asserted outcome only for the exact immutable attempt currently
+/// projected at this frontier. This runs before attempt admission or dispatch;
+/// a hit therefore advances through the ordinary completion path without any
+/// node or network call.
+fn load_current_resolution(
+    run_id: &str,
+    node_id: &str,
+    occurrence: u32,
+) -> Result<Option<NodeOutcome>, String> {
+    let response = client::query(
+        select_current_resolution_sql(),
+        &[text(run_id), text(node_id), int32(occurrence as i32)],
+    )
+    .map_err(|error| err_name(&error))?;
+    decode_current_resolution(&response.rows)
+}
+
+/// Fenced indefinite park for a dispatched `never-replay` attempt whose
+/// outcome is unknown. The append-only system disposition, full checkpoint,
+/// queue wake, and lease release are one statement; no terminal state or
+/// successor attempt is created.
+fn park_effect_uncertain(
+    run_id: &str,
+    node_id: &str,
+    occurrence: u32,
+    checkpoint: &Value,
+    owner: &str,
+    lease_generation: i64,
+) -> Result<(), String> {
+    let response = client::query(
+        &park_effect_uncertain_sql(),
+        &[
+            text(run_id),
+            text(run_id),
+            text(owner),
+            int64(lease_generation),
+            text(node_id),
+            int32(occurrence as i32),
+            jsonb(checkpoint),
+        ],
+    )
+    .map_err(|error| err_name(&error))?;
+    let row = response
+        .rows
+        .first()
+        .ok_or("effect-uncertain park returned no result row")?;
+    let code = match row.first() {
+        Some(SqlValue::Text(code)) => code.as_str(),
+        other => return Err(format!("effect-uncertain park result shape: {other:?}")),
+    };
+    match code {
+        "parked" => Ok(()),
+        "fence-lost" => Err("effect-uncertain park refused: fence-lost".to_string()),
+        other => Err(format!("effect-uncertain park refused: {other}")),
+    }
+}
+
+/// Fenced terminalization for an idempotent attempt missing its required key.
+fn terminalize_missing_attempt_key(
     run_id: &str,
     node_id: &str,
     owner: &str,
     lease_generation: i64,
 ) -> Result<(), String> {
-    let reason = format!("effect-uncertain:{node_id}");
+    let reason = format!("missing-attempt-key:{node_id}");
     let response = client::query(
         &terminalize_sql(),
         &[
@@ -2934,33 +3096,33 @@ fn terminalize_effect_uncertain(
             text("failed"),
             text(&reason),
             SqlValue::Null,
-            jsonb(&json!({"code":"effect-uncertain","node":node_id})),
+            jsonb(&json!({"code":"missing-attempt-key","node":node_id})),
         ],
     )
     .map_err(|error| err_name(&error))?;
     let row = response
         .rows
         .first()
-        .ok_or("effect-uncertain terminalization returned no result row")?;
+        .ok_or("missing-attempt-key terminalization returned no result row")?;
     let code = match row.first() {
         Some(SqlValue::Text(code)) => code.as_str(),
-        other => return Err(format!("effect-uncertain result shape: {other:?}")),
+        other => return Err(format!("missing-attempt-key result shape: {other:?}")),
     };
     let status = match row.get(1) {
         Some(SqlValue::Text(status)) => status.as_str(),
         Some(SqlValue::Null) => "",
-        other => return Err(format!("effect-uncertain status shape: {other:?}")),
+        other => return Err(format!("missing-attempt-key status shape: {other:?}")),
     };
     match TerminalizeResult::from_parts(code, status)
-        .ok_or_else(|| format!("unknown effect-uncertain result: {code}"))?
+        .ok_or_else(|| format!("unknown missing-attempt-key result: {code}"))?
     {
         TerminalizeResult::Terminalized => Ok(()),
         TerminalizeResult::RunTerminal(stored) if stored.as_sql() == "failed" => Ok(()),
         TerminalizeResult::FenceLost => {
-            Err("effect-uncertain terminalization refused: fence-lost".to_string())
+            Err("missing-attempt-key terminalization refused: fence-lost".to_string())
         }
         other => Err(format!(
-            "effect-uncertain terminalization refused: {other:?}"
+            "missing-attempt-key terminalization refused: {other:?}"
         )),
     }
 }
@@ -3387,7 +3549,11 @@ fn execute_claimed(
                 }
             }
             Step::Dispatch(d) => {
-                if d.node_type == "invoke-flow" {
+                // A resolution is an asserted completion of the exact current
+                // immutable attempt. Consume it before child invocation,
+                // attempt admission, or any node/network dispatch.
+                let resolved_outcome = load_current_resolution(run_id, &d.node, d.occurrence)?;
+                if resolved_outcome.is_none() && d.node_type == "invoke-flow" {
                     match invoke_child(run_id, &d, owner, lease_generation)? {
                         ChildInvocation::Parked => {
                             return Ok(ClaimOutcome {
@@ -3440,79 +3606,110 @@ fn execute_claimed(
                         }
                     }
                 }
-                // The lease heartbeat rides each node's checkpoint statement
-                // (fqg.18): the claim's fresh lease covers the first node, each
-                // record's renew covers the next — the same coverage the split
-                // renew-before-dispatch gave, one round trip cheaper.
-                let admission = recovery_admission(artifact, &d)?;
-                match begin_attempt(
-                    run_id,
-                    &d,
-                    next_seq,
-                    admission,
-                    owner,
-                    lease_generation,
-                    ttl_ms,
-                )? {
-                    AttemptStartResult::Started | AttemptStartResult::Redispatch => {
-                        mark_attempt_dispatched(run_id, &d, owner, lease_generation, ttl_ms)?;
+                let node_action = if let Some(outcome) = resolved_outcome {
+                    NodeAction::Emit(outcome)
+                } else {
+                    // The lease heartbeat rides each node's checkpoint statement
+                    // (fqg.18): the claim's fresh lease covers the first node, each
+                    // record's renew covers the next — the same coverage the split
+                    // renew-before-dispatch gave, one round trip cheaper.
+                    let admission = recovery_admission(artifact, &d)?;
+                    match begin_attempt(
+                        run_id,
+                        &d,
+                        next_seq,
+                        admission,
+                        owner,
+                        lease_generation,
+                        ttl_ms,
+                    )? {
+                        AttemptStartResult::Started | AttemptStartResult::Redispatch => {
+                            mark_attempt_dispatched(run_id, &d, owner, lease_generation, ttl_ms)?;
+                        }
+                        AttemptStartResult::EffectUncertain => {
+                            let checkpoint = load_checkpoint(run_id)?;
+                            park_effect_uncertain(
+                                run_id,
+                                &d.node,
+                                d.occurrence,
+                                &checkpoint,
+                                owner,
+                                lease_generation,
+                            )?;
+                            return Ok(ClaimOutcome {
+                                outcome: 1,
+                                park_ms: 0,
+                                fail_reason: None,
+                                already_settled: true,
+                            });
+                        }
+                        AttemptStartResult::MissingAttemptKey => {
+                            terminalize_missing_attempt_key(
+                                run_id,
+                                &d.node,
+                                owner,
+                                lease_generation,
+                            )?;
+                            return Ok(ClaimOutcome {
+                                outcome: 2,
+                                park_ms: 0,
+                                fail_reason: Some(format!(
+                                    "missing-attempt-key: {}: incomplete attempt",
+                                    d.node
+                                )),
+                                already_settled: false,
+                            });
+                        }
+                        refusal @ (AttemptStartResult::UndeclaredRequirement
+                        | AttemptStartResult::NodeNotPermitted
+                        | AttemptStartResult::Unbound
+                        | AttemptStartResult::InactiveGeneration
+                        | AttemptStartResult::Incompatible) => {
+                            let refusal = match refusal {
+                                AttemptStartResult::UndeclaredRequirement => {
+                                    "undeclared-requirement"
+                                }
+                                AttemptStartResult::NodeNotPermitted => "node-not-permitted",
+                                AttemptStartResult::Unbound => "unbound",
+                                AttemptStartResult::InactiveGeneration => "inactive-generation",
+                                AttemptStartResult::Incompatible => "incompatible",
+                                _ => {
+                                    unreachable!("the pattern above contains every typed refusal")
+                                }
+                            };
+                            terminalize_connection_refusal(
+                                run_id,
+                                &flow.flow_id,
+                                flow.version,
+                                &d.node,
+                                st.caller_state(),
+                                refusal,
+                                owner,
+                                lease_generation,
+                            )?;
+                            return Ok(ClaimOutcome {
+                                outcome: 2,
+                                park_ms: 0,
+                                fail_reason: Some(format!("{refusal}: {}", d.node)),
+                                already_settled: true,
+                            });
+                        }
+                        AttemptStartResult::FenceLost => {
+                            return Err("attempt intent refused: fence-lost".to_string());
+                        }
+                        other => return Err(format!("attempt intent refused: {other:?}")),
                     }
-                    AttemptStartResult::EffectUncertain | AttemptStartResult::MissingAttemptKey => {
-                        terminalize_effect_uncertain(run_id, &d.node, owner, lease_generation)?;
-                        return Ok(ClaimOutcome {
-                            outcome: 2,
-                            park_ms: 0,
-                            fail_reason: Some(format!(
-                                "effect-uncertain: {}: incomplete attempt",
-                                d.node
-                            )),
-                            already_settled: false,
-                        });
-                    }
-                    refusal @ (AttemptStartResult::UndeclaredRequirement
-                    | AttemptStartResult::NodeNotPermitted
-                    | AttemptStartResult::Unbound
-                    | AttemptStartResult::InactiveGeneration
-                    | AttemptStartResult::Incompatible) => {
-                        let refusal = match refusal {
-                            AttemptStartResult::UndeclaredRequirement => "undeclared-requirement",
-                            AttemptStartResult::NodeNotPermitted => "node-not-permitted",
-                            AttemptStartResult::Unbound => "unbound",
-                            AttemptStartResult::InactiveGeneration => "inactive-generation",
-                            AttemptStartResult::Incompatible => "incompatible",
-                            _ => unreachable!("the pattern above contains every typed refusal"),
-                        };
-                        terminalize_connection_refusal(
-                            run_id,
-                            &flow.flow_id,
-                            flow.version,
-                            &d.node,
-                            st.caller_state(),
-                            refusal,
-                            owner,
-                            lease_generation,
-                        )?;
-                        return Ok(ClaimOutcome {
-                            outcome: 2,
-                            park_ms: 0,
-                            fail_reason: Some(format!("{refusal}: {}", d.node)),
-                            already_settled: true,
-                        });
-                    }
-                    AttemptStartResult::FenceLost => {
-                        return Err("attempt intent refused: fence-lost".to_string());
-                    }
-                    other => return Err(format!("attempt intent refused: {other:?}")),
-                }
-                match dispatch_node(
-                    &d,
-                    run_id,
-                    flow,
-                    Some(artifact),
-                    Some(&effect_run),
-                    false,
-                    &mut http_status,
-                )? {
+                    dispatch_node(
+                        &d,
+                        run_id,
+                        flow,
+                        Some(artifact),
+                        Some(&effect_run),
+                        false,
+                        &mut http_status,
+                    )?
+                };
+                match node_action {
                     NodeAction::Emit(outcome) => {
                         if d.node_type == "fail" {
                             let NodeOutcome::Error(error) = &outcome else {
@@ -3945,6 +4142,87 @@ impl Guest for Component {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn asserted_success_decodes_complete_emission_without_defaults() {
+        let rows = vec![vec![
+            text("succeeded"),
+            text(r#"{"accepted":true}"#),
+            text("accepted"),
+            text(r#"{"case":"verified"}"#),
+            SqlValue::Null,
+            SqlValue::Null,
+        ]];
+
+        assert_eq!(
+            decode_current_resolution(&rows).unwrap(),
+            Some(NodeOutcome::Success {
+                payload: json!({"accepted": true}),
+                port: "accepted".to_string(),
+                context: Some(json!({"case": "verified"})),
+            })
+        );
+    }
+
+    #[test]
+    fn asserted_failure_decodes_only_non_retrying_variants() {
+        for (kind, expected) in [
+            (
+                "terminal",
+                NodeError::Terminal(ErrorDetail::coded("confirmed", "counterparty confirmed")),
+            ),
+            (
+                "invalid-input",
+                NodeError::InvalidInput(ErrorDetail::coded("invalid", "request was rejected")),
+            ),
+        ] {
+            let message = if kind == "terminal" {
+                "counterparty confirmed"
+            } else {
+                "request was rejected"
+            };
+            let code = if kind == "terminal" {
+                "confirmed"
+            } else {
+                "invalid"
+            };
+            let rows = vec![vec![
+                text("failed"),
+                SqlValue::Null,
+                SqlValue::Null,
+                SqlValue::Null,
+                text(kind),
+                text(json!({"message": message, "code": code}).to_string()),
+            ]];
+            assert_eq!(
+                decode_current_resolution(&rows).unwrap(),
+                Some(NodeOutcome::Error(expected))
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_asserted_outcome_refuses_before_engine_apply() {
+        let missing_port = vec![vec![
+            text("succeeded"),
+            text("null"),
+            SqlValue::Null,
+            SqlValue::Null,
+            SqlValue::Null,
+            SqlValue::Null,
+        ]];
+        assert!(decode_current_resolution(&missing_port).is_err());
+
+        let retry_mutant = vec![vec![
+            text("failed"),
+            SqlValue::Null,
+            SqlValue::Null,
+            SqlValue::Null,
+            text("retryable"),
+            text(r#"{"message":"try again"}"#),
+        ]];
+        assert!(decode_current_resolution(&retry_mutant).is_err());
+    }
 
     #[test]
     fn dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run() {

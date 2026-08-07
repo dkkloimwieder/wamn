@@ -322,13 +322,19 @@ fn run_state_live() {
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','attempt-1','worker-c',now()+interval '1 minute',4); \
-         INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
-            recovery_class,generation_fact_kind, \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
+            selected_recovery_class,recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_deadline_at,attempt_input_ref,attempt_key) \
-         VALUES ('t1','attempt-1','effect',0,1,'started','never-replay','never-replay', \
-                 'not-required', \
-                 now(),now()+interval '30 seconds','sha256:input','attempt-key');",
+         VALUES ('t1','10000000-0000-0000-0000-000000000001','attempt-1','effect',0,1,0, \
+                 'never-replay','never-replay','not-required', \
+                 now(),now()+interval '30 seconds','sha256:input','attempt-key'); \
+         INSERT INTO wamn_run.node_runs \
+           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
+         VALUES ('t1','10000000-0000-0000-0000-000000000001', \
+                 'attempt-1','effect',0,1,'started'); \
+         INSERT INTO wamn_run.effect_attempt_dispatches (tenant_id,attempt_id) \
+         VALUES ('t1','10000000-0000-0000-0000-000000000001');",
     );
     let complete_script = format!(
         "{} PREPARE complete_stmt \
@@ -340,6 +346,11 @@ fn run_state_live() {
            ASSERT (SELECT result_code FROM completed) = 'completed', 'attempt completed'; \
            ASSERT (SELECT status FROM node_runs WHERE run_id='attempt-1') = 'success', \
                   'attempt output persisted'; \
+           ASSERT (SELECT count(*) FROM effect_attempt_outcomes AS o \
+                     JOIN effect_attempts AS e \
+                       ON e.tenant_id=o.tenant_id AND e.attempt_id=o.attempt_id \
+                    WHERE e.run_id='attempt-1' AND o.outcome_status='success') = 1, \
+                  'attempt completion appends one immutable outcome'; \
            ASSERT (SELECT state_json FROM runs WHERE run_id='attempt-1') = '{{\"step\":1}}', \
                   'checkpoint persisted'; \
          END $$; COMMIT;",
@@ -450,16 +461,28 @@ fn run_state_live() {
                   'sent-but-unrecorded never-replay does not redispatch'; \
            ASSERT (SELECT result_code FROM pure_recovery) = 'redispatch', \
                   'pure recovery redispatches'; \
-           ASSERT (SELECT attempt FROM node_runs WHERE run_id='nr-replay') = 1, \
+           ASSERT (SELECT e.attempt_index FROM node_runs AS n \
+                     JOIN effect_attempts AS e \
+                       ON e.tenant_id=n.tenant_id \
+                      AND e.attempt_id=n.current_effect_attempt_id \
+                    WHERE n.run_id='nr-replay') = 1, \
                   'authorized redispatch increments the durable attempt'; \
-           ASSERT (SELECT attempt FROM node_runs WHERE run_id='nr-never') = 0, \
+           ASSERT (SELECT e.attempt_index FROM node_runs AS n \
+                     JOIN effect_attempts AS e \
+                       ON e.tenant_id=n.tenant_id \
+                      AND e.attempt_id=n.current_effect_attempt_id \
+                    WHERE n.run_id='nr-never') = 0, \
                   'effect-uncertain performs no second attempt'; \
-           ASSERT (SELECT selected_recovery_class = 'never-replay' \
-                          AND recovery_class = 'never-replay' \
-                          AND generation_fact_kind = 'not-required' \
-                          AND connection_generation IS NULL \
-                          AND credential_generation IS NULL \
-                     FROM node_runs WHERE run_id='nr-never'), \
+           ASSERT (SELECT e.selected_recovery_class = 'never-replay' \
+                          AND e.recovery_class = 'never-replay' \
+                          AND e.generation_fact_kind = 'not-required' \
+                          AND e.connection_generation IS NULL \
+                          AND e.credential_generation IS NULL \
+                     FROM node_runs AS n \
+                     JOIN effect_attempts AS e \
+                       ON e.tenant_id=n.tenant_id \
+                      AND e.attempt_id=n.current_effect_attempt_id \
+                    WHERE n.run_id='nr-never'), \
                   'attempt ledger records selected/effective class and explicit no-generation facts'; \
            ASSERT (SELECT result_code FROM keyed_prepared_missing) = 'missing-attempt-key', \
                   'prepared keyed attempt still requires the original key'; \
@@ -543,13 +566,19 @@ fn run_state_live() {
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM http_intent) = 'started', \
                   'portable HTTP intent inserts before send'; \
-           ASSERT (SELECT generation_fact_kind = 'attested' \
-                          AND connection_generation = 'manager-dev:1' \
-                          AND credential_generation = 'manager-credential-v1' \
-                          AND attempt_input_ref = 'sha256:operation' \
-                          AND attempt_key = 'http-intent:notify:0' \
-                          AND attempt_dispatched_at IS NULL \
-                     FROM node_runs WHERE run_id='http-intent' AND node_id='notify'), \
+           ASSERT (SELECT e.generation_fact_kind = 'attested' \
+                          AND e.connection_generation = 'manager-dev:1' \
+                          AND e.credential_generation = 'manager-credential-v1' \
+                          AND e.attempt_input_ref = 'sha256:operation' \
+                          AND e.attempt_key = 'http-intent:notify:0' \
+                          AND d.attempt_id IS NULL \
+                     FROM node_runs AS n \
+                     JOIN effect_attempts AS e \
+                       ON e.tenant_id=n.tenant_id \
+                      AND e.attempt_id=n.current_effect_attempt_id \
+                     LEFT JOIN effect_attempt_dispatches AS d \
+                       ON d.tenant_id=e.tenant_id AND d.attempt_id=e.attempt_id \
+                    WHERE n.run_id='http-intent' AND n.node_id='notify'), \
                   'one intent insert records generation, fingerprint, and stable key'; \
            ASSERT (SELECT result_code FROM wrong_node) = 'node-not-permitted', \
                   'node without the admitted connection cannot create intent'; \
@@ -580,14 +609,22 @@ fn run_state_live() {
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','deadline-attempt','worker-deadline',now()+interval '1 minute',1), \
            ('t1','deadline-run','worker-deadline',now()+interval '1 minute',1); \
-         INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status,selected_recovery_class, \
-            recovery_class,generation_fact_kind, \
+         INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
+            selected_recovery_class,recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_deadline_at,attempt_input_ref) VALUES \
-           ('t1','deadline-attempt','effect',0,1,'started','replay','replay','not-required', \
+           ('t1','10000000-0000-0000-0000-000000000002', \
+            'deadline-attempt','effect',0,1,0,'replay','replay','not-required', \
             now()-interval '2 seconds',now()-interval '1 second','sha256:expired'), \
-           ('t1','deadline-run','effect',0,1,'started','replay','replay','not-required', \
-            now()-interval '2 seconds',now()+interval '1 minute','sha256:run-expired');",
+           ('t1','10000000-0000-0000-0000-000000000003', \
+            'deadline-run','effect',0,1,0,'replay','replay','not-required', \
+            now()-interval '2 seconds',now()+interval '1 minute','sha256:run-expired'); \
+         INSERT INTO wamn_run.node_runs \
+           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) VALUES \
+           ('t1','10000000-0000-0000-0000-000000000002', \
+            'deadline-attempt','effect',0,1,'started'), \
+           ('t1','10000000-0000-0000-0000-000000000003', \
+            'deadline-run','effect',0,1,'started');",
     );
     let deadline_script = format!(
         "{} PREPARE mark_stmt (text,text,text,bigint,text,int,bigint) AS {}; \
@@ -602,9 +639,11 @@ fn run_state_live() {
                   'expired attempt is refused at the send boundary'; \
            ASSERT (SELECT result_code FROM run_expired) = 'run-deadline-expired', \
                   'expired invocation budget is refused at the send boundary'; \
-           ASSERT NOT EXISTS (SELECT FROM node_runs \
-                               WHERE run_id LIKE 'deadline-%' \
-                                 AND attempt_dispatched_at IS NOT NULL), \
+           ASSERT NOT EXISTS (SELECT FROM effect_attempt_dispatches AS d \
+                               JOIN effect_attempts AS e \
+                                 ON e.tenant_id=d.tenant_id \
+                                AND e.attempt_id=d.attempt_id \
+                              WHERE e.run_id LIKE 'deadline-%'), \
                   'expired authority performs no dispatch marker write'; \
          END $$; COMMIT;",
         app_preamble(),

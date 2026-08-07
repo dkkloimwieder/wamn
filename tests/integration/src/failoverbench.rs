@@ -70,6 +70,8 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
+use crate::ctl_process;
+
 /// The ephemeral schema that unions the guest's flow tables (flows / runs /
 /// node_runs / sink) with the 5.14 `run_queue`, provisioned via superuser.
 const SCHEMA: &str = "wamn_failover_bench";
@@ -280,6 +282,15 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .batch_execute(&failover_ddl(SCHEMA))
             .await
             .context("apply failover DDL")?;
+        ctl_process::run_checked([
+            "reconcile-run-plane",
+            "--admin-database-url",
+            admin_url,
+            "--schema",
+            SCHEMA,
+        ])
+        .await
+        .context("reconcile failoverbench run-plane")?;
         anyhow::Ok(())
     }
     .await;

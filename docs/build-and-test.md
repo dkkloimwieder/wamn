@@ -594,6 +594,7 @@ kubectl -n wamn-system logs job/provisionbench
 ```bash
 ./target/release/wamn-gates --log-level error flowbench \
   --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn --mode all
 # In-cluster (same co-located / no-cpu-limit Job topology as pgbench):
 kubectl -n wamn-system apply -f deploy/gates/flowbench-job.yaml
@@ -4506,6 +4507,39 @@ docker run -d --rm --name wamn-cf-attempts-pg \
 WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
   cargo test --locked -p wamn-run-state --test run_state_live \
   run_state_live -- --ignored --exact --nocapture
+```
+
+### [PLAN-1 / wamn-4u7p.42] effect disposition and continuation
+
+The focused gate proves the immutable attempt/disposition ledgers, automatic
+park without terminalization, release-without-dispatch, resolved outcome
+consumption through normal completion, bounded all-or-none bulk operations,
+separation-of-duties refusal, privileged break-glass attribution, direct-DML
+denial, and run-plane reconciliation from legacy and empty schemas. The live
+tests require a throwaway PostgreSQL superuser URL because they create the
+`wamn_app` role and reset their schemas.
+
+```bash
+cargo test --locked -p wamn-run-state --lib
+cargo test --locked -p wamn-schema-control run_plane
+cargo test --locked -p wamn-ctl
+cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+cargo test --locked -p wamn-proof-conformance \
+  --test flow_spec_recovery_authority
+
+docker run -d --rm --name wamn-plan1-disposition-pg \
+  -p 127.0.0.1:15626:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+# Wait for PostgreSQL to complete its initialization restart.
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15626/wamn \
+  cargo test --locked -p wamn-run-state --test disposition_live \
+  disposition_live -- --ignored --exact --nocapture
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15626/postgres \
+  cargo test --locked -p wamn-ctl --test effect_disposition_live \
+  effect_disposition_break_glass_and_view_live -- --ignored --exact --nocapture
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15626/postgres \
+  cargo test --locked -p wamn-ctl --test run_plane_live \
+  run_plane_reconcile_live -- --exact --nocapture
 ```
 
 ### [PLAN-1 / wamn-4u7p.24] FLOW-SPEC recovery authority
