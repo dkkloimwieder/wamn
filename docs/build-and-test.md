@@ -3580,6 +3580,96 @@ WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:wamn@127.0.0.1:5473/wamn \
 docker stop wamn-ftfc2-pg
 ```
 
+### [5 / wamn-ctc8.10] management surface in-cluster rollout
+
+Deploys the wamn-ctc8.8 surface into the kind cluster and proves it from an
+OFF-cluster client. Two things the bead's own gate does not cover, because that
+gate runs against a throwaway postgres it provisions from scratch:
+
+1. **Storage.** The adapter's startup authority probe hard-requires
+   `catalog.{flow_drafts,validated_flow_drafts,draft_safe_connection_grants,
+   authoring_command_audit}` plus
+   `<run-schema>.{authoring_report_reservations,authoring_suite_case_facts,
+   authoring_suite_reports}`. `wamn-ctl reconcile-run-plane` installs ALL of
+   them additively — the catalog tables included (`CreateCatalogTable` actions)
+   — so publish-catalog is not needed for this. `catalog` is one schema shared
+   by every project schema in the database, so one run covers them all.
+2. **A correctly-scoped author credential.** The probe REFUSES to serve unless
+   the login role is unprivileged, a member of nothing but
+   `wamn_scenario_author`, denied `wamn_app`, and owns nothing in `catalog` or
+   the run schema. A mis-scoped Secret crash-loops instead of serving.
+
+OPERATOR PRECONDITIONS — neither is self-serviceable, and the Deployment cannot
+start without the first:
+
+* **`wamn-system-db` Secret** (key `url`). Recorded as operator-provided by both
+  `deploy/platform/scenario-worker.yaml` and `event-reader.example.yaml` ("no
+  chart ships it"). `serve()` connects it before the authority probe runs.
+* **The `identity` schema in the T1 system database**
+  (`identity.principals` / `local_credentials` / `project_roles` / `pats`,
+  `deploy/sql/system-schema.sql`). Required for `POST /login` and for the
+  attribution `POST /authoring` records. The T1 apply recipe in
+  [D6 / wamn-q3n.3] predates wamn-ctc8.6/.7: it drops and recreates only
+  `registry, provisioning`, so applying it whole is NOT additive against a live
+  system database — apply the `identity` slice on its own instead.
+  `identity.project_roles` carries an FK to `registry.projects (org, id)`, so
+  the served (org, project) needs its `registry.orgs` + `registry.projects` rows
+  first (`wamn-ctl provision-org` / `provision-project-env`).
+
+```bash
+docker build --target scenario-worker -t wamn-scenario-worker:dev .
+docker build --target ctl -t wamn-ctl:dev .
+kind load docker-image wamn-scenario-worker:dev wamn-ctl:dev --name wamn
+
+# Storage. Read the --dry-run plan FIRST: every action must be a Create*,
+# AddColumn, Repair*, or Ensure* — a Drop/Truncate means STOP. Jobs are
+# immutable, so delete before re-applying.
+kubectl -n wamn-system delete job ctc810-runplane --ignore-not-found
+kubectl -n wamn-system apply -f <reconcile-run-plane Job, --schema wamn_run, --dry-run>
+kubectl -n wamn-system logs job/ctc810-runplane
+# then re-apply the same Job without --dry-run
+
+# The dedicated author login (NEW role; password generated into a mode-600 file,
+# never echoed, and the SQL shredded afterwards):
+#   CREATE ROLE <role> LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+#     NOREPLICATION NOBYPASSRLS PASSWORD '<generated>';
+#   GRANT wamn_scenario_author TO <role>;
+kubectl -n wamn-system create secret generic wamn-authoring-<org>--<project>--<env> \
+  --from-file=url=<mode-600 file holding the postgres:// URL>
+
+kubectl -n wamn-system apply -f deploy/platform/scenario-worker.yaml
+kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=180s
+
+# Off-cluster proof. kubectl port-forward on this kind cluster dies on every
+# connection close, so reach the surface through a temp NodePort on a kind node's
+# docker IP. kube-proxy needs a few seconds to program it — the first probe
+# legitimately refuses. Delete the NodePort afterwards.
+kubectl -n wamn-system create service nodeport ctc810-verify-nodeport \
+  --tcp=8088:8088 --node-port=31088
+kubectl -n wamn-system patch svc ctc810-verify-nodeport \
+  -p '{"spec":{"selector":{"app":"scenario-worker"}}}'
+NODE_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wamn-worker)
+# (a) tokenless -> byte-exact 403 {"kind":"authorization-denied"}
+curl -sS -o /dev/stdout -w ' %{http_code}\n' -X POST "http://$NODE_IP:31088/authoring"
+# (b) POST /login  -> {"token":"wamn_pat_<16 hex>_<64 hex>","expires_at":...}
+# (c) authenticated save-flow-draft -> 200 + one attributed row:
+#     SET app.tenant='<tenant>';
+#     SELECT command_kind, principal_subject, effective_role, target_ref
+#       FROM catalog.authoring_command_audit;
+# (d) the pod log must contain NO secret/PAT material.
+kubectl -n wamn-system delete svc ctc810-verify-nodeport
+```
+
+⚠️ `reconcile-run-plane` against the deployed `wamn_run` fixture stops at
+`BackfillEffectAttempts` with `legacy-effect-attempt-incomplete`
+(`crates/schema/control/src/run_plane.rs:1554`): the deployed `node_runs` rows
+predate the wamn-4u7p effect-attempt era and carry no complete attempt fact set,
+so the guard refuses to synthesize provenance rather than fabricate it. That is
+the correct refusal, and it lands AFTER every authoring table and privilege in
+the plan — so the management surface's storage requirement is fully satisfied
+even though the run exits non-zero. Converging the effect-attempt lineage on
+that legacy fixture needs its own bead.
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md
