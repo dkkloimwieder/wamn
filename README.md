@@ -33,6 +33,8 @@ services/               native deployable Rust services
 
 crates/                 shared Rust workspace packages
   # shared, non-deployable packages grouped by bounded context:
+  authoring/
+    model               wamn-authoring-model: public commands and projections
   platform/
     component-policy    pure component-import and grant policy
     runtime             shared engine, plugins, WIT, and metrics

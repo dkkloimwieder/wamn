@@ -33,6 +33,7 @@ docs-of-record follow. One doc per subsystem, each with a predictable name.
 
 | Subsystem group | Files |
 |---|---|
+| Authoring | [authoring-surface.md](authoring/authoring-surface.md), [authoring-surface.schema.json](contracts/authoring-surface.schema.json) |
 | Catalog / schema | [catalog-model.md](schema/catalog-model.md), [app-schema.md](schema/app-schema.md), [schema-lifecycle.md](schema/schema-lifecycle.md), [ddl-compiler.md](schema/ddl-compiler.md), [migration-engine.md](schema/migration-engine.md), [rls-builder.md](schema/rls-builder.md), [seed-data.md](schema/seed-data.md), [catalog-model.schema.json](contracts/catalog-model.schema.json) |
 | Execution | [flow-schema.md](execution/flow-schema.md), [flow-runner.md](execution/flow-runner.md), [node-library.md](execution/node-library.md), [run-queue.md](execution/run-queue.md), [run-state.md](execution/run-state.md), [wamn-node-design-notes.md](execution/wamn-node-design-notes.md), [wamn-node.wit](contracts/wamn-node.wit), [flow-schema.schema.json](contracts/flow-schema.schema.json), [wamn-node-manifest.schema.json](contracts/wamn-node-manifest.schema.json) |
 | Node supply chain | [builder.md](platform/builder.md) |

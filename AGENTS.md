@@ -107,7 +107,7 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 ## Repository structure
 
 - `services/{host,node-host,ctl,dispatcher,executor,scenario-worker,builder,cdc-reader,waker}` — independently deployable binaries and their service-owned integration tests.
-- `crates/{catalog,control,data,events,execution,identity,node,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
+- `crates/{authoring,catalog,control,data,events,execution,identity,node,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
 - `components/{execution,ingress,nodes}` — production wasm32-wasip2 guests; reusable test and example guests live under `components/{fixtures,samples}`.
 - `tests/{orchestrator,conformance,integration,system}` — proof owners, from orchestration helpers and static conformance through integration and system gates.
 - `test-support/{harness,fixtures,infrastructure}` — shared proof support that is not itself a deployable or proof owner.

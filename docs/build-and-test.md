@@ -213,7 +213,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **49 root + 29 component packages**. The selection
+selection for the current **50 root + 29 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -222,10 +222,10 @@ The selected package roots are:
 
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
-| fast developer/native | 39 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
+| fast developer/native | 40 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
 | product components | 0 | 7 | `api-gateway`, `evaluate-specs`, `flow-http`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
-| contract/conformance | 12 | 0 | all 11 contract packages plus `wamn-proof-conformance` |
-| full CI | 49 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| contract/conformance | 13 | 0 | all 12 contract packages plus `wamn-proof-conformance` |
+| full CI | 50 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
 | deployed-system proof | 16 | 29 | deployable native/proof owners plus every guest proof input and `node-ts` |
 | release | 10 | 7 | every package classified `deployable: true` |
 
@@ -263,7 +263,7 @@ membership never constitutes deployed proof or release admission.
 There are no `default-members` in either virtual workspace. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select all 49 root members. Bare `cargo test` uses each package's default
+  select all 50 root members. Bare `cargo test` uses each package's default
   test targets.
 - From `components/`, the same bare commands select all 29 component members.
   The production guest build remains
@@ -841,6 +841,32 @@ until docker exec wamn-dbstate-proof pg_isready -U postgres; do sleep 1; done
 WAMN_DB_STATE_TEST_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55439/postgres \
   cargo test -p wamn-scenario-runtime --test db_state_live -- --ignored --nocapture
 docker rm -f wamn-dbstate-proof
+```
+
+#### [PLAN-6A / wamn-ftfc.13] public authoring contract
+
+`wamn-authoring-model` is the pure, frontend-neutral command and projection
+contract used by Git, CLI, API, and future visual clients. The package gate
+pins every command/result/refusal shape, rejects unversioned and privileged or
+frontend-specific fields, and keeps stable node/branch/full-edge identity plus
+explicit observation states in the generated JSON Schema.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-13 \
+  cargo test --locked --offline -p wamn-authoring-model
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-13 \
+  cargo clippy --locked --offline -p wamn-authoring-model \
+  --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-13 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test package_architecture --test workspace_tiers
+cargo fmt -p wamn-authoring-model --check
+
+# Regenerate after changing public types; the package drift test pins the bytes.
+CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-13 \
+  cargo run --locked --offline -p wamn-authoring-model \
+  --example print-authoring-surface-schema \
+  > docs/contracts/authoring-surface.schema.json
 ```
 
 #### [PLAN-6A / wamn-ftfc.11] flow-authoring loop

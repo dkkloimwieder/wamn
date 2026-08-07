@@ -1939,6 +1939,9 @@ enumerates the frontend-neutral editor contract; `wamn-ftfc.14` supplies the hea
 checkout CLI; `wamn-ma5` publishes the stable-node/stable-edge suite and coverage projection
 and proves the loop without frontend code. The Studio overlay (`wamn-b454.4`) later renders
 that same projection rather than defining another model.
+The `.13` contract is the pure `wamn-authoring-model` package plus its generated public JSON
+Schema and normative authoring-surface documentation; it defines data, not a transport or
+frontend runtime.
 
 **Four parts**
 - **a. The management plane** — an org-scoped API over schema, flows, attachments,
@@ -2133,7 +2136,7 @@ So:
 - **The run is ordinary and durable.** It pins the applied catalog version (the schema it
   runs against) and the draft artifact hash, so it is reproducible, and the tested bytes
   are byte-identical to what publishing deploys.
-- **Exposure reuses the studio attachment** — pre-confirmed, dev only. The invocation names
+- **Exposure reuses the authoring attachment** — pre-confirmed, dev only. The invocation names
   the validated draft identity directly instead of resolving executable membership through
   `release_flows`. Draft lineage is a closed source pair:
   `runs.trigger_source = 'scenario-draft'` and
@@ -2186,7 +2189,7 @@ edit        change the hold-threshold expression
 validate    §3 predicates pass                        pure, negligible
 hash        new bytes → new draft artifact
 bundle      unchanged → composition cache hit         no work
-draft-run   studio attachment, dev env, real dev Postgres
+draft-run   authoring attachment, dev env, real dev Postgres
 observe     2 holds created; per-node emissions in the run view
 ```
 
@@ -2296,7 +2299,7 @@ laterally.
 | Flag | dev | prod | Widens? |
 |---|---|---|---|
 | `draft_runs_enabled` | yes | no | **yes — an admission capability** (see below) |
-| `auto_confirm_activation` | **studio attachment only** | no | yes if unscoped — must not cover http/internal/cron |
+| `auto_confirm_activation` | **authoring attachment only** | no | yes if unscoped — must not cover http/internal/cron |
 | `auto_cancel_on_publish` | yes | no | no — cancels your own parked runs |
 | `capture.mode` | `full` | `preview` / sampled | not capability, but data-at-rest — decide with retention |
 
@@ -2327,7 +2330,7 @@ And the two execution modes must not become interchangeable product concepts:
 | **Draft execution** | real dev-environment effects through an unpublished artifact |
 
 Resource limits (dispatch budgets, deadlines, fuel, memory) protect against **author
-error**, which is a dev phenomenon — so the studio attachment carries real limits, arguably
+error**, which is a dev phenomenon — so the authoring attachment carries real limits, arguably
 stricter than production's. The temptation runs the other way and is worth resisting
 explicitly.
 

@@ -1,0 +1,11 @@
+[package]
+name = "wamn-authoring-model"
+description = "Frontend-neutral, versioned authoring command and projection contracts."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+schemars = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }

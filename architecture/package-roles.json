@@ -24,6 +24,15 @@
     },
     {
       "workspace": "root",
+      "name": "wamn-authoring-model",
+      "manifest_path": "crates/authoring/model/Cargo.toml",
+      "role": "contract",
+      "target_class": "shared",
+      "bounded_context": "authoring",
+      "deployable": false
+    },
+    {
+      "workspace": "root",
       "name": "wamn-builder",
       "manifest_path": "services/builder/Cargo.toml",
       "role": "native",

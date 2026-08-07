@@ -1,0 +1,1562 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "AuthoringCommand": {
+      "description": "Frontend-independent command inventory for the minimum authoring loop.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/SaveFlowDraft"
+            },
+            "kind": {
+              "enum": [
+                "save-flow-draft"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/ValidateDraft"
+            },
+            "kind": {
+              "enum": [
+                "validate"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/DraftRun"
+            },
+            "kind": {
+              "enum": [
+                "draft-run"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/SuiteRun"
+            },
+            "kind": {
+              "enum": [
+                "suite-run"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/PublishValidatedDraft"
+            },
+            "kind": {
+              "enum": [
+                "publish"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "input": {
+              "$ref": "#/definitions/AuthoringReportQuery"
+            },
+            "kind": {
+              "enum": [
+                "suite-projection"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "input",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringCommandKind": {
+      "description": "Stable command names used to attribute a refusal without parsing prose.",
+      "enum": [
+        "save-flow-draft",
+        "validate",
+        "draft-run",
+        "suite-run",
+        "publish",
+        "suite-projection"
+      ],
+      "type": "string"
+    },
+    "AuthoringOutcome": {
+      "description": "A successful typed result or a typed product refusal.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "completed"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/AuthoringSuccess"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "enum": [
+                "refused"
+              ],
+              "type": "string"
+            },
+            "value": {
+              "$ref": "#/definitions/CommandRefusal"
+            }
+          },
+          "required": [
+            "status",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringRefusal": {
+      "description": "Product refusals; infrastructure faults remain outside this taxonomy.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "authorization-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "unsupported-contract-version"
+              ],
+              "type": "string"
+            },
+            "requested": {
+              "type": "string"
+            },
+            "supported": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "requested",
+            "supported"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "actual_revision": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "expected_revision": {
+              "format": "uint64",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "kind": {
+              "enum": [
+                "revision-conflict"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "expected_revision",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "resource-not-found"
+              ],
+              "type": "string"
+            },
+            "resource": {
+              "$ref": "#/definitions/ResourceKind"
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "resource"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "issues": {
+              "items": {
+                "$ref": "#/definitions/ValidationIssue"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "invalid-draft"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "issues",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "catalog-drift"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "unresolved-nodes"
+              ],
+              "type": "string"
+            },
+            "node_types": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "node_types"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "validated-draft-drift"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connection_names": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "draft-connections-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "connection_names",
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "publish-blocked-by-suite"
+              ],
+              "type": "string"
+            },
+            "report_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "report_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "publish-executable-drift"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "publish-blocked-by-nonterminal-runs"
+              ],
+              "type": "string"
+            },
+            "run_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "run_ids"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "AuthoringReportQuery": {
+      "additionalProperties": false,
+      "description": "Query a durable suite report projection by stable identity.",
+      "properties": {
+        "report-id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        }
+      },
+      "required": [
+        "report-id",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "AuthoringRequest": {
+      "additionalProperties": false,
+      "description": "One idempotent client command.",
+      "properties": {
+        "command": {
+          "$ref": "#/definitions/AuthoringCommand"
+        },
+        "command-id": {
+          "description": "Client-generated correlation and exact-retry identity.",
+          "type": "string"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command",
+        "command-id",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringResponse": {
+      "additionalProperties": false,
+      "description": "Result or typed refusal for one command identity.",
+      "properties": {
+        "command-id": {
+          "type": "string"
+        },
+        "outcome": {
+          "$ref": "#/definitions/AuthoringOutcome"
+        },
+        "schema-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "command-id",
+        "outcome",
+        "schema-version"
+      ],
+      "type": "object"
+    },
+    "AuthoringScope": {
+      "additionalProperties": false,
+      "description": "Project and environment selected by a client.\n\nOrganization and principal are authenticated adapter context, not fields a client may assert in this document.",
+      "properties": {
+        "environment": {
+          "type": "string"
+        },
+        "project-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "environment",
+        "project-id"
+      ],
+      "type": "object"
+    },
+    "AuthoringSuccess": {
+      "description": "The successful result paired with each command.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "save-flow-draft"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/DraftIdentity"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "validate"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/ValidatedDraftIdentity"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "draft-run"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/DraftRunReceipt"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "suite-run"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/SuiteRunReceipt"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "publish"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/PublishedFlowIdentity"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "enum": [
+                "suite-projection"
+              ],
+              "type": "string"
+            },
+            "result": {
+              "$ref": "#/definitions/SuiteProjectionState"
+            }
+          },
+          "required": [
+            "command",
+            "result"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "BranchCoverageProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "$ref": "#/definitions/BranchIdentity"
+        },
+        "coverage": {
+          "$ref": "#/definitions/CoverageState"
+        }
+      },
+      "required": [
+        "branch",
+        "coverage"
+      ],
+      "type": "object"
+    },
+    "BranchIdentity": {
+      "additionalProperties": false,
+      "description": "Stable identity of one authored branch: source node plus emitted port.",
+      "properties": {
+        "from-node-id": {
+          "type": "string"
+        },
+        "from-port": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from-node-id",
+        "from-port"
+      ],
+      "type": "object"
+    },
+    "CaseResultProjection": {
+      "additionalProperties": false,
+      "description": "One stored case's stable result and failure link.",
+      "properties": {
+        "case-id": {
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FailureDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/PassFail"
+        },
+        "run-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "case-id",
+        "outcome",
+        "run-id"
+      ],
+      "type": "object"
+    },
+    "CatalogIdentity": {
+      "additionalProperties": false,
+      "description": "Applied catalog identity pinned by validation.",
+      "properties": {
+        "catalog-id": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "catalog-id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "CommandRefusal": {
+      "additionalProperties": false,
+      "description": "A refusal attributed to an exact command kind.",
+      "properties": {
+        "command": {
+          "$ref": "#/definitions/AuthoringCommandKind"
+        },
+        "reason": {
+          "$ref": "#/definitions/AuthoringRefusal"
+        }
+      },
+      "required": [
+        "command",
+        "reason"
+      ],
+      "type": "object"
+    },
+    "CoverageState": {
+      "description": "Explicit coverage state; absence never means uncovered.",
+      "enum": [
+        "covered",
+        "not-covered",
+        "not-observed",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "DraftIdentity": {
+      "additionalProperties": false,
+      "description": "Stable identity returned after a draft save.",
+      "properties": {
+        "draft-id": {
+          "type": "string"
+        },
+        "flow-id": {
+          "type": "string"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "draft-id",
+        "flow-id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "DraftRevisionRef": {
+      "additionalProperties": false,
+      "description": "Select one exact mutable draft revision.",
+      "properties": {
+        "draft-id": {
+          "type": "string"
+        },
+        "revision": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "draft-id",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "DraftRun": {
+      "additionalProperties": false,
+      "description": "Execute one input against an exact validated draft.",
+      "properties": {
+        "input": true,
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "input",
+        "scope",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "DraftRunReceipt": {
+      "additionalProperties": false,
+      "description": "Receipt for one admitted draft run.",
+      "properties": {
+        "run-id": {
+          "type": "string"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "run-id",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "DraftSuiteProjection": {
+      "additionalProperties": false,
+      "description": "Final client-renderable result for one draft suite.",
+      "properties": {
+        "branches": {
+          "items": {
+            "$ref": "#/definitions/BranchCoverageProjection"
+          },
+          "type": "array"
+        },
+        "cases": {
+          "items": {
+            "$ref": "#/definitions/CaseResultProjection"
+          },
+          "type": "array"
+        },
+        "draft": {
+          "$ref": "#/definitions/ValidatedDraftIdentity"
+        },
+        "edges": {
+          "items": {
+            "$ref": "#/definitions/EdgeCoverageProjection"
+          },
+          "type": "array"
+        },
+        "edit-to-run-ms": {
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "execution-id": {
+          "type": "string"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/definitions/NodeResultProjection"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "$ref": "#/definitions/SuiteOutcome"
+        },
+        "projection-version": {
+          "enum": [
+            "0.1"
+          ],
+          "type": "string"
+        },
+        "report-id": {
+          "type": "string"
+        },
+        "suite": {
+          "$ref": "#/definitions/SuiteRef"
+        }
+      },
+      "required": [
+        "branches",
+        "cases",
+        "draft",
+        "edges",
+        "execution-id",
+        "nodes",
+        "outcome",
+        "projection-version",
+        "report-id",
+        "suite"
+      ],
+      "type": "object"
+    },
+    "EdgeCoverageProjection": {
+      "additionalProperties": false,
+      "properties": {
+        "coverage": {
+          "$ref": "#/definitions/CoverageState"
+        },
+        "edge": {
+          "$ref": "#/definitions/EdgeIdentity"
+        }
+      },
+      "required": [
+        "coverage",
+        "edge"
+      ],
+      "type": "object"
+    },
+    "EdgeIdentity": {
+      "additionalProperties": false,
+      "description": "Stable identity of one authored edge.\n\n`to_port` is required on the wire and may be null, preserving the full canonical `(from, from-port, to, to-port)` tuple without omission rules.",
+      "properties": {
+        "from-node-id": {
+          "type": "string"
+        },
+        "from-port": {
+          "type": "string"
+        },
+        "to-node-id": {
+          "type": "string"
+        },
+        "to-port": {
+          "$ref": "#/definitions/EdgeInputPort"
+        }
+      },
+      "required": [
+        "from-node-id",
+        "from-port",
+        "to-node-id",
+        "to-port"
+      ],
+      "type": "object"
+    },
+    "EdgeInputPort": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Required, nullable target-port component of an edge identity."
+    },
+    "FailureDetail": {
+      "additionalProperties": false,
+      "description": "Failure classification; clients never need to parse an error message.",
+      "properties": {
+        "kind": {
+          "$ref": "#/definitions/FailureKind"
+        },
+        "node-id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
+    },
+    "FailureKind": {
+      "enum": [
+        "terminal",
+        "retry-exhausted",
+        "invalid-input",
+        "runaway-budget",
+        "cancelled",
+        "infrastructure-fault"
+      ],
+      "type": "string"
+    },
+    "NodeOutcome": {
+      "enum": [
+        "passed",
+        "failed",
+        "not-observed",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "NodeResultProjection": {
+      "additionalProperties": false,
+      "description": "Aggregate result for one stable node across the suite.",
+      "properties": {
+        "failed-case-ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "node-id": {
+          "type": "string"
+        },
+        "observed-case-ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "outcome": {
+          "$ref": "#/definitions/NodeOutcome"
+        }
+      },
+      "required": [
+        "failed-case-ids",
+        "node-id",
+        "observed-case-ids",
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "PassFail": {
+      "enum": [
+        "passed",
+        "failed"
+      ],
+      "type": "string"
+    },
+    "PendingReportReason": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "awaiting-admission"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "capture-interrupted"
+              ],
+              "type": "string"
+            },
+            "run_ids": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "run_ids"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "PendingSuiteProjection": {
+      "additionalProperties": false,
+      "description": "A report reservation that cannot yet finalize without fabricating evidence.",
+      "properties": {
+        "captured-case-ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "execution-id": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/definitions/PendingReportReason"
+        },
+        "report-id": {
+          "type": "string"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "captured-case-ids",
+        "execution-id",
+        "reason",
+        "report-id",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "PublishValidatedDraft": {
+      "additionalProperties": false,
+      "description": "Publish exactly the executable proven by a successful suite report.",
+      "properties": {
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        },
+        "successful-report-id": {
+          "type": "string"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "scope",
+        "successful-report-id",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "PublishedFlowIdentity": {
+      "additionalProperties": false,
+      "description": "Immutable identity produced by publishing the tested draft.",
+      "properties": {
+        "artifact-hash": {
+          "type": "string"
+        },
+        "flow-id": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "artifact-hash",
+        "flow-id",
+        "version"
+      ],
+      "type": "object"
+    },
+    "ResourceKind": {
+      "description": "Stable resource categories for typed not-found refusals.",
+      "enum": [
+        "draft",
+        "draft-revision",
+        "validated-draft",
+        "suite",
+        "report"
+      ],
+      "type": "string"
+    },
+    "SaveFlowDraft": {
+      "additionalProperties": false,
+      "description": "Save one flow draft document under optimistic revision control.",
+      "properties": {
+        "definition": {
+          "description": "Exact UTF-8 flow document text. Save does not parse or validate it; [`AuthoringCommand::Validate`] owns that boundary.",
+          "type": "string"
+        },
+        "draft-id": {
+          "type": "string"
+        },
+        "expected-revision": {
+          "description": "Zero creates a draft; a positive value replaces exactly that revision.",
+          "format": "uint64",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "flow-id": {
+          "type": "string"
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        }
+      },
+      "required": [
+        "definition",
+        "draft-id",
+        "expected-revision",
+        "flow-id",
+        "scope"
+      ],
+      "type": "object"
+    },
+    "SuiteExecutionRefusal": {
+      "description": "Typed refusal retained in a finalized suite report.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "undrivable-nodes"
+              ],
+              "type": "string"
+            },
+            "node_types": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "node_types"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "validated-draft-drift"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "connection_names": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "draft-connections-denied"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "connection_names",
+            "kind"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SuiteOutcome": {
+      "description": "Suite completion is either pass/fail or a typed refusal; contradictory `passed + refusal` documents are not representable.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "passed"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "failed"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "refusal": {
+              "$ref": "#/definitions/SuiteExecutionRefusal"
+            },
+            "state": {
+              "enum": [
+                "refused"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "refusal",
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SuiteProjectionState": {
+      "description": "Durable read state for a suite projection.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "not-found"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "report": {
+              "$ref": "#/definitions/PendingSuiteProjection"
+            },
+            "state": {
+              "enum": [
+                "pending"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "report",
+            "state"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "report": {
+              "$ref": "#/definitions/DraftSuiteProjection"
+            },
+            "state": {
+              "enum": [
+                "finalized"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "report",
+            "state"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SuiteRef": {
+      "additionalProperties": false,
+      "description": "Select one stored suite without exposing its storage location.",
+      "properties": {
+        "flow-version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "suite-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flow-version",
+        "suite-id"
+      ],
+      "type": "object"
+    },
+    "SuiteRun": {
+      "additionalProperties": false,
+      "description": "Execute a stored suite against an exact validated draft.",
+      "properties": {
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        },
+        "suite": {
+          "$ref": "#/definitions/SuiteRef"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "scope",
+        "suite",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "SuiteRunReceipt": {
+      "additionalProperties": false,
+      "description": "Receipt for one durable suite command.",
+      "properties": {
+        "execution-id": {
+          "type": "string"
+        },
+        "report-id": {
+          "type": "string"
+        },
+        "validated-draft": {
+          "$ref": "#/definitions/ValidatedDraftRef"
+        }
+      },
+      "required": [
+        "execution-id",
+        "report-id",
+        "validated-draft"
+      ],
+      "type": "object"
+    },
+    "ValidateDraft": {
+      "additionalProperties": false,
+      "description": "Validate one exact saved revision for the selected stored suite.",
+      "properties": {
+        "draft": {
+          "$ref": "#/definitions/DraftRevisionRef"
+        },
+        "scope": {
+          "$ref": "#/definitions/AuthoringScope"
+        },
+        "suite": {
+          "$ref": "#/definitions/SuiteRef"
+        }
+      },
+      "required": [
+        "draft",
+        "scope",
+        "suite"
+      ],
+      "type": "object"
+    },
+    "ValidatedDraftIdentity": {
+      "additionalProperties": false,
+      "description": "Public pins for the exact executable accepted by validation.",
+      "properties": {
+        "artifact-hash": {
+          "type": "string"
+        },
+        "catalog": {
+          "$ref": "#/definitions/CatalogIdentity"
+        },
+        "draft": {
+          "$ref": "#/definitions/DraftIdentity"
+        },
+        "environment": {
+          "type": "string"
+        },
+        "execution-bundle-hash": {
+          "type": "string"
+        },
+        "runtime-flow-version": {
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": "integer"
+        },
+        "validated-draft-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact-hash",
+        "catalog",
+        "draft",
+        "environment",
+        "execution-bundle-hash",
+        "runtime-flow-version",
+        "validated-draft-id"
+      ],
+      "type": "object"
+    },
+    "ValidatedDraftRef": {
+      "additionalProperties": false,
+      "description": "An opaque reference to the exact validated executable.",
+      "properties": {
+        "validated-draft-id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "validated-draft-id"
+      ],
+      "type": "object"
+    },
+    "ValidationIssue": {
+      "additionalProperties": false,
+      "description": "Machine-readable validation issue; `message` is explanatory only.",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "severity": {
+          "$ref": "#/definitions/ValidationSeverity"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "path",
+        "severity"
+      ],
+      "type": "object"
+    },
+    "ValidationSeverity": {
+      "enum": [
+        "error",
+        "warning"
+      ],
+      "type": "string"
+    }
+  },
+  "description": "A complete request or response document on the authoring contract.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/definitions/AuthoringRequest"
+        },
+        "document": {
+          "enum": [
+            "request"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "document"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "properties": {
+        "body": {
+          "$ref": "#/definitions/AuthoringResponse"
+        },
+        "document": {
+          "enum": [
+            "response"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "body",
+        "document"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "AuthoringDocument"
+}
