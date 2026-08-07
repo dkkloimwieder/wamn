@@ -412,6 +412,9 @@ fn accepted_success_label(
             Some(ScenarioRefusal::UndrivableNodes { node_types }) => bail!(
                 "scenario-worker refusal did not name expected node type {expected_node_type:?}: {node_types:?}"
             ),
+            Some(other) => bail!(
+                "scenario-worker refused with {other:?} instead of an undrivable-node refusal naming {expected_node_type:?}"
+            ),
             None => bail!("scenario-worker unexpectedly executed an undrivable suite"),
         },
         ExpectedExit::Failure(_) => bail!("expected a scenario-worker process failure"),
