@@ -540,6 +540,30 @@ mutated: resolution dispositions it, and any later authorized re-execution
 is a successor attempt with typed lineage — never a substitution of
 authority on the original.
 
+**Disposition authority is settled (wamn-ctc8.2).** Resolution is stronger
+than park/release because it asserts an external outcome and may let the
+workflow continue from that assertion; operational access to a parked run
+does not imply that authority.
+
+| Principal | Manual park/release | Resolve |
+|---|---|---|
+| **System** | Automatic park only, under the execution protocol | No operator assertion |
+| **Project deployer** | Its project | No |
+| **Project admin** | Its project | Its project |
+| **Platform admin** | Audited break-glass and cross-project | Audited break-glass and cross-project |
+| **Author/publisher by authorship alone** | No implicit grant | No self-resolution; only a separately audited platform break-glass action may override separation of duties |
+
+Single-attempt operations name the immutable attempt id. Bulk park/release is
+project-scoped. Bulk resolve is admin-only and must select a connection **and**
+generation plus a bounded time window; a flow selector may narrow that set but
+never replace those required bounds. Before applying any disposition, the
+bulk request materializes the exact immutable attempt ids and authorization
+covers that set, so concurrent query drift cannot change what the operator
+approved. Every resolution records the
+principal and effective role, typed basis, evidence reference, exact attempt
+set, and correlation id. Resolution appends a disposition; it never rewrites
+the attempt, grants compensation or Replay, or silently re-executes anything.
+
 **Parked, not abandoned:** the semantic-strengthening machinery
 (`stable-key-dedup-v1` attestation, evidence, revalidation cadence and
 maximum validity), the payload-store buildout and the sustained
@@ -1789,6 +1813,17 @@ pinning WAL independently, so the stall-and-invalidate failure the event-plane d
 multiplies per project and needs per-slot monitoring (item 11); and connection pools are
 per database, so pool sizing does not amortize.
 
+### Disposition role binding — decided
+
+The v1 effect-disposition matrix in item 1 binds at the project tier: a project
+deployer or admin may manually park/release in that project, while only the
+project admin may resolve. Platform admin is the separately audited
+break-glass and cross-project authority. Author or publisher identity grants
+neither permission and cannot be used to self-resolve an attempt. This split
+keeps routine recovery operations project-local while reserving an assertion
+about an external outcome for the stronger role; item 1 owns the immutable
+attempt-set and audit requirements.
+
 ### Still open here
 
 - **Org-tier roles.** A client admin who requests a project is **org-scoped** — above any
@@ -1888,6 +1923,8 @@ own consumption surfaces.
   carried "run-status surface scope" as an open question; post-POC it is this item's core,
   because a post-release failure is
   invisible to the caller by construction and SRE dashboards do not serve an author.*
+  Visibility does not grant disposition authority: the item 1/item 5 matrix
+  applies, including the prohibition on author/publisher self-resolution.
 - **d. Node library breadth** — the error and retry semantics an author can reason about,
   and the palette the studio presents. **Node *authoring* moved to item 2**: composing
   flows and writing components are different products, and conflating them under-served
@@ -2639,7 +2676,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
 | ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement plus live semantic-attestation verdict in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
 | ~~What evidence, freshness, and invalidation rules apply per semantic-attestation type~~ | **Settled (wamn-ko5r.4):** each strengthening connection claim declares bounded evidence, a maximum validity window, periodic revalidation, semantic scope, and material invalidation inputs; missing policy means the conservative default only. HTTP `0.1` `stable-key-dedup-v1` requires time-bounded end-to-end evidence over every admitted proxy and route, with scope changes or expiry failing explicitly. DNS rotation is not proof; resolution outside the attested service identity/domain refuses. No expiry, revocation, or invalidation may silently downgrade to `never-replay`. | — |
-| **Who holds the v1 effect-disposition verbs, and at what granularity?** | Decide the role-by-verb matrix for park/release and resolve, single and bulk scopes and filters, separation of duties, and the audit identity and typed basis; attempts remain immutable and ordinary authors receive no implicit self-approval | 1, 5, 6A |
+| ~~Who holds the v1 effect-disposition verbs, and at what granularity?~~ | **Settled (wamn-ctc8.2):** automatic park is system-owned; project deployers/admins may manually park/release, project admins may resolve, and platform admins hold audited break-glass/cross-project authority. Bulk park/release is project-scoped; bulk resolve is admin-only, materializes immutable attempt ids, and requires connection + generation + bounded window (flow only narrows). Every resolution records principal, effective role, typed basis, evidence reference, exact attempt set, and correlation id; authors/publishers cannot self-resolve except through separately audited platform break-glass. | — |
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
