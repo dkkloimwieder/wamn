@@ -213,7 +213,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **51 root + 29 component packages**. The selection
+selection for the current **51 root + 31 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -225,8 +225,8 @@ The selected package roots are:
 | fast developer/native | 41 | 0 | every root production package; excludes the 7 proof/support packages and 3 POCs |
 | product components | 0 | 7 | `api-gateway`, `evaluate-specs`, `flow-http`, `flowrunner`, `materializer`, `normalize-receipt`, `time-shift` |
 | contract/conformance | 13 | 0 | all 12 contract packages plus `wamn-proof-conformance` |
-| full CI | 51 | 29 | every Cargo member plus the classified non-Cargo `node-ts` sample |
-| deployed-system proof | 16 | 29 | deployable native/proof owners plus every guest proof input and `node-ts` |
+| full CI | 51 | 31 | every Cargo member plus the classified non-Cargo `node-ts` sample |
+| deployed-system proof | 16 | 31 | deployable native/proof owners plus every guest proof input and `node-ts` |
 | release | 10 | 7 | every package classified `deployable: true` |
 
 Package roots are selection inputs, not hand-maintained dependency closures.
@@ -265,7 +265,7 @@ There are no `default-members` in either virtual workspace. Consequently:
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
   select all 51 root members. Bare `cargo test` uses each package's default
   test targets.
-- From `components/`, the same bare commands select all 29 component members.
+- From `components/`, the same bare commands select all 31 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
 - Full CI keeps three package/artifact steps—every root target, every component

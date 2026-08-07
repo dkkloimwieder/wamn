@@ -14,7 +14,7 @@
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 29
+      "package_count": 31
     },
     "non_cargo_inputs": [
       "components/samples/node-ts"
@@ -163,6 +163,8 @@
         "capability-class-http",
         "capability-class-postgres",
         "capability-class-pure",
+        "connection-http-custom",
+        "connection-http-standard",
         "cred-probe",
         "disposition-node",
         "evaluate-specs",
@@ -218,6 +220,8 @@
         "capability-class-http",
         "capability-class-postgres",
         "capability-class-pure",
+        "connection-http-custom",
+        "connection-http-standard",
         "cred-probe",
         "disposition-node",
         "evaluate-specs",
@@ -292,7 +296,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 29 component workspace members",
+      "selected_packages": "all 31 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],
