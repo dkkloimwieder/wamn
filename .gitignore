@@ -9,3 +9,8 @@
 /target
 /components/target
 *.wasm
+
+# Client workspace artifacts
+/node_modules/
+/clients/*/node_modules/
+/clients/*/dist/

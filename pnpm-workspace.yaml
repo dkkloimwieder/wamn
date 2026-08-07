@@ -1,0 +1,11 @@
+packages:
+  - clients/*
+
+# Direct and transitive registry releases must age for 24 hours before use.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+
+# Dependency lifecycle scripts are denied unless this list is deliberately
+# changed alongside clients/dependency-policy.json.
+onlyBuiltDependencies: []
+strictDepBuilds: true
