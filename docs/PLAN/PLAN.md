@@ -2269,10 +2269,17 @@ durable-run resources — the worked example makes a real ERP call and writes re
 > Draft execution is a **dev-only, explicitly authorized admission capability**. It may use
 > only the environment's approved connections and capabilities, under real execution limits.
 
-**Sharp edge:** connections reachable by draft runs must be deliberately **draft-safe** —
-sandboxed, explicitly marked for studio use, or gated by an author confirmation proportional
-to their effect. An author iterating against a connection that happens to point at a
-production system is the failure this prevents.
+**Decision (wamn-ftfc.5): draft-safe connection authority is explicit, generation-scoped,
+and default-deny.** The exact immutable connection-instance generation resolved for a draft
+effect requires a revocable `draft-safe` grant from an environment administrator authorized
+for that connection. The grant is environment policy, never portable artifact data: it is
+not inferred from an environment name or hostname, cannot be set by an author, and is never
+inherited by a successor generation. Draft admission checks every currently resolved
+generation, and the effect path resolves and rechecks the exact generation before any effect
+or network access. A missing or revoked grant refuses before access. Author confirmation may
+add friction or narrow use within an existing grant, but it can never create or widen one.
+For the internal author-loop proof, the existing development administrator may install the
+grant; item 5 still gates retained client identity and client-facing exposure.
 
 And the two execution modes must not become interchangeable product concepts:
 
@@ -2697,7 +2704,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Exact-node or capability-class specialization?** | **The load-bearing ambiguity.** Under class packaging a plug may carry unused implementations, adding a node inside a present plug may need no recomposition, and growth inside a plug has blast radius for every bundle using it. 2A must be able to *distinguish* the two, not just measure one | 2A |
 | **Packaging granularity and capability worlds** | The plug boundary is the fault-isolation, patch-blast-radius and revocation unit, not just a cache key; which worlds are composition targets | 2A |
 | ~~Draft retention and cache eviction~~ | **Settled (wamn-ftfc.4):** 6A publishes authoritative draft and retained-run/report roots over the exact artifact, bundle, catalog, captures, and payloads; expiry or deletion removes publishability before zero-root GC; 2A evicts only unrooted bundle-cache entries; published artifacts are outside draft GC. The internal proof retains all draft/report state with no automatic expiry or sweeper | — |
-| **Which connections are draft-safe?** | Draft execution is a real admission capability with real effects; an author iterating against a connection pointing at production is the failure to prevent | 6A, 2B |
+| ~~Which connections are draft-safe?~~ | **Settled (wamn-ftfc.5):** draft access is default-deny and requires a revocable environment-admin grant on the exact immutable connection-instance generation, checked at admission and again before effect or network access. The grant is environment policy, not portable or author-settable, and is neither inferred nor inherited; author confirmation can narrow but never grant. The internal proof may use the existing development administrator while item 5 gates client exposure | — |
 | **Flow-draft loop only, or a project-definition draft workspace?** | 6A's fast loop pins the applied catalog, so schema/connection changes go through ordinary releases unless a provisional definition world is built | 6A |
 | ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1; implementation deferred 2026-08-04:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Both protocols resume behind item 1's reactivation condition | — |
 | **Do custom nodes compose in, or keep D7's signed hop?** | Removes a round trip and preserves memory isolation, but moves the supply-chain signature to the composition | 2D |
