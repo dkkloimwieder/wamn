@@ -2729,7 +2729,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Where does raw SQL's structural close land?** | D8's precondition does not exist; the shipped guard is defeatable by dynamic SQL | 4 |
 | **Do D15's latency SLOs get product sign-off?** | Recorded pending it; never obtained. Until then the synchronous path carries no numeric commitment | 3 |
 | **Does the catalog get a float field type?** | Industrial telemetry is natively float; D11/D12 assume it. Today authors invent a `numeric` scale or hide it in untyped `json`. The recorded ban covers material quantities only | Beyond, but decided earlier |
-| Run-visibility surface scope | A post-release failure is invisible to the caller without it; dashboards do not satisfy it | 6A |
+| ~~Run-visibility surface scope~~ | **Settled (wamn-ftfc.7):** the typed application read model lands first; `wamn-ftfc.11` owns durable report lookup with suite/case outcome, exact draft and applied-catalog lineage, linked run/failure detail, and edit-to-run timing. `wamn-ma5` adds only the thin editor action, pass/fail display, and report link. Until item 5, exposure remains an internal development-administrator adapter, never a public client API | — |
 | Output and error schemas in the release | Contract surface | 7 |
 | Waiter transport | The response path stays provisional | 3 |
 | The deferred constants — idempotency TTL, outcome retention, schema limits, budgets, purge windows, sweep cadence | | 3, 7 |
