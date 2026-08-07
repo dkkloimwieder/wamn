@@ -184,7 +184,7 @@ pub fn lock_catalog_head_sql() -> &'static str {
 pub fn count_nonterminal_release_runs_sql(schema: &str) -> String {
     format!(
         "SELECT count(*) FROM {schema}.runs \
-         WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
+         WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3::integer \
            AND status IN ('dispatched', 'running')"
     )
 }
@@ -444,7 +444,10 @@ mod tests {
         );
         assert!(super::publication_boundary_sql().contains("catalog.publication_boundary"));
         assert!(super::lock_catalog_head_sql().contains("FOR UPDATE"));
-        assert!(super::count_nonterminal_release_runs_sql("app").contains("catalog_version = $3"));
+        assert!(
+            super::count_nonterminal_release_runs_sql("app")
+                .contains("catalog_version = $3::integer")
+        );
         assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
         assert!(super::insert_release_source_sql().contains("DO NOTHING"));
         assert!(super::insert_release_attachment_sql().contains("DO NOTHING"));

@@ -4818,12 +4818,15 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "wamn-catalog",
  "wamn-execution-host",
+ "wamn-flow",
  "wamn-run-state",
  "wamn-runtime",
  "wamn-scenario-catalog",
  "wamn-scenario-model",
  "wamn-scenario-runtime",
+ "wamn-standard-nodes",
  "wash-runtime",
 ]
 
@@ -4912,6 +4915,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tracing",

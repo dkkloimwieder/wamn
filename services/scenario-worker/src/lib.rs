@@ -13,7 +13,7 @@ use wash_runtime::host::allowed_hosts::AllowedHost;
 use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, injected_capabilities,
 };
-use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
+use wamn_run_state::queue::{admit_pinned_triggered_run_sql, lock_pinned_trigger_catalog_head_sql};
 use wamn_run_state::sql::select_completed_node_runs_sql;
 use wamn_run_state::{FailKind as StoredFailKind, RunStatus as StoredRunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
@@ -32,6 +32,75 @@ use wamn_scenario_runtime::{
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
 const DEFAULT_RANDOM_SEED: u64 = 0x7492_5EED_5EED_7492;
+
+const RELEASE_CANDIDATES_SQL: &str = "\
+SELECT h.tenant_id, h.catalog_id, h.applied_catalog_version, h.environment, \
+       rf.flow_id, rf.flow_version, a.graph_json::text, a.graph_hash, \
+       a.artifact_hash, a.interface_bundle_json, a.interface_bundle_hash, \
+       a.component_digests::text, a.occurrence_recovery_json, \
+       a.occurrence_recovery_hash, \
+       (SELECT count(*) FROM jsonb_array_elements(rm.members_json) AS member \
+         WHERE member ->> 'flow-id' = rf.flow_id \
+           AND (member ->> 'flow-version')::int = rf.flow_version \
+           AND member ->> 'artifact-hash' = a.artifact_hash) AS manifest_matches \
+  FROM catalog.catalog_heads AS h \
+  JOIN catalog.release_flows AS rf \
+    ON rf.tenant_id = h.tenant_id AND rf.catalog_id = h.catalog_id \
+   AND rf.catalog_version = h.applied_catalog_version \
+  JOIN catalog.release_manifests AS rm \
+    ON rm.tenant_id = rf.tenant_id AND rm.catalog_id = rf.catalog_id \
+   AND rm.catalog_version = rf.catalog_version \
+  JOIN catalog.flow_artifacts AS a \
+    ON a.tenant_id = rf.tenant_id AND a.flow_id = rf.flow_id \
+   AND a.flow_version = rf.flow_version \
+ WHERE h.tenant_id = $1 AND rf.flow_id = $2 AND rf.flow_version = $3 \
+ ORDER BY h.catalog_id, h.environment, h.applied_catalog_version";
+
+#[derive(Debug, Clone)]
+struct ReleaseCandidate {
+    tenant_id: String,
+    catalog_id: String,
+    catalog_version: i32,
+    environment: String,
+    flow_id: String,
+    flow_version: i32,
+    graph_json: String,
+    graph_hash: String,
+    artifact_hash: String,
+    interface_bundle_json: String,
+    interface_bundle_hash: String,
+    component_digests_json: String,
+    occurrence_recovery_json: Option<String>,
+    occurrence_recovery_hash: Option<String>,
+    manifest_matches: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ReleasePin {
+    catalog_id: String,
+    catalog_version: i32,
+    environment: String,
+    artifact_hash: String,
+    graph_json: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScenarioAdmissionResult {
+    Admitted,
+    MembershipDrift,
+    Duplicate,
+}
+
+impl ScenarioAdmissionResult {
+    fn from_sql(value: &str) -> anyhow::Result<Self> {
+        match value {
+            "admitted" => Ok(Self::Admitted),
+            "membership-drift" => Ok(Self::MembershipDrift),
+            "duplicate" => Ok(Self::Duplicate),
+            other => bail!("unknown scenario admission result {other:?}"),
+        }
+    }
+}
 
 /// Scenario-worker configuration.
 #[derive(Debug, Args)]
@@ -163,6 +232,119 @@ fn parse_allowed_hosts(values: &[String]) -> anyhow::Result<Arc<[AllowedHost]>> 
         .collect::<Result<Vec<_>, _>>()
         .context("parse --allowed-hosts")
         .map(Into::into)
+}
+
+async fn release_candidates(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    flow_version: i32,
+) -> anyhow::Result<Vec<ReleaseCandidate>> {
+    client
+        .query(RELEASE_CANDIDATES_SQL, &[&tenant, &flow_id, &flow_version])
+        .await
+        .context("resolve applied immutable scenario release")?
+        .into_iter()
+        .map(|row| {
+            Ok(ReleaseCandidate {
+                tenant_id: row.try_get(0)?,
+                catalog_id: row.try_get(1)?,
+                catalog_version: row.try_get(2)?,
+                environment: row.try_get(3)?,
+                flow_id: row.try_get(4)?,
+                flow_version: row.try_get(5)?,
+                graph_json: row.try_get(6)?,
+                graph_hash: row.try_get(7)?,
+                artifact_hash: row.try_get(8)?,
+                interface_bundle_json: row.try_get(9)?,
+                interface_bundle_hash: row.try_get(10)?,
+                component_digests_json: row.try_get(11)?,
+                occurrence_recovery_json: row.try_get(12)?,
+                occurrence_recovery_hash: row.try_get(13)?,
+                manifest_matches: row.try_get(14)?,
+            })
+        })
+        .collect()
+}
+
+fn resolve_release_member(
+    tenant: &str,
+    flow_id: &str,
+    flow_version: i32,
+    mut candidates: Vec<ReleaseCandidate>,
+) -> anyhow::Result<ReleasePin> {
+    if candidates.is_empty() {
+        bail!("scenario flow {flow_id}@{flow_version} has no applied immutable release member");
+    }
+    if candidates.len() != 1 {
+        bail!(
+            "scenario flow {flow_id}@{flow_version} has ambiguous applied immutable release membership: {} candidates",
+            candidates.len()
+        );
+    }
+    let candidate = candidates.pop().expect("one release candidate checked");
+    if candidate.tenant_id != tenant
+        || candidate.flow_id != flow_id
+        || candidate.flow_version != flow_version
+        || candidate.catalog_id.is_empty()
+        || candidate.catalog_version <= 0
+        || candidate.environment.is_empty()
+        || candidate.manifest_matches != 1
+    {
+        bail!("scenario flow {flow_id}@{flow_version} has mismatched release membership");
+    }
+    if candidate.occurrence_recovery_json.is_none() || candidate.occurrence_recovery_hash.is_none()
+    {
+        bail!(
+            "scenario flow {flow_id}@{flow_version} has an unverifiable immutable release artifact: canonical occurrence recovery is absent"
+        );
+    }
+    let verified_flow_version = u32::try_from(flow_version)
+        .context("scenario release flow version is not a positive u32")?;
+    let artifact = wamn_catalog::PinnedArtifact::from_storage(
+        tenant,
+        flow_id,
+        verified_flow_version,
+        &candidate.graph_json,
+        &candidate.graph_hash,
+        &candidate.artifact_hash,
+        &candidate.interface_bundle_json,
+        &candidate.interface_bundle_hash,
+        &candidate.component_digests_json,
+        candidate.occurrence_recovery_json.as_deref(),
+        candidate.occurrence_recovery_hash.as_deref(),
+    )
+    .with_context(|| {
+        format!(
+            "scenario flow {flow_id}@{flow_version} has an unverifiable immutable release artifact"
+        )
+    })?;
+    Ok(ReleasePin {
+        catalog_id: candidate.catalog_id,
+        catalog_version: candidate.catalog_version,
+        environment: candidate.environment,
+        artifact_hash: candidate.artifact_hash,
+        graph_json: artifact.flow().to_json(),
+    })
+}
+
+async fn resolve_applied_release_member(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    flow_id: &str,
+    flow_version: i32,
+) -> anyhow::Result<ReleasePin> {
+    let candidates = release_candidates(client, tenant, flow_id, flow_version).await?;
+    resolve_release_member(tenant, flow_id, flow_version, candidates)
+}
+
+fn verify_locked_catalog_version(expected: i32, locked: Option<i32>) -> anyhow::Result<()> {
+    if locked != Some(expected) {
+        bail!(
+            "scenario release head drifted before admission: expected {expected}, found {locked:?}"
+        );
+    }
+    Ok(())
 }
 
 async fn capture_terminal_node(
@@ -354,8 +536,6 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
 
     wash_runtime::init_crypto();
     let database_url = database_url(args)?;
-    let guest = std::fs::read(&args.flowrunner)
-        .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
     let (mut client, connection) = tokio_postgres::connect(&database_url, NoTls)
         .await
         .context("connect scenario catalog")?;
@@ -366,21 +546,10 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
     });
 
     scope_session(&client, &args.tenant, &source_schema).await?;
-    let graph_row = client
-        .query_opt(
-            "SELECT graph_json::text FROM flows \
-             WHERE tenant_id = $1 AND flow_id = $2 AND version = $3",
-            &[&args.tenant, &args.flow_id, &args.flow_version],
-        )
-        .await
-        .context("read scenario flow graph")?
-        .with_context(|| {
-            format!(
-                "flow {}@{} not found in {}",
-                args.flow_id, args.flow_version, source_schema
-            )
-        })?;
-    let graph_json: String = graph_row.get(0);
+    let release =
+        resolve_applied_release_member(&client, &args.tenant, &args.flow_id, args.flow_version)
+            .await?;
+    let graph_json = &release.graph_json;
     let case_rows = client
         .query(
             &wamn_scenario_catalog::sql::select_cases_for_suite_sql(),
@@ -449,6 +618,8 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
 
+    let guest = std::fs::read(&args.flowrunner)
+        .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
     let mut postgres_config = WamnPostgresConfig::from_env();
     postgres_config.database_url = Some(database_url);
     let credentials =
@@ -494,7 +665,7 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         .context("instantiate scenario flowrunner")?;
         if !checked_flow {
             let node_types = host
-                .check_flow(&graph_json)
+                .check_flow(graph_json)
                 .await
                 .context("preflight stored scenario flow")?;
             if !node_types.is_empty() {
@@ -515,16 +686,6 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
         }
 
         scope_session(&client, &args.tenant, &execution_schema).await?;
-        client
-            .execute(
-                "INSERT INTO flows (tenant_id, flow_id, version, active, graph_json) \
-                 VALUES (current_setting('app.tenant', true), $1, $2, false, $3::text::jsonb) \
-                 ON CONFLICT (tenant_id, flow_id, version) DO UPDATE \
-                 SET graph_json = EXCLUDED.graph_json",
-                &[&args.flow_id, &args.flow_version, &graph_json],
-            )
-            .await
-            .context("stage scenario flow graph")?;
         let run_id = format!("scenario-{}-{ordinal}", args.execution_id);
         let input = case.input.to_string();
         let database_origin: SystemTime = client
@@ -533,29 +694,50 @@ pub async fn execute(args: &ScenarioWorkerArgs) -> anyhow::Result<ScenarioReport
             .context("capture scenario database clock boundary")?
             .get(0);
         let clock_boundary = DatabaseClockBoundary::capture(&clock, unix_nanos(database_origin)?);
-        let inserted = client
-            .execute(
-                &write_ahead_triggered_run_sql(),
+        let transaction = client
+            .transaction()
+            .await
+            .context("begin pinned scenario admission")?;
+        let locked_catalog_version: Option<i32> = transaction
+            .query_one(
+                &lock_pinned_trigger_catalog_head_sql(),
+                &[&release.catalog_id, &release.environment],
+            )
+            .await
+            .context("lock scenario catalog head")?
+            .get(0);
+        verify_locked_catalog_version(release.catalog_version, locked_catalog_version)?;
+        let admission_row = transaction
+            .query_one(
+                &admit_pinned_triggered_run_sql(),
                 &[
                     &run_id,
                     &args.flow_id,
                     &args.flow_version,
-                    &"scenario",
+                    &release.catalog_id,
+                    &release.catalog_version,
+                    &release.environment,
                     &input,
+                    &args.suite_id,
+                    &case_id,
+                    &release.artifact_hash,
+                    &env!("CARGO_PKG_VERSION"),
                 ],
             )
             .await
-            .context("persist scenario run")?;
-        if inserted != 1 {
-            bail!("scenario run {run_id:?} already exists; use a new execution-id");
+            .context("atomically admit and enqueue pinned scenario run")?;
+        match ScenarioAdmissionResult::from_sql(admission_row.get(0))? {
+            ScenarioAdmissionResult::Admitted => transaction
+                .commit()
+                .await
+                .context("commit pinned scenario admission")?,
+            ScenarioAdmissionResult::MembershipDrift => {
+                bail!("scenario immutable release membership drifted before admission")
+            }
+            ScenarioAdmissionResult::Duplicate => {
+                bail!("scenario run {run_id:?} already exists; use a new execution-id")
+            }
         }
-        client
-            .execute(
-                &enqueue_sql(),
-                &[&run_id, &Option::<&str>::None, &0i32, &0i64],
-            )
-            .await
-            .context("enqueue scenario run")?;
 
         host.drain().await.context("drive stored scenario case")?;
         ScenarioScheduler::new(clock.clone())
@@ -629,6 +811,183 @@ pub async fn run(args: ScenarioWorkerArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release_candidate() -> ReleaseCandidate {
+        let graph_json = r#"{
+          "schema-version":"0.1","flow-id":"scenario-flow","version":1,
+          "nodes":[
+            {"id":"request","type":"request","config":{"input-schema":true}},
+            {"id":"write","type":"postgres","config":{"entity":"sink","op":"create"}},
+            {"id":"respond","type":"respond","config":{"status":200}}
+          ],
+          "edges":[
+            {"from":"request","to":"write"},
+            {"from":"write","to":"respond"}
+          ]
+        }"#;
+        let flow = wamn_flow::Flow::from_json(graph_json).unwrap();
+        let mut implementations = ["request", "postgres", "respond"]
+            .into_iter()
+            .map(|node_type| {
+                let descriptor = wamn_standard_nodes::describe(node_type).unwrap();
+                let contract = wamn_standard_nodes::resolve_descriptor(descriptor).unwrap();
+                wamn_catalog::NodeImplementation::from_resolved_platform_contract(contract).unwrap()
+            })
+            .collect::<Vec<_>>();
+        implementations
+            .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+        let artifact = wamn_catalog::Artifact::new("tenant-a", &flow, implementations).unwrap();
+
+        ReleaseCandidate {
+            tenant_id: "tenant-a".into(),
+            catalog_id: "scenario-catalog".into(),
+            catalog_version: 1,
+            environment: "dev".into(),
+            flow_id: "scenario-flow".into(),
+            flow_version: 1,
+            graph_json: graph_json.into(),
+            graph_hash: artifact.graph_hash().into(),
+            artifact_hash: artifact.identity().artifact_hash().as_str().into(),
+            interface_bundle_json: String::from_utf8(
+                artifact.interface_bundle().canonical_bytes().to_vec(),
+            )
+            .unwrap(),
+            interface_bundle_hash: artifact.interface_bundle().hash().into(),
+            component_digests_json: serde_json::to_string(artifact.supplied_components()).unwrap(),
+            occurrence_recovery_json: Some(
+                String::from_utf8(artifact.occurrence_recovery_bytes().to_vec()).unwrap(),
+            ),
+            occurrence_recovery_hash: Some(artifact.occurrence_recovery_hash().into()),
+            manifest_matches: 1,
+        }
+    }
+
+    #[test]
+    fn exact_verified_release_member_supplies_the_only_execution_graph() {
+        let candidate = release_candidate();
+        let expected_hash = candidate.artifact_hash.clone();
+        let release =
+            resolve_release_member("tenant-a", "scenario-flow", 1, vec![candidate]).unwrap();
+
+        assert_eq!(release.catalog_id, "scenario-catalog");
+        assert_eq!(release.catalog_version, 1);
+        assert_eq!(release.environment, "dev");
+        assert_eq!(release.artifact_hash, expected_hash);
+        assert_eq!(
+            wamn_flow::Flow::from_json(&release.graph_json)
+                .unwrap()
+                .flow_id,
+            "scenario-flow"
+        );
+        assert!(!RELEASE_CANDIDATES_SQL.contains("FROM flows"));
+        assert!(!RELEASE_CANDIDATES_SQL.contains("LEFT JOIN"));
+    }
+
+    #[test]
+    fn absent_or_ambiguous_release_membership_refuses_before_execution() {
+        let missing = resolve_release_member("tenant-a", "scenario-flow", 1, vec![])
+            .unwrap_err()
+            .to_string();
+        assert!(missing.contains("no applied immutable release member"));
+
+        let candidate = release_candidate();
+        let mut other = candidate.clone();
+        other.catalog_id = "other-catalog".into();
+        let ambiguous =
+            resolve_release_member("tenant-a", "scenario-flow", 1, vec![candidate, other])
+                .unwrap_err()
+                .to_string();
+        assert!(ambiguous.contains("ambiguous applied immutable release membership"));
+    }
+
+    #[test]
+    fn mismatched_or_unverifiable_release_membership_refuses_before_execution() {
+        let mut mismatched = release_candidate();
+        mismatched.manifest_matches = 0;
+        let mismatch = resolve_release_member("tenant-a", "scenario-flow", 1, vec![mismatched])
+            .unwrap_err()
+            .to_string();
+        assert!(mismatch.contains("mismatched release membership"));
+
+        let mut tampered = release_candidate();
+        tampered.graph_json = tampered
+            .graph_json
+            .replace("scenario-flow", "tampered-flow");
+        let unverifiable =
+            resolve_release_member("tenant-a", "scenario-flow", 1, vec![tampered]).unwrap_err();
+        assert!(format!("{unverifiable:#}").contains("unverifiable immutable release artifact"));
+    }
+
+    #[test]
+    fn absent_occurrence_recovery_refuses_before_any_admission() {
+        let mut missing_json = release_candidate();
+        missing_json.occurrence_recovery_json = None;
+        let error = resolve_release_member("tenant-a", "scenario-flow", 1, vec![missing_json])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("canonical occurrence recovery is absent"));
+
+        let mut missing_hash = release_candidate();
+        missing_hash.occurrence_recovery_hash = None;
+        let error = resolve_release_member("tenant-a", "scenario-flow", 1, vec![missing_hash])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("canonical occurrence recovery is absent"));
+    }
+
+    #[test]
+    fn head_drift_between_preflight_and_admission_refuses_before_write() {
+        let preflight =
+            resolve_release_member("tenant-a", "scenario-flow", 1, vec![release_candidate()])
+                .unwrap();
+        let mut admission_writes = 0;
+
+        let result = verify_locked_catalog_version(preflight.catalog_version, Some(2));
+        if result.is_ok() {
+            admission_writes += 1;
+        }
+
+        assert!(result.unwrap_err().to_string().contains("head drifted"));
+        assert_eq!(admission_writes, 0);
+        assert_eq!(
+            ScenarioAdmissionResult::from_sql("membership-drift").unwrap(),
+            ScenarioAdmissionResult::MembershipDrift
+        );
+        assert_eq!(
+            ScenarioAdmissionResult::from_sql("duplicate").unwrap(),
+            ScenarioAdmissionResult::Duplicate
+        );
+    }
+
+    #[test]
+    fn worker_source_contains_no_mutable_flow_projection_fallback() {
+        let source = include_str!("lib.rs");
+        let mutable_read = ["SELECT graph_json::text ", "FROM flows"].concat();
+        let mutable_stage = ["stage scenario ", "flow graph"].concat();
+        assert!(!source.contains(&mutable_read));
+        assert!(!source.contains(&mutable_stage));
+    }
+
+    #[test]
+    fn final_admission_locks_rechecks_writes_and_commits_in_one_transaction() {
+        let source = include_str!("lib.rs");
+        let execute = source
+            .split_once("pub async fn execute")
+            .expect("execute function")
+            .1;
+        let transaction = execute.find("let transaction = client").unwrap();
+        let lock = execute
+            .find("lock_pinned_trigger_catalog_head_sql")
+            .unwrap();
+        let recheck = execute.find("verify_locked_catalog_version").unwrap();
+        let admission = execute.find("admit_pinned_triggered_run_sql").unwrap();
+        let commit = execute.find(".commit()").unwrap();
+
+        assert!(transaction < lock);
+        assert!(lock < recheck);
+        assert!(recheck < admission);
+        assert!(admission < commit);
+    }
 
     #[test]
     fn scenario_worker_uses_serving_flowrunner_path() {

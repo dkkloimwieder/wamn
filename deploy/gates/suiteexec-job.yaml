@@ -1,18 +1,22 @@
 # 11.2-exec in-cluster gate of record (wamn-0lfu): suiteexec drives the STORED
 # test-suite EXECUTOR — load test_suites/test_cases rows from a schema, re-validate
 # each case against the wamn-scenario-model vocabulary, and execute each as its OWN run
-# through the t92 doubles seam (fresh ephemeral schema per case, graph from
-# {source}.flows, ScenarioCapabilities::virtualized + RecordingEgress + ExecutionHost + drain,
-# then wamn_scenario_model::evaluate).
+# through the t92 doubles seam (fresh ephemeral schema per case, exactly one
+# applied catalog release member resolved and cryptographically verified before
+# ExecutionHost, ScenarioCapabilities::virtualized + RecordingEgress + drain,
+# then wamn_scenario_model::evaluate). Each admitted root run atomically persists
+# its exact catalog/version/artifact principal with the queue row.
 #
-# HERMETIC: `--seed-demo` is the "SQL preamble" — the executor self-seeds its own
-# THROWAWAY source schema (wamn_suiteexec, NOT poc_f1) via the SAME
-# publish-catalog `ensure_*` path production provisioning uses: a drivable
-# NO-EGRESS demo flow (webhook-in -> pg-write -> respond) + a 2-case suite. It
-# then runs the --suite path against that schema and drops it at the end. No
-# external fixture data, no live egress target — one binary invocation. (An
-# initContainer psql preamble would have to duplicate the ensure_* DDL + the
-# exact envelope shapes; the in-process seed reuses the proven code instead.)
+# HERMETIC: `--seed-demo` invokes the real `wamn-ctl publish-catalog --provision
+# --runstate` boundary for its THROWAWAY source schema (wamn_suiteexec, NOT
+# poc_f1) and every execution schema. The immutable release contains a drivable
+# NO-EGRESS request -> postgres(create sink) -> respond member and an undrivable
+# request -> disposition-recommendation -> respond member pinned to the exact
+# `/bench/disposition-node.wasm` digest. Legacy `flows` rows exist only for the
+# scenario-table foreign keys and are poisoned after seeding, proving execution
+# has no mutable projection fallback. Success, malformed, preflight-refusal, and
+# assertion-failure suites run before teardown; the gate verifies every created
+# root run's exact release pin. No external fixture data or live egress target.
 #
 # The per-case EXECUTION schemas (tk_suiteexec_<n>) are provisioned through the
 # superuser (WAMN_PG_ADMIN_URL) — wamn_app is NOSUPERUSER/NOCREATEDB and cannot
@@ -63,6 +67,7 @@ spec:
               "--tenant", "demo-tenant",
               "--source-schema", "wamn_suiteexec",
               "--exec-schema", "tk_suiteexec",
+              "--node", "/bench/disposition-node.wasm",
               "--flowrunner", "/bench/flowrunner.wasm",
             ]
           env:

@@ -522,6 +522,90 @@ pub fn write_ahead_triggered_run_sql() -> String {
     )
 }
 
+/// Acquire the chosen catalog head's key-share lock before pinned trigger
+/// admission. The caller executes this statement and
+/// [`admit_pinned_triggered_run_sql`] in one transaction so a publisher cannot
+/// move the head between the final admission check and the run insert.
+///
+/// Params: `$1` catalog id, `$2` environment.
+pub fn lock_pinned_trigger_catalog_head_sql() -> String {
+    "SELECT lock_catalog_head(\
+       NULLIF(current_setting('app.tenant', true), ''), $1, $2) \
+     AS applied_catalog_version"
+        .to_string()
+}
+
+/// Admit a trigger run against one exact applied immutable release artifact
+/// and enqueue it in the same statement. The data-modifying CTE makes a queue
+/// row depend on the freshly inserted, fully pinned run row; the returned code
+/// distinguishes admission, duplicate identity, and release drift, and any
+/// queue failure rolls the run insert back with the statement.
+///
+/// Params: `$1` run id, `$2` flow id, `$3` flow version, `$4` catalog id,
+/// `$5` catalog version, `$6` environment, `$7` input JSON text,
+/// `$8` suite id, `$9` case id, `$10` artifact hash,
+/// `$11` platform revision.
+pub fn admit_pinned_triggered_run_sql() -> String {
+    format!(
+        "WITH release_member AS MATERIALIZED ( \
+           SELECT h.tenant_id, a.artifact_hash \
+             FROM catalog.catalog_heads AS h \
+             JOIN catalog.release_flows AS rf \
+               ON rf.tenant_id = h.tenant_id AND rf.catalog_id = h.catalog_id \
+              AND rf.catalog_version = h.applied_catalog_version \
+             JOIN catalog.release_manifests AS rm \
+               ON rm.tenant_id = rf.tenant_id AND rm.catalog_id = rf.catalog_id \
+              AND rm.catalog_version = rf.catalog_version \
+             JOIN catalog.flow_artifacts AS a \
+               ON a.tenant_id = rf.tenant_id AND a.flow_id = rf.flow_id \
+              AND a.flow_version = rf.flow_version \
+            WHERE h.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+              AND h.catalog_id = $4 AND h.applied_catalog_version = $5::int \
+              AND h.environment = $6 AND rf.flow_id = $2 AND rf.flow_version = $3 \
+              AND a.artifact_hash = $10 \
+              AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $11 <> '' \
+              AND a.occurrence_recovery_json IS NOT NULL \
+              AND a.occurrence_recovery_hash IS NOT NULL \
+              AND (SELECT count(*) \
+                     FROM jsonb_array_elements(rm.members_json) AS member \
+                    WHERE member ->> 'flow-id' = rf.flow_id \
+                      AND (member ->> 'flow-version')::int = rf.flow_version \
+                      AND member ->> 'artifact-hash' = a.artifact_hash) = 1 \
+         ), inserted_run AS ( \
+           INSERT INTO runs \
+             (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+              environment, status, trigger_source, input_json, invocation_context, \
+              admission_context_version, platform_revision) \
+           SELECT member.tenant_id, $1, $2, $3, $4, $5::int, $6, '{dispatched}', 'scenario', \
+                  $7::text::jsonb, \
+                  jsonb_build_object( \
+                    'version', 1, \
+                    'principal', jsonb_build_object( \
+                      'tenant-id', member.tenant_id, 'environment', $6::text, \
+                      'catalog-id', $4::text, 'catalog-version', $5::int, \
+                      'run-id', $1::text, 'flow-id', $2::text, \
+                      'flow-version', $3::int, 'artifact-digest', member.artifact_hash), \
+                    'source', jsonb_build_object( \
+                      'producer', 'scenario', 'suite-id', $8::text, 'case-id', $9::text)), \
+                  1, $11 \
+             FROM release_member AS member \
+           ON CONFLICT (tenant_id, run_id) DO NOTHING \
+           RETURNING tenant_id, run_id \
+         ), inserted_queue AS ( \
+           INSERT INTO run_queue \
+             (tenant_id, run_id, partition_key, priority, available_at) \
+           SELECT tenant_id, run_id, NULL, 0, now() FROM inserted_run \
+           RETURNING run_id \
+         ) \
+         SELECT CASE \
+                  WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted' \
+                  WHEN EXISTS (SELECT 1 FROM release_member) THEN 'duplicate' \
+                  ELSE 'membership-drift' \
+                END AS result_code",
+        dispatched = RunStatus::Dispatched.as_sql(),
+    )
+}
+
 /// The dispatcher's trigger-registry scan: every active flow's graph JSON. The
 /// trigger lives INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no
 /// trigger column — so the driver parses each flow and registers the `cron` /

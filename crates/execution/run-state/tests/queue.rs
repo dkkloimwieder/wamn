@@ -8,13 +8,14 @@ use std::collections::HashSet;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
-    acquire_partitions_sql, active_flows_sql, begin_claimed_run_sql, claim_batch_sql,
-    claim_dispatch_sql, claim_partition_head_sql, claim_state, complete_dequeue_sql,
-    cron_anchor_sql, cron_last_run_sql, dead_letter_dequeue_sql, dead_letters_on_terminal,
-    dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
-    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
-    janitor_verdict, lease_deadline, lease_live, mark_running_sql, mint_evt_run_id, orphans,
-    park_sql, parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
+    acquire_partitions_sql, active_flows_sql, admit_pinned_triggered_run_sql,
+    begin_claimed_run_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
+    claim_state, complete_dequeue_sql, cron_anchor_sql, cron_last_run_sql, dead_letter_dequeue_sql,
+    dead_letters_on_terminal, dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql,
+    enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable,
+    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live,
+    lock_pinned_trigger_catalog_head_sql, mark_running_sql, mint_evt_run_id, orphans, park_sql,
+    parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
     record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
     renew_lease_sql, renew_partition_sql, should_renew, upsert_cron_anchor_sql,
     write_ahead_run_sql, write_ahead_triggered_run_sql,
@@ -1250,6 +1251,69 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(wake.contains("LIMIT 100"));
     assert!(!wake.contains("FOR UPDATE"));
     assert!(!wake.contains("UPDATE "));
+}
+
+#[test]
+fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
+    let lock = lock_pinned_trigger_catalog_head_sql();
+    let sql = admit_pinned_triggered_run_sql();
+
+    assert!(lock.contains("SELECT lock_catalog_head"));
+    assert!(lock.contains("$1, $2"));
+    assert!(sql.contains("release_member AS MATERIALIZED"));
+    assert!(sql.contains("FROM catalog.catalog_heads AS h"));
+    assert!(sql.contains("JOIN catalog.release_flows AS rf"));
+    assert!(sql.contains("JOIN catalog.release_manifests AS rm"));
+    assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
+    assert!(sql.contains("a.artifact_hash = $10"));
+    assert!(sql.contains("a.occurrence_recovery_json IS NOT NULL"));
+    assert!(sql.contains("a.occurrence_recovery_hash IS NOT NULL"));
+    assert_eq!(sql.matches("inserted_run AS").count(), 1);
+    assert_eq!(sql.matches("inserted_queue AS").count(), 1);
+    assert!(sql.contains("catalog_id, catalog_version"));
+    assert!(sql.contains("environment, status, trigger_source"));
+    assert!(sql.contains("invocation_context"));
+    assert!(sql.contains("admission_context_version"));
+    for context_field in [
+        "'version', 1",
+        "'principal'",
+        "'tenant-id', member.tenant_id",
+        "'environment', $6::text",
+        "'catalog-id', $4::text",
+        "'catalog-version', $5::int",
+        "'run-id', $1::text",
+        "'flow-id', $2::text",
+        "'flow-version', $3::int",
+        "'artifact-digest', member.artifact_hash",
+        "'source'",
+        "'producer', 'scenario'",
+        "'suite-id', $8::text",
+        "'case-id', $9::text",
+    ] {
+        assert!(sql.contains(context_field), "missing {context_field}");
+    }
+    assert!(!sql.contains("$8::text::jsonb"));
+    assert!(sql.contains("$11"));
+    assert!(sql.contains("SELECT tenant_id, run_id, NULL, 0, now() FROM inserted_run"));
+    assert!(sql.contains("WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted'"));
+    assert!(sql.contains("THEN 'duplicate'"));
+    assert!(sql.contains("ELSE 'membership-drift'"));
+    assert!(!sql.contains("FROM flows"));
+}
+
+#[test]
+fn null_occurrence_recovery_cannot_reach_either_admission_write() {
+    let sql = admit_pinned_triggered_run_sql();
+    let recovery_guard = sql
+        .find("a.occurrence_recovery_json IS NOT NULL")
+        .expect("recovery guard");
+    let run_write = sql.find("INSERT INTO runs").expect("run write");
+    let queue_write = sql.find("INSERT INTO run_queue").expect("queue write");
+
+    assert!(recovery_guard < run_write);
+    assert!(run_write < queue_write);
+    assert!(sql.contains("FROM release_member"));
+    assert!(sql.contains("FROM inserted_run"));
 }
 
 // [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —

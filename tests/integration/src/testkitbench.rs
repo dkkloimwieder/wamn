@@ -118,9 +118,10 @@ pub struct TestKitBenchArgs {
     #[arg(long)]
     pub impact_report: Option<PathBuf>,
 
-    /// The schema holding `flows` + `test_suites` + `test_cases` to READ in the
-    /// stored path (the in-cluster composition uses `poc_f1`). Read-only — never
-    /// mutated; execution happens in a separate ephemeral schema.
+    /// The schema holding `test_suites` + `test_cases` to READ in the stored
+    /// path (the in-cluster composition uses `poc_f1`). The worker resolves the
+    /// graph from the exact applied catalog release; execution happens in a
+    /// separate ephemeral schema.
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
 
@@ -129,10 +130,10 @@ pub struct TestKitBenchArgs {
     #[arg(long, default_value = "tk_suiteexec")]
     pub exec_schema: String,
 
-    /// Hermetic gate-of-record: self-seed `--source-schema` (via the production
-    /// `ensure_*` path) with a drivable no-egress demo flow + suite, then run the
-    /// stored path against it. The `suiteexec-job.yaml` "SQL preamble" — no
-    /// external fixture data. Requires `--tenant`.
+    /// Hermetic gate-of-record: publish immutable drivable and undrivable
+    /// release members through production `wamn-ctl publish-catalog`, seed their
+    /// suites into `--source-schema`, then run the stored path. Requires
+    /// `--tenant` and the exact custom component at `--node`.
     #[arg(long)]
     pub seed_demo: bool,
 
@@ -175,6 +176,7 @@ pub async fn run(args: TestKitBenchArgs) -> anyhow::Result<()> {
             wamn_test_infrastructure::scenario_worker_gate::StoredSuiteGateArgs {
                 worker: args.scenario_worker,
                 flowrunner: args.flowrunner,
+                node: args.node,
                 database_url: args.database_url,
                 admin_database_url: args.admin_database_url.context(
                     "stored-suite execution needs --admin-database-url or WAMN_PG_ADMIN_URL",

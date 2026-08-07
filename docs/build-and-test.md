@@ -810,6 +810,15 @@ flowrunner component used by the production executor. The required
 `scenario_run_{ordinal}`), so case isolation is structural without giving the
 worker schema-creation credentials. It resumes parked work with virtual time,
 evaluates the scenario-model assertions, and emits a JSON report.
+Before loading the guest or executing a node, it resolves exactly one applied
+`catalog.catalog_heads` → `release_flows` / `release_manifests` →
+`flow_artifacts` member and verifies the stored canonical artifact, including
+its occurrence-recovery selection. Missing, ambiguous, mismatched, or
+unverifiable release state is a pre-execution refusal; there is no mutable
+`flows` fallback. Immediately before each root run, one transaction locks and
+rechecks that catalog head, rechecks the exact member and artifact hash, then
+atomically inserts the fully pinned run and queue row. SQL constructs the
+versioned trusted invocation principal from that verified release member.
 Its deterministic clock, random, credentials, and recording/deny egress
 adapters come from `wamn-scenario-runtime`; none are linked into
 `wamn-executor`.
@@ -817,6 +826,8 @@ adapters come from `wamn-scenario-runtime`; none are linked into
 ```bash
 cargo test -p wamn-scenario-model -p wamn-scenario-catalog \
   -p wamn-scenario-runtime -p wamn-scenario-worker
+cargo test --locked --offline -p wamn-run-state --test queue
+cargo test --locked --offline -p wamn-test-infrastructure --lib scenario_worker_gate::tests
 cargo run -p wamn-scenario-worker -- --help
 
 # DbState adapter gate of record (disposable PostgreSQL 18; no kind rollout):
@@ -835,7 +846,8 @@ The 11.4 `testkitbench` subcommand doubles as the STORED-suite EXECUTOR: it load
 `test_suites` / `test_cases` rows from a schema, re-validates each `case_body`
 against the `wamn-scenario-model` vocabulary on READ, and executes each case as its OWN
 run through scenario-runtime — a FRESH ephemeral schema per case (the source
-schema is read-only), the graph read from `{source_schema}.flows`,
+schema is read-only), the verified graph read from the exact applied immutable
+catalog release member,
 `ScenarioCapabilities::virtualized` + `RecordingEgress` (trusted
 `--allowed-hosts` outer policy intersected with the flow's declared policy;
 case assertions never authorize) + `ExecutionHost` + drain, then
@@ -851,14 +863,19 @@ Selection (exactly one source; `--cases` file mode is preserved unchanged):
   `wamn_schema_control::impact::SuiteEdge` tuples (the 12g input contract; a LOCAL deserialize
   struct — wamn-schema-control has no serde derives yet, out of this bead's scope).
 - `--seed-demo` — the hermetic gate: self-seeds `--source-schema` (production
-  `ensure_*` path) with a drivable no-egress demo flow + suite, then runs the
-  stored path. No external data, no live egress target.
+  `wamn-ctl publish-catalog --provision --runstate` process boundary) with a
+  drivable `request → postgres(create sink) → respond` release member and an
+  undrivable `request → disposition-recommendation → respond` member pinned to
+  the exact `--node` component digest. It poisons the legacy `flows` projections,
+  runs success/malformed/refusal/assertion-failure suites, and verifies exact
+  root-run pins before cleanup. No external data or live egress target.
 
-RLS posture: the source suite/graph rows are read via the ADMIN (superuser,
-RLS-bypassing) session with an EXPLICIT `(tenant, flow_id, flow_version
-[, suite_id])` WHERE predicate — matching the impact/cross-tenant model; the
-`flow-tests.sql` FORCE-RLS floor is UNTOUCHED, and the running FLOW still
-exercises it via the `wamn_app` pool. SQL read builders:
+RLS posture: the fixture adapter enumerates source suites/case ordinals via its
+ADMIN (superuser, RLS-bypassing) session with an explicit
+`(tenant, flow_id, flow_version [, suite_id])` predicate. The product worker
+re-reads case bodies and the immutable catalog release through its tenant-scoped
+`wamn_app` session; the running flow uses that same role in the isolated case
+schema. The `flow-tests.sql` FORCE-RLS floor is untouched. SQL read builders:
 `wamn_scenario_catalog::sql::{select_suites_for_flow_sql, select_cases_for_suite_sql}`
 (drift-guarded against `deploy/sql/flow-tests.sql`).
 
@@ -895,27 +912,40 @@ cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # Immutable green/red evidence:
 # architecture/evidence/mutations/scenario-replay-impact.json
 
-# Local FULL gate (throwaway PG). The flowrunner release wasm is reused (no
-# rebuild). --seed-demo is the simplest hermetic proof of the arc:
+# Local FULL gate (throwaway PG). `--seed-demo` requires the product ctl and
+# scenario-worker binaries plus the exact flowrunner and disposition-node wasm
+# inputs. `--keep` preserves the source schema for the follow-on impact example:
+cargo build --locked -p wamn-ctl -p wamn-scenario-worker -p wamn-gates
+# If the component release artifacts are not already present:
+(cd components && cargo build --locked --release --target wasm32-wasip2 \
+  -p flowrunner -p disposition-node)
 docker run -d --name lane0lfu-pg -p 15617:5432 -e POSTGRES_PASSWORD=postgres postgres:18
 export ADMIN=postgres://postgres:postgres@127.0.0.1:15617/postgres
 export APP=postgres://wamn_app:wamn_app@127.0.0.1:15617/postgres
 REL=components/target/wasm32-wasip2/release
-./target/debug/wamn-gates --log-level error testkitbench \
-  --seed-demo --tenant demo-tenant --source-schema wamn_suiteexec \
-  --flowrunner $REL/flowrunner.wasm --database-url "$APP" --admin-database-url "$ADMIN"
+NODE=$REL/disposition_node.wasm
+SUFFIX=$(sha256sum "$NODE" | cut -c1-12)
+DEMO_FLOW_ID=tk-demo-flow-$SUFFIX
+WAMN_CTL_BIN="$PWD/target/debug/wamn-ctl" \
+  ./target/debug/wamn-gates --log-level error testkitbench \
+  --seed-demo --keep --tenant demo-tenant --source-schema wamn_suiteexec \
+  --scenario-worker "$PWD/target/debug/wamn-scenario-worker" \
+  --node "$NODE" --flowrunner "$REL/flowrunner.wasm" \
+  --database-url "$APP" --admin-database-url "$ADMIN"
 # --impact-report over the SAME seeded suite (a JSON array of SuiteEdge tuples):
-echo '[{"tenant":"demo-tenant","flow_id":"tk-demo-flow","flow_version":1,"suite_id":"demo"}]' > /tmp/impact.json
+printf '[{"tenant":"demo-tenant","flow_id":"%s","flow_version":1,"suite_id":"success"}]\n' \
+  "$DEMO_FLOW_ID" > /tmp/impact.json
 ./target/debug/wamn-gates --log-level error testkitbench \
   --impact-report /tmp/impact.json --source-schema wamn_suiteexec \
-  --flowrunner $REL/flowrunner.wasm --database-url "$APP" --admin-database-url "$ADMIN"
-# Refusal: seed an undrivable flow (a validate-receipt node) + a suite, then
-# --suite → a typed SKIP naming the undrivable type, exit 0 (a clean refusal is
-# not a failure). See the lane's local script.
+  --scenario-worker "$PWD/target/debug/wamn-scenario-worker" \
+  --flowrunner "$REL/flowrunner.wasm" --database-url "$APP" \
+  --admin-database-url "$ADMIN"
+# The seed invocation itself also proves the undrivable member is refused before
+# node execution while naming `disposition-recommendation`, with zero admitted runs.
 docker rm -f lane0lfu-pg
 
-# In-cluster gate of record (hermetic --seed-demo; gates image ONLY — no host /
-# guest / ctl rebuild is required by this bead):
+# In-cluster gate of record (hermetic --seed-demo; the exact gates image carries
+# wamn-ctl, wamn-scenario-worker, flowrunner, and disposition-node):
 kubectl -n wamn-system apply -f deploy/gates/suiteexec-job.yaml
 kubectl -n wamn-system wait --for=condition=complete job/suiteexec --timeout=180s
 kubectl -n wamn-system logs job/suiteexec
