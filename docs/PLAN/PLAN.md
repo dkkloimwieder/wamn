@@ -87,7 +87,7 @@ change this after data exists?**
 | 3 | Measurement gate | the R6 verdict, deferred constants | 1, 2A | — (a gate) |
 | 4 | Security structural closes | trust-level gap in the shipped surface | — | **irreversible** once exposed |
 | 5 | Identity & access | who a principal is, at which tier | entry gate | **irreversible** — key encoding |
-| 6A | Minimum authoring loop | validate → draft-run → observe | 2A; 5 before client exposure (+2B for the outbound journey) | expensive |
+| 6A | Minimum authoring loop | frontend-neutral edit → validate → draft-run → observe | 2A; 5 before client exposure (+2B for the outbound journey) | expensive |
 | 6B | Complete studio | canvas, palette, exposure UX | 6A | reversible |
 | 7 | Release normalization | what a release contains, its lifecycle | entry gate | expensive |
 | 8 | Event plane completion | registration exposure, convergence | 7; **external precondition:** an org bootstrapped by platform administration | expensive |
@@ -206,18 +206,26 @@ than treat them as closed doors.
 complete and items 1, 2A, and 2B at their v1 floors, the sequence turns to
 the loop every later item consumes: item 6A's minimum authoring loop (the
 draft model and its retention, draft-safe connections, draft-workspace
-scope, run-visibility surface), item 7's release normalization, and the
-flow-testing surface (editor-run test execution, stored suites, publish
+scope, public versioned authoring projections), item 7's release normalization,
+and the flow-testing surface (client-driven test execution, stored suites, publish
 gates, ephemeral per-run schema isolation). The parked durable-execution
 tail — semantic strengthening and its revalidation economics, the payload
 store and threshold campaign, re-attempt and compensation verbs, declarative
 failure policy, and the controlled-Replay protocol — resumes only on its
 recorded reactivation condition in item 1.
 
-**Exit gate for the wave:** an author edit reaches a draft execution without
-minting a release, and a stored suite runs from the editor before publish —
-both demonstrated end to end, with edit→run latency measured and recorded.
-The latency figure is a measurement output, not a promised constant.
+**Exit gate for the wave:** through the authoring surface from a client, an author edit
+reaches a draft execution without minting a release and a stored suite runs before publish,
+with edit→run latency measured and recorded. The reference demonstration is deliberately
+headless: CI closes edit → validate → draft-run → suite-run → publish from a checkout
+with zero frontend code present. That proves client decoupling; it is not a weaker substitute
+for an editor, because **editor is a client role rather than a platform component**. The
+latency figure is a measurement output, not a promised constant.
+
+The canonical command model (`wamn-ftfc.1`), Git write adapter (`wamn-ftfc.2`), disposition
+surface, per-root test isolation (`wamn-jole`), stored-suite fixture work (`wamn-m1om` and
+`wamn-rktf`), and public projections (`wamn-ma5`) are frontend-independent. None waits for
+a shell, Studio hosting, or `wamn-b454.1`.
 
 This is an internal author-loop proof under the existing development administrator, not a
 client-facing exposure: item 5 still gates retained client identity and client use. Item 3's
@@ -1888,7 +1896,7 @@ contract and treats linked versus composed execution as an implementation choice
 
 | | Scope |
 |---|---|
-| **6A** minimum authoring loop | definition read/write path, structured validation, draft run, author-facing run status and failure visibility, an editor sufficient to build the first vertical |
+| **6A** minimum authoring loop | definition read/write path, structured validation, draft run, public versioned authoring projections, and a headless checkout client sufficient to prove the first loop |
 | **6B** complete studio | canvas, palette, exposure and credential UX, uniform platform/client authoring, template export |
 
 **Decided (wamn-ftfc.1): one transport-neutral application model beneath every front
@@ -1917,10 +1925,20 @@ reconciler is also rejected as the umbrella model because draft execution, suite
 audit reconstruction, Replay, Run again, and disable are distinct use cases; a definition
 command may still reconcile desired state behind its application handler.
 
-**Studio hosting must not gate studio usefulness.** A native SPA over the management API is
-the lower-risk first route. Uniform authoring means the same model and API — not
-necessarily bootstrapping the studio onto the customer runtime before that runtime has its
-own consumption surfaces.
+**Binding authoring doctrine (2026-08-07): editor is a client role, not a platform
+component.** The platform ships the authoring surface: `wamn-ftfc.1`'s canonical commands,
+`wamn-ftfc.2`'s Git-backed definition write adapter, and public versioned projections. Our
+SPA, alternative frontends, and a human or agent working in an IDE through checkout files
+plus CLI/API are substitutable clients of that surface. No frontend receives a private
+command, projection, credential, or platform-plane authority.
+
+**Studio hosting is therefore a deferred 6B client decision, not a 6A dependency.** Where a
+reference shell is served and which service owns it folds into `wamn-b454.1`; the deferred
+shell is `wamn-b454.5`. The iteration-loop wave ships no shell. `wamn-ftfc.13` first
+enumerates the frontend-neutral editor contract; `wamn-ftfc.14` supplies the headless
+checkout CLI; `wamn-ma5` publishes the stable-node/stable-edge suite and coverage projection
+and proves the loop without frontend code. The Studio overlay (`wamn-b454.4`) later renders
+that same projection rather than defining another model.
 
 **Four parts**
 - **a. The management plane** — an org-scoped API over schema, flows, attachments,
@@ -1942,12 +1960,13 @@ own consumption surfaces.
 - **e. The project-request route** — the client-admin surface for "give me a project,"
   fronting item 10's provisioning workflow. Org-scoped, so it depends on item 5's org tier.
 
-**Recorded candidate — git as the definition write path.** Clients push files, CI runs
-`ctl`, Git authentication establishes the adapter principal, and commit metadata supplies
-`changed_by` provenance; the shared handler still authorizes every command. It covers
-definition writes and would shrink the management plane (a) from a full CRUD API to **the
-read surface plus the fast lever (disable)** — the two things git cannot serve. Materially
-smaller and sooner if adopted; the decision belongs here.
+**Required adapter (`wamn-ftfc.2`) — Git as the definition write path.** Clients edit and
+push files; Git authentication supplies the adapter principal and commit metadata supplies
+`changed_by` provenance; the shared handler still authorizes every command. Git is input and
+attribution, never an authority bypass. This shrinks the management plane's definition side
+while retaining its versioned command/projection surface and fast lever (disable). For a
+human or agent in an IDE, the files are the editor; `wamn-ftfc.2` is consequently
+wave-critical rather than an optional Studio choice.
 
 ### The uniform-authoring bar (owner decision)
 
@@ -2328,7 +2347,9 @@ needs revisiting.
 **Decision points**
 - **Does the studio dogfood the platform** (a wamn application built on the generated API)
   **or ship as a privileged native app?** This decides whether item 6 depends on item 9 or
-  precedes it, and it is the largest sequencing question in the document.
+  precedes it, where the reference shell is served and by whom, and remains the largest
+  sequencing question in the document. It is deferred and does not block the headless 6A
+  exit proof.
 - **Flow canvas: build or adopt.**
 - **Does authoring write flow JSON directly, or a higher-level model that compiles to it?**
   The second is a second IR, and the spec's whole validation story is over the first.
@@ -2337,10 +2358,12 @@ needs revisiting.
   and query are the source of truth. `wamn-ftfc.11` provides durable, read-only lookup by
   report identity with suite/case pass-fail, draft-vs-release lineage, exact draft-artifact
   and applied-catalog IDs, linked run and failure detail, and edit-to-run timing; it
-  exposes no disposition mutation. `wamn-ma5` later adds only the thin editor action,
-  pass-fail display, and report link — no full UI or canvas overlays. Until item 5, only an
-  internal adapter under the existing development administrator may invoke this surface;
-  there is no public or client-facing API and no retained client identity.
+  exposes no disposition mutation. `wamn-ma5` publishes the supported versioned projection
+  keyed by stable node, branch, and edge identity, including per-node pass/fail and explicit
+  branch/edge coverage state, and proves it through the headless checkout client. Public
+  means a supported client contract, not unauthenticated access: until item 5, the live proof
+  uses the existing development administrator and creates no retained client identity.
+  Canvas rendering remains `wamn-b454.4`.
 
   The internal loop reserves a deterministic report identity before its first admission and
   appends immutable observed case facts. It finalizes the immutable summary only from all
@@ -2744,8 +2767,8 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Do custom nodes compose in, or keep D7's signed hop?** | Removes a round trip and preserves memory isolation, but moves the supply-chain signature to the composition | 2D |
 | **Node digest pinning versus patchability** | A platform node's security patch would otherwise need every client flow republished | 2D |
 | **Node distribution: curated, private, marketplace?** | Feeds the studio palette and decides whether clients can share nodes | 2C |
-| **Git as the definition write path?** | Would shrink item 6's management plane to read surface + disable | 6 |
-| **Does the studio dogfood the platform, or ship privileged?** | Whether item 6 depends on item 9 or precedes it | 6 |
+| ~~Git as the definition write path?~~ | **Settled by the 2026-08-07 authoring doctrine:** files plus the Git adapter are the definition-write surface for IDE/human/agent clients; `wamn-ftfc.2` ships the adapter through the canonical command model. Git supplies provenance, never authority | — |
+| **Does the studio dogfood the platform, or ship privileged?** | Whether item 6B depends on item 9 or precedes it, including where the deferred reference shell is served and by whom; it does not block 6A's headless proof | 6B |
 | ~~Which persona does the authoring surface target?~~ | **Settled (item 6):** the advanced surface now. The simple surface is *also* authoring — an operations persona building report flows (schedule → query → format → deliver) — deferred as a strict subset, and gated on items 1 and 2 for the formatter/delivery nodes and bulk-payload handles | — |
 | **Does an advanced author eventually get a visual canvas?** | Kept open by four don't-foreclose items; only layout-outside-the-artifact is expensive to retrofit | 6 |
 | **Concurrent-edit notification** | LWW settled; warning an author mid-edit that someone else saved is the recorded future exploration | 6 |
@@ -2757,7 +2780,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Where does raw SQL's structural close land?** | D8's precondition does not exist; the shipped guard is defeatable by dynamic SQL | 4 |
 | **Do D15's latency SLOs get product sign-off?** | Recorded pending it; never obtained. Until then the synchronous path carries no numeric commitment | 3 |
 | **Does the catalog get a float field type?** | Industrial telemetry is natively float; D11/D12 assume it. Today authors invent a `numeric` scale or hide it in untyped `json`. The recorded ban covers material quantities only | Beyond, but decided earlier |
-| ~~Run-visibility surface scope~~ | **Settled (wamn-ftfc.7):** the typed application read model lands first; `wamn-ftfc.11` owns durable report lookup with suite/case outcome, exact draft and applied-catalog lineage, linked run/failure detail, and edit-to-run timing. `wamn-ma5` adds only the thin editor action, pass/fail display, and report link. Until item 5, exposure remains an internal development-administrator adapter, never a public client API | — |
+| ~~Run-visibility surface scope~~ | **Settled (wamn-ftfc.7 + 2026-08-07 authoring doctrine):** the typed application read model lands first; `wamn-ftfc.11` owns durable report lookup, and `wamn-ma5` publishes the supported versioned stable-node/stable-edge suite and coverage projection plus the headless CI proof. Public means client-contract stability; item 5 still gates retained client identity and live client exposure. Studio overlays consume this projection later | — |
 | Output and error schemas in the release | Contract surface | 7 |
 | Waiter transport | The response path stays provisional | 3 |
 | The deferred constants — idempotency TTL, outcome retention, schema limits, budgets, purge windows, sweep cadence | | 3, 7 |
