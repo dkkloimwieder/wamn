@@ -2312,8 +2312,15 @@ needs revisiting.
 - **Flow canvas: build or adopt.**
 - **Does authoring write flow JSON directly, or a higher-level model that compiles to it?**
   The second is a second IR, and the spec's whole validation story is over the first.
-- **How much of the run-visibility surface is API vs. UI** — an author-facing API without a
-  UI is still progress; the reverse is not.
+- ~~**How much of the run-visibility surface is API vs. UI?**~~ **Settled
+  (wamn-ftfc.7): API/application read model first.** The canonical typed application handler
+  and query are the source of truth. `wamn-ftfc.11` provides durable, read-only lookup by
+  report identity with suite/case pass-fail, draft-vs-release lineage, exact draft-artifact
+  and applied-catalog IDs, linked run and failure detail, and edit-to-run timing; it
+  exposes no disposition mutation. `wamn-ma5` later adds only the thin editor action,
+  pass-fail display, and report link — no full UI or canvas overlays. Until item 5, only an
+  internal adapter under the existing development administrator may invoke this surface;
+  there is no public or client-facing API and no retained client identity.
 
 **Alternatives**
 
