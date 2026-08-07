@@ -2121,12 +2121,17 @@ The steady-state loop becomes *edit → validate (~ms) → run → observe*, wit
 (item 2A) invisible because it is keyed by execution-bundle identity and cached — an author waits only when
 using a node type new to the environment.
 
-**Retention has an owner.** Content-addressed drafts accumulate — superseded documents,
-validated artifacts never published, bundles referenced only by expired drafts, and the
-captures and payload objects of draft runs. The boundary, without choosing a TTL or a
-schema: **6A owns reachability and retention for draft documents and validated draft
-artifacts; 2A owns composition-cache eviction; published artifacts and anything referenced
-by a retained run are immutable and protected from GC.**
+**Decision (wamn-ftfc.4): draft retention is reachability-first, not a shared TTL.** 6A
+publishes the authoritative roots for active draft-document heads and validated draft
+artifacts that remain publishable. A retained draft run or stored-suite report is an
+independent root for its exact draft artifact, execution bundle, applied catalog identity,
+and capture and payload objects; superseding or deleting the draft document does not weaken
+that root. Expiry or deletion first removes publishability, after which GC may collect only
+objects with no remaining root. 2A may evict only unrooted execution-bundle cache entries.
+Published artifacts are outside draft GC and remain governed by their published/run
+retention. The internal author-loop proof retains all drafts, reports, and their reachable
+objects and runs no automatic expiry or sweeper: it records reachability without inventing
+a TTL, schema, or cache algorithm.
 
 **Publishing then changes identity and reachability, never the executable**: same composed
 runner, same capabilities, same interpreter. That preserves H1 — the tested artifact is the
@@ -2691,7 +2696,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~Is composition the default, or an opt-in backend?~~ | **Direction, gated by 2A:** execution-bundle specialization is the intended default because it makes capability narrowing structural — the ABI is frozen and the composed arm is gated (`nodebench`, `flow-composed.wasm`). It becomes *committed* when packaging granularity is chosen and the economics hold | 2A |
 | **Exact-node or capability-class specialization?** | **The load-bearing ambiguity.** Under class packaging a plug may carry unused implementations, adding a node inside a present plug may need no recomposition, and growth inside a plug has blast radius for every bundle using it. 2A must be able to *distinguish* the two, not just measure one | 2A |
 | **Packaging granularity and capability worlds** | The plug boundary is the fault-isolation, patch-blast-radius and revocation unit, not just a cache key; which worlds are composition targets | 2A |
-| **Draft retention and cache eviction** | Content-addressed drafts, unpublished artifacts, orphaned bundles and draft-run captures accumulate; 6A owns draft reachability, 2A owns cache eviction | 6A, 2A |
+| ~~Draft retention and cache eviction~~ | **Settled (wamn-ftfc.4):** 6A publishes authoritative draft and retained-run/report roots over the exact artifact, bundle, catalog, captures, and payloads; expiry or deletion removes publishability before zero-root GC; 2A evicts only unrooted bundle-cache entries; published artifacts are outside draft GC. The internal proof retains all draft/report state with no automatic expiry or sweeper | — |
 | **Which connections are draft-safe?** | Draft execution is a real admission capability with real effects; an author iterating against a connection pointing at production is the failure to prevent | 6A, 2B |
 | **Flow-draft loop only, or a project-definition draft workspace?** | 6A's fast loop pins the applied catalog, so schema/connection changes go through ordinary releases unless a provisional definition world is built | 6A |
 | ~~Historical replay or current-definition replay?~~ | **Settled by wamn-4u7p.1; implementation deferred 2026-08-04:** historical pinned execution is controlled Replay (`wamn-v21a.1`); current-definition production processing is Reprocess/live re-execution (`wamn-v21a.2`). Both protocols resume behind item 1's reactivation condition | — |
