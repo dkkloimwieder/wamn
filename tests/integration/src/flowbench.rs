@@ -37,6 +37,7 @@ use wash_runtime::wasmtime::component::{
 };
 use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
 
+use crate::flowrunner_linker::add_flowrunner_imports_to_linker;
 use tokio_postgres::NoTls;
 use wamn_gate_harness::{percentile, scope_session, seed_flow_version, set_active_flow_version};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
@@ -282,26 +283,12 @@ impl Harness {
         let component = WasmtimeComponent::new(raw, guest)
             .map_err(|e| anyhow::anyhow!("compile flowrunner: {e}"))?;
         let mut linker: Linker<SharedCtx> = Linker::new(raw);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        // The runner also imports wasi:http (the S6 http-call node). The S3
-        // flows never call it, but the import must be linkable to instantiate.
-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
-        wamn_postgres::add_to_linker(&mut linker)?;
-        // 5.9: the runner imports wamn:node/credentials unconditionally; no
-        // S3 fixture declares one, so the linked vault stays unbacked.
-        wamn_runtime::plugins::wamn_credentials::add_to_linker(&mut linker)?;
-        // cjv.3: the flowrunner declares its per-run grant via this trusted
-        // channel; the harness must link it or instantiation fails.
-        wamn_runtime::plugins::wamn_credentials::add_runner_to_linker(&mut linker)?;
-        // fqg.11: the flowrunner declares its per-run egress the same way.
-        wamn_runtime::plugins::runner_egress::add_runner_to_linker(&mut linker)?;
-        // l5i9.12.2: the trusted per-run causation channel (the flowrunner world
-        // now imports it; instantiation traps without it).
-        wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
-        // wamn-yf3: the flowrunner world now imports wasi:logging (run-path
-        // emission). This harness registers no wamn:logging plugin, so log() is a
-        // best-effort no-op — but the import must be linked or instantiation traps.
-        wamn_runtime::plugins::wamn_logging::add_to_linker(&mut linker)?;
+        // The whole flowrunner import set, registered once for every bench that
+        // rolls its own linker. The S3 flows call none of the effectful ones
+        // (wasi:http, the vault, wasi:logging, and the trusted HTTP-connection
+        // and node-invocation frames), but every import must be linkable to
+        // instantiate; the ones `plugin_map` leaves unbacked trap if called.
+        add_flowrunner_imports_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
         Ok(Self {
             engine,

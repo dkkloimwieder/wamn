@@ -27,6 +27,7 @@ pub mod f4fixture;
 pub mod f4proof;
 pub mod failoverbench;
 pub mod flowbench;
+mod flowrunner_linker;
 pub mod impactproof;
 pub mod invocationproof;
 pub mod logbench;
