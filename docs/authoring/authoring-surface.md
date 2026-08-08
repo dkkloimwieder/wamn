@@ -290,8 +290,16 @@ cargo test --locked --offline -p wamn-authoring-model \
 The gate decodes every request, success, and refusal through the Rust source of
 truth, compares the collection inventory with the generated and checked-in
 schema, requires the environment-only Bearer header on every executable
-request, and rejects privileged fields. A later authenticated smoke is owned by
-`wamn-jvzx.4`.
+request, and rejects privileged fields.
+
+`clients/authoring-client/scripts/smoke.mjs` (wamn-jvzx.4) is the authenticated S0
+smoke over that same collection. It logs in as a real principal, presents the
+issued token, and sends the collection's own `save-flow-draft` request, deriving
+every executable field from the checked-in section so a hand-rolled divergence on
+either side fails before a byte is sent. `--check` is its network-free drift half
+and runs inside `node scripts/test.mjs`. It reads no ledger and holds no database
+URL: attribution evidence is a runner-side step documented in the
+`[6A / wamn-jvzx.4]` section of `docs/build-and-test.md`.
 
 The headless CLI word `promote` maps to the public `publish` command. Login and
 token issuance and a generic `runs` route are intentionally absent: the current

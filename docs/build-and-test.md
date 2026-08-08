@@ -3705,6 +3705,123 @@ written. The interim live-Deployment placeholder-args patch is RETIRED; the
 running spec matches `deploy/platform/scenario-worker.yaml` exactly. If you are
 re-running the rollout script, `SKIP_CLI_DEFECT_PATCH=1` is the correct setting.
 
+### [6A / wamn-jvzx.4] authenticated S0 smoke over the request collection
+
+Runs the checked-in collection (`docs/contracts/authoring-surface.v0.1.http`)
+against the deployed management surface as two real principals. The COLLECTION is
+the artifact under test, so `clients/authoring-client/scripts/smoke.mjs` derives
+every executable field of its request from the `save-flow-draft` section and
+refuses to send anything when its outgoing document diverges from that section
+outside three declared per-run substitutions — `command-id` (one attempt),
+`draft-id` (so a run cannot collide with the last one), and `expected-revision`
+(the collection's own optimistic-concurrency field, which has to track the
+revision the draft actually has). A pinned SHA-256 of the canonicalized section
+catches a collection-side edit; the derivation comparison catches a script-side
+hand-rolled field. Neither can be a quiet difference.
+
+**THE CLIENT/RUNNER SPLIT, AND THE NO-DATABASE-URL BOUNDARY.** The script is pure
+HTTP: subject and secret to the reserved `POST /login`, the issued Bearer PAT to
+`POST /authoring`, nothing else. It carries no database URL, no platform-admin
+impersonation, and no test-only trusted context — so it cannot read the ledger it
+is proving, because that read needs storage authority a client must never hold.
+It closes instead by printing one `AUDIT-MANIFEST` line naming the command-ids
+that MUST appear with which `principal_subject` and the command-ids that MUST NOT
+appear at all; the GATE RUNNER does the ledger read below and checks it against
+that manifest. Its whole input surface is the base URL and two credential file
+paths. The two route paths are the wamn-ctc8.8 transport contract, which the
+collection deliberately leaves to its caller — supplying them is this script's
+job, not an endpoint the collection invented.
+
+**FOUR LEGS ON ONE DRAFT.** Principal A creates the run's draft at
+`expected-revision: 0` (revision 1). The tokenless attempt, the forged-token
+attempt, and principal B then all present `expected-revision: 1` against that
+same draft — the same command shape, the same target, the same expected version,
+differing only in the credential presented and in the `command-id` that
+identifies the attempt. Distinct `command-id`s are what make the refusals'
+ledger ABSENCE checkable at all; reusing one across three attempts would also
+abuse the contract's per-command identity.
+
+**WHY THE REFUSALS ARE PROVABLY PRE-EXECUTION.** Two independent facts, and the
+gate asserts both. (1) Neither refused `command-id` appears in
+`catalog.authoring_command_audit` — and the surface records BEFORE it runs a
+command, so an absent row means no command ran. (2) Principal B's save succeeds
+at `expected-revision: 1` and returns revision 2, which is only reachable if
+neither refused attempt advanced the draft. A forged token is structurally valid
+with a real lookup half and one flipped hex digit in the secret half, so it
+exercises digest verification rather than parse rejection, and its refusal must
+be the byte-exact uniform `{"kind":"authorization-denied"}` under HTTP 403.
+
+**TOKEN HYGIENE.** No secret ever reaches a command line or an environment block:
+credentials are read from mode-600 `subject=`/`secret=` files. The script's own
+`emit` refuses to print a registered secret, the issued PAT, or the forged token,
+and fails the named check `no-token-material-in-output` if a line ever would.
+
+OPERATOR PRECONDITIONS, neither self-serviceable: the wamn-ctc8.10 rollout, and
+TWO principals in the T1 `identity` schema, each with a local credential and
+`project-author` on the served `(org, project)`.
+
+```bash
+# Static half. Network-free, credential-free, and already inside the client
+# harness, so a collection edit fails CI with no cluster in the loop.
+(cd clients/authoring-client && node scripts/smoke.mjs --check)
+(cd clients/authoring-client && node scripts/test.mjs)
+
+# Live gate of record. Reach the in-cluster surface the wamn-ctc8.10 way — a temp
+# NodePort on a kind node's docker IP, because port-forward dies on every
+# connection close here. kube-proxy needs a few seconds to program it; the first
+# probe legitimately refuses. Delete the NodePort afterwards.
+kubectl -n wamn-system create service nodeport jvzx4-smoke-nodeport \
+  --tcp=8088:8088 --node-port=31188
+kubectl -n wamn-system patch svc jvzx4-smoke-nodeport \
+  -p '{"spec":{"selector":{"app":"scenario-worker"}}}'
+NODE_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' wamn-worker)
+(cd clients/authoring-client && node scripts/smoke.mjs \
+  --base-url "http://$NODE_IP:31188" \
+  --principal <mode-600 subject=/secret= file for the first principal> \
+  --principal <mode-600 subject=/secret= file for the second principal>)
+# -> SMOKE PASS, and one AUDIT-MANIFEST line. Keep it: the next step needs it.
+
+# RUNNER-SIDE AUDIT VERIFICATION. The ledger is in the project database, so this
+# is a kubectl exec psql on the FIXTURE pod — deliberately outside the script.
+# (a) exactly the two `must-appear` command-ids, one row each, identical
+#     command_kind and target_ref, distinguished only by principal_subject:
+kubectl -n wamn-system exec deploy/postgres -- psql -U postgres -d wamn -c \
+  "SET app.tenant = '<tenant>';
+   SELECT command_id, command_kind, principal_subject, effective_role, target_ref
+     FROM catalog.authoring_command_audit
+    WHERE command_id LIKE '%<run-id>%' ORDER BY recorded_at;"
+# (b) the two `must-not-appear` command-ids must count 0 — a refused attempt
+#     writes no row, because the refusal precedes the command that records it:
+kubectl -n wamn-system exec deploy/postgres -- psql -U postgres -d wamn -At -c \
+  "SET app.tenant = '<tenant>';
+   SELECT count(*) FROM catalog.authoring_command_audit
+    WHERE command_id IN ('<tokenless command-id>', '<forged-token command-id>');"
+# (c) token-material scan on the ACTUAL rows. The ledger schema stores no
+#     credential column by design; assert it on the rows anyway, and grep -F each
+#     credential file's secret against the rows and the smoke transcript too.
+kubectl -n wamn-system exec deploy/postgres -- psql -U postgres -d wamn -At -c \
+  "SET app.tenant = '<tenant>';
+   SELECT to_jsonb(a)::text FROM catalog.authoring_command_audit a
+    WHERE command_id LIKE '%<run-id>%';" > <mode-600 rows file>
+grep -q 'wamn_pat_' <mode-600 rows file> && echo 'FAIL: PAT material in the ledger'
+
+kubectl -n wamn-system delete svc jvzx4-smoke-nodeport
+
+# Mutants (sha256 apply/test/restore; each must print KILLED).
+tools/gate-mutants/authoring-smoke-collection-drift.sh run   # network-free
+WAMN_AUTHORING_SMOKE_BASE_URL="http://$NODE_IP:31188" \
+  WAMN_AUTHORING_SMOKE_PRINCIPAL_A=<first credential file> \
+  WAMN_AUTHORING_SMOKE_PRINCIPAL_B=<second credential file> \
+  tools/gate-mutants/authoring-smoke-forged-token.sh run
+```
+
+`authoring-smoke-collection-drift` writes a field the collection owns (`flow-id`)
+and must die on `collection-derivation` before any request is sent.
+`authoring-smoke-forged-token` tells the script to read the forged leg's reply as
+an authorized success and must die on `authoring-leg-forged-token-status`; being
+live, it logs in and writes its own draft plus one audit row for principal A
+before it fails, which is expected fixture residue rather than a gate result.
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md
