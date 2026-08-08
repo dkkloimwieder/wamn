@@ -367,7 +367,7 @@ fn partial_rerun_seeds_from_the_failed_nodes_captured_input() {
     let orig = RunRecord::new("orig", "lin4", 1, json!({ "trig": 1 }));
     // c failed; its captured input is recorded on the node-run.
     let node_runs = [
-        NodeRunRecord::success("orig", "a", 0, "main", json!({ "at": "a" })),
+        entry_row(&orig, "a"),
         NodeRunRecord::success("orig", "b", 1, "main", json!({ "at": "b" })),
         NodeRunRecord {
             status: NodeRunStatus::Error,
