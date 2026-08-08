@@ -57,7 +57,13 @@ pub mod tests {
             "'subject', 'service:' || c.catalog_id || ':' || c.environment || ':' || $9::text"
         ));
         assert!(sql.contains("'caller', jsonb_build_object"));
-        assert!(sql.contains("c.caller_context->'actor'"));
+        // The caller's own actor is demoted to lineage under `caller`, never
+        // promoted to the child's actor. 50169c4 nested the untrusted half of
+        // the context under `source`, so the read is `->'source'->'actor'` —
+        // pin the whole COALESCE so repointing or dropping it fails here.
+        assert!(
+            sql.contains("'actor', COALESCE(c.caller_context->'source'->'actor', 'null'::jsonb)")
+        );
         assert!(sql.contains("$11::text::jsonb,"));
         assert!(sql.contains("invocation_context"));
         assert!(!sql.contains("$11::text::jsonb ||"));
