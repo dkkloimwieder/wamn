@@ -335,7 +335,8 @@ pub struct SaveFlowDraft {
     pub flow_id: String,
     /// Zero creates the draft; a positive value replaces exactly that revision.
     pub expected_revision: i64,
-    pub graph_json: String,
+    /// Exact submitted text, stored byte for byte and never parsed here.
+    pub definition: String,
 }
 
 /// Result of a mutable draft save.
@@ -616,6 +617,10 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
 }
 
 /// Save one mutable draft document without requiring it to parse or validate.
+///
+/// The definition is persisted exactly as submitted, so a half-finished edit is
+/// a preserved draft rather than a failed command. `validate` parses the stored
+/// text at its own stage and returns the canonical typed refusal.
 pub(crate) async fn save_flow_draft(
     _authority: &InternalDevAdmin,
     client: &Client,
@@ -639,7 +644,7 @@ pub(crate) async fn save_flow_draft(
                     &request.tenant_id,
                     &request.draft_id,
                     &request.flow_id,
-                    &request.graph_json,
+                    &request.definition,
                 ],
             )
             .await
@@ -653,7 +658,7 @@ pub(crate) async fn save_flow_draft(
                     &request.draft_id,
                     &request.flow_id,
                     &request.expected_revision,
-                    &request.graph_json,
+                    &request.definition,
                 ],
             )
             .await
@@ -738,9 +743,11 @@ pub(crate) async fn validate_flow_draft(
         return Ok(Err(DraftRunRefusal::DraftRevisionNotFound));
     };
     let flow_id: String = row.get(0);
-    let graph_json: String = row.get(1);
+    // Exactly the bytes the client saved. Parsing them is this stage's job, and
+    // failing to parse them is this stage's typed refusal.
+    let definition: String = row.get(1);
     let edited_at: SystemTime = row.get(2);
-    let flow = match wamn_flow::Flow::from_json(&graph_json) {
+    let flow = match wamn_flow::Flow::from_json(&definition) {
         Ok(flow) => flow,
         Err(error) => {
             return Ok(Err(DraftRunRefusal::InvalidDraft {
@@ -881,6 +888,7 @@ pub(crate) async fn validate_flow_draft(
                 &draft.execution_bundle().hash(),
                 &binding_base_artifact_hash,
                 &validated_identity.as_str(),
+                &definition,
             ],
         )
         .await

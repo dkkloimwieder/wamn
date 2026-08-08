@@ -7,8 +7,17 @@
 //! principals running the same command stay distinguishable in the append-only
 //! ledger.
 //!
+//! It also owns `wamn-ftfc.2`'s S1 write path: a checkout client reads
+//! working-tree definition files and submits their content with the revision it
+//! last saw. That half proves the submitted document reaches the canonical
+//! store, that the exact stored revision is the one the canonical validate read
+//! returns, that a stale working copy refuses before mutating anything, that
+//! the public HTTP path and the canonical audited handler path agree, and that
+//! attribution a client attaches is inert.
+//!
 //! The recipe in `docs/build-and-test.md` supplies one disposable database.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -20,6 +29,10 @@ use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
+use wamn_scenario_worker::authoring::{
+    InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
+};
+use wamn_scenario_worker::management::{CommandScope, authorize, save_flow_draft};
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
@@ -91,6 +104,43 @@ async fn post(path: &str, bearer: Option<&str>, extra: &[(&str, &str)], body: &s
 }
 
 fn save_document(command_id: &str, project: &str, revision: u64, draft: &str) -> String {
+    save_definition(command_id, project, revision, draft, DRAFT_GRAPH)
+}
+
+/// The same command with a caller-supplied definition body.
+fn save_definition(
+    command_id: &str,
+    project: &str,
+    revision: u64,
+    draft: &str,
+    definition: &str,
+) -> String {
+    save_attributed(command_id, project, revision, draft, definition, None)
+}
+
+/// The same command carrying optional client-supplied source attribution.
+fn save_attributed(
+    command_id: &str,
+    project: &str,
+    revision: u64,
+    draft: &str,
+    definition: &str,
+    provenance: Option<serde_json::Value>,
+) -> String {
+    let mut document = save_command(command_id, project, revision, draft, definition);
+    if let Some(provenance) = provenance {
+        document["body"]["command"]["input"]["provenance"] = provenance;
+    }
+    document.to_string()
+}
+
+fn save_command(
+    command_id: &str,
+    project: &str,
+    revision: u64,
+    draft: &str,
+    definition: &str,
+) -> serde_json::Value {
     serde_json::json!({
         "document": "request",
         "body": {
@@ -103,12 +153,91 @@ fn save_document(command_id: &str, project: &str, revision: u64, draft: &str) ->
                     "draft-id": draft,
                     "flow-id": "receive-material",
                     "expected-revision": revision,
-                    "definition": DRAFT_GRAPH,
+                    "definition": definition,
                 }
             }
         }
     })
-    .to_string()
+}
+
+/// Create one disposable working-tree checkout. There is no repository in it:
+/// the platform never sees a checkout, only the content a client sends.
+fn checkout() -> PathBuf {
+    let root = std::env::temp_dir().join("wamn-ftfc2-checkout");
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::create_dir_all(root.join("flows")).expect("create the checkout");
+    root
+}
+
+/// Write one flow definition file, as an editor or an agent would.
+fn edit(root: &Path, file: &str, contents: &str) -> PathBuf {
+    let path = root.join("flows").join(file);
+    std::fs::write(&path, contents).expect("write the definition file");
+    path
+}
+
+/// The whole S1 client: read the working-tree file and submit its content with
+/// the revision the client last saw, presenting its own bearer token.
+///
+/// No repository is opened, no Git process runs, and no database URL or
+/// platform credential is involved on either side of this call.
+async fn submit(
+    token: &str,
+    command_id: &str,
+    path: &Path,
+    draft: &str,
+    expected_revision: u64,
+) -> Response {
+    submit_with(token, command_id, path, draft, expected_revision, &[]).await
+}
+
+/// Submit exactly as [`submit`], with extra transport headers attached.
+async fn submit_with(
+    token: &str,
+    command_id: &str,
+    path: &Path,
+    draft: &str,
+    expected_revision: u64,
+    extra: &[(&str, &str)],
+) -> Response {
+    let bytes = std::fs::read(path).expect("read the working-tree definition file");
+    let definition = String::from_utf8(bytes).expect("a definition file is UTF-8");
+    let document = save_definition(command_id, PROJECT, expected_revision, draft, &definition);
+    post("/authoring", Some(token), extra, &document).await
+}
+
+/// Submit as [`submit`], attaching the commit the working tree was read at.
+async fn submit_attributed(
+    token: &str,
+    command_id: &str,
+    path: &Path,
+    draft: &str,
+    expected_revision: u64,
+    provenance: serde_json::Value,
+) -> Response {
+    let bytes = std::fs::read(path).expect("read the working-tree definition file");
+    let definition = String::from_utf8(bytes).expect("a definition file is UTF-8");
+    let document = save_attributed(
+        command_id,
+        PROJECT,
+        expected_revision,
+        draft,
+        &definition,
+        Some(provenance),
+    );
+    post("/authoring", Some(token), &[], &document).await
+}
+
+/// The response envelope's outcome, which is where every typed result and
+/// product refusal lives.
+fn outcome(body: &str) -> serde_json::Value {
+    let document: serde_json::Value =
+        serde_json::from_str(body).unwrap_or_else(|_| panic!("a response document: {body}"));
+    document["body"]["outcome"].clone()
+}
+
+fn as_json(text: &str) -> serde_json::Value {
+    serde_json::from_str(text).unwrap_or_else(|_| panic!("valid JSON: {text}"))
 }
 
 async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
@@ -211,6 +340,69 @@ async fn draft_count(admin: &Client) -> i64 {
         .await
         .expect("count drafts")
         .get(0)
+}
+
+/// Read one exact draft revision through the very statement
+/// `validate_flow_draft` selects with, so this gate cannot agree with the
+/// canonical read by accident.
+///
+/// `validate` is the only command that resolves a mutable revision; `draft-run`,
+/// `suite-run`, and `promote` consume the immutable pin `validate` produces, so
+/// they inherit exactly whatever this returns.
+async fn draft_at_revision(admin: &Client, draft: &str, revision: i64) -> Option<(String, String)> {
+    admin
+        .query_opt(
+            wamn_scenario_catalog::authoring::select_flow_draft_sql(),
+            &[&TENANT, &draft, &revision],
+        )
+        .await
+        .expect("read one exact draft revision")
+        .map(|row| (row.get(0), row.get(1)))
+}
+
+async fn stored_revision(admin: &Client, draft: &str) -> Option<i64> {
+    admin
+        .query_opt(
+            "SELECT revision FROM catalog.flow_drafts WHERE tenant_id = $1 AND draft_id = $2",
+            &[&TENANT, &draft],
+        )
+        .await
+        .expect("read the stored draft revision")
+        .map(|row| row.get(0))
+}
+
+/// The attribution recorded for one command target: subject and effective role.
+async fn attribution(admin: &Client, target: &str) -> Vec<(String, String)> {
+    admin
+        .query(
+            "SELECT principal_subject, effective_role \
+               FROM catalog.authoring_command_audit \
+              WHERE tenant_id = $1 AND target_ref = $2 ORDER BY recorded_at",
+            &[&TENANT, &target],
+        )
+        .await
+        .expect("read the attribution for one target")
+        .iter()
+        .map(|row| (row.get(0), row.get(1)))
+        .collect()
+}
+
+/// The client's recorded source claim for one command target.
+type RecordedProvenance = (Option<String>, Option<String>, Option<bool>);
+
+async fn recorded_provenance(admin: &Client, target: &str) -> Vec<RecordedProvenance> {
+    admin
+        .query(
+            "SELECT provenance_commit, provenance_ref, provenance_dirty \
+               FROM catalog.authoring_command_audit \
+              WHERE tenant_id = $1 AND target_ref = $2 ORDER BY recorded_at",
+            &[&TENANT, &target],
+        )
+        .await
+        .expect("read the recorded provenance for one target")
+        .iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2)))
+        .collect()
 }
 
 #[tokio::test]
@@ -477,6 +669,455 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         ledger_rows(&admin).await.len(),
         before,
         "a smuggled principal reached a command"
+    );
+
+    // ---- S1: a checkout client submits working-tree file content -----------
+    let root = checkout();
+    let file = edit(&root, "receive-material.flow.json", DRAFT_GRAPH);
+    let created = submit(alice.token(), "checkout-1", &file, "draft-checkout", 0).await;
+    assert_eq!(created.status, 200, "{}", created.body);
+    let result = outcome(&created.body);
+    assert_eq!(result["status"], "completed", "{}", created.body);
+    assert_eq!(result["value"]["command"], "save-flow-draft");
+    assert_eq!(result["value"]["result"]["draft-id"], "draft-checkout");
+    assert_eq!(result["value"]["result"]["flow-id"], "receive-material");
+    assert_eq!(result["value"]["result"]["revision"], 1);
+
+    // The editor changes one literal in the file; the client submits the new
+    // content at exactly the revision it last saw.
+    let edited_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":201"#);
+    assert_ne!(edited_text, DRAFT_GRAPH, "the fixture edit changed nothing");
+    let file = edit(&root, "receive-material.flow.json", &edited_text);
+    let saved = submit(alice.token(), "checkout-2", &file, "draft-checkout", 1).await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    assert_eq!(outcome(&saved.body)["value"]["result"]["revision"], 2);
+
+    // The revision the client was handed is the revision the canonical read
+    // returns, carrying the document the client submitted.
+    let (flow_id, stored) = draft_at_revision(&admin, "draft-checkout", 2)
+        .await
+        .expect("the canonical validate read finds the revision the client was handed");
+    assert_eq!(flow_id, "receive-material");
+    assert_eq!(
+        as_json(&stored),
+        as_json(&edited_text),
+        "the stored revision is not the document the client submitted"
+    );
+    // A superseded revision is not separately addressable: the draft is one
+    // mutable document, so `validate` can only ever pin the current revision.
+    assert!(
+        draft_at_revision(&admin, "draft-checkout", 1)
+            .await
+            .is_none()
+    );
+
+    // ---- a stale working copy refuses before it mutates anything -----------
+    let stale_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":500"#);
+    let stale_file = edit(&root, "receive-material.flow.json", &stale_text);
+    let before = draft_at_revision(&admin, "draft-checkout", 2)
+        .await
+        .expect("the draft is stored");
+    // The client still believes it holds revision 1.
+    let stale = submit(
+        alice.token(),
+        "checkout-stale",
+        &stale_file,
+        "draft-checkout",
+        1,
+    )
+    .await;
+    assert_eq!(stale.status, 200, "{}", stale.body);
+    let refused = outcome(&stale.body);
+    assert_eq!(refused["status"], "refused", "{}", stale.body);
+    assert_eq!(refused["value"]["command"], "save-flow-draft");
+    assert_eq!(refused["value"]["reason"]["kind"], "revision-conflict");
+    assert_eq!(refused["value"]["reason"]["expected-revision"], 1);
+    // Refused before mutation: neither the revision nor the stored document
+    // moved, so the concurrent editor's work is intact.
+    assert_eq!(
+        draft_at_revision(&admin, "draft-checkout", 2).await,
+        Some(before),
+        "a stale write overwrote the stored document"
+    );
+    assert_eq!(
+        stored_revision(&admin, "draft-checkout").await,
+        Some(2),
+        "a stale write advanced the draft revision"
+    );
+
+    // ---- an unversioned or unsupported document refuses before a command ---
+    let versioned = |change: fn(&mut serde_json::Value)| {
+        let mut document = as_json(&save_definition(
+            "checkout-version",
+            PROJECT,
+            0,
+            "draft-version",
+            DRAFT_GRAPH,
+        ));
+        change(&mut document);
+        document.to_string()
+    };
+    let unversioned = versioned(|document| {
+        document["body"]
+            .as_object_mut()
+            .expect("a request body")
+            .remove("schema-version");
+    });
+    let unsupported = versioned(|document| {
+        document["body"]["schema-version"] = serde_json::json!("0.2");
+    });
+    for (name, document) in [("unversioned", &unversioned), ("unsupported", &unsupported)] {
+        let ledger_before = ledger_rows(&admin).await.len();
+        let refused = post("/authoring", Some(alice.token()), &[], document).await;
+        assert_eq!(refused.status, 400, "{name}: {}", refused.body);
+        assert!(
+            stored_revision(&admin, "draft-version").await.is_none(),
+            "{name} reached a command"
+        );
+        assert_eq!(
+            ledger_rows(&admin).await.len(),
+            ledger_before,
+            "{name} was audited"
+        );
+    }
+    // The unsupported version is a typed refusal naming both versions; the
+    // unversioned one cannot be, because a document with no version has no
+    // contract to answer on.
+    let refused = post("/authoring", Some(alice.token()), &[], &unsupported).await;
+    assert_eq!(
+        as_json(&refused.body),
+        serde_json::json!({
+            "kind": "unsupported-contract-version",
+            "requested": "0.2",
+            "supported": "0.1",
+        })
+    );
+
+    // ---- attribution a client attaches is inert ----------------------------
+    // A checkout client legitimately knows the commit it edited from. It may
+    // send that; the platform runs no Git, reads no such header, and must
+    // produce the identical outcome and the identical attribution either way.
+    let provenance = [
+        ("X-Wamn-Commit", "0123456789abcdef0123456789abcdef01234567"),
+        ("X-Git-Author", "bob@example.com"),
+        ("X-Wamn-Signed-Off-By", "project-admin"),
+        ("X-Wamn-Repository", "git@example.invalid:acme/flows.git"),
+    ];
+    let plain = submit(alice.token(), "prov-plain", &file, "draft-prov-plain", 0).await;
+    let signed = submit_with(
+        alice.token(),
+        "prov-signed",
+        &file,
+        "draft-prov-signed",
+        0,
+        &provenance,
+    )
+    .await;
+    assert_eq!(plain.status, signed.status, "{}", signed.body);
+    assert_eq!(outcome(&plain.body)["status"], "completed");
+    assert_eq!(
+        outcome(&plain.body)["value"]["result"]["revision"],
+        outcome(&signed.body)["value"]["result"]["revision"],
+        "attached provenance changed the command outcome"
+    );
+    assert_eq!(
+        as_json(
+            &draft_at_revision(&admin, "draft-prov-plain", 1)
+                .await
+                .expect("the plain draft is stored")
+                .1
+        ),
+        as_json(
+            &draft_at_revision(&admin, "draft-prov-signed", 1)
+                .await
+                .expect("the signed draft is stored")
+                .1
+        ),
+        "attached provenance changed what was stored"
+    );
+    // Attribution stays the verified presenter, never the attached author or
+    // the attached role.
+    assert_eq!(
+        attribution(&admin, "draft-prov-signed").await,
+        vec![("alice@example.com".to_owned(), "project-author".to_owned())],
+        "attached provenance became identity or authority"
+    );
+
+    // ---- handler parity: the HTTP path is the canonical handler path -------
+    // The same author saves the same content at the same expected revision,
+    // once through the public versioned API and once through the canonical
+    // audited command boundary that API itself calls.
+    let parity_text = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":202"#);
+    let parity_file = edit(&root, "parity.flow.json", &parity_text);
+    let (identity, identity_task) = connect(&url).await.expect("connect for authorization");
+    let author = authorize(&identity, alice.token(), ORG, PROJECT)
+        .await
+        .expect("authorize the parity author")
+        .expect("alice is admitted");
+    let mut backend = InternalAuthoringBackend::connect(
+        &author_url(&url),
+        TENANT.to_owned(),
+        SOURCE_SCHEMA.to_owned(),
+    )
+    .await
+    .expect("connect the canonical authoring backend");
+    let scope = CommandScope::new(TENANT, ORG, PROJECT, "dev");
+    let request = |draft: &str| SaveFlowDraft {
+        tenant_id: TENANT.to_owned(),
+        draft_id: draft.to_owned(),
+        flow_id: "receive-material".to_owned(),
+        expected_revision: 0,
+        definition: parity_text.clone(),
+    };
+    // Both paths carry the same source claim, so parity covers attribution too.
+    let claim = wamn_authoring_model::CommitProvenance {
+        commit: "0123456789abcdef0123456789abcdef01234567".to_owned(),
+        r#ref: Some("refs/heads/main".to_owned()),
+        dirty: false,
+    };
+    let direct = save_flow_draft(
+        &mut backend,
+        &author,
+        &scope,
+        "parity-direct",
+        &request("draft-parity-direct"),
+        Some(&claim),
+    )
+    .await
+    .expect("the canonical handler runs");
+    assert!(
+        matches!(direct, SaveFlowDraftResult::Saved { revision: 1, .. }),
+        "{direct:?}"
+    );
+    let over_http = submit_attributed(
+        alice.token(),
+        "parity-http",
+        &parity_file,
+        "draft-parity-http",
+        0,
+        serde_json::json!({
+            "commit": "0123456789abcdef0123456789abcdef01234567",
+            "ref": "refs/heads/main",
+            "dirty": false,
+        }),
+    )
+    .await;
+    assert_eq!(over_http.status, 200, "{}", over_http.body);
+    assert_eq!(outcome(&over_http.body)["value"]["result"]["revision"], 1);
+    assert_eq!(
+        draft_at_revision(&admin, "draft-parity-direct", 1)
+            .await
+            .map(|row| row.1),
+        draft_at_revision(&admin, "draft-parity-http", 1)
+            .await
+            .map(|row| row.1),
+        "the two paths stored different documents"
+    );
+    assert_eq!(
+        attribution(&admin, "draft-parity-direct").await,
+        attribution(&admin, "draft-parity-http").await,
+        "the two paths attributed differently"
+    );
+    assert_eq!(
+        recorded_provenance(&admin, "draft-parity-direct").await,
+        recorded_provenance(&admin, "draft-parity-http").await,
+        "the two paths recorded the source claim differently"
+    );
+
+    // Both paths refuse a stale expected revision the same way.
+    let stale_direct = save_flow_draft(
+        &mut backend,
+        &author,
+        &scope,
+        "parity-direct-stale",
+        &SaveFlowDraft {
+            expected_revision: 9,
+            ..request("draft-parity-direct")
+        },
+        Some(&claim),
+    )
+    .await
+    .expect("the canonical handler runs");
+    assert_eq!(stale_direct, SaveFlowDraftResult::RevisionConflict);
+    let stale_http = submit(
+        alice.token(),
+        "parity-http-stale",
+        &parity_file,
+        "draft-parity-http",
+        9,
+    )
+    .await;
+    assert_eq!(
+        outcome(&stale_http.body)["value"]["reason"]["kind"],
+        "revision-conflict"
+    );
+    // Neither refusal advanced its draft.
+    for draft in ["draft-parity-direct", "draft-parity-http"] {
+        assert_eq!(stored_revision(&admin, draft).await, Some(1), "{draft}");
+    }
+    drop(backend);
+    identity_task.abort();
+
+    // ---- the stored draft is the exact submitted bytes ---------------------
+    // `definition` is `text`, so what comes back is what went in: whitespace,
+    // key order, trailing newline and all. Nothing on the save path parses it.
+    let exact = "{  \"schema-version\":\"0.1\",\n\n  \"flow-id\":\"receive-material\",\n  \
+                 \"version\":1,\n\t\"nodes\":[],\n  \"edges\":[]  }\n";
+    let exact_file = edit(&root, "exact.flow.json", exact);
+    let saved = submit(alice.token(), "exact-1", &exact_file, "draft-exact", 0).await;
+    assert_eq!(saved.status, 200, "{}", saved.body);
+    let (_, stored) = draft_at_revision(&admin, "draft-exact", 1)
+        .await
+        .expect("the exact draft is stored");
+    assert_eq!(
+        stored, exact,
+        "the stored revision is not the bytes the client submitted"
+    );
+    // And it is still exactly the file on disk, which is the whole point: the
+    // client can diff its working tree against the stored revision.
+    assert_eq!(
+        stored,
+        std::fs::read_to_string(&exact_file).expect("read the working-tree file"),
+        "the stored revision drifted from the working-tree file"
+    );
+
+    // ---- a half-finished edit is a preserved draft, not a failure ----------
+    // This is the normal state of a file between two keystrokes. Save stores
+    // it; `validate` is where unparseable text becomes a typed refusal.
+    let ledger_before = ledger_rows(&admin).await.len();
+    let broken = "{\"schema-version\":\"0.1\",\n  \"nodes\": [";
+    let broken_file = edit(&root, "broken.flow.json", broken);
+    let preserved = submit(alice.token(), "broken-1", &broken_file, "draft-broken", 0).await;
+    assert_eq!(preserved.status, 200, "{}", preserved.body);
+    assert_eq!(
+        outcome(&preserved.body)["status"],
+        "completed",
+        "{}",
+        preserved.body
+    );
+    assert_eq!(outcome(&preserved.body)["value"]["result"]["revision"], 1);
+    let (_, stored) = draft_at_revision(&admin, "draft-broken", 1)
+        .await
+        .expect("the half-finished draft is preserved");
+    assert_eq!(
+        stored, broken,
+        "invalid intermediate text was not preserved"
+    );
+    assert_eq!(
+        ledger_rows(&admin).await.len(),
+        ledger_before + 1,
+        "the authorized save was not attributed"
+    );
+    // An emptied file is equally legitimate, and equally preserved.
+    let emptied_file = edit(&root, "emptied.flow.json", "");
+    let emptied = submit(
+        alice.token(),
+        "emptied-1",
+        &emptied_file,
+        "draft-emptied",
+        0,
+    )
+    .await;
+    assert_eq!(emptied.status, 200, "{}", emptied.body);
+    assert_eq!(
+        draft_at_revision(&admin, "draft-emptied", 1)
+            .await
+            .expect("the emptied draft is preserved")
+            .1,
+        ""
+    );
+
+    // ---- provenance is recorded verbatim, and only as attribution ----------
+    let attributed = serde_json::json!({
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "ref": "refs/heads/main",
+        "dirty": false,
+    });
+    let with_source = submit_attributed(
+        alice.token(),
+        "prov-recorded",
+        &file,
+        "draft-prov-recorded",
+        0,
+        attributed.clone(),
+    )
+    .await;
+    assert_eq!(with_source.status, 200, "{}", with_source.body);
+    assert_eq!(
+        recorded_provenance(&admin, "draft-prov-recorded").await,
+        vec![(
+            Some("0123456789abcdef0123456789abcdef01234567".to_owned()),
+            Some("refs/heads/main".to_owned()),
+            Some(false),
+        )],
+        "the client's source claim was not recorded verbatim"
+    );
+    // A detached checkout has a commit and no ref; a dirty tree says so.
+    let detached = submit_attributed(
+        alice.token(),
+        "prov-detached",
+        &file,
+        "draft-prov-detached",
+        0,
+        serde_json::json!({"commit": "feedface", "ref": null, "dirty": true}),
+    )
+    .await;
+    assert_eq!(detached.status, 200, "{}", detached.body);
+    assert_eq!(
+        recorded_provenance(&admin, "draft-prov-detached").await,
+        vec![(Some("feedface".to_owned()), None, Some(true))]
+    );
+    // Omitting it records nothing rather than inventing a claim.
+    assert_eq!(
+        recorded_provenance(&admin, "draft-prov-plain").await,
+        vec![(None, None, None)],
+        "an absent claim was fabricated"
+    );
+
+    // Two commands differing ONLY in provenance are indistinguishable in every
+    // respect a client can observe, and in what they stored.
+    let twin = edit(&root, "twin.flow.json", &edited_text);
+    let bare = submit(alice.token(), "twin-bare", &twin, "draft-twin-bare", 0).await;
+    let claimed = submit_attributed(
+        alice.token(),
+        "twin-claimed",
+        &twin,
+        "draft-twin-claimed",
+        0,
+        serde_json::json!({"commit": "deadbeef", "ref": "refs/heads/other", "dirty": true}),
+    )
+    .await;
+    assert_eq!(bare.status, claimed.status);
+    assert_eq!(
+        outcome(&bare.body).to_string().replace("bare", "claimed"),
+        outcome(&claimed.body).to_string(),
+        "attribution changed the command outcome"
+    );
+    assert_eq!(
+        draft_at_revision(&admin, "draft-twin-bare", 1)
+            .await
+            .map(|row| row.1),
+        draft_at_revision(&admin, "draft-twin-claimed", 1)
+            .await
+            .map(|row| row.1),
+        "attribution changed what was stored"
+    );
+    // Even a claim that names a role or another principal is inert: the row is
+    // attributed to the verified presenter, and the claim stays a claim.
+    let hostile = submit_attributed(
+        alice.token(),
+        "prov-hostile",
+        &twin,
+        "draft-prov-hostile",
+        0,
+        serde_json::json!({"commit": "project-admin", "ref": "bob@example.com", "dirty": false}),
+    )
+    .await;
+    assert_eq!(hostile.status, 200, "{}", hostile.body);
+    assert_eq!(
+        attribution(&admin, "draft-prov-hostile").await,
+        vec![("alice@example.com".to_owned(), "project-author".to_owned())],
+        "a source claim became identity or authority"
     );
 
     // ---- the reserved login route implements the ctc8.7 wire contract -------

@@ -2,6 +2,7 @@
 
 pub mod authoring;
 pub mod management;
+pub mod projection;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;

@@ -6,21 +6,25 @@
 
 /// Insert the first revision of one mutable flow draft.
 ///
-/// Params: tenant, draft id, flow id, JSON document text.
+/// Params: tenant, draft id, flow id, exact definition text.
+///
+/// The definition is stored as `text`, byte for byte. Save deliberately does
+/// not parse it, so a half-finished edit is preserved rather than refused;
+/// `validate` parses at its own stage and owns the typed refusal.
 pub fn insert_flow_draft_sql() -> &'static str {
     "INSERT INTO catalog.flow_drafts \
-       (tenant_id, draft_id, flow_id, revision, graph_json) \
-     VALUES ($1, $2, $3, 1, $4::text::jsonb) \
+       (tenant_id, draft_id, flow_id, revision, definition) \
+     VALUES ($1, $2, $3, 1, $4) \
      ON CONFLICT (tenant_id, draft_id) DO NOTHING \
      RETURNING revision, edited_at"
 }
 
 /// Replace one mutable draft only at its caller-observed revision.
 ///
-/// Params: tenant, draft id, flow id, expected revision, JSON document text.
+/// Params: tenant, draft id, flow id, expected revision, exact definition text.
 pub fn update_flow_draft_sql() -> &'static str {
     "UPDATE catalog.flow_drafts \
-        SET revision = revision + 1, graph_json = $5::text::jsonb, \
+        SET revision = revision + 1, definition = $5, \
             edited_at = GREATEST(clock_timestamp(), edited_at + interval '1 microsecond') \
       WHERE tenant_id = $1 AND draft_id = $2 AND flow_id = $3 AND revision = $4 \
       RETURNING revision, edited_at"
@@ -28,9 +32,16 @@ pub fn update_flow_draft_sql() -> &'static str {
 
 /// Read one exact draft revision for validation.
 ///
+/// Returns the definition exactly as it was submitted; the caller parses.
+///
+/// The `graph_json` fallback serves rows saved before wamn-ftfc.2, whose exact
+/// bytes were destroyed by the old `jsonb` cast and are unrecoverable. Such a
+/// row reads back as its normalized document until its next save; every row
+/// written since is byte-exact.
+///
 /// Params: tenant, draft id, revision.
 pub fn select_flow_draft_sql() -> &'static str {
-    "SELECT flow_id, graph_json::text, edited_at \
+    "SELECT flow_id, COALESCE(definition, graph_json::text), edited_at \
        FROM catalog.flow_drafts \
       WHERE tenant_id = $1 AND draft_id = $2 AND revision = $3"
 }
@@ -71,11 +82,16 @@ pub fn select_draft_catalog_source_member_sql() -> &'static str {
 
 /// Persist one immutable validation of a content-addressed draft.
 ///
+/// `graph_json` here is the canonical re-serialization of the parsed flow, which
+/// is what an immutable validated artifact stores. The drift guard is separate
+/// and byte-exact: `$22` is the definition text the validator actually read, so
+/// a concurrent edit between read and insert cannot be validated away.
+///
 /// Params: tenant, draft id, revision, draft-content hash, catalog id/version,
 /// environment, source-suite flow version, runtime flow version, graph JSON/hash, artifact hash,
 /// interface bundle JSON/hash, component digests JSON, occurrence recovery
 /// JSON/hash, execution-bundle bytes/hash, immutable binding-base artifact hash,
-/// validated-draft identity hash.
+/// validated-draft identity hash, exact source definition text.
 pub fn insert_validated_flow_draft_sql() -> &'static str {
     "INSERT INTO catalog.validated_flow_drafts \
        (tenant_id, draft_id, draft_revision, draft_edited_at, draft_content_hash, catalog_id, \
@@ -86,11 +102,12 @@ pub fn insert_validated_flow_draft_sql() -> &'static str {
         validated_draft_hash) \
      SELECT document.tenant_id, document.draft_id, document.revision, document.edited_at, \
             $4, $5, $6, $7, $8, \
-            document.flow_id, $9, document.graph_json, $11, $12, $13, $14, \
+            document.flow_id, $9, $10, $11, $12, $13, $14, \
             $15::text::jsonb, $16, $17, $18, $19, $20, $21 \
        FROM catalog.flow_drafts AS document \
       WHERE document.tenant_id = $1 AND document.draft_id = $2 \
-        AND document.revision = $3 AND document.graph_json = $10::text::jsonb \
+        AND document.revision = $3 \
+        AND COALESCE(document.definition, document.graph_json::text) = $22 \
      ON CONFLICT (tenant_id, draft_id, draft_revision, draft_content_hash, \
                   catalog_id, catalog_version, \
                   environment, suite_flow_version, runtime_flow_version, draft_artifact_hash, \
@@ -231,6 +248,20 @@ mod tests {
         assert!(update.contains("revision = $4"));
         assert!(update.contains("RETURNING revision, edited_at"));
         assert!(insert_flow_draft_sql().contains("ON CONFLICT (tenant_id, draft_id) DO NOTHING"));
+        // The mutable draft is WRITTEN as exact text: neither write may cast
+        // it, because casting is parsing and save does not parse.
+        for statement in [insert_flow_draft_sql(), update_flow_draft_sql()] {
+            assert!(statement.contains("definition"), "{statement}");
+            assert!(!statement.contains("graph_json"), "{statement}");
+            assert!(!statement.contains("jsonb"), "{statement}");
+        }
+        // The read prefers exact text and falls back only for pre-wamn-ftfc.2
+        // rows, which have no exact text to return.
+        let select = select_flow_draft_sql();
+        assert!(
+            select.contains("COALESCE(definition, graph_json::text)"),
+            "{select}"
+        );
     }
 
     #[test]
@@ -256,8 +287,8 @@ mod tests {
         }
         assert!(!insert.contains("release_manifests"));
         assert!(!insert.contains("INSERT INTO catalog.flow_artifacts"));
-        assert!(insert.contains("document.graph_json = $10::text::jsonb"));
-        assert!(insert.contains("document.flow_id, $9, document.graph_json"));
+        assert!(insert.contains("COALESCE(document.definition, document.graph_json::text) = $22"));
+        assert!(insert.contains("document.flow_id, $9, $10"));
         assert!(
             insert.contains("ON CONFLICT (tenant_id, draft_id, draft_revision, draft_content_hash")
         );

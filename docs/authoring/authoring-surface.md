@@ -17,11 +17,22 @@ canonical application handlers established by `wamn-ftfc.1` remain responsible
 for authorization, validation, optimistic lifecycle transitions, and audit
 attribution. Git, CLI, and HTTP are adapters to those handlers.
 
-The authenticated principal and source provenance are trusted adapter context.
-They are deliberately absent from the client-controlled JSON. In particular,
-Git commit identity supplies attribution but never authorization. A request
-that injects a principal, credential, database URL, endpoint, execution bundle,
-frontend state, or shell host fails closed as an unknown field.
+The authenticated principal is trusted adapter context and is deliberately
+absent from the client-controlled JSON. A request that injects a principal,
+credential, database URL, endpoint, execution bundle, frontend state, or shell
+host fails closed as an unknown field.
+
+**Source provenance is different, and is a client field.** The platform runs no
+Git: it never clones a repository, never reads a commit, and never verifies a
+checkout. A client is therefore the only thing that can know where it read a
+definition from, so `save-flow-draft` carries an optional `provenance` object
+(`commit`, nullable `ref`, `dirty`) recording the client's own claim about its
+working tree. It is **attribution and never authorization**: it selects no
+principal, widens no role, and changes no result. Two commands differing only
+in provenance produce the same outcome and store the same document. It is
+recorded verbatim on the command ledger beside the verified principal that
+actually authorized the command, and no read path may substitute one for the
+other. It carries no identity-shaped field for exactly that reason.
 
 ## Wire root and version
 
@@ -43,7 +54,7 @@ not transports.
 
 | Command | Client request | Completed result | Product refusals |
 |---|---|---|---|
-| `save-flow-draft` | project/environment scope, draft and flow IDs, expected revision, exact UTF-8 flow-document text | exact draft ID, flow ID, and new revision | authorization denied, revision conflict |
+| `save-flow-draft` | project/environment scope, draft and flow IDs, expected revision, exact UTF-8 flow-document text, optional commit provenance | exact draft ID, flow ID, and new revision | authorization denied, revision conflict |
 | `validate` | scope, exact draft revision, stored-suite reference | validated-draft ID plus exact draft, artifact, bundle, catalog, environment, and proposed runtime-version pins | authorization denied, missing draft revision, invalid draft, catalog drift, unresolved nodes |
 | `draft-run` | scope, opaque validated-draft reference, one input | run ID and exact validated-draft reference | authorization denied, missing/drifted validated draft, draft connections denied |
 | `suite-run` | scope, opaque validated-draft reference, stored-suite reference | durable report and execution IDs plus exact validated-draft reference | authorization denied, missing suite/draft, validated-draft drift, draft connections denied, undrivable nodes |
@@ -65,9 +76,12 @@ The existing `.11` backend seams map without becoming public storage types:
 - `publish` consumes the exact tested executable and successful report. It may
   not rebuild, re-resolve, or substitute an artifact during publication.
 
-`wamn-ftfc.2` implements the Git-backed save adapter. `wamn-ftfc.14` implements
-the headless `validate`, `draft-run`, and `suite-run` client verbs. Neither may
-introduce a private command or bypass a canonical handler.
+`wamn-ftfc.2` implements the checkout-file save path: an authenticated client
+reads working-tree definition files and submits their content, with optional
+commit provenance, through this contract. The platform hosts no server-side Git
+adapter. `wamn-ftfc.14` implements the headless `validate`, `draft-run`, and
+`suite-run` client verbs. Neither may introduce a private command or bypass a
+canonical handler.
 
 ## Stable identity
 
@@ -75,8 +89,10 @@ All node and graph identities are scoped by the exact `ValidatedDraftIdentity`
 carried by the projection.
 
 - A mutable draft revision is `(draft-id, revision)`; its returned identity also
-  carries the flow ID. Save preserves invalid intermediate text and does not
-  parse or validate it.
+  carries the flow ID. Save stores the submitted definition **byte for byte** as
+  text and does not parse or validate it, so a half-finished or emptied file is
+  a preserved draft rather than a failed command. `validate` parses the stored
+  text at its own stage and owns the typed refusal.
 - `validated-draft-id` is the opaque handle accepted by later commands. The
   validation result and finalized projection expose the exact draft revision,
   artifact hash, execution-bundle hash, catalog ID/version, environment, and
@@ -222,8 +238,8 @@ validation, authorization, node, or coverage result.
 The wave reference client is a checkout and CLI/API, with no frontend artifact:
 
 1. Edit the canonical flow files.
-2. The Git adapter submits `save-flow-draft` with authenticated provenance and
-   expected-revision concurrency.
+2. The client submits `save-flow-draft` with the file's exact bytes, its own
+   optional commit provenance, and expected-revision concurrency.
 3. Run `validate` and retain the returned `validated-draft-id`.
 4. Run `draft-run` for an authored input.
 5. Run `suite-run`, then read the durable `suite-projection` until finalized.

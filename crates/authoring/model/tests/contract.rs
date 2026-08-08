@@ -5,9 +5,9 @@ use wamn_authoring_model::{
     AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringRefusal,
     AuthoringReportQuery, AuthoringRequest, AuthoringResponse, AuthoringScope, AuthoringSuccess,
     BranchCoverageProjection, BranchIdentity, CaseResultProjection, CatalogIdentity,
-    CommandRefusal, ContractDecodeError, CoverageState, DraftIdentity, DraftRun, DraftRunReceipt,
-    DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity, EdgeInputPort, NodeOutcome,
-    NodeResultProjection, PassFail, PendingReportReason, PendingSuiteProjection,
+    CommandRefusal, CommitProvenance, ContractDecodeError, CoverageState, DraftIdentity, DraftRun,
+    DraftRunReceipt, DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity, EdgeInputPort,
+    NodeOutcome, NodeResultProjection, PassFail, PendingReportReason, PendingSuiteProjection,
     PublishValidatedDraft, PublishedFlowIdentity, ResourceKind, SAFE_INTEGER_MAX, SCHEMA_VERSION,
     SafeUint64, SaveFlowDraft, SuiteExecutionRefusal, SuiteOutcome, SuiteProjectionState, SuiteRef,
     SuiteRun, SuiteRunReceipt, ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef,
@@ -63,11 +63,11 @@ fn validated_ref() -> ValidatedDraftRef {
 }
 
 fn request(command_id: &str, command: AuthoringCommand) -> AuthoringDocument {
-    AuthoringDocument::Request(AuthoringRequest {
+    AuthoringDocument::Request(Box::new(AuthoringRequest {
         schema_version: SCHEMA_VERSION.into(),
         command_id: command_id.into(),
         command,
-    })
+    }))
 }
 
 fn projection() -> DraftSuiteProjection {
@@ -259,6 +259,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
                 flow_id: "receive-material".into(),
                 expected_revision: exact(2),
                 definition: "{invalid intermediate flow text".into(),
+                provenance: None,
             }),
         ),
         (
@@ -527,6 +528,108 @@ fn drifted_refusal_field_spelling_is_rejected() {
     );
 }
 
+/// Provenance is optional, inert, and structurally incapable of naming anyone.
+#[test]
+fn commit_provenance_is_optional_attribution_and_never_an_identity() {
+    let with_provenance = |provenance: Option<CommitProvenance>| {
+        request(
+            "save-receiving-draft-3",
+            AuthoringCommand::SaveFlowDraft(SaveFlowDraft {
+                scope: scope(),
+                draft_id: "draft-7".into(),
+                flow_id: "receive-material".into(),
+                expected_revision: exact(2),
+                definition: "{invalid intermediate flow text".into(),
+                provenance,
+            }),
+        )
+    };
+    let attributed = CommitProvenance {
+        commit: "0123456789abcdef0123456789abcdef01234567".into(),
+        r#ref: Some("refs/heads/main".into()),
+        dirty: false,
+    };
+
+    // Omitting the field is legal for every existing 0.1 producer: a document
+    // written before this field existed still decodes, and decodes to `None`.
+    let mut without = serde_json::to_value(with_provenance(None)).unwrap();
+    let input = without["body"]["command"]["input"]
+        .as_object_mut()
+        .expect("a command input");
+    assert_eq!(input.remove("provenance"), Some(json!(null)));
+    let AuthoringDocument::Request(decoded) =
+        decode_document(&without.to_string()).expect("a document without provenance decodes")
+    else {
+        panic!("a request decodes as a request")
+    };
+    let AuthoringCommand::SaveFlowDraft(saved) = decoded.command else {
+        panic!("save-flow-draft decodes as itself")
+    };
+    assert_eq!(saved.provenance, None);
+
+    // Present, it round-trips exactly, including an explicitly null ref.
+    for provenance in [
+        attributed.clone(),
+        CommitProvenance {
+            r#ref: None,
+            dirty: true,
+            ..attributed.clone()
+        },
+    ] {
+        let document = with_provenance(Some(provenance.clone()));
+        let text = serde_json::to_string(&document).expect("emit provenance");
+        assert_eq!(
+            decode_document(&text).expect("provenance decodes"),
+            document,
+            "provenance did not round-trip"
+        );
+        let wire = serde_json::to_value(&document).unwrap();
+        let emitted = &wire["body"]["command"]["input"]["provenance"];
+        assert_eq!(emitted["commit"], json!(provenance.commit));
+        assert_eq!(emitted["dirty"], json!(provenance.dirty));
+        // `ref` is required-and-nullable, never omitted, so a missing key can
+        // never be confused with a client that knew no ref.
+        assert!(emitted.get("ref").is_some());
+    }
+
+    // Provenance is not an identity channel: it carries no field a reader could
+    // mistake for a principal, a role, or a credential.
+    let fields = serde_json::to_value(&attributed).unwrap();
+    let fields = fields.as_object().expect("provenance is an object");
+    assert_eq!(
+        fields.keys().map(String::as_str).collect::<Vec<_>>(),
+        // `serde_json` maps are ordered, so this is the whole field set.
+        ["commit", "dirty", "ref"]
+    );
+    for identity in [
+        "author",
+        "committer",
+        "email",
+        "principal",
+        "subject",
+        "role",
+        "user",
+        "signer",
+    ] {
+        assert!(
+            !fields.contains_key(identity),
+            "provenance published an identity-shaped field {identity}"
+        );
+    }
+
+    // And it stays closed to smuggled fields like every other contract struct.
+    for smuggled in ["principal", "role", "token", "author"] {
+        let mut wire = serde_json::to_value(&attributed).unwrap();
+        wire.as_object_mut()
+            .expect("provenance is an object")
+            .insert(smuggled.into(), json!("bob@example.com"));
+        assert!(
+            serde_json::from_value::<CommitProvenance>(wire).is_err(),
+            "provenance accepted smuggled {smuggled}"
+        );
+    }
+}
+
 #[test]
 fn versions_and_privileged_or_frontend_fields_fail_closed() {
     let schema = wamn_authoring_model::json_schema();
@@ -722,6 +825,7 @@ fn safe_integer_maximum_round_trips_exactly_in_both_directions() {
             flow_id: "receive-material".into(),
             expected_revision: exact(SAFE_INTEGER_MAX),
             definition: "{}".into(),
+            provenance: None,
         }),
     );
     let text = serde_json::to_string(&document).expect("emit the boundary revision");
@@ -781,6 +885,7 @@ fn assert_out_of_domain_refuses(value: u64) {
             flow_id: "receive-material".into(),
             expected_revision: exact(0),
             definition: "{}".into(),
+            provenance: None,
         }),
     );
     let mut wire = serde_json::to_value(&document).unwrap();

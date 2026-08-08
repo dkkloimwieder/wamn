@@ -452,10 +452,22 @@ CREATE TABLE catalog.flow_drafts (
     draft_id   text NOT NULL CHECK (draft_id <> ''),
     flow_id    text NOT NULL CHECK (flow_id <> ''),
     revision   bigint NOT NULL DEFAULT 1 CHECK (revision > 0),
-    graph_json jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
+    -- The authoritative content: EXACTLY the bytes a client submitted, never
+    -- reparsed. Deliberately unconstrained beyond `text` — an emptied or
+    -- half-finished file is a legitimate intermediate edit, and refusing to
+    -- store it would reintroduce the validation this column exists to remove.
+    -- Nullable only for rows written before wamn-ftfc.2; every write sets it.
+    definition text,
+    -- RETIRED by wamn-ftfc.2 (expand phase). No draft write populates this any
+    -- more; readers fall back to it only for pre-migration rows. Distinct from
+    -- catalog.validated_flow_drafts.graph_json, which keeps parsed-document
+    -- semantics because a validated artifact IS a parsed document.
+    graph_json jsonb CHECK (jsonb_typeof(graph_json) = 'object'),
     created_at timestamptz NOT NULL DEFAULT now(),
     edited_at  timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, draft_id)
+    PRIMARY KEY (tenant_id, draft_id),
+    CONSTRAINT flow_drafts_content_present
+        CHECK (definition IS NOT NULL OR graph_json IS NOT NULL)
 );
 ALTER TABLE catalog.flow_drafts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.flow_drafts FORCE ROW LEVEL SECURITY;
@@ -1436,6 +1448,15 @@ CREATE TABLE catalog.authoring_command_audit (
     project           text NOT NULL CHECK (project <> ''),
     environment       text NOT NULL CHECK (environment <> ''),
     target_ref        text NOT NULL CHECK (target_ref <> ''),
+    -- ATTRIBUTION, NEVER AUTHORITY (wamn-ftfc.2). The client's own unverified
+    -- claim about the working tree it read the content from. The platform
+    -- clones no repository, runs no Git, and checks none of these values. They
+    -- sit beside principal_id/principal_subject, which are the verified
+    -- identity that actually authorized this command; no read path may
+    -- substitute one for the other. NULL means the client claimed nothing.
+    provenance_commit text,
+    provenance_ref    text,
+    provenance_dirty  boolean,
     -- Wall-clock audit time: two rows written in one transaction still order.
     recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, audit_id),
@@ -1447,7 +1468,12 @@ CREATE TABLE catalog.authoring_command_audit (
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT authoring_command_audit_effective_role_check
-        CHECK (effective_role IN ('project-author', 'project-admin'))
+        CHECK (effective_role IN ('project-author', 'project-admin')),
+    CONSTRAINT authoring_command_audit_provenance_check
+        CHECK ((provenance_commit IS NULL) = (provenance_dirty IS NULL)
+               AND (provenance_commit IS NULL OR provenance_commit <> '')
+               AND (provenance_ref IS NULL OR provenance_ref <> '')
+               AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL))
 );
 ALTER TABLE catalog.authoring_command_audit ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.authoring_command_audit FORCE ROW LEVEL SECURITY;
@@ -1461,6 +1487,51 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 CREATE INDEX authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
 -- END AUTHORING COMMAND AUDIT MIGRATION (wamn-ctc8.8)
+
+-- BEGIN AUTHORING DRAFT DEFINITION MIGRATION (wamn-ftfc.2)
+-- Additive upgrade for catalogs provisioned before the mutable draft was
+-- stored as exact text. `jsonb` reparsed and normalized what a client sent, so
+-- a saved revision could not be handed back byte for byte and a half-finished
+-- edit could not be saved at all — both of which the authoring contract
+-- promises. `validate` parses this text at its own stage and owns the refusal.
+--
+-- NO BACKFILL, DELIBERATELY. A pre-migration row's exact bytes were destroyed
+-- by the `jsonb` cast and cannot be recovered; writing the normalized document
+-- into a column that promises exactness would manufacture that promise. Those
+-- rows keep `definition NULL`, readers fall back to `graph_json`, and the next
+-- save makes the row exact. This also keeps the upgrade write-free, so it adds
+-- no state-ownership writer to deploy/sql/catalog-schema.sql.
+ALTER TABLE catalog.flow_drafts
+    ADD COLUMN IF NOT EXISTS definition text;
+ALTER TABLE catalog.flow_drafts
+    ALTER COLUMN graph_json DROP NOT NULL;
+ALTER TABLE catalog.flow_drafts
+    DROP CONSTRAINT IF EXISTS flow_drafts_content_present;
+ALTER TABLE catalog.flow_drafts
+    ADD CONSTRAINT flow_drafts_content_present
+    CHECK (definition IS NOT NULL OR graph_json IS NOT NULL);
+-- END AUTHORING DRAFT DEFINITION MIGRATION (wamn-ftfc.2)
+
+-- BEGIN AUTHORING COMMAND PROVENANCE MIGRATION (wamn-ftfc.2)
+-- Additive upgrade for ledgers provisioned before optional source attribution
+-- existed. Existing rows deliberately remain NULL: a command recorded before
+-- this migration carried no claim, and inventing one would be fabricated
+-- evidence. See the column comments above for why this is never authority.
+ALTER TABLE catalog.authoring_command_audit
+    ADD COLUMN IF NOT EXISTS provenance_commit text;
+ALTER TABLE catalog.authoring_command_audit
+    ADD COLUMN IF NOT EXISTS provenance_ref text;
+ALTER TABLE catalog.authoring_command_audit
+    ADD COLUMN IF NOT EXISTS provenance_dirty boolean;
+ALTER TABLE catalog.authoring_command_audit
+    DROP CONSTRAINT IF EXISTS authoring_command_audit_provenance_check;
+ALTER TABLE catalog.authoring_command_audit
+    ADD CONSTRAINT authoring_command_audit_provenance_check
+    CHECK ((provenance_commit IS NULL) = (provenance_dirty IS NULL)
+           AND (provenance_commit IS NULL OR provenance_commit <> '')
+           AND (provenance_ref IS NULL OR provenance_ref <> '')
+           AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL));
+-- END AUTHORING COMMAND PROVENANCE MIGRATION (wamn-ftfc.2)
 
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied

@@ -3518,6 +3518,68 @@ WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5472/wamn \
 docker stop wamn-ctc88-pg
 ```
 
+### [6A / wamn-ftfc.2] checkout-file draft submission
+
+This gate covers the S1 write path: an authenticated checkout client reads
+working-tree definition files and submits their content, with optional commit
+provenance, through `POST /authoring` into the canonical save handler. It
+covers three things the earlier surface could not do.
+
+**Exact bytes.** `catalog.flow_drafts.definition` is `text`, so a saved
+revision reads back byte for byte — whitespace, key order, trailing newline.
+`graph_json` is retired to nullable (expand phase); the read falls back to it
+only for rows written before this bead, whose exact bytes the old `jsonb` cast
+destroyed and which are unrecoverable. There is deliberately no backfill: it
+would manufacture an exactness promise, and it would add a writer on
+`deploy/sql/catalog-schema.sql` that `state_ownership` correctly rejects.
+
+**Preserved intermediate text.** Save no longer parses, so a half-finished or
+emptied file is a preserved draft answering `200`, not a `500`. `validate`
+parses the stored text at its own stage and keeps its typed refusals.
+
+**Attribution that is never authority.** `save-flow-draft` carries an optional
+`provenance` object recorded verbatim in three nullable
+`catalog.authoring_command_audit` columns. It selects no principal, widens no
+role, and changes no outcome; the mutant proving that is a named gate below.
+
+Both schema changes are additive and land through the `publish_catalog.rs`
+marker-slice pattern; `run_plane_live`'s authoring leg synthesizes the
+pre-upgrade shape and re-publishes to prove the column probes converge.
+
+⚠️ The `wamn-scenario-worker` clippy leg stays RED for the six pre-existing
+`services/scenario-worker/src/lib.rs` findings described under wamn-ctc8.8.
+None is in a file this bead touched.
+
+```bash
+cargo test --locked -p wamn-scenario-worker -p wamn-scenario-catalog \
+  -p wamn-schema-control -p wamn-ctl
+# The authoring-model tests bake CARGO_MANIFEST_DIR, so they need their own
+# target directory when a shared cache is in use.
+cargo test --locked -p wamn-authoring-model
+cargo test --locked -p wamn-proof-conformance --test state_ownership
+cargo clippy --locked -p wamn-scenario-worker -p wamn-authoring-model \
+  -p wamn-scenario-catalog --all-targets -- -D warnings
+# Public contract regeneration; both must be clean.
+cargo run --locked --offline -p wamn-authoring-model \
+  --example print-authoring-surface-schema > docs/contracts/authoring-surface.schema.json
+(cd clients/authoring-client && node scripts/generate.mjs --check && node scripts/test.mjs)
+# Live gates of record (throwaway postgres:18). Run them against SEPARATE
+# clusters: run_plane_live drops the runtime role, which management_live's
+# grants pin.
+docker run -d --rm --name wamn-ftfc2-pg -p 5473:5432 \
+  -e POSTGRES_PASSWORD=wamn -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-ftfc2-pg pg_isready -U postgres; do sleep 1; done; sleep 3
+WAMN_CTL_PG_URL=postgres://postgres:wamn@127.0.0.1:5473/postgres \
+  cargo test --locked -p wamn-ctl --test run_plane_live
+docker stop wamn-ftfc2-pg
+docker run -d --rm --name wamn-ftfc2-pg -p 5473:5432 \
+  -e POSTGRES_PASSWORD=wamn -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-ftfc2-pg pg_isready -U postgres; do sleep 1; done; sleep 3
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:wamn@127.0.0.1:5473/wamn \
+  cargo test --locked -p wamn-scenario-worker --test management_live -- --nocapture
+docker stop wamn-ftfc2-pg
+```
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md

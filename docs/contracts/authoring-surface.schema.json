@@ -726,6 +726,32 @@
       ],
       "type": "object"
     },
+    "CommitProvenance": {
+      "additionalProperties": false,
+      "description": "Where a client read the submitted definition from.\n\n**Attribution only.** A checkout client knows the commit its working tree came from; recording that makes a stored revision traceable to the source it was edited in. It authorizes nothing: it selects no principal, widens no role, and changes no result. Two otherwise identical commands, one with this and one without, produce the same outcome and the same stored document.\n\nThe platform never clones a repository, runs Git, or verifies any of these values. They are the client's claim about its own working tree, retained verbatim beside the verified principal that actually authorized the command. No field here is an identity: a subject lives on the audited principal, and nothing in this object may be read as one.",
+      "properties": {
+        "commit": {
+          "description": "Exact commit the working tree was at.",
+          "type": "string"
+        },
+        "dirty": {
+          "description": "Whether the submitted content differs from that commit. A dirty tree means the content is descended from `commit`, not equal to it.",
+          "type": "boolean"
+        },
+        "ref": {
+          "description": "Ref the checkout was on, or null when the client cannot name one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "commit",
+        "dirty"
+      ],
+      "type": "object"
+    },
     "CoverageState": {
       "description": "Explicit coverage state; absence never means uncovered.",
       "enum": [
@@ -1151,7 +1177,7 @@
       "description": "Save one flow draft document under optimistic revision control.",
       "properties": {
         "definition": {
-          "description": "Exact UTF-8 flow document text. Save does not parse or validate it; [`AuthoringCommand::Validate`] owns that boundary.",
+          "description": "Exact UTF-8 flow document text, stored byte-for-byte. Save does not parse or validate it, so a half-finished edit is preserved rather than refused; [`AuthoringCommand::Validate`] owns that boundary.",
           "type": "string"
         },
         "draft-id": {
@@ -1166,6 +1192,18 @@
         },
         "flow-id": {
           "type": "string"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/CommitProvenance"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional source attribution. Omitting it is always allowed and always equivalent in outcome."
         },
         "scope": {
           "$ref": "#/definitions/AuthoringScope"

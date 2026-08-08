@@ -12,6 +12,7 @@ type JsonSchemaObject = {
   readonly $schema?: string;
   readonly additionalProperties?: boolean;
   readonly anyOf?: ReadonlyArray<JsonSchema>;
+  readonly default?: unknown;
   readonly definitions?: Readonly<Record<string, JsonSchema>>;
   readonly description?: string;
   readonly enum?: ReadonlyArray<unknown>;
@@ -36,6 +37,9 @@ const supportedKeywords = new Set([
   "$schema",
   "additionalProperties",
   "anyOf",
+  // Annotation only in draft-07: it constrains no instance, so validation
+  // ignores it exactly as it ignores `description`.
+  "default",
   "definitions",
   "description",
   "enum",

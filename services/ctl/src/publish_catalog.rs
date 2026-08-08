@@ -511,7 +511,15 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     to_regclass('catalog.flow_drafts') IS NOT NULL, \
                     to_regclass('catalog.validated_flow_drafts') IS NOT NULL, \
                     to_regclass('catalog.draft_safe_connection_grants') IS NOT NULL, \
-                    to_regclass('catalog.authoring_command_audit') IS NOT NULL",
+                    to_regclass('catalog.authoring_command_audit') IS NOT NULL, \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'flow_drafts' \
+                               AND column_name = 'definition'), \
+                    EXISTS (SELECT 1 FROM information_schema.columns \
+                             WHERE table_schema = 'catalog' \
+                               AND table_name = 'authoring_command_audit' \
+                               AND column_name = 'provenance_commit')",
             &[],
         )
         .await?;
@@ -639,6 +647,40 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
                 .await
                 .context("install authoring command audit")?;
+        }
+
+        // Both slices below run after the two above deliberately: an existing
+        // catalog may have just gained `flow_drafts` or the audit ledger in
+        // this same pass, and these alter exactly those tables.
+
+        // A draft saved before wamn-ftfc.2 was reparsed into `jsonb`, so its
+        // exact submitted text no longer exists anywhere. The backfill recovers
+        // the document, not the bytes; that is the most an upgrade can honestly
+        // do, and every revision saved afterwards is byte-exact.
+        if !release_row.get::<_, bool>(26) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN AUTHORING DRAFT DEFINITION MIGRATION")
+                .expect("authoring draft definition migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END AUTHORING DRAFT DEFINITION MIGRATION")
+                .expect("authoring draft definition migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install exact-text authoring draft storage")?;
+        }
+
+        if !release_row.get::<_, bool>(27) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN AUTHORING COMMAND PROVENANCE MIGRATION")
+                .expect("authoring command provenance migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END AUTHORING COMMAND PROVENANCE MIGRATION")
+                .expect("authoring command provenance migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install authoring command provenance attribution")?;
         }
         ensure_authoring_catalog_privileges(client).await?;
         return Ok(());

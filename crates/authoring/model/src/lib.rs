@@ -145,7 +145,10 @@ impl std::error::Error for SafeIntegerError {}
     deny_unknown_fields
 )]
 pub enum AuthoringDocument {
-    Request(AuthoringRequest),
+    // Both arms are boxed: a request carries the largest command input and a
+    // response the largest projection, and neither should set the size of every
+    // document value in the process.
+    Request(Box<AuthoringRequest>),
     Response(Box<AuthoringResponse>),
 }
 
@@ -240,6 +243,31 @@ pub struct AuthoringScope {
     pub environment: String,
 }
 
+/// Where a client read the submitted definition from.
+///
+/// **Attribution only.** A checkout client knows the commit its working tree
+/// came from; recording that makes a stored revision traceable to the source it
+/// was edited in. It authorizes nothing: it selects no principal, widens no
+/// role, and changes no result. Two otherwise identical commands, one with this
+/// and one without, produce the same outcome and the same stored document.
+///
+/// The platform never clones a repository, runs Git, or verifies any of these
+/// values. They are the client's claim about its own working tree, retained
+/// verbatim beside the verified principal that actually authorized the command.
+/// No field here is an identity: a subject lives on the audited principal, and
+/// nothing in this object may be read as one.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CommitProvenance {
+    /// Exact commit the working tree was at.
+    pub commit: String,
+    /// Ref the checkout was on, or null when the client cannot name one.
+    pub r#ref: Option<String>,
+    /// Whether the submitted content differs from that commit. A dirty tree
+    /// means the content is descended from `commit`, not equal to it.
+    pub dirty: bool,
+}
+
 /// Save one flow draft document under optimistic revision control.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -249,9 +277,14 @@ pub struct SaveFlowDraft {
     pub flow_id: String,
     /// Zero creates a draft; a positive value replaces exactly that revision.
     pub expected_revision: SafeUint64,
-    /// Exact UTF-8 flow document text. Save does not parse or validate it;
-    /// [`AuthoringCommand::Validate`] owns that boundary.
+    /// Exact UTF-8 flow document text, stored byte-for-byte. Save does not
+    /// parse or validate it, so a half-finished edit is preserved rather than
+    /// refused; [`AuthoringCommand::Validate`] owns that boundary.
     pub definition: String,
+    /// Optional source attribution. Omitting it is always allowed and always
+    /// equivalent in outcome.
+    #[serde(default)]
+    pub provenance: Option<CommitProvenance>,
 }
 
 /// Select one exact mutable draft revision.

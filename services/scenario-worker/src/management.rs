@@ -32,8 +32,8 @@ use tokio_postgres::{Client, GenericClient, NoTls};
 
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringRefusal,
-    AuthoringRequest, AuthoringResponse, AuthoringSuccess, CommandRefusal, ContractDecodeError,
-    DraftIdentity, SCHEMA_VERSION, SafeUint64, decode_document,
+    AuthoringRequest, AuthoringResponse, AuthoringSuccess, CommandRefusal, CommitProvenance,
+    ContractDecodeError, DraftIdentity, SCHEMA_VERSION, SafeUint64, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, IdentityErrorKind, PrincipalKind, ProjectRole, authenticate_pat,
@@ -55,8 +55,9 @@ use crate::authoring::{
 /// reason.
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
     (tenant_id, command_id, command_kind, principal_id, principal_kind, \
-     principal_subject, effective_role, org, project, environment, target_ref) \
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)";
+     principal_subject, effective_role, org, project, environment, target_ref, \
+     provenance_commit, provenance_ref, provenance_dirty) \
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
 
 /// Bearer scheme this surface accepts, including its single trailing space.
 const BEARER_SCHEME: &str = "Bearer ";
@@ -215,6 +216,10 @@ pub struct CommandAudit {
     command: AuditedCommand,
     author: AuthorizedAuthor,
     target_ref: Box<str>,
+    /// The client's own claim about where it read the content, retained
+    /// verbatim beside the principal that was actually verified. It is written,
+    /// never read: nothing on this path branches on it.
+    provenance: Option<CommitProvenance>,
 }
 
 impl CommandAudit {
@@ -289,6 +294,15 @@ pub(crate) async fn insert_command_audit(
                 &audit.scope.project.as_ref(),
                 &audit.scope.environment.as_ref(),
                 &audit.target_ref.as_ref(),
+                &audit
+                    .provenance
+                    .as_ref()
+                    .map(|source| source.commit.as_str()),
+                &audit
+                    .provenance
+                    .as_ref()
+                    .and_then(|source| source.r#ref.as_deref()),
+                &audit.provenance.as_ref().map(|source| source.dirty),
             ],
         )
         .await
@@ -308,6 +322,7 @@ async fn record(
     command_id: &str,
     command: AuditedCommand,
     target_ref: &str,
+    provenance: Option<&CommitProvenance>,
 ) -> anyhow::Result<()> {
     let audit = CommandAudit {
         scope: scope.clone(),
@@ -315,17 +330,24 @@ async fn record(
         command,
         author: author.clone(),
         target_ref: target_ref.into(),
+        provenance: provenance.cloned(),
     };
     backend.record_command_audit(&audit).await
 }
 
 /// Save one flow draft, attributing the save to its verified author.
+///
+/// `provenance` is the client's optional claim about where it read the content.
+/// It reaches the ledger and stops there: this function does not branch on it,
+/// does not pass it to the command, and produces the identical result whether it
+/// is present or absent.
 pub async fn save_flow_draft(
     backend: &mut InternalAuthoringBackend,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
     command_id: &str,
     request: &SaveFlowDraft,
+    provenance: Option<&CommitProvenance>,
 ) -> anyhow::Result<SaveFlowDraftResult> {
     record(
         backend,
@@ -334,6 +356,7 @@ pub async fn save_flow_draft(
         command_id,
         AuditedCommand::SaveFlowDraft,
         &request.draft_id,
+        provenance,
     )
     .await?;
     backend.save_flow_draft(request).await
@@ -355,6 +378,7 @@ pub async fn validate_flow_draft(
         command_id,
         AuditedCommand::Validate,
         &request.draft_id,
+        None,
     )
     .await?;
     backend.validate_flow_draft(request, flowrunner_bytes).await
@@ -375,6 +399,7 @@ pub async fn grant_draft_safe_generation(
         command_id,
         AuditedCommand::GrantDraftSafeGeneration,
         &grant.instance_id,
+        None,
     )
     .await?;
     backend.grant_draft_safe_generation(grant).await
@@ -395,6 +420,7 @@ pub async fn revoke_draft_safe_generation(
         command_id,
         AuditedCommand::RevokeDraftSafeGeneration,
         &revoke.instance_id,
+        None,
     )
     .await?;
     backend.revoke_draft_safe_generation(revoke).await
@@ -643,11 +669,18 @@ async fn dispatch(
         draft_id: input.draft_id.clone(),
         flow_id: input.flow_id.clone(),
         expected_revision,
-        graph_json: input.definition.clone(),
+        definition: input.definition.clone(),
     };
     let mut backend = surface.backend.lock().await;
-    let saved =
-        save_flow_draft(&mut backend, author, &scope, &command.command_id, &request).await?;
+    let saved = save_flow_draft(
+        &mut backend,
+        author,
+        &scope,
+        &command.command_id,
+        &request,
+        input.provenance.as_ref(),
+    )
+    .await?;
     drop(backend);
 
     let outcome = match saved {
@@ -888,6 +921,9 @@ mod tests {
             "project",
             "environment",
             "target_ref",
+            "provenance_commit",
+            "provenance_ref",
+            "provenance_dirty",
         ] {
             assert!(
                 INSERT_COMMAND_AUDIT_SQL.contains(column),
@@ -1040,6 +1076,156 @@ mod tests {
             assert!(
                 body.contains(command),
                 "{start} attributes the wrong command"
+            );
+        }
+    }
+
+    /// Attribution a client attaches to a submission is never an input to the
+    /// answer "may this caller run this command?".
+    ///
+    /// A checkout client legitimately knows the commit its working tree came
+    /// from, and `wamn-ftfc.2` admits that as attribution. This pins the half
+    /// that must never move: the derivation below reads a presented credential
+    /// and the roles storage already holds for that principal, and nothing
+    /// else. A commit, a tag, a signature, a submitted author, or a
+    /// client-chosen role would have to appear here to change its answer.
+    #[test]
+    fn no_client_supplied_attribution_reaches_authorization() {
+        let source = include_str!("management.rs");
+        let authorize = between(
+            source,
+            "pub async fn authorize(",
+            "/// Return the strongest admitted role",
+        );
+        assert!(authorize.contains("authenticate_pat(system_client, token)"));
+        assert!(authorize.contains(
+            "project_roles(system_client, authenticated.principal().id(), org, project)"
+        ));
+        assert!(authorize.contains("admitted_role(&roles)"));
+        let selection = between(source, "fn admitted_role(", "fn author_from_authenticated");
+        assert!(selection.contains("ManagementRole::parse"));
+        // The transport is the other place a submitted attribution could reach
+        // the role a command runs under: it holds the request while it holds
+        // the author. Whatever it derived from the credential is what it must
+        // dispatch with, unchanged.
+        let handler = between(source, "async fn authoring_command(", "/// Dispatch one");
+        assert!(
+            handler.contains("dispatch(surface, &author, &command)"),
+            "the transport dispatches something other than the author it derived"
+        );
+        assert!(
+            !handler.contains("ManagementRole"),
+            "the transport chose a role instead of using the one authorization derived"
+        );
+        for attribution in [
+            "provenance",
+            "commit",
+            "committer",
+            "signature",
+            "signed",
+            "definition",
+        ] {
+            for (region, name) in [
+                (authorize, "authorization"),
+                (selection, "role selection"),
+                (handler, "the transport"),
+            ] {
+                assert!(
+                    !region.contains(attribution),
+                    "{name} consulted {attribution}"
+                );
+            }
+        }
+    }
+
+    /// Attribution is written once, to the ledger, and read by nothing.
+    ///
+    /// The audit insert is the only statement that may name a provenance
+    /// column, and the command the transport builds may not carry one: a save
+    /// with attribution and a save without it must reach `SaveFlowDraft`
+    /// identical, or the outcome could differ.
+    #[test]
+    fn provenance_reaches_the_ledger_and_no_other_statement() {
+        let source = include_str!("management.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        let statements: Vec<&str> = implementation
+            .match_indices("INSERT INTO")
+            .chain(implementation.match_indices("SELECT "))
+            .chain(implementation.match_indices("UPDATE "))
+            .map(|(at, _)| &implementation[at..])
+            .collect();
+        assert_eq!(statements.len(), 1, "the transport gained a new statement");
+        assert!(statements[0].starts_with("INSERT INTO catalog.authoring_command_audit"));
+
+        let dispatch = between(
+            source,
+            "async fn dispatch(",
+            "/// Return the presented bearer",
+        );
+        let command = between(dispatch, "let request = SaveFlowDraft {", "};");
+        assert!(
+            !command.contains("provenance"),
+            "attribution reached the command: {command}"
+        );
+        // It is passed beside the command, to the audited boundary only.
+        assert!(dispatch.contains("input.provenance.as_ref()"));
+    }
+
+    /// The platform stores submitted content; it does not become a Git client,
+    /// and it hands no caller a database or operator authority.
+    #[test]
+    fn the_surface_runs_no_git_and_exposes_no_platform_authority() {
+        let source = include_str!("management.rs");
+        // Scan the implementation only: this module's own tests name the
+        // machinery they forbid, and a guard that matched its own vocabulary
+        // would prove nothing.
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        for machinery in [
+            "git2",
+            "gix",
+            "libgit2",
+            "Command::new",
+            "std::process",
+            "clone_repo",
+            "rev-parse",
+            "pre-receive",
+        ] {
+            assert!(
+                !implementation.contains(machinery),
+                "the management surface reached for {machinery}"
+            );
+        }
+        let manifest = include_str!("../Cargo.toml");
+        for dependency in ["git2", "gix", "libgit2", "wamn-ctl"] {
+            assert!(
+                !manifest.contains(dependency),
+                "the worker took a {dependency} dependency"
+            );
+        }
+        // Both database URLs are server configuration read from argv or the
+        // environment, never anything a request supplies or a response returns.
+        let args = between(
+            source,
+            "pub struct ManagementServeArgs",
+            "/// Everything one running management surface owns",
+        );
+        assert!(args.contains("WAMN_SYSTEM_URL"));
+        assert!(args.contains("WAMN_AUTHORING_PG_URL"));
+        let dispatch = between(
+            source,
+            "async fn dispatch(",
+            "/// Return the presented bearer",
+        );
+        for authority in ["url", "Url", "connect(", "superuser"] {
+            assert!(
+                !dispatch.contains(authority),
+                "dispatch reached for {authority}"
             );
         }
     }

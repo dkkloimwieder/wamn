@@ -123,6 +123,30 @@ async fn table_exists(su: &Client, schema: &str, table: &str) -> bool {
     .get(0)
 }
 
+/// `column_exists` is fixed to the run-plane schema; catalog upgrades need the
+/// same probe against `catalog`.
+async fn catalog_column_exists(su: &Client, table: &str, column: &str) -> bool {
+    su.query_one(
+        "SELECT EXISTS ( SELECT FROM information_schema.columns \
+         WHERE table_schema = 'catalog' AND table_name = $1 AND column_name = $2 )",
+        &[&table, &column],
+    )
+    .await
+    .expect("probe catalog column")
+    .get(0)
+}
+
+async fn catalog_column_is_nullable(su: &Client, table: &str, column: &str) -> bool {
+    su.query_one(
+        "SELECT is_nullable = 'YES' FROM information_schema.columns \
+          WHERE table_schema = 'catalog' AND table_name = $1 AND column_name = $2",
+        &[&table, &column],
+    )
+    .await
+    .expect("probe catalog column nullability")
+    .get(0)
+}
+
 async fn column_exists(su: &Client, table: &str, column: &str) -> bool {
     su.query_one(
         "SELECT EXISTS ( SELECT FROM information_schema.columns \
@@ -1317,6 +1341,18 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "-- BEGIN AUTHORING COMMAND AUDIT MIGRATION",
         "-- END AUTHORING COMMAND AUDIT MIGRATION",
     );
+    // Both wamn-ftfc.2 blocks alter tables the three stripped sections own, so
+    // they cannot survive into a catalog that predates those tables.
+    let legacy_catalog = without_marked_section(
+        &legacy_catalog,
+        "-- BEGIN AUTHORING DRAFT DEFINITION MIGRATION",
+        "-- END AUTHORING DRAFT DEFINITION MIGRATION",
+    );
+    let legacy_catalog = without_marked_section(
+        &legacy_catalog,
+        "-- BEGIN AUTHORING COMMAND PROVENANCE MIGRATION",
+        "-- END AUTHORING COMMAND PROVENANCE MIGRATION",
+    );
     su.batch_execute(&legacy_catalog)
         .await
         .expect("apply pre-authoring catalog storage");
@@ -1369,6 +1405,66 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
             "upgrade creates {table}"
         );
     }
+
+    // wamn-ftfc.2's two upgrades add columns to tables that already exist, so
+    // the from-zero path above never exercises their probes. Synthesize the
+    // pre-upgrade shape on the installed catalog and publish again: that is the
+    // exact path an existing project takes.
+    su.batch_execute(
+        "ALTER TABLE catalog.flow_drafts \
+             DROP CONSTRAINT flow_drafts_content_present; \
+         ALTER TABLE catalog.flow_drafts DROP COLUMN definition; \
+         ALTER TABLE catalog.flow_drafts ALTER COLUMN graph_json SET NOT NULL; \
+         ALTER TABLE catalog.authoring_command_audit \
+             DROP CONSTRAINT authoring_command_audit_provenance_check; \
+         ALTER TABLE catalog.authoring_command_audit \
+             DROP COLUMN provenance_commit, \
+             DROP COLUMN provenance_ref, \
+             DROP COLUMN provenance_dirty;",
+    )
+    .await
+    .expect("synthesize a catalog that predates wamn-ftfc.2");
+    for (table, column) in [
+        ("flow_drafts", "definition"),
+        ("authoring_command_audit", "provenance_commit"),
+    ] {
+        assert!(
+            !catalog_column_exists(su, table, column).await,
+            "synthesized legacy catalog still has catalog.{table}.{column}"
+        );
+    }
+    assert!(
+        !catalog_column_is_nullable(su, "flow_drafts", "graph_json").await,
+        "synthesized legacy catalog must still require a parsed document"
+    );
+
+    wamn_ctl::publish_catalog::ensure_catalog_storage(su)
+        .await
+        .expect("additively install the wamn-ftfc.2 column upgrades");
+    for (table, column) in [
+        ("flow_drafts", "definition"),
+        ("authoring_command_audit", "provenance_commit"),
+        ("authoring_command_audit", "provenance_ref"),
+        ("authoring_command_audit", "provenance_dirty"),
+    ] {
+        assert!(
+            catalog_column_exists(su, table, column).await,
+            "upgrade creates catalog.{table}.{column}"
+        );
+    }
+    // Exact submitted text can only be stored once the retired parsed-document
+    // column stops demanding a value.
+    assert!(
+        catalog_column_is_nullable(su, "flow_drafts", "graph_json").await,
+        "upgrade must relax the retired parsed-document column"
+    );
+    assert!(
+        catalog_column_is_nullable(su, "authoring_command_audit", "provenance_commit").await,
+        "attribution is optional and must never be demanded"
+    );
+    wamn_ctl::publish_catalog::ensure_catalog_storage(su)
+        .await
+        .expect("the wamn-ftfc.2 column upgrades are idempotent");
     for table in [
         "authoring_report_reservations",
         "authoring_suite_case_facts",

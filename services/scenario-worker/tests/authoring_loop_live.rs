@@ -359,7 +359,7 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
             draft_id: DRAFT_ID.to_string(),
             flow_id: FLOW_ID.to_string(),
             expected_revision: 0,
-            graph_json: DRAFT_GRAPH.to_string(),
+            definition: DRAFT_GRAPH.to_string(),
         })
         .await?;
     let (revision, edited_at) = match saved {

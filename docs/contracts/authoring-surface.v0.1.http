@@ -27,7 +27,12 @@ Content-Type: application/json
         "draft-id": "draft-receiving",
         "flow-id": "receive-material",
         "expected-revision": 2,
-        "definition": "{\"schema-version\":\"0.1\",\"flow-id\":\"receive-material\",\"version\":4,\"nodes\":[{\"id\":\"request\",\"type\":\"request\",\"config\":{\"input-schema\":true}},{\"id\":\"respond\",\"type\":\"respond\",\"config\":{\"status\":200}}],\"edges\":[{\"from\":\"request\",\"to\":\"respond\"}]}"
+        "definition": "{\"schema-version\":\"0.1\",\"flow-id\":\"receive-material\",\"version\":4,\"nodes\":[{\"id\":\"request\",\"type\":\"request\",\"config\":{\"input-schema\":true}},{\"id\":\"respond\",\"type\":\"respond\",\"config\":{\"status\":200}}],\"edges\":[{\"from\":\"request\",\"to\":\"respond\"}]}",
+        "provenance": {
+          "commit": "0123456789abcdef0123456789abcdef01234567",
+          "ref": "refs/heads/main",
+          "dirty": false
+        }
       }
     }
   }

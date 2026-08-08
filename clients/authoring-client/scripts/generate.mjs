@@ -16,6 +16,9 @@ const supportedKeywords = new Set([
   "$schema",
   "additionalProperties",
   "anyOf",
+  // Annotation only in draft-07: it constrains no instance and changes no
+  // generated type. An optional field is already optional through `required`.
+  "default",
   "definitions",
   "description",
   "enum",
