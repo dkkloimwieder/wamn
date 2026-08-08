@@ -76,10 +76,14 @@ pub mod tests {
     fn invalid_context_is_detected_before_mutating_payload_progress() {
         let plan = plan();
         let mut state = plan.start("run", Value::Null);
-        let Step::Reserved(entry) = plan.next(&mut state, 0) else {
-            panic!("entry must be reserved");
+        // Since wamn-ayq7.23 the `cron` entry executes through the node ABI:
+        // it dispatches, and may only re-emit its admitted input unchanged.
+        let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
+            panic!("cron entry must dispatch");
         };
-        plan.apply_reserved(&mut state, &entry).unwrap();
+        let admitted = entry.payload.clone();
+        plan.apply(&mut state, &entry, NodeOutcome::ok(admitted), 0)
+            .unwrap();
         let Step::Dispatch(mark) = plan.next(&mut state, 0) else {
             panic!("mark must dispatch");
         };
