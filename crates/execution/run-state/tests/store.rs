@@ -71,6 +71,20 @@ fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<Strin
     seen
 }
 
+/// The recorded row for a `cron` entry node. Since wamn-ayq7.23 cron executes
+/// through the node ABI and may only emit its scheduler-admitted input unchanged
+/// (`validate_cron_outcome`, which the driver applies before durable
+/// checkpointing), a persisted entry row's output IS the run's own input.
+fn entry_row(run: &RunRecord, node: &str) -> NodeRunRecord {
+    NodeRunRecord::success(
+        run.run_id.clone(),
+        node,
+        0,
+        "main",
+        run.input.clone().expect("fixture run captured its input"),
+    )
+}
+
 // ---- reconstruction --------------------------------------------------------
 
 #[test]
@@ -80,7 +94,7 @@ fn reconstruct_linear_resumes_at_the_killed_node() {
     // Killed after b: a and b persisted, c/d not.
     let run = RunRecord::new("r1", "lin4", 1, json!({ "trig": 1 }));
     let node_runs = [
-        NodeRunRecord::success("r1", "a", 0, "main", json!({ "at": "a" })),
+        entry_row(&run, "a"),
         NodeRunRecord::success("r1", "b", 1, "main", json!({ "at": "b" })),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
@@ -96,7 +110,7 @@ fn reconstruct_ignores_running_and_parked_rows() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     let node_runs = [
-        NodeRunRecord::success("r1", "a", 0, "main", json!({ "at": "a" })),
+        entry_row(&run, "a"),
         NodeRunRecord {
             status: NodeRunStatus::Started, // b was in flight; no emission
             output: None,
@@ -190,7 +204,7 @@ fn reconstruct_replays_per_visit_merge_rows() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
-        success_at("a", 0, 0),
+        entry_row(&run, "a"),
         success_at("b", 0, 1),
         success_at("c", 0, 2),
         success_at("d", 0, 3), // first arrival recorded; second visit killed
@@ -213,7 +227,7 @@ fn reconstruct_full_per_visit_history_is_idempotent() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
-        success_at("a", 0, 0),
+        entry_row(&run, "a"),
         success_at("b", 0, 1),
         success_at("c", 0, 2),
         success_at("d", 0, 3),
@@ -236,7 +250,7 @@ fn reconstruct_detects_legacy_collapsed_merge_history() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "dia", 1, json!({}));
     let node_runs = [
-        success_at("a", 0, 0),
+        entry_row(&run, "a"),
         success_at("b", 0, 1),
         success_at("c", 0, 2),
         success_at("d", 0, 3),
@@ -291,7 +305,7 @@ fn reconstruct_sorts_by_seq_not_row_order() {
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     let node_runs = [
         NodeRunRecord::success("r1", "b", 1, "main", json!({ "at": "b" })),
-        NodeRunRecord::success("r1", "a", 0, "main", json!({ "at": "a" })),
+        entry_row(&run, "a"),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(drive_collect(&plan, &mut st), ["c", "d"]);
