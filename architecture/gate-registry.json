@@ -3275,6 +3275,59 @@
         "evidence_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"
       }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-PUBLISH-GATE",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D14",
+        "D18"
+      ],
+      "bead_owner": "bd:wamn-12g",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-12g",
+        "git": "git:c3eec1c2857a733b629c46d763475f1a879574cc",
+        "machine_evidence": "missing",
+        "evidence_follow_up": "bd:wamn-2jdm.8",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
+    },
+    {
+      "source_kind": "recipe",
+      "source": "H5-SUITE-SELECTOR",
+      "classification": "required-gate",
+      "decision_ids": [
+        "D14"
+      ],
+      "bead_owner": "bd:wamn-tean",
+      "proof_tier": "documented-recipe",
+      "expected_outcome": "pass",
+      "can_fail": true,
+      "allowed_skips": [],
+      "coverage_exclusions": [],
+      "mutation_evidence": {
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
+      },
+      "cadence": "per-shipping-change",
+      "latest_evidence": {
+        "issue": "bd:wamn-tean",
+        "git": "git:c3eec1c2857a733b629c46d763475f1a879574cc",
+        "machine_evidence": "missing",
+        "evidence_follow_up": "bd:wamn-2jdm.8",
+        "scheduling_follow_up": "bd:wamn-2jdm.8"
+      }
     }
   ]
 }

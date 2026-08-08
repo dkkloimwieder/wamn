@@ -916,16 +916,22 @@ case assertions never authorize) + `ExecutionHost` + drain, then
 `wamn_scenario_model::evaluate` per case. The hermetic success suite contains
 two root runs and requires each run's private `sink` to contain exactly one row,
 so collapsing both runs onto one schema turns the gate red. One `check` line per assertion + a
-per-suite/summary line; nonzero exit on any failure. This is the future callee
-of the 12g migrate-catalog auto-run seam.
+per-suite/summary line; nonzero exit on any failure.
 
 Selection (exactly one source; `--cases` file mode is preserved unchanged):
 - `--suite <flow_id>@<version> --tenant <t> --source-schema <s>` — runs EVERY
   suite of that flow version (single tenant).
 - `--impact-report <path>` — a JSON array of `SuiteSelector`
   `{tenant, flow_id, flow_version, suite_id}`, the flattened
-  `wamn_schema_control::impact::SuiteEdge` tuples (the 12g input contract; a LOCAL deserialize
-  struct — wamn-schema-control has no serde derives yet, out of this bead's scope).
+  `wamn_schema_control::impact::SuiteEdge` tuples. Since wamn-gn6b that type
+  carries its own `Serialize`/`Deserialize` (`deny_unknown_fields`) and
+  `impact::suite_selectors[_json]` emits the array. `SuiteSelector` remains a
+  LOCAL deserialize struct in the executor — deliberately, so the gate keeps a
+  reader independent of the producer — and two named tests hold the two halves
+  together: `suite_selector_matches_the_suite_edge_shape` (field-for-field shape
+  + unknown-field rejection) and `flattened_impact_suites_deserialize_as_suite_selectors`
+  (a real `suite_selectors_json` array round-trips into the executor's struct).
+  Both live in `test-support/infrastructure/scenario_worker_gate.rs`.
 - `--seed-demo` — the hermetic gate: self-seeds `--source-schema` (production
   `wamn-ctl publish-catalog --provision --runstate` process boundary) with a
   drivable `request → postgres(create sink) → respond` release member and an
@@ -962,6 +968,14 @@ F1 refuses cleanly while F3/F4 (std nodes) drive.
 # recipe-test: H5-TESTKITBENCH | integration | wamn-proof-integration | lib | - | testkitbench::tests:: | 1 | tests/integration/src/testkitbench.rs scenario-runtime ownership guard
 cargo test -p wamn-proof-integration --lib testkitbench::tests::
 cargo test -p wamn-scenario-catalog
+
+# The producer/consumer seam itself (wamn-gn6b): the executor's LOCAL
+# SuiteSelector must stay field-for-field with wamn_schema_control SuiteEdge, and
+# a real suite_selectors_json array must deserialize into it.
+# recipe-test: H5-SUITE-SELECTOR | integration | wamn-test-infrastructure | lib | - | scenario_worker_gate::tests::suite_selector | 1 | test-support/infrastructure/scenario_worker_gate.rs SuiteEdge shape guard
+cargo test -p wamn-test-infrastructure --lib scenario_worker_gate::tests::suite_selector
+cargo test -p wamn-test-infrastructure --lib \
+  scenario_worker_gate::tests::flattened_impact_suites_deserialize_as_suite_selectors
 
 # Checked-in PLAN-0.2 scenario/replay/impact mutation campaign. `check` pins
 # clean source hashes; `green-all` runs one debug gate per 11 named mutants; `run-all`
@@ -2262,8 +2276,11 @@ flows/suites (typed error, non-zero exit, before the apply tx — nothing mutate
 orthogonal to `--confirm-with-backup`. The report enumerates the
 `(tenant, flow_id, flow_version, suite_id)` tuples that would run; suite EXECUTION
 of those tuples is the wamn-0lfu executor (`testkitbench --impact-report`, see
-[11.2-exec] above) — the 12g migrate-catalog auto-run seam flattens
-`ImpactReport.entities[].suites[]` into that executor's `SuiteSelector` array.
+[11.2-exec] above). `impact::suite_selectors[_json]` flattens
+`ImpactReport.entities[].suites[]` into that executor's `SuiteSelector` array —
+and the same flattening is what the [11.7] publish gate checks evidence for
+(below). `migrate-catalog` itself does NOT run suites: the gate binds to stored
+suite results at promotion, not to a re-run at migration.
 
 ```bash
 cargo test -p wamn-schema-control                       # pure decision + drift-guard pins (3 mutants killed here)
@@ -2288,6 +2305,78 @@ docker rm -f wave-wvb-pg
 # wamn-schema-control untouched_entity_flows_are_not_reported; M2 destructive classification
 # forced additive → destructive_change_with_impact_requires_acknowledge; M3
 # node-config keyed on entity.id not name → node_config_edge_keys_on_entity_name_not_id.
+```
+
+### [11.7 / wamn-12g] publish gates & policy — per-project rules + gate audit
+
+Design: `docs/platform-plan.md` §11.7. Per-project rules ("prod deploys require
+green suite") enforced on the deploy/promote verb, with every verdict recorded.
+
+POLICY lives in the T1 registry in two layers —
+`registry.env_policies.requires_green_suite` (the org-wide per-env default,
+`false` so an upgrade gates nothing) and `registry.project_publish_policies` (the
+per-project override, authoritative in BOTH directions). They are combined by ONE
+pure function, `wamn_control_registry::resolve_publish_policy`, so the CLI and
+the future management transport cannot disagree about what is gated.
+
+EVIDENCE is `wamn_schema_control::publish_gate`. For every `SuiteEdge` the 11.8
+impact report names, it requires a `wamn_run.authoring_suite_reports` row that
+(a) passed, (b) carries RELEASE lineage for the exact
+`(catalog_id, catalog_version, environment)` being promoted, and (c) whose
+recorded `artifact_hash` equals the hash that release actually pins for the flow
+(`release_flows` ⋈ `flow_artifacts`). (c) is FRESHNESS as a hash comparison, not
+a timestamp window — a hash match is a statement about the current bytes, where
+"recent" is only a guess about them. Each miss is its own typed defect
+(`no-report` / `draft-only` / `foreign-release` / `failed` / `unpinned-flow` /
+`stale-artifact`) so a refusal names the cause.
+
+ENFORCEMENT is `copy-project-env --include definition`, after every read and
+before the definition transaction — a refusal mutates nothing but its own audit
+row. `migrate-catalog` / `publish-catalog` are unchanged. The decision ships as a
+LIBRARY (`wamn-schema-control`, which `services/scenario-worker` already depends
+on) so wamn-ftfc.33 can mount the same seam at the authenticated transport;
+ma5's human/promoter proof binds there, not in the CLI.
+
+AUDIT is `catalog.publish_gate_audit` — append-only, recording PASSES AND
+REFUSALS with the per-suite evidence pointer. Deliberately NOT
+`authoring_command_audit`: that ledger's rows carry a verified principal and
+`wamn-ctl` is an operator CLI with none.
+
+FAIL-CLOSED: no shipped producer writes `authoring_suite_reports` yet (that
+backend is wamn-ftfc.28/.33), so an env gated today refuses with `no-report`
+until it lands. A definition copy now REQUIRES `--system-database-url` — a
+promotion that cannot read its policy cannot be shown to be allowed.
+
+```bash
+# Pure decision (evidence classification, fail-closed, refusal rendering) + the
+# registry policy resolution + the SQL drift guards pinning the evidence read,
+# the freshness join, and the ledger write against deploy/sql:
+# recipe-test: H5-PUBLISH-GATE | integration | wamn-schema-control | lib | - | publish_gate:: | 8 | crates/schema/control/src/publish_gate.rs green-suite decision
+cargo test -p wamn-schema-control --lib publish_gate::
+cargo test -p wamn-control-registry --lib publish_policy::
+cargo clippy -p wamn-schema-control -p wamn-control-registry --all-targets --locked -- -D warnings
+
+# Live gate (throwaway PG): a gated env refuses with no evidence and mutates
+# nothing; fresh release-pinned evidence promotes and the ledger keeps the report
+# id; a pass against SUPERSEDED flow bytes is refused; a per-project override
+# gates (and exempts) one project; the ledger refuses UPDATE and DELETE.
+# Evidence is seeded through the REAL reservation -> case-fact -> report triggers
+# and the release is minted by the REAL publish-catalog writer. Hermetic: each
+# scenario drops+recreates its own system/src/dst databases.
+docker run -d --name wave6-12g-pg -p 15612:5432 -e POSTGRES_PASSWORD=pg postgres:18
+WAMN_CTL_PG_URL=postgres://postgres:pg@127.0.0.1:15612/postgres \
+  cargo test -p wamn-ctl --test publish_gate_live -- --test-threads=1
+docker rm -f wave6-12g-pg
+# 3 mutants killed (apply/test/restore via sha256 byte-restore, debug builds):
+# M1 missing evidence yields no defect → wamn-schema-control
+#   required_gate_refuses_when_no_report_exists + a_gated_env_refuses_a_promotion_with_no_suite_report;
+# M2 the artifact-hash freshness comparison disabled →
+#   stale_artifact_hash_is_not_evidence_about_the_shipped_bytes +
+#   a_pass_against_superseded_flow_bytes_is_refused;
+# M3 the verdict recorded only after the refusal returns →
+#   a_refusal_is_recorded_in_the_append_only_ledger.
+# LIVE T1 SYSDB APPLY IS A DEFERRAL: the additive registry DDL
+# (env_policies.requires_green_suite + project_publish_policies) is owner-run.
 ```
 
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
