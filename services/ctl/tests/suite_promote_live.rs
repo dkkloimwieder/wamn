@@ -27,6 +27,12 @@ const RUN_STATE: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS: &str = include_str!("../../../deploy/sql/flows.sql");
 const FLOW_TESTS: &str = include_str!("../../../deploy/sql/flow-tests.sql");
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
+const SYSTEM_SCHEMA: &str = include_str!("../../../deploy/sql/system-schema.sql");
+
+/// The T1 system database this gate stands up so `copy-project-env` can resolve
+/// its [11.7] publish policy (wamn-12g). Both envs are left UNGATED — the org
+/// default — because this gate proves 11.2 promotion, not the publish gate.
+const SYSTEM_DB: &str = "wamn_system_lane828";
 
 const ORG: &str = "lane828";
 const PROJECT: &str = "promote";
@@ -63,7 +69,14 @@ async fn reset_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     )
     .await
     .expect("ensure wamn_app role");
-    for db in [src_db, dst_db] {
+    su.batch_execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
+           THEN CREATE ROLE wamn_system LOGIN PASSWORD 'wamn_system' NOSUPERUSER; \
+         END IF; END $$;",
+    )
+    .await
+    .expect("ensure wamn_system role");
+    for db in [src_db, dst_db, SYSTEM_DB] {
         su.batch_execute(&format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)"))
             .await
             .expect("drop db");
@@ -75,9 +88,59 @@ async fn reset_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     let _ = task.await;
 }
 
+/// Stand up the T1 registry the [11.7] gate resolves its policy from: the org,
+/// its project, and both env policies (neither requiring green suites).
+async fn seed_registry(admin_url: &str) {
+    let (sys, task) = connect(&swap_db(admin_url, SYSTEM_DB)).await;
+    sys.batch_execute(SYSTEM_SCHEMA)
+        .await
+        .expect("apply system-schema.sql");
+    // Applied as superuser, so the TABLES are superuser-owned while the schemas
+    // carry `AUTHORIZATION wamn_system`. The copy saga runs as `wamn_system`.
+    sys.batch_execute(
+        "GRANT USAGE ON SCHEMA registry, provisioning, identity TO wamn_system; \
+         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA registry, provisioning, \
+           identity TO wamn_system;",
+    )
+    .await
+    .expect("grant the system owner role");
+    sys.execute(
+        "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
+         VALUES ($1, 'pooled', 'wamn-pg')",
+        &[&ORG],
+    )
+    .await
+    .expect("seed org");
+    sys.execute(
+        "INSERT INTO registry.projects (org, id) VALUES ($1, $2)",
+        &[&ORG, &PROJECT],
+    )
+    .await
+    .expect("seed project");
+    for (env, rank) in [(SRC_ENV, 0i32), (DST_ENV, 1i32)] {
+        sys.execute(
+            "INSERT INTO registry.env_policies \
+               (org, name, recovery_domain, promotion_rank, instances, storage, cpu, memory, image) \
+             VALUES ($1, $2, '\"own\"'::jsonb, $3, 1, '1Gi', '100m', '256Mi', 'pg:18')",
+            &[&ORG, &env, &rank],
+        )
+        .await
+        .expect("seed env policy");
+        sys.execute(
+            "INSERT INTO registry.project_envs (org, project, env, secret_name) \
+             VALUES ($1, $2, $3, 'wamn-db-lane828')",
+            &[&ORG, &PROJECT, &env],
+        )
+        .await
+        .expect("seed project env");
+    }
+    drop(sys);
+    let _ = task.await;
+}
+
 async fn drop_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     let (su, task) = connect(admin_url).await;
-    for db in [src_db, dst_db] {
+    for db in [src_db, dst_db, SYSTEM_DB] {
         let _ = su
             .batch_execute(&format!("DROP DATABASE IF EXISTS \"{db}\" WITH (FORCE)"))
             .await;
@@ -151,7 +214,7 @@ fn copy_args(admin_url: &str) -> CopyProjectEnvArgs {
         confirm: false,
         src_admin_url: Some(admin_url.to_string()),
         dst_admin_url: None,
-        system_database_url: None,
+        system_database_url: Some(swap_db(admin_url, SYSTEM_DB)),
         tenant: Some(TENANT.into()),
         data_schema: "public".into(),
         flow_schema: "wamn_run".into(),
@@ -201,6 +264,7 @@ async fn promote_scenario(admin_url: &str) {
     let src_db = project_env_database_name(ORG, PROJECT, SRC_ENV);
     let dst_db = project_env_database_name(ORG, PROJECT, DST_ENV);
     reset_databases(admin_url, &src_db, &dst_db).await;
+    seed_registry(admin_url).await;
     provision_src(&swap_db(admin_url, &src_db)).await;
     apply_catalog_schema(&swap_db(admin_url, &dst_db)).await;
 
@@ -300,6 +364,7 @@ async fn guard_scenario(admin_url: &str) {
     let src_db = project_env_database_name(ORG, PROJECT, SRC_ENV);
     let dst_db = project_env_database_name(ORG, PROJECT, DST_ENV);
     reset_databases(admin_url, &src_db, &dst_db).await;
+    seed_registry(admin_url).await;
     provision_src(&swap_db(admin_url, &src_db)).await;
     apply_catalog_schema(&swap_db(admin_url, &dst_db)).await;
 

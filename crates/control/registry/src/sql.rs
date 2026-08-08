@@ -68,6 +68,36 @@ pub fn select_env_policy_sql() -> String {
     )
 }
 
+/// Resolve the publish-gate rule for one `(org, project, env)` in a single
+/// round trip ([11.7], wamn-12g). Params: `$1` org, `$2` env slug, `$3` project.
+///
+/// Column 0 is the org's env default, column 1 the project's override (NULL
+/// when the project has no row). The LEFT JOIN is deliberate: the two layers
+/// are returned SEPARATELY and combined by
+/// [`crate::resolve_publish_policy`], so the precedence rule lives in one
+/// testable pure function rather than being smeared into a `COALESCE` here.
+///
+/// NO ROWS means the org configures no such env — the caller must treat that as
+/// a refusal to answer, never as "no gate".
+pub fn select_publish_policy_sql() -> &'static str {
+    "SELECT ep.requires_green_suite, ppp.requires_green_suite \
+     FROM registry.env_policies AS ep \
+     LEFT JOIN registry.project_publish_policies AS ppp \
+       ON ppp.org = ep.org AND ppp.env = ep.name AND ppp.project = $3 \
+     WHERE ep.org = $1 AND ep.name = $2"
+}
+
+/// Set (or clear) one project's publish-gate override. Params: `$1` org, `$2`
+/// project, `$3` env, `$4` requires_green_suite. Upsert, so an operator
+/// re-stating a rule is idempotent and `updated_at` moves.
+pub fn upsert_project_publish_policy_sql() -> &'static str {
+    "INSERT INTO registry.project_publish_policies \
+       (org, project, env, requires_green_suite) \
+     VALUES ($1, $2, $3, $4) \
+     ON CONFLICT (org, project, env) DO UPDATE \
+       SET requires_green_suite = EXCLUDED.requires_green_suite, updated_at = now()"
+}
+
 /// Stamp one template policy row into an org's set — **insert-if-absent**
 /// (`ON CONFLICT (org, name) DO NOTHING`), the wamn-8df.4 instantiate-and-own
 /// semantics: re-running `provision-org` keeps an org's per-env customizations
@@ -161,6 +191,47 @@ mod tests {
     use super::*;
 
     const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
+    const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
+
+    /// [11.7] wamn-12g drift guard: the publish-policy read is a security
+    /// control, so a renamed column must fail HERE rather than resolving to
+    /// "no gate" against a live cluster.
+    #[test]
+    fn publish_policy_read_tracks_the_registry_policy_tables() {
+        let sql = select_publish_policy_sql();
+        assert!(sql.contains("FROM registry.env_policies"));
+        assert!(sql.contains("registry.project_publish_policies"));
+        assert!(
+            SYSTEM_SCHEMA.contains("CREATE TABLE registry.project_publish_policies"),
+            "system-schema.sql no longer declares the override table"
+        );
+        assert!(
+            SYSTEM_SCHEMA.contains("requires_green_suite boolean NOT NULL DEFAULT false"),
+            "env_policies lost the org-wide publish-gate default"
+        );
+        // Both layers come back SEPARATELY: collapsing them in SQL would move
+        // the precedence rule out of resolve_publish_policy.
+        assert!(!sql.contains("COALESCE"));
+        assert!(sql.contains("ep.requires_green_suite, ppp.requires_green_suite"));
+        // Every key travels as a $n param — never interpolated.
+        assert!(sql.contains("ppp.project = $3"));
+        assert!(sql.contains("WHERE ep.org = $1 AND ep.name = $2"));
+    }
+
+    /// The override must not be able to name an env its org does not configure:
+    /// a typo'd override would silently never apply.
+    #[test]
+    fn project_publish_policy_override_is_keyed_and_foreign_keyed() {
+        let upsert = upsert_project_publish_policy_sql();
+        assert!(upsert.contains("INSERT INTO registry.project_publish_policies"));
+        assert!(upsert.contains("ON CONFLICT (org, project, env) DO UPDATE"));
+        assert!(upsert.contains("requires_green_suite = EXCLUDED.requires_green_suite"));
+        assert!(SYSTEM_SCHEMA.contains("PRIMARY KEY (org, project, env),"));
+        assert!(
+            SYSTEM_SCHEMA
+                .contains("FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)")
+        );
+    }
 
     #[test]
     fn catalog_release_storage_has_stable_head_and_db_immutable_artifacts() {

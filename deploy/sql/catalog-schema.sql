@@ -1533,6 +1533,85 @@ ALTER TABLE catalog.authoring_command_audit
            AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL));
 -- END AUTHORING COMMAND PROVENANCE MIGRATION (wamn-ftfc.2)
 
+-- BEGIN PUBLISH GATE AUDIT MIGRATION (wamn-12g)
+-- ---------------------------------------------------------------------------
+-- Publish-gate verdicts ([11.7], wamn-12g) — the "results recorded in the audit
+-- log" half of §11.7, and the compliance/change-control record for industrial
+-- clients: for every gated promotion, WHAT was deployed, under WHICH rule, and
+-- on WHAT evidence.
+--
+-- WHY THIS IS NOT `catalog.authoring_command_audit`. That ledger records
+-- authenticated AUTHORING COMMANDS: every row carries a verified
+-- `principal_id`/`principal_subject` and an `effective_role`, and its CHECKs
+-- close `command_kind` to the client command vocabulary. `wamn-ctl` is an
+-- operator CLI running as a superuser from a Job — it has no verified
+-- principal, and manufacturing one to satisfy that ledger would fabricate
+-- exactly the attribution the ledger exists to guarantee (the same reason
+-- `flow_artifacts.verified_author_principal` stays NULL for operator
+-- publication). So gate verdicts get their own ledger with honest operator
+-- context, and the two never pretend to be the same evidence.
+--
+-- REFUSALS ARE RECORDED, NOT ONLY PASSES. A change-control log that only shows
+-- successful deploys cannot answer "was anything blocked, and did someone then
+-- weaken the rule?" — which is the question an auditor actually asks. A refusal
+-- row is written and then the promotion aborts, so a blocked deploy leaves a
+-- durable trace even though it mutated nothing else.
+--
+-- APPEND-ONLY, like its neighbour: UPDATE and DELETE are both refused by the
+-- shared immutability trigger. `wamn_app` (the guest runtime credential) is
+-- granted nothing at all — this is management-plane state and no flow may read
+-- or forge it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS catalog.publish_gate_audit (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    audit_id        uuid NOT NULL DEFAULT gen_random_uuid(),
+    -- The control-plane verb that ran the gate. Open-ended on purpose: the
+    -- management transport (wamn-ftfc.33) will record its own promote verb here
+    -- through the same library seam.
+    verb            text NOT NULL CHECK (verb <> ''),
+    decision        text NOT NULL,
+    -- The rule that was in force, and which registry layer supplied it.
+    requires_green_suite boolean NOT NULL,
+    policy_source   text NOT NULL,
+    org             text NOT NULL CHECK (org <> ''),
+    project         text NOT NULL CHECK (project <> ''),
+    source_env      text NOT NULL CHECK (source_env <> ''),
+    target_env      text NOT NULL CHECK (target_env <> ''),
+    -- The release the promotion carried.
+    catalog_id      text NOT NULL CHECK (catalog_id <> ''),
+    catalog_version int  NOT NULL,
+    -- THE EVIDENCE POINTER, one element per suite the promotion touched: the
+    -- suite selector plus either the `authoring_suite_reports.report_id` that
+    -- proved it green or the typed defect that did not. Stored as the array the
+    -- pure decision emits (wamn_schema_control::publish_gate::SuiteFinding), so
+    -- the ledger keeps the exact verdict rather than a prose summary of it.
+    findings_json   jsonb NOT NULL CHECK (jsonb_typeof(findings_json) = 'array'),
+    -- OPERATOR CONTEXT, NEVER AUTHORITY. `session_user` of the connection that
+    -- ran the verb: a real fact about the database session, and deliberately
+    -- NOT called a principal — it is a role name, not an authenticated human.
+    operator_session text NOT NULL CHECK (operator_session <> ''),
+    recorded_at     timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (tenant_id, audit_id),
+    CONSTRAINT publish_gate_audit_decision_check
+        CHECK (decision IN ('passed', 'refused', 'not-required')),
+    CONSTRAINT publish_gate_audit_policy_source_check
+        CHECK (policy_source IN ('env-default', 'project-override'))
+);
+ALTER TABLE catalog.publish_gate_audit ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.publish_gate_audit FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS publish_gate_audit_tenant ON catalog.publish_gate_audit;
+CREATE POLICY publish_gate_audit_tenant ON catalog.publish_gate_audit
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT, INSERT ON catalog.publish_gate_audit TO wamn_scenario_author;
+DROP TRIGGER IF EXISTS publish_gate_audit_immutable ON catalog.publish_gate_audit;
+CREATE TRIGGER publish_gate_audit_immutable
+BEFORE UPDATE OR DELETE ON catalog.publish_gate_audit
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE INDEX IF NOT EXISTS publish_gate_audit_recorded
+    ON catalog.publish_gate_audit (tenant_id, recorded_at);
+-- END PUBLISH GATE AUDIT MIGRATION (wamn-12g)
+
 -- ---------------------------------------------------------------------------
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine

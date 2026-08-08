@@ -164,6 +164,12 @@ CREATE TABLE registry.env_policies (
     backup_cadence  text  NOT NULL DEFAULT '',
     wal_retention   text  NOT NULL DEFAULT '',
     hibernation     text  NOT NULL DEFAULT 'off',
+    -- [11.7] wamn-12g. The org's DEFAULT publish gate for this env: may a
+    -- definition promotion INTO it proceed without proven-green suites? Default
+    -- false, so adding this column changes no existing org's behaviour — a gate
+    -- nobody asked for must not start refusing deploys on upgrade. `prod` gets
+    -- `true` by an explicit operator UPDATE (or a project override below).
+    requires_green_suite boolean NOT NULL DEFAULT false,
     PRIMARY KEY (org, name),
     -- cjv.20 charset backstop: `name` IS the env slug (check_env mirror) — a
     -- lowercase slug ≤ 40 bytes; no reserved rule (an env may be any slug).
@@ -186,6 +192,42 @@ CREATE TABLE registry.projects (
         CHECK (id ~ '^[a-z0-9]+(-[a-z0-9]+)*$'
                AND char_length(id) <= 40
                AND id <> 'wamn' AND id NOT LIKE 'wamn-%')
+);
+
+-- ---------------------------------------------------------------------------
+-- Per-project publish-gate overrides ([11.7], wamn-12g) — the "per-project
+-- rules" half of the publish gate. `registry.env_policies.requires_green_suite`
+-- is the ORG-WIDE default for an env; a row here overrides it for ONE project
+-- in that env, in EITHER direction (a stricter project in a lax org, or a
+-- documented exemption in a strict one).
+--
+-- ABSENCE IS NOT AN ANSWER, IT IS A DEFERRAL: no row means "ask the env
+-- policy", never "no gate". The resolution is a total function over
+-- (override, env default) and lives in ONE place —
+-- crates/control/registry `resolve_publish_policy` — so the CLI, the future
+-- management transport, and any operator query cannot disagree about whether a
+-- given (org, project, env) is gated.
+--
+-- Control-plane metadata only (invariant 3): this records the RULE, never the
+-- EVIDENCE. Which suites actually passed lives in each project-env's own
+-- database (`wamn_run.authoring_suite_reports`) and the gate's verdicts land in
+-- that project's `catalog.publish_gate_audit` — the T1 registry never
+-- accumulates per-deploy history.
+-- ---------------------------------------------------------------------------
+CREATE TABLE registry.project_publish_policies (
+    org                  text NOT NULL,
+    project              text NOT NULL,
+    env                  text NOT NULL,
+    requires_green_suite boolean NOT NULL,
+    updated_at           timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, project, env),
+    FOREIGN KEY (org, project) REFERENCES registry.projects (org, id)
+        ON DELETE CASCADE,
+    -- The env must be one this org actually configures: an override naming a
+    -- typo'd env would silently never apply, which is the worst failure mode a
+    -- security control can have.
+    FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
+        ON DELETE CASCADE
 );
 
 -- ---------------------------------------------------------------------------

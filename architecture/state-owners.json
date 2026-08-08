@@ -344,77 +344,1281 @@
     ]
   },
   "objects": [
-    {"id":"registry.meta","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["system-schema-installer"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"registry.orgs","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"registry.env_policies","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"registry.projects","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"registry.project_envs","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store","provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"registry.event_readers","plane":"control","semantic_owner":"registry-store","migration_owners":["registry-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["registry-store"],"readers":["registry-store","cdc-reader"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"provisioning.sagas","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"provisioning.dumps","plane":"control","semantic_owner":"provision-store","migration_owners":["provision-store"],"schema_source":"deploy/sql/system-schema.sql","writers":["provision-store"],"readers":["provision-store"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"identity.principals","plane":"control","semantic_owner":"platform-identity","migration_owners":["platform-identity"],"schema_source":"deploy/sql/system-schema.sql","writers":["platform-identity"],"readers":["platform-identity"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"identity.local_credentials","plane":"control","semantic_owner":"platform-identity","migration_owners":["platform-identity"],"schema_source":"deploy/sql/system-schema.sql","writers":["platform-identity"],"readers":["platform-identity"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"identity.project_roles","plane":"control","semantic_owner":"platform-identity","migration_owners":["platform-identity"],"schema_source":"deploy/sql/system-schema.sql","writers":["platform-identity"],"readers":["platform-identity"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"identity.pats","plane":"control","semantic_owner":"platform-identity","migration_owners":["platform-identity"],"schema_source":"deploy/sql/system-schema.sql","writers":["platform-identity"],"readers":["platform-identity"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-
-    {"id":"catalog.catalogs","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-migrate"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.flow_artifacts","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy"],"readers":["ctl-copy","materializer","scenario-worker"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.release_manifests","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy"],"readers":["ctl-publish","ctl-copy","scenario-worker"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.release_flows","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate","materializer","scenario-worker"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.catalog_heads","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy"],"readers":["schema-control","ctl-copy","materializer","scenario-worker"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:catalog-live"},
-    {"id":"catalog.flow_drafts","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["scenario-catalog","scenario-worker"],"readers":["scenario-catalog","scenario-worker"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.validated_flow_drafts","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["scenario-catalog","scenario-worker"],"readers":["scenario-catalog","scenario-worker","run-state","flowrunner"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.release_exposure_manifests","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-publish","ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.release_sources","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.release_attachments","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.attachment_tombstones","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["ctl-publish","ctl-copy","ctl-migrate"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.attachment_activation","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.attachment_activation_events","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["catalog-schema-installer","schema-control","ctl-publish","ctl-copy","ctl-migrate"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:exposure-live"},
-    {"id":"catalog.connection_requirements","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","run-state"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.connection_instances","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","run-state"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.connection_generations","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","run-state"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.connection_bindings","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control","run-state"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.connection_generation_retention","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.draft_safe_connection_grants","plane":"project","semantic_owner":"catalog-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["scenario-catalog","scenario-worker"],"readers":["run-state","flowrunner"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.authoring_command_audit","plane":"project","semantic_owner":"scenario-worker","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["scenario-worker"],"readers":["scenario-worker"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.schema_migrations","plane":"project","semantic_owner":"schema-control","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.entities","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.fields","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.relations","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.indexes","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.constraints","plane":"project","semantic_owner":"schema-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.rls_policies","plane":"project","semantic_owner":"schema-compiler","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control","ctl-copy"],"readers":["schema-control","ctl-copy"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.seed_datasets","plane":"project","semantic_owner":"schema-compiler","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"catalog-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"catalog.event_registrations","plane":"project","semantic_owner":"event-registration-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/catalog-schema.sql","writers":["event-registration-api","schema-control","ctl-copy"],"readers":["event-registration-api","schema-control","ctl-copy","materializer"],"compatibility_horizon":"frozen-0.1-event-contract-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-
-    {"id":"app_system.users","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.roles","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.user_roles","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.permissions","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.configurations","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state","ctl-publish"],"readers":["project-state","flowrunner"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.audit_log","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"app_system.api_keys","plane":"project","semantic_owner":"project-state","migration_owners":["project-state"],"schema_source":"deploy/sql/app-schema.sql","writers":["project-state"],"readers":["project-state"],"compatibility_horizon":"platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-
-    {"id":"wamn_run.flows","plane":"project","semantic_owner":"flow-model","migration_owners":["schema-control"],"schema_source":"deploy/sql/flows.sql","writers":["scenario-worker"],"readers":["flowrunner","dispatcher"],"compatibility_horizon":"flow-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.test_suites","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","ctl-copy"],"readers":["scenario-catalog","ctl-copy","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.test_cases","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","ctl-copy"],"readers":["scenario-catalog","ctl-copy","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.authoring_report_reservations","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","scenario-worker"],"readers":["scenario-catalog","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.authoring_suite_case_facts","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","scenario-worker"],"readers":["scenario-catalog","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.authoring_suite_reports","plane":"project","semantic_owner":"scenario-catalog","migration_owners":["schema-control"],"schema_source":"deploy/sql/flow-tests.sql","writers":["scenario-catalog","scenario-worker"],"readers":["scenario-catalog","scenario-worker"],"compatibility_horizon":"scenario-format-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-
-    {"id":"wamn_run.runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher","scenario-worker","flowrunner","materializer"],"readers":["run-state","dispatcher","scenario-worker","flowrunner","materializer"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.invocation_admissions","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state"],"readers":["run-state"],"compatibility_horizon":"caller-outcome-retention-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.cron_anchor","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","dispatcher"],"readers":["run-state","dispatcher"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.node_runs","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["run-state","schema-control","flowrunner"],"readers":["run-state","schema-control","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.effect_attempts","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.effect_attempt_dispatches","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.effect_attempt_outcomes","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.effect_disposition_requests","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.effect_dispositions","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-state.sql","writers":["schema-control"],"readers":["schema-control"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-
-    {"id":"wamn_run.run_queue","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","dispatcher","scenario-runtime","scenario-worker","flowrunner","materializer"],"readers":["run-state","dispatcher","scenario-runtime","scenario-worker","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.partition_owner","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","flowrunner"],"readers":["run-state","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"},
-    {"id":"wamn_run.run_dead_letters","plane":"project","semantic_owner":"run-state","migration_owners":["run-state"],"schema_source":"deploy/sql/run-queue.sql","writers":["run-state","flowrunner"],"readers":["run-state","flowrunner"],"compatibility_horizon":"persisted-run-and-platform-schema-major","drift_gate":"SR13:generate-and-structurally-compare"}
+    {
+      "id": "registry.meta",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "system-schema-installer"
+      ],
+      "readers": [
+        "registry-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.orgs",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.env_policies",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.project_publish_policies",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store",
+        "ctl-copy"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.projects",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.project_envs",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store",
+        "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "registry.event_readers",
+      "plane": "control",
+      "semantic_owner": "registry-store",
+      "migration_owners": [
+        "registry-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "registry-store"
+      ],
+      "readers": [
+        "registry-store",
+        "cdc-reader"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "provisioning.sagas",
+      "plane": "control",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "provision-store"
+      ],
+      "readers": [
+        "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "provisioning.dumps",
+      "plane": "control",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "provision-store"
+      ],
+      "readers": [
+        "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "identity.principals",
+      "plane": "control",
+      "semantic_owner": "platform-identity",
+      "migration_owners": [
+        "platform-identity"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "platform-identity"
+      ],
+      "readers": [
+        "platform-identity"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "identity.local_credentials",
+      "plane": "control",
+      "semantic_owner": "platform-identity",
+      "migration_owners": [
+        "platform-identity"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "platform-identity"
+      ],
+      "readers": [
+        "platform-identity"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "identity.project_roles",
+      "plane": "control",
+      "semantic_owner": "platform-identity",
+      "migration_owners": [
+        "platform-identity"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "platform-identity"
+      ],
+      "readers": [
+        "platform-identity"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "identity.pats",
+      "plane": "control",
+      "semantic_owner": "platform-identity",
+      "migration_owners": [
+        "platform-identity"
+      ],
+      "schema_source": "deploy/sql/system-schema.sql",
+      "writers": [
+        "platform-identity"
+      ],
+      "readers": [
+        "platform-identity"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.catalogs",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-publish",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "schema-control",
+        "ctl-copy"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.flow_artifacts",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy"
+      ],
+      "readers": [
+        "ctl-copy",
+        "materializer",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:catalog-live"
+    },
+    {
+      "id": "catalog.release_manifests",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy"
+      ],
+      "readers": [
+        "ctl-publish",
+        "ctl-copy",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:catalog-live"
+    },
+    {
+      "id": "catalog.release_flows",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "ctl-copy",
+        "ctl-migrate",
+        "materializer",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:catalog-live"
+    },
+    {
+      "id": "catalog.catalog_heads",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy"
+      ],
+      "readers": [
+        "schema-control",
+        "ctl-copy",
+        "materializer",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:catalog-live"
+    },
+    {
+      "id": "catalog.flow_drafts",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.validated_flow_drafts",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "scenario-worker",
+        "run-state",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.release_exposure_manifests",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.release_sources",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.release_attachments",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.attachment_tombstones",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.attachment_activation",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.attachment_activation_events",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "ctl-publish",
+        "ctl-copy",
+        "ctl-migrate"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:exposure-live"
+    },
+    {
+      "id": "catalog.connection_requirements",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control",
+        "run-state"
+      ],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.connection_instances",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control",
+        "run-state"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.connection_generations",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control",
+        "run-state"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.connection_bindings",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control",
+        "run-state"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.connection_generation_retention",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.draft_safe_connection_grants",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "run-state",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.authoring_command_audit",
+      "plane": "project",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.publish_gate_audit",
+      "plane": "project",
+      "semantic_owner": "ctl-copy",
+      "migration_owners": [
+        "ctl-publish"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-copy"
+      ],
+      "readers": [
+        "schema-control",
+        "ctl-copy"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.schema_migrations",
+      "plane": "project",
+      "semantic_owner": "schema-control",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.entities",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.fields",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.relations",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.indexes",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.constraints",
+      "plane": "project",
+      "semantic_owner": "schema-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.rls_policies",
+      "plane": "project",
+      "semantic_owner": "schema-compiler",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control",
+        "ctl-copy"
+      ],
+      "readers": [
+        "schema-control",
+        "ctl-copy"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.seed_datasets",
+      "plane": "project",
+      "semantic_owner": "schema-compiler",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.event_registrations",
+      "plane": "project",
+      "semantic_owner": "event-registration-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "event-registration-api",
+        "schema-control",
+        "ctl-copy"
+      ],
+      "readers": [
+        "event-registration-api",
+        "schema-control",
+        "ctl-copy",
+        "materializer"
+      ],
+      "compatibility_horizon": "frozen-0.1-event-contract-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.users",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.roles",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.user_roles",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.permissions",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.configurations",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state",
+        "ctl-publish"
+      ],
+      "readers": [
+        "project-state",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.audit_log",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "app_system.api_keys",
+      "plane": "project",
+      "semantic_owner": "project-state",
+      "migration_owners": [
+        "project-state"
+      ],
+      "schema_source": "deploy/sql/app-schema.sql",
+      "writers": [
+        "project-state"
+      ],
+      "readers": [
+        "project-state"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.flows",
+      "plane": "project",
+      "semantic_owner": "flow-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flows.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "flowrunner",
+        "dispatcher"
+      ],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.test_suites",
+      "plane": "project",
+      "semantic_owner": "scenario-catalog",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-catalog",
+        "ctl-copy"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "ctl-copy",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.test_cases",
+      "plane": "project",
+      "semantic_owner": "scenario-catalog",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-catalog",
+        "ctl-copy"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "ctl-copy",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_report_reservations",
+      "plane": "project",
+      "semantic_owner": "scenario-catalog",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_suite_case_facts",
+      "plane": "project",
+      "semantic_owner": "scenario-catalog",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_suite_reports",
+      "plane": "project",
+      "semantic_owner": "scenario-catalog",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-catalog",
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.runs",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "run-state",
+        "dispatcher",
+        "scenario-worker",
+        "flowrunner",
+        "materializer"
+      ],
+      "readers": [
+        "run-state",
+        "dispatcher",
+        "scenario-worker",
+        "flowrunner",
+        "materializer"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.invocation_admissions",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "run-state"
+      ],
+      "readers": [
+        "run-state"
+      ],
+      "compatibility_horizon": "caller-outcome-retention-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.cron_anchor",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "run-state",
+        "dispatcher"
+      ],
+      "readers": [
+        "run-state",
+        "dispatcher"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.node_runs",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "run-state",
+        "schema-control",
+        "flowrunner"
+      ],
+      "readers": [
+        "run-state",
+        "schema-control",
+        "scenario-worker",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.effect_attempts",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.effect_attempt_dispatches",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.effect_attempt_outcomes",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.effect_disposition_requests",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.effect_dispositions",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-state.sql",
+      "writers": [
+        "schema-control"
+      ],
+      "readers": [
+        "schema-control"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.run_queue",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-queue.sql",
+      "writers": [
+        "run-state",
+        "dispatcher",
+        "scenario-runtime",
+        "scenario-worker",
+        "flowrunner",
+        "materializer"
+      ],
+      "readers": [
+        "run-state",
+        "dispatcher",
+        "scenario-runtime",
+        "scenario-worker",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.partition_owner",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-queue.sql",
+      "writers": [
+        "run-state",
+        "flowrunner"
+      ],
+      "readers": [
+        "run-state",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.run_dead_letters",
+      "plane": "project",
+      "semantic_owner": "run-state",
+      "migration_owners": [
+        "run-state"
+      ],
+      "schema_source": "deploy/sql/run-queue.sql",
+      "writers": [
+        "run-state",
+        "flowrunner"
+      ],
+      "readers": [
+        "run-state",
+        "flowrunner"
+      ],
+      "compatibility_horizon": "persisted-run-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    }
   ],
   "families": [
     {

@@ -69,6 +69,7 @@ pub mod lifecycle;
 mod model;
 mod orphan;
 mod publication;
+pub mod publish_gate;
 mod replica_identity;
 mod run_plane;
 pub mod sql;

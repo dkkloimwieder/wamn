@@ -547,6 +547,16 @@ async fn exec_copy_definition(
         )
         .await
         .context("read source catalog heads")?;
+
+    // 0b. The [11.7] publish gate (wamn-12g) — the LAST read-only step before
+    //     anything is written. Everything above this point is a SELECT, so a
+    //     refusal here mutates nothing but its own audit row (the D24 / 11.8
+    //     shape). Placed after the catalog read rather than beside the
+    //     suite-orphan guard because the gate is ABOUT the release being
+    //     promoted: it needs each catalog's identity and version to know which
+    //     suite reports could possibly be evidence.
+    enforce_publish_gate(ctx, &src_client, &dst_client, &catalogs).await?;
+
     let tx = dst_client
         .transaction()
         .await
@@ -1110,6 +1120,142 @@ fn guard_copy_destination(
         unresolved_sources: &[],
     })
     .map_err(anyhow::Error::new)
+}
+
+/// The [11.7] publish gate (wamn-12g): refuse a definition promotion into an
+/// env whose policy requires green suites when the suites that promotion touches
+/// are not PROVEN green for exactly the release being carried.
+///
+/// One verdict is decided, printed, and recorded PER CATALOG, because the policy
+/// is about a release and a definition copy may carry several. Every verdict is
+/// appended to the destination's `catalog.publish_gate_audit` — including
+/// `not-required` ones, so the ledger shows the rule that was in force at the
+/// time rather than only the deploys that happened to be gated.
+///
+/// The suites checked are exactly the ones the 11.8 impact report names for this
+/// promotion, flattened through the wamn-gn6b seam
+/// ([`wamn_schema_control::impact::suite_selectors`]) — the same tuples the
+/// stored-suite executor would run. A malformed selector (an edge missing an
+/// identity field) is an ERROR, not a skipped suite: a gate that silently drops
+/// what it cannot name is not a gate.
+async fn enforce_publish_gate(
+    ctx: &ExecCtx<'_>,
+    src: &tokio_postgres::Client,
+    dst: &tokio_postgres::Client,
+    catalogs: &[wamn_schema_control::Catalog],
+) -> anyhow::Result<()> {
+    let tenant = ctx.args.tenant.as_deref().expect("checked upfront");
+    let system_url = ctx.args.system_database_url.as_deref().context(
+        "a definition copy needs --system-database-url: the [11.7] publish policy lives in the \
+         T1 registry, and a promotion that cannot read its policy cannot be shown to be allowed",
+    )?;
+    let target = crate::publish_gate::GateTarget {
+        org: &ctx.args.dst_org,
+        project: &ctx.args.dst_project,
+        source_env: ctx.args.src_env.as_str(),
+        target_env: ctx.args.dst_env.as_str(),
+        tenant,
+    };
+    let (system, system_task) = connect(system_url)
+        .await
+        .context("system db connect (publish policy)")?;
+    let policy = crate::publish_gate::read_policy(&system, &target).await;
+    system_task.abort();
+    let policy = policy?;
+
+    // The destination's applied catalogs are the impact analysis's "current":
+    // the promotion's blast radius is what changes ON THE DESTINATION.
+    let dst_applied = read_applied_catalogs(dst, tenant, ctx.args.dst_env.as_str()).await?;
+
+    for cat in catalogs {
+        let selectors = {
+            let plan = crate::impact_report::compile_plan(dst_applied.get(&cat.catalog_id), cat)?;
+            // Edges are read from the SOURCE: it holds the flows and suites this
+            // promotion carries, which the destination may not have yet.
+            let impact = crate::impact_report::gather_impact(
+                src,
+                &plan,
+                dst_applied.get(&cat.catalog_id),
+                cat,
+                ctx.flow_schema.as_str(),
+            )
+            .await?;
+            wamn_schema_control::impact::suite_selectors(&impact)
+                .map_err(anyhow::Error::new)
+                .with_context(|| {
+                    format!(
+                        "catalog {:?} names suites the publish gate cannot identify",
+                        cat.catalog_id
+                    )
+                })?
+        };
+        let catalog_version = i32::try_from(cat.version)
+            .with_context(|| format!("catalog version {} exceeds i32", cat.version))?;
+        let reports = crate::publish_gate::read_suite_reports(
+            src,
+            ctx.flow_schema.as_str(),
+            tenant,
+            &cat.catalog_id,
+        )
+        .await?;
+        let hashes = crate::publish_gate::read_release_artifact_hashes(
+            src,
+            tenant,
+            &cat.catalog_id,
+            catalog_version,
+        )
+        .await?;
+        let pin = wamn_schema_control::publish_gate::ReleasePin {
+            catalog_id: cat.catalog_id.clone(),
+            catalog_version,
+            environment: ctx.args.src_env.clone(),
+        };
+        let report = wamn_schema_control::publish_gate::evaluate(
+            policy.requires_green_suite,
+            &selectors,
+            &reports,
+            &pin,
+            &hashes,
+        );
+        println!(
+            "  catalog {:?}: {}",
+            cat.catalog_id,
+            report.render().trim_end()
+        );
+        // Recorded BEFORE the refusal propagates: a blocked deploy must leave a
+        // durable trace, which is the whole point of a change-control gate.
+        crate::publish_gate::record_verdict(dst, &target, &policy, cat, &report).await?;
+        if !report.is_satisfied() {
+            return Err(report.refusal().into());
+        }
+    }
+    Ok(())
+}
+
+/// Read one env's applied catalogs into a `catalog_id -> Catalog` map.
+async fn read_applied_catalogs(
+    client: &tokio_postgres::Client,
+    tenant: &str,
+    env: &str,
+) -> anyhow::Result<std::collections::BTreeMap<String, wamn_schema_control::Catalog>> {
+    let rows = client
+        .query(
+            &wamn_schema_control::sql::select_applied_catalogs_sql(),
+            &[&tenant, &env],
+        )
+        .await
+        .context("enumerate applied catalogs")?;
+    let mut applied = std::collections::BTreeMap::new();
+    for row in &rows {
+        let catalog_id: String = row.get(0);
+        let Some(doc) = row.get::<_, Option<String>>(2) else {
+            continue;
+        };
+        let cat = wamn_schema_control::Catalog::from_json(&doc)
+            .with_context(|| format!("parse applied catalog {catalog_id:?}"))?;
+        applied.insert(catalog_id, cat);
+    }
+    Ok(applied)
 }
 
 /// The 11.2 suite-orphan guard (wamn-828): refuse a definition copy that would

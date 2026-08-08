@@ -2844,11 +2844,15 @@ pub fn strip_registration_state_sql() -> &'static str {
 /// Create or harden the host-only scenario-author group role.
 pub fn ensure_scenario_author_role_sql() -> &'static str {
     "DO $scenario_author$ BEGIN \
+       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
        IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
                       WHERE rolname = 'wamn_scenario_author') THEN \
          CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
            NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-       ELSE \
+       ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                     WHERE rolname = 'wamn_scenario_author' \
+                       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                            OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
          ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
            NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
        END IF; \

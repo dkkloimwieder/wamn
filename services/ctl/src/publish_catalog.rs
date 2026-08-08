@@ -519,7 +519,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'authoring_command_audit' \
-                               AND column_name = 'provenance_commit')",
+                               AND column_name = 'provenance_commit'), \
+                    to_regclass('catalog.publish_gate_audit') IS NOT NULL",
             &[],
         )
         .await?;
@@ -682,6 +683,23 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .await
                 .context("install authoring command provenance attribution")?;
         }
+
+        // [11.7] wamn-12g: the publish gate REFUSES when it cannot record its
+        // verdict, so a catalog provisioned before this ledger existed must gain
+        // it here or every gated promotion into that project would fail on a
+        // missing table rather than on its actual evidence.
+        if !release_row.get::<_, bool>(28) {
+            let start = CATALOG_SCHEMA_SQL
+                .find("-- BEGIN PUBLISH GATE AUDIT MIGRATION")
+                .expect("publish gate audit migration start");
+            let end = CATALOG_SCHEMA_SQL
+                .find("-- END PUBLISH GATE AUDIT MIGRATION")
+                .expect("publish gate audit migration end");
+            client
+                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
+                .await
+                .context("install publish gate audit")?;
+        }
         ensure_authoring_catalog_privileges(client).await?;
         return Ok(());
     }
@@ -738,6 +756,8 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON catalog.publish_gate_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT ON catalog.publish_gate_audit TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
                IF has_table_privilege('wamn_app', 'catalog.flow_drafts', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'UPDATE') \
@@ -749,6 +769,10 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'DELETE') \
+                  OR has_table_privilege('wamn_app', 'catalog.publish_gate_audit', 'SELECT') \
+                  OR has_table_privilege('wamn_app', 'catalog.publish_gate_audit', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.publish_gate_audit', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.publish_gate_audit', 'DELETE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
@@ -1307,6 +1331,7 @@ pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> any
     client
         .batch_execute(
             "DO $$ BEGIN \
+               PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
@@ -1319,7 +1344,10 @@ pub(crate) async fn ensure_wamn_app_role(client: &tokio_postgres::Client) -> any
         .await
         .context("ensure host-only wamn_scenario_author role")?;
     client
-        .batch_execute("REVOKE wamn_scenario_author FROM wamn_app")
+        .batch_execute(
+            "SELECT pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+             REVOKE wamn_scenario_author FROM wamn_app",
+        )
         .await
         .context("separate guest and scenario-author roles")
 }
