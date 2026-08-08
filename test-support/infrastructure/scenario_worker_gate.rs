@@ -1132,4 +1132,107 @@ mod tests {
             )));
         }
     }
+
+    /// The `--impact-report` input row is the `wamn_schema_control::impact::SuiteEdge`
+    /// shape field-for-field: names `tenant / flow_id / flow_version / suite_id`,
+    /// types `String / String / i32 / String`. A wrong field name or an extra field
+    /// is REFUSED, so the wamn-12g input contract stays locked.
+    #[test]
+    fn suite_selector_matches_the_suite_edge_shape() {
+        // The exact SuiteEdge shape parses, with the right values/types.
+        let sel: SuiteSelector =
+            serde_json::from_str(r#"{"tenant":"t","flow_id":"f","flow_version":3,"suite_id":"s"}"#)
+                .expect("SuiteEdge-shaped JSON parses");
+        assert_eq!(
+            sel,
+            SuiteSelector {
+                tenant: "t".into(),
+                flow_id: "f".into(),
+                flow_version: 3,
+                suite_id: "s".into(),
+            }
+        );
+        // A camelCase / renamed field drops a REQUIRED field ⇒ parse fails; an
+        // EXTRA field is refused by `deny_unknown_fields`.
+        for wrong in [
+            r#"{"tenant":"t","flow":"f","flow_version":1,"suite_id":"s"}"#,
+            r#"{"tenant":"t","flow_id":"f","version":1,"suite_id":"s"}"#,
+            r#"{"tenant":"t","flowId":"f","flowVersion":1,"suiteId":"s"}"#,
+            r#"{"tenant":"t","flow_id":"f","flow_version":1,"suite_id":"s","extra":1}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<SuiteSelector>(wrong).is_err(),
+                "a wrong or extra field must be refused: {wrong}"
+            );
+        }
+    }
+
+    /// Producer ↔ consumer: what the wamn-12g seam EMITS
+    /// (`wamn_schema_control::impact::suite_selectors_json`, the flattened
+    /// `ImpactReport.entities[].suites[]`) is exactly what this executor READS into
+    /// its `SuiteSelector` rows — same field names, same types, same order, no
+    /// rendered text in between. Guards the two shapes against drifting apart.
+    #[test]
+    fn flattened_impact_suites_deserialize_as_suite_selectors() {
+        use wamn_schema_control::impact::{
+            EntityChangeKind, EntityImpact, ImpactReport, SuiteEdge, suite_selectors_json,
+        };
+
+        let edge = |tenant: &str, flow: &str, version: i32, suite: &str| SuiteEdge {
+            tenant: tenant.into(),
+            flow_id: flow.into(),
+            flow_version: version,
+            suite_id: suite.into(),
+        };
+        let impacted = |suites: Vec<SuiteEdge>| EntityImpact {
+            entity_id: "receipts".into(),
+            entity_name: "receipts".into(),
+            change: EntityChangeKind::Changed,
+            destructive: true,
+            flows_via_registration: Vec::new(),
+            flows_via_node_config: Vec::new(),
+            suites,
+            api_resources: Vec::new(),
+        };
+
+        // Two affected entities sharing a suite, deliberately out of order.
+        let shared = edge("acme", "receiving", 1, "happy");
+        let report = ImpactReport {
+            entities: vec![
+                impacted(vec![edge("acme", "receiving", 2, "happy"), shared.clone()]),
+                impacted(vec![shared, edge("acme", "billing", 1, "b")]),
+            ],
+        };
+
+        let emitted = suite_selectors_json(&report).expect("complete suite edges flatten");
+        let read: Vec<SuiteSelector> =
+            serde_json::from_str(&emitted).expect("the emitted array is SuiteSelector-shaped");
+
+        assert_eq!(
+            read,
+            vec![
+                SuiteSelector {
+                    tenant: "acme".into(),
+                    flow_id: "billing".into(),
+                    flow_version: 1,
+                    suite_id: "b".into(),
+                },
+                SuiteSelector {
+                    tenant: "acme".into(),
+                    flow_id: "receiving".into(),
+                    flow_version: 1,
+                    suite_id: "happy".into(),
+                },
+                SuiteSelector {
+                    tenant: "acme".into(),
+                    flow_id: "receiving".into(),
+                    flow_version: 2,
+                    suite_id: "happy".into(),
+                },
+            ],
+            "the producer's de-duplicated, identity-ordered array round-trips into the consumer",
+        );
+        // Every read selector survives this gate's own non-negative version check.
+        assert!(read.iter().all(|s| s.flow_version >= 0));
+    }
 }
