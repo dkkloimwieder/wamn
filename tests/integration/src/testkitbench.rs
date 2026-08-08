@@ -377,6 +377,71 @@ fn wire_error_kind(e: &WireNodeError) -> NodeErrorKind {
 // flow-level: ExecutionHost under the test-double set (the runworker template)
 // ---------------------------------------------------------------------------
 
+/// The ephemeral per-case execution schema: the drift-guarded runnerbench
+/// stand-in plus every run/node-run column the run-next statements name.
+///
+/// The shared stand-in is a generation behind `deploy/sql/run-state.sql`: it was
+/// never swept for the wamn-2jdm.11 trusted event lineage (`claim_dispatch_sql`
+/// projects `event_root_run_id` / `event_depth`) nor for the durable invocation
+/// context and callable-flow release columns `begin_attempt_sql` reads. The
+/// wamn-9mg8 stand-in guard only reads `run-queue.sql`, so it never saw either
+/// sweep and every flow case died in `drain` with `run-next: query-error:42703`
+/// (wamn-jflp). Composed here, the way `pocsuiteproof` composes its F4 run
+/// columns, so no other gate's stand-in moves; `IF NOT EXISTS` keeps this
+/// correct once the shared stand-in is swept.
+fn flow_case_ddl(schema: &str) -> String {
+    format!(
+        "{} \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS catalog_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS catalog_version bigint; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS environment text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS attachment_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS registration_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS event_source_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS event_root_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS event_depth int; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS admission_context_version int NOT NULL DEFAULT 1; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS platform_revision text NOT NULL DEFAULT 'testkit'; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS response_deadline_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS run_deadline_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_requested_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_requested_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS terminal_reason text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_outcome_kind text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_outcome_json jsonb; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_http_status int; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_release_node_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_outcome_hash text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_released_at timestamptz; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS parent_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS parent_node_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS parent_occurrence int; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS invoke_depth int NOT NULL DEFAULT 0; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS invoke_root_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS waiting_child_run_id text; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS waiting_child_occurrence int; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS wait_generation bigint; \
+         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(); \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS selected_recovery_class text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS recovery_class text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS generation_fact_kind text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS connection_generation text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS credential_generation text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS attempt_started_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS attempt_dispatched_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS attempt_deadline_at timestamptz; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS attempt_input_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS attempt_key text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS input_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS output_ref text; \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS started_at timestamptz NOT NULL DEFAULT now(); \
+         ALTER TABLE {schema}.node_runs ADD COLUMN IF NOT EXISTS ended_at timestamptz;",
+        crate::runnerbench::runner_ddl(schema)
+    )
+}
+
 async fn flow_phase(
     engine: &wash_runtime::engine::Engine,
     args: &TestKitBenchArgs,
@@ -409,12 +474,12 @@ async fn flow_phase(
     let echo_url = format!("http://{echo_authority}/echo");
 
     // Provision the union schema (flow tables + run_queue) via the drift-guarded
-    // runnerbench DDL, seed poc-s6 (delay 0 → drives straight through), and stage
-    // a dispatched run + its queue row.
-    let provisioner =
-        EphemeralSchemaProvisioner::connect(&admin_url, crate::runnerbench::runner_ddl)
-            .await
-            .context("connect flow provisioner")?;
+    // runnerbench DDL plus this gate's run-row lineage columns, seed poc-s6
+    // (delay 0 → drives straight through), and stage a dispatched run + its
+    // queue row.
+    let provisioner = EphemeralSchemaProvisioner::connect(&admin_url, flow_case_ddl)
+        .await
+        .context("connect flow provisioner")?;
     let runworker_schema = ScenarioSchemaName::new(RW_SCHEMA)?;
     provisioner
         .provision_case(&runworker_schema)
@@ -522,7 +587,54 @@ async fn flow_phase(
 mod tests {
     use wamn_scenario_model::{Assertion, AssertionResult};
 
-    use super::{Outcome, fold_outcome};
+    use super::{Outcome, flow_case_ddl, fold_outcome};
+
+    /// Every `r.<column>` a run-next statement names (the run row, plus the
+    /// queue row where the same builder renews a lease under that alias).
+    fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
+        let bytes = sql.as_bytes();
+        sql.match_indices("r.")
+            .filter(|(at, _)| {
+                *at == 0 || !(bytes[*at - 1].is_ascii_alphanumeric() || bytes[*at - 1] == b'_')
+            })
+            .map(|(at, _)| {
+                sql[at + 2..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+            .filter(|column| !column.is_empty())
+            .collect()
+    }
+
+    /// wamn-jflp [GATE-DRIFT]: `runs` is defined in `deploy/sql/run-state.sql`,
+    /// which the wamn-9mg8 `run-queue.sql` stand-in guard cannot see — so the
+    /// wamn-2jdm.11 lineage sweep left this gate's ephemeral schema behind and
+    /// every flow case died in `drain run_queue`. Pin the template to every run
+    /// column the run-next statements name, so the next run-state sweep cannot
+    /// repeat it.
+    #[test]
+    fn flow_case_schema_carries_every_run_column_run_next_names() {
+        let ddl = flow_case_ddl("wamn_run");
+        for sql in [
+            wamn_run_state::queue::claim_dispatch_sql(),
+            wamn_run_state::sql::select_run_dispatch_sql(),
+            wamn_run_state::transitions::begin_attempt_sql(),
+        ] {
+            let columns = run_row_columns(&sql);
+            assert!(
+                !columns.is_empty(),
+                "parser sanity: no run columns in {sql}"
+            );
+            for column in columns {
+                assert!(
+                    ddl.contains(&column),
+                    "testkitbench flow-case schema is missing `runs.{column}`, which \
+                     run-next projects (drifted from deploy/sql/run-state.sql)"
+                );
+            }
+        }
+    }
 
     #[test]
     fn integration_gate_uses_scenario_runtime_without_importing_worker() {
