@@ -271,7 +271,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:b966e982ebcd4fccac290101a48d3e5bb8399a510a2980e92e5a3e820318ec4b",
+        baseline_hash, "sha256:32eac00eb34144fe2dece516c5387979b675a143adaab5d863642fa45eea0e6f",
         "artifact frame sequence changed"
     );
 }
@@ -823,7 +823,7 @@ fn pinned_artifact_verifies_and_projects_the_legacy_persisted_shape() {
         "sha256:6dedf8035e4ed1bb053b9701f5b5a9620e340111fcba07e71bcb3a8897a03201";
     const LEGACY_COMPONENTS: &str = r#"[{"interface":{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"},"component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]"#;
     const LEGACY_ARTIFACT_HASH: &str =
-        "sha256:7ffb85fc00483d38f78c09969dd26da8a07a5b43842df2040f28f843a0037f7c";
+        "sha256:69f92a51082a55f25ced74531d6283b56aca8a7d345d1c3a0a711280ccbd0fce";
 
     let flow = request_flow();
     let graph = flow.to_json();
@@ -965,7 +965,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:70088114665be3665967e1b8244058905673b048e7e1f259d90fa81d908238df",
+        baseline_hash, "sha256:07cda54903be3e9e1fe31bea0ce5f3d29709eab703e5dee193dfeb73c8d98431",
         "definition frame sequence changed"
     );
 }

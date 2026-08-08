@@ -1,5 +1,5 @@
 use wamn_catalog::{
-    Artifact, DraftArtifact, ExecutionBundleIdentity, ExecutionBundleInput,
+    Artifact, DraftArtifact, DraftContentHash, ExecutionBundleIdentity, ExecutionBundleInput,
     ExecutionBundlePackaging, ExecutionPlugManifest, NodeImplementation, PinnedDraftArtifact,
     StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
 };
@@ -74,6 +74,29 @@ fn execution_bundle_exposes_the_exact_runner_digest_for_instantiate_guarding() {
 
     assert_eq!(runner.identity(), "flowrunner@fixture");
     assert_eq!(runner.digest(), digest('a'));
+}
+
+/// Drift guard for the version-independent draft preimage. `DraftContentHash`
+/// builds on the same `FlowPreimage` view as `Flow::canonical_bytes`, so this
+/// pinned digest is what proves a change to that shared view cannot move
+/// `draft_content_hash` except where a W2 bead deliberately moves it. The
+/// fixture's nodes are already node-id ordered, so W2A leaves it untouched.
+#[test]
+fn draft_content_hash_is_pinned_and_stays_version_independent() {
+    assert_eq!(
+        DraftContentHash::for_flow(&flow(7, 200)).as_str(),
+        "sha256:84fbf0ff004f3c56212691e64ba84bf57a1b111ff66e66d208bf8fe2425f858f",
+    );
+    assert_eq!(
+        DraftContentHash::for_flow(&flow(7, 200)),
+        DraftContentHash::for_flow(&flow(9, 200)),
+        "the draft preimage omits `version`"
+    );
+    assert_ne!(
+        DraftContentHash::for_flow(&flow(7, 200)),
+        DraftContentHash::for_flow(&flow(7, 201)),
+        "the draft preimage still covers behavior"
+    );
 }
 
 #[test]

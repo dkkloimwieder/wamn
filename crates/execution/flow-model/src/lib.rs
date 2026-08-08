@@ -12,12 +12,15 @@
 //! - **import/export** — [`Flow::from_json`] / [`Flow::to_json`] (round-trip);
 //! - **validation** — [`Flow::validate`] (graph well-formedness against pinned
 //!   node interfaces; ordinary node `config` remains node-library-owned);
+//! - **preimage** — [`FlowPreimage`] (the canonical projection every graph
+//!   digest hashes; W2 digest ordering);
 //! - **diff** — [`diff::diff`] (structured version diff for the editor);
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
 //!   published at `docs/contracts/flow-schema.schema.json` (drift-guarded by a test).
 
 mod canonical;
 mod diff;
+mod preimage;
 mod types;
 mod validate;
 
@@ -26,6 +29,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 pub use diff::{FlowDiff, NodeChange, diff};
+pub use preimage::FlowPreimage;
 pub use types::{
     Capture, CaptureMode, CredentialRef, CronInput, DEFAULT_CAPTURE_MAX_BYTES, ENTRY_TYPES,
     ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow, FlowConnectionRequirement,

@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 use wamn_node_manifest::PortableConnectionRequirement;
 
 use crate::canonical;
+use crate::preimage::FlowPreimage;
 
 /// The flow-schema **format** version this crate implements. Distinct from a
 /// flow's own [`Flow::version`]. This pre-version-alpha contract is refreshed
@@ -516,8 +517,11 @@ impl Flow {
     }
 
     /// RFC 8785 JSON Canonicalization Scheme bytes for artifact identity.
+    ///
+    /// Hashes the [`FlowPreimage`] projection rather than the document, so node
+    /// frames are ordered by [`Node::id`] (W2 digest ordering).
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        let value = serde_json::to_value(self).expect("Flow serializes");
+        let value = serde_json::to_value(FlowPreimage::of(self)).expect("Flow serializes");
         canonical::to_vec(&value)
     }
 

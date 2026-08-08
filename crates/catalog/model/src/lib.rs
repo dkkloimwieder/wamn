@@ -10,7 +10,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use wamn_flow::{Flow, ResolvedInterfaces};
+use wamn_flow::{Flow, FlowPreimage, ResolvedInterfaces};
 use wamn_node_manifest::{
     CONNECTION_DESCRIPTOR_VERSION, ConnectionRecoverySupport, ConnectionTypeDescriptor,
     EXECUTABLE_RECOVERY_CONTRACT_VERSION, ExecutableConnectionRecoveryMode, ExecutableIdentity,
@@ -762,15 +762,17 @@ pub struct DraftContentHash(String);
 
 impl DraftContentHash {
     /// Compute the version-independent content address for a parsed flow draft.
+    ///
+    /// Shares [`FlowPreimage`] with [`Flow::canonical_bytes`], so the W2 digest
+    /// ordering rules apply identically to both; only `version` differs, and it
+    /// is omitted here by construction rather than deleted from a serialized map.
     pub fn for_flow(flow: &Flow) -> Self {
-        let mut value = serde_json::to_value(flow).expect("Flow serializes");
-        value
-            .as_object_mut()
-            .expect("Flow serializes as an object")
-            .remove("version");
         Self(digest(&frames(
             "flow-draft",
-            [("graph", canonical_json(&value).as_slice())],
+            [(
+                "graph",
+                canonical_serialized(&FlowPreimage::version_independent(flow)).as_slice(),
+            )],
         )))
     }
 

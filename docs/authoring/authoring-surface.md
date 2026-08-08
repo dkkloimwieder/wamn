@@ -162,7 +162,8 @@ preimage. Three rules are normative.
 1. **Preimages use canonical stable-ID ordering.** Object keys are RFC 8785:
    UTF-16 code-unit order, no insignificant whitespace (`wamn-flow`'s
    `canonical` module; `wamn-catalog`'s `write_json`). Repeated preimage frames
-   are ordered by the member's stable id — node type for resolved nodes
+   are ordered by the member's stable id — node id for graph nodes
+   (`wamn-flow`'s `FlowPreimage`), node type for resolved nodes
    (`validate_interface_order`), node id for occurrence recovery
    (`conservative_occurrence_recovery` with `validate_occurrence_recovery`),
    logical name for execution plugs and adapters (`validate_named_order`), and
@@ -180,16 +181,30 @@ preimage. Three rules are normative.
    are not identity. The graph document has no coordinate field at all and
    rejects one as an unknown field.
 
-Known deviations from rules 1 and 3 are carried as ignored proof fixtures, not
-as prose: `node_sequence_position_must_not_change_the_graph_digest`,
-`edge_sequence_position_must_not_change_the_graph_digest`, and
+Every graph digest hashes one projection, `wamn-flow`'s `FlowPreimage`, which
+both `Flow::canonical_bytes` and `DraftContentHash::for_flow` build on, so a
+field reaches a graph digest only by being listed there. Node frames are ordered
+by node id (wamn-jvzx.14): permuting a document's `nodes` array is proved not to
+move `graph_hash` or `artifact_hash` by
+`node_sequence_position_must_not_change_the_graph_digest` and
+`artifact_hash_must_not_depend_on_node_document_sequence`, and the exact
+preimage bytes are pinned by `graph_preimage_bytes_are_pinned`.
+
+Because these are the digests of an already-content-addressed store, a change to
+the projection changes every previously computed digest. There is no backfill:
+the project is greenfield (FLOW-SPEC §preamble), `catalog.flow_artifacts` and
+`catalog.validated_flow_drafts` are physically immutable, and a row written
+before the change fails closed in `PinnedArtifact::from_storage` with
+`GraphHashMismatch` rather than loading under the wrong rules. From-zero
+reprovisioning is the migration story.
+
+Known deviations from rules 1 to 3 are carried as ignored proof fixtures, not as
+prose: `edge_sequence_position_must_not_change_the_graph_digest` and
 `editor_labels_must_not_enter_the_graph_preimage` in
-`crates/execution/flow-model/tests/digest_ordering.rs`, plus
-`artifact_hash_must_not_depend_on_node_document_sequence` in
-`crates/catalog/model/tests/digest_ordering.rs`. Each names the follow-up that
-closes it. Until they close, a client must treat a flow document's node and
-edge array order and its `name`/`label`/`description` text as digest-affecting
-and must not reorder or relabel a graph it intends to keep identical.
+`crates/execution/flow-model/tests/digest_ordering.rs`. Each names the follow-up
+that closes it. Until they close, a client must treat a flow document's edge
+array order and its `name`/`label`/`description` text as digest-affecting and
+must not reorder or relabel a graph it intends to keep identical.
 
 ## Suite projection
 

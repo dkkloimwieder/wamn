@@ -233,14 +233,12 @@ fn occurrence_recovery_frames_follow_node_id_not_document_sequence() {
     );
 }
 
-// FOLLOW-UP (child bead of wamn-jvzx, to file: "digest preimage must order flow
-// nodes by node id"). The artifact preimage's `graph` frame is
-// `Flow::canonical_bytes`, which serializes `nodes` in document sequence, so a
-// pure reordering mints a different `artifact_hash`. The sibling fixture
-// `node_sequence_position_must_not_change_the_graph_digest` in `wamn-flow` owns
-// the source-level defect; this one pins the persisted digest that inherits it.
+/// The artifact preimage's `graph` frame is `Flow::canonical_bytes`, whose node
+/// frames are ordered by node id, so a pure reordering of the document array
+/// does not mint a new `artifact_hash` (wamn-jvzx.14). The sibling fixture
+/// `node_sequence_position_must_not_change_the_graph_digest` in `wamn-flow` owns
+/// the projection; this one pins the persisted digest that inherits it.
 #[test]
-#[ignore = "known W2 defect: node document sequence still enters the artifact preimage"]
 fn artifact_hash_must_not_depend_on_node_document_sequence() {
     let baseline = artifact_of(&flow());
     let mut permuted_flow = flow();

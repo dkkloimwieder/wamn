@@ -659,7 +659,7 @@ fn ordered_occurrence_selections_pin_connection_recovery_for_exact_occurrence() 
     assert_eq!(selected.occurrence_recovery(), selections);
     assert_eq!(
         selected.identity().artifact_hash().as_str(),
-        "sha256:5ab11c9c5f1999d5164178232d4d4bea104343df836f3ea568f44c7536b6c280",
+        "sha256:4dfb8fa1644c17717bb9190336d2b0620504c52eb11093f22c59c690e598ec2a",
         "occurrence recovery frame sequence changed"
     );
 
