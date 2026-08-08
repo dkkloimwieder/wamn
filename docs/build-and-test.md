@@ -3590,10 +3590,21 @@ gate runs against a throwaway postgres it provisions from scratch:
    `catalog.{flow_drafts,validated_flow_drafts,draft_safe_connection_grants,
    authoring_command_audit}` plus
    `<run-schema>.{authoring_report_reservations,authoring_suite_case_facts,
-   authoring_suite_reports}`. `wamn-ctl reconcile-run-plane` installs ALL of
-   them additively — the catalog tables included (`CreateCatalogTable` actions)
-   — so publish-catalog is not needed for this. `catalog` is one schema shared
-   by every project schema in the database, so one run covers them all.
+   authoring_suite_reports}`. `wamn-ctl reconcile-run-plane` creates all of those
+   TABLES additively — the catalog ones included (`CreateCatalogTable` actions).
+   `catalog` is one schema shared by every project schema in the database, so one
+   run covers them all.
+
+   BOTH verbs are needed, and reconcile-run-plane is NOT a superset. Its column
+   planner (`run_plane.rs`, "column drift on PRESENT record tables") iterates
+   `RUN_PLANE_FILES` for the RUN schema only and never plans a `catalog` column,
+   so a catalog table that exists but is missing a newly added COLUMN is invisible
+   to it. Those land in `publish-catalog`'s guarded slices — wamn-ftfc.2's
+   `AUTHORING DRAFT DEFINITION` (`flow_drafts.definition`, `graph_json` relaxed to
+   nullable) and `AUTHORING COMMAND PROVENANCE` (three `provenance_*` columns) are
+   exactly that shape. Run reconcile-run-plane for the tables, then
+   publish-catalog for the columns; skipping the second leaves `save-flow-draft`
+   writing a column the live catalog does not have.
 2. **A correctly-scoped author credential.** The probe REFUSES to serve unless
    the login role is unprivileged, a member of nothing but
    `wamn_scenario_author`, denied `wamn_app`, and owns nothing in `catalog` or
