@@ -185,7 +185,12 @@ preimage. Three rules are normative.
    and changing an `ordinal` changes both the run order and the digest.
 3. **Display never enters a preimage.** Labels, prose, and canvas coordinates
    are not identity. The graph document has no coordinate field at all and
-   rejects one as an unknown field.
+   rejects one as an unknown field. The display fields it does carry — a flow's
+   `name`, a node's `label`, and a credential declaration's `kind` and
+   `description` — are stored and returned verbatim but never hashed, so
+   renaming is not a new artifact. `kind` is display by decision: it is
+   documented as a hint for the editor's credential picker, the vault resolves a
+   credential by `name`, and nothing in the platform reads it.
 
 Every graph digest hashes one projection, `wamn-flow`'s `FlowPreimage`, which
 both `Flow::canonical_bytes` and `DraftContentHash::for_flow` build on, so a
@@ -199,7 +204,14 @@ by `node_sequence_position_must_not_change_the_graph_digest`,
 `edge_sequence_position_must_not_change_the_graph_digest`; the converse — that an
 explicit `ordinal` *is* identity — by
 `explicit_edge_ordinals_are_materialized_at_parse_and_do_change_the_digest`; and
-the exact preimage bytes by `graph_preimage_bytes_are_pinned`.
+the exact preimage bytes by `graph_preimage_bytes_are_pinned`. Display text is
+excluded by construction (wamn-jvzx.16) and proved excluded by
+`editor_labels_must_not_enter_the_graph_preimage` and
+`artifact_hash_must_not_depend_on_editor_labels`, while
+`every_flow_field_is_classified_as_identity_or_display` pins which document
+fields are identity and which are display at the flow, node, edge, and
+credential level — so a field added to the document cannot reach a digest, or be
+silently kept out of one, without that test failing.
 
 Because these are the digests of an already-content-addressed store, a change to
 the projection changes every previously computed digest. There is no backfill:
@@ -209,12 +221,14 @@ before the change fails closed in `PinnedArtifact::from_storage` with
 `GraphHashMismatch` rather than loading under the wrong rules. From-zero
 reprovisioning is the migration story.
 
-The one remaining deviation from rules 1 to 3 is carried as an ignored proof
-fixture, not as prose: `editor_labels_must_not_enter_the_graph_preimage` in
-`crates/execution/flow-model/tests/digest_ordering.rs`, which names the follow-up
-that closes it. Until it closes, a client must treat a flow document's
-`name`/`label`/`description` text as digest-affecting and must not relabel a
-graph it intends to keep identical.
+All three rules now hold with no carried deviation: a client may reorder a
+document's `nodes` or `edges` arrays and may retitle a flow, a node, or a
+credential declaration without minting a new artifact identity. What does change
+an identity is a change to the graph itself, including an edge's explicit
+`ordinal`. Note that a rename is still a new *document*: `catalog.flow_artifacts`
+is immutable and keyed by `(tenant, flow, version)`, and `register_flow_artifact`
+compares `graph_json`, so re-registering a renamed graph at the same flow version
+is refused with `flow-version-content-conflict` even though its hashes match.
 
 ## Suite projection
 

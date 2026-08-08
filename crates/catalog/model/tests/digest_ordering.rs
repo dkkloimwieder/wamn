@@ -250,3 +250,32 @@ fn artifact_hash_must_not_depend_on_node_document_sequence() {
         permuted.identity().artifact_hash()
     );
 }
+
+/// The same claim for display text (wamn-jvzx.16): editor labels are not part of
+/// the `graph` frame, so relabelling a graph does not mint a new
+/// `artifact_hash`. The in-repo catalog fixtures carry no labels, which is why
+/// no golden literal moved when the labels left — this fixture is what actually
+/// exercises the exclusion at the persisted-digest level.
+#[test]
+fn artifact_hash_must_not_depend_on_editor_labels() {
+    let baseline_flow = flow();
+    let baseline = artifact_of(&baseline_flow);
+
+    let mut relabelled_flow = flow();
+    relabelled_flow.name = Some("Renamed by the editor".to_string());
+    for node in &mut relabelled_flow.nodes {
+        node.label = Some(format!("{} step", node.id));
+    }
+    let relabelled = artifact_of(&relabelled_flow);
+
+    assert_eq!(
+        baseline.identity().artifact_hash(),
+        relabelled.identity().artifact_hash()
+    );
+    assert_eq!(baseline.graph_hash(), relabelled.graph_hash());
+    assert_ne!(
+        baseline_flow.to_json(),
+        relabelled_flow.to_json(),
+        "the persisted graph document still carries the display text"
+    );
+}

@@ -17,15 +17,22 @@
 //!   to-port)`. Fan-out order is semantic, so it is carried by the explicit
 //!   [`Edge::ordinal`] and hashed; the array position that used to imply it is
 //!   not. `Flow::validate`'s `duplicate-edge` refusal is what makes the key
-//!   total.
+//!   total;
+//! - **display text is absent.** [`Flow::name`], [`Node::label`],
+//!   [`crate::CredentialRef::description`], and [`crate::CredentialRef::kind`] are editor
+//!   text with no reader anywhere in the platform — the vault resolves a
+//!   credential by [`crate::CredentialRef::name`] and `diff` compares credentials by
+//!   name alone — so renaming does not mint a new artifact identity. They stay
+//!   in the document; they simply never enter a digest.
 //!
 //! Object-key order and whitespace never reach a digest at all: the projection
 //! is serialized through [`crate::canonical`] (RFC 8785).
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::types::{
-    Capture, CredentialRef, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
+    Capture, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
 };
 
 /// The canonical digest preimage of a [`Flow`].
@@ -60,17 +67,15 @@ pub struct FlowPreimage<'a> {
     /// Absent for [`FlowPreimage::version_independent`].
     #[serde(skip_serializing_if = "Option::is_none")]
     version: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<&'a str>,
     /// Ordered by [`Node::id`], never by document sequence.
-    nodes: Vec<&'a Node>,
+    nodes: Vec<NodePreimage<'a>>,
     /// Ordered by the stable edge key, never by document sequence.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     edges: Vec<&'a Edge>,
     #[serde(skip_serializing_if = "is_empty")]
     connection_requirements: &'a [FlowConnectionRequirement],
-    #[serde(skip_serializing_if = "is_empty")]
-    credentials: &'a [CredentialRef],
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    credentials: Vec<CredentialPreimage<'a>>,
     #[serde(skip_serializing_if = "is_empty")]
     allowed_hosts: &'a [String],
     #[serde(skip_serializing_if = "PartitionPolicy::is_default")]
@@ -79,6 +84,30 @@ pub struct FlowPreimage<'a> {
     ordering: &'a Ordering,
     #[serde(skip_serializing_if = "Capture::is_default")]
     capture: Capture,
+}
+
+/// A graph node's identity: [`Node`] without its editor [`Node::label`].
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct NodePreimage<'a> {
+    id: &'a str,
+    #[serde(rename = "type")]
+    node_type: &'a str,
+    #[serde(skip_serializing_if = "is_empty_object")]
+    config: &'a Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    connection: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential: Option<&'a str>,
+}
+
+/// A credential declaration's identity: the logical name the vault resolves and
+/// [`Node::credential`] points at. `kind` is an editor picker hint and
+/// `description` is prose; neither is read by anything, so neither is identity.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct CredentialPreimage<'a> {
+    name: &'a str,
 }
 
 impl<'a> FlowPreimage<'a> {
@@ -106,26 +135,52 @@ impl<'a> FlowPreimage<'a> {
     /// two constructors disagree about, so it is left at its `None` default
     /// here and set by [`FlowPreimage::of`].
     fn shared(flow: &'a Flow) -> FlowPreimage<'a> {
-        let mut nodes: Vec<&Node> = flow.nodes.iter().collect();
+        let mut sorted: Vec<&Node> = flow.nodes.iter().collect();
         // Stable, so a flow that has not been validated (duplicate node ids are
         // an `Flow::validate` error) still hashes deterministically.
-        nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        sorted.sort_by(|left, right| left.id.cmp(&right.id));
+        let nodes = sorted.into_iter().map(node_preimage).collect();
         let mut edges: Vec<&Edge> = flow.edges.iter().collect();
         edges.sort_by(|left, right| edge_key(left).cmp(&edge_key(right)));
         FlowPreimage {
             schema_version: &flow.schema_version,
             flow_id: &flow.flow_id,
             version: None,
-            name: flow.name.as_deref(),
             nodes,
             edges,
             connection_requirements: &flow.connection_requirements,
-            credentials: &flow.credentials,
+            credentials: flow
+                .credentials
+                .iter()
+                .map(|credential| CredentialPreimage {
+                    name: &credential.name,
+                })
+                .collect(),
             allowed_hosts: &flow.allowed_hosts,
             partition_policy: flow.partition_policy,
             ordering: &flow.ordering,
             capture: flow.capture,
         }
+    }
+}
+
+fn node_preimage(node: &Node) -> NodePreimage<'_> {
+    NodePreimage {
+        id: &node.id,
+        node_type: &node.node_type,
+        config: &node.config,
+        connection: node.connection.as_deref(),
+        credential: node.credential.as_deref(),
+    }
+}
+
+/// Matches [`Node::config`]'s own `skip_serializing_if`, so an absent config is
+/// absent from the preimage exactly as it is from the document.
+fn is_empty_object(value: &&Value) -> bool {
+    match value {
+        Value::Object(map) => map.is_empty(),
+        Value::Null => true,
+        _ => false,
     }
 }
 

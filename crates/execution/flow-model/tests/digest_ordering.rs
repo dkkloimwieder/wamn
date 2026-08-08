@@ -190,13 +190,11 @@ fn explicit_edge_ordinals_are_materialized_at_parse_and_do_change_the_digest() {
     );
 }
 
-// FOLLOW-UP (child bead of wamn-jvzx, to file: "editor labels must leave the
-// graph preimage"). `Flow::name`, `Node::label`, and `CredentialRef::description`
-// are documented as editor display text yet are serialized into
-// `Flow::canonical_bytes`, so renaming a node mints a new artifact identity.
-// Excluding them changes every persisted digest, so it is filed, not applied.
+/// `Flow::name`, `Node::label`, `CredentialRef::description`, and
+/// `CredentialRef::kind` are editor display text with no reader anywhere in the
+/// platform, so `FlowPreimage` omits all four and relabelling a graph does not
+/// mint a new artifact identity (wamn-jvzx.16). They stay in the document.
 #[test]
-#[ignore = "known W2 defect: editor labels still enter the graph preimage"]
 fn editor_labels_must_not_enter_the_graph_preimage() {
     let baseline = flow();
     let mut relabelled = flow();
@@ -208,10 +206,16 @@ fn editor_labels_must_not_enter_the_graph_preimage() {
             .map(|label| format!("{label} (renamed)"));
     }
     for credential in &mut relabelled.credentials {
+        credential.kind = Some("renamed-kind".to_string());
         credential.description = Some("renamed".to_string());
     }
 
     assert_eq!(baseline.graph_hash(), relabelled.graph_hash());
+    assert_ne!(
+        baseline.to_json(),
+        relabelled.to_json(),
+        "the document still carries the display text it is not identified by"
+    );
 }
 
 /// Drift guard: the exact RFC 8785 preimage bytes for `GRAPH`. Any silent change
@@ -226,19 +230,18 @@ fn graph_preimage_bytes_are_pinned() {
         String::from_utf8(flow().canonical_bytes()).expect("the preimage is UTF-8"),
         concat!(
             r#"{"allowed-hosts":["a.example.com","b.example.com"],"#,
-            r#""credentials":[{"description":"Alpha credential","name":"alpha-key"},"#,
-            r#"{"description":"Beta credential","name":"beta-key"}],"#,
+            r#""credentials":[{"name":"alpha-key"},{"name":"beta-key"}],"#,
             r#""edges":[{"from":"alpha","ordinal":0,"to":"zeta"},"#,
             r#"{"from":"entry","ordinal":0,"to":"alpha"},"#,
             r#"{"from":"zeta","ordinal":0,"to":"done"}],"#,
-            r#""flow-id":"digest-ordering","name":"Digest ordering fixture","#,
-            r#""nodes":[{"credential":"alpha-key","id":"alpha","label":"Alpha step","type":"custom"},"#,
+            r#""flow-id":"digest-ordering","#,
+            r#""nodes":[{"credential":"alpha-key","id":"alpha","type":"custom"},"#,
             r#"{"config":{"status":200},"id":"done","type":"respond"},"#,
             r#"{"config":{"input-schema":true},"id":"entry","type":"request"},"#,
-            r#"{"credential":"beta-key","id":"zeta","label":"Zeta step","type":"custom"}],"#,
+            r#"{"credential":"beta-key","id":"zeta","type":"custom"}],"#,
             r#""schema-version":"0.1","version":3}"#,
         ),
-        "node frames are ordered by node id"
+        "node frames are ordered by node id and display text is absent"
     );
 }
 
@@ -308,19 +311,26 @@ fn every_flow_field_is_classified_as_identity_or_display() {
         ["from", "from-port", "ordinal", "to", "to-port"],
         "no edge-level field is display yet"
     );
+    let mut identity_keys = sorted_keys(&document);
+    identity_keys.retain(|key| key != "name");
     assert_eq!(
         sorted_keys(&preimage),
-        sorted_keys(&document),
-        "no flow-level field is display yet"
+        identity_keys,
+        "`name` is the only display field at the flow level"
     );
     assert_eq!(
         sorted_keys(&preimage["nodes"][0]),
-        ["config", "connection", "credential", "id", "label", "type"],
-        "no node-level field is display yet"
+        ["config", "connection", "credential", "id", "type"],
+        "`label` is the only display field at the node level"
     );
     assert_eq!(
         sorted_keys(&preimage["credentials"][0]),
-        ["description", "kind", "name"],
-        "no credential-level field is display yet"
+        ["name"],
+        "a credential is identified by its logical name alone"
+    );
+    assert_eq!(
+        sorted_keys(&document["nodes"][0]),
+        ["config", "id", "label", "type"],
+        "the document keeps the display text the preimage drops"
     );
 }
