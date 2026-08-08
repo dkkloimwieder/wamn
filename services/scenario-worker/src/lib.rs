@@ -194,7 +194,7 @@ impl DraftScenarioAdmissionResult {
 enum ScenarioTarget {
     Release(ReleasePin),
     Draft {
-        pin: authoring::ValidatedDraftPin,
+        pin: Box<authoring::ValidatedDraftPin>,
         loaded: Option<authoring::LoadedValidatedDraft>,
     },
 }
@@ -835,7 +835,7 @@ async fn execute_target(
             };
             (
                 ScenarioTarget::Draft {
-                    pin: pin.clone(),
+                    pin: Box::new(pin.clone()),
                     loaded,
                 },
                 refusal,
@@ -1067,7 +1067,7 @@ async fn execute_target(
         let postgres = case_pool(
             &postgres_config,
             &args.tenant,
-            &execution_schema,
+            execution_schema,
             &args.flow_id,
         )?;
         let mut host = ExecutionHost::instantiate(
@@ -1108,7 +1108,7 @@ async fn execute_target(
             checked_flow = true;
         }
 
-        scope_session(&client, &args.tenant, &execution_schema).await?;
+        scope_session(&client, &args.tenant, execution_schema).await?;
         let run_id = scenario_run_id(&args.execution_id, *ordinal);
         let input = case.input.to_string();
         let database_origin: SystemTime = client
@@ -1281,7 +1281,7 @@ async fn execute_target(
             .context("resume delayed scenario work")?;
         drop(host);
 
-        scope_session(&client, &args.tenant, &execution_schema).await?;
+        scope_session(&client, &args.tenant, execution_schema).await?;
         let result_row = client
             .query_one(
                 "SELECT status, fail_kind, fail_node FROM runs \
@@ -1305,10 +1305,10 @@ async fn execute_target(
                 fail_node: fail_node.clone(),
             }),
             egress: recorder.records(),
-            db: capture_db_assertions(&mut client, &case).await?,
+            db: capture_db_assertions(&mut client, case).await?,
             ..Default::default()
         };
-        let outcome = evaluate(&case, &captured);
+        let outcome = evaluate(case, &captured);
         let authoring_fact = AuthoringCaseReport::new(
             case_id,
             &run_id,
