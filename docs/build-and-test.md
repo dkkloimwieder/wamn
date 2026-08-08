@@ -3670,6 +3670,30 @@ the plan — so the management surface's storage requirement is fully satisfied
 even though the run exits non-zero. Converging the effect-attempt lineage on
 that legacy fixture needs its own bead.
 
+📌 RESOLVED — the `serve` CLI defect this rollout found (wamn-kisz, fixed at
+`927db6f`). Recorded because it is the reason an in-cluster rollout gate exists,
+and because the shape recurs whenever a binary carries two invocations.
+
+This rollout was the first thing ever to run `serve` through its CLI: the
+wamn-ctc8.8 `management_live` gate drives `management::serve()` as a LIBRARY
+function, so the shipped argument wiring was unexercised and
+`deploy/platform/scenario-worker.yaml` crash-looped with
+`error: the following required argument was not provided: tenant`, printing the
+BARE-invocation usage. It was not an environment or manifest problem — it
+reproduced with no environment set and every argument passed explicitly.
+
+Cause and fix: `subcommand_negates_reqs = true` relaxes the usage line but still
+enforces a REQUIRED flattened struct, so `serve` died on the bare path's
+`--tenant` even with all of its own arguments satisfied. Making the flattened
+group `Option<ScenarioWorkerArgs>` is what actually relaxes it; wamn-kisz pairs
+that with `arg_required_else_help` so an empty invocation still cannot silently
+become a bare run, and pins both invocations with named CLI-parse tests.
+
+No workaround is needed now — `serve` starts natively from the manifest as
+written. The interim live-Deployment placeholder-args patch is RETIRED; the
+running spec matches `deploy/platform/scenario-worker.yaml` exactly. If you are
+re-running the rollout script, `SKIP_CLI_DEFECT_PATCH=1` is the correct setting.
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md
