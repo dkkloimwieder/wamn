@@ -306,3 +306,16 @@ token issuance and a generic `runs` route are intentionally absent: the current
 public schema defines neither, and `wamn-jvzx.13` owns their collection entries
 after those contracts land. Report reads use the schema's `suite-projection`
 command.
+
+## Headless reference client
+
+`clients/authoring-client/scripts/wamn.mjs` (`wamn-ftfc.14`) is that client: five
+verbs — `validate` (`save-flow-draft` then `validate`), `draft-run`, `suite-run`,
+`promote`, and `runs` — over the generated HTTP client, with the first-party PAT
+flow and no frontend artifact. Each invocation emits one machine-readable
+document carrying typed identities, a typed product refusal, a typed `unmounted`
+answer for a command kind the adapter has not mounted, or a fault, and reports
+edit-to-run latency measured from the working-tree file it submitted. Its gates,
+including the composed edit-to-publish cycle and the checks that unversioned,
+unauthorized, privileged-database, direct-handler, and frontend-only shortcuts
+all fail, are the `[6A / wamn-ftfc.14]` section of `docs/build-and-test.md`.

@@ -3822,6 +3822,188 @@ an authorized success and must die on `authoring-leg-forged-token-status`; being
 live, it logs in and writes its own draft plus one audit row for principal A
 before it fails, which is expected fixture residue rather than a gate result.
 
+### [6A / wamn-ftfc.14] the headless CLI's edit-to-publish cycle
+
+The reference checkout client (`clients/authoring-client/scripts/wamn.mjs`, source
+in `src/cli/cli.ts`) drives the whole authoring loop over HTTP through the
+wamn-jvzx.2 generated client. Five verbs cover the six public command kinds:
+`validate` sends `save-flow-draft` then `validate`, `draft-run` and `suite-run`
+send themselves, `promote` sends `publish`, and `runs` reads `suite-projection`.
+Two gates own it.
+
+**STATIC HALF — `node scripts/test.mjs`.** Network-free and credential-free, so a
+drift fails CI with no surface in the loop. It carries the wamn-jvzx.2 client
+suite plus the CLI suite, which proves three things. (1) REQUEST-SHAPE DRIFT:
+every document the CLI can build is compared key for key with the matching
+section of `docs/contracts/authoring-surface.v0.1.http` and is decoded by the
+generated closed validator, so the collection and the schema own the SHAPE while
+the client owns only the VALUES. A pinned SHA-256 over the collection's shape
+(field names, nesting, leaf types, values erased) catches a collection-side
+change; a value edit deliberately does not move it. (2) TYPED ANSWERS: a
+completed command, a product refusal, an unmounted command, and an
+infrastructure fault are four distinct documents with four distinct exit codes
+(`0`, `3`, `4`, `5`), and the `501` case carries no result and no refusal.
+(3) ABSENCE OF SHORTCUTS, structurally: the compiled CLI imports the generated
+client and NOTHING else — no node builtin, so it cannot open a socket, a file, or
+a process on its own; every capability arrives through the injected port in
+`scripts/wamn.mjs`, whose only child process is a read-only `git` query; the
+contract version reaches a request from the generated constant alone and no flag
+can select another; and a launch with `WAMN_AUTHORING_ENDPOINT`,
+`WAMN_AUTHORING_BEARER_TOKEN`, `WAMN_SYSTEM_URL`, `WAMN_AUTHORING_PG_URL`,
+`PGPASSWORD`, and `DATABASE_URL` all poisoned still refuses for want of
+`--base-url` and echoes none of them.
+
+**LIVE HALF — `node scripts/cycle.mjs`.** Edit a flow file in a real checkout,
+`validate`, edit it again, `validate`, then `draft-run`, `suite-run`, `runs`, and
+`promote`, each one a subprocess invocation of the shipped CLI whose stdout
+document is the result. Like the wamn-jvzx.4 smoke it is PURE HTTP: its whole
+input surface is `--base-url`, ONE `--credential` file, `--project`,
+`--environment`, and an optional `--checkout`. It holds no database URL, no
+platform-admin impersonation, and no test-only trusted context, so it cannot read
+the ledger it is proving — it prints one `VERIFY-MANIFEST` line instead and the
+runner does that read below.
+
+**HONEST 501s, AND WHY THE GATE STILL PASSES.** The management surface mounts the
+command kinds whose handlers have landed and answers a bare `501` for the rest
+(the per-kind mount beads wamn-ftfc.30–.34 own mounting the remainder;
+wamn-ftfc.22 closed having proven every remaining backend absent). Each cycle step therefore asserts the
+CONTRACT shape of whatever answer it gets — `completed` must carry that command's
+required identity fields, `refused` must carry a typed reason, `unmounted` must be
+a bare `501` with no document — and a `fault` fails the gate. The two saves are
+required to complete at revisions 1 and 2, because that is what proves
+working-tree content reaching the canonical save handler through optimistic
+concurrency. The run then prints `CYCLE-COMPLETED` and `CYCLE-UNMOUNTED-501`, so
+the record says exactly which steps a surface answered and which it did not.
+While `validate` and `suite-run` are unmounted there is no validated-draft or
+report identity to carry forward, so the downstream legs present a
+contract-shaped placeholder purely to reach the transport; on a surface that
+mounts them the real identity flows instead, and `runs`/`promote` then answer
+`completed` or a typed refusal.
+
+**EDIT-TO-RUN LATENCY.** The CLI measures it where a checkout client can: from the
+modification time of the definition file it submitted to the arrival of a run
+receipt, printed as `edit-to-run-ms` on stderr and carried in the stdout
+document. When a report finalizes, `runs` also reports the platform's own
+`DraftSuiteProjection.edit-to-run-ms` as `server-edit-to-run-ms`. Until
+`draft-run`/`suite-run` are mounted no receipt exists, and the gate prints
+`edit-to-run-ms=unmeasurable` with the reason rather than a number it did not
+measure; the exact-value assertion lives in the static half.
+
+**A LOCAL SURFACE FOR THE LIVE HALF.** Either the in-cluster wamn-ctc8.10 rollout
+(reach it the `[6A / wamn-jvzx.4]` way) or a local `serve` against a throwaway
+PostgreSQL. The local recipe deliberately has no seeding tool of its own: the
+wamn-ctc8.8 `management_live` gate already provisions the schemas, the
+unprivileged author login, the registry org/project rows, and the principals with
+Argon2id local credentials, so RUNNING THAT GATE IS THE SEED.
+
+```bash
+# 1. Throwaway PostgreSQL. Wait for the SECOND pg_isready: postgres:18
+#    initializes, restarts, and only then serves TCP; a host connection during
+#    the socket-only phase is refused.
+docker run -d --name wamn-ftfc14-pg \
+  --env-file <mode-600 file holding POSTGRES_PASSWORD=...> \
+  -p 127.0.0.1:15432:5432 postgres:18
+docker exec wamn-ftfc14-pg pg_isready -U postgres && sleep 3
+docker exec wamn-ftfc14-pg pg_isready -U postgres
+
+# 2. Seed by running the wamn-ctc8.8 gate against it. It leaves
+#    alice@example.com with `project-author` on acme/receiving and the local
+#    secret that gate declares, plus the wamn_management_live_author login the
+#    surface needs.
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:PW@127.0.0.1:15432/postgres \
+  cargo test --locked -p wamn-scenario-worker --test management_live
+
+# 3. Serve the same database on a port of its own. management_live binds
+#    127.0.0.1:18088 while it runs, so do not reuse that port.
+cargo run --locked -p wamn-scenario-worker -- serve \
+  --bind 127.0.0.1:18188 \
+  --system-url postgres://postgres:PW@127.0.0.1:15432/postgres \
+  --authoring-database-url \
+    postgres://wamn_management_live_author:wamn-management-live@127.0.0.1:15432/postgres \
+  --org acme --project receiving --tenant management-live-tenant \
+  --source-schema management_live_source
+
+# 4. The gates. The credential file is mode-600 `subject=`/`secret=` lines.
+(cd clients/authoring-client && node scripts/test.mjs)
+(cd clients/authoring-client && node scripts/cycle.mjs \
+  --base-url http://127.0.0.1:18188 \
+  --credential <mode-600 subject=/secret= file> \
+  --project receiving --environment dev)
+# -> CYCLE PASS, one CYCLE-UNMOUNTED-501 line, and one VERIFY-MANIFEST line.
+#    Keep the manifest: the next step needs it.
+
+# 5. RUNNER-SIDE LEDGER VERIFICATION, deliberately outside the client, because
+#    this read needs storage authority a client must not hold.
+#    (a) exactly the manifest's `must-appear` command-ids, one row each, same
+#        principal, with the client's provenance recorded verbatim:
+docker exec wamn-ftfc14-pg psql -U postgres -d postgres -c \
+  "SET app.tenant = 'management-live-tenant';
+   SELECT command_id, command_kind, principal_subject, effective_role, target_ref,
+          provenance_commit, provenance_ref, provenance_dirty
+     FROM catalog.authoring_command_audit
+    WHERE command_id LIKE '%<run-id>%' ORDER BY recorded_at;"
+#    (b) the `must-not-appear` command-ids must count 0 — a refusal precedes the
+#        command that records it:
+docker exec wamn-ftfc14-pg psql -U postgres -d postgres -At -c \
+  "SET app.tenant = 'management-live-tenant';
+   SELECT count(*) FROM catalog.authoring_command_audit
+    WHERE command_id = '<forged command-id>';"
+#    (c) the stored draft is the working-tree file, byte for byte: compare
+#        sha256(definition) with the manifest's `definition-sha256`:
+docker exec wamn-ftfc14-pg psql -U postgres -d postgres -At -c \
+  "SET app.tenant = 'management-live-tenant';
+   SELECT revision, encode(sha256(definition::bytea), 'hex'), length(definition)
+     FROM catalog.flow_drafts WHERE draft_id = '<draft-id>';"
+#    (d) no credential material in the rows:
+docker exec wamn-ftfc14-pg psql -U postgres -d postgres -At -c \
+  "SET app.tenant = 'management-live-tenant';
+   SELECT to_jsonb(a)::text FROM catalog.authoring_command_audit a
+    WHERE command_id LIKE '%<run-id>%';" | grep -c 'wamn_pat_'   # must be 0
+
+docker rm -f wamn-ftfc14-pg     # teardown; shred the credential files
+
+# Mutants (sha256 apply/test/restore; each must print KILLED; both network-free).
+tools/gate-mutants/authoring-cli-collection-drift.sh run
+tools/gate-mutants/authoring-cli-unmounted-green.sh run
+```
+
+**RESULT OF RECORD (2026-08-08, integrated tree, local `serve` at
+`127.0.0.1:18188`, run-id `mskcytxp-4f16`).** `node scripts/test.mjs` 14/14 + 16/16 plus `cycle --check`.
+`node scripts/cycle.mjs` CYCLE PASS with
+`CYCLE-COMPLETED ["save-flow-draft"]` and
+`CYCLE-UNMOUNTED-501 ["validate","draft-run","suite-run","suite-projection","publish"]`
+— on that surface `save-flow-draft` is the only mounted kind, so five of the six
+cycle steps honestly answer `501` and the run receipt that carries edit-to-run
+latency does not exist yet. Runner-side ledger read: exactly the two
+`must-appear` command-ids, one row each, both `alice@example.com` /
+`project-author` on the same `target_ref`, with provenance recorded verbatim
+(the fixture checkout's commit, `refs/heads/main`, `dirty=f` for the committed
+tree and `t` for the edited one); the forged attempt counted `0` rows; the
+stored draft sat at revision 2 with `sha256(definition) = 303b8fb7…` and length
+242, byte-identical to the working-tree file the client submitted; and no
+`wamn_pat_` or secret material in the rows. Both mutants KILLED.
+wamn-ftfc.22 landed mounting NOTHING (every remaining backend is genuinely
+absent — see its close), so this five-501 record remains current. RE-RUN THE
+LIVE HALF AS EACH MOUNT BEAD (wamn-ftfc.30–.34) LANDS: the same command must
+then report the newly mounted kind as `completed` (or a typed refusal), print a
+real `edit-to-run-ms`, and — once wamn-ma5's projection field exists —
+`server-edit-to-run-ms`.
+
+`authoring-cli-collection-drift` makes `save-flow-draft` drop the caller's
+optional `provenance` claim and must die on the request-shape drift check before
+anything is sent; a field RENAME cannot be the mutation because the generated
+schema types reject a misspelling at compile time.
+`authoring-cli-unmounted-green` makes the client read a bare `501` as a completed
+command and must die on the typed-answer check — a green cycle over unmounted
+handlers is exactly the false evidence this bead must not produce.
+
+⚠️ **Do not share one `CARGO_TARGET_DIR` between two worktrees of this
+repository.** Building `-p wamn-scenario-worker` from a second worktree overwrites
+the first worktree's binaries and integration-test executables in place, and a
+later `cargo test`/`cargo run` from either worktree can then run the OTHER tree's
+code while reporting nothing unusual. Give each worktree its own target directory
+when lanes run in parallel.
+
 ### [2.4] per-project system schema v1
 
 Docs: docs/schema/app-schema.md

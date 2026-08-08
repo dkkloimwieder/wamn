@@ -31,14 +31,25 @@ try {
   }
 
   if (status === 0) {
-    const run = spawnSync("node", ["tests/client.test.mjs"], {
-      env: {
-        ...process.env,
-        WAMN_AUTHORING_CLIENT_TEST_MODULE: pathToFileURL(join(output, "index.js")).href,
-      },
+    const environment = {
+      ...process.env,
+      WAMN_AUTHORING_CLIENT_TEST_MODULE: pathToFileURL(join(output, "index.js")).href,
+      WAMN_AUTHORING_CLI_TEST_MODULE: pathToFileURL(join(output, "cli", "cli.js")).href,
+    };
+    for (const suite of ["tests/client.test.mjs", "tests/cli.test.mjs"]) {
+      const run = spawnSync("node", [suite], { env: environment, stdio: "inherit" });
+      if (run.status !== 0) status = run.status ?? 1;
+    }
+  }
+
+  // The headless cycle gate's static half: the CLI must still send the
+  // checked-in collection's documents, and its no-shortcut checks are
+  // network-free, so they belong in this harness too.
+  if (status === 0) {
+    const cycleDrift = spawnSync(process.execPath, ["scripts/cycle.mjs", "--check"], {
       stdio: "inherit",
     });
-    if (run.status !== 0) status = run.status ?? 1;
+    if (cycleDrift.status !== 0) status = cycleDrift.status ?? 1;
   }
 } finally {
   await rm(output, { force: true, recursive: true });
