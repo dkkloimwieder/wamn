@@ -342,6 +342,9 @@ pub(crate) async fn read_current_applied(
 /// version (locked), plan with the pure engine, and run the whole [`ApplyPlan`]
 /// in **one transaction** (the R9c invariant). Shared by `migrate-catalog` and
 /// the copy driver's definition pass (`copy-project-env`, wamn-8df.5).
+// Its parameters are exactly the in-transaction verb's; bundling them would churn
+// both signatures and every caller for no behaviour change.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_catalog_target(
     client: &mut tokio_postgres::Client,
     tenant: &str,
@@ -368,6 +371,8 @@ pub(crate) async fn apply_catalog_target(
     Ok(outcome)
 }
 
+// Bundling these would churn the `copy-project-env` caller too, for no behaviour change.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_catalog_target_in_transaction(
     tx: &tokio_postgres::Transaction<'_>,
     tenant: &str,
@@ -386,7 +391,7 @@ pub(crate) async fn apply_catalog_target_in_transaction(
     .await
     .context("set search_path")?;
 
-    let current = read_current_applied(&tx, tenant, &target.catalog_id, environment).await?;
+    let current = read_current_applied(tx, tenant, &target.catalog_id, environment).await?;
     let head_version = crate::publish_catalog::lock_or_initialize_catalog_head(
         tx,
         tenant,

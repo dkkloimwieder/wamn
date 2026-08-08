@@ -829,6 +829,9 @@ pub(crate) async fn lock_or_initialize_catalog_head(
     Ok(legacy_applied)
 }
 
+// Seven call sites in this file; a params struct would churn them all for no
+// behaviour change.
+#[allow(clippy::too_many_arguments)]
 async fn publish_release(
     client: &tokio_postgres::Client,
     cat: &wamn_schema_model::Catalog,
@@ -1229,9 +1232,7 @@ async fn publish_release(
         anyhow::Ok(())
     }
     .await;
-    if let Err(error) = writes {
-        return Err(error);
-    }
+    writes?;
     Ok(())
 }
 

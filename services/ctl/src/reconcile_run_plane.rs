@@ -136,21 +136,23 @@ async fn observe(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<RunPlaneObservation> {
-    let mut obs = RunPlaneObservation::default();
+    let mut obs = RunPlaneObservation {
+        scenario_author_role: client
+            .query_opt(select_scenario_author_role_sql(), &[])
+            .await
+            .context("read scenario-author role attributes")?
+            .map(|row| ScenarioAuthorRoleObservation {
+                can_login: row.get(0),
+                is_superuser: row.get(1),
+                can_create_database: row.get(2),
+                can_create_role: row.get(3),
+                inherits_roles: row.get(4),
+                can_replicate: row.get(5),
+                bypasses_rls: row.get(6),
+            }),
+        ..Default::default()
+    };
 
-    obs.scenario_author_role = client
-        .query_opt(select_scenario_author_role_sql(), &[])
-        .await
-        .context("read scenario-author role attributes")?
-        .map(|row| ScenarioAuthorRoleObservation {
-            can_login: row.get(0),
-            is_superuser: row.get(1),
-            can_create_database: row.get(2),
-            can_create_role: row.get(3),
-            inherits_roles: row.get(4),
-            can_replicate: row.get(5),
-            bypasses_rls: row.get(6),
-        });
     obs.app_is_scenario_author_member = client
         .query_one(select_app_scenario_author_membership_sql(), &[])
         .await

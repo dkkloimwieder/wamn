@@ -1638,13 +1638,13 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     .await
     .expect("seed platform-owned connection generations");
 
-    su.batch_execute(&format!(
+    su.batch_execute(
         "SET ROLE wamn_scenario_author; \
          SELECT set_config('app.tenant','t1',false); \
          INSERT INTO catalog.flow_drafts \
            (tenant_id,draft_id,flow_id,graph_json) \
-         VALUES ('t1','draft-a','flow-a','{{}}');"
-    ))
+         VALUES ('t1','draft-a','flow-a','{}');",
+    )
     .await
     .expect("host author can write the mutable draft surface");
     su.execute(
