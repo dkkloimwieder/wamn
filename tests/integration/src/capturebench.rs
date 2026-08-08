@@ -30,7 +30,7 @@ use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_flow::{Capture, CaptureMode, Flow};
+use wamn_flow::{Capture, CaptureMode, Flow, ResolvedInterfaces};
 use wamn_run_state::{NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct};
 use wamn_runner::Plan;
 
@@ -239,14 +239,31 @@ async fn write_error(
     Ok(())
 }
 
-/// A minimal linear flow `a -> b` with the given capture policy — the reconstruct
-/// source for the toggle/truncate phases.
+/// Completion ports for the fixture's one ordinary node type. 9b7e2a7 gave
+/// validation this port map, so a plan can no longer be compiled without it; the
+/// engine owns the `cron` entry's ports, which is why entry types are absent.
+fn resolved_interfaces() -> ResolvedInterfaces {
+    ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])])
+}
+
+/// A minimal linear flow `a -> b` behind a typed entry, with the given capture
+/// policy — the reconstruct source for the toggle phase.
+///
+/// 9b7e2a7 (wamn-5wd1.34) replaced the document's `trigger` + `entry` fields with
+/// a typed entry NODE (`request`/`cron`/`event`). The 9.6 capture semantics under
+/// proof here are entry-agnostic — nothing downstream reads the entry kind — so
+/// `cron`, the config-free entry that imposes no `respond` discipline, stands in
+/// for the old `{"type": "manual"}` trigger, and `a` stays an ordinary captured
+/// work node rather than becoming the entry itself.
 fn linear_flow(capture: Value) -> Flow {
     let mut graph = json!({
         "schema-version": "0.1", "flow-id": "cap", "version": 1,
-        "trigger": {"type": "manual"}, "entry": "a",
-        "nodes": [{"id": "a", "type": "echo"}, {"id": "b", "type": "echo"}],
-        "edges": [{"from": "a", "to": "b"}],
+        "nodes": [
+            {"id": "in", "type": "cron"},
+            {"id": "a", "type": "echo"},
+            {"id": "b", "type": "echo"}
+        ],
+        "edges": [{"from": "in", "to": "a"}, {"from": "a", "to": "b"}],
     });
     if !capture.is_null() {
         graph["capture"] = capture;
@@ -295,7 +312,7 @@ async fn reconstruct_verdict(
         .context("read completed node_runs")?;
     let node_runs = load_node_runs(&rows, run_id);
     let plan =
-        Plan::compile(flow, &Default::default()).map_err(|e| anyhow::anyhow!("compile: {e}"))?;
+        Plan::compile(flow, &resolved_interfaces()).map_err(|e| anyhow::anyhow!("compile: {e}"))?;
     let run = RunRecord::new(run_id, "cap", 1, json!({ "trig": 1 }));
     Ok(reconstruct(&plan, &run, &node_runs).map(|_| ()))
 }
