@@ -31,12 +31,17 @@ pub use shapes::{
     EvalBranchOut, HoldEntry, LineSpec, OutOfSpec, UpsertOut, ValidateOut, ok_body, respond_status,
 };
 
-/// Node types the F1 flow uses and the `poc-webhook-f1` component implements.
-/// `deploy/poc/f1-flow.json` must reference only these (drift-guarded in tests).
-pub const NODE_TYPES: [&str; 5] = [
-    "validate-receipt",
-    "upsert-receipt",
+/// Node types the F1 flow uses: the engine-owned entry and terminals, the
+/// standard nodes, and the two custom node components (`components/nodes`) that
+/// wrap this crate's logic. `deploy/poc/f1-flow.json` must reference only these
+/// (drift-guarded in tests).
+pub const NODE_TYPES: [&str; 8] = [
+    "conditional",
     "evaluate-specs",
-    "create-holds",
+    "fail",
+    "normalize-receipt",
+    "postgres-query",
+    "request",
     "respond",
+    "transform",
 ];

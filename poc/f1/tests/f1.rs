@@ -425,9 +425,28 @@ fn catalog_drift_guard() {
     );
 }
 
+/// Output ports the F1 graph's non-engine node types resolve to. The engine
+/// owns the ports of `request`/`respond`/`fail`, so they are absent here.
+fn resolved_interfaces() -> wamn_flow::ResolvedInterfaces {
+    wamn_flow::ResolvedInterfaces::from([
+        (
+            "conditional".to_string(),
+            vec!["false".to_string(), "true".to_string()],
+        ),
+        ("evaluate-specs".to_string(), vec!["main".to_string()]),
+        ("normalize-receipt".to_string(), vec!["main".to_string()]),
+        ("postgres-query".to_string(), vec!["main".to_string()]),
+        ("transform".to_string(), vec!["main".to_string()]),
+    ])
+}
+
 /// The production flow graph must validate under wamn-flow and reference only
-/// the node types this crate implements, with the F1 topology (sync webhook on
-/// /receipts, validate error path, evaluate out-of-spec branch).
+/// the node types this crate backs, with the F1 topology (synchronous `request`
+/// entry released by a `respond`, normalize error path, reference-validity
+/// branch, out-of-spec holds path). `sync: true` + `path: "/receipts"` used to
+/// be a `trigger` on this document; 9b7e2a7 replaced triggers with typed entry
+/// nodes and 5d3f7e5 moved the route onto the HTTP attachment, so both halves
+/// are pinned where they now live.
 #[test]
 fn flow_drift_guard() {
     let src = std::fs::read_to_string(concat!(
@@ -436,16 +455,23 @@ fn flow_drift_guard() {
     ))
     .expect("read deploy/poc/f1-flow.json");
     let flow = wamn_flow::Flow::from_json(&src).expect("parse f1 flow");
+    let interfaces = resolved_interfaces();
     assert!(
-        flow.issues().is_empty(),
+        flow.issues(&interfaces).is_empty(),
         "flow must validate clean: {:?}",
-        flow.issues()
+        flow.issues(&interfaces)
     );
     assert_eq!(flow.flow_id, "receipt-received");
-    assert!(matches!(
-        &flow.trigger,
-        wamn_flow::Trigger::Webhook { sync: true, path: Some(p) } if p == "/receipts"
-    ));
+
+    // The caller-synchronous entry: a `request` entry node, released in-request
+    // by a `respond` terminal.
+    let entry = flow.entry_node().expect("exactly one typed entry");
+    assert_eq!(entry.entry_kind(), Some(wamn_flow::EntryKind::Request));
+    assert!(
+        flow.nodes.iter().any(|n| n.node_type == "respond"),
+        "a sync entry must be able to release its caller"
+    );
+
     for node in &flow.nodes {
         assert!(
             NODE_TYPES.contains(&node.node_type.as_str()),
@@ -458,8 +484,47 @@ fn flow_drift_guard() {
             .iter()
             .any(|e| e.from == from && e.from_port == port && e.to == to)
     };
-    assert!(has_edge("validate", "error", "respond-bad"));
-    assert!(has_edge("evaluate", "out-of-spec", "holds"));
-    assert!(has_edge("evaluate", "main", "respond-ok"));
-    assert!(has_edge("holds", "main", "respond-ok"));
+    assert!(has_edge("request", "main", "normalize-receipt"));
+    assert!(has_edge("normalize-receipt", "error", "invalid-input"));
+    assert!(has_edge("normalize-receipt", "main", "resolve-and-persist"));
+    assert!(has_edge("resolve-and-persist", "main", "references-valid"));
+    assert!(has_edge("references-valid", "false", "invalid-reference"));
+    assert!(has_edge("references-valid", "true", "evaluate-specs"));
+    assert!(has_edge("evaluate-specs", "main", "create-holds"));
+    assert!(has_edge("create-holds", "main", "shape-response"));
+    assert!(has_edge("shape-response", "main", "respond"));
+
+    // The out-of-spec branch is now data-driven: evaluate-specs reports the
+    // offending lines and create-holds inserts exactly those.
+    let create_holds = flow
+        .nodes
+        .iter()
+        .find(|n| n.id == "create-holds")
+        .expect("create-holds node");
+    let sql = create_holds.config["sql"]
+        .as_str()
+        .expect("create-holds sql");
+    assert!(sql.contains("result->'out_of_spec'"), "sql: {sql}");
+    assert!(sql.contains("INSERT INTO quality_holds"), "sql: {sql}");
+}
+
+/// The `/receipts` POST route the old `trigger` pinned now lives on the HTTP
+/// attachment, bound to this flow id.
+#[test]
+fn flow_http_route_drift_guard() {
+    let src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../deploy/poc/f1-http-attachment.json"
+    ))
+    .expect("read deploy/poc/f1-http-attachment.json");
+    let doc: Value = serde_json::from_str(&src).expect("parse f1 http attachment");
+    let attachment = doc["attachments"]
+        .as_array()
+        .expect("attachments")
+        .iter()
+        .find(|a| a["flow-id"] == json!("receipt-received"))
+        .expect("receipt-received attachment");
+    assert_eq!(attachment["kind"], json!("http"));
+    assert_eq!(attachment["route"]["path"], json!("/receipts"));
+    assert_eq!(attachment["route"]["method"], json!("POST"));
 }
