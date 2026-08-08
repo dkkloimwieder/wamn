@@ -19,6 +19,9 @@ struct Cli {
     command: Command,
 }
 
+// clap has no `Args` impl for `Box<T>`, so the variant cannot be boxed; this enum
+// is also built once per process, where the size difference does not matter.
+#[allow(clippy::large_enum_variant)]
 #[derive(Subcommand)]
 enum Command {
     /// Build a custom node (cargo|jco) into a wasm component, screened through the 5.5 import lint

@@ -574,7 +574,7 @@ mod tests {
         // The exact shape docs/build-and-test.md uses for the node-ts fixture.
         assert_eq!(
             jco_componentize_argv("node.js", "wit", "node-bench", "out/node-ts.wasm"),
-            vec![
+            [
                 "componentize",
                 "node.js",
                 "--wit",

@@ -5,8 +5,8 @@
 //! `WorkloadDeployment` (the operator OCI-fetches the artifact). That fork is
 //! UNSHIPPED — OCI-fetch is wamn-fqg.21's open scope — so v0 emits the SHIPPED
 //! `serve-node` Deployment shape (`deploy/platform/serve-node.yaml`): a ConfigMap-
-//! mounted node, `wamn-node-host`, the `--allowed-hosts` arg, `WAMN_PROJECT`
-//! + the credential vault (which holds the runner→node signing key). The emitted
+//! mounted node, `wamn-node-host`, the `--allowed-hosts` arg, `WAMN_PROJECT` +
+//! the credential vault (which holds the runner→node signing key). The emitted
 //! YAML carries the OCI ref + digest + signature as metadata ANNOTATIONS so
 //! fqg.21's future operator can adopt it.
 //!
