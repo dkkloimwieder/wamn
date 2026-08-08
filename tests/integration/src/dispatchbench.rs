@@ -67,6 +67,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
+use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_flow::Flow;
 use wamn_run_state::queue::{enqueue_sql, write_ahead_run_sql};
 use wamn_scheduler::{canonical_tick, mint_cron_run_id};
 
@@ -82,6 +84,14 @@ const TENANT_B: &str = "dispatch-b";
 const BASE_MS: i64 = 1_767_225_600_000;
 const HOUR: i64 = 3_600_000;
 const DAY: i64 = 86_400_000;
+/// The fixture cron attachment's run deadline. `fire()` stamps
+/// `run_deadline_at = <injected now> + run-deadline-ms`, but the same tick's
+/// cancellation sweep (wamn-dq5) compares that column to the REAL clock: a
+/// real-world 60s deadline on a `BASE_MS`-relative tick is already expired, so
+/// the sweep would cancel the run and DELETE its queue row inside the very tick
+/// that fired it. A century-wide deadline keeps the stepped-time runs queued;
+/// run-deadline expiry itself is `cancellation_live`'s gate, not this one.
+const RUN_DEADLINE_MS: i64 = 100 * 365 * DAY;
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
@@ -252,6 +262,35 @@ fn cron_flow_json(flow_id: &str, schedule: &str) -> CronFixture {
     }
 }
 
+/// Resolve one fixture graph into the SAME immutable artifact the dispatcher
+/// re-verifies at scan time (`PinnedArtifact::from_storage`, wamn-2jdm.5.8):
+/// every identity column is derived, never a placeholder string, so a seeded
+/// cron flow is admitted instead of skipped as invalid.
+fn pinned_cron_artifact(tenant: &str, graph_json: &str) -> anyhow::Result<(Flow, Artifact)> {
+    let flow = Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("fixture flow: {e}"))?;
+    let mut node_types: Vec<&str> = flow
+        .nodes
+        .iter()
+        .map(|node| node.node_type.as_str())
+        .collect();
+    node_types.sort_unstable();
+    node_types.dedup();
+    let mut implementations = Vec::with_capacity(node_types.len());
+    for node_type in node_types {
+        let descriptor = wamn_standard_nodes::describe(node_type)
+            .with_context(|| format!("standard node descriptor for {node_type}"))?;
+        let contract = wamn_standard_nodes::resolve_descriptor(descriptor)
+            .map_err(|e| anyhow::anyhow!("resolve the {node_type} descriptor: {e}"))?;
+        implementations.push(
+            NodeImplementation::from_resolved_platform_contract(contract)
+                .map_err(|e| anyhow::anyhow!("{node_type} implementation: {e}"))?,
+        );
+    }
+    let artifact = Artifact::new(tenant, &flow, implementations)
+        .map_err(|e| anyhow::anyhow!("fixture artifact: {e}"))?;
+    Ok((flow, artifact))
+}
+
 /// Publish one complete immutable cron definition and activate its exact hash.
 async fn seed_flow(
     admin_url: &str,
@@ -259,6 +298,20 @@ async fn seed_flow(
     flow_id: &str,
     fixture: &CronFixture,
 ) -> anyhow::Result<()> {
+    let (flow, artifact) = pinned_cron_artifact(tenant, &fixture.graph_json)?;
+    let graph_json = flow.to_json();
+    let graph_hash = artifact.graph_hash().to_string();
+    let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
+    let interface_bundle_json =
+        String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+            .context("canonical interface bundle is UTF-8")?;
+    let interface_bundle_hash = artifact.interface_bundle().hash().to_string();
+    let component_digests = serde_json::to_string(artifact.supplied_components())
+        .context("component digests serialize")?;
+    let occurrence_recovery_json = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+        .context("canonical occurrence recovery is UTF-8")?;
+    let occurrence_recovery_hash = artifact.occurrence_recovery_hash().to_string();
+
     let (mut client, connection) = tokio_postgres::connect(admin_url, NoTls)
         .await
         .context("control-plane seed connect")?;
@@ -266,8 +319,6 @@ async fn seed_flow(
     let catalog_id = format!("dispatch-{flow_id}");
     let source_id = format!("schedule-{flow_id}");
     let attachment_id = format!("cron-{flow_id}");
-    let graph_hash = format!("fixture-graph:{flow_id}");
-    let artifact_hash = format!("fixture-artifact:{flow_id}");
     let source_hash = format!("fixture-source:{flow_id}");
     let definition_hash = format!("fixture-definition:{flow_id}");
     let members = serde_json::json!([{
@@ -285,7 +336,7 @@ async fn seed_flow(
         "kind": "cron",
         "flow-id": flow_id,
         "source-id": source_id,
-        "run-deadline-ms": 60_000,
+        "run-deadline-ms": RUN_DEADLINE_MS,
     });
     let definitions = serde_json::json!({
         "sources": [{
@@ -309,14 +360,20 @@ async fn seed_flow(
         .execute(
             "INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,'[]','fixture-interfaces','[]')",
+                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
+                occurrence_recovery_json,occurrence_recovery_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8::text::jsonb,$9,$10)",
             &[
                 &tenant,
                 &flow_id,
-                &fixture.graph_json,
+                &graph_json,
                 &graph_hash,
                 &artifact_hash,
+                &interface_bundle_json,
+                &interface_bundle_hash,
+                &component_digests,
+                &occurrence_recovery_json,
+                &occurrence_recovery_hash,
             ],
         )
         .await?;
