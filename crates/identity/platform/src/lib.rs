@@ -1,9 +1,16 @@
 //! First-party platform identities live in the T1 system database.
 //!
 //! This crate owns human and service principals, local human credentials,
-//! project-role assignments, and opaque personal access tokens. It deliberately
-//! contains no HTTP, cookie, OIDC, JWT, or per-project `app_system` authority:
-//! every function here is transport-neutral and takes an already-open client.
+//! project-role assignments, opaque personal access tokens, and the browser
+//! sessions that present the same principals to a page. It deliberately
+//! contains no HTTP, OIDC, JWT, or per-project `app_system` authority: every
+//! function here is transport-neutral and takes an already-open client.
+//!
+//! Tokens and sessions are two **presenters over one authority**, not two
+//! authorities. Both resolve to the same [`AuthenticatedPrincipal`] and are
+//! roled by the same [`project_roles`], so nothing downstream can tell which
+//! one a caller used except by asking. Cookie framing, the CSRF header, and
+//! every other wire concern belong to the transport that mounts them.
 
 use std::fmt;
 use std::time::Duration;
@@ -93,6 +100,32 @@ const REVOKE_PAT_SQL: &str = "UPDATE identity.pats \
         to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
         to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
+// Sessions mirror the token statements above column for column, minus the
+// operator label a browser has no use for and plus the CSRF digest bound to the
+// row. `usable` folds revocation and absolute expiry into one boolean so the
+// verifier cannot check one and forget the other.
+const INSERT_SESSION_SQL: &str = "INSERT INTO identity.sessions \
+    (principal_id, cookie_prefix, cookie_hash, csrf_hash, expires_at) \
+    SELECT p.id, $2, $3, $4, now() + ($5::bigint * interval '1 second') \
+    FROM identity.principals p \
+    WHERE p.id = $1::text::uuid AND p.status = 'active' \
+    RETURNING id::text, cookie_prefix, \
+        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+        to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
+const SELECT_SESSION_BY_PREFIX_SQL: &str = "SELECT p.id::text, p.kind, p.subject, \
+    p.display_name, p.status, identity.sessions.cookie_hash, \
+    (identity.sessions.revoked_at IS NULL AND identity.sessions.expires_at > now()) AS usable, \
+    identity.sessions.csrf_hash \
+    FROM identity.sessions JOIN identity.principals p \
+        ON p.id = identity.sessions.principal_id \
+    WHERE identity.sessions.cookie_prefix = $1";
+const REVOKE_SESSION_SQL: &str = "UPDATE identity.sessions \
+    SET revoked_at = COALESCE(revoked_at, now()) WHERE cookie_prefix = $1 \
+    RETURNING id::text, cookie_prefix, \
+        to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+        to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), \
+        to_char(revoked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')";
 
 /// Maximum accepted principal-subject length.
 pub const MAX_SUBJECT_LEN: usize = 254;
@@ -119,10 +152,23 @@ pub const MAX_PAT_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 pub const PAT_TOKEN_PREFIX: &str = "wamn_pat_";
 
 /// Random bytes behind the non-secret lookup half of a token.
-const PAT_LOOKUP_BYTES: usize = 8;
+const TOKEN_LOOKUP_BYTES: usize = 8;
 
 /// Random bytes behind the secret half of a token.
-const PAT_SECRET_BYTES: usize = 32;
+const TOKEN_SECRET_BYTES: usize = 32;
+
+/// Marker every first-party browser session cookie value starts with. A value
+/// reads `wamn_sess_<16 hex lookup digits>_<64 hex secret digits>` — the same
+/// shape as a personal access token, because it is the same kind of thing: an
+/// opaque high-entropy handle that means nothing without the row it addresses.
+pub const SESSION_COOKIE_PREFIX: &str = "wamn_sess_";
+
+/// Longest accepted browser-session lifetime. Expiry is absolute and mandatory:
+/// there is no idle timeout and no sliding window, so a session dies at a fixed
+/// instant even if it is in constant use. The ceiling sits far below
+/// [`MAX_PAT_TTL`] because a session rides an ambient cookie the browser
+/// replays on its own, where a token is presented deliberately.
+pub const MAX_SESSION_TTL: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// The kind of first-party platform principal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,6 +436,111 @@ impl fmt::Debug for IssuedPat {
     }
 }
 
+/// Opaque browser-session identity minted by the system database.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SessionId(Box<str>);
+
+impl SessionId {
+    /// Return the canonical UUID text stored by PostgreSQL.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Everything one stored browser session keeps. No field is secret: storage
+/// holds digests of the cookie and the CSRF token plus this non-secret lookup
+/// metadata, so a record is safe to list, log, and audit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRecord {
+    id: SessionId,
+    prefix: Box<str>,
+    created_at: Box<str>,
+    expires_at: Box<str>,
+    revoked_at: Option<Box<str>>,
+}
+
+impl SessionRecord {
+    /// Return the opaque session ID.
+    pub fn id(&self) -> &SessionId {
+        &self.id
+    }
+
+    /// Return the non-secret lookup half, which also addresses revocation.
+    pub fn prefix(&self) -> &str {
+        &self.prefix
+    }
+
+    /// Return the issuance instant as RFC 3339 UTC text.
+    pub fn created_at(&self) -> &str {
+        &self.created_at
+    }
+
+    /// Return the mandatory absolute expiry as RFC 3339 UTC text.
+    pub fn expires_at(&self) -> &str {
+        &self.expires_at
+    }
+
+    /// Return the revocation instant as RFC 3339 UTC text, if revoked.
+    pub fn revoked_at(&self) -> Option<&str> {
+        self.revoked_at.as_deref()
+    }
+}
+
+/// A freshly minted session: the cookie value, its bound CSRF token, and the
+/// record that was stored.
+///
+/// Both secrets exist only in this value; storage keeps digests, so neither can
+/// be recovered afterwards. The type implements no `Display` and no equality
+/// (which would compare secrets in variable time) and redacts both from
+/// `Debug`.
+///
+/// The two are handed to the client by different channels on purpose. The
+/// cookie goes into a `HttpOnly` `Set-Cookie` header the page cannot read; the
+/// CSRF token goes into the response body the page *can* read. A cross-site
+/// request therefore carries the ambient cookie but cannot produce the token.
+#[derive(Clone)]
+pub struct IssuedSession {
+    cookie: Box<str>,
+    csrf_token: Box<str>,
+    record: SessionRecord,
+}
+
+impl IssuedSession {
+    /// Return the session cookie value. Set it `HttpOnly` and drop it; never
+    /// log, audit, or persist this string.
+    pub fn cookie(&self) -> &str {
+        &self.cookie
+    }
+
+    /// Return the CSRF token bound to this session. Every state-changing
+    /// request must echo it; it dies when the session is revoked.
+    pub fn csrf_token(&self) -> &str {
+        &self.csrf_token
+    }
+
+    /// Return the non-secret record persisted for this session.
+    pub fn record(&self) -> &SessionRecord {
+        &self.record
+    }
+}
+
+impl fmt::Debug for IssuedSession {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("IssuedSession")
+            .field("cookie", &"<redacted>")
+            .field("csrf_token", &"<redacted>")
+            .field("record", &self.record)
+            .finish()
+    }
+}
+
 /// Stable classes of identity-core failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdentityErrorKind {
@@ -587,7 +738,7 @@ pub async fn issue_pat(
 ) -> Result<IssuedPat, IdentityError> {
     let label = checked_pat_label(label)?;
     let ttl_seconds = checked_pat_ttl(ttl)?;
-    let (token, prefix) = mint_token();
+    let (token, prefix) = mint_token(PAT_TOKEN_PREFIX);
     let token_hash = digest_token(&token);
     let row = client
         .query_opt(
@@ -659,7 +810,7 @@ pub async fn authenticate_pat(
     client: &(impl GenericClient + Sync),
     token: &str,
 ) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
-    let Some(prefix) = lookup_prefix(token) else {
+    let Some(prefix) = lookup_prefix(PAT_TOKEN_PREFIX, token) else {
         return Ok(None);
     };
     let row = client
@@ -710,6 +861,158 @@ pub async fn list_pats(
         .await
         .map_err(database_error)?;
     rows.iter().map(decode_pat).collect()
+}
+
+/// Open a browser session for an active principal.
+///
+/// This is the trusted-context issuance path: the caller must already have
+/// authorized the request. It mints a fresh cookie value and a fresh CSRF token
+/// bound to the new row, stores only their digests, and returns both once.
+/// A missing or disabled principal is `NotFound`.
+pub async fn create_session(
+    client: &(impl GenericClient + Sync),
+    principal_id: &PrincipalId,
+    ttl: Duration,
+) -> Result<IssuedSession, IdentityError> {
+    let ttl_seconds = checked_session_ttl(ttl)?;
+    let (cookie, prefix) = mint_token(SESSION_COOKIE_PREFIX);
+    let cookie_hash = digest_token(&cookie);
+    let csrf_token = mint_csrf_token();
+    let csrf_hash = digest_token(&csrf_token);
+    let row = client
+        .query_opt(
+            INSERT_SESSION_SQL,
+            &[
+                &principal_id.as_str(),
+                &prefix,
+                &cookie_hash,
+                &csrf_hash,
+                &ttl_seconds,
+            ],
+        )
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| {
+            IdentityError::new(
+                IdentityErrorKind::NotFound,
+                "principal does not exist or is disabled",
+            )
+        })?;
+    Ok(IssuedSession {
+        cookie: cookie.into(),
+        csrf_token: csrf_token.into(),
+        record: decode_session(&row)?,
+    })
+}
+
+/// Exchange a human's local secret for a browser session.
+///
+/// This is the console login flow: [`authenticate_local`] followed by
+/// [`create_session`] for the principal it proved — the exact counterpart of
+/// [`login_local`], differing only in which presenter it mints. Every refusal
+/// `authenticate_local` reports stays `Ok(None)` here.
+///
+/// A **fresh** session is always minted. Nothing this function does depends on
+/// any session the caller already held, so a value an attacker planted before
+/// login cannot survive it: the caller is handed a new cookie addressing a new
+/// row, and the planted value still resolves to whatever it did before —
+/// nothing.
+///
+/// # Wire contract
+///
+/// The reserved management route a transport mounts carries exactly this shape:
+///
+/// ```text
+/// request:  {"subject": "author@example.com", "secret": "…"}
+/// response: {"csrf_token": "<64 hex>", "expires_at": "2026-08-07T12:00:00Z"}
+///           + Set-Cookie carrying the HttpOnly session value
+/// ```
+///
+/// The cookie value appears only in that header and never in a body; the CSRF
+/// token appears only in that body and never in a header the browser sets. A
+/// refusal carries no field naming the reason. Serialization and cookie framing
+/// belong to the transport, so this crate defines no types for them.
+pub async fn login_session(
+    client: &(impl GenericClient + Sync),
+    subject: &str,
+    local_secret: &[u8],
+    ttl: Duration,
+) -> Result<Option<IssuedSession>, IdentityError> {
+    let Some(authenticated) = authenticate_local(client, subject, local_secret).await? else {
+        return Ok(None);
+    };
+    create_session(client, authenticated.principal().id(), ttl)
+        .await
+        .map(Some)
+}
+
+/// Authenticate the holder of a session cookie presenting its CSRF token.
+///
+/// Both proofs are required together and neither is optional: the cookie says
+/// *which* session, the CSRF token says the request came from a page that could
+/// read the login response rather than from a cross-site form that merely
+/// inherited the cookie. Malformed cookies, unknown prefixes, forged cookie
+/// values, **absent or wrong CSRF tokens**, expired sessions, revoked sessions,
+/// and disabled principals all return `Ok(None)`. Only infrastructure failure
+/// is an `Err`, so a transport may map every refusal to one generic response
+/// without leaking which predicate failed.
+///
+/// Callers that need to refuse *before* doing any other work should call this
+/// first: it reaches no state beyond the session and principal rows.
+pub async fn authenticate_session(
+    client: &(impl GenericClient + Sync),
+    cookie: &str,
+    csrf_token: &str,
+) -> Result<Option<AuthenticatedPrincipal>, IdentityError> {
+    let Some(prefix) = lookup_prefix(SESSION_COOKIE_PREFIX, cookie) else {
+        return Ok(None);
+    };
+    let row = client
+        .query_opt(SELECT_SESSION_BY_PREFIX_SQL, &[&prefix])
+        .await
+        .map_err(database_error)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+
+    let principal = decode_principal(&row)?;
+    let stored_cookie_hash: String = row.try_get(5).map_err(database_error)?;
+    let usable: bool = row.try_get(6).map_err(database_error)?;
+    let stored_csrf_hash: String = row.try_get(7).map_err(database_error)?;
+    // Every predicate is evaluated; none short-circuits past the CSRF proof.
+    if !digest_matches(&stored_cookie_hash, &digest_token(cookie))
+        || !digest_matches(&stored_csrf_hash, &digest_token(csrf_token))
+        || !usable
+        || principal.status != PrincipalStatus::Active
+    {
+        return Ok(None);
+    }
+    Ok(Some(AuthenticatedPrincipal { principal }))
+}
+
+/// Revoke a browser session by the cookie value that addresses it.
+///
+/// This is logout, and it is what makes a session revocable rather than merely
+/// expiring: the stamp is one-way and `COALESCE`d, so repeated logouts keep the
+/// first instant and a replayed logout is harmless. Revoking the session
+/// revokes its CSRF token with it — both live on the row this stamps.
+///
+/// A malformed or unknown cookie is `Ok(None)`, not an error, so a transport
+/// answers an already-dead session exactly as it answers a live one.
+pub async fn revoke_session(
+    client: &(impl GenericClient + Sync),
+    cookie: &str,
+) -> Result<Option<SessionRecord>, IdentityError> {
+    let Some(prefix) = lookup_prefix(SESSION_COOKIE_PREFIX, cookie) else {
+        return Ok(None);
+    };
+    client
+        .query_opt(REVOKE_SESSION_SQL, &[&prefix])
+        .await
+        .map_err(database_error)?
+        .as_ref()
+        .map(decode_session)
+        .transpose()
 }
 
 /// Assign one opaque role slug to a principal in a registered project.
@@ -789,15 +1092,45 @@ fn decode_pat(row: &Row) -> Result<PatRecord, IdentityError> {
     })
 }
 
-/// Mint a token and return it beside its non-secret lookup prefix.
-fn mint_token() -> (String, String) {
-    let mut lookup = [0_u8; PAT_LOOKUP_BYTES];
-    let mut secret = [0_u8; PAT_SECRET_BYTES];
+fn decode_session(row: &Row) -> Result<SessionRecord, IdentityError> {
+    let id: String = row.try_get(0).map_err(database_error)?;
+    let prefix: String = row.try_get(1).map_err(database_error)?;
+    let created_at: String = row.try_get(2).map_err(database_error)?;
+    let expires_at: String = row.try_get(3).map_err(database_error)?;
+    let revoked_at: Option<String> = row.try_get(4).map_err(database_error)?;
+    Ok(SessionRecord {
+        id: SessionId(id.into()),
+        prefix: prefix.into(),
+        created_at: created_at.into(),
+        expires_at: expires_at.into(),
+        revoked_at: revoked_at.map(Into::into),
+    })
+}
+
+/// Mint a token under one marker and return it beside its lookup prefix.
+///
+/// Personal access tokens and session cookies share this shape deliberately:
+/// both are opaque high-entropy handles resolved by one index probe, and the
+/// marker is the only thing that distinguishes them.
+fn mint_token(marker: &str) -> (String, String) {
+    let mut lookup = [0_u8; TOKEN_LOOKUP_BYTES];
+    let mut secret = [0_u8; TOKEN_SECRET_BYTES];
     OsRng.fill_bytes(&mut lookup);
     OsRng.fill_bytes(&mut secret);
     let prefix = hex::encode(lookup);
-    let token = format!("{PAT_TOKEN_PREFIX}{prefix}_{}", hex::encode(secret));
+    let token = format!("{marker}{prefix}_{}", hex::encode(secret));
     (token, prefix)
+}
+
+/// Mint the synchronizer token bound to one session row.
+///
+/// It is not a bearer handle: nothing looks a session up by it, so it carries no
+/// marker and no lookup half. It is compared against the digest stored on the
+/// session it belongs to, and dies with that session.
+fn mint_csrf_token() -> String {
+    let mut secret = [0_u8; TOKEN_SECRET_BYTES];
+    OsRng.fill_bytes(&mut secret);
+    hex::encode(secret)
 }
 
 /// Digest a whole token. Tokens are uniform 256-bit random material, so a plain
@@ -811,11 +1144,13 @@ fn digest_matches(stored: &str, presented: &str) -> bool {
     stored.as_bytes().ct_eq(presented.as_bytes()).into()
 }
 
-/// Return the lookup half of a well-formed token, or `None` if it is malformed.
-fn lookup_prefix(token: &str) -> Option<&str> {
-    let (prefix, secret) = token.strip_prefix(PAT_TOKEN_PREFIX)?.split_once('_')?;
-    let well_formed = prefix.len() == PAT_LOOKUP_BYTES * 2
-        && secret.len() == PAT_SECRET_BYTES * 2
+/// Return the lookup half of a well-formed token carrying `marker`, or `None`
+/// if it is malformed. A session cookie presented as a token, or the reverse,
+/// is malformed here and never reaches a lookup.
+fn lookup_prefix<'a>(marker: &str, token: &'a str) -> Option<&'a str> {
+    let (prefix, secret) = token.strip_prefix(marker)?.split_once('_')?;
+    let well_formed = prefix.len() == TOKEN_LOOKUP_BYTES * 2
+        && secret.len() == TOKEN_SECRET_BYTES * 2
         && is_lower_hex(prefix)
         && is_lower_hex(secret);
     well_formed.then_some(prefix)
@@ -849,8 +1184,19 @@ fn checked_pat_ttl(ttl: Duration) -> Result<i64, IdentityError> {
     Ok(ttl.as_secs() as i64)
 }
 
+fn checked_session_ttl(ttl: Duration) -> Result<i64, IdentityError> {
+    if ttl.as_secs() == 0 || ttl > MAX_SESSION_TTL {
+        return Err(IdentityError::new(
+            IdentityErrorKind::InvalidInput,
+            "session lifetime must be 1 second to 30 days",
+        ));
+    }
+    // Bounded by MAX_SESSION_TTL above, so the cast cannot truncate.
+    Ok(ttl.as_secs() as i64)
+}
+
 fn checked_pat_prefix(value: &str) -> Result<&str, IdentityError> {
-    if value.len() != PAT_LOOKUP_BYTES * 2 || !is_lower_hex(value) {
+    if value.len() != TOKEN_LOOKUP_BYTES * 2 || !is_lower_hex(value) {
         return Err(IdentityError::new(
             IdentityErrorKind::InvalidInput,
             "token prefix must be 16 lowercase hex digits",
@@ -1029,16 +1375,19 @@ mod tests {
 
     #[test]
     fn minted_tokens_are_unique_prefixed_hex_that_parses_back() {
-        let (token, prefix) = mint_token();
-        let (other, other_prefix) = mint_token();
+        let (token, prefix) = mint_token(PAT_TOKEN_PREFIX);
+        let (other, other_prefix) = mint_token(PAT_TOKEN_PREFIX);
         assert_ne!(token, other);
         assert_ne!(prefix, other_prefix);
         assert!(token.starts_with(PAT_TOKEN_PREFIX));
         assert_eq!(
             token.len(),
-            PAT_TOKEN_PREFIX.len() + PAT_LOOKUP_BYTES * 2 + 1 + PAT_SECRET_BYTES * 2
+            PAT_TOKEN_PREFIX.len() + TOKEN_LOOKUP_BYTES * 2 + 1 + TOKEN_SECRET_BYTES * 2
         );
-        assert_eq!(lookup_prefix(&token), Some(prefix.as_str()));
+        assert_eq!(
+            lookup_prefix(PAT_TOKEN_PREFIX, &token),
+            Some(prefix.as_str())
+        );
         assert_eq!(checked_pat_prefix(&prefix).unwrap(), prefix);
 
         let secret = token.rsplit_once('_').unwrap().1;
@@ -1052,7 +1401,7 @@ mod tests {
             format!("{PAT_TOKEN_PREFIX}{prefix}{secret}"),
         ] {
             assert!(
-                lookup_prefix(&malformed).is_none(),
+                lookup_prefix(PAT_TOKEN_PREFIX, &malformed).is_none(),
                 "accepted malformed token {malformed:?}"
             );
         }
@@ -1060,7 +1409,7 @@ mod tests {
 
     #[test]
     fn token_digest_is_deterministic_and_hides_the_token() {
-        let (token, _) = mint_token();
+        let (token, _) = mint_token(PAT_TOKEN_PREFIX);
         let digest = digest_token(&token);
         assert_eq!(digest, digest_token(&token));
         assert_eq!(digest.len(), 64);
@@ -1069,7 +1418,7 @@ mod tests {
         assert!(!token.contains(&digest));
         assert!(digest_matches(&digest, &digest_token(&token)));
 
-        let (forged, _) = mint_token();
+        let (forged, _) = mint_token(PAT_TOKEN_PREFIX);
         assert!(!digest_matches(&digest, &digest_token(&forged)));
         assert!(!digest_matches(&digest, ""));
     }
@@ -1123,6 +1472,90 @@ mod tests {
                 assert!(sql.contains(column), "missing {column} in {sql}");
             }
         }
+    }
+
+    #[test]
+    fn session_cookies_and_tokens_are_distinct_credential_shapes() {
+        let (cookie, prefix) = mint_token(SESSION_COOKIE_PREFIX);
+        assert!(cookie.starts_with(SESSION_COOKIE_PREFIX));
+        assert_eq!(
+            lookup_prefix(SESSION_COOKIE_PREFIX, &cookie),
+            Some(&*prefix)
+        );
+        // The two markers do not cross: a cookie is not a token and a token is
+        // not a cookie, so neither can be replayed against the other's lookup.
+        let (token, _) = mint_token(PAT_TOKEN_PREFIX);
+        assert!(lookup_prefix(PAT_TOKEN_PREFIX, &cookie).is_none());
+        assert!(lookup_prefix(SESSION_COOKIE_PREFIX, &token).is_none());
+
+        // A CSRF token is not a bearer handle: no marker, no lookup half.
+        let csrf = mint_csrf_token();
+        assert_eq!(csrf.len(), TOKEN_SECRET_BYTES * 2);
+        assert!(is_lower_hex(&csrf));
+        assert!(!csrf.starts_with(SESSION_COOKIE_PREFIX));
+        assert_ne!(csrf, mint_csrf_token(), "CSRF tokens repeat");
+        assert!(lookup_prefix(SESSION_COOKIE_PREFIX, &csrf).is_none());
+    }
+
+    #[test]
+    fn session_storage_keeps_digests_and_never_a_cookie() {
+        for sql in [
+            INSERT_SESSION_SQL,
+            SELECT_SESSION_BY_PREFIX_SQL,
+            REVOKE_SESSION_SQL,
+        ] {
+            for forbidden in ["cookie_value", "cookie_plaintext", "csrf_token"] {
+                assert!(!sql.contains(forbidden), "{forbidden} in {sql}");
+            }
+        }
+        assert!(INSERT_SESSION_SQL.contains("cookie_hash"));
+        assert!(INSERT_SESSION_SQL.contains("csrf_hash"));
+        assert!(INSERT_SESSION_SQL.contains("p.status = 'active'"));
+        // Revocation and absolute expiry are one predicate, so a verifier
+        // cannot satisfy one and skip the other.
+        assert!(SELECT_SESSION_BY_PREFIX_SQL.contains("revoked_at IS NULL"));
+        assert!(SELECT_SESSION_BY_PREFIX_SQL.contains("expires_at > now()"));
+        assert!(SELECT_SESSION_BY_PREFIX_SQL.contains("csrf_hash"));
+        assert!(REVOKE_SESSION_SQL.contains("COALESCE(revoked_at, now())"));
+        // Sessions expire absolutely: nothing here ever moves `expires_at`.
+        assert!(!REVOKE_SESSION_SQL.contains("expires_at ="));
+        assert!(
+            !SELECT_SESSION_BY_PREFIX_SQL.contains("UPDATE"),
+            "resolving a session must not extend it (no sliding window)"
+        );
+    }
+
+    #[test]
+    fn issued_sessions_never_reach_debug_output() {
+        let issued = IssuedSession {
+            cookie: "wamn_sess_0123456789abcdef_cookie".into(),
+            csrf_token: "0123456789abcdef".into(),
+            record: SessionRecord {
+                id: SessionId("6d3f2d1c-0000-4000-8000-00000000abcd".into()),
+                prefix: "0123456789abcdef".into(),
+                created_at: "2026-08-07T11:00:00Z".into(),
+                expires_at: "2026-08-08T11:00:00Z".into(),
+                revoked_at: None,
+            },
+        };
+        let rendered = format!("{issued:?}");
+        assert!(!rendered.contains(issued.cookie()), "{rendered}");
+        assert!(!rendered.contains("_cookie"), "{rendered}");
+        assert_eq!(rendered.matches("<redacted>").count(), 2, "{rendered}");
+        assert!(rendered.contains("2026-08-08T11:00:00Z"), "{rendered}");
+    }
+
+    #[test]
+    fn session_lifetimes_fail_closed_and_are_capped_below_tokens() {
+        assert_eq!(
+            checked_session_ttl(Duration::from_secs(3600)).unwrap(),
+            3600
+        );
+        assert!(checked_session_ttl(Duration::ZERO).is_err());
+        assert!(checked_session_ttl(MAX_SESSION_TTL).is_ok());
+        assert!(checked_session_ttl(MAX_SESSION_TTL + Duration::from_secs(1)).is_err());
+        // An ambient cookie must not be allowed to outlive a deliberate token.
+        assert!(MAX_SESSION_TTL < MAX_PAT_TTL);
     }
 
     #[test]

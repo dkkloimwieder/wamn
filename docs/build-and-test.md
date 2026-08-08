@@ -3518,6 +3518,52 @@ WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5472/wamn \
 docker stop wamn-ctc88-pg
 ```
 
+### [5 / wamn-ctc8.9] browser sessions and CSRF-safe reserved auth routes
+
+This gate covers the second presenter over the one identity core: `identity.sessions`,
+the reserved `POST /session` (login) and `DELETE /session` (logout) routes, the
+`HttpOnly; SameSite=Strict; Secure; Path=/` cookie framing, and the synchronizer
+token bound to the session row that every state-changing request must echo in
+`X-Wamn-Csrf`. It proves a session resolves the same principal and role a PAT
+does and lands the same `catalog.authoring_command_audit` attribution, and that
+session fixation, an absent/empty/wrong CSRF proof, an expired session, a revoked
+session, a cross-project session, and a forged cookie each refuse with the frozen
+`{"kind":"authorization-denied"}` document *before* any command runs, leaving the
+ledger and the store untouched.
+
+Sessions are a presenter, not an authority: there is no JWT, no OIDC, and no
+second role store — both presenters funnel through `role_for`, which a drift test
+pins. OIDC remains a later issuer (wamn-117).
+
+⚠️ The `wamn-scenario-worker` clippy leg is RED for reasons that predate this
+bead: the same six findings in `services/scenario-worker/src/lib.rs` recorded for
+wamn-ctc8.8 (one `large_enum_variant` on `ScenarioTarget`, five `needless_borrow`
+in `execute_case`). That file is not one this bead touched and the count is
+unchanged; `wamn-platform-identity` is clean under `-D warnings`.
+
+⚠️ Deployment is NOT covered here. `identity.sessions` and the
+`wamn_scenario_worker_identity` grant delta (`SELECT, INSERT, UPDATE`) have been
+applied only to throwaway PostgreSQL. The in-cluster sysdb rollout is deferred.
+
+```bash
+cargo test --locked -p wamn-platform-identity -p wamn-scenario-worker
+cargo clippy --locked -p wamn-platform-identity --all-targets -- -D warnings
+rustfmt --check --edition 2024 \
+  crates/identity/platform/src/lib.rs \
+  crates/identity/platform/tests/schema.rs \
+  services/scenario-worker/src/management.rs \
+  services/scenario-worker/tests/management_live.rs
+# Live gate of record (throwaway postgres:18 only). `pg_isready` reports ready
+# during socket-only init, before the TCP listener binds — the sleep is load
+# bearing, not superstition.
+docker run -d --rm --name wamn-ctc89-pg -p 5473:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-ctc89-pg pg_isready -U postgres; do sleep 1; done; sleep 3
+WAMN_PLATFORM_IDENTITY_PG_URL=postgres://postgres:postgres@127.0.0.1:5473/wamn \
+  cargo test --locked -p wamn-scenario-worker --test management_live -- --nocapture
+docker stop wamn-ctc89-pg
+```
+
 ### [6A / wamn-ftfc.2] checkout-file draft submission
 
 This gate covers the S1 write path: an authenticated checkout client reads
