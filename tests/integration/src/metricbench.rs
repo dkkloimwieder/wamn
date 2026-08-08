@@ -369,6 +369,11 @@ fn fixture_artifact(
 }
 
 fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
+    // `request` and `respond` carry resolved interfaces like any other node
+    // type: the wamn-ayq7 series moved every engine node onto the node ABI and
+    // emptied the model-owned set, so publication resolves them too. Both are
+    // pure/replay with a single `main` port, exactly as the standard node
+    // library describes them. Implementations stay sorted by node type.
     let mut artifacts = vec![
         fixture_artifact(
             &crate::flowbench::flow_json(1),
@@ -379,16 +384,22 @@ fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
                     ResolvedPurity::Effectful,
                     RecoveryClass::NeverReplay,
                 ),
+                interface("request", ResolvedPurity::Pure, RecoveryClass::Replay),
+                interface("respond", ResolvedPurity::Pure, RecoveryClass::Replay),
                 interface("transform", ResolvedPurity::Pure, RecoveryClass::Replay),
             ],
         )?,
         fixture_artifact(
             &fail_flow_json(),
-            vec![interface(
-                "postgres-query",
-                ResolvedPurity::Effectful,
-                RecoveryClass::NeverReplay,
-            )],
+            vec![
+                interface(
+                    "postgres-query",
+                    ResolvedPurity::Effectful,
+                    RecoveryClass::NeverReplay,
+                ),
+                interface("request", ResolvedPurity::Pure, RecoveryClass::Replay),
+                interface("respond", ResolvedPurity::Pure, RecoveryClass::Replay),
+            ],
         )?,
     ];
     artifacts.sort_by(|left, right| left.flow_id.cmp(&right.flow_id));
