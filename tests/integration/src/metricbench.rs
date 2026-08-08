@@ -587,12 +587,31 @@ async fn seed_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::R
         &[&run_id, &flow_id, &1i32, &"cron", &"\"receipt\""],
     )
     .await?;
+    // Release pin + the durable invocation context admission would have written.
+    // The effect path reads the trusted principal off the run row
+    // (`invocation_context #>> '{principal,artifact-digest}'`) and refuses a run
+    // whose digest is absent, so a fixture that only pinned catalog columns left
+    // every drive dying in `run-next: effect run artifact_digest shape` and the
+    // executor settled nothing (wamn-wddi). The digest comes from the seeded
+    // release member itself, so the pin and the principal cannot disagree.
     let catalog_version = i64::from(CATALOG_VERSION);
     let pinned = tx
         .execute(
-            "UPDATE runs \
-                SET catalog_id = $2, catalog_version = $3, environment = 'metricbench' \
-              WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1",
+            "UPDATE runs AS r \
+                SET catalog_id = $2, catalog_version = $3, environment = 'metricbench', \
+                    invocation_context = jsonb_build_object( \
+                      'version', 1, \
+                      'principal', jsonb_build_object( \
+                        'tenant-id', r.tenant_id, 'environment', 'metricbench', \
+                        'catalog-id', $2::text, 'catalog-version', $3::bigint, \
+                        'run-id', r.run_id, 'flow-id', r.flow_id, \
+                        'flow-version', r.flow_version, \
+                        'artifact-digest', a.artifact_hash), \
+                      'source', jsonb_build_object('producer', r.trigger_source)) \
+               FROM catalog.flow_artifacts AS a \
+              WHERE a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
+                AND a.flow_version = r.flow_version \
+                AND r.tenant_id = current_setting('app.tenant', true) AND r.run_id = $1",
             &[&run_id, &CATALOG_ID, &catalog_version],
         )
         .await?;
