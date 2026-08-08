@@ -24,16 +24,17 @@
 //!    ([`nodescan`]).
 //! 4. **suites of affected flows** — every `test_suites` row of a flow the entity
 //!    change touches (all versions; the suite tuple keeps its version so the
-//!    parked executor, wamn-0lfu, can pin).
+//!    stored-suite executor, wamn-0lfu, can pin).
 //! 5. **generated-API resources** — pure over the catalog: the entity's own
 //!    `/api/rest/{name}` plus the neighbours' `?expand=` resources that embed it.
 //!
-//! **Out of scope (parked wamn-0lfu, "execution from stored suites").** The report
-//! *enumerates* the `(tenant, flow_id, flow_version, suite_id)` tuples that WOULD
-//! run; it never executes them. [`ImpactReport`]'s suite tuples are that executor's
-//! input contract: [`suite_selectors`] (and [`suite_selectors_json`]) flatten
-//! `entities[].suites[]` into the exact `--impact-report` array it reads, which is
-//! the seam the wamn-12g `migrate-catalog` auto-run wiring calls.
+//! **Out of scope ("execution from stored suites" — the wamn-0lfu executor).** The
+//! report *enumerates* the `(tenant, flow_id, flow_version, suite_id)` tuples that
+//! executor runs; this crate never executes them. [`ImpactReport`]'s suite tuples
+//! are that executor's input contract: [`suite_selectors`] (and
+//! [`suite_selectors_json`]) flatten `entities[].suites[]` into the exact
+//! `--impact-report` array it reads, which is the seam the wamn-12g
+//! publish-gate enforcement in `copy-project-env` calls.
 
 pub mod nodescan;
 
@@ -73,7 +74,7 @@ pub struct FlowGraph {
 ///
 /// This is ALSO the stored-suite executor's `--impact-report` input row: the
 /// serialized field names and types (`tenant / flow_id / flow_version: i32 /
-/// suite_id`) are the 12g auto-run seam's wire contract, so an unknown field is
+/// suite_id`) are the 12g publish-gate seam's wire contract, so an unknown field is
 /// REFUSED on read. [`suite_selectors`] emits the array; the executor's local
 /// deserialize type is pinned to this shape by that gate's
 /// `suite_selector_matches_the_suite_edge_shape`.
@@ -157,7 +158,7 @@ pub struct EntityImpact {
     pub flows_via_registration: Vec<FlowViaRegistration>,
     pub flows_via_node_config: Vec<FlowViaNodeConfig>,
     /// The suites of every flow the entity change touches (both edges), all
-    /// versions — the tuples the parked executor (wamn-0lfu) WOULD run.
+    /// versions — the tuples the stored-suite executor (wamn-0lfu) runs.
     pub suites: Vec<SuiteEdge>,
     /// The generated-API resources over the catalog: `/api/rest/{name}` plus the
     /// neighbours' `?expand=` resources that embed this entity.
@@ -922,7 +923,7 @@ mod tests {
         );
     }
 
-    // --- the 12g auto-run seam ----------------------------------------------
+    // --- the 12g publish-gate seam ----------------------------------------------
 
     /// An affected entity carrying `suites` — the only field the flattener reads.
     fn impacted(entity_id: &str, suites: &[SuiteEdge]) -> EntityImpact {
