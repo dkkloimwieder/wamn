@@ -7,6 +7,11 @@
 //! principals running the same command stay distinguishable in the append-only
 //! ledger.
 //!
+//! It also owns `wamn-ftfc.22`'s posture for the contract kinds this transport
+//! does not mount: an untrusted presenter naming one gets the same refusal
+//! document as any other, so the surface is no route-existence oracle, and an
+//! admitted author gets a bare `501` that audits nothing and mutates nothing.
+//!
 //! It also owns `wamn-ftfc.2`'s S1 write path: a checkout client reads
 //! working-tree definition files and submits their content with the revision it
 //! last saw. That half proves the submitted document reaches the canonical
@@ -158,6 +163,69 @@ fn save_command(
             }
         }
     })
+}
+
+/// One well-formed request document for every contract kind this transport does
+/// not mount, paired with its kind for assertion messages.
+///
+/// Each document has to decode: the contract boundary answers `400` for a
+/// document it rejects, so a `501` for one of these is evidence about the route
+/// and nothing else.
+fn unmounted_commands() -> Vec<(&'static str, String)> {
+    let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
+    let validated = serde_json::json!({"validated-draft-id": "validated-draft-1"});
+    let suite = serde_json::json!({"suite-id": "suite-1", "flow-version": 1});
+    [
+        (
+            "validate",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "draft": {"draft-id": "draft-unmounted", "revision": 1},
+                "suite": suite.clone(),
+            }),
+        ),
+        (
+            "draft-run",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "validated-draft": validated.clone(),
+                "input": {},
+            }),
+        ),
+        (
+            "suite-run",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "validated-draft": validated.clone(),
+                "suite": suite,
+            }),
+        ),
+        (
+            "publish",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "validated-draft": validated,
+                "successful-report-id": "report-1",
+            }),
+        ),
+        (
+            "suite-projection",
+            serde_json::json!({"scope": scope, "report-id": "report-1"}),
+        ),
+    ]
+    .into_iter()
+    .map(|(kind, input)| {
+        let document = serde_json::json!({
+            "document": "request",
+            "body": {
+                "schema-version": "0.1",
+                "command-id": format!("unmounted-{kind}"),
+                "command": {"kind": kind, "input": input},
+            }
+        });
+        (kind, document.to_string())
+    })
+    .collect()
 }
 
 /// Create one disposable working-tree checkout. There is no repository in it:
@@ -528,6 +596,54 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     .await;
     assert_eq!(elsewhere.status, 403);
     assert_eq!(elsewhere.body, AUTHORIZATION_DENIED);
+
+    // ---- the unmounted kinds are an absent route, not a product refusal -----
+    // `wamn-ftfc.22` re-checked validate, draft-run, suite-run, publish, and
+    // suite-projection against this tree and mounted none of them: each either
+    // has no backend or has one whose trusted inputs no in-process producer
+    // supplies. Two properties have to hold while that is true.
+    //
+    // First, route selection happens after authorization, so naming an
+    // unmounted kind is not a way to ask whether a route exists. Every
+    // untrusted presenter gets the one refusal document for every kind.
+    let unmounted = unmounted_commands();
+    for (name, token) in &refusals {
+        for (kind, document) in &unmounted {
+            let response = post("/authoring", token.as_deref(), &[], document).await;
+            assert_eq!(response.status, 403, "{name} probed {kind} for a route");
+            assert_eq!(
+                response.body, AUTHORIZATION_DENIED,
+                "{name} learned something about {kind}"
+            );
+        }
+    }
+    // Second, an admitted author gets a bare `501`: the absence of a route
+    // carries no document, so no client can read it as a typed product refusal
+    // and no client can read a fabricated result out of it.
+    for (kind, document) in &unmounted {
+        let response = post("/authoring", Some(alice.token()), &[], document).await;
+        assert_eq!(
+            response.status, 501,
+            "{kind} answered as though it were mounted: {}",
+            response.body
+        );
+        assert!(
+            response.body.is_empty(),
+            "{kind} answered 501 carrying a document: {}",
+            response.body
+        );
+    }
+    // The ledger retains authorized command attempts. An absent route is not
+    // one, so an unmounted kind leaves it untouched — and mutates nothing.
+    assert!(
+        ledger_rows(&admin).await.is_empty(),
+        "an unmounted kind was attributed on the command ledger"
+    );
+    assert_eq!(
+        draft_count(&admin).await,
+        0,
+        "an unmounted kind reached a command"
+    );
 
     // Nothing above reached a command: no draft, no ledger row.
     assert_eq!(draft_count(&admin).await, 0, "a refusal ran a command");

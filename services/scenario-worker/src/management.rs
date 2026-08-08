@@ -644,7 +644,32 @@ async fn authoring_command(
 /// `save-flow-draft` is the command this transport mounts today; the rest of the
 /// contract inventory answers `501` until the beads that own their handlers land
 /// them. A `501` is the absence of a route, not a product refusal, so it carries
-/// no document.
+/// no document. Route selection happens here, after authorization, so naming an
+/// unmounted kind is not a way to ask whether a route exists: an untrusted
+/// presenter is refused identically whichever kind it names.
+///
+/// `wamn-ftfc.22` re-checked each remaining kind against this tree instead of
+/// inheriting the reasons recorded when the route landed:
+///
+/// - `validate` has a backend, but three of its trusted inputs have no producer
+///   here. [`crate::authoring::DraftBundleInputs`] needs execution-bundle and
+///   plug identities nothing outside test fixtures constructs; the runner pin is
+///   the digest of a compiled flowrunner this surface does not carry; and the
+///   applied catalog identity is absent from the contract request. Supplying any
+///   of them from a transport would persist a content-addressed pin that names
+///   no real executable.
+/// - `draft-run` has no backend: the only draft admission statement requires a
+///   suite and a case, and one arbitrary input is neither.
+/// - `suite-run` has a backend, but nothing resolves the contract's opaque
+///   validated-draft handle back to the whole [`ValidatedDraftPin`] every read of
+///   the validated-draft store requires, and this surface holds neither the
+///   distinct runtime credential nor the compiled component execution needs.
+/// - `publish` has no backend.
+/// - `suite-projection` has its mapper in [`crate::projection`] and stays
+///   unmounted by owner ruling while `wamn-rwcw` and `wamn-o6xw` are open: its
+///   node, branch, edge, and refused-connection arrays are exhaustive
+///   enumerations on the contract with no evidence source yet, so mounting it
+///   would publish an empty enumeration as a complete one.
 async fn dispatch(
     surface: &Surface,
     author: &AuthorizedAuthor,
@@ -1033,6 +1058,21 @@ mod tests {
         assert!(
             authorized_at < body_at,
             "the request body is read before identity is settled"
+        );
+        // Settling identity is not the same as acting on it. The refusal has to
+        // precede the body too, or the handler could decode a command, select a
+        // route, and answer `501` for an unmounted kind before it ever refused
+        // an untrusted presenter — which would make the absence of a route
+        // readable without a credential. Measured from the check itself, because
+        // the handler also refuses an absent credential earlier and that refusal
+        // says nothing about this order.
+        let refused_at = authorized_at
+            + handler[authorized_at..]
+                .find("return Ok(authorization_denied())")
+                .expect("the handler refuses an unauthorized presenter");
+        assert!(
+            refused_at < body_at,
+            "an unauthorized presenter reaches route selection before it is refused"
         );
         // The credential header is the only header this handler consults, and
         // it reads it through `bearer`.
