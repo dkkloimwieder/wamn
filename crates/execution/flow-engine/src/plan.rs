@@ -70,6 +70,14 @@ impl<'f> Plan<'f> {
         for edge in &flow.edges {
             out.entry(edge.from.as_str()).or_default().push(edge);
         }
+        // Fan-out order is the explicit `Edge::ordinal`, not array position.
+        // Ordinals are scoped to a `(from, from-port)` group, so sorting a whole
+        // from-node group here and filtering by port in `successors` yields each
+        // port's edges in ordinal order. Stable, so a flow built in Rust without
+        // ordinals keeps the order its `edges` were built in.
+        for edges in out.values_mut() {
+            edges.sort_by_key(|edge| edge.ordinal.unwrap_or(0));
+        }
 
         Ok(Plan {
             flow,
@@ -123,8 +131,9 @@ impl<'f> Plan<'f> {
         self.by_id.get(id).copied()
     }
 
-    /// The edges leaving `node` on `port` (empty if none). Order preserves the
-    /// flow's edge order, so fan-out to several targets is deterministic.
+    /// The edges leaving `node` on `port` (empty if none). Order follows each
+    /// edge's explicit [`wamn_flow::Edge::ordinal`] within its `(from, from-port)`
+    /// group, so fan-out to several targets is deterministic.
     pub fn successors(&self, node: &str, port: &str) -> Vec<&'f Edge> {
         self.out
             .get(node)

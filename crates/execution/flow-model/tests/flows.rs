@@ -137,6 +137,7 @@ fn diff_detects_changes() {
         from_port: "main".into(),
         to: "audit".into(),
         to_port: None,
+        ordinal: None,
     });
     // 3) declare a credential
     v2.credentials.push(wamn_flow::CredentialRef {
@@ -439,6 +440,7 @@ fn mutant_f3_or_f4_terminal_response_is_rejected() {
             },
             to: "legacy-response".into(),
             to_port: None,
+            ordinal: None,
         });
         assert!(
             flow.issues(&interfaces())

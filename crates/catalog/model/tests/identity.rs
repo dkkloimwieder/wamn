@@ -271,7 +271,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:32eac00eb34144fe2dece516c5387979b675a143adaab5d863642fa45eea0e6f",
+        baseline_hash, "sha256:90dcaf17e287c670192ca3a7e9257ced5722e69a68ea49b60497221405fe1ac8",
         "artifact frame sequence changed"
     );
 }
@@ -823,7 +823,7 @@ fn pinned_artifact_verifies_and_projects_the_legacy_persisted_shape() {
         "sha256:6dedf8035e4ed1bb053b9701f5b5a9620e340111fcba07e71bcb3a8897a03201";
     const LEGACY_COMPONENTS: &str = r#"[{"interface":{"node-type":"custom-node","output-ports":["main"],"purity":"effectful","recovery-class":"never-replay"},"component-digest":"sha256:1111111111111111111111111111111111111111111111111111111111111111"}]"#;
     const LEGACY_ARTIFACT_HASH: &str =
-        "sha256:69f92a51082a55f25ced74531d6283b56aca8a7d345d1c3a0a711280ccbd0fce";
+        "sha256:c3c0c0d8e9616c37505fbcb21088c6f15c383f0ad110ac211e2390bf472a609d";
 
     let flow = request_flow();
     let graph = flow.to_json();
@@ -965,7 +965,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:07cda54903be3e9e1fe31bea0ce5f3d29709eab703e5dee193dfeb73c8d98431",
+        baseline_hash, "sha256:19fae6e4a1f27b15b9c02f0194944c4c3a7f0f35d51558060ada87df062fa9e1",
         "definition frame sequence changed"
     );
 }
@@ -1158,18 +1158,21 @@ fn noncanonical_interface_and_member_reordering_is_rejected() {
             from_port: "main".to_string(),
             to: "shape".to_string(),
             to_port: None,
+            ordinal: None,
         },
         wamn_flow::Edge {
             from: "shape".to_string(),
             from_port: "main".to_string(),
             to: "second".to_string(),
             to_port: None,
+            ordinal: None,
         },
         wamn_flow::Edge {
             from: "second".to_string(),
             from_port: "main".to_string(),
             to: "response".to_string(),
             to_port: None,
+            ordinal: None,
         },
     ];
     let z_interface = resolved_interface(

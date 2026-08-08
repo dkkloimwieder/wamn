@@ -205,6 +205,15 @@
           "description": "Source output port. Defaults to [`MAIN_PORT`]; [`ERROR_PORT`] is the error path; node-library node types may define others (e.g. a `conditional`'s `true`/`false`).",
           "type": "string"
         },
+        "ordinal": {
+          "description": "This edge's **fan-out order** within its `(from, from-port)` group: the sequence the engine dispatches a branch's targets in ([`crate::Flow`] consumers see it through `Plan::successors`).\n\nFan-out order is author-meaningful and therefore an explicit value, never an element's position in the `edges` array (W2 digest ordering rule 2). An authored document may omit it; [`Flow::from_json`] then materializes the edge's position within its group exactly once, at parse, so the document's order is preserved as an explicit value and array position stops mattering thereafter. Only order *within* a group is meaningful: two edges leaving different nodes or different ports never compare.\n\n`None` therefore only appears on a flow built in Rust without going through [`Flow::from_json`]; it sorts as `0`, which for such a flow keeps the array order it was built in.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "to": {
           "description": "Target node id.",
           "type": "string"

@@ -101,21 +101,93 @@ fn node_sequence_position_must_not_change_the_graph_digest() {
     assert_eq!(baseline.graph_hash(), permuted.graph_hash());
 }
 
-// FOLLOW-UP (child bead of wamn-jvzx, to file: "flow edges need an explicit
-// fan-out order field"). Edge sequence position is load-bearing at runtime —
-// `wamn-flow-engine::plan::successors` documents "Order preserves the flow's
-// edge order, so fan-out to several targets is deterministic" — but the schema
-// carries no explicit order field, so author-meaningful order rides sequence
-// position. W2 requires the explicit field first; only then can the preimage
-// sort edges by their stable key. Both steps change persisted digests.
+/// Edge fan-out order is load-bearing at runtime (`plan::successors` feeds the
+/// engine's frontier in that order), so it is carried by the explicit
+/// `Edge::ordinal` and the preimage sorts edges by their stable key. Array
+/// position no longer reaches the digest (wamn-jvzx.15).
 #[test]
-#[ignore = "known W2 defect: edge fan-out order is sequence position, not an explicit order field"]
 fn edge_sequence_position_must_not_change_the_graph_digest() {
     let baseline = flow();
     let mut permuted = flow();
     permuted.edges.swap(0, 2);
 
     assert_eq!(baseline.graph_hash(), permuted.graph_hash());
+}
+
+/// The other half of rule 2: an explicit order value *is* identity. Moving one
+/// edge's `ordinal` within its group changes the digest, and `Flow::from_json`
+/// is where an absent ordinal becomes the edge's position in its group — read
+/// exactly once, at parse.
+#[test]
+fn explicit_edge_ordinals_are_materialized_at_parse_and_do_change_the_digest() {
+    let fanned = Flow::from_json(
+        r#"{
+          "schema-version": "0.1",
+          "flow-id": "fan-out",
+          "version": 1,
+          "nodes": [
+            {"id": "entry", "type": "request", "config": {"input-schema": true}},
+            {"id": "a", "type": "custom"},
+            {"id": "b", "type": "custom"}
+          ],
+          "edges": [
+            {"from": "entry", "to": "b"},
+            {"from": "entry", "to": "a"}
+          ]
+        }"#,
+    )
+    .expect("fan-out fixture parses");
+
+    assert_eq!(
+        fanned
+            .edges
+            .iter()
+            .map(|edge| edge.ordinal)
+            .collect::<Vec<_>>(),
+        [Some(0), Some(1)],
+        "an absent ordinal becomes the edge's position within its group"
+    );
+    assert_eq!(
+        Flow::from_json(&fanned.to_json())
+            .expect("an exported flow re-parses")
+            .edges,
+        fanned.edges,
+        "materialization is idempotent across an export/import round trip"
+    );
+
+    // The ordinal is part of the edge sort key, not only of the hashed frame:
+    // this group's ordinal order (b, a) is deliberately the reverse of its
+    // target-id order, so dropping the ordinal from the key would reorder the
+    // frames here even though the frames themselves are unchanged.
+    let preimage: Value =
+        serde_json::from_slice(&fanned.canonical_bytes()).expect("the preimage is JSON");
+    let targets: Vec<&str> = preimage["edges"]
+        .as_array()
+        .expect("the preimage carries edges")
+        .iter()
+        .map(|edge| edge["to"].as_str().expect("an edge target"))
+        .collect();
+    assert_eq!(
+        targets,
+        ["b", "a"],
+        "edge frames follow the fan-out ordinal, not the target id"
+    );
+
+    let mut reordered = fanned.clone();
+    reordered.edges[0].ordinal = Some(1);
+    reordered.edges[1].ordinal = Some(0);
+    assert_ne!(
+        fanned.graph_hash(),
+        reordered.graph_hash(),
+        "changing an explicit order value changes the digest"
+    );
+
+    let mut repeated = fanned.clone();
+    repeated.edges.push(repeated.edges[0].clone());
+    assert!(
+        codes(&repeated).contains(&"duplicate-edge"),
+        "a repeated wire would make the edge sort key ambiguous"
+    );
 }
 
 // FOLLOW-UP (child bead of wamn-jvzx, to file: "editor labels must leave the
@@ -156,8 +228,9 @@ fn graph_preimage_bytes_are_pinned() {
             r#"{"allowed-hosts":["a.example.com","b.example.com"],"#,
             r#""credentials":[{"description":"Alpha credential","name":"alpha-key"},"#,
             r#"{"description":"Beta credential","name":"beta-key"}],"#,
-            r#""edges":[{"from":"entry","to":"alpha"},{"from":"alpha","to":"zeta"},"#,
-            r#"{"from":"zeta","to":"done"}],"#,
+            r#""edges":[{"from":"alpha","ordinal":0,"to":"zeta"},"#,
+            r#"{"from":"entry","ordinal":0,"to":"alpha"},"#,
+            r#"{"from":"zeta","ordinal":0,"to":"done"}],"#,
             r#""flow-id":"digest-ordering","name":"Digest ordering fixture","#,
             r#""nodes":[{"credential":"alpha-key","id":"alpha","label":"Alpha step","type":"custom"},"#,
             r#"{"config":{"status":200},"id":"done","type":"respond"},"#,
@@ -229,6 +302,11 @@ fn every_flow_field_is_classified_as_identity_or_display() {
             "version",
         ],
         "a new `Flow` field must be classified as identity or display here"
+    );
+    assert_eq!(
+        sorted_keys(&preimage["edges"][0]),
+        ["from", "from-port", "ordinal", "to", "to-port"],
+        "no edge-level field is display yet"
     );
     assert_eq!(
         sorted_keys(&preimage),

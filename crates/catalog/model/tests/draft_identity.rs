@@ -79,13 +79,14 @@ fn execution_bundle_exposes_the_exact_runner_digest_for_instantiate_guarding() {
 /// Drift guard for the version-independent draft preimage. `DraftContentHash`
 /// builds on the same `FlowPreimage` view as `Flow::canonical_bytes`, so this
 /// pinned digest is what proves a change to that shared view cannot move
-/// `draft_content_hash` except where a W2 bead deliberately moves it. The
-/// fixture's nodes are already node-id ordered, so W2A leaves it untouched.
+/// `draft_content_hash` except where a W2 bead deliberately moves it: it was
+/// captured before the view was introduced and was unchanged by that refactor,
+/// and it moves here only because `Edge::ordinal` joined the preimage.
 #[test]
 fn draft_content_hash_is_pinned_and_stays_version_independent() {
     assert_eq!(
         DraftContentHash::for_flow(&flow(7, 200)).as_str(),
-        "sha256:84fbf0ff004f3c56212691e64ba84bf57a1b111ff66e66d208bf8fe2425f858f",
+        "sha256:6f7302483aa0817abc35e2e177e03811b5990236c535d49613cb490cb4dbc7a0",
     );
     assert_eq!(
         DraftContentHash::for_flow(&flow(7, 200)),

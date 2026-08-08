@@ -174,9 +174,15 @@ preimage. Three rules are normative.
    `unsorted-credentials`, `unsorted-allowed-hosts`), never silently hashed.
 2. **Author-meaningful order is an explicit order field.** Where order carries
    meaning it is a value the client sets — `version`, `catalog-version`,
-   `draft-revision` — never an element's position in a document array. Changing
-   an explicit order value changes the digest; permuting a sequence that has no
-   explicit order must not.
+   `draft-revision`, and an edge's `ordinal` — never an element's position in a
+   document array. Changing an explicit order value changes the digest; permuting
+   a sequence that has no explicit order must not. An edge's `ordinal` is its
+   fan-out position within its `(from, from-port)` group, which is the order the
+   engine dispatches a branch's targets in (`Plan::successors`). A client may
+   omit it: the platform then materializes the edge's position within its group
+   once, at parse, and returns it on export. Array position is read at that one
+   point and never again — after it, moving an edge in the array changes nothing
+   and changing an `ordinal` changes both the run order and the digest.
 3. **Display never enters a preimage.** Labels, prose, and canvas coordinates
    are not identity. The graph document has no coordinate field at all and
    rejects one as an unknown field.
@@ -184,11 +190,16 @@ preimage. Three rules are normative.
 Every graph digest hashes one projection, `wamn-flow`'s `FlowPreimage`, which
 both `Flow::canonical_bytes` and `DraftContentHash::for_flow` build on, so a
 field reaches a graph digest only by being listed there. Node frames are ordered
-by node id (wamn-jvzx.14): permuting a document's `nodes` array is proved not to
-move `graph_hash` or `artifact_hash` by
-`node_sequence_position_must_not_change_the_graph_digest` and
-`artifact_hash_must_not_depend_on_node_document_sequence`, and the exact
-preimage bytes are pinned by `graph_preimage_bytes_are_pinned`.
+by node id (wamn-jvzx.14) and edge frames by the stable edge key
+`(from, from-port, ordinal, to, to-port)` (wamn-jvzx.15, which also adds the
+`duplicate-edge` refusal that makes that key total). Permuting a document's
+`nodes` or `edges` array is proved not to move `graph_hash` or `artifact_hash`
+by `node_sequence_position_must_not_change_the_graph_digest`,
+`artifact_hash_must_not_depend_on_node_document_sequence`, and
+`edge_sequence_position_must_not_change_the_graph_digest`; the converse — that an
+explicit `ordinal` *is* identity — by
+`explicit_edge_ordinals_are_materialized_at_parse_and_do_change_the_digest`; and
+the exact preimage bytes by `graph_preimage_bytes_are_pinned`.
 
 Because these are the digests of an already-content-addressed store, a change to
 the projection changes every previously computed digest. There is no backfill:
@@ -198,13 +209,12 @@ before the change fails closed in `PinnedArtifact::from_storage` with
 `GraphHashMismatch` rather than loading under the wrong rules. From-zero
 reprovisioning is the migration story.
 
-Known deviations from rules 1 to 3 are carried as ignored proof fixtures, not as
-prose: `edge_sequence_position_must_not_change_the_graph_digest` and
-`editor_labels_must_not_enter_the_graph_preimage` in
-`crates/execution/flow-model/tests/digest_ordering.rs`. Each names the follow-up
-that closes it. Until they close, a client must treat a flow document's edge
-array order and its `name`/`label`/`description` text as digest-affecting and
-must not reorder or relabel a graph it intends to keep identical.
+The one remaining deviation from rules 1 to 3 is carried as an ignored proof
+fixture, not as prose: `editor_labels_must_not_enter_the_graph_preimage` in
+`crates/execution/flow-model/tests/digest_ordering.rs`, which names the follow-up
+that closes it. Until it closes, a client must treat a flow document's
+`name`/`label`/`description` text as digest-affecting and must not relabel a
+graph it intends to keep identical.
 
 ## Suite projection
 

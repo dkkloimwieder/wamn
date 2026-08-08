@@ -223,6 +223,31 @@ fn fan_out_and_merge_without_a_join_barrier() {
 }
 
 #[test]
+fn fan_out_order_follows_the_explicit_edge_ordinal() {
+    // The runtime half of W2 digest ordering (wamn-jvzx.15): fan-out order is the
+    // explicit `Edge::ordinal`, not the edge's position in the array. Here `s`
+    // declares a before b but ordinals say b first, so b must run first.
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"fan-ordinal","version":1,
+            "trigger":{"type":"manual"},"entry":"s",
+            "nodes":[{"id":"s","type":"echo"},{"id":"a","type":"echo"},
+                     {"id":"b","type":"echo"}],
+            "edges":[{"from":"s","to":"a","ordinal":1},
+                     {"from":"s","to":"b","ordinal":0}]}"#,
+    );
+    let plan = compile(&f).unwrap();
+    let t = run(&plan, "r1", json!({}), |d| {
+        NodeOutcome::ok(json!({ "at": d.node }))
+    });
+    assert_eq!(t.status, ExecutionStatus::Completed);
+    assert_eq!(
+        t.nodes(),
+        ["s", "b", "a"],
+        "array position must not decide fan-out order"
+    );
+}
+
+#[test]
 fn merge_visits_carry_distinct_occurrences() {
     // A merge runs once per arriving token; each visit is its own occurrence
     // (wamn-03m / R24) so the driver's node_runs rows never collide on the

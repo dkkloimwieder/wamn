@@ -5,6 +5,8 @@
 //! credentials by name. Ordinary node `type` values are open strings resolved
 //! by the runner's node library (5.3).
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use wamn_node_manifest::PortableConnectionRequirement;
@@ -368,6 +370,23 @@ pub struct Edge {
     /// future multi-input node types.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to_port: Option<String>,
+    /// This edge's **fan-out order** within its `(from, from-port)` group: the
+    /// sequence the engine dispatches a branch's targets in
+    /// ([`crate::Flow`] consumers see it through `Plan::successors`).
+    ///
+    /// Fan-out order is author-meaningful and therefore an explicit value, never
+    /// an element's position in the `edges` array (W2 digest ordering rule 2).
+    /// An authored document may omit it; [`Flow::from_json`] then materializes
+    /// the edge's position within its group exactly once, at parse, so the
+    /// document's order is preserved as an explicit value and array position
+    /// stops mattering thereafter. Only order *within* a group is meaningful:
+    /// two edges leaving different nodes or different ports never compare.
+    ///
+    /// `None` therefore only appears on a flow built in Rust without going
+    /// through [`Flow::from_json`]; it sorts as `0`, which for such a flow keeps
+    /// the array order it was built in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<u32>,
 }
 
 /// The graph's unique engine-reserved entry kind.
@@ -506,8 +525,14 @@ impl Flow {
     }
 
     /// Parse a flow from JSON (import).
+    ///
+    /// Materializes any absent [`Edge::ordinal`] from the edge's position within
+    /// its `(from, from-port)` group — the one point where document order is read
+    /// as fan-out order. Idempotent: re-parsing an exported flow changes nothing.
     pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(s)
+        let mut flow: Flow = serde_json::from_str(s)?;
+        assign_edge_ordinals(&mut flow.edges);
+        Ok(flow)
     }
 
     /// Serialize a flow to human-readable JSON (export).
@@ -528,6 +553,23 @@ impl Flow {
     /// SHA-256 of [`Flow::canonical_bytes`], the stored `graph_hash`.
     pub fn graph_hash(&self) -> [u8; 32] {
         canonical::sha256(&self.canonical_bytes())
+    }
+}
+
+/// Give every edge that omitted [`Edge::ordinal`] its position within its
+/// `(from, from-port)` group. The counter advances for every edge in a group,
+/// author-supplied ordinals included, so an explicit value is never overwritten
+/// and never shifts the positions around it.
+fn assign_edge_ordinals(edges: &mut [Edge]) {
+    let mut positions: HashMap<(String, String), u32> = HashMap::new();
+    for edge in edges {
+        let position = positions
+            .entry((edge.from.clone(), edge.from_port.clone()))
+            .or_default();
+        if edge.ordinal.is_none() {
+            edge.ordinal = Some(*position);
+        }
+        *position += 1;
     }
 }
 

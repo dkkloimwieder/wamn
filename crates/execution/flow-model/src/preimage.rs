@@ -12,7 +12,12 @@
 //!
 //! - **nodes are ordered by [`Node::id`]**, the stable identity every consumer
 //!   looks up by, so a pure reordering of the document's `nodes` array is not a
-//!   new artifact identity.
+//!   new artifact identity;
+//! - **edges are ordered by their stable key**, `(from, from-port, ordinal, to,
+//!   to-port)`. Fan-out order is semantic, so it is carried by the explicit
+//!   [`Edge::ordinal`] and hashed; the array position that used to imply it is
+//!   not. `Flow::validate`'s `duplicate-edge` refusal is what makes the key
+//!   total.
 //!
 //! Object-key order and whitespace never reach a digest at all: the projection
 //! is serialized through [`crate::canonical`] (RFC 8785).
@@ -59,8 +64,9 @@ pub struct FlowPreimage<'a> {
     name: Option<&'a str>,
     /// Ordered by [`Node::id`], never by document sequence.
     nodes: Vec<&'a Node>,
-    #[serde(skip_serializing_if = "is_empty")]
-    edges: &'a [Edge],
+    /// Ordered by the stable edge key, never by document sequence.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    edges: Vec<&'a Edge>,
     #[serde(skip_serializing_if = "is_empty")]
     connection_requirements: &'a [FlowConnectionRequirement],
     #[serde(skip_serializing_if = "is_empty")]
@@ -104,13 +110,15 @@ impl<'a> FlowPreimage<'a> {
         // Stable, so a flow that has not been validated (duplicate node ids are
         // an `Flow::validate` error) still hashes deterministically.
         nodes.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut edges: Vec<&Edge> = flow.edges.iter().collect();
+        edges.sort_by(|left, right| edge_key(left).cmp(&edge_key(right)));
         FlowPreimage {
             schema_version: &flow.schema_version,
             flow_id: &flow.flow_id,
             version: None,
             name: flow.name.as_deref(),
             nodes,
-            edges: &flow.edges,
+            edges,
             connection_requirements: &flow.connection_requirements,
             credentials: &flow.credentials,
             allowed_hosts: &flow.allowed_hosts,
@@ -119,6 +127,20 @@ impl<'a> FlowPreimage<'a> {
             capture: flow.capture,
         }
     }
+}
+
+/// The stable edge key: the source endpoint, the explicit fan-out
+/// [`Edge::ordinal`] within that endpoint's group, then the target endpoint.
+/// Total for a valid flow, because `duplicate-edge` refuses a repeated
+/// `(from, from-port, to, to-port)`.
+fn edge_key(edge: &Edge) -> (&str, &str, u32, &str, Option<&str>) {
+    (
+        edge.from.as_str(),
+        edge.from_port.as_str(),
+        edge.ordinal.unwrap_or(0),
+        edge.to.as_str(),
+        edge.to_port.as_deref(),
+    )
 }
 
 fn is_empty<T>(items: &&[T]) -> bool {

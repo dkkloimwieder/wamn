@@ -476,7 +476,25 @@ fn validate_edges(
     resolved_interfaces: &ResolvedInterfaces,
     issues: &mut Vec<Issue>,
 ) {
+    let mut wires = HashSet::new();
     for (index, edge) in flow.edges.iter().enumerate() {
+        // The stable edge key is also the graph preimage's edge sort key
+        // (`FlowPreimage`), so a repeat would make that ordering ambiguous.
+        if !wires.insert((
+            edge.from.as_str(),
+            edge.from_port.as_str(),
+            edge.to.as_str(),
+            edge.to_port.as_deref(),
+        )) {
+            issues.push(Issue::error(
+                "duplicate-edge",
+                format!("edges[{index}]"),
+                format!(
+                    "edge {:?} -> {:?} on port {:?} is declared more than once",
+                    edge.from, edge.to, edge.from_port
+                ),
+            ));
+        }
         if !node_ids.contains(edge.from.as_str()) {
             issues.push(Issue::error(
                 "unknown-edge-source",
@@ -1072,6 +1090,7 @@ mod tests {
             from_port: from_port.into(),
             to: to.into(),
             to_port: None,
+            ordinal: None,
         }
     }
 
