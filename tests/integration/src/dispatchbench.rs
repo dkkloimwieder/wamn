@@ -10,7 +10,7 @@
 //! decisions take an injected `now`, so a nightly cron and a three-day outage
 //! are gated in milliseconds with no wall-clock waits (the 11.1
 //! fast-forwardable-cron discipline). Only the wake and live modes touch real
-//! time (sub-second), because `available_at` is a server-side instant.
+//! time (a few seconds), because `available_at` is a server-side instant.
 //!
 //! Row events are NOT gated here since l5i9.19: the D19 v3 event plane (CDC
 //! reader → JetStream → materializer) delivers them — matbench/streambench/
@@ -1303,6 +1303,21 @@ async fn fairness_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
 // wake: a parked run is doorbell-hinted only once due
 // ---------------------------------------------------------------------------
 
+/// How far out the wake phase parks its run: the window during which the run
+/// must be neither woken nor hinted.
+///
+/// wamn-nqt1: this window is REAL time — `available_at` is a server-side instant
+/// — so it is only meaningful while the gate can actually observe it. The
+/// readiness tick in `wake_phase` takes dispatcher startup out of the window
+/// deterministically, but nothing can stop an oversubscribed box from
+/// descheduling this process between the arming COMMIT and the "still parked"
+/// tick; at load ~30 a 400ms window was observed to elapse first, flipping
+/// not_woken_early/no_premature_hint false for a reason unrelated to the
+/// property under test. This is headroom, not a behavioural knob: nothing in
+/// the dispatcher keys on the value, and the phase's semantics are identical at
+/// any width that outlasts one sweep.
+const WAKE_PARK_WINDOW_MS: i64 = 1_500;
+
 async fn wake_phase(
     app_url: &str,
     admin_url: &str,
@@ -1366,20 +1381,7 @@ async fn wake_phase(
         }
     }
 
-    // Park a run 400ms out (a delay-node wake, D15 write-ahead + delayed enqueue).
     let (mut app, _h) = connect_app(app_url, SCHEMA_A, TENANT_A).await?;
-    let delay_ms: i64 = 400;
-    {
-        let tx = app.transaction().await?;
-        tx.execute(&write_ahead_run_sql(), &[&"parked-1", &"f", &1i32])
-            .await?;
-        tx.execute(
-            &enqueue_sql(),
-            &[&"parked-1", &Option::<&str>::None, &0i32, &delay_ms],
-        )
-        .await?;
-        tx.commit().await?;
-    }
 
     let specs = [spec("a", app_url, SCHEMA_A, TENANT_A)];
     let tls = match (
@@ -1391,6 +1393,36 @@ async fn wake_phase(
         _ => None,
     };
     let mut d = DispatcherProcess::spawn(&specs, &args.nats_url, tls, None, None, None)?;
+
+    // wamn-nqt1: the park window is real time (`available_at` is a server-side
+    // instant), so it must not be spent on dispatcher startup. A cold debug
+    // wamn-dispatcher under concurrent build load can take longer to boot and open
+    // its pool than the window is wide, and the run is then already due at the
+    // "still parked" tick — not_woken_early/no_premature_hint flip false for a
+    // reason that has nothing to do with the property under test.
+    //
+    // The readiness signal is the control stream itself: a tick round-trip only
+    // answers once the process is up, has parsed its projects file, and has a
+    // working connection to the project database. Spend the cold start HERE, on an
+    // empty schema (no run rows, no cron flows yet — the tick is a no-op), and arm
+    // the window only afterwards. Window semantics are unchanged.
+    d.tick_project(0, chrono::Utc::now().timestamp_millis())
+        .await
+        .context("dispatcher readiness tick before arming the park window")?;
+
+    // Park the run (a delay-node wake, D15 write-ahead + delayed enqueue).
+    let delay_ms: i64 = WAKE_PARK_WINDOW_MS;
+    {
+        let tx = app.transaction().await?;
+        tx.execute(&write_ahead_run_sql(), &[&"parked-1", &"f", &1i32])
+            .await?;
+        tx.execute(
+            &enqueue_sql(),
+            &[&"parked-1", &Option::<&str>::None, &0i32, &delay_ms],
+        )
+        .await?;
+        tx.commit().await?;
+    }
 
     // Still parked: no hint may arrive.
     let early = d
