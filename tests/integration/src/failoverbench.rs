@@ -476,6 +476,13 @@ pub async fn run(args: FailoverBenchArgs) -> anyhow::Result<()> {
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let harness = Harness::new(engine, &guest, plugin.clone())?;
 
+    // `run-next` resolves every claimed run's graph through the immutable release
+    // lineage alone (wamn-kex2), so all four claim-path fixtures are published as
+    // release members once, before any mode runs. The `run`/`run-until-kill`
+    // phases (failover / janitor-guard / reverse-race) read the mutable head
+    // instead and are untouched by this.
+    crate::catalog_pin::publish_release(&admin_url, TENANT, &published_fixtures()).await?;
+
     let run_all = args.mode == Mode::All;
     let mut pass = true;
     let outcome = async {
@@ -890,6 +897,12 @@ const DELAY_FLOW_ID: &str = "poc-delay";
 /// A long transform chain (heartbeat gate): enough nodes that the walk spans
 /// several lease renewals.
 const HEARTBEAT_FLOW_ID: &str = "heartbeat";
+/// The park fixture's real-clock delay, and the heartbeat fixture's chain length.
+/// Both are shape parameters of a PUBLISHED artifact, so the phase and the
+/// release must name the same value or the run would drive a graph the gate never
+/// seeded.
+const PARK_DELAY_SECS: u64 = 1;
+const HEARTBEAT_NODES: usize = 20;
 
 /// Structurally the `poc-receipt` v1 fixture ([`crate::flowbench::flow_json`])
 /// with a different flow id and the REVERSE transform — the only difference the
@@ -912,23 +925,32 @@ fn alt_flow_json() -> String {
     )
 }
 
+/// wamn-r7bg re-authored both queue fixtures below onto the current flow schema.
+///
+/// Every run these phases seed is DISPATCHER-seeded (`write_ahead_triggered_run_sql`
+/// with `trigger_source = 'cron'`) and claimed off `run_queue` — there is no HTTP
+/// caller in the loop — so the honest entry is `cron`, and `cron` is also the only
+/// entry kind that admits either graph: a `request` entry may not be made to wait
+/// on a `delay` (`delay-before-release`), which is the whole point of the park
+/// fixture, and it demands every pre-release node reach `respond` or `fail`
+/// (`unanswerable-path`). `respond` is illegal under a cron entry
+/// (`respond-without-request-entry`) and neither phase ever read one: the park
+/// phase's completion witness is its `sink` row, and the heartbeat phase's is the
+/// run outcome. Both drop it; nothing else moved.
 fn delay_flow_json(delay_secs: u64) -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{DELAY_FLOW_ID}","version":1,
-            "trigger":{{"type":"cron","schedule":"* * * * *"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"cron"}},
               {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
-              {{"id":"w","type":"pg-write"}},
-              {{"id":"out","type":"respond"}}
+              {{"id":"w","type":"pg-write"}}
             ],
-            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"w"}},
-                     {{"from":"w","to":"out"}}]}}"#
+            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"w"}}]}}"#
     )
 }
 
 fn heartbeat_flow_json(n: usize) -> String {
-    let mut nodes = String::from(r#"{"id":"in","type":"webhook-in"}"#);
+    let mut nodes = String::from(r#"{"id":"in","type":"cron"}"#);
     let mut edges = String::new();
     let mut prev = String::from("in");
     for i in 0..n {
@@ -936,14 +958,14 @@ fn heartbeat_flow_json(n: usize) -> String {
         nodes.push_str(&format!(
             r#",{{"id":"{id}","type":"transform","config":{{"op":"upper"}}}}"#
         ));
-        edges.push_str(&format!(r#"{{"from":"{prev}","to":"{id}"}},"#));
+        edges.push_str(&format!(r#"{{"from":"{prev}","to":"{id}"}}"#));
+        if i + 1 < n {
+            edges.push(',');
+        }
         prev = id;
     }
-    nodes.push_str(r#",{"id":"out","type":"respond"}"#);
-    edges.push_str(&format!(r#"{{"from":"{prev}","to":"out"}}"#));
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{HEARTBEAT_FLOW_ID}","version":1,
-            "trigger":{{"type":"cron","schedule":"* * * * *"}},"entry":"in",
             "nodes":[{nodes}],"edges":[{edges}]}}"#
     )
 }
@@ -951,6 +973,19 @@ fn heartbeat_flow_json(n: usize) -> String {
 /// Seed an active v1 flow host-side (the guest's `seed` export is retired, SR2).
 async fn seed_flow(client: &Client, flow_id: &str, json: &str) -> anyhow::Result<()> {
     wamn_gate_harness::seed_flow_version(client, TENANT, flow_id, 1, true, json, true).await
+}
+
+/// Every fixture graph this gate's CLAIM-path phases drive through `run-next`,
+/// published as members of one immutable release before any mode runs (wamn-kex2,
+/// wamn-r7bg). The `run`/`run-until-kill` phases read the mutable head and take
+/// nothing from here.
+fn published_fixtures() -> Vec<String> {
+    vec![
+        crate::flowbench::flow_json(1),
+        alt_flow_json(),
+        delay_flow_json(PARK_DELAY_SECS),
+        heartbeat_flow_json(HEARTBEAT_NODES),
+    ]
 }
 
 /// `count(*)`-style scalar read (a free helper so it never holds a borrow of the
@@ -1004,15 +1039,6 @@ async fn claim_phase(
     let (mut seed_conn, _h) = connect_app(app_url).await?;
     seed_flow(&seed_conn, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
     seed_flow(&seed_conn, ALT_FLOW_ID, &alt_flow_json()).await?;
-    // Both fixtures as members of ONE immutable release: `run-next` resolves a
-    // run's graph through `catalog.release_flows` alone, so the wrong-flow guard
-    // needs the alt flow published, not just registered (wamn-kex2).
-    crate::catalog_pin::publish_release(
-        admin_url,
-        TENANT,
-        &[crate::flowbench::flow_json(1), alt_flow_json()],
-    )
-    .await?;
 
     // Generous TTL: the lease never expires here, so claim/exactly-once are not
     // clouded by reclaim noise (the heartbeat gate exercises renewal separately).
@@ -1153,7 +1179,7 @@ async fn claim_phase(
 async fn park_phase(harness: &Harness, app_url: &str) -> anyhow::Result<bool> {
     println!("\n## park — a delay run parks (lease released), a later run-next completes it");
     let (mut seed_conn, _h) = connect_app(app_url).await?;
-    seed_flow(&seed_conn, DELAY_FLOW_ID, &delay_flow_json(1)).await?; // 1s real-clock delay
+    seed_flow(&seed_conn, DELAY_FLOW_ID, &delay_flow_json(PARK_DELAY_SECS)).await?;
     let run_id = "park-1";
     seed_claim_run(&mut seed_conn, run_id, DELAY_FLOW_ID, "\"x\"").await?;
 
@@ -1237,7 +1263,12 @@ async fn heartbeat_phase(
     println!("\n## heartbeat — per-node lease renewal advances the lease during a long walk");
     reset(admin_url).await?;
     let (mut seed_conn, _h) = connect_app(app_url).await?;
-    seed_flow(&seed_conn, HEARTBEAT_FLOW_ID, &heartbeat_flow_json(20)).await?;
+    seed_flow(
+        &seed_conn,
+        HEARTBEAT_FLOW_ID,
+        &heartbeat_flow_json(HEARTBEAT_NODES),
+    )
+    .await?;
     let run_id = "heartbeat-1";
     seed_claim_run(&mut seed_conn, run_id, HEARTBEAT_FLOW_ID, "\"x\"").await?;
 
@@ -1330,7 +1361,7 @@ async fn seed_partition_run(
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    crate::catalog_pin::pin_run(client, run_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1573,14 +1604,15 @@ mod tests {
         assert_carries_every_run_next_column("failoverbench", &runner_ddl("wamn_run"));
     }
 
-    /// wamn-kex2 [GATE-DRIFT]: claim mode publishes the alt flow as a release
-    /// member so the wrong-flow guard has a graph to resolve THROUGH — which holds
-    /// only while that fixture is a graph a real release could carry.
+    /// wamn-kex2 / wamn-r7bg [GATE-DRIFT]: every fixture the claim-path phases
+    /// resolve THROUGH is a published release member — the wrong-flow alt graph,
+    /// the park fixture's delay, and the heartbeat chain. That holds only while
+    /// each is a graph a real release could carry, so a fixture edit that cannot
+    /// be published fails here instead of a mode in a cluster.
     #[test]
-    fn failoverbench_alt_flow_is_a_releasable_graph() {
-        crate::catalog_pin::assert_releasable(
-            "failoverbench alt_flow_json",
-            &super::alt_flow_json(),
-        );
+    fn every_published_failoverbench_fixture_is_a_releasable_graph() {
+        for flow_json in super::published_fixtures() {
+            crate::catalog_pin::assert_releasable("failoverbench fixture", &flow_json);
+        }
     }
 }
