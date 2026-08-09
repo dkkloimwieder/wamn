@@ -11,6 +11,12 @@
 //! Linking an import is not backing it: the caller still owns its store's
 //! plugin map. An effect no bench fixture reaches may stay unbacked, in which
 //! case a call traps (fail-closed) instead of escaping the bench.
+//!
+//! wamn-fstr: this is the ONE registration point, and
+//! `tests/conformance/tests/flowrunner_linker_imports.rs` diffs it against the
+//! world's import set on every conformance run. A new import therefore lands
+//! here AND in that guard's mapping table — the two additions that silently
+//! skipped this file (9721d42, 914f661) can no longer pass.
 
 use wamn_runtime::plugins::{
     connection_http, node_invocation, runner_egress, wamn_credentials, wamn_logging, wamn_postgres,
