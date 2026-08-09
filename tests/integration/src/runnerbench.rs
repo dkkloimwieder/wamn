@@ -30,11 +30,16 @@
 //!     via the gate-local `Worker`, proven here through the long-lived runner.
 //!     Dispatch order is read from a gate-local `sink.dispatch_seq` IDENTITY
 //!     witness (execution order, not seed order).
-//!   * MERGE-RESUME (wamn-03m/cjv.10/wamn-2jkm.42, R24): a diamond whose merge
-//!     is a delay node parks between the merge's two visits; every re-claim
-//!     reconstructs the partially-recorded merge, and each visit persists its
-//!     OWN `node_runs` row (occurrence 0/1) — the per-visit occurrence proof
-//!     through the production claim path.
+//!   * MERGE-RESUME (wamn-03m/cjv.10/wamn-2jkm.42, R24; redesigned by
+//!     wamn-58s2): a diamond whose merge is a delay node parks between the
+//!     merge's two visits, and every re-claim folds the partially-recorded merge
+//!     back out of `node_runs`. The phase reads four things off what the run
+//!     persisted: the exact per-visit `(node, occurrence)` ledger, the DISTINCT
+//!     payload each merge visit folded (the branches disagree on purpose), the
+//!     recorded gap between the two visits (>= the delay, so the run really
+//!     left), and — against a structurally different v2 standing published and
+//!     holding the mutable head — that the resume kept driving the run's PINNED
+//!     v1.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -86,24 +91,38 @@ fn runaway_flow_json() -> String {
     )
 }
 
-/// The wamn-03m/R24 merge-resume fixture: a diamond in -> {ba, bb} -> m -> r
-/// whose MERGE is a `delay` node, so the claim path PARKS between the merge's
-/// two visits — every re-claim reconstructs a partially-recorded merge from
-/// `node_runs` through the production resume seam. Pre-R24 the second visit's
-/// row was ON CONFLICT-dropped (occurrence hardcoded 0) and the history
-/// collapsed; the phase asserts one row PER VISIT.
+/// The wamn-03m/R24 merge-resume fixture, re-authored by wamn-58s2: a diamond
+/// `in -> {ba, bb} -> m -> r` whose MERGE is a `delay`, so the claim path leaves
+/// the run and re-enters it between the merge's two visits, and every re-claim
+/// reconstructs a partially-recorded merge out of `node_runs` through the
+/// production resume seam.
+///
+/// The entry is `cron` — the trigger the dispatcher stamps on these seeds, and
+/// the only entry kind that admits a graph which parks at all: a `request` entry
+/// may not be made to wait on a `delay` (`delay-before-release`), and the delay IS
+/// the park this phase exists to prove.
+///
+/// The two branches deliberately disagree (`upper` vs `reverse`), so the merge's
+/// two emissions are DISTINGUISHABLE strings and the phase can read back which
+/// one each visit folded — evidence the old row-count assertions could not give.
+/// The tail `r` reverses again, so its two recorded outputs are distinct in turn:
+/// it is dispatched once per merge emission, on a different payload each time.
+/// (`respond` is illegal under a cron entry, and a recorded transform serves the
+/// proof better than a caller release the claim path has no caller for.)
 const MERGE_FLOW_ID: &str = "merge-resume";
+/// The merge's real-clock park, in seconds. The phase reads it back out of
+/// `node_runs` to prove the run genuinely LEFT between the two visits.
+const MERGE_DELAY_SECS: i64 = 1;
 
 fn merge_flow_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{MERGE_FLOW_ID}","version":1,
-            "trigger":{{"type":"manual"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"cron"}},
               {{"id":"ba","type":"transform","config":{{"op":"upper"}}}},
               {{"id":"bb","type":"transform","config":{{"op":"reverse"}}}},
-              {{"id":"m","type":"delay","config":{{"delay-secs":1}}}},
-              {{"id":"r","type":"respond"}}
+              {{"id":"m","type":"delay","config":{{"delay-secs":{MERGE_DELAY_SECS}}}}},
+              {{"id":"r","type":"transform","config":{{"op":"reverse"}}}}
             ],
             "edges":[{{"from":"in","to":"ba"}},{{"from":"in","to":"bb"}},
                      {{"from":"ba","to":"m"}},{{"from":"bb","to":"m"}},
@@ -111,20 +130,26 @@ fn merge_flow_json() -> String {
     )
 }
 
-/// A STRUCTURALLY DIFFERENT v2 of the merge-resume flow (wamn-cox): a bare linear
-/// `in -> r`, no diamond and no delay-merge. Registered + activated MID-RUN while
-/// mr-0 (stamped v1) is parked at its delay-merge. A resume that pins the run's
-/// PERSISTED v1 reconstructs the recorded diamond node_runs against v1 and
-/// completes; a resume that (wrongly) loaded the ACTIVE v2 would fold the
-/// recorded `ba`/`bb`/`m` visits against a graph that has none — `Plan::resume`
-/// dies `Mismatch`. So this v2, ignored, is the cox mutant detector.
+/// A STRUCTURALLY DIFFERENT v2 of the merge-resume flow — a bare linear
+/// `in -> r`, no diamond and no delay-merge — kept as the resume's DISTRACTOR.
+///
+/// wamn-cox originally aimed it at the mutable `flows` head: registered and
+/// ACTIVATED mid-run, it caught a resume that loaded the active version instead
+/// of the run's persisted one. `run-next` no longer reads that head at all, so
+/// that detector went inert under the immutable-release posture (wamn-kex2).
+/// wamn-58s2 re-points it rather than retiring it: v2 is PUBLISHED as a member of
+/// its own release for the whole gate, and the mutable head is still flipped to it
+/// mid-park. The run stays pinned to v1's (catalog, catalog-version, flow-version,
+/// artifact-digest), so a resume that resolved the flow's other PUBLISHED version
+/// — or fell back to the mutable head — folds the recorded `ba`/`bb`/`m` visits
+/// against a graph that has neither and dies `Mismatch`. One fixture, both
+/// detectors, and the immutable one is the live seam now.
 fn merge_flow_v2_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{MERGE_FLOW_ID}","version":2,
-            "trigger":{{"type":"manual"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
-              {{"id":"r","type":"respond"}}
+              {{"id":"in","type":"cron"}},
+              {{"id":"r","type":"transform","config":{{"op":"reverse"}}}}
             ],
             "edges":[{{"from":"in","to":"r"}}]}}"#
     )
@@ -163,6 +188,8 @@ fn published_fixtures() -> Vec<String> {
         crate::flowbench::flow_json(2),
         runaway_flow_json(),
         terminal_flow_json(),
+        merge_flow_json(),
+        merge_flow_v2_json(),
     ]
 }
 
@@ -529,6 +556,26 @@ async fn seed_keyed_flow_run(
     .await?;
     tx.commit().await?;
     crate::catalog_pin::pin_run(client, run_id).await
+}
+
+/// Every payload a node RECORDED, one per visit, in occurrence order — the
+/// merge-resume phase's evidence that each visit folded its own emission
+/// (wamn-58s2).
+async fn recorded_outputs(
+    client: &Client,
+    run_id: &str,
+    node_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let rows = client
+        .query(
+            &format!(
+                "SELECT COALESCE(output_json #>> '{{}}', '<null>') FROM {SCHEMA}.node_runs \
+                  WHERE run_id = $1 AND node_id = $2 ORDER BY occurrence"
+            ),
+            &[&run_id, &node_id],
+        )
+        .await?;
+    Ok(rows.iter().map(|row| row.get::<_, String>(0)).collect())
 }
 
 async fn count(client: &Client, sql: &str) -> anyhow::Result<i64> {
@@ -976,16 +1023,31 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             q8 == 0
         );
 
-        // --- (9) MERGE-RESUME (wamn-03m / cjv.10 / wamn-2jkm.42, R24): a
-        // diamond whose merge `m` is a delay node. The walk parks at m's FIRST
-        // arrival, again between m's two visits, and each re-claim
-        // RECONSTRUCTS the run from node_runs through the production resume
-        // seam — after m's first visit is recorded, the replay folds a
-        // partially-recorded merge (the kill-mid-D shape, via parks). The
-        // occurrence fix is what makes this converge: each visit persists its
-        // OWN row (m@0/m@1, r@0/r@1 — 7 rows total). Pre-R24 the second-visit
-        // inserts were ON CONFLICT-dropped (5 rows), history collapsed, and a
-        // later resume of such a run died Mismatch.
+        // --- (9) MERGE-RESUME (wamn-03m / cjv.10 / wamn-2jkm.42, R24; redesigned
+        // by wamn-58s2). The proof intent, restated on the current model: a run
+        // PARKS between a merge's two visits, and each re-claim folds the
+        // partially-recorded merge back out of `node_runs` through the production
+        // resume seam. The diamond's merge `m` is a `delay`, so the run leaves
+        // after each arrival; the branches disagree (`upper`/`reverse`), so what
+        // the merge folded on each visit is READABLE, not merely counted.
+        //
+        // Four things are asserted, each from something the current model
+        // persists rather than from the old row-count transliteration:
+        //   * VISIT LEDGER — the exact (node, occurrence) set the diamond must
+        //     leave: one row for each of in/ba/bb, and one PER VISIT for m and r.
+        //     Pre-R24 the second-visit inserts were ON CONFLICT-dropped, history
+        //     collapsed, and a later resume of such a run died `Mismatch`.
+        //   * FOLDED EMISSIONS — m's two recorded outputs are the two DISTINCT
+        //     branch payloads, and r's are their transforms. A merge that replayed
+        //     one branch twice, or dropped one, cannot produce this pair.
+        //   * THE PARK IS REAL — m's two rows are at least the delay apart, so the
+        //     run demonstrably left and came back between the visits rather than
+        //     walking straight through.
+        //   * PINNED RESUME — a structurally different v2 (linear `in -> r`) is
+        //     published for the whole gate as its own release member AND flipped
+        //     into the mutable head mid-park. mr-0 stays pinned to v1, so a resume
+        //     that resolved the other published version, or the head, folds the
+        //     recorded ba/bb/m against a graph that has none and dies `Mismatch`.
         wamn_gate_harness::seed_flow_version(
             &seed_conn,
             TENANT,
@@ -998,7 +1060,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         .await?;
         seed_flow_run(&mut seed_conn, "mr-0", MERGE_FLOW_ID, 1).await?;
         let mut mr_claims = 0usize;
-        let mr_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mr_deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
         let mr_status = format!("SELECT status FROM {SCHEMA}.runs WHERE run_id = 'mr-0'");
 
         // FIRST drain: mr-0 (v1) is claimed and parks at the delay-merge `m`, with
@@ -1006,14 +1068,9 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         let r0 = worker.drain().await?;
         mr_claims += r0.claimed;
 
-        // wamn-cox LIVE PROOF (the cox mutant detector): mid-run — while mr-0 is
-        // parked at `m` — register AND activate a STRUCTURALLY DIFFERENT v2
-        // (linear in -> r). The resumed claims MUST keep driving the run's
-        // PERSISTED v1: reconstruction folds the recorded diamond node_runs
-        // against v1's graph and converges. Without the pin the resume would load
-        // the now-ACTIVE v2 and `Plan::resume` dies Mismatch (recorded ba/bb/m
-        // absent from v2), so the asserts below — completed, 7 rows, m/r visits
-        // (2,0,1) — are the mutant detector.
+        // The mutable-head half of the distractor, fired while mr-0 is parked (the
+        // immutable half — v2 as a published release member — has been standing
+        // since the gate's release was published).
         wamn_gate_harness::seed_flow_version(
             &seed_conn,
             TENANT,
@@ -1032,7 +1089,7 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
                 break;
             }
             if std::time::Instant::now() > mr_deadline {
-                bail!("merge-resume FAIL: run mr-0 still '{status}' after 30s ({mr_claims} claims)");
+                bail!("merge-resume FAIL: run mr-0 still '{status}' after 60s ({mr_claims} claims)");
             }
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             let r = worker.drain().await?;
@@ -1041,51 +1098,57 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         // Restore v1 active so a re-run of the binary starts from the same state
         // (the phase-6 pattern).
         wamn_gate_harness::set_active_flow_version(&seed_conn, TENANT, MERGE_FLOW_ID, 1).await?;
-        let mr_rows = count(
-            &seed_conn,
-            &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0'"),
-        )
-        .await?;
-        let mr_m: (i64, i32, i32) = {
-            let row = seed_conn
-                .query_one(
-                    &format!(
-                        "SELECT count(*), min(occurrence)::int, max(occurrence)::int \
-                         FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0' AND node_id = 'm'"
-                    ),
-                    &[],
-                )
-                .await?;
-            (row.get(0), row.get(1), row.get(2))
-        };
-        let mr_r: (i64, i32, i32) = {
-            let row = seed_conn
-                .query_one(
-                    &format!(
-                        "SELECT count(*), min(occurrence)::int, max(occurrence)::int \
-                         FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0' AND node_id = 'r'"
-                    ),
-                    &[],
-                )
-                .await?;
-            (row.get(0), row.get(1), row.get(2))
-        };
+
+        // VISIT LEDGER: every (node, occurrence) the run recorded, in order.
+        let mr_visits: Vec<String> = seed_conn
+            .query(
+                &format!(
+                    "SELECT node_id || '@' || occurrence FROM {SCHEMA}.node_runs \
+                      WHERE run_id = 'mr-0' ORDER BY node_id, occurrence"
+                ),
+                &[],
+            )
+            .await?
+            .iter()
+            .map(|row| row.get::<_, String>(0))
+            .collect();
+        let want_visits = ["ba@0", "bb@0", "in@0", "m@0", "m@1", "r@0", "r@1"];
+        let visits_ok = mr_visits == want_visits;
+
+        // FOLDED EMISSIONS: what each visit of the merge, and of the tail, recorded.
+        let mut mr_merge_out = recorded_outputs(&seed_conn, "mr-0", "m").await?;
+        let mut mr_tail_out = recorded_outputs(&seed_conn, "mr-0", "r").await?;
+        mr_merge_out.sort();
+        mr_tail_out.sort();
+        // `upper` and `reverse` of the seeded "receipt", folded one per visit, and
+        // the tail's reverse of each.
+        let folded_ok = mr_merge_out == ["RECEIPT", "tpiecer"] && mr_tail_out == ["TPIECER", "receipt"];
+
+        // THE PARK IS REAL: the two merge visits are at least the delay apart.
+        let mr_gap_secs: f64 = seed_conn
+            .query_one(
+                &format!(
+                    "SELECT EXTRACT(EPOCH FROM (max(started_at) - min(started_at)))::float8 \
+                       FROM {SCHEMA}.node_runs WHERE run_id = 'mr-0' AND node_id = 'm'"
+                ),
+                &[],
+            )
+            .await?
+            .get(0);
+        let parked_between = mr_gap_secs >= MERGE_DELAY_SECS as f64;
+
         let q9 = count(&seed_conn, &queued).await?;
-        // >= 3 claims: the fresh claim + at least one park-wake reclaim BEFORE
-        // m's first record and one AFTER it — the latter is the replay of a
-        // partially-recorded merge this phase exists to prove.
-        let merge_resume_ok = mr_rows == 7
-            && mr_m == (2, 0, 1)
-            && mr_r == (2, 0, 1)
-            && mr_claims >= 3
-            && q9 == 0;
+        let merge_resume_ok = visits_ok && folded_ok && parked_between && mr_claims >= 3 && q9 == 0;
         println!(
-            "## merge-resume — diamond with delay-merge via ExecutionHost::drain: completed after \
-             {mr_claims} claims (>=3 -> parked mid-merge and resumed), node_runs rows = {mr_rows} \
-             (want 7 — one PER VISIT), m visits = {mr_m:?} (want (2,0,1)), r visits = {mr_r:?} \
-             (want (2,0,1)), queue drained = {} — and a structurally-different v2 (linear in->r) \
-             was activated MID-RUN yet the pinned resume kept driving the run's persisted v1 \
-             (wamn-cox; an active-version resume would die Mismatch) -> {merge_resume_ok}",
+            "## merge-resume — diamond with a delay-merge via ExecutionHost::drain, completed after \
+             {mr_claims} claims (>=3 -> parked and re-claimed): visits {mr_visits:?} (want \
+             {want_visits:?} — one row PER VISIT) -> {visits_ok}, merge folded {mr_merge_out:?} \
+             (want the two DISTINCT branch payloads) and the tail recorded {mr_tail_out:?} -> \
+             {folded_ok}, merge visits {mr_gap_secs:.2}s apart (>= the {MERGE_DELAY_SECS}s delay -> \
+             the run really left between them) -> {parked_between}, queue drained = {} — and a \
+             structurally different v2 stood PUBLISHED as its own release member the whole time, \
+             and took the mutable head mid-park, yet the pinned resume kept driving v1 (wamn-cox; \
+             resolving either would die Mismatch) -> {merge_resume_ok}",
             q9 == 0
         );
 
