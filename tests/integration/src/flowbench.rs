@@ -428,13 +428,18 @@ async fn preflight(plugin: &Arc<WamnPostgres>) -> anyhow::Result<()> {
 /// The unchanged S3 dispatch latency ceiling.
 const DISPATCH_P99_NS: u64 = 50_000;
 
+/// Dispatches one walk of `flow` spends.
+///
+/// Every node type now executes through the node ABI — the wamn-ayq7 series
+/// moved `respond` (e937df7), `request` (58c3ed3), `cron` (a30cff6), `event`
+/// (d6f8084) and `fail` (5d99ed0) off the engine-reserved path — so `Plan::next`
+/// hands the driver a `Step::Dispatch` for each of them and a linear graph spends
+/// exactly one dispatch per node. Until that series the typed entry and the
+/// `respond`/`fail` terminals came back as `Step::Reserved` transitions the
+/// engine applied itself, which is what the earlier entry/terminal filter here
+/// subtracted.
 fn walk_dispatches(flow: &wamn_flow::Flow) -> u64 {
-    flow.nodes
-        .iter()
-        .filter(|node| {
-            node.entry_kind().is_none() && !matches!(node.node_type.as_str(), "respond" | "fail")
-        })
-        .count() as u64
+    flow.nodes.len() as u64
 }
 
 fn dispatch_passes(flow: &wamn_flow::Flow, iterations: u32, count: u64, p99_ns: u64) -> bool {
@@ -446,7 +451,7 @@ mod dispatch_cardinality_tests {
     use super::{DISPATCH_P99_NS, dispatch_passes, walk_dispatches};
 
     #[test]
-    fn typed_s3_verdict_requires_three_dispatches_per_walk() {
+    fn typed_s3_verdict_requires_a_dispatch_for_every_node_per_walk() {
         let flow = wamn_flow::Flow::from_json(
             r#"{
                 "schema-version":"0.1",
@@ -469,11 +474,13 @@ mod dispatch_cardinality_tests {
         )
         .expect("typed S3 fixture parses");
 
-        assert_eq!(walk_dispatches(&flow), 3);
-        assert!(dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS - 1));
-        assert!(!dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS - 1));
-        assert!(!dispatch_passes(&flow, 2, 4, DISPATCH_P99_NS - 1));
-        assert!(!dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS));
+        assert_eq!(walk_dispatches(&flow), 5);
+        assert!(dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS - 1));
+        assert!(!dispatch_passes(&flow, 2, 12, DISPATCH_P99_NS - 1));
+        // 3 per walk is the pre-wamn-ayq7 count (entry + respond subtracted); the
+        // verdict must reject it now that both dispatch through the node ABI.
+        assert!(!dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS - 1));
+        assert!(!dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS));
     }
 }
 
