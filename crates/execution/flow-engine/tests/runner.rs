@@ -665,7 +665,7 @@ fn concurrency_gate_enforces_per_flow_concurrency() {
 
 // ---- resume: branch-aware reconstruction from recorded steps --------------
 
-use wamn_runner::{Recorded, ResumeError, SeedError};
+use wamn_runner::{ApplyError, Recorded, ResumeError, SeedError};
 
 /// A 4-node linear flow a -> b -> c -> d.
 fn linear4() -> Flow {
@@ -1149,6 +1149,46 @@ fn resume_rejects_more_records_than_the_flow_walks() {
         .collect();
     let err = resumed(&plan, "r1", json!({}), &completed).unwrap_err();
     assert_eq!(err, ResumeError::Overrun { node: "e".into() });
+}
+
+/// wamn-cnot: a record can name exactly the node the flow dispatches and still
+/// be a transition the engine refuses — a legacy or corrupt `node_runs` row
+/// whose captured entry payload is no longer the run's admitted input. That is
+/// persisted DATA reaching a pure library, so it comes back typed. The healthy
+/// leg of the same history still resumes, proving the guard is not blanket.
+#[test]
+fn resume_refuses_a_recorded_emission_the_engine_cannot_apply() {
+    let f = flow(
+        r#"{"schema-version":"0.1","flow-id":"req","version":1,
+            "nodes":[{"id":"in","type":"request","config":{"input-schema":true}},
+                     {"id":"w","type":"echo"},
+                     {"id":"out","type":"respond","config":{"status":200}}],
+            "edges":[{"from":"in","to":"w"},{"from":"w","to":"out"}]}"#,
+    );
+    let plan = compile(&f).unwrap();
+    let input = json!({ "admitted": true });
+
+    // Healthy: the entry record carries the run's admitted input unchanged.
+    let healthy = [Recorded::new("in", "main", input.clone())];
+    let mut st = plan.resume("r1", input.clone(), &healthy).unwrap();
+    match plan.next(&mut st, 0) {
+        Step::Dispatch(d) => assert_eq!(d.node, "w"),
+        other => panic!("healthy history must resume at w, got {other:?}"),
+    }
+
+    // Corrupt: the same node, a payload the request contract forbids. Pre-fix
+    // this panicked inside `Plan::resume` ("recorded dispatch matches active
+    // state") instead of returning through the ResumeError channel.
+    let corrupt = [Recorded::new("in", "main", json!({ "tampered": true }))];
+    let err = plan.resume("r1", input, &corrupt).unwrap_err();
+    assert_eq!(
+        err,
+        ResumeError::Apply {
+            node: "in".into(),
+            error: ApplyError::InvalidRequestEmission,
+        }
+    );
+    assert!(err.to_string().contains("is not applicable"), "{err}",);
 }
 
 #[test]

@@ -417,6 +417,11 @@ pub enum ResumeError {
     UnexpectedWait { node: String },
     /// Error-port emissions are context-free by contract.
     ErrorContext { node: String },
+    /// The engine refused the recorded emission at the node it dispatched: the
+    /// history names the right node but is not a transition this flow can take
+    /// (a corrupt or legacy row — e.g. an entry record whose captured payload is
+    /// no longer the run's admitted input). Carries the node and the refusal.
+    Apply { node: String, error: ApplyError },
 }
 
 impl std::fmt::Display for ResumeError {
@@ -440,6 +445,12 @@ impl std::fmt::Display for ResumeError {
             }
             ResumeError::ErrorContext { node } => {
                 write!(f, "error-port record for node {node:?} carries context")
+            }
+            ResumeError::Apply { node, error } => {
+                write!(
+                    f,
+                    "recorded step for node {node:?} is not applicable: {error}"
+                )
             }
         }
     }
@@ -961,7 +972,9 @@ impl<'f> Plan<'f> {
     /// `completed` must be in the run's original dispatch order (persist a
     /// monotonic sequence). A record that names a different node than the flow
     /// dispatches is a [`ResumeError::Mismatch`] — a drift guard against a
-    /// corrupt history or a flow-version skew.
+    /// corrupt history or a flow-version skew; one that names the RIGHT node but
+    /// carries an emission the engine refuses is a [`ResumeError::Apply`]. Every
+    /// shape of corrupt or legacy history is a typed error, never a panic.
     pub fn resume(
         &self,
         run_id: impl Into<String>,
@@ -996,6 +1009,11 @@ impl<'f> Plan<'f> {
                         // keeps replay == live.
                         self.route_error(&mut state, &rec.node, rec.payload.clone());
                     } else {
+                        // Corrupt or legacy history is DATA, not a bug in this
+                        // library: a persisted row can name the node the flow
+                        // dispatches and still carry an emission the engine
+                        // refuses. Surface the refusal typed instead of
+                        // panicking inside a pure reducer.
                         self.apply(
                             &mut state,
                             &d,
@@ -1006,7 +1024,10 @@ impl<'f> Plan<'f> {
                             },
                             0,
                         )
-                        .expect("recorded dispatch matches active state");
+                        .map_err(|error| ResumeError::Apply {
+                            node: rec.node.clone(),
+                            error,
+                        })?;
                     }
                 }
                 Step::Reserved(step) => {
@@ -1016,8 +1037,14 @@ impl<'f> Plan<'f> {
                             dispatched: step.node().to_string(),
                         });
                     }
+                    // Structurally unreachable today (`step` is built from this
+                    // very state), but the fold stays total: a pure library
+                    // never panics on persisted input.
                     self.apply_reserved(&mut state, &step)
-                        .expect("reserved replay matches active state");
+                        .map_err(|error| ResumeError::Apply {
+                            node: rec.node.clone(),
+                            error,
+                        })?;
                 }
                 Step::Wait { node, .. } => return Err(ResumeError::UnexpectedWait { node }),
                 Step::Done(_) => {
