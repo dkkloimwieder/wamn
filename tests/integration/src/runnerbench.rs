@@ -284,6 +284,52 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
     )
 }
 
+/// Every `r.<column>` a run-next statement names (the run row, plus the queue row
+/// where the same builder renews a lease under that alias).
+#[cfg(test)]
+fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
+    let bytes = sql.as_bytes();
+    sql.match_indices("r.")
+        .filter(|(at, _)| {
+            *at == 0 || !(bytes[*at - 1].is_ascii_alphanumeric() || bytes[*at - 1] == b'_')
+        })
+        .map(|(at, _)| {
+            sql[at + 2..]
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<String>()
+        })
+        .filter(|column| !column.is_empty())
+        .collect()
+}
+
+/// wamn-thvs's derived drift check, shared so each gate names its OWN guard over
+/// the DDL it actually provisions (wamn-03a9): a gate that forks the stand-in again
+/// keeps its guard, instead of silently leaving the derived class behind.
+#[cfg(test)]
+pub(crate) fn assert_carries_every_run_next_column(gate: &str, ddl: &str) {
+    let mut missing: Vec<String> = Vec::new();
+    for sql in [
+        wamn_run_state::queue::claim_dispatch_sql(),
+        wamn_run_state::sql::select_run_dispatch_sql(),
+        wamn_run_state::transitions::begin_attempt_sql(),
+    ] {
+        let columns = run_row_columns(&sql);
+        assert!(
+            !columns.is_empty(),
+            "parser sanity: no run columns in {sql}"
+        );
+        missing.extend(columns.into_iter().filter(|column| !ddl.contains(column)));
+    }
+    missing.sort();
+    missing.dedup();
+    assert!(
+        missing.is_empty(),
+        "{gate} stand-in is missing run columns run-next projects \
+         (drifted from deploy/sql/run-state.sql): {missing:?}"
+    );
+}
+
 async fn provision(admin_url: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
@@ -1005,24 +1051,6 @@ mod tests {
         );
     }
 
-    /// Every `r.<column>` a run-next statement names (the run row, plus the
-    /// queue row where the same builder renews a lease under that alias).
-    fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
-        let bytes = sql.as_bytes();
-        sql.match_indices("r.")
-            .filter(|(at, _)| {
-                *at == 0 || !(bytes[*at - 1].is_ascii_alphanumeric() || bytes[*at - 1] == b'_')
-            })
-            .map(|(at, _)| {
-                sql[at + 2..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect::<String>()
-            })
-            .filter(|column| !column.is_empty())
-            .collect()
-    }
-
     /// wamn-thvs [GATE-DRIFT]: `runs` is defined in `deploy/sql/run-state.sql`,
     /// which the wamn-9mg8 `run-queue.sql` guard above cannot see — so the
     /// wamn-2jdm.11 lineage sweep left this SHARED stand-in a generation behind
@@ -1033,27 +1061,7 @@ mod tests {
     /// pattern), so the next run-state sweep cannot repeat it.
     #[test]
     fn runner_ddl_carries_every_run_column_run_next_names() {
-        let ddl = runner_ddl("wamn_run");
-        let mut missing: Vec<String> = Vec::new();
-        for sql in [
-            wamn_run_state::queue::claim_dispatch_sql(),
-            wamn_run_state::sql::select_run_dispatch_sql(),
-            wamn_run_state::transitions::begin_attempt_sql(),
-        ] {
-            let columns = run_row_columns(&sql);
-            assert!(
-                !columns.is_empty(),
-                "parser sanity: no run columns in {sql}"
-            );
-            missing.extend(columns.into_iter().filter(|column| !ddl.contains(column)));
-        }
-        missing.sort();
-        missing.dedup();
-        assert!(
-            missing.is_empty(),
-            "runnerbench stand-in is missing run columns run-next projects \
-             (drifted from deploy/sql/run-state.sql): {missing:?}"
-        );
+        assert_carries_every_run_next_column("runnerbench", &runner_ddl("wamn_run"));
     }
 
     #[test]

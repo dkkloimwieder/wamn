@@ -72,7 +72,8 @@ use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker}
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 /// The ephemeral schema that unions the guest's flow tables (flows / runs /
-/// node_runs / sink) with the 5.14 `run_queue`, provisioned via superuser.
+/// node_runs / sink) with the 5.14 `run_queue`, provisioned via superuser from
+/// the shared [`crate::runnerbench::runner_ddl`] stand-in.
 const SCHEMA: &str = "wamn_failover_bench";
 /// The single tenant + component identity the runner and the claimers share, so
 /// the guest's plugin session and the host's raw claim connections see each
@@ -149,122 +150,16 @@ pub struct FailoverBenchArgs {
 // Ephemeral schema: the flow tables (guest) + run_queue (claimers), unioned.
 // ---------------------------------------------------------------------------
 
-/// The union DDL: the flowrunner guest's flow tables (mirrors testhostbench's
-/// `template_ddl` / the s3 fixture — flows / flow_runs / sink / runs / node_runs)
-/// PLUS the 5.14 `run_queue`, all schema-qualified with the house tenant floor.
-/// `runs` carries the full status CHECK so the write-ahead `dispatched`, the guest's
-/// `running`/`completed`, and the janitor's `infrastructure-failure` are all
-/// validated; `run_queue` FK→`runs` ON DELETE CASCADE (a per-run reset cascades).
-fn failover_ddl(schema: &str) -> String {
-    format!(
-        "CREATE TABLE {schema}.flows (\
-            tenant_id text NOT NULL, flow_id text NOT NULL, version int NOT NULL, \
-            active boolean NOT NULL DEFAULT false, graph_json jsonb NOT NULL, \
-            PRIMARY KEY (tenant_id, flow_id, version));\
-         ALTER TABLE {schema}.flows ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flows FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flows_tenant ON {schema}.flows \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flows TO wamn_app;\
-         CREATE TABLE {schema}.flow_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, step_seq int NOT NULL DEFAULT -1, \
-            status text NOT NULL DEFAULT 'running', state_json jsonb, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.flow_runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.flow_runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY flow_runs_tenant ON {schema}.flow_runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.flow_runs TO wamn_app;\
-         CREATE TABLE {schema}.sink (\
-            tenant_id text NOT NULL, run_id text NOT NULL, step int NOT NULL, \
-            payload text NOT NULL, \
-            CONSTRAINT sink_idem UNIQUE (tenant_id, run_id, step));\
-         ALTER TABLE {schema}.sink ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.sink FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY sink_tenant ON {schema}.sink \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.sink TO wamn_app;\
-         CREATE TABLE {schema}.runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            flow_version int NOT NULL, \
-            status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
-            updated_at timestamptz NOT NULL DEFAULT now(), \
-            idempotency_key text, replay_of text, root_run_id text, \
-            fail_kind text, fail_node text, fail_reason text, \
-            PRIMARY KEY (tenant_id, run_id));\
-         ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY runs_tenant ON {schema}.runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
-         CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
-            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY node_runs_tenant ON {schema}.node_runs \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
-         CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' \
-              CHECK (partition_policy IN ('blocking','leapfrog')), \
-            priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
-            lease_owner text, lease_expires_at timestamptz, \
-            lease_generation bigint NOT NULL DEFAULT 0, \
-            attempts int NOT NULL DEFAULT 0, max_attempts int NOT NULL DEFAULT 20, \
-            enqueued_at timestamptz NOT NULL DEFAULT now(), \
-            stream_seq bigint NOT NULL DEFAULT 0, \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
-         ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_queue_tenant ON {schema}.run_queue \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.partition_owner (\
-            tenant_id text NOT NULL, partition_key text NOT NULL, \
-            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
-            acquired_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, partition_key));\
-         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;\
-         CREATE TABLE {schema}.run_dead_letters (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text NOT NULL, \
-            flow_id text NOT NULL, reason text NOT NULL, \
-            failed_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, run_id), \
-            FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         ALTER TABLE {schema}.run_dead_letters ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_dead_letters FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_dead_letters_tenant ON {schema}.run_dead_letters \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT ON {schema}.run_dead_letters TO wamn_app;"
-    )
-}
-
+/// The union DDL failoverbench provisions is the SHARED run-state stand-in,
+/// [`crate::runnerbench::runner_ddl`] (wamn-03a9). failoverbench used to carry a
+/// private near-copy of it, which the wamn-2jdm.11 lineage sweep and the wamn-thvs
+/// repair both missed — so `--mode claim` died `42703: column r.event_root_run_id
+/// does not exist` while every gate on the shared stand-in was green. The two
+/// copies differed only in dead weight: a `flow_runs` table nothing reads (the s3
+/// fixture retains it unused, see testhostbench's `template_ddl`) and the shared
+/// `sink`'s extra `dispatch_seq` witness column, which is inert for a gate that
+/// never reads it. One DDL of record now carries both gates, and the drift guards
+/// below run against the DDL failoverbench actually provisions.
 async fn provision(admin_url: &str) -> anyhow::Result<()> {
     let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
         .await
@@ -278,7 +173,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .await
             .context("create ephemeral schema")?;
         client
-            .batch_execute(&failover_ddl(SCHEMA))
+            .batch_execute(&crate::runnerbench::runner_ddl(SCHEMA))
             .await
             .context("apply failover DDL")?;
         anyhow::Ok(())
@@ -1625,7 +1520,7 @@ async fn partition_failover_phase(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::runnerbench::{assert_carries_every_run_next_column, runner_ddl};
     use crate::schema_drift::{Need, assert_stand_in};
 
     /// wamn-9mg8 [GATE-DRIFT]: failoverbench's `run_queue` stand-in vs the schema
@@ -1636,7 +1531,7 @@ mod tests {
     /// Required.
     #[test]
     fn failoverbench_stand_in_tracks_run_queue_schema_of_record() {
-        let ddl = failover_ddl("wamn_run");
+        let ddl = runner_ddl("wamn_run");
         assert_stand_in(
             "failoverbench",
             &ddl,
@@ -1647,5 +1542,18 @@ mod tests {
             ],
         );
         assert!(ddl.contains("lease_generation bigint NOT NULL DEFAULT 0"));
+    }
+
+    /// wamn-03a9 [GATE-DRIFT]: the sibling of the guard above for `runs`, which
+    /// lives in `deploy/sql/run-state.sql` and is therefore invisible to the
+    /// `run-queue.sql` check. failoverbench's own copy of the stand-in predated
+    /// the wamn-2jdm.11 lineage sweep, so `--mode claim` died `42703: column
+    /// r.event_root_run_id does not exist` — and wamn-thvs's derived guard, which
+    /// covered every OTHER gate, could not see it. failoverbench now provisions the
+    /// shared stand-in and names its own guard over it, so a future fork keeps the
+    /// check instead of escaping it.
+    #[test]
+    fn failoverbench_stand_in_carries_every_run_column_run_next_names() {
+        assert_carries_every_run_next_column("failoverbench", &runner_ddl("wamn_run"));
     }
 }
