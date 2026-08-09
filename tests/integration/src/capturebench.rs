@@ -80,10 +80,12 @@ async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
         .await
         .context("admin connect")?;
     let conn_task = tokio::spawn(conn);
-    let r = client
-        .batch_execute(sql)
-        .await
-        .map_err(|e| anyhow::anyhow!("admin exec: {e}"));
+    // `.context`, not `anyhow!("{e}")`: tokio_postgres::Error's Display is only
+    // its kind ("db error"); the server's message — e.g. `role
+    // "wamn_scenario_author" does not exist` — hangs off `source()`. Formatting
+    // the error away collapsed every provisioning failure to "admin exec: db
+    // error"; chaining keeps the cause in the `Caused by:` report.
+    let r = client.batch_execute(sql).await.context("admin exec");
     drop(client);
     let _ = conn_task.await;
     r
