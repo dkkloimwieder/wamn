@@ -87,13 +87,14 @@ pub fn check_registration_orphans(
 // The 11.2 suite-orphan guard (test cases as catalog data, wamn-828).
 //
 // A definition copy (copy-project-env --include definition) carries a tenant's
-// test suites, each pinning a concrete `(flow_id, flow_version)`. The copy also
-// installs the src's flow registrations; a suite whose pinned version is present
-// in NEITHER the src registry (what the copy installs) NOR the dst's existing
-// flows would land as an orphan — the `test_suites → flows` FK ON DELETE CASCADE
-// would reject the insert with a bare FK error. This is the PURE decision that
-// refuses the copy FIRST, naming the orphaned suites, exactly as the D24
-// registration guard above refuses an orphaning publish before any mutation.
+// test suites, each pinning a concrete `(flow_id, flow_version)`. The copy does
+// NOT install the mutable flows registry — immutable release publication is the
+// authoritative flow path (5wd1.46) — so a suite whose pinned version is absent
+// from the DESTINATION's existing flows would land as an orphan: the
+// `test_suites → flows` FK ON DELETE CASCADE would reject the insert with a bare
+// FK error. This is the PURE decision that refuses the copy FIRST, naming the
+// orphaned suites, exactly as the D24 registration guard above refuses an
+// orphaning publish before any mutation.
 // ---------------------------------------------------------------------------
 
 /// One suite the guard inspects: its id, owning tenant, and the concrete flow
@@ -122,7 +123,7 @@ impl std::fmt::Display for OrphaningSuiteCopy {
         write!(
             f,
             "refusing this definition copy: {} test suite(s) pin a flow version the destination \
-             will not have — the flow version must be copied (or already present) first:",
+             does not have — the flow version must already be present on the destination:",
             self.orphans.len()
         )?;
         for o in &self.orphans {
@@ -139,10 +140,10 @@ impl std::fmt::Display for OrphaningSuiteCopy {
 impl std::error::Error for OrphaningSuiteCopy {}
 
 /// The pure 11.2 decision: refuse if any `referenced` suite pins a
-/// `(flow_id, flow_version)` absent from `present` (the flow versions the copy
-/// will install plus the dst's existing ones), naming every orphan in input
-/// order. `Ok(())` when the destination will hold every pinned version (or there
-/// are no suites).
+/// `(flow_id, flow_version)` absent from `present` — the flow versions the
+/// DESTINATION already holds, and only those, since the copy installs no flows
+/// of its own — naming every orphan in input order. `Ok(())` when the
+/// destination already holds every pinned version (or there are no suites).
 pub fn check_suite_orphans(
     present: &BTreeSet<(String, i32)>,
     referenced: &[SuiteRef],

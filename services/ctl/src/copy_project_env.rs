@@ -487,9 +487,9 @@ async fn exec_copy_definition(
 
     // 0. The 11.2 suite-orphan guard — BEFORE any mutation (the D24 shape). A
     //    definition copy carries the tenant's test suites (block 5); each pins a
-    //    concrete flow version. Refuse if a suite pins a version present in
-    //    destination's legacy test-plane registry — the `test_suites → flows`
-    //    FK would otherwise reject the
+    //    concrete flow version. Refuse if a suite pins a version ABSENT from the
+    //    destination's legacy test-plane registry — this copy installs no flows
+    //    of its own, so the `test_suites → flows` FK would otherwise reject the
     //    insert with a bare error mid-copy. src has no test-suite table ⇒ clean
     //    pass. Runs on the validated flow schema.
     guard_suite_orphans(&src_client, &dst_client, &ctx.flow_schema, tenant).await?;
@@ -1006,9 +1006,10 @@ async fn exec_copy_definition(
     // 5. Flow test suites + cases (11.2): copy the tenant's suite/case rows
     //    verbatim (per-row INSERT ... ON CONFLICT DO UPDATE, the flows-block
     //    shape). Both are version-bound: each row pins `(flow_id, flow_version)`
-    //    and FKs into the flows copied in block 2 — so the target ALWAYS exists
-    //    by the time block 5 runs (and the block-0 guard has already refused any
-    //    orphan). Suites BEFORE cases: `test_cases → test_suites` FK. Superuser
+    //    and FKs into the destination's OWN flows registry, which this copy never
+    //    writes (immutable release publication is authoritative) — the block-0
+    //    guard has already refused any suite whose FK target is absent there.
+    //    Suites BEFORE cases: `test_cases → test_suites` FK. Superuser
     //    bypasses the tenant-FORCE RLS; the tenant filter scopes the read.
     let src_has_suites: Option<String> = src_client
         .query_one(

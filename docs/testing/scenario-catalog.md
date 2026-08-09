@@ -1,9 +1,10 @@
 # Scenario catalog — persisted suites and cases
 
 A flow's test cases live as **catalog data**, stored in Postgres and versioned
-WITH the flow they test. A flow version and its test suite promote together
-between environments through the same `copy-project-env --include definition`
-path that carries catalogs, flows, RLS policies, and event registrations.
+WITH the flow they test. A test suite promotes between environments through the
+same `copy-project-env --include definition` path that carries catalogs,
+immutable release artifacts, RLS policies, and event registrations — onto a
+destination that already holds the flow version the suite pins.
 
 ## Storage (`deploy/sql/flow-tests.sql`)
 
@@ -46,17 +47,22 @@ The definition copy (`services/ctl/src/copy_project_env.rs`,
 FK-significant:
 
 1. applied catalogs (2.5 migrate engine)
-2. **flows** (verbatim row copy) ← the FK target for suites
+2. immutable release artifacts + membership
 3. RLS policy rows (+ re-compile/apply)
 4. event registrations (verbatim)
 5. **test suites, then test cases** (verbatim, `INSERT … ON CONFLICT DO UPDATE`)
 
-Because flows are installed in block 2, a suite copied in block 5 always finds
-its `(flow_id, flow_version)` present on the destination. Before any of this, a
-**suite-orphan guard** (block 0, the D24 shape) refuses the copy — naming the
-orphaned suites, mutating nothing — if a carried suite pins a flow version the
-destination will hold in NEITHER the src flow registry (what block 2 installs)
-NOR the dst's existing flows. The pure decision is
+The mutable `wamn_run.flows` registry — the FK target for suites — is **not
+copied**. Immutable release publication is the authoritative flow-installation
+path (5wd1.46), so the definition copy never writes `flows.active`, and the
+destination's own flow registrations are a **precondition** of a suite-carrying
+copy rather than something the copy provides.
+
+Accordingly, the **suite-orphan guard** (block 0, the D24 shape) counts
+DESTINATION-present versions only: before any mutation it refuses the copy —
+naming the orphaned suites, mutating nothing — if a carried suite pins a flow
+version the destination does not already hold. A suite promotes only onto a
+version already present on the destination. The pure decision is
 `wamn_schema_control::check_suite_orphans`; the driver read builders are
 `wamn_schema_control::sql::select_suites_for_tenant_sql` /
 `select_flow_versions_for_tenant_sql`. `verify` compares suite/case row counts
@@ -64,6 +70,10 @@ between src and dst.
 
 The FK is the structural backstop; the guard converts what would be a bare
 mid-copy FK error into a clean, named refusal before any mutation.
+
+Suites are still keyed on the legacy test-plane `flows` registry rather than on
+the release tables; re-keying them onto the immutable release is tracked as
+`wamn-l2mi`.
 
 ## The envelope (`crates/scenarios/model`)
 
@@ -155,10 +165,12 @@ capture.
 ## Gates
 
 - **`services/ctl/tests/suite_promote_live.rs`** — drives the REAL
-  `copy-project-env --include definition` across two project-env databases:
-  promote (flow v1 + suite/cases arrive version-bound, counts match), RLS (a
-  second tenant sees zero suites), FK cascade, and the guard refusal. Recipe:
-  `docs/build-and-test.md` [11.2 / wamn-828].
+  `copy-project-env --include definition` across two project-env databases, with
+  the destination pre-holding flow v1: promote (suite/cases arrive version-bound,
+  counts match), RLS (a second tenant sees zero suites), FK cascade, and the
+  guard refusal of a suite pinned to a version the destination lacks — proven to
+  mutate nothing as a before/after row-count delta over every relation the copy
+  writes. Recipe: `docs/build-and-test.md` [11.2 / wamn-828].
 - **`wamn-gates suiteproof`** — the in-cluster gate-of-record candidate: the same
   arc in an ephemeral schema against `WAMN_PG_URL` / `WAMN_PG_ADMIN_URL`
   (`deploy/gates/suiteproof-job.yaml`).

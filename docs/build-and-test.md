@@ -2130,10 +2130,13 @@ docker rm -f wave3-pg-rmxa
 Docs: docs/testing/scenario-catalog.md. A flow's test suites/cases live as catalog data
 (`deploy/sql/flow-tests.sql`: `wamn_run.test_suites` + `wamn_run.test_cases`,
 both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
-`wamn_run.flows` ON DELETE CASCADE. They promote together through
-`copy-project-env --include definition` (block 5, after flows in block 2);
+`wamn_run.flows` ON DELETE CASCADE. Suites copy through
+`copy-project-env --include definition` (block 5); the mutable `wamn_run.flows`
+registry is NOT copied (immutable release is authoritative, 5wd1.46), so a
+destination flow registration is a precondition and
 `wamn-schema-control::check_suite_orphans` refuses FIRST (D24 shape) a copy carrying a
-suite pinned to a version the destination will not hold. The suite/case envelope
+suite pinned to a version the destination does not already hold (re-keying
+suites onto release identity is wamn-l2mi). The suite/case envelope
 and validation live in `wamn-scenario-model`; `wamn-scenario-catalog` owns the
 SQL queries, ordering, compatibility translations, and pin-from-run transform.
 reconcile-run-plane manages the new tables (they are in `RUN_PLANE_FILES`).
@@ -2143,8 +2146,9 @@ cargo test -p wamn-scenario-model -p wamn-scenario-catalog -p wamn-schema-contro
 cargo test -p wamn-ctl                                    # driver units
 cargo clippy -p wamn-scenario-catalog -p wamn-schema-control -p wamn-ctl -p wamn-gates --all-targets
 # Live promote gate (throwaway PG): drives the REAL copy-project-env verb across
-# two project-env databases — flow v1 + its suite/cases promote version-bound
-# (matching counts), a foreign tenant sees ZERO suites (RLS), dropping flow v1
+# two project-env databases — suite/cases copy onto a dst that pre-registers
+# flow v1 (dst registration is a precondition; the mutable flows registry is
+# not copied), a foreign tenant sees ZERO suites (RLS), dropping flow v1
 # CASCADES its suite (FK), and an orphan-pinned suite copy is REFUSED. Applies
 # deploy/sql/postgres-init.sql (dedicated DB `wamn`); URLs target /wamn:
 docker run -d --name lane-828-pg -p 5465:5432 -e POSTGRES_PASSWORD=postgres \

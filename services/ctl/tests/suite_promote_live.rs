@@ -6,13 +6,18 @@
 //! `copy-project-env --include definition` verb across two freshly-created
 //! project-env DATABASES, proving:
 //!
-//!   * PROMOTE: a flow v1 AND its suite + cases arrive on the dst, version-bound
-//!     (`flow_version = 1`) with matching counts;
+//!   * PROMOTE: a suite + its cases arrive on a destination that ALREADY holds
+//!     the pinned flow version, version-bound (`flow_version = 1`) with matching
+//!     counts. The destination's flow registration is a PRECONDITION, not
+//!     something the copy installs: immutable release publication owns flow
+//!     installation (5wd1.46), so the definition copy never writes the mutable
+//!     `flows` registry;
 //!   * RLS: a second tenant's claim sees ZERO suite rows on the dst;
 //!   * FK (version binding): deleting flow v1 on the dst CASCADES its suite +
 //!     cases (the `test_suites/test_cases → flows` ON DELETE CASCADE);
 //!   * GUARD: a copy carrying a suite pinned to a flow version the destination
-//!     will not hold is REFUSED, naming the orphan, mutating nothing.
+//!     does not hold is REFUSED, naming only that orphan, and the refusal leaves
+//!     every definition-copy target on the dst at its pre-copy row count.
 //!
 //! Hermetic: each scenario drops+recreates its two databases, so a re-run starts
 //! clean and teardown leaves nothing behind.
@@ -149,12 +154,29 @@ async fn drop_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     let _ = task.await;
 }
 
-/// The catalog metadata schema is the copy precondition on BOTH databases.
-async fn apply_catalog_schema(url: &str) {
+/// Provision the DST: catalog metadata + run-plane DDL, and PRE-REGISTER flow
+/// v1 (the `publish_gate_live.rs::seed_dst` shape). Holding the pinned flow
+/// version is the destination-side PRECONDITION of a suite-carrying definition
+/// copy: immutable release publication is the authoritative flow path (5wd1.46),
+/// so the copy never installs the mutable `wamn_run.flows` registry and a suite
+/// promotes only onto a version the destination already has.
+async fn provision_dst(url: &str) {
     let (c, task) = connect(url).await;
     c.batch_execute(CATALOG_SCHEMA)
         .await
-        .expect("apply catalog-schema.sql");
+        .expect("apply catalog-schema.sql on dst");
+    for ddl in [RUN_STATE, FLOWS, FLOW_TESTS] {
+        c.batch_execute(ddl)
+            .await
+            .expect("apply run-plane DDL on dst");
+    }
+    c.execute(
+        "INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) \
+         VALUES ($1, $2, 1, true, '{}'::jsonb)",
+        &[&TENANT, &FLOW_ID],
+    )
+    .await
+    .expect("pre-register flow v1 on dst");
     drop(c);
     let _ = task.await;
 }
@@ -229,6 +251,35 @@ async fn count(c: &Client, sql: &str) -> i64 {
     c.query_one(sql, &[]).await.expect("count").get(0)
 }
 
+/// Every destination relation a `--include definition` copy writes, one per
+/// block: catalogs + heads (1), the immutable release slice (2a), RLS policy
+/// rows (3), event registrations (4), suites + cases (5) — plus `flows`, which
+/// the copy deliberately does NOT write. Counted before and after a refused
+/// copy: the guard's promise is that a refusal moves none of them.
+const DEFINITION_COPY_TARGETS: [&str; 10] = [
+    "catalog.catalogs",
+    "catalog.catalog_heads",
+    "catalog.flow_artifacts",
+    "catalog.release_manifests",
+    "catalog.release_flows",
+    "catalog.rls_policies",
+    "catalog.event_registrations",
+    "wamn_run.flows",
+    "wamn_run.test_suites",
+    "wamn_run.test_cases",
+];
+
+async fn definition_copy_counts(c: &Client) -> Vec<(&'static str, i64)> {
+    let mut counts = Vec::new();
+    for relation in DEFINITION_COPY_TARGETS {
+        counts.push((
+            relation,
+            count(c, &format!("SELECT count(*) FROM {relation}")).await,
+        ));
+    }
+    counts
+}
+
 /// The suite rows a role sees under `tenant` on the dst (RLS via SET ROLE
 /// wamn_app — non-superuser, non-BYPASSRLS, so the FORCE-RLS policy applies).
 async fn suites_seen_as_app(c: &Client, tenant: &str) -> i64 {
@@ -266,23 +317,14 @@ async fn promote_scenario(admin_url: &str) {
     reset_databases(admin_url, &src_db, &dst_db).await;
     seed_registry(admin_url).await;
     provision_src(&swap_db(admin_url, &src_db)).await;
-    apply_catalog_schema(&swap_db(admin_url, &dst_db)).await;
+    provision_dst(&swap_db(admin_url, &dst_db)).await;
 
     copy_project_env::run(copy_args(admin_url))
         .await
         .expect("definition copy src -> dst");
 
-    // --- PROMOTE: flow v1 + its suite/cases arrived, version-bound. ---
+    // --- PROMOTE: the suite/cases arrived on the pre-held flow v1, version-bound. ---
     let (dst, task) = connect(&swap_db(admin_url, &dst_db)).await;
-    assert_eq!(
-        count(
-            &dst,
-            "SELECT count(*) FROM wamn_run.flows WHERE flow_id = 'escalate-holds' AND version = 1"
-        )
-        .await,
-        1,
-        "flow v1 promoted"
-    );
     assert_eq!(
         count(&dst, "SELECT count(*) FROM wamn_run.test_suites").await,
         1,
@@ -358,15 +400,17 @@ async fn promote_scenario(admin_url: &str) {
     drop_databases(admin_url, &src_db, &dst_db).await;
 }
 
-/// GUARD: a src carrying a suite pinned to a version the copy will not install
-/// is refused before any mutation.
+/// GUARD: a src carrying a suite pinned to a version the destination does not
+/// hold is refused before any mutation. The dst is a real provisioned project-env
+/// holding flow v1, so the ONLY orphan is the drifted v99 pin — and "mutating
+/// nothing" is proven as a row-count delta, not as an absent table.
 async fn guard_scenario(admin_url: &str) {
     let src_db = project_env_database_name(ORG, PROJECT, SRC_ENV);
     let dst_db = project_env_database_name(ORG, PROJECT, DST_ENV);
     reset_databases(admin_url, &src_db, &dst_db).await;
     seed_registry(admin_url).await;
     provision_src(&swap_db(admin_url, &src_db)).await;
-    apply_catalog_schema(&swap_db(admin_url, &dst_db)).await;
+    provision_dst(&swap_db(admin_url, &dst_db)).await;
 
     // Seed a DRIFTED orphan suite: it pins v99, which no flow row backs. The FK
     // forbids this, so bypass it with session_replication_role (superuser only)
@@ -383,6 +427,10 @@ async fn guard_scenario(admin_url: &str) {
     drop(src);
     let _ = task.await;
 
+    // The pre-copy state of every relation the definition copy writes.
+    let (dst, dtask) = connect(&swap_db(admin_url, &dst_db)).await;
+    let before = definition_copy_counts(&dst).await;
+
     let err = copy_project_env::run(copy_args(admin_url))
         .await
         .expect_err("an orphaning definition copy must be refused");
@@ -390,18 +438,31 @@ async fn guard_scenario(admin_url: &str) {
     for needle in ["orphan", "escalate-holds", "99"] {
         assert!(msg.contains(needle), "refusal names {needle:?}: {msg}");
     }
-
-    // NOTHING mutated: the guard fires before any block, so the dst never got the
-    // flow-tests tables at all (nor the flow registry).
-    let (dst, dtask) = connect(&swap_db(admin_url, &dst_db)).await;
-    let has_suites: Option<String> = dst
-        .query_one("SELECT to_regclass('wamn_run.test_suites')::text", &[])
-        .await
-        .expect("probe dst")
-        .get(0);
     assert!(
-        has_suites.is_none(),
-        "the refused copy created nothing on the dst"
+        !msg.contains("smoke"),
+        "the suite whose pinned version the dst holds is not named: {msg}"
+    );
+
+    // NOTHING mutated. The dst is provisioned, so this can no longer be "the
+    // tables do not exist": it is a DELTA — every definition-copy target still
+    // holds exactly the rows it held before the refusal.
+    let after = definition_copy_counts(&dst).await;
+    assert_eq!(
+        after, before,
+        "the refused copy wrote no new rows to the dst"
+    );
+    // Sentinel, scoped to the one row a guard-less copy would have committed:
+    // 'smoke' pins v1, which the dst HOLDS, so block 5 would have inserted it
+    // (autocommit) before the FK rejected the v99 orphan. Its absence is what
+    // proves the refusal happened FIRST rather than part-way through.
+    assert_eq!(
+        count(
+            &dst,
+            "SELECT count(*) FROM wamn_run.test_suites WHERE suite_id = 'smoke'"
+        )
+        .await,
+        0,
+        "the refused copy landed no suite row on the dst"
     );
     drop(dst);
     let _ = dtask.await;
