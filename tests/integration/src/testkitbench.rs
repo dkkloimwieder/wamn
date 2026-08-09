@@ -13,7 +13,10 @@
 //!     [`ExecutionHost::instantiate`]) exactly as `testhostbench`'s runworker phase
 //!     does, then captures the run outcome (from the
 //!     [`DrainReport`](wamn_execution_host::DrainReport)), the egress
-//!     log, and tenant-scoped application DB reads.
+//!     log, and tenant-scoped application DB reads. Its graph comes from a seeded
+//!     IMMUTABLE catalog release (`seed_release`) with the run release-pinned and
+//!     carrying the trusted principal (`pin_run_to_release`) — the only lineage
+//!     `flowrunner` resolves.
 //!
 //! Every captured fact bundle is folded through [`wamn_scenario_model::evaluate`] and
 //! each [`AssertionResult`](wamn_scenario_model::AssertionResult) becomes a
@@ -25,19 +28,24 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use tokio_postgres::NoTls;
+use serde_json::json;
+use tokio_postgres::{Client, NoTls};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
+use wamn_catalog::{Artifact, NodeImplementation};
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
+use wamn_flow::Flow;
 use wamn_gate_harness::{check, scope_session};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
+use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
@@ -63,6 +71,17 @@ const TEST_SEED: u64 = 0x7492_5EED_5EED_7492;
 const RW_TENANT: &str = "tk-rw-tenant";
 const RW_OWNER: &str = "tk-runworker";
 const RW_SCHEMA: &str = "tk_runworker";
+
+/// The immutable catalog release the flow-level run is pinned to. `flowrunner`
+/// resolves a release-lineage graph ONLY through `catalog.release_flows` ->
+/// `release_manifests` -> `flow_artifacts` (its `PINNED_ARTIFACT_SQL`), so the
+/// release IS this leg's flow fixture.
+const RW_CATALOG_ID: &str = "testkitbench";
+const RW_CATALOG_VERSION: i32 = 1;
+const RW_ENVIRONMENT: &str = "testkitbench";
+
+/// The canonical catalog storage DDL the release is published into.
+const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 #[derive(Debug, Args)]
 pub struct TestKitBenchArgs {
@@ -442,6 +461,248 @@ fn flow_case_ddl(schema: &str) -> String {
     )
 }
 
+/// The flow-level fixture graph: `request -> http-call -> pg-write -> respond`,
+/// the poc-s6 shape the checked-in case judges (one admitted egress call to the
+/// loopback echo, one `sink` row, a completed run).
+///
+/// This leg owns its graph rather than reusing `flowbench::flow_json_s6` because
+/// that shared S3/S6 benchmark fixture is NOT publishable: its `respond` node
+/// carries no `status` (`invalid-respond-config`) and its `delay` sits inside the
+/// request/respond region (`delay-before-release`). Its `delay` is configured to 0
+/// here anyway — it drove straight through and no assertion named it — while
+/// other gates depend on that node to prove parking, so the fixture stays as it
+/// is and this leg publishes a graph a real release could carry. `authority` is a
+/// locally built `127.0.0.1:<port>`, so it needs no escaping.
+fn poc_s6_flow_json(authority: &str) -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
+            "allowed-hosts":["{authority}"],
+            "nodes":[
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
+              {{"id":"h","type":"http-call","config":{{"url":"http://{authority}/echo"}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
+            ],
+            "edges":[{{"from":"in","to":"h"}},{{"from":"h","to":"w"}},
+                     {{"from":"w","to":"out"}}]}}"#
+    )
+}
+
+/// The pinned interfaces for the poc-s6 graph, ordered by node type as the
+/// artifact requires. Every fixture node type emits on `main` only; the http call
+/// and the pg write are effectful, so they default closed to never-replay and the
+/// run's effect path demands the trusted principal [`pin_run_to_release`] stamps.
+fn s6_implementations() -> Vec<NodeImplementation> {
+    [
+        ("http-call", CapabilityClass::Http),
+        ("pg-write", CapabilityClass::Postgres),
+        ("request", CapabilityClass::Pure),
+        ("respond", CapabilityClass::Pure),
+    ]
+    .into_iter()
+    .map(|(node_type, capability)| {
+        let recovery = if capability == CapabilityClass::Pure {
+            ExecutableRecoveryContract::pure()
+        } else {
+            ExecutableRecoveryContract::effectful(false)
+        };
+        NodeImplementation::platform(
+            ResolvedNodeInterface::new(
+                node_type,
+                "wamn:node/node@0.1.0",
+                vec!["main".to_string()],
+                vec![capability],
+                Vec::new(),
+            ),
+            recovery,
+        )
+    })
+    .collect()
+}
+
+/// A unique throwaway database for one flow phase.
+fn proof_database_name() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock is after the Unix epoch")
+        .as_nanos();
+    format!("wamn_testkitbench_{}_{}", std::process::id(), nanos)
+}
+
+/// Repoint a PostgreSQL URL at `database`, preserving any query string.
+fn database_url(url: &str, database: &str) -> anyhow::Result<String> {
+    let (prefix, tail) = url
+        .rsplit_once('/')
+        .context("PostgreSQL URL must contain a database path")?;
+    let query = tail
+        .find('?')
+        .map(|index| &tail[index..])
+        .unwrap_or_default();
+    Ok(format!("{prefix}/{database}{query}"))
+}
+
+/// Run one administrative statement on its own short-lived superuser session:
+/// `CREATE`/`DROP DATABASE` cannot run inside a transaction, nor on a session
+/// connected to the database being dropped.
+async fn admin_execute(admin_url: &str, sql: &str) -> anyhow::Result<()> {
+    let (client, connection) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect for the throwaway flow database")?;
+    let task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let result = client.batch_execute(sql).await;
+    drop(client);
+    let _ = task.await;
+    result.with_context(|| format!("admin statement failed: {sql}"))
+}
+
+/// Lay down the catalog store and publish `flow_json` as the single member of an
+/// immutable catalog release.
+///
+/// `flowrunner` resolves a release-lineage run's graph ONLY through
+/// `catalog.release_flows` -> `release_manifests` -> `flow_artifacts`, and admits
+/// a member only when the manifest entry and the stored artifact agree on the
+/// artifact hash (`PINNED_ARTIFACT_SQL`). The mutable `{schema}.flows` head this
+/// leg used to seed is read by nothing and is dead by product contract.
+///
+/// All four rows land in ONE transaction: `release_flows` carries a foreign key to
+/// its manifest, so the manifest must be inserted first, and the membership
+/// coherence trigger that reconciles the two is `DEFERRABLE INITIALLY DEFERRED` —
+/// it is satisfied only at commit, with the whole release present. This runs on
+/// its own superuser session (the provisioner lends out a shared `&Client`, which
+/// cannot open a transaction).
+async fn seed_release(admin_url: &str, flow_json: &str) -> anyhow::Result<()> {
+    let flow = Flow::from_json(flow_json)
+        .map_err(|error| anyhow::anyhow!("parse the poc-s6 fixture graph: {error}"))?;
+    let artifact = Artifact::new(RW_TENANT, &flow, s6_implementations())
+        .context("build the immutable poc-s6 artifact")?;
+    let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
+    let graph_json =
+        String::from_utf8(flow.canonical_bytes()).expect("canonical flow graph is UTF-8");
+    let interface_bundle_json =
+        String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
+            .expect("canonical interface bundle is UTF-8");
+    let occurrence_recovery_json = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
+        .expect("canonical occurrence recovery selections are UTF-8");
+    let component_digests = serde_json::to_value(artifact.supplied_components())?;
+    let members = json!([{
+        "flow-id": flow.flow_id,
+        "flow-version": 1,
+        "artifact-hash": artifact_hash,
+    }]);
+
+    let (mut client, connection) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin connect to publish the flow release")?;
+    let connection_task = tokio::spawn(async move {
+        let _ = connection.await;
+    });
+    let result = async {
+        client
+            .batch_execute(CATALOG_DDL)
+            .await
+            .context("apply the canonical catalog storage DDL")?;
+        let tx = client.transaction().await?;
+        tx.execute(
+            "INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state,document) \
+             VALUES ($1,$2,$3,$4,'0.1','applied','{}')",
+            &[
+                &RW_TENANT,
+                &RW_CATALOG_ID,
+                &RW_CATALOG_VERSION,
+                &RW_ENVIRONMENT,
+            ],
+        )
+        .await
+        .context("seed the release's catalog header")?;
+        tx.execute(
+            "INSERT INTO catalog.flow_artifacts \
+               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
+                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
+                occurrence_recovery_json,occurrence_recovery_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
+            &[
+                &RW_TENANT,
+                &flow.flow_id,
+                &graph_json,
+                &artifact.graph_hash(),
+                &artifact_hash,
+                &interface_bundle_json,
+                &artifact.interface_bundle().hash(),
+                &component_digests,
+                &occurrence_recovery_json,
+                &artifact.occurrence_recovery_hash(),
+            ],
+        )
+        .await
+        .context("publish the poc-s6 flow artifact")?;
+        tx.execute(
+            "INSERT INTO catalog.release_manifests \
+               (tenant_id,catalog_id,catalog_version,members_json) VALUES ($1,$2,$3,$4)",
+            &[&RW_TENANT, &RW_CATALOG_ID, &RW_CATALOG_VERSION, &members],
+        )
+        .await
+        .context("publish the release manifest")?;
+        tx.execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) VALUES ($1,$2,$3,$4,1)",
+            &[
+                &RW_TENANT,
+                &RW_CATALOG_ID,
+                &RW_CATALOG_VERSION,
+                &flow.flow_id,
+            ],
+        )
+        .await
+        .context("register the release member")?;
+        tx.commit()
+            .await
+            .context("commit the immutable flow release")?;
+        println!(
+            "flow release: {RW_CATALOG_ID}@{RW_CATALOG_VERSION} pins poc-s6 v1 {artifact_hash}"
+        );
+        anyhow::Ok(())
+    }
+    .await;
+    drop(client);
+    let _ = connection_task.await;
+    result
+}
+
+/// Pin the staged run to that release AND stamp the trusted invocation context
+/// admission would have written (wamn-wddi): the effect path re-reads the
+/// principal's `artifact-digest` off the run row and refuses a run whose digest is
+/// absent or disagrees with the published member. The digest is sourced FROM the
+/// seeded release member itself, so the pin and the principal cannot disagree.
+async fn pin_run_to_release(admin: &Client, run_id: &str) -> anyhow::Result<()> {
+    let catalog_version = i64::from(RW_CATALOG_VERSION);
+    let pinned = admin
+        .execute(
+            "UPDATE runs AS r \
+                SET catalog_id = $2, catalog_version = $3, environment = $4, \
+                    invocation_context = jsonb_build_object( \
+                      'version', 1, \
+                      'principal', jsonb_build_object( \
+                        'tenant-id', r.tenant_id, 'environment', $4::text, \
+                        'catalog-id', $2::text, 'catalog-version', $3::bigint, \
+                        'run-id', r.run_id, 'flow-id', r.flow_id, \
+                        'flow-version', r.flow_version, \
+                        'artifact-digest', a.artifact_hash), \
+                      'source', jsonb_build_object('producer', r.trigger_source)) \
+               FROM catalog.flow_artifacts AS a \
+              WHERE a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
+                AND a.flow_version = r.flow_version \
+                AND r.tenant_id = current_setting('app.tenant', true) AND r.run_id = $1",
+            &[&run_id, &RW_CATALOG_ID, &catalog_version, &RW_ENVIRONMENT],
+        )
+        .await
+        .context("pin the staged run to its release member")?;
+    anyhow::ensure!(pinned == 1, "staged run {run_id} was not release-pinned");
+    Ok(())
+}
+
 async fn flow_phase(
     engine: &wash_runtime::engine::Engine,
     args: &TestKitBenchArgs,
@@ -457,7 +718,7 @@ async fn flow_phase(
         cfg.database_url = Some(url.clone());
     }
     cfg.pool_max_size = args.pool_max;
-    let observer_url = cfg.database_url.clone().context(
+    let app_url = cfg.database_url.clone().context(
         "flow-level cases need a database url: --database-url or DATABASE_URL / WAMN_PG_URL",
     )?;
     let admin_url = args
@@ -467,119 +728,144 @@ async fn flow_phase(
     let guest = std::fs::read(&args.flowrunner)
         .with_context(|| format!("read flowrunner {}", args.flowrunner.display()))?;
 
-    // The real egress target for the poc-s6 http-call node (reuse testhostbench's
-    // loopback echo — a 200-answering listener).
-    let (echo_addr, echo_task) = crate::testhostbench::spawn_echo().await?;
-    let echo_authority = format!("127.0.0.1:{}", echo_addr.port());
-    let echo_url = format!("http://{echo_authority}/echo");
+    // The release store is a THROWAWAY DATABASE (the metricbench pattern), never
+    // the target database's own catalog: `catalog` is a fixed schema name, and the
+    // poc-s6 graph carries the echo listener's ephemeral port, so its artifact
+    // hash differs on every run and could never be re-published into a shared
+    // IMMUTABLE catalog. The ephemeral run schema below still owns the run plane,
+    // so what this leg proves — file cases driving a real flow off the run queue,
+    // judged by the assertion vocabulary — is unchanged.
+    let database = proof_database_name();
+    admin_execute(&admin_url, &format!("CREATE DATABASE {database}"))
+        .await
+        .context("create the throwaway flow database")?;
+    let case_admin_url = database_url(&admin_url, &database)?;
+    let observer_url = database_url(&app_url, &database)?;
+    cfg.database_url = Some(observer_url.clone());
 
-    // Provision the union schema (flow tables + run_queue) via the drift-guarded
-    // runnerbench DDL plus this gate's run-row lineage columns, seed poc-s6
-    // (delay 0 → drives straight through), and stage a dispatched run + its
-    // queue row.
-    let provisioner = EphemeralSchemaProvisioner::connect(&admin_url, flow_case_ddl)
-        .await
-        .context("connect flow provisioner")?;
-    let runworker_schema = ScenarioSchemaName::new(RW_SCHEMA)?;
-    provisioner
-        .provision_case(&runworker_schema)
-        .await
-        .context("provision flow schema")?;
-    let admin = provisioner.admin();
-    scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
-    let flow_json = crate::flowbench::flow_json_s6(0, &echo_url);
-    wamn_gate_harness::seed_flow_version(admin, RW_TENANT, "poc-s6", 1, true, &flow_json, true)
-        .await?;
-    let run_id = "tk-run-0";
-    admin
-        .execute(
-            &write_ahead_triggered_run_sql(),
-            &[&run_id, &"poc-s6", &1i32, &"cron", &"\"receipt\""],
+    let result = async {
+        // The real egress target for the poc-s6 http-call node (reuse testhostbench's
+        // loopback echo — a 200-answering listener).
+        let (echo_addr, echo_task) = crate::testhostbench::spawn_echo().await?;
+        let echo_authority = format!("127.0.0.1:{}", echo_addr.port());
+
+        // Publish poc-s6 as an immutable release member, provision the union run
+        // schema (flow tables + run_queue) via the drift-guarded runnerbench DDL
+        // plus this gate's run-row lineage columns, then stage a dispatched run
+        // with its release pin, its trusted principal, and its queue row.
+        seed_release(&case_admin_url, &poc_s6_flow_json(&echo_authority)).await?;
+        let provisioner = EphemeralSchemaProvisioner::connect(&case_admin_url, flow_case_ddl)
+            .await
+            .context("connect flow provisioner")?;
+        let runworker_schema = ScenarioSchemaName::new(RW_SCHEMA)?;
+        provisioner
+            .provision_case(&runworker_schema)
+            .await
+            .context("provision flow schema")?;
+        let admin = provisioner.admin();
+        scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
+        let run_id = "tk-run-0";
+        admin
+            .execute(
+                &write_ahead_triggered_run_sql(),
+                &[&run_id, &"poc-s6", &1i32, &"cron", &"\"receipt\""],
+            )
+            .await
+            .context("seed dispatched runs row")?;
+        pin_run_to_release(admin, run_id).await?;
+        admin
+            .execute(
+                &enqueue_sql(),
+                &[&run_id, &Option::<&str>::None, &0i32, &0i64],
+            )
+            .await
+            .context("enqueue run_queue row")?;
+
+        // Drive the production runner under the test-double set (virtual clock +
+        // seeded random + trusted outer/flow egress policy intersection).
+        let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
+        let vault = Arc::new(WamnCredentials::empty());
+        let egress_policy = Arc::new(RunnerEgressPolicy::default());
+        let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+        let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
+        let (scenario, _clock) = ScenarioCapabilities::virtualized(
+            TEST_EPOCH_SECS,
+            TEST_SEED,
+            recorder.clone() as Arc<dyn HostHandler>,
+        );
+        let mut worker = ExecutionHost::instantiate(
+            engine,
+            &guest,
+            plugin.clone(),
+            vault,
+            Arc::new(WamnLogging::from_env()?),
+            ExecutionIdentity {
+                owner: RW_OWNER,
+                tenant: RW_TENANT,
+                schema: Some(runworker_schema.as_str()),
+                project: "default",
+            },
+            injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
+            30_000,
         )
         .await
-        .context("seed dispatched runs row")?;
-    admin
-        .execute(
-            &enqueue_sql(),
-            &[&run_id, &Option::<&str>::None, &0i32, &0i64],
-        )
-        .await
-        .context("enqueue run_queue row")?;
+        .context("instantiate ExecutionHost with the test double set")?;
+        let report = worker.drain().await.context("drain run_queue")?;
+        println!("flow drain: {report:?}, egress={:?}", recorder.records());
 
-    // Drive the production runner under the test-double set (virtual clock +
-    // seeded random + trusted outer/flow egress policy intersection).
-    let plugin = Arc::new(WamnPostgres::new(cfg.clone())?);
-    let vault = Arc::new(WamnCredentials::empty());
-    let egress_policy = Arc::new(RunnerEgressPolicy::default());
-    let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
-    let allowed_hosts: Arc<[AllowedHost]> = vec![echo_authority.parse::<AllowedHost>()?].into();
-    let (scenario, _clock) = ScenarioCapabilities::virtualized(
-        TEST_EPOCH_SECS,
-        TEST_SEED,
-        recorder.clone() as Arc<dyn HostHandler>,
-    );
-    let mut worker = ExecutionHost::instantiate(
-        engine,
-        &guest,
-        plugin.clone(),
-        vault,
-        Arc::new(WamnLogging::from_env()?),
-        ExecutionIdentity {
-            owner: RW_OWNER,
-            tenant: RW_TENANT,
-            schema: Some(runworker_schema.as_str()),
-            project: "default",
-        },
-        injected_capabilities(scenario.wasi, scenario.egress, allowed_hosts, egress_policy),
-        30_000,
-    )
-    .await
-    .context("instantiate ExecutionHost with the test double set")?;
-    let report = worker.drain().await.context("drain run_queue")?;
-    println!("flow drain: {report:?}, egress={:?}", recorder.records());
-
-    // Base captured facts shared by every flow case: the run outcome (from the
-    // drain report) and the egress audit log.
-    let status = if report.failed > 0 {
-        RunStatus::Failed
-    } else if report.completed > 0 {
-        RunStatus::Completed
-    } else {
-        RunStatus::Running
-    };
-    let egress = recorder.records();
-
-    // Observe through the same least-privileged application identity as the
-    // scenario, independently scoped to its tenant and schema.
-    let (mut observer, observer_connection) = tokio_postgres::connect(&observer_url, NoTls)
-        .await
-        .context("connect flow db-state observer")?;
-    let observer_task = tokio::spawn(async move {
-        let _ = observer_connection.await;
-    });
-    scope_session(&observer, RW_TENANT, RW_SCHEMA).await?;
-
-    let mut ok = true;
-    for case in cases {
-        let captured = Captured {
-            run: Some(RunFacts {
-                status,
-                fail_kind: None,
-                fail_node: None,
-            }),
-            egress: egress.clone(),
-            db: capture_db_assertions(&mut observer, case).await?,
-            ..Default::default()
+        // Base captured facts shared by every flow case: the run outcome (from the
+        // drain report) and the egress audit log.
+        let status = if report.failed > 0 {
+            RunStatus::Failed
+        } else if report.completed > 0 {
+            RunStatus::Completed
+        } else {
+            RunStatus::Running
         };
-        fold_outcome(&mut ok, &evaluate(case, &captured));
-    }
+        let egress = recorder.records();
 
-    drop(observer);
-    observer_task.abort();
-    drop(worker);
-    drop(plugin);
-    provisioner.drop_case(&runworker_schema).await.ok();
-    echo_task.abort();
+        // Observe through the same least-privileged application identity as the
+        // scenario, independently scoped to its tenant and schema.
+        let (mut observer, observer_connection) = tokio_postgres::connect(&observer_url, NoTls)
+            .await
+            .context("connect flow db-state observer")?;
+        let observer_task = tokio::spawn(async move {
+            let _ = observer_connection.await;
+        });
+        scope_session(&observer, RW_TENANT, RW_SCHEMA).await?;
+
+        let mut ok = true;
+        for case in cases {
+            let captured = Captured {
+                run: Some(RunFacts {
+                    status,
+                    fail_kind: None,
+                    fail_node: None,
+                }),
+                egress: egress.clone(),
+                db: capture_db_assertions(&mut observer, case).await?,
+                ..Default::default()
+            };
+            fold_outcome(&mut ok, &evaluate(case, &captured));
+        }
+
+        drop(observer);
+        observer_task.abort();
+        drop(worker);
+        drop(plugin);
+        provisioner.drop_case(&runworker_schema).await.ok();
+        echo_task.abort();
+        anyhow::Ok(ok)
+    }
+    .await;
+
+    let cleanup = admin_execute(
+        &admin_url,
+        &format!("DROP DATABASE IF EXISTS {database} WITH (FORCE)"),
+    )
+    .await;
+    let ok = result?;
+    cleanup?;
     Ok(ok)
 }
 
@@ -634,6 +920,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// wamn-see7 [RELEASE-PIN]: the flow leg's graph must come from an immutable
+    /// release, so its catalog preamble has to create every table
+    /// `flowrunner`'s `PINNED_ARTIFACT_SQL` joins. The leg seeded the mutable
+    /// `flows` head instead and died `42P01: catalog.release_flows does not exist`.
+    #[test]
+    fn flow_case_catalog_preamble_creates_every_release_table_the_runner_joins() {
+        for table in [
+            "CREATE TABLE catalog.flow_artifacts (",
+            "CREATE TABLE catalog.release_manifests (",
+            "CREATE TABLE catalog.release_flows (",
+        ] {
+            assert!(
+                super::CATALOG_DDL.contains(table),
+                "the flow leg's catalog preamble is missing `{table}`"
+            );
+        }
+    }
+
+    /// The poc-s6 graph must publish as an immutable artifact: one implementation
+    /// per node type the fixture graph names, ordered as the artifact requires.
+    #[test]
+    fn poc_s6_publishes_as_an_immutable_release_artifact() {
+        let flow_json = super::poc_s6_flow_json("127.0.0.1:1");
+        let flow = wamn_flow::Flow::from_json(&flow_json).expect("poc-s6 fixture graph parses");
+        let artifact = super::Artifact::new(super::RW_TENANT, &flow, super::s6_implementations())
+            .expect("poc-s6 publishes as an immutable artifact");
+        assert!(
+            artifact
+                .identity()
+                .artifact_hash()
+                .as_str()
+                .starts_with("sha256:"),
+            "the published member must carry a content digest"
+        );
     }
 
     #[test]
