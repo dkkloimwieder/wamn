@@ -252,8 +252,13 @@ fn executor_command(
     command
         .env_remove("WAMN_ALLOWED_HOSTS")
         .env_remove("WAMN_CREDENTIALS_FILE")
+        // warn, not error: the run-worker reports effect-level REFUSALS at warn
+        // (e.g. "effect run artifact_digest shape: Null"). At `error` the child's
+        // stderr is silent about them, and a whole wave read that silence as
+        // success. The gate asserts on database state, never on this stream, so
+        // the extra lines cost nothing and buy the refusal signal.
         .arg("--log-level")
-        .arg("error")
+        .arg("warn")
         .arg("--flowrunner")
         .arg(flowrunner)
         .arg("--database-url")
@@ -1196,7 +1201,7 @@ mod tests {
             command.get_args().collect::<Vec<_>>(),
             [
                 "--log-level",
-                "error",
+                "warn",
                 "--flowrunner",
                 "/proof/flowrunner.wasm",
                 "--database-url",
