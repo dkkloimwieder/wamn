@@ -221,7 +221,13 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
    AND grant_row.generation = generation.generation \
  WHERE r.run_id = $1";
 
-const NODE_INVOCATION_SNAPSHOT_SQL: &str = "\
+/// The trusted node-invocation snapshot: the host-side statement of record for
+/// the run-next release-lineage join (`catalog.release_flows` ->
+/// `release_manifests` -> `flow_artifacts`, keyed on the run's principal
+/// `artifact-digest`). Public so the gate harnesses can DERIVE the catalog
+/// relations and run columns their fixtures must provide from the statement
+/// itself rather than hand-listing them (wamn-kex2).
+pub const NODE_INVOCATION_SNAPSHOT_SQL: &str = "\
 WITH admitted_artifact AS MATERIALIZED ( \
     SELECT artifact.graph_json, artifact.interface_bundle_json, artifact.artifact_hash \
       FROM runs AS source_run \

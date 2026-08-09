@@ -1151,6 +1151,32 @@ const RW_TENANT: &str = "s6-rw-tenant";
 const RW_OWNER: &str = "s6-runworker";
 const RW_SCHEMA: &str = "s6_runworker";
 
+/// The run-worker leg's own `poc-s6` graph: `request -> http-call -> pg-write ->
+/// respond`.
+///
+/// It cannot reuse `flowbench::flow_json_s6` because that shared S3/S6 benchmark
+/// fixture is NOT publishable — its `respond` carries no `status`
+/// (`invalid-respond-config`) and its `delay` sits inside the request/respond
+/// region (`delay-before-release`) — and `run-next` resolves this leg's run only
+/// through an immutable release artifact (wamn-kex2). The `delay` was configured
+/// to 0 here and no assertion named it, while other legs depend on that node to
+/// prove parking, so the shared fixture stays as it is and this leg publishes a
+/// graph a real release could carry (the wamn-see7 precedent in `testkitbench`).
+fn runworker_flow_json(echo_url: &str, echo_authority: &str) -> String {
+    format!(
+        r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
+            "allowed-hosts":["{echo_authority}"],
+            "nodes":[
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
+              {{"id":"h","type":"http-call","config":{{"url":"{echo_url}"}}}},
+              {{"id":"w","type":"pg-write"}},
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
+            ],
+            "edges":[{{"from":"in","to":"h"}},{{"from":"h","to":"w"}},
+                     {{"from":"w","to":"out"}}]}}"#
+    )
+}
+
 async fn runworker_phase(
     harness: &Harness,
     guest: &[u8],
@@ -1175,12 +1201,17 @@ async fn runworker_phase(
         .await
         .context("provision runworker schema")?;
 
-    // Seed the flow + a dispatched run + its queue row (delay 0 so it drives
-    // straight through: in → delay(0) → http-call(echo) → pg-write → respond).
+    // Seed the flow + a dispatched run + its queue row (in → http-call(echo) →
+    // pg-write → respond, driven straight through).
     let admin = provisioner.admin();
     scope_session(admin, RW_TENANT, RW_SCHEMA).await?;
-    let flow_json = crate::flowbench::flow_json_s6(0, echo_url);
+    let flow_json = runworker_flow_json(echo_url, echo_authority);
     wamn_gate_harness::seed_flow_version(admin, RW_TENANT, "poc-s6", 1, true, &flow_json, true)
+        .await?;
+    // `run-next` resolves the claimed run's graph through the immutable release
+    // lineage alone, so the fixture is published as a release member and the run
+    // is pinned to it with the trusted principal (wamn-kex2).
+    crate::catalog_pin::publish_release(admin_url, RW_TENANT, std::slice::from_ref(&flow_json))
         .await?;
     let run_id = "rw-run-0";
     admin
@@ -1197,6 +1228,7 @@ async fn runworker_phase(
         )
         .await
         .context("enqueue run_queue row")?;
+    crate::catalog_pin::pin_run(admin, run_id).await?;
 
     // Build the production runner store under the test double set: virtual clock
     // + seeded random `WasiCtx` and an RecordingEgress swapped in for the prod
@@ -1296,4 +1328,19 @@ async fn runworker_phase(
     drop(plugin);
     provisioner.drop_case(&runworker_schema).await.ok();
     Ok(pass)
+}
+
+#[cfg(test)]
+mod tests {
+    /// wamn-kex2 [GATE-DRIFT]: the runworker leg publishes its own `poc-s6` graph
+    /// as a release member, because `run-next` resolves the claimed run only
+    /// through the immutable release lineage — which holds only while that fixture
+    /// is a graph a real release could carry.
+    #[test]
+    fn runworker_flow_is_a_releasable_graph() {
+        crate::catalog_pin::assert_releasable(
+            "testhostbench runworker_flow_json",
+            &super::runworker_flow_json("http://127.0.0.1:9/echo", "127.0.0.1:9"),
+        );
+    }
 }

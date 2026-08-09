@@ -812,7 +812,9 @@ async fn runpath_connect_app(
 }
 
 /// Seed one run the way the dispatcher does: a write-ahead `dispatched` runs row
-/// + a queue row, co-transacted (the exact producer state the runner claims).
+/// plus a queue row, co-transacted (the exact producer state the runner claims),
+/// then release-pinned the way admission does (wamn-kex2) — `run-next` resolves
+/// the graph only through the immutable release lineage.
 async fn runpath_seed_run(client: &mut Client, run_id: &str) -> anyhow::Result<()> {
     let tx = client.transaction().await?;
     tx.execute(
@@ -826,7 +828,7 @@ async fn runpath_seed_run(client: &mut Client, run_id: &str) -> anyhow::Result<(
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    crate::catalog_pin::pin_run(client, run_id).await
 }
 
 async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
@@ -864,6 +866,12 @@ async fn runpath_phase(args: &LogBenchArgs) -> anyhow::Result<()> {
             true,
             &crate::flowbench::flow_json(1),
             true,
+        )
+        .await?;
+        crate::catalog_pin::publish_release(
+            &admin_url,
+            RUNPATH_TENANT,
+            &[crate::flowbench::flow_json(1)],
         )
         .await?;
         runpath_seed_run(&mut seed_conn, "rp-0").await?;

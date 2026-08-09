@@ -891,16 +891,21 @@ const DELAY_FLOW_ID: &str = "poc-delay";
 /// several lease renewals.
 const HEARTBEAT_FLOW_ID: &str = "heartbeat";
 
+/// Structurally the `poc-receipt` v1 fixture ([`crate::flowbench::flow_json`])
+/// with a different flow id and the REVERSE transform — the only difference the
+/// wrong-flow guard reads. wamn-kex2 restated it on the current flow schema (a
+/// `request` entry node, no retired `trigger`/`entry` envelope): the release the
+/// claim path resolves through is an immutable artifact, and an artifact is built
+/// from a graph the flow model can parse and validate.
 fn alt_flow_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{ALT_FLOW_ID}","version":1,
-            "trigger":{{"type":"webhook","sync":true}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
               {{"id":"t","type":"transform","config":{{"op":"reverse"}}}},
               {{"id":"w","type":"pg-write"}},
               {{"id":"c","type":"conditional","config":{{"min-len":3}}}},
-              {{"id":"out","type":"respond"}}
+              {{"id":"out","type":"respond","config":{{"status":200}}}}
             ],
             "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
                      {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
@@ -957,7 +962,9 @@ async fn count_rows(client: &Client, sql: &str) -> anyhow::Result<i64> {
 /// Seed a run the way the DISPATCHER does: the write-ahead `dispatched` row with
 /// its `flow_id` + trigger `input_json`, co-transacted with the queue row — the
 /// exact producer state the guest claims (`write_ahead_triggered_run_sql` +
-/// `enqueue_sql`). `input_json` is JSON text (`"receipt"` = the string payload).
+/// `enqueue_sql`), then release-pinned the way ADMISSION does (wamn-kex2), since
+/// `run-next` resolves the graph only through the immutable release lineage.
+/// `input_json` is JSON text (`"receipt"` = the string payload).
 async fn seed_claim_run(
     client: &mut Client,
     run_id: &str,
@@ -976,7 +983,7 @@ async fn seed_claim_run(
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    crate::catalog_pin::pin_run(client, run_id).await
 }
 
 // ---------------------------------------------------------------------------
@@ -997,6 +1004,15 @@ async fn claim_phase(
     let (mut seed_conn, _h) = connect_app(app_url).await?;
     seed_flow(&seed_conn, FLOW_ID, &crate::flowbench::flow_json(1)).await?;
     seed_flow(&seed_conn, ALT_FLOW_ID, &alt_flow_json()).await?;
+    // Both fixtures as members of ONE immutable release: `run-next` resolves a
+    // run's graph through `catalog.release_flows` alone, so the wrong-flow guard
+    // needs the alt flow published, not just registered (wamn-kex2).
+    crate::catalog_pin::publish_release(
+        admin_url,
+        TENANT,
+        &[crate::flowbench::flow_json(1), alt_flow_json()],
+    )
+    .await?;
 
     // Generous TTL: the lease never expires here, so claim/exactly-once are not
     // clouded by reclaim noise (the heartbeat gate exercises renewal separately).
@@ -1555,5 +1571,16 @@ mod tests {
     #[test]
     fn failoverbench_stand_in_carries_every_run_column_run_next_names() {
         assert_carries_every_run_next_column("failoverbench", &runner_ddl("wamn_run"));
+    }
+
+    /// wamn-kex2 [GATE-DRIFT]: claim mode publishes the alt flow as a release
+    /// member so the wrong-flow guard has a graph to resolve THROUGH — which holds
+    /// only while that fixture is a graph a real release could carry.
+    #[test]
+    fn failoverbench_alt_flow_is_a_releasable_graph() {
+        crate::catalog_pin::assert_releasable(
+            "failoverbench alt_flow_json",
+            &super::alt_flow_json(),
+        );
     }
 }

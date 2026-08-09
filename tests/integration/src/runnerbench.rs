@@ -204,18 +204,27 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
             catalog_id text, catalog_version bigint, environment text, \
+            attachment_id text, registration_id text, \
             event_source_run_id text, event_root_run_id text, event_depth int, \
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
             invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
             admission_context_version int NOT NULL DEFAULT 1, \
-            updated_at timestamptz NOT NULL DEFAULT now(), \
+            platform_revision text NOT NULL DEFAULT 'legacy', \
             idempotency_key text, replay_of text, root_run_id text, \
+            parent_run_id text, parent_node_id text, parent_occurrence int, \
+            invoke_depth int NOT NULL DEFAULT 0, invoke_root_run_id text, \
+            waiting_child_run_id text, waiting_child_occurrence int, wait_generation bigint, \
             caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
             caller_release_node_id text, caller_outcome_hash text, \
-            caller_released_at timestamptz, run_deadline_at timestamptz, \
+            caller_released_at timestamptz, \
+            response_deadline_at timestamptz, run_deadline_at timestamptz, \
+            cancel_requested_kind text, cancel_requested_at timestamptz, \
+            cancel_kind text, terminal_reason text, \
             fail_kind text, fail_node text, fail_reason text, \
+            created_at timestamptz NOT NULL DEFAULT now(), \
+            updated_at timestamptz NOT NULL DEFAULT now(), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
@@ -224,12 +233,32 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+            tenant_id text NOT NULL, current_effect_attempt_id uuid, \
+            run_id text NOT NULL, node_id text NOT NULL, \
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
-            status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
+            status text NOT NULL, \
+            selected_recovery_class text \
+              CHECK (selected_recovery_class IN ('replay','idempotent-with-key','never-replay')), \
+            recovery_class text \
+              CHECK (recovery_class IN ('replay','idempotent-with-key','never-replay')), \
+            generation_fact_kind text \
+              CHECK (generation_fact_kind IN ('not-required','attested')), \
+            connection_generation text, credential_generation text, \
+            attempt_started_at timestamptz, attempt_dispatched_at timestamptz, \
+            attempt_deadline_at timestamptz, attempt_input_ref text, attempt_key text, \
+            output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, resume_at timestamptz, \
+            input_ref text, output_ref text, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
+            started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
+            CHECK ((status <> 'started') OR \
+                   (selected_recovery_class IS NOT NULL AND recovery_class IS NOT NULL \
+                    AND selected_recovery_class = recovery_class \
+                    AND generation_fact_kind IS NOT NULL \
+                    AND attempt_started_at IS NOT NULL \
+                    AND attempt_deadline_at IS NOT NULL \
+                    AND attempt_input_ref IS NOT NULL)), \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
@@ -284,17 +313,18 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
     )
 }
 
-/// Every `r.<column>` a run-next statement names (the run row, plus the queue row
-/// where the same builder renews a lease under that alias).
+/// Every `<alias>.<column>` a run-next statement names, where `alias` is the
+/// one-letter alias the builders bind the row to (`r.` the run + queue row, `n.`
+/// the node_run row).
 #[cfg(test)]
-fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
+fn aliased_columns(sql: &str, alias: &str) -> std::collections::BTreeSet<String> {
     let bytes = sql.as_bytes();
-    sql.match_indices("r.")
+    sql.match_indices(alias)
         .filter(|(at, _)| {
             *at == 0 || !(bytes[*at - 1].is_ascii_alphanumeric() || bytes[*at - 1] == b'_')
         })
         .map(|(at, _)| {
-            sql[at + 2..]
+            sql[at + alias.len()..]
                 .chars()
                 .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
                 .collect::<String>()
@@ -306,18 +336,43 @@ fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
 /// wamn-thvs's derived drift check, shared so each gate names its OWN guard over
 /// the DDL it actually provisions (wamn-03a9): a gate that forks the stand-in again
 /// keeps its guard, instead of silently leaving the derived class behind.
+///
+/// wamn-kex2 widened it from three statements to the whole set the claim path
+/// executes, and from the run row to the NODE_RUN row. thvs swept `runs` against
+/// the first three; run-next then walked one statement further and died `42703:
+/// column n.selected_recovery_class does not exist`, then `42703: column
+/// r.cancel_requested_kind does not exist` — the same rot, one table and one
+/// statement over each time, while `testkitbench` patched its own copy of the
+/// delta by hand rather than the stand-in. Deriving both rows from the STATEMENTS
+/// names the path once and lets the columns follow.
 #[cfg(test)]
 pub(crate) fn assert_carries_every_run_next_column(gate: &str, ddl: &str) {
-    let mut missing: Vec<String> = Vec::new();
-    for sql in [
+    // The statements a `run-next` turn executes: claim + dispatch read, the
+    // per-node attempt lifecycle, and the settle.
+    let run_next_statements = [
         wamn_run_state::queue::claim_dispatch_sql(),
         wamn_run_state::sql::select_run_dispatch_sql(),
         wamn_run_state::transitions::begin_attempt_sql(),
-    ] {
-        let columns = run_row_columns(&sql);
+        wamn_run_state::transitions::mark_attempt_dispatched_sql(),
+        wamn_run_state::transitions::complete_attempt_success_sql(),
+        wamn_run_state::transitions::complete_attempt_error_sql(),
+        wamn_run_state::transitions::reserved_checkpoint_sql(),
+        wamn_run_state::transitions::node_context_checkpoint_sql(),
+        wamn_run_state::transitions::park_sql(),
+        wamn_run_state::transitions::complete_sql(),
+        wamn_run_state::transitions::terminalize_sql(),
+        wamn_run_state::transitions::release_caller_sql(),
+    ];
+
+    let mut missing: Vec<String> = Vec::new();
+    for (row, alias) in [("run", "r."), ("node_run", "n.")] {
+        let columns: std::collections::BTreeSet<String> = run_next_statements
+            .iter()
+            .flat_map(|sql| aliased_columns(sql, alias))
+            .collect();
         assert!(
             !columns.is_empty(),
-            "parser sanity: no run columns in {sql}"
+            "parser sanity: no {row} columns across the run-next statements"
         );
         missing.extend(columns.into_iter().filter(|column| !ddl.contains(column)));
     }
@@ -325,7 +380,7 @@ pub(crate) fn assert_carries_every_run_next_column(gate: &str, ddl: &str) {
     missing.dedup();
     assert!(
         missing.is_empty(),
-        "{gate} stand-in is missing run columns run-next projects \
+        "{gate} stand-in is missing columns run-next projects \
          (drifted from deploy/sql/run-state.sql): {missing:?}"
     );
 }
@@ -413,7 +468,7 @@ async fn seed_flow_run(
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    crate::catalog_pin::pin_run(client, run_id).await
 }
 
 /// Seed a PARTITIONED(key) run the way a keyed producer does (fqg.9): the
@@ -448,7 +503,7 @@ async fn seed_keyed_flow_run(
     )
     .await?;
     tx.commit().await?;
-    Ok(())
+    crate::catalog_pin::pin_run(client, run_id).await
 }
 
 async fn count(client: &Client, sql: &str) -> anyhow::Result<i64> {
@@ -512,6 +567,17 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             true,
             &crate::flowbench::flow_json(1),
             true,
+        )
+        .await?;
+        // `run-next` resolves each claimed run's graph through the immutable
+        // release lineage alone, so both `poc-receipt` versions are published as
+        // members of one release and every seeded run is pinned to its member
+        // (wamn-kex2). The hot-reload phase seeds v2 into the mutable head; the
+        // release already carries it.
+        crate::catalog_pin::publish_release(
+            &admin_url,
+            TENANT,
+            &[crate::flowbench::flow_json(1), crate::flowbench::flow_json(2)],
         )
         .await?;
 
