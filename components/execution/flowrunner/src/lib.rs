@@ -1372,13 +1372,22 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
     }
 }
 
-/// Output ports for the legacy S3 fixture nodes compiled inside this component.
+/// Output ports for the legacy S3/S6 fixture nodes compiled inside this
+/// component.
 ///
 /// Production execution resolves interfaces from the release's pinned artifact
-/// bundle; this map exists only for the S3 benchmark and direct fixture paths.
+/// bundle ([`execute_claimed`]); this map is the fixture stand-in for the direct
+/// `run`/`run-s6`/`dispatch-bench` paths, whose flow documents carry no pinned
+/// interface bundle. Every one of these legacy node types emits exactly one
+/// completion on `main` — the shape a real resolution supplies for them — so a
+/// missing entry is not a narrower graph but an unvalidatable one
+/// (`unresolved-output-ports`, and the request-region checks silently skip the
+/// node).
 fn s3_fixture_interfaces() -> ResolvedInterfaces {
     ResolvedInterfaces::from([
         ("conditional".to_string(), vec![MAIN_PORT.to_string()]),
+        ("delay".to_string(), vec![MAIN_PORT.to_string()]),
+        ("http-call".to_string(), vec![MAIN_PORT.to_string()]),
         ("pg-write".to_string(), vec![MAIN_PORT.to_string()]),
         ("transform".to_string(), vec![MAIN_PORT.to_string()]),
     ])
@@ -4221,6 +4230,104 @@ mod tests {
 
         Plan::compile(&flow, &s3_fixture_interfaces())
             .expect("legacy S3 fixture compiles with its explicit interfaces");
+    }
+
+    /// wamn-gm5d: `run-s6` compiles its graph against this map, so an S6 node
+    /// type missing from it is unresolvable — the flow document cannot declare
+    /// its own ports and there is no fallback on this path. Each of these
+    /// completes on `main`, matching what a pinned interface bundle resolves
+    /// them to on the production `execute_claimed` path.
+    #[test]
+    fn s3_fixture_interfaces_resolve_every_s6_node_type_on_main() {
+        let interfaces = s3_fixture_interfaces();
+        for node_type in ["conditional", "delay", "http-call", "pg-write", "transform"] {
+            assert_eq!(
+                interfaces.get(node_type).map(Vec::as_slice),
+                Some([MAIN_PORT.to_string()].as_slice()),
+                "fixture interface map is missing {node_type:?}"
+            );
+        }
+    }
+
+    /// The S6 fixture shapes `run-s6` drives (`tests/integration/src/flowbench.rs`
+    /// owns the JSON, SR2): the caller is released BEFORE any delay parks, so
+    /// both compile against the fixture map.
+    #[test]
+    fn the_s6_fixture_shapes_compile_under_the_fixture_interfaces() {
+        let single = r#"{
+            "schema-version":"0.1",
+            "flow-id":"poc-s6",
+            "version":1,
+            "allowed-hosts":["127.0.0.1:18080"],
+            "nodes":[
+                {"id":"in","type":"request","config":{"input-schema":true}},
+                {"id":"out","type":"respond","config":{"status":200}},
+                {"id":"h","type":"http-call","config":{"url":"http://127.0.0.1:18080/echo"}},
+                {"id":"w","type":"pg-write"},
+                {"id":"d","type":"delay","config":{"delay-secs":86400}}
+            ],
+            "edges":[
+                {"from":"in","to":"out"},
+                {"from":"out","to":"h"},
+                {"from":"h","to":"w"},
+                {"from":"w","to":"d"}
+            ]
+        }"#;
+        let two_delay = r#"{
+            "schema-version":"0.1",
+            "flow-id":"poc-s6",
+            "version":1,
+            "nodes":[
+                {"id":"in","type":"request","config":{"input-schema":true}},
+                {"id":"out","type":"respond","config":{"status":200}},
+                {"id":"d1","type":"delay","config":{"delay-secs":7}},
+                {"id":"d2","type":"delay","config":{"delay-secs":7}},
+                {"id":"w","type":"pg-write"}
+            ],
+            "edges":[
+                {"from":"in","to":"out"},
+                {"from":"out","to":"d1"},
+                {"from":"d1","to":"d2"},
+                {"from":"d2","to":"w"}
+            ]
+        }"#;
+        for fixture in [single, two_delay] {
+            let flow = Flow::from_json(fixture).expect("S6 fixture shape parses");
+            Plan::compile(&flow, &s3_fixture_interfaces())
+                .expect("S6 fixture shape compiles with the fixture interfaces");
+        }
+    }
+
+    /// Resolving `delay` arms `delay-before-release`; the guard must stay armed.
+    /// A graph that parks a still-waiting request caller is refused, not
+    /// silently skipped the way an unresolved node type was.
+    #[test]
+    fn a_delay_inside_the_request_region_is_refused() {
+        let flow = Flow::from_json(
+            r#"{
+                "schema-version":"0.1",
+                "flow-id":"poc-s6",
+                "version":1,
+                "nodes":[
+                    {"id":"in","type":"request","config":{"input-schema":true}},
+                    {"id":"d","type":"delay","config":{"delay-secs":86400}},
+                    {"id":"w","type":"pg-write"},
+                    {"id":"out","type":"respond","config":{"status":200}}
+                ],
+                "edges":[
+                    {"from":"in","to":"d"},
+                    {"from":"d","to":"w"},
+                    {"from":"w","to":"out"}
+                ]
+            }"#,
+        )
+        .expect("delay-before-release shape parses");
+        let error = Plan::compile(&flow, &s3_fixture_interfaces())
+            .expect_err("a delay while the caller waits is not a compilable graph");
+        assert!(
+            error.to_string().contains("delay-before-release"),
+            "{error}"
+        );
     }
 
     #[test]

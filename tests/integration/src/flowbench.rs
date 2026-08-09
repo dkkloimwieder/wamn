@@ -120,8 +120,18 @@ pub fn flow_json(version: u32) -> String {
     )
 }
 
-/// The S6 fixture flow: `request -> delay(delay-secs) -> http-call(url) ->
-/// pg-write -> respond` (used by testhostbench through this module).
+/// The S6 fixture flow: `request -> respond -> http-call(url) -> pg-write ->
+/// delay(delay-secs)` (used by testhostbench through this module).
+///
+/// `poc-s6` is a fire-and-forget request flow: it releases the caller first and
+/// does its egress, write and park PAST the release. That ordering is forced —
+/// a request caller may not be made to wait on a delay
+/// (`delay-before-release`) — and the whole tail moves with it rather than
+/// straddling the release, so the run's reported HTTP status stays the
+/// http-call's OBSERVED status instead of being overwritten by the `respond`
+/// node's declared one. The egress gate reads that status to prove a denied
+/// call reached the guest as "no response". The `respond` carries an explicit
+/// `status`, which its config demands.
 pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
     // http_url is a controlled harness value (a loopback URL); escape the two
     // JSON-significant characters defensively anyway.
@@ -139,34 +149,39 @@ pub fn flow_json_s6(delay_secs: u64, http_url: &str) -> String {
             "allowed-hosts":["{authority}"],
             "nodes":[
               {{"id":"in","type":"request","config":{{"input-schema":true}}}},
-              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
+              {{"id":"out","type":"respond","config":{{"status":200}}}},
               {{"id":"h","type":"http-call","config":{{"url":"{url}"}}}},
               {{"id":"w","type":"pg-write"}},
-              {{"id":"out","type":"respond"}}
+              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}}
             ],
-            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"h"}},
-                     {{"from":"h","to":"w"}},{{"from":"w","to":"out"}}]}}"#
+            "edges":[{{"from":"in","to":"out"}},{{"from":"out","to":"h"}},
+                     {{"from":"h","to":"w"}},{{"from":"w","to":"d"}}]}}"#
     )
 }
 
-/// A TWO-delay `poc-s6` fixture: `request -> delay(d1) -> delay(d2) ->
-/// pg-write -> respond` (wamn-2jkm.51). Both delays use the same `delay_secs`.
+/// A TWO-delay `poc-s6` fixture: `request -> respond -> delay(d1) -> delay(d2)
+/// -> pg-write` (wamn-2jkm.51). Both delays use the same `delay_secs`.
 /// The two delay nodes must park INDEPENDENTLY: after the first elapses the
 /// second must actually delay (park again), never inherit the first's stale
 /// (already-elapsed) wake and emit at once. Seeded as `poc-s6` v1 (ON CONFLICT
 /// DO UPDATE replaces the single-delay graph in place), so `run-s6` drives it.
+///
+/// Both delays sit past the caller release for the same reason the single-delay
+/// fixture's does (`delay-before-release`), and the `pg-write` stays behind them
+/// so the sink row still separates "the second delay parked" from "the second
+/// delay emitted".
 pub fn flow_json_s6_twodelay(delay_secs: u64) -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
             "nodes":[
               {{"id":"in","type":"request","config":{{"input-schema":true}}}},
+              {{"id":"out","type":"respond","config":{{"status":200}}}},
               {{"id":"d1","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
               {{"id":"d2","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
-              {{"id":"w","type":"pg-write"}},
-              {{"id":"out","type":"respond","config":{{"status":200}}}}
+              {{"id":"w","type":"pg-write"}}
             ],
-            "edges":[{{"from":"in","to":"d1"}},{{"from":"d1","to":"d2"}},
-                     {{"from":"d2","to":"w"}},{{"from":"w","to":"out"}}]}}"#
+            "edges":[{{"from":"in","to":"out"}},{{"from":"out","to":"d1"}},
+                     {{"from":"d1","to":"d2"}},{{"from":"d2","to":"w"}}]}}"#
     )
 }
 
@@ -669,6 +684,25 @@ mod fixture_tests {
         assert!(definition.get("entry").is_none());
     }
 
+    /// The interface map the flowrunner's `run`/`run-s6` fixture path resolves
+    /// these graphs against (`s3_fixture_interfaces` in
+    /// `components/execution/flowrunner/src/lib.rs`, its own guest-side test
+    /// pins the entries). Every fixture node type completes on `main`.
+    fn fixture_interfaces() -> wamn_flow::ResolvedInterfaces {
+        ["conditional", "delay", "http-call", "pg-write", "transform"]
+            .into_iter()
+            .map(|node_type| (node_type.to_string(), vec!["main".to_string()]))
+            .collect()
+    }
+
+    fn issue_codes(fixture: &str) -> Vec<&'static str> {
+        let flow = wamn_flow::Flow::from_json(fixture).expect("fixture parses");
+        wamn_flow::validate(&flow, &fixture_interfaces())
+            .into_iter()
+            .map(|issue| issue.code)
+            .collect()
+    }
+
     #[test]
     fn primary_fixture_parses_with_typed_request_entry() {
         for (version, op) in [(1, "upper"), (2, "reverse")] {
@@ -726,17 +760,19 @@ mod fixture_tests {
                 .iter()
                 .map(|node| node.node_type.as_str())
                 .collect::<Vec<_>>(),
-            ["request", "delay", "delay", "pg-write", "respond"]
+            ["request", "respond", "delay", "delay", "pg-write"]
         );
-        assert_eq!(flow.nodes[1].config["delay-secs"], 7);
+        assert_eq!(flow.nodes[1].config["status"], 200);
         assert_eq!(flow.nodes[2].config["delay-secs"], 7);
-        assert_eq!(flow.nodes[4].config["status"], 200);
+        assert_eq!(flow.nodes[3].config["delay-secs"], 7);
+        // Both delays park PAST the caller release, and the pg-write stays
+        // behind them so the sink row still marks the second delay's emission.
         assert_eq!(
             flow.edges
                 .iter()
                 .map(|edge| (edge.from.as_str(), edge.to.as_str()))
                 .collect::<Vec<_>>(),
-            [("in", "d1"), ("d1", "d2"), ("d2", "w"), ("w", "out")]
+            [("in", "out"), ("out", "d1"), ("d1", "d2"), ("d2", "w")]
         );
     }
 
@@ -753,5 +789,63 @@ mod fixture_tests {
             Some("request")
         );
         assert_no_legacy_entry_fields(&definition);
+        assert_eq!(
+            flow.nodes
+                .iter()
+                .map(|node| node.node_type.as_str())
+                .collect::<Vec<_>>(),
+            ["request", "respond", "http-call", "pg-write", "delay"]
+        );
+        assert_eq!(flow.nodes[1].config["status"], 200);
+        // The whole tail — egress, write, park — sits past the caller release,
+        // so the http-call is the LAST node to set the run's HTTP status.
+        assert_eq!(
+            flow.edges
+                .iter()
+                .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+                .collect::<Vec<_>>(),
+            [("in", "out"), ("out", "h"), ("h", "w"), ("w", "d")]
+        );
+    }
+
+    /// wamn-gm5d: `run-s6` refused BOTH S6 fixtures — the `respond` carried no
+    /// `status` and, once the guest's fixture map resolves `delay`/`http-call`,
+    /// a delay inside the request/respond region is illegal. Both fixtures now
+    /// validate clean against the map the guest actually resolves them with.
+    #[test]
+    fn both_s6_fixtures_validate_against_the_fixture_interface_map() {
+        assert_eq!(
+            issue_codes(&flow_json_s6(0, "http://127.0.0.1:18080/echo")),
+            Vec::<&str>::new()
+        );
+        assert_eq!(
+            issue_codes(&flow_json_s6(86_400, "http://127.0.0.1:18080/echo")),
+            Vec::<&str>::new()
+        );
+        assert_eq!(issue_codes(&flow_json_s6_twodelay(7)), Vec::<&str>::new());
+        assert_eq!(issue_codes(&flow_json(1)), Vec::<&str>::new());
+        assert_eq!(issue_codes(&flow_json(2)), Vec::<&str>::new());
+    }
+
+    /// The guard the reordering exists to satisfy must stay armed: the ORIGINAL
+    /// `request -> delay -> http-call -> pg-write -> respond` shape (and its
+    /// missing respond status) is still refused, so a future fixture edit cannot
+    /// quietly park a waiting caller again.
+    #[test]
+    fn a_delay_before_the_caller_release_is_still_refused() {
+        let before_release = r#"{"schema-version":"0.1","flow-id":"poc-s6","version":1,
+            "allowed-hosts":["127.0.0.1:18080"],
+            "nodes":[
+              {"id":"in","type":"request","config":{"input-schema":true}},
+              {"id":"d","type":"delay","config":{"delay-secs":0}},
+              {"id":"h","type":"http-call","config":{"url":"http://127.0.0.1:18080/echo"}},
+              {"id":"w","type":"pg-write"},
+              {"id":"out","type":"respond"}
+            ],
+            "edges":[{"from":"in","to":"d"},{"from":"d","to":"h"},
+                     {"from":"h","to":"w"},{"from":"w","to":"out"}]}"#;
+        let codes = issue_codes(before_release);
+        assert!(codes.contains(&"delay-before-release"), "{codes:?}");
+        assert!(codes.contains(&"invalid-respond-config"), "{codes:?}");
     }
 }
