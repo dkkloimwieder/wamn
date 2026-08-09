@@ -172,7 +172,9 @@ pub struct RunnerBenchArgs {
 /// walks + the 5.14 `run_queue` the runner claims from + the `partition_owner`
 /// lease table the fqg.9 guest-side partitioned claim path leases against,
 /// schema-qualified with the house tenant floor. Kept aligned with
-/// `deploy/sql/run-queue.sql` by the drift guard in this module's tests.
+/// `deploy/sql/run-queue.sql` by the drift guard in this module's tests, and
+/// with the `runs` columns run-next projects out of `deploy/sql/run-state.sql`
+/// by the derived guard beside it (wamn-thvs).
 // `pub(crate)` so the wamn-t92 testhostbench `runworker` mode drives the SAME
 // drift-guarded union schema when it exercises the scenario composition.
 pub(crate) fn runner_ddl(schema: &str) -> String {
@@ -201,11 +203,18 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
          CREATE TABLE {schema}.runs (\
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
+            catalog_id text, catalog_version bigint, environment text, \
+            event_source_run_id text, event_root_run_id text, event_depth int, \
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
+            admission_context_version int NOT NULL DEFAULT 1, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             idempotency_key text, replay_of text, root_run_id text, \
+            caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
+            caller_release_node_id text, caller_outcome_hash text, \
+            caller_released_at timestamptz, run_deadline_at timestamptz, \
             fail_kind text, fail_node text, fail_reason text, \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
@@ -993,6 +1002,57 @@ mod tests {
                 ("partition_owner", Need::Required),
                 ("run_dead_letters", Need::Required),
             ],
+        );
+    }
+
+    /// Every `r.<column>` a run-next statement names (the run row, plus the
+    /// queue row where the same builder renews a lease under that alias).
+    fn run_row_columns(sql: &str) -> std::collections::BTreeSet<String> {
+        let bytes = sql.as_bytes();
+        sql.match_indices("r.")
+            .filter(|(at, _)| {
+                *at == 0 || !(bytes[*at - 1].is_ascii_alphanumeric() || bytes[*at - 1] == b'_')
+            })
+            .map(|(at, _)| {
+                sql[at + 2..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect::<String>()
+            })
+            .filter(|column| !column.is_empty())
+            .collect()
+    }
+
+    /// wamn-thvs [GATE-DRIFT]: `runs` is defined in `deploy/sql/run-state.sql`,
+    /// which the wamn-9mg8 `run-queue.sql` guard above cannot see — so the
+    /// wamn-2jdm.11 lineage sweep left this SHARED stand-in a generation behind
+    /// and every gate that reaches run-next through it died `42703`
+    /// (runnerbench itself, logbench runpath, testhostbench runworker; the
+    /// pocsuiteproof F4 composition patched a subset by hand). Derive the
+    /// required set from the run-next statements themselves (the wamn-jflp
+    /// pattern), so the next run-state sweep cannot repeat it.
+    #[test]
+    fn runner_ddl_carries_every_run_column_run_next_names() {
+        let ddl = runner_ddl("wamn_run");
+        let mut missing: Vec<String> = Vec::new();
+        for sql in [
+            wamn_run_state::queue::claim_dispatch_sql(),
+            wamn_run_state::sql::select_run_dispatch_sql(),
+            wamn_run_state::transitions::begin_attempt_sql(),
+        ] {
+            let columns = run_row_columns(&sql);
+            assert!(
+                !columns.is_empty(),
+                "parser sanity: no run columns in {sql}"
+            );
+            missing.extend(columns.into_iter().filter(|column| !ddl.contains(column)));
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "runnerbench stand-in is missing run columns run-next projects \
+             (drifted from deploy/sql/run-state.sql): {missing:?}"
         );
     }
 

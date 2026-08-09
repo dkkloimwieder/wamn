@@ -959,33 +959,20 @@ async fn drive_f3(
 
 /// The legacy pocsuite harness schema plus the authoritative invocation fields
 /// consumed by the current runner and host-owned custom-node transport. This is
-/// F4-only so the F3/nodeinvoke migration lanes remain untouched.
+/// F4-only so the F3/nodeinvoke migration lanes remain untouched. The run
+/// columns run-next itself projects now live in the shared stand-in (wamn-thvs),
+/// so only the F4-only remainder is composed here.
 fn f4_runner_ddl(schema: &str) -> String {
     format!(
         "{} \
-         ALTER TABLE {schema}.runs ADD COLUMN catalog_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN catalog_version bigint; \
-         ALTER TABLE {schema}.runs ADD COLUMN environment text; \
          ALTER TABLE {schema}.runs ADD COLUMN attachment_id text; \
          ALTER TABLE {schema}.runs ADD COLUMN registration_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_source_run_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_root_run_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN event_depth int; \
-         ALTER TABLE {schema}.runs ADD COLUMN invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb; \
-         ALTER TABLE {schema}.runs ADD COLUMN admission_context_version int NOT NULL DEFAULT 1; \
          ALTER TABLE {schema}.runs ADD COLUMN platform_revision text NOT NULL DEFAULT 'pocsuite'; \
          ALTER TABLE {schema}.runs ADD COLUMN response_deadline_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN run_deadline_at timestamptz; \
          ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_kind text; \
          ALTER TABLE {schema}.runs ADD COLUMN cancel_requested_at timestamptz; \
          ALTER TABLE {schema}.runs ADD COLUMN cancel_kind text; \
          ALTER TABLE {schema}.runs ADD COLUMN terminal_reason text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_kind text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_json jsonb; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_http_status int; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_release_node_id text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_outcome_hash text; \
-         ALTER TABLE {schema}.runs ADD COLUMN caller_released_at timestamptz; \
          ALTER TABLE {schema}.node_runs ADD COLUMN selected_recovery_class text; \
          ALTER TABLE {schema}.node_runs ADD COLUMN recovery_class text; \
          ALTER TABLE {schema}.node_runs ADD COLUMN generation_fact_kind text; \
