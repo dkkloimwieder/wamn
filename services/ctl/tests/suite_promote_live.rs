@@ -64,7 +64,7 @@ fn swap_db(url: &str, db: &str) -> String {
     }
 }
 
-/// Ensure the runtime role, then drop+create the two project-env databases.
+/// Ensure the runtime roles, then drop+create the two project-env databases.
 async fn reset_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     let (su, task) = connect(admin_url).await;
     su.batch_execute(
@@ -74,6 +74,14 @@ async fn reset_databases(admin_url: &str, src_db: &str, dst_db: &str) {
     )
     .await
     .expect("ensure wamn_app role");
+    // The canonical DDL this gate applies (run-state / flow-tests / catalog-schema)
+    // GRANTs to the host-only author role, so the reset must bootstrap it too —
+    // otherwise a from-zero throwaway PG dies with `role "wamn_scenario_author"
+    // does not exist` before the first assert. Same statement production
+    // reconcile-run-plane runs, so there is no second definition to drift.
+    su.batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .expect("ensure wamn_scenario_author role");
     su.batch_execute(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_system') \
            THEN CREATE ROLE wamn_system LOGIN PASSWORD 'wamn_system' NOSUPERUSER; \

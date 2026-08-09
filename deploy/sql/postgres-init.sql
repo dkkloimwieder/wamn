@@ -12,6 +12,23 @@
 
 CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
 
+-- The host-only scenario-author group role (11.2/12g). Roles are CLUSTER-global,
+-- so creating it here is what makes the canonical run-plane DDL
+-- (deploy/sql/{run-state,flow-tests,catalog-schema}.sql, which GRANT to it)
+-- appliable out of the box — without it every such apply dies with
+-- `role "wamn_scenario_author" does not exist`. Same advisory-locked,
+-- idempotent shape as `wamn_schema_control::ensure_scenario_author_role_sql`
+-- (crates/schema/control/src/run_plane.rs), so an init-time create and a later
+-- reconcile-run-plane bootstrap converge on identical attributes.
+DO $scenario_author$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_scenario_author') THEN
+    CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END $scenario_author$;
+
 CREATE DATABASE wamn OWNER postgres;
 
 \connect wamn

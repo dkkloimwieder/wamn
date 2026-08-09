@@ -697,15 +697,20 @@ cargo test -p wamn-execution-host -p wamn-executor -p wamn-dispatcher --no-fail-
 # recipe-test: H5-METRIC-PROOF | integration | wamn-proof-integration | lib | - | metricbench::tests:: | 7 | tests/integration/src/metricbench.rs hermetic release fixture, executor process boundary, URL isolation, scrape parsing, and body assembly
 cargo test -p wamn-proof-integration --lib metricbench::tests::
 cargo build -p wamn-dispatcher -p wamn-executor -p wamn-gates   # metricbench spawns both sibling service binaries
-# Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role) and the
+# Local iteration: a throwaway Postgres (+ the NOSUPERUSER wamn_app role and the
+# host-only NOLOGIN wamn_scenario_author role the canonical DDL GRANTs to) and the
 # local collector with the new :8889 metrics pipeline. metricbench creates and
 # drops its own database, applies the canonical catalog/run-plane DDL, drives the
 # executor and dispatcher through their binaries, then scrapes :8889 for the
 # real run/queue/pool/memory families.
 docker run -d --name lane-metric-pg -e POSTGRES_PASSWORD=pg -p 127.0.0.1:15503:5432 postgres:18
+# (postgres:18 inits-then-restarts — pg_isready lies during socket-only init; if the
+# first connection is refused, wait a few seconds and retry)
 until docker exec lane-metric-pg pg_isready -U postgres; do sleep 1; done
 docker exec -e PGPASSWORD=pg lane-metric-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;" -c \
+  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+     NOINHERIT NOREPLICATION NOBYPASSRLS;"
 docker run -d --name lane-metric-otelcol -p 127.0.0.1:4317:4317 -p 127.0.0.1:8889:8889 \
   -v "$PWD/deploy/infra/otelcol-local.yaml:/etc/otelcol/config.yaml:ro" \
   otel/opentelemetry-collector-contrib:0.115.1 --config=/etc/otelcol/config.yaml
@@ -998,6 +1003,12 @@ cargo build --locked -p wamn-ctl -p wamn-scenario-worker -p wamn-gates
 (cd components && cargo build --locked --release --target wasm32-wasip2 \
   -p flowrunner -p disposition-node)
 docker run -d --name lane0lfu-pg -p 15617:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+until docker exec lane0lfu-pg pg_isready -U postgres; do sleep 1; done
+# catalog-schema.sql (applied by the gate) GRANTs to the host-only NOLOGIN author
+# role, which nothing on a bare container creates — bootstrap it up front.
+docker exec lane0lfu-pg psql -U postgres -c \
+  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+     NOINHERIT NOREPLICATION NOBYPASSRLS;"
 export ADMIN=postgres://postgres:postgres@127.0.0.1:15617/postgres
 export APP=postgres://wamn_app:wamn_app@127.0.0.1:15617/postgres
 REL=components/target/wasm32-wasip2/release
@@ -2986,8 +2997,16 @@ cargo build -p wamn-dispatcher -p wamn-gates   # gate spawns the sibling service
 # wake scan):
 docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
   -e POSTGRES_DB=wamn postgres:18
+# (postgres:18 inits-then-restarts — pg_isready lies during socket-only init; if the
+# first connection is refused, wait a few seconds and retry)
+until docker exec wamn-rq-pg pg_isready -U postgres; do sleep 1; done
+# BOTH roles: catalog-schema.sql / run-state.sql GRANT to the host-only NOLOGIN
+# author role, so without it the gate's first DDL apply dies with
+# `role "wamn_scenario_author" does not exist`.
 docker exec wamn-rq-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
+  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;" -c \
+  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+     NOINHERIT NOREPLICATION NOBYPASSRLS;"
 WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-state
 # the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
 docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
@@ -4564,6 +4583,12 @@ docker run -d --name lane-f4-pg -p 5464:5432 -e POSTGRES_PASSWORD=postgres postg
 docker run -d --name lane-f4-nats -p 4232:4222 nats:2.10 -js
 until docker exec lane-f4-pg pg_isready -U postgres; do sleep 1; done
 until docker logs lane-f4-nats 2>&1 | grep -q 'Server is ready'; do sleep 1; done
+# The gate bootstraps wamn_system + wamn_app itself but NOT the host-only author
+# role that run-state.sql / catalog-schema.sql GRANT to; create it up front or the
+# provisioning step dies `role "wamn_scenario_author" does not exist`.
+docker exec lane-f4-pg psql -U postgres -c \
+  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+     NOINHERIT NOREPLICATION NOBYPASSRLS;"
 DBG=/tmp/wamn-target-2jdm-26/wasm32-wasip2/debug
 export WAMN_CTL_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-ctl
 export WAMN_CDC_READER_BIN=/tmp/wamn-target-2jdm-26/debug/wamn-cdc-reader
