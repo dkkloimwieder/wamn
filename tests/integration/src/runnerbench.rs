@@ -62,14 +62,22 @@ const FLOW_ID: &str = "poc-receipt";
 /// The cjv.4 anti-wedge fixture: a permitted 2-node cycle with no exit
 /// (`in → a → b → a → …`, pure transform nodes — no DB, no egress), so the
 /// only thing that can end it is the engine's dispatch budget.
+///
+/// wamn-hu74 re-authored it onto the current flow schema. The entry is a `cron`
+/// node — the trigger the dispatcher actually stamps on these seeds
+/// (`trigger_source = 'cron'`), and the only entry kind that admits a graph with
+/// no exit: a `request` entry demands every node in the pre-release region reach
+/// `respond` or `fail` (`unanswerable-path`), which a cycle by construction
+/// cannot, and the point of the fixture is precisely that it never terminates on
+/// its own. `cron` emits its input unchanged, so the cycle is the same pure
+/// two-transform loop it always was.
 const RUNAWAY_FLOW_ID: &str = "runaway-loop";
 
 fn runaway_flow_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{RUNAWAY_FLOW_ID}","version":1,
-            "trigger":{{"type":"manual"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"cron"}},
               {{"id":"a","type":"transform","config":{{"op":"upper"}}}},
               {{"id":"b","type":"transform","config":{{"op":"reverse"}}}}
             ],
@@ -127,18 +135,35 @@ fn merge_flow_v2_json() -> String {
 /// standard-library grant check while the D8 raw-SQL flag is off (as it is in
 /// this substrate and production) — a deterministic, one-step, no-I/O
 /// GUEST-OBSERVED terminal business failure (no error edge, nothing crashed).
+///
+/// wamn-hu74 re-authored it onto the current flow schema, `cron`-entry for the
+/// same reason as the runaway fixture: the graph deliberately has no `respond`
+/// (the head must die at `q`, not answer), and a `request` entry would reject
+/// exactly that (`unanswerable-path`).
 const TERMINAL_FLOW_ID: &str = "terminal-head";
 
 fn terminal_flow_json() -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"{TERMINAL_FLOW_ID}","version":1,
-            "trigger":{{"type":"manual"}},"entry":"in",
             "nodes":[
-              {{"id":"in","type":"webhook-in"}},
+              {{"id":"in","type":"cron"}},
               {{"id":"q","type":"postgres-query","config":{{}}}}
             ],
             "edges":[{{"from":"in","to":"q"}}]}}"#
     )
+}
+
+/// Every fixture graph this gate drives through `run-next`, in the order they are
+/// published: a release pins at most one version of a flow, so the two
+/// `poc-receipt` versions land in successive releases and everything else joins
+/// the first (wamn-kex2, wamn-hu74).
+fn published_fixtures() -> Vec<String> {
+    vec![
+        crate::flowbench::flow_json(1),
+        crate::flowbench::flow_json(2),
+        runaway_flow_json(),
+        terminal_flow_json(),
+    ]
 }
 
 #[derive(Debug, Args)]
@@ -570,16 +595,12 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
         )
         .await?;
         // `run-next` resolves each claimed run's graph through the immutable
-        // release lineage alone, so both `poc-receipt` versions are published as
-        // members of one release and every seeded run is pinned to its member
-        // (wamn-kex2). The hot-reload phase seeds v2 into the mutable head; the
-        // release already carries it.
-        crate::catalog_pin::publish_release(
-            &admin_url,
-            TENANT,
-            &[crate::flowbench::flow_json(1), crate::flowbench::flow_json(2)],
-        )
-        .await?;
+        // release lineage alone, so every fixture this gate drives is published
+        // up front and every seeded run is pinned to its member (wamn-kex2).
+        // Later phases still register their fixture in the mutable head — the
+        // release already carries it; the head is what the wamn-cox distractor in
+        // phase 9 moves.
+        crate::catalog_pin::publish_release(&admin_url, TENANT, &published_fixtures()).await?;
 
         // Build the PRODUCTION runner struct (not a gate-local worker): this is the
         // exact instantiate + claim loop the `run-worker` binary runs. The vault
@@ -1097,6 +1118,20 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
 mod tests {
     use super::*;
     use crate::schema_drift::{Need, assert_stand_in};
+
+    /// wamn-hu74 [GATE-DRIFT]: every fixture runnerbench publishes must be a graph
+    /// a real release could carry — `run-next` reaches it only as an immutable
+    /// artifact, and building one parses and VALIDATES the graph. The anti-wedge
+    /// and partition-terminal fixtures were written against the retired
+    /// `trigger`/`entry` envelope and could not be published at all; this holds
+    /// the whole published set, so the next fixture edit fails a named test
+    /// instead of the gate's phase 4 or 8 in a cluster.
+    #[test]
+    fn every_published_runnerbench_fixture_is_a_releasable_graph() {
+        for flow_json in published_fixtures() {
+            crate::catalog_pin::assert_releasable("runnerbench fixture", &flow_json);
+        }
+    }
 
     /// wamn-9mg8 [GATE-DRIFT]: runnerbench's `run_queue` stand-in vs the schema of
     /// record, through the uniform guard (folds the wamn-nhjg/wamn-v8cv guard).
