@@ -3,10 +3,10 @@
     "schema-version": "0.1",
     "name": "disposition-reject",
     "node-ref": { "node-id": "recommend" },
-    "input": { "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" } },
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "12.00", "moisture_max_pct": "5.00" }, "decision": "reject" },
     "expect": [
-      { "subset": { "recommended": "reject" } },
-      { "path-equals": { "pointer": "/recommended", "value": "reject" } },
+      { "subset": { "recommendation": "reject" } },
+      { "path-equals": { "pointer": "/recommendation", "value": "reject" } },
       { "port": "main" }
     ]
   },
@@ -14,25 +14,25 @@
     "schema-version": "0.1",
     "name": "disposition-use-as-is",
     "node-ref": {},
-    "input": { "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" } },
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "6.00", "moisture_max_pct": "5.00" }, "decision": "use-as-is" },
     "expect": [
-      { "subset": { "recommended": "use-as-is" } }
+      { "subset": { "recommendation": "use-as-is" } }
     ]
   },
   {
     "schema-version": "0.1",
     "name": "disposition-accept",
     "node-ref": {},
-    "input": { "hold": { "material": "resin-A", "moisture_pct": "4.00", "moisture_max_pct": "5.00" } },
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "4.00", "moisture_max_pct": "5.00" }, "decision": "accept" },
     "expect": [
-      { "subset": { "recommended": "accept" } }
+      { "subset": { "recommendation": "accept" } }
     ]
   },
   {
     "schema-version": "0.1",
     "name": "disposition-invalid-input",
     "node-ref": {},
-    "input": { "hold": { "material": "resin-A", "moisture_pct": "not-a-decimal", "moisture_max_pct": "5.00" } },
+    "input": { "hold": { "material": "resin-A", "moisture_pct": "not-a-decimal", "moisture_max_pct": "5.00" }, "decision": "accept" },
     "expect": [
       { "error-class": { "node-error": "invalid-input" } }
     ]
