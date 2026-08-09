@@ -16,6 +16,11 @@ const POLICY_TOKENS: &[&str] = &[
     "rustc-codegen-cranelift",
 ];
 
+/// Directory names [`text_files`] never descends into, at any depth: build output
+/// (a nested crate's `target/debug/.fingerprint/*` files are extension-less and
+/// BINARY, so scanning them panicked the walker outright) and VCS metadata.
+const SKIPPED_DIRECTORIES: &[&str] = &["target", ".git"];
+
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 struct TestDirectory(PathBuf);
@@ -118,6 +123,13 @@ fn text_files(path: &Path, files: &mut Vec<PathBuf>) {
     entries.sort();
     for entry in entries {
         if entry.is_dir() {
+            let name = entry
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if SKIPPED_DIRECTORIES.contains(&name.as_str()) {
+                continue;
+            }
             text_files(&entry, files);
         } else if matches!(
             entry.extension().and_then(|extension| extension.to_str()),
@@ -269,6 +281,53 @@ fn cranelift_toolchain_is_isolated_to_one_leaf_developer_stage() {
             .contains("COPY --chmod=0755 tools/cargo-cranelift /usr/local/bin/cargo-cranelift")
     );
     assert!(dockerfile.contains("WORKDIR /workspace"));
+}
+
+/// wamn-hyrn: the scan reads extension-less files (shell helpers carry no
+/// extension), so an in-place `cargo build` under a scanned tree used to feed it
+/// `target/debug/.fingerprint/*` and panic `stream did not contain valid UTF-8`
+/// before any policy assertion ran. Build output is skipped by directory NAME, at
+/// any depth — a sub-crate's `target/` nests below the scan roots.
+#[test]
+fn text_file_scan_skips_build_output_but_keeps_extensionless_sources() {
+    let directory = TestDirectory::new();
+    let root = directory.path("scan");
+    let planted = [
+        ("crate/target/debug/.fingerprint/lib-abc123/output", false),
+        (".git/objects/ab/cdef0123456789", false),
+        ("tools/helper", true),
+        ("crate/build.rs", true),
+    ];
+    for (relative, _) in planted {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().expect("planted file has a parent"))
+            .expect("create planted directory");
+        fs::write(&path, [0xff, 0xfe, 0x00, 0x9f]).expect("write planted file");
+    }
+    // The scanned files must be readable as UTF-8 text; the skipped ones are not.
+    for (relative, scanned) in planted {
+        if scanned {
+            fs::write(root.join(relative), "#!/usr/bin/env bash\ntrue\n")
+                .expect("write scanned file");
+        }
+    }
+
+    let mut files = Vec::new();
+    text_files(&root, &mut files);
+
+    let expected = planted
+        .iter()
+        .filter(|(_, scanned)| *scanned)
+        .map(|(relative, _)| root.join(relative))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        files.iter().collect::<std::collections::BTreeSet<_>>(),
+        expected.iter().collect::<std::collections::BTreeSet<_>>(),
+        "scan descended into build output or dropped an extension-less source"
+    );
+    for path in &files {
+        assert_no_policy_tokens(path);
+    }
 }
 
 #[test]
