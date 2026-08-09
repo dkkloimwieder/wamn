@@ -1,13 +1,19 @@
 //! pocsuiteproof — the POC suite gate (wamn-3rj): the F1/F3/F4 test suites AS
-//! STORED DATA, seeded into `wamn_run.test_suites`/`test_cases` and then PROVEN
-//! REAL by driving each flow once through its own harness path and folding the
-//! stored assertions through `wamn_scenario_model::evaluate`.
+//! STORED DATA, seeded into `wamn_run.test_suites`/`test_cases`; F3 and F4 are
+//! then PROVEN REAL by driving the flow once through its own harness path and
+//! folding the stored assertions through `wamn_scenario_model::evaluate`.
 //!
 //! It is `suiteproof` generalized to the three real POC flows, plus a fixture-
 //! realism pass. It is NOT the generic PG-loading executor (sibling lane 0lfu):
-//! this gate is hard-wired per-POC-flow so it can drive F1 (which the generic
-//! ExecutionHost-doubles executor cannot — F1's node types are baked into
-//! `poc-webhook-f1`, not the flowrunner).
+//! the drive legs are hard-wired per POC flow.
+//!
+//! F1 is SEED-ONLY here (wamn-97sj). Its drive leg ran the embedded
+//! `poc-webhook-f1` component, which was deleted at the callable cutover
+//! (wamn-5wd1.57) — the leg could not run at all, and because it ran first it
+//! also blocked F3/F4 on any non-`--seed-only` invocation. The callable F1 arc
+//! (`tests/system/src/callable_f1.rs` + `deploy/gates/callable-flow-f1-job.yaml`)
+//! owns the F1 flow's behaviour; the F1 SUITE is still seeded, round-tripped,
+//! RLS-checked, and FK-bound by phases A and C below.
 //!
 //! Phases:
 //!   A. data validity — seed the three embedded `wamn-scenario-catalog` envelopes into
@@ -15,11 +21,9 @@
 //!      provisioning uses; assert envelope round-trip, suite/case counts, version
 //!      binding, the jsonb round-trip + "parses as a `wamn_scenario_model::TestCase`",
 //!      and RLS (a foreign tenant sees zero suites).
-//!   B. fixture realism (drive-and-fold) — load each suite's cases back FROM the
-//!      seeded `test_cases` (round-trip through PG), drive the flow ONCE, build a
-//!      `Captured` fact bundle, and fold every stored assertion:
-//!        F1 — `poc-webhook-f1.wasm` over `wasi:http/incoming-handler` (ProxyPre),
-//!             sync response body + final DB captured via admin queries.
+//!   B. fixture realism (drive-and-fold) — load the F3/F4 suites' cases back FROM
+//!      the seeded `test_cases` (round-trip through PG), drive the flow ONCE, build
+//!      a `Captured` fact bundle, and fold every stored assertion:
 //!        F3 — `flowrunner.wasm` under the ExecutionHost test-double set at a fixed
 //!             virtual epoch; the 48h cutoff is proven by time-offset arithmetic
 //!             against epoch-anchored seed rows (48h in wall-clock milliseconds).
@@ -48,21 +52,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context as _, bail};
-use bytes::Bytes;
 use clap::Args;
-use http_body_util::combinators::BoxBody;
-use http_body_util::{BodyExt, Full};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
-use wash_runtime::engine::ctx::{Ctx, SharedCtx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
-use wash_runtime::plugin::HostPlugin;
-use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker};
-use wash_runtime::wasmtime::{Engine as RawEngine, Store};
-use wasmtime_wasi_http::p2::WasiHttpView;
-use wasmtime_wasi_http::p2::bindings::ProxyPre;
-use wasmtime_wasi_http::p2::bindings::http::types::{ErrorCode, Scheme};
 
 use crate::ctl_process;
 use crate::f4fixture;
@@ -80,7 +74,7 @@ use wamn_runtime::plugins::node_invocation::NodePlacementMap;
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
-use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
+use wamn_runtime::plugins::wamn_postgres::{WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_model::{
     Assertion, Captured, DbCapture, EgressObservation, Outcome, RunFacts, RunStatus, TestCase,
     TestSuite, evaluate,
@@ -91,7 +85,7 @@ use wamn_scenario_runtime::{
 use wamn_schema_control::BareSchemaName;
 
 use crate::erp_sim::ErpAudit;
-use crate::f1fixture::{self, F1_FLOW_JSON, F1_SEED_JSON, F1_TENANT};
+use crate::f1fixture::F1_FLOW_JSON;
 
 // The three committed suite envelopes — the canonical source the wave-end
 // composition gate + a copy-project-env promotion also carry.
@@ -123,10 +117,6 @@ const F3_OFFSET_MS: i64 = -172_800_000;
 
 #[derive(Debug, Args)]
 pub struct PocSuiteProofArgs {
-    /// Path to poc_webhook_f1.wasm (the F1 sync-webhook ingress component).
-    #[arg(long, default_value = "/bench/poc-webhook-f1.wasm")]
-    pub webhook_entry: PathBuf,
-
     /// Path to flowrunner.wasm (drives F3 + F4 under the test-double set).
     #[arg(long, default_value = "/bench/flowrunner.wasm")]
     pub flowrunner: PathBuf,
@@ -289,12 +279,7 @@ fn f3_holds_ddl(schema: &str) -> String {
 
 pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
-    for s in [
-        &args.schema,
-        &f1_schema(&args),
-        &f3_schema(&args),
-        &f4_schema(&args),
-    ] {
+    for s in [&args.schema, &f3_schema(&args), &f4_schema(&args)] {
         if !is_bare_ident(s) {
             bail!("--schema must be a bare identifier [a-z_][a-z0-9_]*: {s:?}");
         }
@@ -475,14 +460,16 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
     }
 
     // --- Phase B: fixture realism — load cases FROM PG, drive, fold ---
-    let f1_cases = load_cases(&app, F1_FLOW_ID).await?;
+    // F1 has no drive leg: the embedded `poc-webhook-f1` driver was retired with
+    // the component itself at the callable cutover (wamn-5wd1.57). Its suite is
+    // still seeded, still round-tripped, and still FK-bound above; the callable
+    // F1 arc (tests/system/src/callable_f1.rs) owns the flow's behaviour.
     let f3_cases = load_cases(&app, F3_FLOW_ID).await?;
     let f4_cases = load_cases(&app, F4_FLOW_ID).await?;
 
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
 
-    ok &= drive_f1(&engine, &args, &app_url, &admin_url, &f1_cases).await?;
     ok &= drive_f3(&engine, &args, &app_url, &admin_url, &f3_cases).await?;
     ok &= drive_f4(&engine, &args, &app_url, &admin_url, &f4_cases).await?;
 
@@ -528,276 +515,6 @@ pub async fn run(args: PocSuiteProofArgs) -> anyhow::Result<()> {
         bail!("pocsuiteproof failed");
     }
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// F1 drive — poc-webhook-f1 over wasi:http/incoming-handler (ProxyPre)
-// ---------------------------------------------------------------------------
-
-const F1_BENCH_ID: &str = "pocsuite-f1";
-
-async fn drive_f1(
-    engine: &wash_runtime::engine::Engine,
-    args: &PocSuiteProofArgs,
-    app_url: &str,
-    admin_url: &str,
-    cases: &[TestCase],
-) -> anyhow::Result<bool> {
-    println!(
-        "\n## F1 drive — {} case(s) via poc-webhook-f1 (sync webhook), body+DB via admin queries",
-        cases.len()
-    );
-    let schema = ScenarioSchemaName::new(f1_schema(args))?;
-    provision_f1(admin_url, &schema).await?;
-
-    let webhook_wasm = std::fs::read(&args.webhook_entry)
-        .with_context(|| format!("read {}", args.webhook_entry.display()))?;
-    let harness = ProxyHarness::new(engine.clone(), &webhook_wasm)?;
-
-    let mut cfg = WamnPostgresConfig::from_env();
-    cfg.database_url = Some(app_url.to_string());
-    let plugin = Arc::new(WamnPostgres::new(cfg)?);
-    plugin.set_tenant(F1_BENCH_ID, F1_TENANT)?;
-    plugin.set_schema(F1_BENCH_ID, schema.as_str())?;
-    plugin.probe_checkout().await?;
-
-    let (admin, admin_task) = connect(admin_url).await?;
-    scope_session(&admin, F1_TENANT, schema.as_str()).await?;
-
-    let mut ok = true;
-    for case in cases {
-        // Drive: POST the case input to the sync webhook.
-        let (status, _body) = harness
-            .request(&plugin, "POST", "/receipts", Some(case.input.clone()))
-            .await
-            .with_context(|| format!("F1 request for case {}", case.name))?;
-        // Capture the run outcome (from runs.status, keyed by the input's
-        // receipt_no) + each DbState query the case reads.
-        let receipt_no = case.input["receipt_no"].as_str().unwrap_or_default();
-        let run_status: Option<String> = admin
-            .query_opt(
-                "SELECT status FROM runs WHERE input_json->>'receipt_no' = $1",
-                &[&receipt_no],
-            )
-            .await?
-            .map(|r| r.get(0));
-        let mut captured = Captured {
-            run: run_status.as_deref().and_then(run_facts),
-            ..Default::default()
-        };
-        for a in &case.expect {
-            if let Assertion::DbState { query, params, .. } = a {
-                let rows = admin_query_json(&admin, query, params)
-                    .await
-                    .with_context(|| format!("F1 db-state query for {}", case.name))?;
-                captured.db.push(DbCapture {
-                    query: query.clone(),
-                    params: params.clone(),
-                    rows,
-                });
-            }
-        }
-        println!("  F1 {} — http status {status}", case.name);
-        fold_outcome(&mut ok, &evaluate(case, &captured));
-    }
-
-    drop(admin);
-    let _ = admin_task.await;
-    drop(plugin);
-    if !args.keep {
-        drop_schema(admin_url, &schema).await.ok();
-    }
-    Ok(ok)
-}
-
-/// Provision the ephemeral F1 world (floor + run-state + flow registry + catalog
-/// snapshot + business seed + the registered/active F1 flow) — the f1bench
-/// provisioning path, trimmed of its collision-check drill.
-async fn provision_f1(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::Result<()> {
-    let (client, conn_task) = connect(admin_url).await?;
-    let result = async {
-        client
-            .batch_execute(
-                "DO $$ BEGIN \
-                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
-                     CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-                   END IF; \
-                 END $$;",
-            )
-            .await
-            .context("ensure wamn_app role")?;
-        client
-            .batch_execute(&format!(
-                "DROP SCHEMA IF EXISTS {schema} CASCADE; \
-                 CREATE SCHEMA {schema} AUTHORIZATION postgres; \
-                 GRANT USAGE ON SCHEMA {schema} TO wamn_app; \
-                 SET search_path TO {schema};"
-            ))
-            .await
-            .context("create ephemeral F1 schema")?;
-        client
-            .batch_execute(&f1fixture::floor_ddl()?)
-            .await
-            .context("apply F1 floor")?;
-        BareSchemaName::new(schema.as_str()).context("validate F1 execution schema")?;
-        ctl_process::run_checked([
-            "reconcile-run-plane",
-            "--admin-database-url",
-            admin_url,
-            "--schema",
-            schema.as_str(),
-        ])
-        .await
-        .context("reconcile F1 run-plane")?;
-        client
-            .batch_execute(
-                "CREATE TABLE wamn_catalog ( \
-                   id uuid PRIMARY KEY DEFAULT gen_random_uuid(), \
-                   tenant_id text NOT NULL, \
-                   document jsonb NOT NULL); \
-                 ALTER TABLE wamn_catalog ENABLE ROW LEVEL SECURITY; \
-                 ALTER TABLE wamn_catalog FORCE ROW LEVEL SECURITY; \
-                 CREATE POLICY wamn_catalog_tenant ON wamn_catalog \
-                   USING (tenant_id = current_setting('app.tenant', true)) \
-                   WITH CHECK (tenant_id = current_setting('app.tenant', true)); \
-                 GRANT SELECT ON wamn_catalog TO wamn_app;",
-            )
-            .await
-            .context("create wamn_catalog")?;
-        client
-            .execute(
-                "INSERT INTO wamn_catalog (tenant_id, document) VALUES ($1, $2::text::jsonb)",
-                &[&F1_TENANT, &f1fixture::catalog()?.to_json()],
-            )
-            .await
-            .context("write catalog snapshot")?;
-        let dataset = wamn_schema_compiler::seed::Dataset::from_json(F1_SEED_JSON)
-            .context("parse F1 seed dataset")?;
-        let seed = wamn_schema_compiler::seed::compile(
-            &dataset,
-            &f1fixture::catalog()?,
-            F1_TENANT,
-        )
-        .map_err(|error| anyhow::anyhow!("compile F1 seed dataset: {error}"))?
-        .sql(wamn_schema_compiler::Confirmation::None)
-        .map_err(|error| anyhow::anyhow!("render F1 seed SQL: {error}"))?;
-        client.batch_execute(&seed).await.context("apply F1 seed")?;
-        seed_flow_version(
-            &client,
-            F1_TENANT,
-            F1_FLOW_ID,
-            1,
-            true,
-            F1_FLOW_JSON,
-            true,
-        )
-        .await
-        .context("register F1 flow")?;
-        anyhow::Ok(())
-    }
-    .await;
-    drop(client);
-    let _ = conn_task.await;
-    result
-}
-
-/// A minimal ProxyPre harness (the f1bench/apibench pattern) — compile the
-/// component once, then drive one `wasi:http/incoming-handler` request per call.
-struct ProxyHarness {
-    engine: wash_runtime::engine::Engine,
-    pre: ProxyPre<SharedCtx>,
-}
-
-impl ProxyHarness {
-    fn new(engine: wash_runtime::engine::Engine, guest: &[u8]) -> anyhow::Result<Self> {
-        let raw: &RawEngine = engine.inner();
-        let component = WasmtimeComponent::new(raw, guest)
-            .map_err(|e| anyhow::anyhow!("compile component: {e}"))?;
-        let mut linker: Linker<SharedCtx> = Linker::new(raw);
-        wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
-        wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
-        wamn_postgres::add_to_linker(&mut linker)?;
-        let pre = ProxyPre::new(linker.instantiate_pre(&component)?)?;
-        Ok(Self { engine, pre })
-    }
-
-    async fn request(
-        &self,
-        plugin: &Arc<WamnPostgres>,
-        method: &str,
-        uri: &str,
-        body: Option<Value>,
-    ) -> anyhow::Result<(u16, Value)> {
-        let body_bytes = match body {
-            Some(v) => serde_json::to_vec(&v)?,
-            None => Vec::new(),
-        };
-        let mut plugins: std::collections::HashMap<
-            &'static str,
-            Arc<dyn HostPlugin + Send + Sync>,
-        > = std::collections::HashMap::new();
-        plugins.insert(
-            wamn_postgres::WAMN_POSTGRES_ID,
-            plugin.clone() as Arc<dyn HostPlugin + Send + Sync>,
-        );
-        let ctx = Ctx::builder(F1_BENCH_ID.to_string(), F1_BENCH_ID.to_string())
-            .with_plugins(plugins)
-            .build();
-        let mut store = Store::new(self.engine.inner(), SharedCtx::new(ctx));
-        store.set_epoch_deadline(u64::MAX / 2);
-
-        let body: BoxBody<Bytes, ErrorCode> = Full::new(Bytes::from(body_bytes))
-            .map_err(|e| match e {})
-            .boxed();
-        let req = hyper::Request::builder()
-            .method(method)
-            .uri(uri)
-            .header(hyper::header::HOST, "f1.local")
-            .body(body)
-            .context("build request")?;
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let req_res = store
-            .data_mut()
-            .http()
-            .new_incoming_request(Scheme::Http, req)?;
-        let out_res = store.data_mut().http().new_response_outparam(tx)?;
-
-        let pre = self.pre.clone();
-        let task = tokio::task::spawn(async move {
-            let proxy = pre.instantiate_async(&mut store).await?;
-            proxy
-                .wasi_http_incoming_handler()
-                .call_handle(&mut store, req_res, out_res)
-                .await
-        });
-
-        let resp = match rx.await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(code)) => {
-                task.await??;
-                bail!("guest set an error code: {code:?}");
-            }
-            Err(_) => {
-                task.await??;
-                bail!("guest never set the response outparam");
-            }
-        };
-        let status = resp.status().as_u16();
-        let bytes = resp
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| anyhow::anyhow!("collect response body: {e}"))?
-            .to_bytes();
-        task.await??;
-        let json = if bytes.is_empty() {
-            Value::Null
-        } else {
-            serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-        };
-        Ok((status, json))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,23 +1117,10 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-async fn drop_schema(admin_url: &str, schema: &ScenarioSchemaName) -> anyhow::Result<()> {
-    let (client, task) = connect(admin_url).await?;
-    let r = client
-        .batch_execute(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE;"))
-        .await;
-    drop(client);
-    let _ = task.await;
-    r.context("drop schema")
-}
-
 async fn scalar(c: &Client, sql: &str) -> anyhow::Result<i64> {
     Ok(c.query_one(sql, &[]).await.context("scalar count")?.get(0))
 }
 
-fn f1_schema(args: &PocSuiteProofArgs) -> String {
-    format!("{}_f1", args.schema)
-}
 fn f3_schema(args: &PocSuiteProofArgs) -> String {
     format!("{}_f3", args.schema)
 }
@@ -1469,7 +1173,7 @@ mod tests {
 
     /// The F1 stored suite drives against the committed F1 flow: its flow-ref
     /// names `receipt-received` v1 (the flow `poc-webhook-f1` serves), and every
-    /// case is a flow-level case (not a node case the ProxyPre driver can't run).
+    /// case is a flow-level case, not a node case.
     #[test]
     fn f1_suite_targets_the_receipt_received_flow() {
         let suite = TestSuite::from_json(F1_SUITE_JSON).unwrap();

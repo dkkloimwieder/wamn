@@ -2237,7 +2237,13 @@ proof gates:
   in `f4proof`.
 
 The fixture-realism and stored-data tests remain useful independently. The old
-hard-wired F1 drive is no longer a gate of record after the callable cutover.
+hard-wired F1 drive is RETIRED (wamn-97sj), not merely demoted: it read
+`poc-webhook-f1.wasm`, which the callable cutover deleted, so the leg could not
+run at all — and because it ran first it also blocked F3/F4 on any invocation
+without `--seed-only`. The gate now has no `--webhook-entry` flag; F1 is
+seed-only (phases A and C still round-trip, RLS-check, and FK-bind its suite),
+and the callable F1 arc (`callable_f1` + `deploy/gates/callable-flow-f1-job.yaml`)
+owns the flow's behaviour.
 
 ```bash
 # recipe-test: H5-F1-FIXTURE | system | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | shared F1 catalog, flow, seed, and burst fixture coherence
