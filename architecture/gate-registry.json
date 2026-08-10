@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "authority": "Canonical semantic registry for shipped gate ownership. Canonical decision status and identity derive from docs/archive/PLAN/PLAN.md. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
+  "authority": "MVP gate-manifest disposition derives from docs/scope-reduction-mvp.md Appendix D. Retained D-number and recipe metadata is historical registry compatibility only. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.",
   "registry_owner": "bd:wamn-2jdm.2",
   "machine_evidence_policy": "Kubernetes Job verdicts use tools/kubernetes-gate-run and the strict wamn-kubernetes-gate-verdict/v1 consumer contract; verdict records require fresh Job UIDs, post-start Job/Pod evidence, bounded completion, exit codes, image IDs, logs, and explicit expected-negative side-effect snapshots. Aggregate scheduling remains pending bd:wamn-2jdm.8; artifact provenance remains owned by bd:wamn-2jkm.98 and bd:wamn-4tob.6.25.",
   "mutation_campaigns": [
@@ -24,7 +24,7 @@
       "plan_anchor": "**D1**",
       "primary_source": {
         "source_kind": "manifest",
-        "source": "deploy/gates/callable-flow-wave2-job.yaml"
+        "source": "deploy/gates/suiteproof-job.yaml"
       }
     },
     {
@@ -32,8 +32,8 @@
       "status": "shipped",
       "plan_anchor": "**D2**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/apiproof-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-API-PUBLISH"
       }
     },
     {
@@ -42,7 +42,7 @@
       "plan_anchor": "**D3**",
       "primary_source": {
         "source_kind": "manifest",
-        "source": "deploy/gates/queuebench-job.yaml"
+        "source": "deploy/gates/wakeproof-job.yaml"
       }
     },
     {
@@ -50,8 +50,8 @@
       "status": "shipped",
       "plan_anchor": "**D5**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/pgbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-R18-NEG"
       }
     },
     {
@@ -59,8 +59,8 @@
       "status": "shipped",
       "plan_anchor": "**D6**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/provisionbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "PLAN-0-2-GATE-REGISTRY"
       }
     },
     {
@@ -86,8 +86,8 @@
       "status": "shipped",
       "plan_anchor": "- **D9 / D20**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/dispatchbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "PLAN-0-2-GATE-REGISTRY"
       }
     },
     {
@@ -95,8 +95,8 @@
       "status": "shipped",
       "plan_anchor": "**D13**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/dashproof-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-TRACEPROOF"
       }
     },
     {
@@ -113,8 +113,8 @@
       "status": "shipped",
       "plan_anchor": "**D15**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/flowbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "PLAN-1-FLOW-SPEC-RECOVERY"
       }
     },
     {
@@ -122,8 +122,8 @@
       "status": "shipped",
       "plan_anchor": "**D16**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/bench-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-EXECUTION-DEADLINE"
       }
     },
     {
@@ -140,8 +140,8 @@
       "status": "shipped",
       "plan_anchor": "**D18**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/provisionbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-PUBLISH-GATE"
       }
     },
     {
@@ -150,7 +150,7 @@
       "plan_anchor": "**D19**",
       "primary_source": {
         "source_kind": "manifest",
-        "source": "deploy/gates/rie2ebench-job.yaml"
+        "source": "deploy/gates/causation-e2e-job.yaml"
       }
     },
     {
@@ -158,8 +158,8 @@
       "status": "shipped",
       "plan_anchor": "- **D9 / D20**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/queuebench-job.yaml"
+        "source_kind": "recipe",
+        "source": "PLAN-0-2-GATE-REGISTRY"
       }
     },
     {
@@ -176,8 +176,8 @@
       "status": "shipped",
       "plan_anchor": "**D22**",
       "primary_source": {
-        "source_kind": "manifest",
-        "source": "deploy/gates/cdcbench-job.yaml"
+        "source_kind": "recipe",
+        "source": "H5-CDCBENCH"
       }
     },
     {
@@ -231,112 +231,6 @@
   "entries": [
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/apibench-job.yaml",
-      "classification": "partial-proof",
-      "decision_ids": [
-        "D2"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/apiproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D2"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/bench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D16",
-        "D23"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/buildproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D7",
-        "D17"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/causation-e2e-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
@@ -365,651 +259,11 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-cron-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D9",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-f0-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-f1-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-f2-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-f3-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-f4-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-schema-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D14"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-wave1-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/callable-flow-wave2-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/capturebench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D3",
-        "D13"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/cdcbench-job.yaml",
-      "classification": "measurement",
-      "decision_ids": [
-        "D19",
-        "D22"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "measurement-with-sanity-pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "on-demand-record-campaign",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/cdcbench-switchover-job.yaml",
-      "classification": "drill",
-      "decision_ids": [
-        "D6",
-        "D19"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "drill-completes",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "operator-drill",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/credproof-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
         "D7",
         "D17"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/dashproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D13"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/dispatchbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D3",
-        "D9",
-        "D20"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/egressbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D17",
-        "D23"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f2-build-job.yaml",
-      "classification": "non-gate",
-      "decision_ids": [],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "no-verdict",
-      "can_fail": false,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "on-demand-prerequisite",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f2-buildproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D7",
-        "D17"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f2-testgate-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D7"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "expected-refusal",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f2invoke-job.yaml",
-      "classification": "partial-proof",
-      "decision_ids": [
-        "D7"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f3proof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D3"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/f4proof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D3",
-        "D19"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/callable-flow-aggregate.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/failoverbench-job.yaml",
-      "classification": "drill",
-      "decision_ids": [
-        "D6"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "drill-completes",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
-      },
-      "cadence": "operator-drill",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/flowbench-job.yaml",
-      "classification": "partial-proof",
-      "decision_ids": [
-        "D1",
-        "D3",
-        "D15"
       ],
       "bead_owner": "bd:wamn-2jdm.2",
       "proof_tier": "in-cluster",
@@ -1087,250 +341,6 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/logbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D13"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/matbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D19"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/metricbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D13"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/nodebench-job.yaml",
-      "classification": "partial-proof",
-      "decision_ids": [
-        "D1",
-        "D7",
-        "D17"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/pgbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D3",
-        "D5",
-        "D8",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/pgbench-multiproject-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D5",
-        "D6"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/pinproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/pocsuiteproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D14"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/provisionbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D6",
-        "D18"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/publish-catalog-job.yaml",
       "classification": "setup",
       "decision_ids": [],
@@ -1355,174 +365,11 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/queuebench-ceiling-job.yaml",
-      "classification": "measurement",
-      "decision_ids": [
-        "D3",
-        "D5"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "measurement-with-sanity-pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "on-demand-record-campaign",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/queuebench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D3",
-        "D9",
-        "D20"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/rie2ebench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D19",
-        "D22"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/runstate-baseline-job.yaml",
-      "classification": "measurement",
-      "decision_ids": [
-        "D3",
-        "D15"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "measurement-with-sanity-pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "on-demand-record-campaign",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/samplebench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D17",
-        "D19"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/socketguard-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
         "D17",
         "D23"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/streambench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D19"
       ],
       "bead_owner": "bd:wamn-2jdm.2",
       "proof_tier": "in-cluster",
@@ -1600,115 +447,6 @@
     },
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/testhostbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1",
-        "D7"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/testkitbench-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D1"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/tracebench-job.yaml",
-      "classification": "partial-proof",
-      "decision_ids": [
-        "D13",
-        "D17"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/traceproof-job.yaml",
-      "classification": "required-gate",
-      "decision_ids": [
-        "D13",
-        "D17",
-        "D23"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
       "source": "deploy/gates/wakeproof-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
@@ -1726,32 +464,6 @@
         "evidence": "architecture/evidence/mutations/queue-runner.json"
       },
       "cadence": "per-shipping-change",
-      "latest_evidence": {
-        "issue": "bd:wamn-2jdm.2",
-        "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",
-        "machine_evidence": "missing",
-        "evidence_follow_up": "bd:wamn-2jdm.8",
-        "scheduling_follow_up": "bd:wamn-2jdm.8"
-      }
-    },
-    {
-      "source_kind": "manifest",
-      "source": "deploy/gates/walbench-job.yaml",
-      "classification": "measurement",
-      "decision_ids": [
-        "D19"
-      ],
-      "bead_owner": "bd:wamn-2jdm.2",
-      "proof_tier": "in-cluster",
-      "expected_outcome": "measurement-with-sanity-pass",
-      "can_fail": true,
-      "allowed_skips": [],
-      "coverage_exclusions": [],
-      "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
-      },
-      "cadence": "on-demand-record-campaign",
       "latest_evidence": {
         "issue": "bd:wamn-2jdm.2",
         "git": "git:0bc55d4c741c2d6cad8dfb39f8c6ff3b95a85e13",

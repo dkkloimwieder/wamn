@@ -692,7 +692,8 @@ Workspace: 51 root members, `default-members` absent (32 `crates/*/*`,
 workspace 31 members, defaults absent. Dockerfile: 19 stages = 10
 advertised image targets + 9 build stages; the shared builders compile
 everything (`Dockerfile:47-49,78-81,144-161`). Gates: 60 yaml in
-`deploy/gates/` (57 Jobs + 3 fixtures) + 4 JSON; one GitHub workflow
+`deploy/gates/` (56 Jobs + 1 Deployment/Service input + 3 fixtures) +
+4 JSON; one GitHub workflow
 (JS client only). Key verified facts by area — management surface:
 one contract command mounted (`management.rs:831`); sessions/CSRF in
 the binary (`management.rs:15-291`); contract carries
@@ -835,7 +836,7 @@ Docker: `--target run-worker | management | ctl | host | dispatcher |
 waker | cdc-reader` each build from their own cook+build stage;
 `--target gates` requests the proof builders explicitly.
 
-## D · Gate-manifest disposition (57 Jobs; counts derive from these lists)
+## D · Gate-manifest disposition (57 gate inputs; counts derive from these lists)
 **Absorbed (7):** suiteproof, suiteexec, invocationproof, credproof →
 M0 · causation-e2e → M1 · wakeproof → M2 · publish-catalog →
 bootstrap-journey.
@@ -865,7 +866,7 @@ Baseline for comparison: the 10 advertised targets, not the 19 stages.
 |---|---|---|
 | Root members / default-selected | 51 / 51 | 38 / 19 |
 | Component members / default-selected | 31 / 31 | 6 / 2 (+1 M1) |
-| Gate Jobs | 57 supported | 7 absorbed · 3 triggered · 47 archived |
+| Gate inputs | 57 supported | 7 absorbed · 3 triggered · 47 archived |
 | Advertised image targets → product | 10 → 10 | 10 → 7 (+1 proof) |
 | Long-lived: infra / native / workloads | mixed | 2 (+2 ext) / 7 / 2 |
 | Root `cargo test` + `cargo check` | unmeasured | clean **and** incremental, recorded on landing |

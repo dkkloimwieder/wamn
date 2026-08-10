@@ -593,16 +593,9 @@ pub mod tests {
     }
 
     #[test]
-    fn exact_image_job_routes_to_the_system_proof() {
+    fn archived_job_has_no_orchestrator_route() {
         let router = include_str!("../../orchestrator/src/main.rs");
-        assert!(router.contains("CallableF3(callable_f3::CallableF3Args)"));
-        assert!(router.contains("Command::CallableF3(args) => callable_f3::run(args)"));
-
-        let job = include_str!("../../../deploy/gates/callable-flow-f3-job.yaml");
-        assert!(job.contains("name: callable-flow-f3"));
-        assert!(job.contains("image: wamn-gates:cf-f3-ISSUE"));
-        assert!(job.contains("imagePullPolicy: Never"));
-        assert!(job.contains(r#"args: ["--log-level", "error", "callable-f3"]"#));
-        assert!(!job.contains("wamn-gates:dev"));
+        assert!(!router.contains("CallableF3(callable_f3::CallableF3Args)"));
+        assert!(!router.contains("Command::CallableF3(args) => callable_f3::run(args)"));
     }
 }

@@ -38,7 +38,7 @@
 //!                burst/recovery profile — curves + CSVs, not pass/fail numbers
 //!                (only the exactly-once/completeness sanity asserts gate). NOT
 //!                part of `--mode all` (it is a long campaign, not a regression
-//!                gate); run it explicitly via deploy/gates/queuebench-ceiling-job.yaml.
+//!                gate); run it explicitly as the retained repository recipe.
 //!   all        — every regression mode in sequence (everything except ceiling).
 
 use std::collections::{HashMap, HashSet};

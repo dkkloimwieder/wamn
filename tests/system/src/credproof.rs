@@ -146,11 +146,10 @@ mod tests {
             include_str!("../../../deploy/platform/runner-connection-egress.example.yaml");
         let p0 = include_str!("../../../deploy/gates/runner-connection-egress.yaml");
         let credproof = include_str!("../../../deploy/gates/credproof-job.yaml");
-        let nodebench = include_str!("../../../deploy/gates/nodebench-job.yaml");
         let platform_node = include_str!("../../../deploy/platform/serve-node.yaml");
         let gate_node = include_str!("../../../deploy/gates/serve-node.yaml");
 
-        for manifest in [runner, platform, external, p0, credproof, nodebench] {
+        for manifest in [runner, platform, external, p0, credproof] {
             assert!(manifest.contains("wamn.io/egress-profile: runner"));
         }
         for required in [

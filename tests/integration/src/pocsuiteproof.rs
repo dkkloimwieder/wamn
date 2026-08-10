@@ -10,9 +10,9 @@
 //! F1 is SEED-ONLY here (wamn-97sj). Its drive leg ran the embedded
 //! `poc-webhook-f1` component, which was deleted at the callable cutover
 //! (wamn-5wd1.57) — the leg could not run at all, and because it ran first it
-//! also blocked F3/F4 on any non-`--seed-only` invocation. The callable F1 arc
-//! (`tests/system/src/callable_f1.rs` + `deploy/gates/callable-flow-f1-job.yaml`)
-//! owns the F1 flow's behaviour; the F1 SUITE is still seeded, round-tripped,
+//! also blocked F3/F4 on any non-`--seed-only` invocation. The retained callable
+//! F1 recipe (`tests/system/src/callable_f1.rs`) owns the F1 flow's behaviour;
+//! the F1 SUITE is still seeded, round-tripped,
 //! RLS-checked, and FK-bound by phases A and C below.
 //!
 //! Phases:

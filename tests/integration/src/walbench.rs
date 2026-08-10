@@ -29,8 +29,8 @@
 //!           "representative app load" bytes/s baseline.
 //!   all   — perop then mixed.
 //!
-//! Not `--mode all` of some other gate: run it explicitly via
-//! deploy/gates/walbench-job.yaml. A single run is the record (unlike the C7 two-run
+//! Not `--mode all` of some other gate: run the retained recipe explicitly. A
+//! single run is the record (unlike the C7 two-run
 //! practice): there is no knee search a one-sided disk stall can poison — the
 //! headline numbers are byte counts and medians, and a stall shows up visibly
 //! as a p99 outlier. The insert position (`pg_current_wal_insert_lsn`), not the

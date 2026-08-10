@@ -278,18 +278,11 @@ pub mod tests {
     }
 
     #[test]
-    fn exact_image_job_routes_to_the_composed_proof() {
+    fn archived_job_has_no_orchestrator_route() {
         let router = include_str!("../../orchestrator/src/main.rs");
-        assert!(router.contains("CallableWave2(callable_wave2::CallableWave2Args)"));
-        assert!(router.contains("Command::CallableWave2(args) => callable_wave2::run(args).await"));
-
-        let job = include_str!("../../../deploy/gates/callable-flow-wave2-job.yaml");
-        assert!(job.contains("name: callable-flow-wave2"));
-        assert!(job.contains("image: wamn-gates:cf-wave2-ISSUE"));
-        assert!(job.contains("imagePullPolicy: Never"));
-        assert!(job.contains("\"--source-identity\", \"ISSUE\""));
-        assert!(job.contains("\"--image-id\", \"IMAGE_ID\""));
-        assert!(job.contains("\"--deployment-identity\", \"callable-flow-wave2@ISSUE\""));
-        assert!(!job.contains("wamn-gates:dev"));
+        assert!(!router.contains("CallableWave2(callable_wave2::CallableWave2Args)"));
+        assert!(
+            !router.contains("Command::CallableWave2(args) => callable_wave2::run(args).await")
+        );
     }
 }

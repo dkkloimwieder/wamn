@@ -12,8 +12,8 @@
 //! plus a malformed one, asserting the node's recommendation and the
 //! `InvalidInput` taxonomy arm over the real `wamn:node` ABI.
 //!
-//! In-cluster it runs from the gates image against `/bench/disposition-node.wasm`
-//! (deploy/gates/f2invoke-job.yaml); topology-independent, so local == in-cluster.
+//! The retained recipe runs against `/bench/disposition-node.wasm`; the proof is
+//! topology-independent.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,27 +1,18 @@
-//! Compatibility orchestration facade for the repository proof tiers.
+//! Orchestration facade for retained proof inputs and repository fixtures.
 //!
-//! `wamn-gates` retains its deploy-facing binary and subcommand surface while
-//! the implementations live in explicit conformance, integration, system, and
+//! `wamn-gates` retains the routing needed by the MVP proof inputs while their
+//! implementations live in explicit conformance, integration, system, and
 //! test-support homes. Proofs that import service clients remain integration
 //! evidence even when they also exercise a deployed endpoint.
 
-mod callable_wave1;
-mod callable_wave2;
-
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
-use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
+use wamn_proof_conformance::{credprobe, socketguard, testgate};
 use wamn_proof_integration::{
-    apibench, bench, capturebench, causation_e2e, cdcbench, credproof, dashproof, f1bench,
-    f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, invocationproof, logbench,
-    matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
-    queuebench, readerbench, rie2ebench, runnerbench, runstate_baseline, samplebench, streambench,
-    suiteproof, testhostbench, testkitbench, tracebench, wakeproof, walbench,
+    causation_e2e, credproof, f1bench, impactproof, invocationproof, nodebench, nodeinvoke,
+    readerbench, runnerbench, suiteproof, testkitbench, wakeproof,
 };
-use wamn_proof_system::{
-    apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, f1proof,
-    pocsuiteproof as callable_flow_schema, traceproof,
-};
+use wamn_proof_system::{f1proof, traceproof};
 
 // Repository-only fixture and temporary-service commands.
 use wamn_test_infrastructure::{erp_sim, publish_catalog_demo};
@@ -43,121 +34,44 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run the S1 benchmark suite
-    Bench(bench::BenchArgs),
-    /// Run the S2 wamn:postgres benchmark + security gates
-    Pgbench(pgbench::PgBenchArgs),
-    /// Run the 2.3 provisioning gate (per-project DB provisioning / credential resolution / isolation)
-    Provisionbench(provisionbench::ProvisionBenchArgs),
-    /// Run the S3 flow-runner gates (dispatch / hot-reload / resume)
-    Flowbench(flowbench::FlowBenchArgs),
-    /// Run the 5.14 durable-run-queue gates (dispatch SLOs / throughput / reclaim / janitor / doorbell)
-    Queuebench(queuebench::QueueBenchArgs),
-    /// Run the 5.14 failover gates (checkpoint/resume on replica loss / janitor completion-race guard)
-    Failoverbench(failoverbench::FailoverBenchArgs),
     /// Run the fqg.8 production runner gate (ExecutionHost drains run_queue to completion; drive+reuse+empty)
     Runnerbench(runnerbench::RunnerBenchArgs),
-    /// Run the 9.6 node-I/O capture gates (toggle / truncate / scrub / retention)
-    Capturebench(capturebench::CaptureBenchArgs),
-    /// Run the EVT-NATS data-plane JetStream gate (publish / consume / Nats-Msg-Id dedupe / R3 node-loss heal)
-    Streambench(streambench::StreamBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
     /// Prove one admitted invocation through the deployed runner, WAL reader, and R3 stream.
     CausationE2e(causation_e2e::CausationE2eArgs),
-    /// Run the EVT-C-WAL-0 pre-CDC WAL-volume baseline (per-op WAL/op + representative-load bytes/s)
-    Walbench(walbench::WalBenchArgs),
-    /// Record the PLAN-3 pre-checkpoint F1 capture-on persistence baseline.
-    RunstateBaseline(runstate_baseline::RunstateBaselineArgs),
-    /// Run the EVT-C-CDC ceiling campaign (decode drain / slot-lag knee / RI-FULL WAL delta / timed switchover drill)
-    Cdcbench(cdcbench::CdcBenchArgs),
     /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
     Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
-    /// Run the S4 custom-node gates (HTTP hop / interpreted-vs-composed / config parse)
-    Nodebench(nodebench::NodeBenchArgs),
     /// Serve a wamn:node component over HTTP (S4 hop node host)
     ServeNode(nodebench::ServeNodeArgs),
     /// Run the 5.6/wamn-bd5 production custom-node invocation gate (real runner -> HTTP hop -> serve-node; grant + not-granted + config memoization)
     Nodeinvoke(nodeinvoke::NodeInvokeArgs),
-    /// Run the S5 logging-capture gates (overhead / loss / drops / enrichment)
-    Logbench(logbench::LogBenchArgs),
-    /// Run the 9.1 OTel trace-pipeline gate (host spans → Tempo; enriched single trace)
-    Tracebench(tracebench::TracebenchArgs),
-    /// Run the 9.2 independent P2/P3 host traceparent proof (host surfaces → serve-echo)
-    Traceproof(traceproof::TraceproofArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
-    /// Run the S6 scenario-runtime capability-substitution gates (compatibility name)
-    Testhostbench(testhostbench::TestHostBenchArgs),
     /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_scenario_model::evaluate) AND the 11.2-exec stored-suite executor (--suite/--impact-report: load test_suites/test_cases from a schema, drive each case through the t92 doubles)
     Testkitbench(testkitbench::TestKitBenchArgs),
-    /// Run the 2.6 DB-path egress review gate (no shipped workload imports wasi:sockets)
-    Egressbench(egressbench::EgressBenchArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
-    /// Verify a builder-pushed custom-node artifact independently.
-    Buildproof(buildproof::BuildproofArgs),
     /// Run the 11.5 custom-node test-gate proof.
     Testgate(testgate::TestGateArgs),
-    /// Run the 11.5 custom-node test-gate publish proof (the disposition node's cases.json passes; a deliberately-wrong expectation refuses with the typed error before any push)
-    /// Run the l5i9.17 materializer gate (decide/refuse/enqueue/doorbell + C-MAT numbers)
-    Matbench(matbench::MatBenchArgs),
-    /// Run the wamn-3glr reader-inclusive RI-flip e2e gate (real reader → materializer: pre-flip refusal, live flip, post-flip scoped delete run, non-retroactive)
-    Rie2ebench(rie2ebench::Rie2eBenchArgs),
-    /// Run the l5i9.57 E10-e2e wamn:jetstream sample gate (bind/fetch/ack/publish/dedupe/reject via the js-sample guest)
-    Samplebench(samplebench::SampleBenchArgs),
-    /// Run the 4.1 generated-REST-API-gateway gates (CRUD / expand / RLS / injection)
-    Apibench(apibench::ApiBenchArgs),
     /// Publish a catalog snapshot with the bundled 4.1b demo seed (wraps the
     /// prod publish-catalog and re-adds the gates-only --seed)
     PublishCatalog(publish_catalog_demo::PublishCatalogDemoArgs),
-    /// Run the 4.1b in-cluster proof against a deployed api-gateway over HTTP
-    Apiproof(apiproof::ApiProofArgs),
     /// Run the POC-F1 receipt-received gates (happy / holds / invalid / burst / rest)
     F1bench(f1bench::F1BenchArgs),
     /// Run the POC-F1 proof against the deployed poc-webhook-f1 + api-gateway over HTTP
     F1proof(f1proof::F1ProofArgs),
-    /// Run the POC-F2 disposition-node invocation gate (warm ServeNode over the zero-import node; one input per disposition outcome + InvalidInput)
-    F2invoke(f2invoke::F2InvokeArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
     Wakeproof(wakeproof::WakeProofArgs),
-    /// Run the POC-F3 escalate-stale-holds proof (time-shift cutoff + structural cycle drain + credentialed notify + egress allowlist; local seed or in-cluster park→wake)
-    F3proof(f3proof::F3ProofArgs),
     /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
     Suiteproof(suiteproof::SuiteProofArgs),
-    /// Run the POC-F4 CDC row-event flow + 429-throttle proof (real reader→materializer→queue→runner drives a WAL insert to an ERP callback; idempotency-key, queue-park backoff, no stampede)
-    F4proof(f4proof::F4ProofArgs),
     /// Serve the POC-F4 ERP callback simulator (429 + Retry-After for the first K requests per idempotency key, then 202; GET /audit)
     ErpSim(erp_sim::ErpSimArgs),
-    /// Run the 11.3 record-and-replay gate (pin a full-capture run through the `wamn-ctl` executable boundary: secret scrubbed + volatile normalized + replay round-trip + preview-run refusal, ephemeral schema)
-    Pinproof(pinproof::PinProofArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl impact-report` names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
     /// Prove exact claimed-run execution through the production host and baked flowrunner image.
     Invocationproof(invocationproof::InvocationProofArgs),
-    /// Run the 9.8 metric-set gate (run executions/success-ratio / queue depth / drive duration / memory denial+high-water / pool+query latency; api RPS in-cluster-only)
-    Metricbench(metricbench::MetricBenchArgs),
-    /// Run the 9.9 dashboards proof (wamn-b4e): assert a deployed Grafana — health, the three datasources present+healthy (Tempo/Loki soft in --local), the static SRE dashboard/folder, and every registry org's per-tenant folder+dashboard after provision-dashboards
-    Dashproof(dashproof::DashproofArgs),
-    /// Run the POC-TESTS gate (wamn-3rj): seed the F1/F3/F4 stored suites as catalog data + drive each flow once through its real path, folding the stored assertions (F1 webhook body+DB, F3 virtual-time 48h cutoff, F4 egress spy); --seed-only for the composition gate
-    Pocsuiteproof(pocsuiteproof::PocSuiteProofArgs),
-    /// Prove the canonical F0-F4 POC catalog applies from zero atomically and enforces replay keys.
-    CallableFlowSchema(callable_flow_schema::CallableFlowSchemaArgs),
-    /// Prove the callable F0 immutable release, HTTP attachment, and two-commit path.
-    CallableF0(callable_f0::CallableF0Args),
-    /// Prove the callable F1 immutable release, deterministic CTEs, and webhook cutover.
-    CallableF1(callable_f1::CallableF1Args),
-    /// Prove the callable F2 pure component release, internal policy, and replay.
-    CallableF2(callable_f2::CallableF2Args),
-    /// Prove the callable F3 graph, cron attachment, and recovery windows.
-    CallableF3(callable_f3::CallableF3Args),
-    /// Prove the callable F4 graph, event scope, child recovery, and effective-once callback.
-    CallableF4(callable_f4::CallableF4Args),
-    /// Reprovision and prove the composed callable-flow Wave-1 F0/F1/F3 campaign.
-    CallableWave1(callable_wave1::CallableWave1Args),
-    /// Reprovision all five flows and prove Wave 2 plus the Wave-1 regression.
-    CallableWave2(callable_wave2::CallableWave2Args),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -177,63 +91,25 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
-        Command::Bench(args) => bench::run(args).await,
-        Command::Pgbench(args) => pgbench::run(args).await,
-        Command::Provisionbench(args) => provisionbench::run(args).await,
-        Command::Flowbench(args) => flowbench::run(args).await,
-        Command::Queuebench(args) => queuebench::run(args).await,
-        Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
-        Command::Capturebench(args) => capturebench::run(args).await,
-        Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::CausationE2e(args) => causation_e2e::run(args).await,
-        Command::Walbench(args) => walbench::run(args).await,
-        Command::RunstateBaseline(args) => runstate_baseline::run(args).await,
-        Command::Cdcbench(args) => cdcbench::run(args).await,
         Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
-        Command::Nodebench(args) => nodebench::run(args).await,
         Command::ServeNode(args) => nodebench::serve(args).await,
         Command::Nodeinvoke(args) => nodeinvoke::run(args).await,
-        Command::Logbench(args) => logbench::run(args).await,
-        Command::Tracebench(args) => tracebench::run(args).await,
-        Command::Traceproof(args) => traceproof::run(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
-        Command::Testhostbench(args) => testhostbench::run(args).await,
         Command::Testkitbench(args) => testkitbench::run(args).await,
-        Command::Egressbench(args) => egressbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
-        Command::Buildproof(args) => buildproof::run(args).await,
         Command::Testgate(args) => testgate::run(args).await,
-        Command::Matbench(args) => matbench::run(args).await,
-        Command::Rie2ebench(args) => rie2ebench::run(args).await,
-        Command::Samplebench(args) => samplebench::run(args).await,
-        Command::Apibench(args) => apibench::run(args).await,
         Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
-        Command::Apiproof(args) => apiproof::run(args).await,
         Command::F1bench(args) => f1bench::run(args).await,
         Command::F1proof(args) => f1proof::run(args).await,
-        Command::F2invoke(args) => f2invoke::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
-        Command::F3proof(args) => f3proof::run(args).await,
         Command::Suiteproof(args) => suiteproof::run(args).await,
-        Command::F4proof(args) => f4proof::run(args).await,
         Command::ErpSim(args) => erp_sim::run(args).await,
-        Command::Pinproof(args) => pinproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
         Command::Invocationproof(args) => invocationproof::run(args).await,
-        Command::Metricbench(args) => metricbench::run(args).await,
-        Command::Dashproof(args) => dashproof::run(args).await,
-        Command::Pocsuiteproof(args) => pocsuiteproof::run(args).await,
-        Command::CallableFlowSchema(args) => callable_flow_schema::run(args).await,
-        Command::CallableF0(args) => callable_f0::run(args),
-        Command::CallableF1(args) => callable_f1::run(args),
-        Command::CallableF2(args) => callable_f2::run(args),
-        Command::CallableF3(args) => callable_f3::run(args),
-        Command::CallableF4(args) => callable_f4::run(args),
-        Command::CallableWave1(args) => callable_wave1::run(args).await,
-        Command::CallableWave2(args) => callable_wave2::run(args).await,
     };
 
     shutdown_observability();

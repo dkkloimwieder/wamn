@@ -18,8 +18,8 @@
 # co-designed in wamn-4xw — NOT provisioned here. The subject namespace already
 # reserves per-org isolation (evt.<org>...), so the account split is additive.
 #
-# The gate of record is deploy/gates/streambench-job.yaml (publish/consume + Nats-Msg-Id
-# dedupe + R3 survives one node deletion).
+# The retained streambench recipe covers publish/consume, Nats-Msg-Id dedupe,
+# and R3 survival after one node deletion; its in-cluster Job is archived for MVP.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -20,7 +20,8 @@
 //!   * **R3 survives node loss** — proven two ways: a self-contained RAFT
 //!     leader step-down + re-election (`--mode all`), and a physical pod
 //!     deletion (the two-step `publish` → `kubectl delete pod` → `heal`
-//!     runbook, deploy/gates/streambench-job.yaml).
+//!     historical runbook). The repository recipe remains, while its Job is
+//!     archived for MVP.
 //!
 //! Accounts: this stand-up runs on the single shared (default) account — the
 //! per-org account model + replication credentials are the wamn-4xw seam

@@ -18,11 +18,10 @@
 //! that `Err` before the push block ever runs.
 //!
 //! The two `cases.json` fixtures are `include_str!`d from the disposition-node
-//! crate (the same files the builder-svc image bakes for the in-cluster
-//! `deploy/gates/f2-testgate-job.yaml`), so this gate cannot drift from them.
-//! Only the compiled artifact comes from a path (`--node`), exactly like
-//! `f2invoke`: in-cluster it runs from the gates image against
-//! `/bench/disposition-node.wasm`.
+//! crate (the same files the builder-svc image bakes), so this retained recipe
+//! cannot drift from them.
+//! Only the compiled artifact comes from a path (`--node`), matching the
+//! retained `f2invoke` recipe.
 
 use std::path::PathBuf;
 

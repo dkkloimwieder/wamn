@@ -20,8 +20,8 @@
 //! (GF_SECURITY_ADMIN_USER / GF_SECURITY_ADMIN_PASSWORD) — `/api/datasources`
 //! needs an authenticated admin/editor. The SRE identity + the per-tenant
 //! folder/dashboard identities are asserted independently through Grafana's
-//! public API. In-cluster gate of record:
-//! `deploy/gates/dashproof-job.yaml`.
+//! public API. The repository-local proof remains available; its in-cluster Job
+//! is archived for MVP.
 
 use anyhow::{Context as _, bail};
 use clap::Args;

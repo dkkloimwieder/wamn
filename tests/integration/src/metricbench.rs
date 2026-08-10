@@ -26,7 +26,8 @@
 //! Local recipe (docs/archive/observability/metrics.md): the tracebench docker collector +
 //! otelcol-local's new metrics pipeline + a throwaway Postgres, with
 //! `OTEL_METRIC_EXPORT_INTERVAL=1000` so the periodic reader does not wait a
-//! minute. In-cluster gate of record: `deploy/gates/metricbench-job.yaml`.
+//! minute. The repository-local recipe remains available; its in-cluster Job is
+//! archived for MVP.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
