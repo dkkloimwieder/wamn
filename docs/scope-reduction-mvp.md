@@ -397,7 +397,7 @@ projection up to a fixed platform maximum; above it, output is
 omitted with explicit `output-too-large` metadata. Known secret
 patterns are redacted; **capture is not a secret-classification
 boundary** (a literal secretless guarantee is a demand-gated
-allowlist-projection design — owner veto open). Draft runs default
+allowlist-projection design and is outside MVP). Draft runs default
 `full`; **published runs retain the admitted `runs.input_json` but
 store no per-node input or output capture**; `test-set-run` forces
 `off`. The four-mode surface and per-flow capture field delete; the
@@ -451,7 +451,7 @@ released (pinning, cut 4). Retention follows release → evidence →
 generations** }; run-history pruning cannot orphan publish evidence;
 credential revocation stays independent — a retained definition keeps
 no secret usable. The `replay-seed` reference kind deletes;
-`audit-seed` deletes unless a named consumer surfaces at execution;
+`audit-seed` deletes; no execution consumer exists;
 `active-attempt` stays. **The gate is unconditional:**
 `requires_green_suite` and its project override delete
 (`system-schema:172,221`; `catalog-schema:1574`); no flag, no
@@ -941,9 +941,9 @@ slims to authored graph + public contract.
 checks (`catalog-schema:102-107`).
 **Stable-key live retry:** the `live-retry` policy arm ·
 multi-dispatch records · key-support attestation ·
-connection-mode recovery validation (owner veto window, F.3).
-**Retention kinds:** `replay-seed` · `audit-seed` (unless a named
-consumer surfaces at execution); `release-evidence` added;
+connection-mode recovery validation.
+**Retention kinds:** `replay-seed` · `audit-seed`;
+`release-evidence` added;
 `active-attempt` stays (`catalog-schema:1262-1273`).
 **Flow authority vocabulary:** `Flow.credentials` · `CredentialRef` ·
 `Node::credential` · `Flow.allowed_hosts` + their validation and
@@ -1009,10 +1009,9 @@ serve-echo/-node · logspewer · memhog · pgprobe · f1 flow fixtures.
 
 ### F.3 Owner resolutions (record)
 Single-shot runs + cancel deleted · capture full|off (the literal
-secretless guarantee is demand-gated; **open veto window 1**) ·
-effect retry cut — one dispatch per effectful occurrence (**open veto
-window 2**: the bounded stable-key variant returns only with its five
-constraints stated) ·
+secretless guarantee is outside MVP) · effect retry cut — one dispatch
+per effectful occurrence; no stable-key retry alternative ·
+`audit-seed` deleted; no execution consumer found ·
 observability named as an outcome, no local Grafana/Loki · fixture
 keep-set {sockprobe, connection-http-standard, busyloop} · custom
 plane deleted wholesale · call-flow restored and finalized (mandatory
