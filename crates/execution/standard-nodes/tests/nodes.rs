@@ -352,178 +352,6 @@ fn conditional_branches_by_jmespath_truthiness() {
     assert_eq!(empty.port, "false");
 }
 
-// ---------------------------------------------------------------------------
-// time-shift (deterministic time arithmetic — the F3 cutoff gap)
-// ---------------------------------------------------------------------------
-
-/// The F3 shape: shift the cron `scheduled-at` back 48h into an RFC 3339 cutoff
-/// a `timestamptz` filter compares against.
-#[test]
-fn time_shift_computes_an_iso_cutoff() {
-    let mut mock = Mock::default();
-    let config = json!({
-        "base": "\"scheduled-at\"", "offset-ms": -172_800_000, "format": "iso", "key": "cutoff"
-    });
-    let input = json!({"trigger": "cron", "scheduled-at": "2023-11-14T22:13:20Z"});
-    let em = go("time-shift", &mut mock, &config, &input).unwrap();
-    assert_eq!(em.port, "main");
-    assert_eq!(em.payload, json!({"cutoff": "2023-11-12T22:13:20.000Z"}));
-}
-
-/// MUTANT WITNESS (mutant #1): the offset SIGN is respected — a NEGATIVE offset
-/// yields an instant strictly EARLIER than the base, a positive one strictly
-/// later. A node that dropped the sign (added `|offset|`) or flipped it would
-/// escalate FRESH holds (cutoff in the future); this pins the direction.
-#[test]
-fn time_shift_offset_sign_is_respected() {
-    let mut mock = Mock::default();
-    let input = json!({"scheduled-at": "2023-11-14T22:13:20Z"});
-
-    let back = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": -172_800_000, "format": "epoch-ms"}),
-        &input,
-    )
-    .unwrap();
-    assert_eq!(
-        back.payload,
-        json!({"cutoff": 1_699_827_200_000i64}),
-        "− subtracts"
-    );
-
-    let fwd = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": 172_800_000, "format": "epoch-ms"}),
-        &input,
-    )
-    .unwrap();
-    assert_eq!(
-        fwd.payload,
-        json!({"cutoff": 1_700_172_800_000i64}),
-        "+ adds"
-    );
-}
-
-/// `format`/`key` default to `iso`/`cutoff`; `key` is configurable.
-#[test]
-fn time_shift_format_and_key_defaults() {
-    let mut mock = Mock::default();
-    let input = json!({"scheduled-at": "1970-01-01T00:00:00Z"});
-    // Defaults: iso under "cutoff".
-    let em = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": 0}),
-        &input,
-    )
-    .unwrap();
-    assert_eq!(em.payload, json!({"cutoff": "1970-01-01T00:00:00.000Z"}));
-    // Configurable key.
-    let em = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": 1000, "format": "epoch-ms", "key": "before"}),
-        &input,
-    )
-    .unwrap();
-    assert_eq!(em.payload, json!({"before": 1000}));
-}
-
-/// The base is a JMESPath over runtime INPUT: a missing or non-RFC3339 value is
-/// the input's fault (invalid-input, never retried) — not a flow-config bug.
-#[test]
-fn time_shift_bad_base_is_invalid_input() {
-    let mut mock = Mock::default();
-    let config = json!({"base": "\"scheduled-at\"", "offset-ms": -1000});
-    // Missing path -> JMESPath null -> not an RFC 3339 string.
-    let e = go("time-shift", &mut mock, &config, &json!({"other": 1})).unwrap_err();
-    assert!(
-        matches!(&e, NodeError::InvalidInput(d) if d.code.as_deref() == Some("invalid-base")),
-        "missing base is invalid-input: {e:?}"
-    );
-    // Present but not RFC 3339.
-    let e = go(
-        "time-shift",
-        &mut mock,
-        &config,
-        &json!({"scheduled-at": "soon"}),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(&e, NodeError::InvalidInput(_)),
-        "malformed timestamp base: {e:?}"
-    );
-
-    // Greenfield contract: the former epoch-ms number is rejected.
-    let e = go(
-        "time-shift",
-        &mut mock,
-        &config,
-        &json!({"scheduled-at": 1_700_000_000_000i64}),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(&e, NodeError::InvalidInput(_)),
-        "epoch-ms base is rejected: {e:?}"
-    );
-}
-
-#[test]
-fn time_shift_normalizes_timezone_and_checks_rfc3339_boundaries() {
-    let mut mock = Mock::default();
-    let shifted = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": -172_800_000}),
-        &json!({"scheduled-at": "2023-11-15T00:13:20+02:00"}),
-    )
-    .unwrap();
-    assert_eq!(
-        shifted.payload,
-        json!({"cutoff": "2023-11-12T22:13:20.000Z"})
-    );
-
-    let overflow = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": 1}),
-        &json!({"scheduled-at": "9999-12-31T23:59:59.999Z"}),
-    )
-    .unwrap_err();
-    assert_eq!(terminal_code(&overflow), "time-overflow");
-}
-
-/// Config faults (missing base / missing offset / unknown format) are terminal
-/// flow-authoring bugs.
-#[test]
-fn time_shift_config_faults_are_terminal() {
-    let mut mock = Mock::default();
-    let input = json!({"scheduled-at": "1970-01-01T00:00:00Z"});
-    // Missing base string.
-    let e = go("time-shift", &mut mock, &json!({"offset-ms": 0}), &input).unwrap_err();
-    assert_eq!(terminal_code(&e), "invalid-config");
-    // Missing / non-integer offset-ms.
-    let e = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\""}),
-        &input,
-    )
-    .unwrap_err();
-    assert_eq!(terminal_code(&e), "invalid-config");
-    // Unknown format.
-    let e = go(
-        "time-shift",
-        &mut mock,
-        &json!({"base": "\"scheduled-at\"", "offset-ms": 0, "format": "unix"}),
-        &input,
-    )
-    .unwrap_err();
-    assert_eq!(terminal_code(&e), "invalid-config");
-}
-
 /// The F3 flow drains stale holds via a STRUCTURAL cycle whose loop state is an
 /// in-memory work-list threaded through `conditional` (pass-through) + a
 /// `transform` slice — `escalate`/`notify` hang off a dead-end branch and never
@@ -1070,6 +898,19 @@ fn unknown_node_type_is_terminal() {
     assert_eq!(terminal_code(&e), "unknown-node-type");
 }
 
+#[test]
+fn removed_node_types_are_unknown_to_dispatch() {
+    for node_type in ["cron", "time-shift"] {
+        let mut mock = Mock::default();
+        let error = go(node_type, &mut mock, &json!({}), &json!({})).unwrap_err();
+        assert_eq!(
+            terminal_code(&error),
+            "unknown-node-type",
+            "removed node {node_type:?} reached a dispatch implementation"
+        );
+    }
+}
+
 /// C2-3 (wamn-bd5): the PUBLIC node-resolution surface is descriptor-only — a
 /// caller can learn that a type exists and what it may touch, but can NOT obtain
 /// a runnable `&dyn Node` and skip the capability gate. This test pins that
@@ -1096,6 +937,20 @@ fn public_resolution_surface_is_descriptor_only() {
 
     // The existence check the flow-runner uses (the non-running replacement for
     // the old `node(t).is_some()` leak) covers exactly the shipped types.
+    assert_eq!(
+        wamn_standard_nodes::NODE_TYPES,
+        [
+            "request",
+            "event",
+            "fail",
+            "transform",
+            "conditional",
+            "http-request",
+            "postgres",
+            "postgres-query",
+            "respond",
+        ]
+    );
     for t in wamn_standard_nodes::NODE_TYPES {
         assert!(is_standard(t), "{t} is a standard node");
     }
@@ -1104,6 +959,13 @@ fn public_resolution_surface_is_descriptor_only() {
         "a custom node is not standard-library"
     );
     assert!(describe("delay").is_none(), "delay is runner-intrinsic");
+    for removed in ["cron", "time-shift"] {
+        assert!(!is_standard(removed), "removed node {removed:?} survived");
+        assert!(
+            describe(removed).is_none(),
+            "removed node {removed:?} retained a descriptor"
+        );
+    }
 }
 
 #[test]
@@ -1227,12 +1089,10 @@ fn descriptor_version_and_dispatch_divergence_fail_before_publication() {
 #[test]
 fn capability_table_rows_are_exact() {
     assert_eq!(required_capabilities("request"), Some(&[][..]));
-    assert_eq!(required_capabilities("cron"), Some(&[][..]));
     assert_eq!(required_capabilities("event"), Some(&[][..]));
     assert_eq!(required_capabilities("fail"), Some(&[][..]));
     assert_eq!(required_capabilities("transform"), Some(&[][..]));
     assert_eq!(required_capabilities("conditional"), Some(&[][..]));
-    assert_eq!(required_capabilities("time-shift"), Some(&[][..]));
     assert_eq!(required_capabilities("respond"), Some(&[][..]));
     assert_eq!(
         required_capabilities("http-request"),
@@ -1251,6 +1111,13 @@ fn capability_table_rows_are_exact() {
         None,
         "delay is runner-intrinsic"
     );
+    for removed in ["cron", "time-shift"] {
+        assert_eq!(
+            required_capabilities(removed),
+            None,
+            "removed node {removed:?} retained a capability row"
+        );
+    }
 }
 
 /// A node type is refused OUTRIGHT when the runner cannot grant its row —
@@ -1270,49 +1137,11 @@ fn dispatch_refuses_ungranted_capability_rows() {
     assert!(mock.http_calls.is_empty(), "the node never ran");
 }
 
-/// Drift guard: every non-reserved node type the committed F3 fixture uses must
-/// be a node this library actually ships. Request, cron, event, and respond use the
-/// same standard-node dispatch path.
-#[test]
-fn f3_fixture_node_types_are_all_standard() {
-    use wamn_standard_nodes::is_standard;
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../flow-model/tests/fixtures/f3-escalate-stale-holds.flow.json");
-    let raw = std::fs::read_to_string(&path).expect("read F3 fixture");
-    let flow: Value = serde_json::from_str(&raw).expect("F3 fixture is json");
-    let nodes = flow["nodes"].as_array().expect("nodes array");
-    let types: Vec<&str> = nodes.iter().map(|n| n["type"].as_str().unwrap()).collect();
-    for t in &types {
-        assert!(
-            is_standard(t),
-            "F3 node type {t:?} is not a shipped standard node"
-        );
-    }
-    // The cutoff-gap node is the one this lane adds — pin that it is present.
-    assert!(
-        types.contains(&"time-shift"),
-        "F3 must use the time-shift node"
-    );
-}
-
 #[test]
 fn request_is_capability_free_exact_input_passthrough() {
     let input = json!({"request": {"id": 42}});
     let mut mock = Mock::default();
     let emission = go("request", &mut mock, &json!({}), &input).unwrap();
-
-    assert_eq!(emission.port, "main");
-    assert_eq!(emission.payload, input);
-    assert_eq!(emission.ctx, None);
-    assert!(mock.http_calls.is_empty());
-    assert!(mock.pg_calls.is_empty());
-}
-
-#[test]
-fn cron_is_capability_free_exact_scheduler_input_passthrough() {
-    let input = json!({"scheduled-at": "2026-08-03T12:00:00Z"});
-    let mut mock = Mock::default();
-    let emission = go("cron", &mut mock, &json!({}), &input).unwrap();
 
     assert_eq!(emission.port, "main");
     assert_eq!(emission.payload, input);

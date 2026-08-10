@@ -10,12 +10,10 @@
 //! | node type        | capabilities            | what it does |
 //! |------------------|-------------------------|--------------|
 //! | `request`        | —                       | emit the admitted request payload unchanged |
-//! | `cron`           | —                       | emit the scheduler-admitted payload unchanged |
 //! | `event`          | —                       | emit the externally admitted event payload unchanged |
 //! | `fail`           | —                       | return the authored terminal failure detail |
 //! | `transform`      | —                       | reshape the payload with a JMESPath expression |
 //! | `conditional`    | —                       | branch `true`/`false` on a JMESPath predicate |
-//! | `time-shift`     | —                       | shift an RFC 3339 input by a signed offset (the arithmetic JMESPath lacks) |
 //! | `http-request`   | `HttpEgress`            | one outbound HTTP call, taxonomy-classified |
 //! | `postgres`       | `Postgres`              | catalog-derived entity ops via the audited 4.1 surface |
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
@@ -23,7 +21,7 @@
 //!
 //! Deliberately NOT here (v1 scope decisions, wamn-3xa): `delay` is
 //! runner-intrinsic (parking is an engine concern, not a node effect); event and
-//! cron admission remain outside their capability-free node data paths. Loops are
+//! request admission remain outside their capability-free node data paths. Loops are
 //! STRUCTURAL (cycles + `conditional`
 //! express them; dedicated split/merge nodes land with the 5.11 ordering
 //! semantics); `email`/`notify` wait for an email egress capability decision.
@@ -31,7 +29,6 @@
 //! standard nodes may attach a whole context replacement with config `ctx`.
 
 mod conditional;
-mod cron;
 mod event;
 mod expr;
 mod fail;
@@ -40,7 +37,6 @@ mod policy;
 mod postgres;
 mod request;
 mod template;
-mod timeshift;
 mod transform;
 
 pub mod respond;
@@ -73,14 +69,12 @@ pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
 const STANDARD_NODE_INTERFACE: &str = NODE_WORLD_INTERFACE;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
-pub const NODE_TYPES: [&str; 11] = [
+pub const NODE_TYPES: [&str; 9] = [
     "request",
-    "cron",
     "event",
     "fail",
     "transform",
     "conditional",
-    "time-shift",
     "http-request",
     "postgres",
     "postgres-query",
@@ -88,12 +82,10 @@ pub const NODE_TYPES: [&str; 11] = [
 ];
 
 static REQUEST: request::Request = request::Request;
-static CRON: cron::Cron = cron::Cron;
 static EVENT: event::Event = event::Event;
 static FAIL: fail::Fail = fail::Fail;
 static TRANSFORM: transform::Transform = transform::Transform;
 static CONDITIONAL: conditional::Conditional = conditional::Conditional;
-static TIME_SHIFT: timeshift::TimeShift = timeshift::TimeShift;
 static HTTP_REQUEST: http::HttpRequestNode = http::HttpRequestNode;
 static POSTGRES: postgres::PostgresEntity = postgres::PostgresEntity;
 static POSTGRES_QUERY: postgres::PostgresQuery = postgres::PostgresQuery;
@@ -112,12 +104,10 @@ static RESPOND: respond::Respond = respond::Respond;
 pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
         "request" => Some(&REQUEST),
-        "cron" => Some(&CRON),
         "event" => Some(&EVENT),
         "fail" => Some(&FAIL),
         "transform" => Some(&TRANSFORM),
         "conditional" => Some(&CONDITIONAL),
-        "time-shift" => Some(&TIME_SHIFT),
         "http-request" => Some(&HTTP_REQUEST),
         "postgres" => Some(&POSTGRES),
         "postgres-query" => Some(&POSTGRES_QUERY),
@@ -161,19 +151,17 @@ impl fmt::Display for DescriptorError {
 
 impl std::error::Error for DescriptorError {}
 
-static DESCRIPTORS: LazyLock<[NodeDescriptor; 11]> = LazyLock::new(|| {
+static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> = LazyLock::new(|| {
     [
         pure_descriptor(NODE_TYPES[0], &["main"]),
         pure_descriptor(NODE_TYPES[1], &["main"]),
         pure_descriptor(NODE_TYPES[2], &["main"]),
         pure_descriptor(NODE_TYPES[3], &["main"]),
-        pure_descriptor(NODE_TYPES[4], &["main"]),
-        pure_descriptor(NODE_TYPES[5], &["false", "true"]),
-        pure_descriptor(NODE_TYPES[6], &["main"]),
-        http_descriptor(NODE_TYPES[7]),
-        postgres_descriptor(NODE_TYPES[8], &[Capability::Postgres]),
-        postgres_descriptor(NODE_TYPES[9], &[Capability::Postgres, Capability::RawSql]),
-        pure_descriptor(NODE_TYPES[10], &["main"]),
+        pure_descriptor(NODE_TYPES[4], &["false", "true"]),
+        http_descriptor(NODE_TYPES[5]),
+        postgres_descriptor(NODE_TYPES[6], &[Capability::Postgres]),
+        postgres_descriptor(NODE_TYPES[7], &[Capability::Postgres, Capability::RawSql]),
+        pure_descriptor(NODE_TYPES[8], &["main"]),
     ]
 });
 
