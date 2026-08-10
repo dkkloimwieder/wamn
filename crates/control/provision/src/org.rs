@@ -39,7 +39,7 @@ const NAMESPACE: &str = "wamn-system";
 /// of letting WAL fill the volume and take the primary down. Always-on:
 /// single-instance pools host CDC slots too (the reader MVP runs on `wamn-pg`),
 /// so no cluster is ever renderable without a bound. `1GB` is the S-CDC-1-proven
-/// value (poc/cdc1/cdc1-cluster.yaml) for the 2Gi cluster sizing rendered here.
+/// value for the 2Gi cluster sizing rendered here.
 const WAL_KEEP_BOUND: &str = "1GB";
 
 /// `logical_decoding_work_mem` on multi-instance CDC clusters — the per-walsender

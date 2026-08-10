@@ -1,16 +1,10 @@
-# [4.1b] Provision the api-gateway's project data + publish its catalog snapshot.
-# Runs the publish-catalog subcommand of wamn-gates image (SR1: gates ride their own image layered on the prod host stage). It connects as the Postgres SUPERUSER (WAMN_PG_ADMIN_URL) to:
-#   * create the dedicated `api_proof` schema (additive: CREATE SCHEMA IF NOT
-#     EXISTS — never touches the S2/S3 fixtures or any existing object),
-#   * --provision the 3.2 tenant floor (suppliers/receipts/receipt_lines) when
-#     absent,
-#   * --seed the bundled two-tenant demo rows (idempotent),
-#   * UPSERT the deploy/poc/proof-catalog.json snapshot under tenant-a into the
-#     wamn_catalog table the gateway reads (RLS-scoped, GRANT SELECT to wamn_app).
+# Provision a project schema and publish its catalog snapshot through the
+# production ctl boundary. The bootstrap journey absorbs this input; it connects
+# as the Postgres superuser and applies the additive catalog floor.
 #
-# The catalog JSON is mounted from a ConfigMap built from deploy/poc/proof-catalog.json:
-#   kubectl -n wamn-system create configmap proof-catalog \
-#     --from-file=proof-catalog.json=deploy/poc/proof-catalog.json
+# The retained schema proof catalog is mounted as bootstrap input:
+#   kubectl -n wamn-system create configmap bootstrap-catalog \
+#     --from-file=catalog.json=crates/schema/model/tests/fixtures/poc-receiving.catalog.json
 #   kubectl -n wamn-system apply -f deploy/gates/publish-catalog-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/publish-catalog --timeout=120s
 #   kubectl -n wamn-system logs job/publish-catalog
@@ -34,20 +28,17 @@ spec:
               topologyKey: kubernetes.io/hostname
       containers:
         - name: publish-catalog
-          image: wamn-gates:dev
+          image: wamn-ctl:dev
           imagePullPolicy: IfNotPresent
           args:
-            - "--log-level"
-            - "error"
             - "publish-catalog"
             - "--catalog"
-            - "/fixtures/proof-catalog.json"
+            - "/fixtures/catalog.json"
             - "--tenant"
             - "tenant-a"
             - "--schema"
             - "api_proof"
             - "--provision"
-            - "--seed"
           env:
             # Superuser: provisions the schema/floor + writes the RLS-scoped snapshot.
             - name: PGUSER
@@ -69,4 +60,4 @@ spec:
       volumes:
         - name: fixtures
           configMap:
-            name: proof-catalog
+            name: bootstrap-catalog

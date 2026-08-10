@@ -187,15 +187,11 @@ spec:
             # [5.9] HOST-LEVEL egress allowlist — the outer bound (EMPTY =
             # deny-all, fail-closed). Portable HTTP connections must ALSO pass
             # the trusted adapter's admitted requirement/binding/generation
-            # checks. serve-echo is the demo notify target the credproof + f3proof
-            # gates drive; notify.example is the F3 (escalate-stale-holds)
-            # deployable example's manager-webhook authority (deploy/poc). Rendering
-            # per-project entries from provisioning is still open (nothing renders
-            # runner deploys today — hand-maintained).
+            # checks. serve-echo is the M0 credential/egress proof target.
+            # Rendering per-project entries from provisioning is still open
+            # (nothing renders runner deploys today — hand-maintained).
             - "--allowed-hosts"
             - "serve-echo:8091"
-            - "--allowed-hosts"
-            - "notify.example"
             - "--nats-url"
             - "nats://nats.wamn-system.svc.cluster.local:4222"
             - "--nats-tls-ca"

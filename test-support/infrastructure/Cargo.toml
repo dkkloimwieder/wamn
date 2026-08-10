@@ -28,5 +28,4 @@ wamn-scenario-model = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-model = { workspace = true }
-wamn-test-fixtures = { workspace = true }
 wash-runtime = { workspace = true }

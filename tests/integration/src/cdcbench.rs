@@ -161,10 +161,11 @@ const TENANT: &str = "ccdc-tenant";
 const CDC_PW: &str = "wamn_cdc_pw";
 const CATALOG_ID: &str = "poc-material-receiving";
 
-// The REAL shipped DDL + the real POC app model, compiled in (drift-proof).
+// The shipped DDL + retained receiving catalog, compiled in (drift-proof).
 const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
+const CATALOG_JSON: &str =
+    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
 fn catalog() -> anyhow::Result<wamn_schema_model::Catalog> {
     wamn_schema_model::Catalog::from_json(CATALOG_JSON)

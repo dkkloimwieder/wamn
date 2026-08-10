@@ -76,8 +76,8 @@ pub struct EgressBenchArgs {
     components: Vec<PathBuf>,
 
     /// Tenant / custom-node artifacts that MUST be REFUSED by the allowlist v1
-    /// — the E17 negative. Each imports a non-allowlisted package (e.g. pgprobe
-    /// imports `wamn:postgres`, the raw DB surface + `DO`/`EXECUTE`
+    /// — the E17 negative. Each imports a non-allowlisted package (for example,
+    /// `wamn:postgres`, the raw DB surface + `DO`/`EXECUTE`
     /// claim-mutation bypass); the gate PASSES when the classifier refuses it,
     /// FAILS if it is admitted. This is the polarity the `--component` sweep
     /// cannot express. Repeatable.
@@ -304,8 +304,7 @@ fn non_loopback_target() -> anyhow::Result<SocketAddr> {
 
 /// Start sockprobe as a SERVICE (so `is_service` is true and its loopback UDP
 /// bind is permitted — the raw-egress connect is the gated op) with a mounted
-/// host-path report volume, optionally opting into raw sockets. Mirrors bench's
-/// memhog service pattern.
+/// host-path report volume, optionally opting into raw sockets.
 async fn run_sockprobe(
     host: &Arc<wash_runtime::host::Host>,
     bytes: &[u8],
@@ -620,7 +619,7 @@ mod tests {
     #[test]
     fn reject_tenant_passes_when_postgres_importer_refused() {
         let n = names(&["wamn:postgres/client@0.1.0", "wasi:io/streams@0.2.3"]);
-        assert!(assert_reject_tenant("pgprobe", &n));
+        assert!(assert_reject_tenant("postgres-importer", &n));
     }
 
     /// A legitimate node has nothing to refuse, so the E17 negative assertion

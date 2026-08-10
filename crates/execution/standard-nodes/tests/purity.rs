@@ -23,7 +23,6 @@ const FORBIDDEN: &[&str] = &[
     "wamn-runtime",
     "wamn-node-runtime",
     "wamn-flow",
-    "wamn-f1",
 ];
 
 /// The EXACT direct (normal) dependencies wamn-standard-nodes may have. Growing this

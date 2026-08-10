@@ -131,14 +131,6 @@
       "path": "components/ingress/api-gateway",
       "role": "effect"
     },
-    "evaluate-specs": {
-      "path": "components/nodes/evaluate-specs",
-      "role": "reader"
-    },
-    "normalize-receipt": {
-      "path": "components/nodes/normalize-receipt",
-      "role": "reader"
-    },
     "node-guest": {
       "path": "crates/node/guest",
       "role": "reader"

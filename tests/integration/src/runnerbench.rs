@@ -1220,7 +1220,7 @@ mod tests {
     /// wamn-2jdm.11 lineage sweep left this SHARED stand-in a generation behind
     /// and every gate that reaches run-next through it died `42703`
     /// (runnerbench itself, logbench runpath, testhostbench runworker; the
-    /// pocsuiteproof F4 composition patched a subset by hand). Derive the
+    /// older composition proofs patched a subset by hand). Derive the
     /// required set from the run-next statements themselves (the wamn-jflp
     /// pattern), so the next run-state sweep cannot repeat it.
     #[test]

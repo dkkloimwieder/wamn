@@ -4247,16 +4247,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-cdc1"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "pg_walstream",
- "tokio",
- "tokio-postgres",
-]
-
-[[package]]
 name = "wamn-component-policy"
 version = "0.1.0"
 
@@ -4329,17 +4319,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-dm1"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-project-state",
- "wamn-schema-compiler",
- "wamn-schema-control",
- "wamn-schema-model",
-]
-
-[[package]]
 name = "wamn-entity-access"
 version = "0.1.0"
 dependencies = [
@@ -4403,15 +4382,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-f1"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wamn-flow",
-]
-
-[[package]]
 name = "wamn-flow"
 version = "0.1.0"
 dependencies = [
@@ -4450,7 +4420,6 @@ dependencies = [
  "wamn-proof-integration",
  "wamn-proof-system",
  "wamn-runtime",
- "wamn-test-infrastructure",
  "wash-runtime",
 ]
 
@@ -4625,7 +4594,6 @@ dependencies = [
  "clap",
  "futures-util",
  "hex",
- "http-body-util",
  "hyper",
  "libc",
  "pg_walstream",
@@ -4647,14 +4615,12 @@ dependencies = [
  "wamn-gate-harness",
  "wamn-node-invoke",
  "wamn-node-manifest",
- "wamn-node-runtime",
  "wamn-run-state",
  "wamn-runner",
  "wamn-runtime",
  "wamn-scenario-catalog",
  "wamn-scenario-model",
  "wamn-scenario-runtime",
- "wamn-scheduler",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
@@ -4673,28 +4639,18 @@ dependencies = [
  "anyhow",
  "bytes",
  "clap",
- "hex",
  "http-body-util",
  "hyper",
  "opentelemetry",
  "opentelemetry_sdk",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
- "tokio-postgres",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "wamn-catalog",
- "wamn-event-reg",
  "wamn-flow",
- "wamn-gate-harness",
  "wamn-node-manifest",
  "wamn-run-state",
- "wamn-schema-compiler",
- "wamn-schema-control",
- "wamn-schema-model",
- "wamn-standard-nodes",
  "wamn-test-fixtures",
  "wash-runtime",
  "wasmtime-wasi-http",
@@ -4890,14 +4846,10 @@ name = "wamn-test-fixtures"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "serde_json",
  "tokio",
  "tokio-postgres",
- "wamn-flow",
  "wamn-gate-harness",
  "wamn-run-state",
- "wamn-schema-compiler",
- "wamn-schema-model",
 ]
 
 [[package]]
@@ -4923,7 +4875,6 @@ dependencies = [
  "wamn-scenario-runtime",
  "wamn-schema-control",
  "wamn-schema-model",
- "wamn-test-fixtures",
  "wash-runtime",
 ]
 

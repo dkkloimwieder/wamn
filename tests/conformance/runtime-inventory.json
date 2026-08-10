@@ -56,11 +56,6 @@
       "abi": "p2-components"
     },
     {
-      "path": "deploy/platform/hello-workload.yaml",
-      "deployment_state": "active",
-      "abi": "p2-components"
-    },
-    {
       "path": "deploy/platform/materializer.example.yaml",
       "deployment_state": "template",
       "abi": "p2-cli-service",

@@ -1321,7 +1321,7 @@ pub(crate) async fn guard_registration_orphans(
 
 // ---------------------------------------------------------------------------
 // Run-state / flow-registry provisioning + flow registration. Shared with the
-// f1bench gate so the bench provisions through the same code path production
+// integration proof so it provisions through the same code path production
 // provisioning uses.
 // ---------------------------------------------------------------------------
 
@@ -2055,13 +2055,13 @@ mod tests {
         let catalog = wamn_schema_model::Catalog::from_json(&catalog_json).unwrap();
         let (descriptor, _, _) = custom_input_fixture(
             "fault-live",
-            "normalize-receipt",
-            "normalize-receipt",
+            "custom-example",
+            "custom-example",
             Some("pure"),
             b"resolved-before-transaction",
         );
         let supplied = load_supplied_components(&[descriptor]).unwrap();
-        let graph = custom_graph("normalize-receipt");
+        let graph = custom_graph("custom-example");
 
         client.batch_execute("BEGIN").await.unwrap();
         client
@@ -2687,18 +2687,18 @@ mod tests {
     fn verified_custom_component_pins_exact_bytes_and_pure_manifest() {
         let (descriptor, _, _) = custom_input_fixture(
             "pure",
-            "normalize-receipt",
-            "normalize-receipt",
+            "custom-example",
+            "custom-example",
             Some("pure"),
             b"component",
         );
         let supplied = load_supplied_components(&[descriptor]).unwrap();
-        let graph = custom_graph("normalize-receipt");
+        let graph = custom_graph("custom-example");
         let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
 
         assert_eq!(
             prepared.supplied_node_types,
-            BTreeSet::from(["normalize-receipt".to_string()])
+            BTreeSet::from(["custom-example".to_string()])
         );
         assert_eq!(
             match &prepared.artifact.supplied_components()[0]
@@ -2719,7 +2719,7 @@ mod tests {
             &prepared.artifact.interface_bundle().contracts()[0],
             "custom resolution must use the persisted canonical contract"
         );
-        assert_eq!(interface.node_type, "normalize-receipt");
+        assert_eq!(interface.node_type, "custom-example");
         assert_eq!(interface.output_ports, ["main"]);
         assert_eq!(
             contract.executable_recovery.purity,
@@ -2801,8 +2801,8 @@ mod tests {
     fn supplied_node_must_be_declared_directly_by_a_graph() {
         let (descriptor, _, _) = custom_input_fixture(
             "graph-shape",
-            "normalize-receipt",
-            "normalize-receipt",
+            "custom-example",
+            "custom-example",
             Some("pure"),
             b"component",
         );
@@ -2813,7 +2813,7 @@ mod tests {
             {"id":"request","type":"request","config":{"input-schema":{
               "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
             }}},
-            {"id":"custom","type":"custom","config":{"manifest":"normalize-receipt"}},
+            {"id":"custom","type":"custom","config":{"manifest":"custom-example"}},
             {"id":"respond","type":"respond","config":{"status":200}}
           ],
           "edges":[

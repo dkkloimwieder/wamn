@@ -69,7 +69,7 @@ const FLOW_ID: &str = "poc-receipt";
 const FAIL_FLOW_ID: &str = "metric-terminal";
 
 /// The component id the phase-4 forced-denial limiter is labelled by.
-const MEM_COMPONENT: &str = "metricbench-memhog";
+const MEM_COMPONENT: &str = "metricbench-memory-limit";
 const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_DDL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const RUN_QUEUE_DDL: &str = include_str!("../../../deploy/sql/run-queue.sql");
@@ -1270,7 +1270,7 @@ wamn_run_drive_duration_ms_count{instance=\"metric-process\",wamn_project=\"metr
 wamn_postgres_pool_size{instance=\"metric-process\",wamn_project=\"default\"} 1
 wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"metric-process\",wamn_project=\"default\"} 9
 wamn_postgres_query_duration_ms_count{db_operation=\"query\",instance=\"other-process\",wamn_project=\"default\"} 44182
-wamn_memory_high_water_bytes{component=\"metricbench-memhog\"} 33554432
+wamn_memory_high_water_bytes{component=\"metricbench-memory-limit\"} 33554432
 wamn_run_queue_depth{wamn_project=\"metric-proof\",wamn_tenant=\"metric-tenant\"} 6
 wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
 ";
@@ -1325,7 +1325,7 @@ wamn_run_queue_depth{wamn_project=\"f1\",wamn_tenant=\"f1-tenant\"} 3619
             label_value(
                 text,
                 "wamn_memory_high_water_bytes",
-                "component=\"metricbench-memhog\""
+                "component=\"metricbench-memory-limit\""
             ),
             Some(33554432.0)
         );

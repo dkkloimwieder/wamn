@@ -32,7 +32,6 @@ COPY crates ./crates
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-COPY poc ./poc
 RUN cargo chef prepare --recipe-path root-recipe.json
 
 FROM chef AS root-cook
@@ -55,7 +54,6 @@ COPY crates ./crates
 COPY services ./services
 COPY test-support ./test-support
 COPY tests ./tests
-COPY poc ./poc
 # The canonical deploy DDL (sql/run-state.sql / sql/flows.sql) is include_str!'d by
 # publish-catalog's provisioning helpers — single source of truth, no clones.
 COPY deploy ./deploy
@@ -88,12 +86,11 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
 
 # ---- locked component outputs shared by every embedding image --------------
 # Keep the guest workspace and lockfile separate from the native recipe. Root
-# Cargo.toml plus crates/poc are present only because guest path dependencies
-# inherit root workspace fields and use those source trees.
+# Cargo.toml plus crates are present because guest path dependencies inherit
+# root workspace fields and use those source trees.
 FROM chef AS component-planner
 COPY Cargo.toml ./
 COPY crates ./crates
-COPY poc ./poc
 COPY components ./components
 WORKDIR /build/components
 RUN cargo chef prepare --recipe-path component-recipe.json
@@ -115,15 +112,14 @@ FROM component-toolchain AS component-cook
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY --from=component-planner /build/Cargo.toml /build/Cargo.toml
 COPY --from=component-planner /build/crates /build/crates
-COPY --from=component-planner /build/poc /build/poc
 WORKDIR /build/components
 COPY --from=component-planner /build/components/component-recipe.json ./component-recipe.json
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git,sharing=locked \
     cargo +1.97.0 chef cook --locked --release --target wasm32-wasip2 \
       --recipe-path component-recipe.json \
-      -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
-      -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
+      -p api-gateway -p flow-http -p flowrunner -p materializer \
+      -p busyloop -p flow-driver -p sockprobe \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
  && mv target /component-chef-target
 
@@ -131,7 +127,6 @@ FROM component-cook AS component-builder
 COPY .cargo/config.toml /build/.cargo/config.toml
 COPY Cargo.toml /build/Cargo.toml
 COPY crates /build/crates
-COPY poc /build/poc
 COPY components /build/components
 RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=wamn-component-cargo-git,target=/usr/local/cargo/git \
@@ -142,13 +137,13 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
       cp component-recipe.json target/.wamn-chef-recipe.json; \
     fi \
  && cargo +1.97.0 build --locked --release --target wasm32-wasip2 \
-      -p api-gateway -p evaluate-specs -p flow-http -p flowrunner -p materializer -p normalize-receipt \
-      -p busyloop -p flow-driver -p hello -p logspewer -p memhog -p pgprobe -p sockprobe \
+      -p api-gateway -p flow-http -p flowrunner -p materializer \
+      -p busyloop -p flow-driver -p sockprobe \
       -p disposition-node -p js-sample -p node-rs -p sample-node \
  && install -d /component-output \
  && for artifact in \
-      api_gateway evaluate_specs flow_http flowrunner materializer normalize_receipt \
-      busyloop flow_driver hello logspewer memhog pgprobe sockprobe \
+      api_gateway flow_http flowrunner materializer \
+      busyloop flow_driver sockprobe \
       disposition_node js-sample node_rs sample_node; do \
       install -m 0644 "target/wasm32-wasip2/release/${artifact}.wasm" \
         "/component-output/${artifact}.wasm"; \
@@ -247,14 +242,11 @@ COPY --from=builder /native-output/wamn-dispatcher /usr/local/bin/wamn-dispatche
 # Metricbench drives run telemetry through the production executor boundary;
 # the integration proof must not duplicate the executor-owned instruments.
 COPY --from=builder /native-output/wamn-run-worker /usr/local/bin/wamn-run-worker
-# Bench fixtures baked in so the gate Jobs run with no volume plumbing.
-COPY --from=component-builder /component-output/hello.wasm /bench/hello.wasm
-COPY --from=component-builder /component-output/memhog.wasm /bench/memhog.wasm
+# Proof fixtures baked in so the retained gates run with no volume plumbing.
 COPY --from=component-builder /component-output/busyloop.wasm /bench/busyloop.wasm
 # E13/E15 runtime raw-socket fixture: attempts raw TCP + UDP egress via
 # wasi:sockets so egressbench can assert the fork's socket_addr_check deny.
 COPY --from=component-builder /component-output/sockprobe.wasm /bench/sockprobe.wasm
-COPY --from=component-builder /component-output/pgprobe.wasm /bench/pgprobe.wasm
 COPY --from=component-builder /component-output/flowrunner.wasm /bench/flowrunner.wasm
 # S4 custom-node fixtures: the Rust node, the wac-composed frozen flow, and the
 # JS/JCO node (built by `jco componentize`, so it lives outside target/).
@@ -267,13 +259,6 @@ COPY --from=component-builder /component-output/sample_node.wasm /bench/sample-n
 # POC-F2 (wamn-1ab) zero-import disposition-recommendation node: the f2invoke
 # gate warm-instantiates it in a ServeNode and calls it per disposition outcome.
 COPY --from=component-builder /component-output/disposition_node.wasm /bench/disposition-node.wasm
-# Callable-flow F1 pure custom nodes: zero-import handler components whose
-# manifest purity authorizes replay. The component tests pin decimal behavior
-# and the exact main-only interface before this locked build emits artifacts.
-COPY --from=component-builder /component-output/evaluate_specs.wasm /bench/evaluate-specs.wasm
-COPY --from=component-builder /component-output/normalize_receipt.wasm /bench/normalize-receipt.wasm
-# S5 logging-capture fixture (imports wasi:logging, exports overhead+emit-batch).
-COPY --from=component-builder /component-output/logspewer.wasm /bench/logspewer.wasm
 # 4.1 generated REST API gateway (exports wasi:http/incoming-handler, imports
 # wamn:postgres; the apibench gate drives it via ProxyPre).
 COPY --from=component-builder /component-output/api_gateway.wasm /bench/api-gateway.wasm
@@ -292,12 +277,6 @@ COPY --from=component-builder /component-output/js-sample.wasm /bench/js-sample.
 # 11.4 assertion-library fixture: the checked-in Vec<TestCase> the testkitbench
 # gate loads (the cases-as-data path). Static JSON, not a compiled artifact.
 COPY deploy/gates/testkit-cases.json /bench/testkit-cases.json
-# POC-TESTS (wamn-3rj): the F1/F3/F4 stored suite envelopes the pocsuiteproof
-# gate seeds + drives. Static JSON, not compiled artifacts; every wasm this gate
-# needs is already baked above, so this gate adds no additional component build.
-COPY deploy/gates/poc-f1-suite.json /bench/poc-f1-suite.json
-COPY deploy/gates/poc-f3-suite.json /bench/poc-f3-suite.json
-COPY deploy/gates/poc-f4-suite.json /bench/poc-f4-suite.json
 ENTRYPOINT ["/usr/local/bin/wamn-gates"]
 
 # ---- builder-svc image: the 5.5 node build sandbox (cargo + jco) ------------
@@ -324,8 +303,6 @@ COPY components/Cargo.toml components/Cargo.lock ./components/
 COPY components/ingress/api-gateway ./components/ingress/api-gateway
 COPY components/fixtures ./components/fixtures
 COPY components/execution ./components/execution
-COPY components/nodes ./components/nodes
-COPY components/poc ./components/poc
 COPY components/samples ./components/samples
 RUN cd components && cargo fetch
 # The compiled verb binary (built in the `builder` stage above) on PATH.

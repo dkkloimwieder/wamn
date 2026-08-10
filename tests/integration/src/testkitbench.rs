@@ -405,7 +405,7 @@ fn wire_error_kind(e: &WireNodeError) -> NodeErrorKind {
 /// context and callable-flow release columns `begin_attempt_sql` reads. The
 /// wamn-9mg8 stand-in guard only reads `run-queue.sql`, so it never saw either
 /// sweep and every flow case died in `drain` with `run-next: query-error:42703`
-/// (wamn-jflp). Composed here, the way `pocsuiteproof` composes its F4 run
+/// (wamn-jflp). Composed here through the same stored-run pattern
 /// columns, so no other gate's stand-in moves; `IF NOT EXISTS` keeps this
 /// correct once the shared stand-in is swept.
 fn flow_case_ddl(schema: &str) -> String {

@@ -152,7 +152,7 @@ fn member(tenant: &str, flow_json: &str) -> anyhow::Result<Member> {
 
 /// Lay the canonical catalog schema down hermetically. The DDL grants to
 /// `wamn_scenario_author`, a NOLOGIN authoring role the gate databases do not
-/// otherwise need, so it is ensured first (the pocsuiteproof idiom).
+/// otherwise need, so it is ensured first.
 async fn apply_catalog_preamble(client: &Client) -> anyhow::Result<()> {
     client
         .batch_execute(

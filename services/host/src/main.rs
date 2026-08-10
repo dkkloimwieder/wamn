@@ -8,7 +8,7 @@
 //! dump/restore/copy-project-env, enable-cdc-project-env) live in `wamn-ctl`
 //! (SR9); this artifact ships none of them.
 //!
-//! The gate suite (bench/pgbench/…/f1proof) lives in the separate
+//! The proof suite lives in the separate
 //! `wamn-gates` binary (docs/archive/structure-review.md SR1); this artifact ships
 //! none of it.
 

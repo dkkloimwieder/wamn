@@ -32,10 +32,6 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/bench/disposition-node.wasm",
         ),
         (
-            "/component-output/evaluate_specs.wasm",
-            "/bench/evaluate-specs.wasm",
-        ),
-        (
             "/component-output/flow_composed.wasm",
             "/bench/flow-composed.wasm",
         ),
@@ -56,21 +52,13 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/component-output/flowrunner.wasm",
             "/components/flowrunner.wasm",
         ),
-        ("/component-output/hello.wasm", "/bench/hello.wasm"),
         ("/component-output/js-sample.wasm", "/bench/js-sample.wasm"),
-        ("/component-output/logspewer.wasm", "/bench/logspewer.wasm"),
         (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",
         ),
-        ("/component-output/memhog.wasm", "/bench/memhog.wasm"),
         ("/component-output/node-ts.wasm", "/bench/node-ts.wasm"),
         ("/component-output/node_rs.wasm", "/bench/node-rs.wasm"),
-        (
-            "/component-output/normalize_receipt.wasm",
-            "/bench/normalize-receipt.wasm",
-        ),
-        ("/component-output/pgprobe.wasm", "/bench/pgprobe.wasm"),
         (
             "/component-output/sample_node.wasm",
             "/bench/sample-node.wasm",
@@ -133,7 +121,6 @@ fn dependency_caches_are_keyed_per_workspace() {
     ));
     assert!(DOCKERFILE.contains("COPY .cargo/config.toml /build/.cargo/config.toml"));
     assert!(DOCKERFILE.contains("COPY --from=component-planner /build/crates /build/crates"));
-    assert!(DOCKERFILE.contains("COPY --from=component-planner /build/poc /build/poc"));
     assert!(DOCKERFILE.contains("cargo chef cook --locked --release"));
     assert!(DOCKERFILE.contains("cargo +1.97.0 chef cook --locked --release"));
     assert!(DOCKERFILE.contains("id=wamn-root-target,target=/build/target"));

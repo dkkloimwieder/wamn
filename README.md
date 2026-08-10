@@ -76,11 +76,9 @@ crates/                 shared Rust workspace packages
 components/             wasm32-wasip2 guests
   ingress/              product ingress components (api-gateway)
   execution/            product execution components (flowrunner, materializer)
-  fixtures/             non-product proof fixtures (flow-driver, hello, memhog,
-                        busyloop, pgprobe, logspewer)
+  fixtures/             non-product proof fixtures (flow-driver, busyloop,
+                        sockprobe)
   samples/              reference/sample nodes (node-rs, node-ts, sample-node)
-
-poc/                    POC integration crates (f1, dm1, cdc1)
 
 test-support/
   harness/              shared measurement helpers for gates
@@ -149,10 +147,8 @@ subsystem — is in **`docs/archive/build-and-test.md`**.
 Example (S1, no backend):
 
 ```bash
-./target/release/wamn-gates --log-level warn bench \
-  --hello    components/target/wasm32-wasip2/release/hello.wasm \
-  --memhog   components/target/wasm32-wasip2/release/memhog.wasm \
-  --busyloop components/target/wasm32-wasip2/release/busyloop.wasm
+./target/release/wamn-gates --log-level warn socketguard \
+  --component components/target/wasm32-wasip2/release/sockprobe.wasm
 ```
 
 ## Deploy (in-cluster)

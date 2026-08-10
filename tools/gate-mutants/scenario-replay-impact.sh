@@ -27,8 +27,7 @@ mutation_ids() {
     pinproof-secret-scrub \
     pinproof-replay-normalization \
     impact-name-traversal \
-    impact-suite-traversal \
-    pocsuite-aggregate-fold
+    impact-suite-traversal
 }
 
 load_mutation() {
@@ -113,14 +112,6 @@ load_mutation() {
       REPLACEMENT='.filter(|_| false)'
       GATE="impact::tests::suites_of_affected_flows_are_enumerated_across_versions"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control --lib "$GATE" -- --exact)
-      ;;
-    pocsuite-aggregate-fold)
-      TARGET="tests/integration/src/pocsuiteproof.rs"
-      EXPECTED_SHA="a0a1db7fbe924f4dd8f4891c4ed904b4db9bac785ed60f718d5010a135b7e0e2"
-      NEEDLE="check(ok, &label, r.passed);"
-      REPLACEMENT="check(ok, &label, true);"
-      GATE="pocsuiteproof::tests::aggregate_fold_turns_red_when_a_real_poc_assertion_fails"
-      TEST_ARGV=(cargo test --locked -p wamn-proof-integration --lib "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2

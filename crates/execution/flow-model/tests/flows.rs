@@ -1,4 +1,4 @@
-//! Integration tests over the canonical example flows (S3 + POC F1/F3/F4):
+//! Integration tests over the canonical example flows:
 //! import round-trips, structural validation passes, each flow conforms to the
 //! published JSON Schema, the committed schema matches the types, and the diff
 //! detects real changes.
@@ -13,7 +13,6 @@ use wamn_flow::{CronInput, EventInput, Flow, ResolvedInterfaces, RowEvent};
 const FIXTURES: &[&str] = &[
     "f0-echo.flow.json",
     "s3-demo.flow.json",
-    "f1-receipt-received.flow.json",
     "f2-disposition-recommendation.flow.json",
     "f3-escalate-stale-holds.flow.json",
     "f4-disposition-recorded.flow.json",
@@ -32,8 +31,6 @@ fn load(name: &str) -> (String, Flow) {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("conditional".into(), vec!["true".into(), "false".into()]),
-        ("evaluate-specs".into(), vec!["main".into()]),
-        ("normalize-receipt".into(), vec!["main".into()]),
         ("disposition-recommendation".into(), vec!["main".into()]),
         ("custom".into(), vec!["main".into()]),
         ("http-request".into(), vec!["main".into()]),
@@ -113,16 +110,16 @@ fn committed_schema_matches_types() {
 
 #[test]
 fn diff_detects_changes() {
-    let (_, v1) = load("f1-receipt-received.flow.json");
+    let (_, v1) = load("f0-echo.flow.json");
 
     let mut v2 = v1.clone();
     v2.version = 2;
     // 1) change a node's config
     v2.nodes
         .iter_mut()
-        .find(|n| n.id == "evaluate-specs")
+        .find(|n| n.id == "shape")
         .unwrap()
-        .config = serde_json::json!({ "compare": "exact-decimal", "tolerance": true });
+        .config = serde_json::json!({ "expression": "{ value: @ }" });
     // 2) add a node + edge
     v2.nodes.push(wamn_flow::Node {
         id: "audit".into(),
@@ -133,19 +130,12 @@ fn diff_detects_changes() {
         credential: None,
     });
     v2.edges.push(wamn_flow::Edge {
-        from: "create-holds".into(),
+        from: "shape".into(),
         from_port: "main".into(),
         to: "audit".into(),
         to_port: None,
         ordinal: None,
     });
-    // 3) declare a credential
-    v2.credentials.push(wamn_flow::CredentialRef {
-        name: "audit-sink".into(),
-        kind: None,
-        description: None,
-    });
-
     let d = wamn_flow::diff(&v1, &v2);
     assert!(!d.is_empty());
     assert!(d.nodes_added.contains(&"audit".to_string()));
@@ -153,10 +143,9 @@ fn diff_detects_changes() {
     assert!(
         d.nodes_changed
             .iter()
-            .any(|c| c.id == "evaluate-specs" && c.config_changed)
+            .any(|c| c.id == "shape" && c.config_changed)
     );
     assert!(d.edges_added.iter().any(|e| e.to == "audit"));
-    assert!(d.credentials_added.contains(&"audit-sink".to_string()));
 
     // A flow diffed against itself is empty.
     assert!(wamn_flow::diff(&v1, &v1).is_empty());

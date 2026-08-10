@@ -7,7 +7,6 @@ license.workspace = true
 
 [dependencies]
 wamn-runtime = { workspace = true }
-wamn-test-infrastructure = { workspace = true }
 wamn-proof-conformance = { workspace = true }
 wamn-proof-integration = { workspace = true }
 wamn-proof-system = { workspace = true }

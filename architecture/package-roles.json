@@ -76,15 +76,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-cdc1",
-      "manifest_path": "poc/cdc1/Cargo.toml",
-      "role": "poc",
-      "target_class": "native",
-      "bounded_context": "events",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-component-policy",
       "manifest_path": "crates/platform/component-policy/Cargo.toml",
       "role": "core",
@@ -146,15 +137,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-dm1",
-      "manifest_path": "poc/dm1/Cargo.toml",
-      "role": "poc",
-      "target_class": "shared",
-      "bounded_context": "schema",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-entity-access",
       "manifest_path": "crates/data/entity-access/Cargo.toml",
       "role": "core",
@@ -205,15 +187,6 @@
         "tested_boundary": "Executor process and runner integration proofs cover queue claim, component execution, and durable completion.",
         "exit_condition": "Retire when flowrunner is promoted to a production Service workload with equivalent lease, failure, and rollback behavior (wamn-l5i9.49)."
       }
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-f1",
-      "manifest_path": "poc/f1/Cargo.toml",
-      "role": "poc",
-      "target_class": "shared",
-      "bounded_context": "execution",
-      "deployable": false
     },
     {
       "workspace": "root",
@@ -563,15 +536,6 @@
     },
     {
       "workspace": "components",
-      "name": "evaluate-specs",
-      "manifest_path": "components/nodes/evaluate-specs/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "execution",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
       "name": "flow-http",
       "manifest_path": "components/ingress/flow-http/Cargo.toml",
       "role": "component",
@@ -604,15 +568,6 @@
       "role": "component",
       "target_class": "guest",
       "bounded_context": "node",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
-      "name": "normalize-receipt",
-      "manifest_path": "components/nodes/normalize-receipt/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "execution",
       "deployable": true
     },
     {
@@ -727,42 +682,6 @@
       "workspace": "components",
       "name": "flow-driver",
       "manifest_path": "components/fixtures/flow-driver/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "hello",
-      "manifest_path": "components/fixtures/hello/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "logspewer",
-      "manifest_path": "components/fixtures/logspewer/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "memhog",
-      "manifest_path": "components/fixtures/memhog/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "pgprobe",
-      "manifest_path": "components/fixtures/pgprobe/Cargo.toml",
       "role": "test",
       "target_class": "guest",
       "bounded_context": "proof",

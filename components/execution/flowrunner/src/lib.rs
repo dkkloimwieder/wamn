@@ -214,7 +214,7 @@ fn capture_binds(
 }
 
 /// Name a pg-error by its variant (no host detail beyond the taxonomy tag), so
-/// the harness can assert on the error kind. Mirrors pgprobe's `err_name`.
+/// the harness can assert on the error kind. Mirrors the guest probe error name.
 fn err_name(e: &PgError) -> String {
     match e {
         PgError::SerializationFailure => "serialization-failure".into(),
@@ -1365,7 +1365,7 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
         "pg-write" => Some(ResolvedNode::PgWrite),
         "delay" => Some(ResolvedNode::Delay),
         "http-call" => Some(ResolvedNode::HttpCall),
-        "custom" | "normalize-receipt" | "evaluate-specs" => Some(ResolvedNode::Custom),
+        "custom" => Some(ResolvedNode::Custom),
         "invoke-flow" => Some(ResolvedNode::InvokeFlow),
         node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),
         _ => None,
@@ -4570,19 +4570,6 @@ mod tests {
                 )
             );
         }
-    }
-
-    #[test]
-    fn f1_supplied_node_types_dispatch_through_the_custom_abi_without_endpoint_config() {
-        let config = serde_json::json!({});
-        assert_eq!(
-            resolve_node("normalize-receipt", &config),
-            Some(ResolvedNode::Custom)
-        );
-        assert_eq!(
-            resolve_node("evaluate-specs", &config),
-            Some(ResolvedNode::Custom)
-        );
     }
 
     #[test]

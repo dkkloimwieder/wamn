@@ -15,7 +15,7 @@
 //!     dead local port → verdict `connected` / `allowed-failed` (NOT `denied`).
 //!
 //! The verdict for each arm is written to the file named by
-//! `SOCKPROBE_REPORT_PATH` (a mounted host-path volume — the memhog report-file
+//! `SOCKPROBE_REPORT_PATH` (a mounted host-path volume — the proof report-file
 //! pattern), and echoed to stderr. `denied` is the ONLY token the negative
 //! asserts on; the positive accepts stable permitted tokens — so neither
 //! assertion depends on the exact non-deny error.

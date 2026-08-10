@@ -247,15 +247,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
-name = "evaluate-specs"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-node-guest",
- "wamn-node-sdk",
-]
-
-[[package]]
 name = "exact-driver-alpha"
 version = "0.1.0"
 dependencies = [
@@ -474,10 +465,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
-name = "hello"
-version = "0.1.0"
-
-[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -678,13 +665,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
-name = "logspewer"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "materializer"
 version = "0.1.0"
 dependencies = [
@@ -705,10 +685,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "memhog"
-version = "0.1.0"
-
-[[package]]
 name = "node-cred"
 version = "0.1.0"
 dependencies = [
@@ -723,15 +699,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "normalize-receipt"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-node-guest",
- "wamn-node-sdk",
 ]
 
 [[package]]
@@ -754,13 +721,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pgprobe"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
 
 [[package]]
 name = "pin-project-lite"

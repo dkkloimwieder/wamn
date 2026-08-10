@@ -14,7 +14,6 @@ chrono = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
 futures-util = { workspace = true }
 hex = { workspace = true }
-http-body-util = { workspace = true }
 hyper = { workspace = true }
 libc = { workspace = true }
 pg_walstream = { workspace = true }
@@ -38,12 +37,10 @@ wamn-test-fixtures = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
 wamn-node-invoke = { workspace = true }
 wamn-node-manifest = { workspace = true }
-wamn-node-runtime = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-runner = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-scheduler = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-model = { workspace = true }

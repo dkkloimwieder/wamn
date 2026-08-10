@@ -10,7 +10,7 @@
 //! host-side (raw `tokio_postgres`, no wasm): WAL is a Postgres mechanism. It
 //! provisions a fresh ephemeral schema (`wamn_walbench`) through the
 //! superuser and applies the REAL 3.2 tenant floor (`Migration::create`) for
-//! the poc-receiving catalog — the actual POC app model, so the baseline's
+//! the retained receiving catalog, so the baseline's
 //! schema matches the `FOR TABLES IN SCHEMA app` publication l5i9.14 measures
 //! the delta against (app-schema WAL only; the run-plane is context, not the
 //! denominator).
@@ -48,10 +48,10 @@ use wamn_schema_compiler::{Confirmation, Migration};
 
 const SCHEMA: &str = "wamn_walbench";
 const TENANT: &str = "walbench-tenant";
-/// The poc-receiving catalog (POC-DM1's promoted artifact) — the real POC app
-/// model. `include_str!` bakes it into the binary at compile time (the builder
-/// COPYs `deploy/` before `cargo build`), so no runtime file dependency.
-const CATALOG_JSON: &str = include_str!("../../../deploy/poc/poc-material-receiving.catalog.json");
+/// The retained receiving catalog. `include_str!` bakes it into the binary at
+/// compile time, so no runtime file dependency remains.
+const CATALOG_JSON: &str =
+    include_str!("../../../crates/schema/model/tests/fixtures/poc-receiving.catalog.json");
 
 /// Reference (master) data seeded once for the mixed leg — the FK parents
 /// every receiving event references.

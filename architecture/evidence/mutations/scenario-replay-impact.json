@@ -4,7 +4,7 @@
   "bead": "wamn-2jdm.5.3",
   "source": {
     "git_commit": "3b866e82725b84eea40f513d81838b6c7fcbfadf",
-    "runner_sha256": "7705dd01c488eb830a87152fa9ea368e98c76d772119a6c06a580b786022fd23"
+    "runner_sha256": "42ec730c4081d029ccc7417c724a97501f4590568d0efe96c786ba560f4df403"
   },
   "profile": "debug",
   "green_runs": [
@@ -154,23 +154,6 @@
         "wamn-schema-control",
         "--lib",
         "impact::tests::suites_of_affected_flows_are_enumerated_across_versions",
-        "--",
-        "--exact"
-      ],
-      "exit_code": 0,
-      "log_sha256": "4c52ac5997bd04f0e9e08228adb913f397337dcb600d38fada59ff101ddbaa4a",
-      "status": "passed"
-    },
-    {
-      "gate": "pocsuiteproof::tests::aggregate_fold_turns_red_when_a_real_poc_assertion_fails",
-      "command": [
-        "cargo",
-        "test",
-        "--locked",
-        "-p",
-        "wamn-proof-integration",
-        "--lib",
-        "pocsuiteproof::tests::aggregate_fold_turns_red_when_a_real_poc_assertion_fails",
         "--",
         "--exact"
       ],
@@ -396,28 +379,6 @@
       "baseline_sha256": "05aa2dde01126ca9820f090f45a30b8019bc9aa6b9407cae4f4eddc45b7ae7f4",
       "mutant_sha256": "96c3278073365acc71b45f4843153dd359465e8ec75216450d128a4db73db059",
       "restored_sha256": "05aa2dde01126ca9820f090f45a30b8019bc9aa6b9407cae4f4eddc45b7ae7f4",
-      "exit_code": 101,
-      "log_sha256": "c59cf16883981ce872c724444516a40d2da7c34b7a63ec3e5bfc96eabbfe2b52",
-      "status": "killed"
-    },
-    {
-      "id": "pocsuite-aggregate-fold",
-      "gate": "pocsuiteproof::tests::aggregate_fold_turns_red_when_a_real_poc_assertion_fails",
-      "target": "tests/integration/src/pocsuiteproof.rs",
-      "command": [
-        "cargo",
-        "test",
-        "--locked",
-        "-p",
-        "wamn-proof-integration",
-        "--lib",
-        "pocsuiteproof::tests::aggregate_fold_turns_red_when_a_real_poc_assertion_fails",
-        "--",
-        "--exact"
-      ],
-      "baseline_sha256": "a0a1db7fbe924f4dd8f4891c4ed904b4db9bac785ed60f718d5010a135b7e0e2",
-      "mutant_sha256": "f8780fc35e474a6f8ac3968af2983a93bddef38b469f0801c1f7e5380c31e99d",
-      "restored_sha256": "a0a1db7fbe924f4dd8f4891c4ed904b4db9bac785ed60f718d5010a135b7e0e2",
       "exit_code": 101,
       "log_sha256": "c59cf16883981ce872c724444516a40d2da7c34b7a63ec3e5bfc96eabbfe2b52",
       "status": "killed"

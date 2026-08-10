@@ -9,13 +9,10 @@
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{credprobe, socketguard, testgate};
 use wamn_proof_integration::{
-    causation_e2e, credproof, f1bench, impactproof, invocationproof, nodebench, nodeinvoke,
-    readerbench, runnerbench, suiteproof, testkitbench, wakeproof,
+    causation_e2e, credproof, impactproof, invocationproof, nodebench, nodeinvoke, readerbench,
+    runnerbench, suiteproof, testkitbench, wakeproof,
 };
-use wamn_proof_system::{f1proof, traceproof};
-
-// Repository-only fixture and temporary-service commands.
-use wamn_test_infrastructure::{erp_sim, publish_catalog_demo};
+use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
 
@@ -55,19 +52,10 @@ enum Command {
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the 11.5 custom-node test-gate proof.
     Testgate(testgate::TestGateArgs),
-    /// Publish a catalog snapshot with the bundled 4.1b demo seed (wraps the
-    /// prod publish-catalog and re-adds the gates-only --seed)
-    PublishCatalog(publish_catalog_demo::PublishCatalogDemoArgs),
-    /// Run the POC-F1 receipt-received gates (happy / holds / invalid / burst / rest)
-    F1bench(f1bench::F1BenchArgs),
-    /// Run the POC-F1 proof against the deployed poc-webhook-f1 + api-gateway over HTTP
-    F1proof(f1proof::F1ProofArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
     Suiteproof(suiteproof::SuiteProofArgs),
-    /// Serve the POC-F4 ERP callback simulator (429 + Retry-After for the first K requests per idempotency key, then 202; GET /audit)
-    ErpSim(erp_sim::ErpSimArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl impact-report` names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
     Impactproof(impactproof::ImpactProofArgs),
     /// Prove exact claimed-run execution through the production host and baked flowrunner image.
@@ -102,12 +90,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Testkitbench(args) => testkitbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Testgate(args) => testgate::run(args).await,
-        Command::PublishCatalog(args) => publish_catalog_demo::run(args).await,
-        Command::F1bench(args) => f1bench::run(args).await,
-        Command::F1proof(args) => f1proof::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::Suiteproof(args) => suiteproof::run(args).await,
-        Command::ErpSim(args) => erp_sim::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
         Command::Invocationproof(args) => invocationproof::run(args).await,
     };

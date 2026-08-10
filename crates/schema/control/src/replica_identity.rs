@@ -3,7 +3,7 @@
 //! `REPLICA IDENTITY FULL` is a **per-entity knob the DDL engine manages** (the
 //! l5i9.1 sign-off, decision d): set only on entities whose registered row-event
 //! conditions need the OLD image, reconciled when registrations change; DEFAULT
-//! (pkey-only) everywhere else keeps WAL minimal (the poc/cdc1 TOAST test ships a
+//! (pkey-only) everywhere else keeps WAL minimal (the wide-row proof ships a
 //! 22.4KB old value under FULL — the global default is NEVER flipped). This module
 //! is the PURE decision (the wamn-schema-compiler / D24-orphan precedent — no DB, clock, or
 //! wasm): given a catalog + the event registrations for its catalog (read across
