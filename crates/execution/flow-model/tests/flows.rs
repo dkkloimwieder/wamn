@@ -332,10 +332,9 @@ fn t0_old_trigger_and_scalar_entry_have_no_reader() {
 }
 
 #[test]
-fn t0_f0_through_f4_use_typed_entries_and_no_legacy_definition_fields() {
+fn retained_f0_f2_through_f4_use_typed_entries_and_no_legacy_definition_fields() {
     let expected = [
         ("f0-echo.flow.json", "request"),
-        ("f1-receipt-received.flow.json", "request"),
         ("f2-disposition-recommendation.flow.json", "request"),
         ("f3-escalate-stale-holds.flow.json", "cron"),
         ("f4-disposition-recorded.flow.json", "event"),
