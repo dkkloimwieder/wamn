@@ -36,6 +36,9 @@ wamn-schema-control = { workspace = true }
 wamn-control-provision = { workspace = true }
 # wamn-q3n.6 provision-org: the control-plane registry model + registry SQL.
 wamn-control-registry = { workspace = true }
+# MVP management authentication: stable service principals, project roles, and
+# independently issued/revoked PATs for provision-project-env.
+wamn-platform-identity = { workspace = true }
 # wamn-8df.5 copy-project-env: the definition pass re-compiles the copied RLS
 # policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder

@@ -4295,6 +4295,7 @@ dependencies = [
  "wamn-control-registry",
  "wamn-flow",
  "wamn-node-manifest",
+ "wamn-platform-identity",
  "wamn-run-state",
  "wamn-scenario-catalog",
  "wamn-scenario-model",
