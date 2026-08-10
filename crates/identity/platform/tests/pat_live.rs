@@ -4,11 +4,10 @@ use std::time::Duration;
 
 use wamn_platform_identity::{
     IdentityErrorKind, PAT_TOKEN_PREFIX, PrincipalKind, authenticate_pat, create_human,
-    create_service, disable_principal, issue_pat, list_pats, login_local, revoke_pat,
+    create_service, disable_principal, issue_pat, list_pats, revoke_pat,
 };
 
 const SYSTEM_SCHEMA: &str = include_str!("../../../../deploy/sql/system-schema.sql");
-const SECRET: &[u8] = b"correct horse battery staple";
 const TTL: Duration = Duration::from_secs(3600);
 
 #[tokio::test]
@@ -45,27 +44,13 @@ async fn platform_pat_round_trip_on_postgres() {
         .await
         .expect("apply deploy/sql/system-schema.sql");
 
-    let human = create_human(&client, "author@example.com", "Receiving Author", SECRET)
+    let human = create_human(&client, "author@example.com", "Receiving Author")
         .await
         .expect("create human principal");
 
-    // The headless login flow mints exactly one token and only on a valid secret.
-    assert!(
-        login_local(
-            &client,
-            "author@example.com",
-            b"wrong secret",
-            "laptop",
-            TTL
-        )
+    let issued = issue_pat(&client, human.id(), " laptop ", TTL)
         .await
-        .expect("reject invalid secret")
-        .is_none()
-    );
-    let issued = login_local(&client, "author@example.com", SECRET, " laptop ", TTL)
-        .await
-        .expect("login human")
-        .expect("valid human secret must mint a token");
+        .expect("issue human token from trusted context");
     let token = issued.token().to_owned();
     let prefix = issued.record().prefix().to_owned();
     assert!(token.starts_with(PAT_TOKEN_PREFIX));

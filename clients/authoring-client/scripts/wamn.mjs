@@ -3,7 +3,7 @@
 //
 //   node clients/authoring-client/scripts/wamn.mjs --help
 //   node clients/authoring-client/scripts/wamn.mjs validate \
-//     --base-url http://HOST:PORT --credential /path/to/principal.env \
+//     --base-url http://HOST:PORT --token-file /path/to/pat \
 //     --project receiving --environment dev \
 //     --file flows/receive-material.flow.json \
 //     --draft-id draft-receiving --flow-id receive-material \

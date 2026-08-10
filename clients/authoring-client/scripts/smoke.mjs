@@ -1,11 +1,10 @@
 // S0 authenticated smoke gate for the checked-in authoring request collection.
 //
-// WHAT THIS IS. A pure HTTP client. It exchanges one principal's own subject and
-// secret for a personal access token on the reserved login route, presents that
-// token as a Bearer credential, and POSTs the `save-flow-draft` request DERIVED
+// WHAT THIS IS. A pure HTTP client. It reads a pre-issued personal access token,
+// presents that token as a Bearer credential, and POSTs the `save-flow-draft` request DERIVED
 // FROM docs/archive/contracts/authoring-surface.v0.1.http. It holds no database URL, no
 // platform-admin impersonation, and no test-only trusted context: the only
-// authority it ever presents is a token issued for a credential it was handed.
+// authority it ever presents is the token it was handed.
 //
 // WHAT THIS IS NOT. It never reads the audit ledger — that read needs storage
 // authority this client must not have. Attribution evidence is verified by the
@@ -23,8 +22,8 @@
 //   node scripts/smoke.mjs --base-url http://HOST:PORT \
 //     --principal /path/to/first.env --principal /path/to/second.env
 //
-// A credential file is `key=value` lines and must carry `subject` and `secret`.
-// It is read as a file so no secret byte ever reaches a command line, an
+// A principal file is `key=value` lines and must carry `subject` and `token`.
+// It is read as a file so no token byte ever reaches a command line, an
 // environment block, or this script's output.
 
 import { createHash } from "node:crypto";
@@ -39,12 +38,9 @@ const ENDPOINT_LINE = "POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}";
 const AUTHORIZATION_LINE = "Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}";
 const REQUIRED_HEADERS = ["Accept: application/json", "Content-Type: application/json"];
 
-// The two routes the management surface reserves. The collection deliberately
-// defines no route and no login request, so supplying both is the caller's job —
-// which is precisely the job this script does.
+// The management route is supplied by this client because the collection
+// deliberately defines no transport route.
 const AUTHORING_PATH = "/authoring";
-const LOGIN_PATH = "/login";
-const LOGIN_LABEL = "authoring-collection-smoke";
 
 // The one frozen document every authentication and authorization failure
 // returns, compared byte for byte.
@@ -223,7 +219,7 @@ function assertDerivedFromCollection(outgoing, template) {
   }
 }
 
-async function loadCredential(path) {
+async function loadPrincipal(path) {
   const text = await readFile(path, "utf8");
   const fields = new Map();
   for (const line of text.split("\n")) {
@@ -231,12 +227,14 @@ async function loadCredential(path) {
     if (separator > 0) fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
   }
   const subject = fields.get("subject");
-  const secret = fields.get("secret");
-  if (!subject || !secret) {
-    throw new CheckFailure("credential-file", `${path} must define subject and secret`);
+  const token = fields.get("token");
+  const match = PAT_PATTERN.exec(token ?? "");
+  if (!subject || match === null) {
+    throw new CheckFailure("principal-file", `${path} must define subject and a well-formed token`);
   }
-  secrets.add(secret);
-  return { path, subject, secret };
+  secrets.add(token);
+  secrets.add(match[2]);
+  return { path, subject, token };
 }
 
 async function post(url, { body, token }) {
@@ -244,24 +242,6 @@ async function post(url, { body, token }) {
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
   const response = await fetch(url, { method: "POST", headers, body });
   return { status: response.status, text: await response.text() };
-}
-
-async function login(baseUrl, credential, ordinal) {
-  const check = `login-principal-${ordinal}`;
-  const body = JSON.stringify({
-    subject: credential.subject,
-    secret: credential.secret,
-    label: LOGIN_LABEL,
-  });
-  const { status, text } = await post(`${baseUrl}${LOGIN_PATH}`, { body });
-  require_(`${check}-status`, status === 200, `expected HTTP 200, got HTTP ${status} ${text}`);
-  const issued = JSON.parse(text);
-  const match = PAT_PATTERN.exec(String(issued.token ?? ""));
-  require_(`${check}-token-shape`, match !== null, "login did not return a well-formed token");
-  secrets.add(issued.token);
-  secrets.add(match[2]);
-  emit(`  info  principal ${ordinal} subject=${credential.subject} token=<redacted> expires_at=${issued.expires_at}`);
-  return issued.token;
 }
 
 /** A structurally valid token whose secret half is wrong by one hex digit. */
@@ -370,25 +350,21 @@ async function main() {
   if (!options.baseUrl || options.principals.length !== 2) {
     throw new CheckFailure(
       "usage",
-      "a live run needs --base-url and exactly two --principal credential files",
+      "a live run needs --base-url and exactly two --principal token files",
     );
   }
 
   const baseUrl = options.baseUrl.replace(/\/+$/, "");
-  const credentials = [];
-  for (const path of options.principals) credentials.push(await loadCredential(path));
+  const principals = [];
+  for (const path of options.principals) principals.push(await loadPrincipal(path));
   require_(
     "distinct-principals",
-    credentials[0].subject !== credentials[1].subject,
-    "the two credential files name the same principal",
+    principals[0].subject !== principals[1].subject,
+    "the two principal files name the same subject",
   );
 
   emit(`surface ${baseUrl}`);
-  const tokens = [];
-  for (const [ordinal, credential] of credentials.entries()) {
-    emit(`login principal-${ordinal}`);
-    tokens.push(await login(baseUrl, credential, ordinal));
-  }
+  const tokens = principals.map((principal) => principal.token);
 
   for (const leg of LEGS) {
     const check = `authoring-leg-${leg.name}`;
@@ -422,7 +398,7 @@ async function main() {
   require_(
     "two-principal-attribution",
     authorized.length === 2 &&
-      credentials[authorized[0].principal].subject !== credentials[authorized[1].principal].subject,
+      principals[authorized[0].principal].subject !== principals[authorized[1].principal].subject,
     "the authorized saves are not attributable to two distinct principals",
   );
 
@@ -434,7 +410,7 @@ async function main() {
     "command-kind": SECTION,
     "must-appear": authorized.map((leg) => ({
       "command-id": leg.commandId,
-      "principal-subject": credentials[leg.principal].subject,
+      "principal-subject": principals[leg.principal].subject,
       revision: leg.savedRevision,
     })),
     "must-not-appear": refused.map((leg) => ({ "command-id": leg.commandId, leg: leg.name })),

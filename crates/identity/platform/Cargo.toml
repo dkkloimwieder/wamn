@@ -6,9 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-argon2 = { workspace = true }
 hex = { workspace = true }
-password-hash = { workspace = true }
+ring = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }

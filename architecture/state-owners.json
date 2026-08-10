@@ -518,23 +518,6 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "identity.local_credentials",
-      "plane": "control",
-      "semantic_owner": "platform-identity",
-      "migration_owners": [
-        "platform-identity"
-      ],
-      "schema_source": "deploy/sql/system-schema.sql",
-      "writers": [
-        "platform-identity"
-      ],
-      "readers": [
-        "platform-identity"
-      ],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
       "id": "identity.project_roles",
       "plane": "control",
       "semantic_owner": "platform-identity",
@@ -553,23 +536,6 @@
     },
     {
       "id": "identity.pats",
-      "plane": "control",
-      "semantic_owner": "platform-identity",
-      "migration_owners": [
-        "platform-identity"
-      ],
-      "schema_source": "deploy/sql/system-schema.sql",
-      "writers": [
-        "platform-identity"
-      ],
-      "readers": [
-        "platform-identity"
-      ],
-      "compatibility_horizon": "platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "identity.sessions",
       "plane": "control",
       "semantic_owner": "platform-identity",
       "migration_owners": [

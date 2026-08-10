@@ -39,7 +39,7 @@ node clients/authoring-client/scripts/wamn.mjs --help
 
 # Edit a flow file, then save its exact bytes and validate the saved revision:
 node clients/authoring-client/scripts/wamn.mjs validate \
-  --base-url http://HOST:PORT --credential /path/to/principal.env \
+  --base-url http://HOST:PORT --token-file /path/to/pat \
   --project receiving --environment dev \
   --file flows/receive-material.flow.json \
   --draft-id draft-receiving --flow-id receive-material \
@@ -57,10 +57,9 @@ surface has not mounted that command kind (`501`), or a fault — and exits `0`,
 in `.wamn/state.json` (override with `--state`, disable with `--no-state`) so the
 next verb needs no copied ids; no credential is ever written there.
 
-Authentication is the first-party PAT flow: `--credential FILE` is a mode-600
-`subject=`/`secret=` file exchanged at the reserved `POST /login`, or
-`--token-file FILE` presents a token already issued. Nothing is read from the
-environment — the CLI's only capabilities are the ones
+Authentication is PAT-only: `--token-file FILE` presents a token already issued
+through a trusted provisioning context. Nothing is read from the environment —
+the CLI's only capabilities are the ones
 `scripts/wamn.mjs` injects, which are POST-only HTTP, reads and writes of files
 the caller named, and a read-only `git` query for its own checkout provenance.
 

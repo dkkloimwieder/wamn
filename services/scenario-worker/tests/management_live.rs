@@ -20,14 +20,6 @@
 //! the public HTTP path and the canonical audited handler path agree, and that
 //! attribution a client attaches is inert.
 //!
-//! It also owns `wamn-ctc8.9`'s browser presenter: a login that opens a
-//! revocable `HttpOnly`/`SameSite=Strict` session, a session-authenticated
-//! command that resolves the very same principal and role a token does, and the
-//! CSRF proof without which no state change runs. Session fixation, a missing or
-//! wrong proof, an expired session, a revoked session, a cross-project session,
-//! and a forged cookie each refuse before any command runs and leave the ledger
-//! and the store untouched.
-//!
 //! The recipe in `docs/archive/build-and-test.md` supplies one disposable database.
 
 use std::path::{Path, PathBuf};
@@ -64,7 +56,6 @@ const AUTHOR_PASSWORD: &str = "wamn-management-live";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
-const SECRET: &[u8] = b"correct horse battery staple";
 const TTL: Duration = Duration::from_secs(3600);
 
 const DRAFT_GRAPH: &str = r#"{"schema-version":"0.1","flow-id":"receive-material","version":1,
@@ -78,25 +69,6 @@ const AUTHORIZATION_DENIED: &str = r#"{"kind":"authorization-denied"}"#;
 struct Response {
     status: u16,
     body: String,
-    /// The raw response head, so a gate can assert on `Set-Cookie` framing.
-    head: String,
-}
-
-impl Response {
-    /// The value of the one `Set-Cookie` header, if the response set a cookie.
-    fn set_cookie(&self) -> Option<&str> {
-        self.head
-            .lines()
-            .find_map(|line| line.strip_prefix("set-cookie: "))
-    }
-
-    /// The session value the response handed back, if any.
-    fn session_value(&self) -> Option<&str> {
-        self.set_cookie()?
-            .strip_prefix("wamn_session=")?
-            .split(';')
-            .next()
-    }
 }
 
 /// Post one document and read the whole response. `Connection: close` lets the
@@ -143,26 +115,7 @@ async fn send(
     Response {
         status,
         body: body.to_owned(),
-        head: head.to_lowercase(),
     }
-}
-
-/// Present a browser session: the cookie the browser replays automatically, and
-/// the CSRF proof only a page that read the login response can supply.
-fn session_headers<'a>(cookie: &'a str, csrf: &'a str) -> Vec<(&'a str, &'a str)> {
-    vec![("Cookie", cookie), ("X-Wamn-Csrf", csrf)]
-}
-
-/// One state-changing authoring command presented over a browser session.
-async fn session_post(cookie: &str, csrf: &str, document: &str) -> Response {
-    let cookie = format!("wamn_session={cookie}");
-    post(
-        "/authoring",
-        None,
-        &session_headers(&cookie, csrf),
-        document,
-    )
-    .await
 }
 
 fn save_document(command_id: &str, project: &str, revision: u64, draft: &str) -> String {
@@ -438,7 +391,7 @@ async fn admitted_human(
     project: &str,
     role: &str,
 ) -> anyhow::Result<IssuedPat> {
-    let principal = create_human(admin, subject, subject, SECRET).await?;
+    let principal = create_human(admin, subject, subject).await?;
     assign_project_role(admin, principal.id(), ORG, project, role).await?;
     issue_pat(admin, principal.id(), "gate", TTL)
         .await
@@ -568,7 +521,7 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     )
     .await
     .expect("admit the stranger elsewhere");
-    let roleless = create_human(&admin, "roleless@example.com", "Roleless", SECRET)
+    let roleless = create_human(&admin, "roleless@example.com", "Roleless")
         .await
         .expect("create a roleless principal");
     let roleless_token = issue_pat(&admin, roleless.id(), "gate", TTL)
@@ -607,8 +560,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             project: PROJECT.to_owned(),
             tenant: TENANT.to_owned(),
             source_schema: SOURCE_SCHEMA.to_owned(),
-            login_token_ttl_secs: 3600,
-            session_ttl_secs: 3600,
         },
     ));
     // The listener binds inside the spawned task; give it the connection.
@@ -1293,401 +1244,6 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         vec![("alice@example.com".to_owned(), "project-author".to_owned())],
         "a source claim became identity or authority"
     );
-
-    // ---- the reserved login route implements the ctc8.7 wire contract -------
-    let logged_in = post(
-        "/login",
-        None,
-        &[],
-        r#"{"subject":"alice@example.com","secret":"correct horse battery staple","label":"laptop"}"#,
-    )
-    .await;
-    assert_eq!(logged_in.status, 200, "{}", logged_in.body);
-    let minted: serde_json::Value =
-        serde_json::from_str(&logged_in.body).expect("login returns a document");
-    let token = minted["token"].as_str().expect("a token field");
-    assert!(token.starts_with(PAT_TOKEN_PREFIX));
-    assert!(
-        minted["expires_at"]
-            .as_str()
-            .expect("an expires_at field")
-            .ends_with('Z')
-    );
-    assert_eq!(minted.as_object().expect("an object").len(), 2);
-
-    // The freshly minted token works, proving login and authorization agree.
-    let with_minted = post(
-        "/authoring",
-        Some(token),
-        &[],
-        &save_document("save-5", PROJECT, 0, "draft-minted"),
-    )
-    .await;
-    assert_eq!(with_minted.status, 200, "{}", with_minted.body);
-
-    // Every login refusal is the same document as every token refusal.
-    for bad in [
-        r#"{"subject":"alice@example.com","secret":"wrong","label":"laptop"}"#,
-        r#"{"subject":"nobody@example.com","secret":"whatever","label":"laptop"}"#,
-        r#"{"subject":"ci-runner","secret":"whatever","label":"laptop"}"#,
-        r#"{"subject":"not a subject","secret":"whatever","label":"laptop"}"#,
-    ] {
-        let refused = post("/login", None, &[], bad).await;
-        assert_eq!(refused.status, 403, "{bad}");
-        assert_eq!(refused.body, AUTHORIZATION_DENIED, "{bad}");
-    }
-
-    // ---- the browser presenter: sessions over the same identity core -------
-    // A session is a SECOND PRESENTER, not a second authority. Everything below
-    // proves both halves: it reaches the same principal and role a token does,
-    // and it is refused wherever a token would be — plus the cross-site case a
-    // token cannot have, because a browser replays a cookie on its own.
-
-    // A value planted in the browser before anyone logs in. Session fixation is
-    // the attack where this survives the login and becomes the victim's session.
-    let planted = format!("wamn_sess_{}_{}", "a".repeat(16), "b".repeat(64));
-    let planted_probe = session_post(
-        &planted,
-        "whatever",
-        &save_document("fixation-pre", PROJECT, 0, "draft-fixation"),
-    )
-    .await;
-    assert_eq!(planted_probe.status, 403, "a planted cookie authenticated");
-
-    let opened = post(
-        "/session",
-        None,
-        &[("Cookie", &format!("wamn_session={planted}"))],
-        r#"{"subject":"alice@example.com","secret":"correct horse battery staple"}"#,
-    )
-    .await;
-    assert_eq!(opened.status, 200, "{}", opened.body);
-
-    // The cookie is framed so a page cannot read it and a cross-site context
-    // cannot send it. Every attribute is load bearing.
-    let set_cookie = opened.set_cookie().expect("login sets a cookie");
-    for attribute in ["httponly", "samesite=strict", "secure", "path=/"] {
-        assert!(
-            set_cookie.contains(attribute),
-            "the session cookie lost {attribute}: {set_cookie}"
-        );
-    }
-    let session = opened
-        .session_value()
-        .expect("the cookie carries a session value")
-        .to_owned();
-    assert!(session.starts_with("wamn_sess_"), "{session}");
-
-    // The CSRF token comes back in the body — the one channel the page can read
-    // and a cross-site attacker cannot. The session value never does.
-    let issued: serde_json::Value =
-        serde_json::from_str(&opened.body).expect("login returns a document");
-    let csrf = issued["csrf_token"]
-        .as_str()
-        .expect("a csrf_token field")
-        .to_owned();
-    assert!(
-        issued["expires_at"]
-            .as_str()
-            .expect("an expires_at field")
-            .ends_with('Z')
-    );
-    assert_eq!(issued.as_object().expect("an object").len(), 2);
-    assert!(
-        !opened.body.contains(&session),
-        "the session value leaked into a body the page can read"
-    );
-
-    // Fixation fails: the caller leaves holding a NEW session, and the planted
-    // value is still worthless.
-    assert_ne!(session, planted, "login adopted the planted cookie");
-    let after_login = session_post(
-        &planted,
-        &csrf,
-        &save_document("fixation-post", PROJECT, 0, "draft-fixation"),
-    )
-    .await;
-    assert_eq!(after_login.status, 403, "a planted cookie survived login");
-    assert_eq!(after_login.body, AUTHORIZATION_DENIED);
-
-    // ---- a session-authenticated command resolves the SAME principal -------
-    let by_session = session_post(
-        &session,
-        &csrf,
-        &save_document("session-1", PROJECT, 0, "draft-session"),
-    )
-    .await;
-    assert_eq!(by_session.status, 200, "{}", by_session.body);
-    assert_eq!(outcome(&by_session.body)["status"], "completed");
-    // Same principal, same role, same ledger shape as the token path.
-    assert_eq!(
-        attribution(&admin, "draft-session").await,
-        vec![("alice@example.com".to_owned(), "project-author".to_owned())],
-        "the session presenter resolved a different principal or role than the token"
-    );
-    let session_row = ledger_rows(&admin)
-        .await
-        .into_iter()
-        .find(|row| row.2 == "save-flow-draft" && row.1 == alice_principal.id().as_str())
-        .expect("the session command is attributed to alice's principal");
-    assert_eq!(session_row.3, "project-author");
-
-    // ---- no CSRF proof, no command -----------------------------------------
-    // This is the whole point of the synchronizer token: a cross-site page can
-    // make the browser send the cookie, but it cannot read the login body, so it
-    // cannot produce this header. Each probe must refuse BEFORE the command
-    // runs — no draft, no ledger row.
-    let ledger_before = ledger_rows(&admin).await.len();
-    let drafts_before = draft_count(&admin).await;
-    let cookie_header = format!("wamn_session={session}");
-    let csrf_probes: [(&str, Vec<(&str, &str)>); 4] = [
-        ("absent", vec![("Cookie", cookie_header.as_str())]),
-        (
-            "empty",
-            vec![("Cookie", cookie_header.as_str()), ("X-Wamn-Csrf", "")],
-        ),
-        (
-            "wrong",
-            vec![
-                ("Cookie", cookie_header.as_str()),
-                ("X-Wamn-Csrf", "0000000000000000"),
-            ],
-        ),
-        (
-            "another session's",
-            vec![
-                ("Cookie", cookie_header.as_str()),
-                ("X-Wamn-Csrf", "deadbeefdeadbeefdeadbeefdeadbeef"),
-            ],
-        ),
-    ];
-    for (name, headers) in &csrf_probes {
-        let refused = post(
-            "/authoring",
-            None,
-            headers,
-            &save_document("csrf-probe", PROJECT, 0, "draft-csrf"),
-        )
-        .await;
-        assert_eq!(refused.status, 403, "{name} CSRF proof was accepted");
-        assert_eq!(refused.body, AUTHORIZATION_DENIED, "{name} leaked a reason");
-    }
-    assert!(
-        stored_revision(&admin, "draft-csrf").await.is_none(),
-        "a request with no CSRF proof reached a command"
-    );
-    assert_eq!(
-        ledger_rows(&admin).await.len(),
-        ledger_before,
-        "a request with no CSRF proof was audited"
-    );
-    assert_eq!(
-        draft_count(&admin).await,
-        drafts_before,
-        "a request with no CSRF proof mutated the store"
-    );
-
-    // ---- a forged cookie is refused, proof or no proof ----------------------
-    let forged_cookie = format!("wamn_sess_{}_{}", "0".repeat(16), "f".repeat(64));
-    for (name, cookie) in [
-        ("forged", forged_cookie.as_str()),
-        ("malformed", "not-a-session"),
-        ("token-shaped", alice.token()),
-    ] {
-        let refused = session_post(
-            cookie,
-            &csrf,
-            &save_document("forged-probe", PROJECT, 0, "draft-forged"),
-        )
-        .await;
-        assert_eq!(refused.status, 403, "{name} cookie authenticated");
-        assert_eq!(refused.body, AUTHORIZATION_DENIED, "{name} leaked a reason");
-    }
-    assert!(
-        stored_revision(&admin, "draft-forged").await.is_none(),
-        "a forged cookie reached a command"
-    );
-
-    // ---- cross-project: a real session for the wrong project ---------------
-    // Alice's own session, naming a project she holds no role in.
-    let elsewhere = session_post(
-        &session,
-        &csrf,
-        &save_document(
-            "session-elsewhere",
-            OTHER_PROJECT,
-            0,
-            "draft-session-elsewhere",
-        ),
-    )
-    .await;
-    assert_eq!(elsewhere.status, 403, "{}", elsewhere.body);
-    assert_eq!(elsewhere.body, AUTHORIZATION_DENIED);
-
-    // And a session belonging to a principal roled only on another project.
-    let stranger_session = post(
-        "/session",
-        None,
-        &[],
-        r#"{"subject":"stranger@example.com","secret":"correct horse battery staple"}"#,
-    )
-    .await;
-    assert_eq!(stranger_session.status, 200, "{}", stranger_session.body);
-    let stranger_cookie = stranger_session
-        .session_value()
-        .expect("a session")
-        .to_owned();
-    let stranger_csrf = as_json(&stranger_session.body)["csrf_token"]
-        .as_str()
-        .expect("a csrf_token")
-        .to_owned();
-    let crossed = session_post(
-        &stranger_cookie,
-        &stranger_csrf,
-        &save_document("session-cross", PROJECT, 0, "draft-session-cross"),
-    )
-    .await;
-    assert_eq!(crossed.status, 403, "a cross-project session was admitted");
-    assert_eq!(crossed.body, AUTHORIZATION_DENIED);
-
-    // ---- an expired session refuses, without anyone revoking it ------------
-    let expiring = post(
-        "/session",
-        None,
-        &[],
-        r#"{"subject":"alice@example.com","secret":"correct horse battery staple"}"#,
-    )
-    .await;
-    let expiring_cookie = expiring.session_value().expect("a session").to_owned();
-    let expiring_csrf = as_json(&expiring.body)["csrf_token"]
-        .as_str()
-        .expect("a csrf_token")
-        .to_owned();
-    let expiring_prefix = expiring_cookie
-        .strip_prefix("wamn_sess_")
-        .and_then(|rest| rest.split_once('_'))
-        .expect("a well-formed session value")
-        .0
-        .to_owned();
-    admin
-        .execute(
-            // `expires_at > created_at` is a stored invariant, so an aged session
-            // moves both instants rather than only its expiry.
-            "UPDATE identity.sessions \
-                SET created_at = now() - interval '2 hours', \
-                    expires_at = now() - interval '1 hour' \
-              WHERE cookie_prefix = $1",
-            &[&expiring_prefix],
-        )
-        .await
-        .expect("age one session past its expiry");
-    let stale = session_post(
-        &expiring_cookie,
-        &expiring_csrf,
-        &save_document("session-stale", PROJECT, 0, "draft-session-stale"),
-    )
-    .await;
-    assert_eq!(stale.status, 403, "an expired session was admitted");
-    assert_eq!(stale.body, AUTHORIZATION_DENIED);
-
-    // ---- logout invalidates the session ------------------------------------
-    // Logout is itself a state change, so it needs the same proof.
-    let unproven_logout = send(
-        "DELETE",
-        "/session",
-        None,
-        &[("Cookie", cookie_header.as_str())],
-        "",
-    )
-    .await;
-    assert_eq!(
-        unproven_logout.status, 403,
-        "logout ran without a CSRF proof"
-    );
-    // The session is still live, which is what makes that refusal meaningful.
-    let still_live = session_post(
-        &session,
-        &csrf,
-        &save_document("session-2", PROJECT, 0, "draft-session-live"),
-    )
-    .await;
-    assert_eq!(still_live.status, 200, "{}", still_live.body);
-
-    let logged_out = send(
-        "DELETE",
-        "/session",
-        None,
-        &session_headers(&cookie_header, &csrf),
-        "",
-    )
-    .await;
-    assert_eq!(logged_out.status, 204, "{}", logged_out.body);
-    assert!(logged_out.body.is_empty());
-    // The clearing header is a courtesy; the revocation stamp is the mechanism.
-    let cleared = logged_out.set_cookie().expect("logout clears the cookie");
-    assert!(cleared.contains("max-age=0"), "{cleared}");
-    assert!(cleared.contains("httponly"), "{cleared}");
-
-    // The revoked session is dead for every later request, cookie and proof
-    // intact — this is the difference between a revocable session and a bearer
-    // assertion that merely expires.
-    let ledger_before = ledger_rows(&admin).await.len();
-    let after_logout = session_post(
-        &session,
-        &csrf,
-        &save_document("session-3", PROJECT, 0, "draft-session-dead"),
-    )
-    .await;
-    assert_eq!(after_logout.status, 403, "a revoked session still worked");
-    assert_eq!(after_logout.body, AUTHORIZATION_DENIED);
-    assert!(
-        stored_revision(&admin, "draft-session-dead")
-            .await
-            .is_none(),
-        "a revoked session reached a command"
-    );
-    assert_eq!(
-        ledger_rows(&admin).await.len(),
-        ledger_before,
-        "a revoked session was audited"
-    );
-    // Logging out twice is harmless, and never resurrects anything.
-    let again = send(
-        "DELETE",
-        "/session",
-        None,
-        &session_headers(&cookie_header, &csrf),
-        "",
-    )
-    .await;
-    assert_eq!(again.status, 403, "a revoked session logged out again");
-
-    // Alice's PAT is untouched by her session ending: two presenters, one
-    // authority, independent lifecycles.
-    let token_still_works = post(
-        "/authoring",
-        Some(alice.token()),
-        &[],
-        &save_document("token-after-logout", PROJECT, 0, "draft-token-after"),
-    )
-    .await;
-    assert_eq!(token_still_works.status, 200, "{}", token_still_works.body);
-
-    // ---- every session refusal is the same document as every token refusal --
-    for bad in [
-        r#"{"subject":"alice@example.com","secret":"wrong"}"#,
-        r#"{"subject":"nobody@example.com","secret":"whatever"}"#,
-        r#"{"subject":"ci-runner","secret":"whatever"}"#,
-        r#"{"subject":"not a subject","secret":"whatever"}"#,
-    ] {
-        let refused = post("/session", None, &[], bad).await;
-        assert_eq!(refused.status, 403, "{bad}");
-        assert_eq!(refused.body, AUTHORIZATION_DENIED, "{bad}");
-        assert!(
-            refused.set_cookie().is_none(),
-            "a refused login set a cookie"
-        );
-    }
 
     // ---- the ledger is append-only -----------------------------------------
     let rewrite = admin

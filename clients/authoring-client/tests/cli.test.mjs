@@ -249,12 +249,13 @@ function fakeIo({ files = {}, reply, now = () => 1_700_000_000_000 } = {}) {
   return { io, state };
 }
 
-const CREDENTIAL = "principal.env";
+const TOKEN_FILE = "token.env";
+const TOKEN = "wamn_pat_0123456789abcdef_".padEnd(26 + 64, "a");
 const DEFINITION = "flows/receive-material.flow.json";
 const STATE = "cycle-state.json";
 
 const baseFiles = {
-  [CREDENTIAL]: "subject=author@example.com\nsecret=correct horse battery staple\n",
+  [TOKEN_FILE]: `${TOKEN}\n`,
   [DEFINITION]: '{"schema-version":"0.1","flow-id":"receive-material","version":1}',
 };
 
@@ -262,8 +263,8 @@ const validateArguments = [
   "validate",
   "--base-url",
   "http://surface.invalid",
-  "--credential",
-  CREDENTIAL,
+  "--token-file",
+  TOKEN_FILE,
   "--project",
   "receiving",
   "--environment",
@@ -282,12 +283,6 @@ const validateArguments = [
   "3",
 ];
 
-const TOKEN = "wamn_pat_0123456789abcdef_".padEnd(26 + 64, "a");
-
-function loginReply() {
-  return { status: 200, body: { expires_at: "2026-08-08T00:00:00Z", token: TOKEN } };
-}
-
 function commandIdOf(init) {
   return JSON.parse(init.body).body["command-id"];
 }
@@ -301,7 +296,6 @@ test("a completed save and validate emit typed identities and remember them", as
   const { io, state } = fakeIo({
     files: baseFiles,
     reply: (endpoint, init) => {
-      if (endpoint.endsWith("/login")) return loginReply();
       const body = JSON.parse(init.body).body;
       if (body.command.kind === "save-flow-draft") {
         // The whole input, so a hard-coded or dropped value cannot pass.
@@ -357,7 +351,6 @@ test("an unmounted command is its own answer and never a success", async () => {
   const { io, state } = fakeIo({
     files: baseFiles,
     reply: (endpoint, init) => {
-      if (endpoint.endsWith("/login")) return loginReply();
       const body = JSON.parse(init.body).body;
       if (body.command.kind === "save-flow-draft") {
         return {
@@ -392,13 +385,10 @@ test("a product refusal is typed, exits 3, and is not a fault", async () => {
   };
   const { io, state } = fakeIo({
     files: baseFiles,
-    reply: (endpoint, init) =>
-      endpoint.endsWith("/login")
-        ? loginReply()
-        : {
-            status: 200,
-            body: response(commandIdOf(init), { status: "refused", value: refusal }),
-          },
+    reply: (_endpoint, init) => ({
+      status: 200,
+      body: response(commandIdOf(init), { status: "refused", value: refusal }),
+    }),
   });
 
   assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_REFUSED);
@@ -413,42 +403,26 @@ test("an unauthorized presenter is refused with the frozen contract kind", async
   // The surface refuses before dispatch with a bare `authorization-denied`
   // document under HTTP 403, so there is no response envelope to read.
   const { io, state } = fakeIo({
-    files: { ...baseFiles, "token.env": `${TOKEN}\n` },
+    files: baseFiles,
     reply: () => ({ status: 403, body: { kind: "authorization-denied" } }),
   });
-  const withToken = validateArguments
-    .filter((argument, index, all) => argument !== "--credential" && all[index - 1] !== "--credential")
-    .concat(["--token-file", "token.env"]);
-  assert.equal(await cli.runCli(withToken, io), cli.EXIT_REFUSED);
+  assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_REFUSED);
   const emitted = document(state);
   assert.deepEqual(emitted.steps[0].refusal, {
     command: "save-flow-draft",
     reason: { kind: "authorization-denied" },
   });
   assert.equal(emitted.steps[0]["http-status"], 403);
-
-  // A refused login never reaches an authoring command at all.
-  const denied = fakeIo({ files: baseFiles, reply: () => ({ status: 403, body: { kind: "authorization-denied" } }) });
-  assert.equal(await cli.runCli(validateArguments, denied.io), cli.EXIT_REFUSED);
-  assert.equal(denied.state.calls.length, 1);
-  assert.match(denied.state.calls[0].endpoint, /\/login$/);
-  assert.match(document(denied.state).status, /refused/);
 });
 
-test("a missing credential is a usage error that reaches no network", async () => {
-  const withoutCredential = validateArguments.filter(
-    (argument, index, all) => argument !== "--credential" && all[index - 1] !== "--credential",
+test("a missing token file is a usage error that reaches no network", async () => {
+  const withoutToken = validateArguments.filter(
+    (argument, index, all) => argument !== "--token-file" && all[index - 1] !== "--token-file",
   );
   const { io, state } = fakeIo({ files: baseFiles, reply: () => ({ status: 200, body: {} }) });
-  assert.equal(await cli.runCli(withoutCredential, io), cli.EXIT_USAGE);
+  assert.equal(await cli.runCli(withoutToken, io), cli.EXIT_USAGE);
   assert.equal(state.calls.length, 0);
   assert.equal(state.out.length, 0);
-
-  // Presenting both is equally refused: the CLI never picks one silently.
-  const both = validateArguments.concat(["--token-file", "token.env"]);
-  const ambiguous = fakeIo({ files: baseFiles, reply: () => ({ status: 200, body: {} }) });
-  assert.equal(await cli.runCli(both, ambiguous.io), cli.EXIT_USAGE);
-  assert.equal(ambiguous.state.calls.length, 0);
 });
 
 test("network, HTTP, and protocol failures are faults, not refusals", async () => {
@@ -460,7 +434,7 @@ test("network, HTTP, and protocol failures are faults, not refusals", async () =
   for (const [authoringAnswer, kind] of cases) {
     const { io, state } = fakeIo({
       files: baseFiles,
-      reply: (endpoint) => (endpoint.endsWith("/login") ? loginReply() : authoringAnswer),
+      reply: () => authoringAnswer,
     });
     assert.equal(await cli.runCli(validateArguments, io), cli.EXIT_FAULT, kind);
     const emitted = document(state);
@@ -485,22 +459,19 @@ test("draft-run reports the edit-to-run latency of the working-tree edit", async
   };
   const { io, state } = fakeIo({
     files,
-    reply: (endpoint, init) =>
-      endpoint.endsWith("/login")
-        ? loginReply()
-        : {
-            status: 200,
-            body: response(commandIdOf(init), {
-              status: "completed",
-              value: {
-                command: "draft-run",
-                result: {
-                  "run-id": "run-1",
-                  "validated-draft": { "validated-draft-id": "sha256:validated-draft-v4" },
-                },
-              },
-            }),
+    reply: (_endpoint, init) => ({
+      status: 200,
+      body: response(commandIdOf(init), {
+        status: "completed",
+        value: {
+          command: "draft-run",
+          result: {
+            "run-id": "run-1",
+            "validated-draft": { "validated-draft-id": "sha256:validated-draft-v4" },
           },
+        },
+      }),
+    }),
   });
 
   const code = await cli.runCli(
@@ -508,8 +479,8 @@ test("draft-run reports the edit-to-run latency of the working-tree edit", async
       "draft-run",
       "--base-url",
       "http://surface.invalid",
-      "--credential",
-      CREDENTIAL,
+      "--token-file",
+      TOKEN_FILE,
       "--project",
       "receiving",
       "--environment",
@@ -561,19 +532,16 @@ test("runs reports the projection's own edit-to-run latency and case runs", asyn
   };
   const { io, state } = fakeIo({
     files: baseFiles,
-    reply: (endpoint, init) =>
-      endpoint.endsWith("/login")
-        ? loginReply()
-        : {
-            status: 200,
-            body: response(commandIdOf(init), {
-              status: "completed",
-              value: {
-                command: "suite-projection",
-                result: { report, state: "finalized" },
-              },
-            }),
-          },
+    reply: (_endpoint, init) => ({
+      status: 200,
+      body: response(commandIdOf(init), {
+        status: "completed",
+        value: {
+          command: "suite-projection",
+          result: { report, state: "finalized" },
+        },
+      }),
+    }),
   });
 
   const code = await cli.runCli(
@@ -581,8 +549,8 @@ test("runs reports the projection's own edit-to-run latency and case runs", asyn
       "runs",
       "--base-url",
       "http://surface.invalid",
-      "--credential",
-      CREDENTIAL,
+      "--token-file",
+      TOKEN_FILE,
       "--project",
       "receiving",
       "--environment",
@@ -598,24 +566,20 @@ test("runs reports the projection's own edit-to-run latency and case runs", asyn
   assert.ok(state.err.some((line) => line.includes("case-id=happy run-id=run-1 outcome=passed")));
 });
 
-test("no credential material ever reaches stdout or the transcript", async () => {
+test("no token material ever reaches stdout or the transcript", async () => {
   const { io, state } = fakeIo({
     files: baseFiles,
-    reply: (endpoint, init) =>
-      endpoint.endsWith("/login")
-        ? loginReply()
-        : {
-            status: 200,
-            body: response(commandIdOf(init), {
-              status: "completed",
-              value: { command: "save-flow-draft", result: draftIdentity },
-            }),
-          },
+    reply: (_endpoint, init) => ({
+      status: 200,
+      body: response(commandIdOf(init), {
+        status: "completed",
+        value: { command: "save-flow-draft", result: draftIdentity },
+      }),
+    }),
   });
   await cli.runCli(validateArguments, io);
   const transcript = [...state.out, ...state.err].join("\n");
   assert.doesNotMatch(transcript, /wamn_pat_/);
-  assert.doesNotMatch(transcript, /correct horse battery staple/);
 });
 
 // ---------------------------------------------------------------------------

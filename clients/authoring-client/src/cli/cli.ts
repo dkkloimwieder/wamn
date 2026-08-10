@@ -38,11 +38,9 @@ import {
   type SuiteProjectionState,
 } from "../generated/authoring.js";
 
-/// The two routes the wamn-ctc8.8 management surface reserves. The contract
-/// defines no route, so a client supplies both; nothing else is ever reached.
-const LOGIN_PATH = "/login";
+/// The route the management surface reserves. The contract defines no route,
+/// so a client supplies it; nothing else is ever reached.
 const AUTHORING_PATH = "/authoring";
-const LOGIN_LABEL = "wamn-cli";
 
 /// The frozen refusal every authentication and authorization failure returns.
 /// A pre-dispatch refusal carries no response envelope, and the generated
@@ -267,7 +265,6 @@ const FLAGS = new Set(["--help", "--no-state", "--no-provenance"]);
 
 const OPTIONS = new Set([
   "--base-url",
-  "--credential",
   "--token-file",
   "--project",
   "--environment",
@@ -346,9 +343,8 @@ commands:
   promote      publish a validated draft proven by a successful report
   runs         read the durable suite projection for a report
 
-authentication (exactly one, always from a file so no secret reaches argv):
-  --credential FILE   subject=/secret= file, exchanged for a PAT at POST /login
-  --token-file FILE   an already-issued personal access token
+authentication (always from a file so no token reaches argv):
+  --token-file FILE   an already-issued personal access token (required)
 
 common options:
   --base-url URL           management surface base URL (required)
@@ -509,66 +505,6 @@ function exitCode(status: StepStatus): number {
     case "fault":
       return EXIT_FAULT;
   }
-}
-
-// ---------------------------------------------------------------------------
-// Credentials
-// ---------------------------------------------------------------------------
-
-function credentialFields(text: string): { subject: string; secret: string } {
-  const fields = new Map<string, string>();
-  for (const line of text.split("\n")) {
-    const separator = line.indexOf("=");
-    if (separator > 0) {
-      fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
-    }
-  }
-  const subject = fields.get("subject");
-  const secret = fields.get("secret");
-  if (subject === undefined || secret === undefined || subject === "" || secret === "") {
-    throw new UsageError("a credential file must define subject and secret");
-  }
-  return { subject, secret };
-}
-
-type Credential = { readonly token: string } | { readonly refused: true } | { readonly fault: string };
-
-/// Exchange one principal's own subject and secret for a personal access token
-/// on the reserved login route. This is the whole first-party PAT flow: the CLI
-/// never mints, stores, or forwards authority it was not handed.
-async function login(
-  io: CliIo,
-  transcript: Transcript,
-  baseUrl: string,
-  path: string,
-): Promise<Credential> {
-  const { subject, secret } = credentialFields(await io.readText(path));
-  transcript.guard(secret);
-  let response;
-  try {
-    response = await io.fetch(`${baseUrl}${LOGIN_PATH}`, {
-      body: JSON.stringify({ label: LOGIN_LABEL, secret, subject }),
-      headers: { accept: "application/json", "content-type": "application/json" },
-      method: "POST",
-    });
-  } catch {
-    return { fault: "the login route could not be reached" };
-  }
-  if (response.status === 403) return { refused: true };
-  if (!response.ok) return { fault: `login returned HTTP ${response.status}` };
-  let issued: unknown;
-  try {
-    issued = await response.json();
-  } catch {
-    return { fault: "login did not return JSON" };
-  }
-  const token = (issued as { token?: unknown }).token;
-  if (typeof token !== "string" || token.length === 0) {
-    return { fault: "login returned no token" };
-  }
-  transcript.guard(token);
-  transcript.note(`  ok    logged in subject=${subject} token=<redacted>`);
-  return { token };
 }
 
 // ---------------------------------------------------------------------------
@@ -873,52 +809,10 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
       environment: required(parsed, "environment"),
       "project-id": required(parsed, "project"),
     };
-    const credentialPath = parsed.values["credential"];
-    const tokenPath = parsed.values["token-file"];
-    if ((credentialPath === undefined) === (tokenPath === undefined)) {
-      throw new UsageError("exactly one of --credential and --token-file is required");
-    }
-
-    let token: string;
-    if (credentialPath !== undefined) {
-      const credential = await login(io, transcript, baseUrl, credentialPath);
-      if ("refused" in credential) {
-        // Login refused: no command was attempted, so there is no step to
-        // report — only the frozen refusal the surface returns for every
-        // authentication and authorization failure alike.
-        transcript.note(`  ref   login refused ${AUTHORIZATION_DENIED}`);
-        transcript.document({
-          client: "wamn",
-          "edit-to-run-ms": null,
-          "elapsed-ms": io.now() - started,
-          refusal: { reason: { kind: AUTHORIZATION_DENIED } },
-          "schema-version": AUTHORING_SCHEMA_VERSION,
-          status: "refused",
-          steps: [],
-          verb: parsed.verb,
-        });
-        return EXIT_REFUSED;
-      }
-      if ("fault" in credential) {
-        transcript.note(`  FAIL  ${credential.fault}`);
-        transcript.document({
-          client: "wamn",
-          "edit-to-run-ms": null,
-          "elapsed-ms": io.now() - started,
-          fault: { detail: credential.fault, kind: "network" },
-          "schema-version": AUTHORING_SCHEMA_VERSION,
-          status: "fault",
-          steps: [],
-          verb: parsed.verb,
-        });
-        return EXIT_FAULT;
-      }
-      token = credential.token;
-    } else {
-      token = (await io.readText(tokenPath!)).trim();
-      if (token.length === 0) throw new UsageError("--token-file is empty");
-      transcript.guard(token);
-    }
+    const tokenPath = required(parsed, "token-file");
+    const token = (await io.readText(tokenPath)).trim();
+    if (token.length === 0) throw new UsageError("--token-file is empty");
+    transcript.guard(token);
 
     const statePath = parsed.flags.has("--no-state")
       ? undefined

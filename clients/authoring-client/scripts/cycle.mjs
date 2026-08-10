@@ -8,7 +8,7 @@
 // the gate proves the CLI's public behaviour rather than its internals.
 //
 // WHAT THIS IS NOT. Pure HTTP, like the wamn-jvzx.4 smoke: the caller supplies a
-// base URL and ONE credential file and nothing else. No database URL, no
+// base URL and ONE pre-issued PAT file and nothing else. No database URL, no
 // platform-admin impersonation, no test-only trusted context, and no ledger
 // read — that read needs storage authority a client must not hold. The gate
 // closes by printing one VERIFY-MANIFEST line naming what a runner-side ledger
@@ -24,11 +24,10 @@
 //
 //   node scripts/cycle.mjs --check
 //   node scripts/cycle.mjs --base-url http://HOST:PORT \
-//     --credential /path/to/principal.env --project receiving --environment dev
+//     --token-file /path/to/pat --project receiving --environment dev
 //
-// A credential file is `key=value` lines carrying `subject` and `secret`. It is
-// read as a file so no secret byte reaches a command line, an environment block,
-// or this gate's output.
+// The PAT is read from a mode-600 file so no token byte reaches a command line,
+// an environment block, or this gate's output.
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -43,7 +42,6 @@ const LAUNCHER = join(PACKAGE_ROOT, "scripts", "wamn.mjs");
 const SCHEMA_URL = new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url);
 
 const AUTHORING_PATH = "/authoring";
-const LOGIN_PATH = "/login";
 const REFUSAL_BODY = '{"kind":"authorization-denied"}';
 const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 
@@ -111,7 +109,7 @@ function require_(check, condition, detail) {
 /// This gate's ENTIRE input surface. A storage URL, a platform credential, or a
 /// trusted-context switch has no spelling here, which is why `--check` can assert
 /// the surface itself rather than scanning for forbidden words.
-const NAMED_ARGUMENTS = ["--base-url", "--credential", "--project", "--environment", "--checkout"];
+const NAMED_ARGUMENTS = ["--base-url", "--token-file", "--project", "--environment", "--checkout"];
 
 function parseArguments(argv) {
   const options = { check: false };
@@ -145,34 +143,6 @@ async function post(url, { body, token }) {
   if (token !== undefined) headers.authorization = `Bearer ${token}`;
   const response = await fetch(url, { method: "POST", headers, body });
   return { status: response.status, text: await response.text() };
-}
-
-function credentialFields(text) {
-  const fields = new Map();
-  for (const line of text.split("\n")) {
-    const separator = line.indexOf("=");
-    if (separator > 0) fields.set(line.slice(0, separator).trim(), line.slice(separator + 1).trim());
-  }
-  const subject = fields.get("subject");
-  const secret = fields.get("secret");
-  if (!subject || !secret) throw new CheckFailure("credential-file", "needs subject and secret");
-  secrets.add(secret);
-  return { subject, secret };
-}
-
-/// The gate's own login, used only by the raw shortcut probes below. The CYCLE
-/// legs never see this token: the CLI performs its own login from the same
-/// credential file, which is the flow under test.
-async function login(baseUrl, credential) {
-  const { status, text } = await post(`${baseUrl}${LOGIN_PATH}`, {
-    body: JSON.stringify({ label: "ftfc14-cycle-probe", secret: credential.secret, subject: credential.subject }),
-  });
-  require_("probe-login-status", status === 200, `expected HTTP 200, got HTTP ${status} ${text}`);
-  const token = JSON.parse(text).token;
-  require_("probe-login-token-shape", PAT_PATTERN.test(String(token)), "login returned no well-formed token");
-  secrets.add(token);
-  secrets.add(PAT_PATTERN.exec(token)[2]);
-  return token;
 }
 
 /// A structurally valid token whose secret half is wrong by one hex digit, so it
@@ -265,12 +235,12 @@ async function staticHalf() {
       JSON.stringify([...schema.definitions.AuthoringCommandKind.enum].sort()),
     "the cycle does not reach every public command kind",
   );
-  // This gate's own input surface: a base URL, one credential file, a scope, and
+  // This gate's own input surface: a base URL, one token file, a scope, and
   // a checkout. There is no storage URL, platform credential, or trusted-context
   // argument to supply, so a run cannot smuggle one in.
   require_(
     "gate-input-surface",
-    NAMED_ARGUMENTS.join(" ") === "--base-url --credential --project --environment --checkout",
+    NAMED_ARGUMENTS.join(" ") === "--base-url --token-file --project --environment --checkout",
     `the gate grew an argument: ${NAMED_ARGUMENTS.join(" ")}`,
   );
   for (const rejected of ["--database-url", "--system-url", "--pg-url", "--token", "--tenant"]) {
@@ -290,15 +260,18 @@ async function main() {
     await staticHalf();
     return;
   }
-  if (!options["base-url"] || !options.credential || !options.project || !options.environment) {
+  if (!options["base-url"] || !options["token-file"] || !options.project || !options.environment) {
     throw new CheckFailure(
       "usage",
-      "a live run needs --base-url, --credential, --project, and --environment",
+      "a live run needs --base-url, --token-file, --project, and --environment",
     );
   }
 
   const baseUrl = options["base-url"].replace(/\/+$/, "");
-  const credential = credentialFields(await readFile(options.credential, "utf8"));
+  const token = (await readFile(options["token-file"], "utf8")).trim();
+  require_("token-file", PAT_PATTERN.test(token), "needs one well-formed personal access token");
+  secrets.add(token);
+  secrets.add(PAT_PATTERN.exec(token)[2]);
   const runId = `${Date.now().toString(36)}-${randomBytes(2).toString("hex")}`;
   const draftId = `draft-${options.project}-cycle-${runId}`;
   const checkout = options.checkout ?? (await mkdtemp(join(tmpdir(), `wamn-ftfc14-cycle-${runId}-`)));
@@ -336,8 +309,8 @@ async function main() {
   const scope = [
     "--base-url",
     baseUrl,
-    "--credential",
-    options.credential,
+    "--token-file",
+    options["token-file"],
     "--project",
     options.project,
     "--environment",
@@ -510,7 +483,6 @@ async function main() {
 
   // ---- shortcut probes: every one of these must fail -----------------------
   emit("probes (each of these must fail)");
-  const token = await login(baseUrl, credential);
   const probeDocument = (change) => {
     const document = {
       document: "request",
@@ -564,8 +536,7 @@ async function main() {
     `an unsupported version was not typed-refused: HTTP ${unsupported.status} ${unsupported.text}`,
   );
 
-  // A forged token and a wrong secret, both through the CLI, so the typed
-  // refusal a caller sees is what is being proven.
+  // A forged token through the CLI proves the typed refusal a caller sees.
   const forgedPath = join(checkout, "forged.token");
   writeFileSync(forgedPath, `${forge(token)}\n`, { mode: 0o600 });
   const forgedRun = wamn("validate", [
@@ -599,30 +570,6 @@ async function main() {
     `a forged token was not refused as authorization-denied: exit ${forgedRun.code}`,
   );
   commandIds.refused.push(`cycle-${runId}-forged`);
-
-  const wrongPath = join(checkout, "wrong.env");
-  writeFileSync(wrongPath, `subject=${credential.subject}\nsecret=${credential.secret}-wrong\n`, {
-    mode: 0o600,
-  });
-  const wrongRun = wamn("runs", [
-    "--base-url",
-    baseUrl,
-    "--credential",
-    wrongPath,
-    "--project",
-    options.project,
-    "--environment",
-    options.environment,
-    "--no-state",
-    "--report-id",
-    PLACEHOLDER_REPORT,
-  ]);
-  rmSync(wrongPath, { force: true });
-  require_(
-    "probe-wrong-secret-refused",
-    wrongRun.code === 3 && wrongRun.document?.steps?.length === 0,
-    `a wrong secret did not refuse at login: exit ${wrongRun.code}`,
-  );
 
   // The environment can hold every shortcut-shaped value there is; the CLI reads
   // none of them and refuses for want of the flags it actually accepts.
@@ -675,7 +622,6 @@ async function main() {
       environment: options.environment,
       "draft-id": draftId,
       "flow-id": FLOW_ID,
-      "principal-subject": credential.subject,
       "must-appear": commandIds.authorized.map((id, index) => ({
         "command-id": id,
         "command-kind": "save-flow-draft",

@@ -233,9 +233,10 @@ CREATE TABLE registry.project_publish_policies (
 -- ---------------------------------------------------------------------------
 -- First-party platform identity (wamn-ctc8.6). This is platform-plane
 -- authentication state, distinct from per-project `app_system` identities.
--- Humans may have one Argon2id PHC credential; services deliberately have no
--- local password row and gain presenters in later work. Role slugs are opaque:
--- permission meaning belongs to the management authorization boundary.
+-- Humans and services are passwordless subjects. PATs are the MVP presenter;
+-- an external OIDC adapter may resolve a human subject through this same core.
+-- Role slugs are opaque: permission meaning belongs to the management
+-- authorization boundary.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.principals (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -261,19 +262,6 @@ CREATE TABLE identity.principals (
         CHECK ((status = 'disabled') = (disabled_at IS NOT NULL))
 );
 
-CREATE TABLE identity.local_credentials (
-    principal_id uuid PRIMARY KEY,
-    principal_kind text NOT NULL DEFAULT 'human',
-    password_hash text NOT NULL,
-    updated_at timestamptz NOT NULL DEFAULT now(),
-    FOREIGN KEY (principal_id, principal_kind)
-        REFERENCES identity.principals (id, kind) ON DELETE CASCADE,
-    CONSTRAINT local_credentials_human_only_check
-        CHECK (principal_kind = 'human'),
-    CONSTRAINT local_credentials_argon2id_check
-        CHECK (password_hash LIKE '$argon2id$%')
-);
-
 CREATE TABLE identity.project_roles (
     principal_id uuid NOT NULL
         REFERENCES identity.principals (id) ON DELETE CASCADE,
@@ -293,11 +281,11 @@ CREATE TABLE identity.project_roles (
 -- humans and services use headlessly. INVARIANT: no token material is stored.
 -- `token_prefix` is the non-secret lookup half (hex of the token's random
 -- lookup bytes, UNIQUE so verification is a single index probe);
--- `token_hash` is the hex SHA-256 of the WHOLE token string, which is high-
--- entropy random material, so a plain digest — not Argon2 — is the correct
--- rest form. Expiry is mandatory (no immortal tokens) and revocation is a
--- one-way stamp. The principal FK is deliberately RESTRICT, not CASCADE: a
--- token row is audit evidence that must outlive careless principal deletes.
+-- `token_hash` is the hex SHA-256 of the WHOLE token string, which is
+-- high-entropy random material, so a plain digest is the correct rest form.
+-- Expiry is mandatory (no immortal tokens) and revocation is a one-way stamp.
+-- The principal FK is deliberately RESTRICT, not CASCADE: a token row is audit
+-- evidence that must outlive careless principal deletes.
 -- ---------------------------------------------------------------------------
 CREATE TABLE identity.pats (
     id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -320,50 +308,6 @@ CREATE TABLE identity.pats (
 );
 
 CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
-
--- ---------------------------------------------------------------------------
--- Browser sessions (wamn-ctc8.9) — the SECOND presenter over the same identity
--- core, not a second authority: a session resolves to the same principal and
--- the same `identity.project_roles` rows a PAT does. Storage mirrors
--- `identity.pats` exactly, for the same reasons. INVARIANT: no cookie material
--- is stored. `cookie_prefix` is the non-secret lookup half (UNIQUE, so
--- resolution is one index probe) and `cookie_hash` is the hex SHA-256 of the
--- WHOLE cookie value, which is high-entropy random material.
---
--- `csrf_hash` is the synchronizer token bound to THIS row, stored as a digest
--- for the same reason the cookie is. The cookie is HttpOnly so page script
--- cannot read it; the CSRF token is handed to the client in the login response
--- body instead and echoed in a request header, so a cross-site form post —
--- which carries the ambient cookie but cannot read that body — has no proof and
--- is refused. Revoking the session revokes its CSRF token with it, because both
--- live on this one row.
---
--- Expiry is absolute and mandatory (no idle timeout, no sliding window: a
--- session dies at a fixed instant even if it is in constant use) and revocation
--- is a one-way stamp, so logout is durable and idempotent. The principal FK is
--- RESTRICT, matching `identity.pats`: a session row is audit evidence.
--- ---------------------------------------------------------------------------
-CREATE TABLE identity.sessions (
-    id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    principal_id  uuid NOT NULL
-        REFERENCES identity.principals (id) ON DELETE RESTRICT,
-    cookie_prefix text NOT NULL UNIQUE,
-    cookie_hash   text NOT NULL,
-    csrf_hash     text NOT NULL,
-    created_at    timestamptz NOT NULL DEFAULT now(),
-    expires_at    timestamptz NOT NULL,
-    revoked_at    timestamptz,
-    CONSTRAINT sessions_cookie_prefix_check
-        CHECK (cookie_prefix ~ '^[0-9a-f]{16}$'),
-    CONSTRAINT sessions_cookie_hash_check
-        CHECK (cookie_hash ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT sessions_csrf_hash_check
-        CHECK (csrf_hash ~ '^[0-9a-f]{64}$'),
-    CONSTRAINT sessions_expiry_check
-        CHECK (expires_at > created_at)
-);
-
-CREATE INDEX sessions_principal_idx ON identity.sessions (principal_id);
 
 -- ---------------------------------------------------------------------------
 -- Project-envs — the registry LEAF: one provisioned (org, project, env)

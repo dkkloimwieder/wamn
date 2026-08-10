@@ -20,13 +20,7 @@ fn code_only(sql: &str) -> String {
 fn system_schema_contains_the_platform_identity_core() {
     let sql = code_only(&system_schema_sql());
     assert!(sql.contains("CREATE SCHEMA identity AUTHORIZATION wamn_system"));
-    for table in [
-        "principals",
-        "local_credentials",
-        "project_roles",
-        "pats",
-        "sessions",
-    ] {
+    for table in ["principals", "project_roles", "pats"] {
         assert!(
             sql.contains(&format!("CREATE TABLE identity.{table}")),
             "missing identity.{table}"
@@ -36,13 +30,19 @@ fn system_schema_contains_the_platform_identity_core() {
         assert!(sql.contains(literal), "missing identity literal {literal}");
     }
     assert!(sql.contains("UNIQUE (kind, subject)"));
-    assert!(sql.contains("UNIQUE (id, kind)"));
-    assert!(sql.contains("principal_kind text NOT NULL DEFAULT 'human'"));
-    assert!(sql.contains("CHECK (principal_kind = 'human')"));
-    assert!(sql.contains("REFERENCES identity.principals (id, kind) ON DELETE CASCADE"));
-    assert!(sql.contains("password_hash text NOT NULL"));
-    assert!(sql.contains("password_hash LIKE '$argon2id$%'"));
     assert!(sql.contains("REFERENCES registry.projects (org, id) ON DELETE CASCADE"));
+    for removed in [
+        "identity.local_credentials",
+        "identity.sessions",
+        "password_hash",
+        "cookie_hash",
+        "csrf_hash",
+    ] {
+        assert!(
+            !sql.contains(removed),
+            "removed local-auth schema {removed}"
+        );
+    }
 }
 
 #[test]
@@ -56,34 +56,6 @@ fn system_schema_stores_personal_access_tokens_as_expirable_digests() {
     assert!(sql.contains("CHECK (token_hash ~ '^[0-9a-f]{64}$')"));
     assert!(sql.contains("CHECK (expires_at > created_at)"));
     assert!(sql.contains("REFERENCES identity.principals (id) ON DELETE RESTRICT"));
-}
-
-/// Sessions are the second presenter, and storage proves they are no weaker
-/// than the first: digests at rest, mandatory absolute expiry, revocable.
-#[test]
-fn system_schema_stores_sessions_as_revocable_expiring_digests() {
-    let sql = code_only(&system_schema_sql());
-    assert!(sql.contains("cookie_prefix text NOT NULL UNIQUE"));
-    assert!(sql.contains("cookie_hash   text NOT NULL"));
-    assert!(sql.contains("csrf_hash     text NOT NULL"));
-    assert!(sql.contains("expires_at    timestamptz NOT NULL"));
-    assert!(sql.contains("revoked_at    timestamptz,"));
-    assert!(sql.contains("CHECK (cookie_prefix ~ '^[0-9a-f]{16}$')"));
-    assert!(sql.contains("CHECK (cookie_hash ~ '^[0-9a-f]{64}$')"));
-    assert!(sql.contains("CHECK (csrf_hash ~ '^[0-9a-f]{64}$')"));
-    assert!(sql.contains("CONSTRAINT sessions_expiry_check"));
-    // Audit evidence outlives a careless principal delete, exactly like a token.
-    let sessions = sql
-        .split("CREATE TABLE identity.sessions")
-        .nth(1)
-        .expect("the sessions table body");
-    let sessions = sessions.split(");").next().expect("a table terminator");
-    assert!(sessions.contains("REFERENCES identity.principals (id) ON DELETE RESTRICT"));
-    // The CSRF token lives on the session row, so revoking one revokes both.
-    assert!(
-        sessions.contains("csrf_hash"),
-        "the CSRF proof must be bound to the session row, not stored apart"
-    );
 }
 
 #[test]

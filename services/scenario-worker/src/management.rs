@@ -8,25 +8,15 @@
 //! process-local capability token and learns who the caller was only through the
 //! ledger row this module writes.
 //!
-//! Two presenters reach the same authority. A personal access token serves
-//! headless callers; a browser session serves the console. Both resolve through
-//! [`role_for`] into one [`AuthorizedAuthor`], so nothing downstream can tell
-//! them apart and neither can widen what the other may do. A session is the
-//! weaker position — the browser replays its cookie automatically — so a
-//! session-presented state change additionally carries the synchronizer token
-//! bound to its session row, and is refused without it.
-//!
 //! Trusted context never comes from the request. [`AuthorizedAuthor`] has no
 //! public constructor and implements no deserialization trait, exactly like the
 //! [`AuthenticatedPrincipal`] it is derived from, and no handler here reads any
-//! header other than the three that carry a credential — `authorization`,
-//! `cookie`, and the CSRF header — or any body field naming an identity.
+//! header other than `authorization` or any body field naming an identity.
 
 use std::convert::Infallible;
 use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context as _;
 use bytes::Bytes;
@@ -35,7 +25,7 @@ use hyper::body::Incoming;
 use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, GenericClient, NoTls};
 
@@ -45,9 +35,7 @@ use wamn_authoring_model::{
     ContractDecodeError, DraftIdentity, SCHEMA_VERSION, SafeUint64, decode_document,
 };
 use wamn_platform_identity::{
-    AuthenticatedPrincipal, IdentityErrorKind, IssuedSession, PrincipalKind, ProjectRole,
-    authenticate_pat, authenticate_session, login_local, login_session, project_roles,
-    revoke_session,
+    AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
 };
 
 use crate::authoring::{
@@ -71,23 +59,6 @@ const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_au
 
 /// Bearer scheme this surface accepts, including its single trailing space.
 const BEARER_SCHEME: &str = "Bearer ";
-
-/// Name of the cookie carrying the browser session value.
-const SESSION_COOKIE_NAME: &str = "wamn_session";
-
-/// Header carrying the synchronizer token bound to the presented session.
-///
-/// It is a header rather than a body field on purpose: a cross-site form post
-/// can be made to carry the ambient cookie, but it cannot set a custom header,
-/// and it cannot read the login response body the token was handed out in.
-const CSRF_HEADER: &str = "x-wamn-csrf";
-
-/// Attributes every session cookie carries. They are the browser-side half of
-/// the defence and are deliberately not configurable: `HttpOnly` keeps page
-/// script — and therefore any XSS — away from the value, `SameSite=Strict` stops
-/// a cross-site context from sending it at all, `Secure` keeps it off plaintext
-/// transports, and `Path=/` scopes it to this surface.
-const SESSION_COOKIE_ATTRIBUTES: &str = "; HttpOnly; SameSite=Strict; Secure; Path=/";
 
 /// Roles this boundary admits for the authoring command surface.
 ///
@@ -258,9 +229,6 @@ impl CommandAudit {
 
 /// Verify a bearer token and resolve the role it may exercise for one project.
 ///
-/// [`authorize_session`] is the same function for the browser presenter; both
-/// end in [`role_for`].
-///
 /// Malformed, unknown, forged, expired, and revoked tokens, disabled principals,
 /// principals with no role in this project, and principals whose roles all fall
 /// outside [`ManagementRole`] every return `Ok(None)`. Only infrastructure
@@ -278,33 +246,7 @@ pub async fn authorize(
     role_for(system_client, &authenticated, org, project).await
 }
 
-/// Verify a session cookie and its CSRF proof, and resolve the role it may
-/// exercise for one project.
-///
-/// The cookie and the proof are verified together by the identity core, so a
-/// request that presents a valid cookie without the matching synchronizer token
-/// is refused here — before this function returns, and therefore before any
-/// caller can read a body or reach a command. Every refusal [`authorize`] can
-/// produce, plus a missing or wrong CSRF proof, returns `Ok(None)`.
-pub async fn authorize_session(
-    system_client: &(impl GenericClient + Sync),
-    cookie: &str,
-    csrf_token: &str,
-    org: &str,
-    project: &str,
-) -> anyhow::Result<Option<AuthorizedAuthor>> {
-    let Some(authenticated) = authenticate_session(system_client, cookie, csrf_token).await? else {
-        return Ok(None);
-    };
-    role_for(system_client, &authenticated, org, project).await
-}
-
 /// Resolve the role an already-authenticated principal may exercise.
-///
-/// Both presenters funnel through here. That is the whole reason a session is a
-/// presenter and not an authority: the roles come from the same
-/// `identity.project_roles` rows and the same [`admitted_role`] selection, so a
-/// session and a token held by one principal cannot resolve differently.
 async fn role_for(
     system_client: &(impl GenericClient + Sync),
     authenticated: &AuthenticatedPrincipal,
@@ -526,15 +468,6 @@ pub struct ManagementServeArgs {
     /// Schema containing the stored flow and scenario catalog.
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
-
-    /// Lifetime of a token minted by the reserved login route.
-    #[arg(long = "login-token-ttl-secs", default_value_t = 3600)]
-    pub login_token_ttl_secs: u64,
-
-    /// Lifetime of a browser session opened by the reserved session route.
-    /// Expiry is absolute: a session is never extended by being used.
-    #[arg(long = "session-ttl-secs", default_value_t = 43200)]
-    pub session_ttl_secs: u64,
 }
 
 /// Everything one running management surface owns.
@@ -544,8 +477,6 @@ struct Surface {
     org: Box<str>,
     project: Box<str>,
     tenant: Box<str>,
-    login_ttl: Duration,
-    session_ttl: Duration,
 }
 
 impl Surface {
@@ -590,8 +521,6 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
         tenant: args.tenant.into_boxed_str(),
-        login_ttl: Duration::from_secs(args.login_token_ttl_secs),
-        session_ttl: Duration::from_secs(args.session_ttl_secs),
     });
     let listener = TcpListener::bind(address)
         .await
@@ -621,9 +550,6 @@ async fn route(
     request: Request<Incoming>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let handled = match (request.method(), request.uri().path()) {
-        (&Method::POST, "/login") => login(&surface, request).await,
-        (&Method::POST, "/session") => open_session(&surface, request).await,
-        (&Method::DELETE, "/session") => close_session(&surface, request).await,
         (&Method::POST, "/authoring") => authoring_command(&surface, request).await,
         _ => Ok(empty(StatusCode::NOT_FOUND)),
     };
@@ -634,136 +560,20 @@ async fn route(
     }))
 }
 
-/// Exchange a human's local secret for a personal access token.
+/// Run one authoring command for a verified PAT.
 ///
-/// Implements the wire contract frozen on `login_local`: `subject`, `secret`,
-/// and `label` in; `token` and `expires_at` out. Every refusal — unknown
-/// subject, wrong secret, disabled human, service principal, and malformed
-/// input alike — answers with [`authorization_denied`].
-async fn login(
-    surface: &Surface,
-    request: Request<Incoming>,
-) -> anyhow::Result<Response<Full<Bytes>>> {
-    let body = request.into_body().collect().await?.to_bytes();
-    let Ok(login) = serde_json::from_slice::<LoginRequest>(&body) else {
-        return Ok(empty(StatusCode::BAD_REQUEST));
-    };
-    match login_local(
-        &surface.identity,
-        &login.subject,
-        login.secret.as_bytes(),
-        &login.label,
-        surface.login_ttl,
-    )
-    .await
-    {
-        Ok(Some(issued)) => Ok(json(
-            StatusCode::OK,
-            &LoginResponse {
-                token: issued.token(),
-                expires_at: issued.record().expires_at(),
-            },
-        )),
-        Ok(None) => Ok(authorization_denied()),
-        // Malformed input must not be distinguishable from a wrong secret.
-        Err(error) if error.kind() == IdentityErrorKind::InvalidInput => Ok(authorization_denied()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// Open a browser session for a human's local secret.
-///
-/// Implements the wire contract frozen on `login_session`: `subject` and
-/// `secret` in; `csrf_token` and `expires_at` out, with the session value
-/// itself in a `HttpOnly` `Set-Cookie` header the page cannot read. Every
-/// refusal answers with [`authorization_denied`], exactly like `/login`.
-///
-/// This handler reads no cookie. The session it mints is always fresh, so a
-/// value an attacker planted in the browser before login is not adopted, not
-/// extended, and not returned — the caller leaves holding a new cookie for a new
-/// row, which is what makes fixation fail.
-async fn open_session(
-    surface: &Surface,
-    request: Request<Incoming>,
-) -> anyhow::Result<Response<Full<Bytes>>> {
-    let body = request.into_body().collect().await?.to_bytes();
-    let Ok(login) = serde_json::from_slice::<SessionRequest>(&body) else {
-        return Ok(empty(StatusCode::BAD_REQUEST));
-    };
-    match login_session(
-        &surface.identity,
-        &login.subject,
-        login.secret.as_bytes(),
-        surface.session_ttl,
-    )
-    .await
-    {
-        Ok(Some(issued)) => Ok(session_opened(&issued, surface.session_ttl)),
-        Ok(None) => Ok(authorization_denied()),
-        // Malformed input must not be distinguishable from a wrong secret.
-        Err(error) if error.kind() == IdentityErrorKind::InvalidInput => Ok(authorization_denied()),
-        Err(error) => Err(error.into()),
-    }
-}
-
-/// Close the presented browser session.
-///
-/// Logout is a state change, so it carries the same CSRF proof every other state
-/// change does — a cross-site page must not be able to log a user out. The proof
-/// is checked before anything is revoked, and a token presenter is refused here
-/// outright: this route belongs to the session presenter alone.
-///
-/// Revocation is a one-way stamp on the session row, so the cookie is dead for
-/// every later request whether or not the browser honours the clearing header,
-/// and a replayed logout is harmless.
-async fn close_session(
-    surface: &Surface,
-    request: Request<Incoming>,
-) -> anyhow::Result<Response<Full<Bytes>>> {
-    let Some(Presenter::Session { cookie, csrf }) = presenter(&request) else {
-        return Ok(authorization_denied());
-    };
-    if authenticate_session(&surface.identity, &cookie, &csrf)
-        .await?
-        .is_none()
-    {
-        return Ok(authorization_denied());
-    }
-    revoke_session(&surface.identity, &cookie).await?;
-    Ok(session_closed())
-}
-
-/// Run one authoring command for a verified presenter.
-///
-/// Identity is settled from the credential headers alone, before the body is
+/// Identity is settled from the authorization header alone, before the body is
 /// read at all: no header and no request field can supply, override, or widen
-/// the principal this command is attributed to. For a session presenter the CSRF
-/// proof is settled in the same step, so a state change with no proof is refused
-/// before the body is read, before route selection, and before the ledger is
-/// touched — there is no path on which it mutates anything.
+/// the principal this command is attributed to.
 async fn authoring_command(
     surface: &Surface,
     request: Request<Incoming>,
 ) -> anyhow::Result<Response<Full<Bytes>>> {
-    let Some(presented) = presenter(&request) else {
+    let Some(token) = bearer(&request) else {
         return Ok(authorization_denied());
     };
-    let resolved = match &presented {
-        Presenter::Pat(token) => {
-            authorize(&surface.identity, token, &surface.org, &surface.project).await?
-        }
-        Presenter::Session { cookie, csrf } => {
-            authorize_session(
-                &surface.identity,
-                cookie,
-                csrf,
-                &surface.org,
-                &surface.project,
-            )
-            .await?
-        }
-    };
-    let Some(author) = resolved else {
+    let Some(author) = authorize(&surface.identity, token, &surface.org, &surface.project).await?
+    else {
         return Ok(authorization_denied());
     };
 
@@ -889,57 +699,6 @@ async fn dispatch(
     ))
 }
 
-/// The credential one request presents. There is no third variant: a request
-/// either carries a token, or carries a session cookie, or is anonymous.
-enum Presenter {
-    /// A headless caller's personal access token.
-    Pat(String),
-    /// A browser's session cookie and the CSRF proof it sent with it. `csrf` is
-    /// empty when the header was absent, which the identity core refuses
-    /// exactly as it refuses a wrong one — an absent proof is not a weaker
-    /// failure than a forged one.
-    Session { cookie: String, csrf: String },
-}
-
-/// Read the credential a request presents, consulting only credential headers.
-///
-/// A bearer token wins when both are present, so a page that somehow holds a
-/// token is not silently downgraded to the cookie path. A cookie with no CSRF
-/// header still produces a `Session`, deliberately: returning `None` there would
-/// make an unproven state change indistinguishable from an anonymous one, and it
-/// must be refused as the presenter it is.
-fn presenter<B>(request: &Request<B>) -> Option<Presenter> {
-    if let Some(token) = bearer(request) {
-        return Some(Presenter::Pat(token.to_owned()));
-    }
-    let cookie = session_cookie(request)?;
-    Some(Presenter::Session {
-        cookie: cookie.to_owned(),
-        csrf: csrf_proof(request).unwrap_or_default().to_owned(),
-    })
-}
-
-/// Return the session cookie's value from the `cookie` header, ignoring every
-/// other cookie the browser sent.
-fn session_cookie<B>(request: &Request<B>) -> Option<&str> {
-    request
-        .headers()
-        .get(hyper::header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .find_map(|pair| {
-            let (name, value) = pair.split_once('=')?;
-            (name.trim() == SESSION_COOKIE_NAME).then(|| value.trim())
-        })
-        .filter(|value| !value.is_empty())
-}
-
-/// Return the presented CSRF proof, or `None` when the header is absent.
-fn csrf_proof<B>(request: &Request<B>) -> Option<&str> {
-    request.headers().get(CSRF_HEADER)?.to_str().ok()
-}
-
 /// Return the presented bearer token, or `None` when the header is absent or
 /// does not carry exactly one non-empty `Bearer` credential.
 fn bearer<B>(request: &Request<B>) -> Option<&str> {
@@ -955,7 +714,7 @@ fn bearer<B>(request: &Request<B>) -> Option<&str> {
 /// The single response every authentication and authorization failure returns.
 ///
 /// Absent, malformed, forged, expired, revoked, disabled, unroled, and
-/// cross-project presenters are byte-identical here, so a caller cannot use the
+/// cross-project PATs are byte-identical here, so a caller cannot use the
 /// response to learn which predicate refused them. The body is the repository's
 /// own frozen refusal literal; a pre-dispatch refusal carries no command
 /// identity, so it is the bare reason rather than a response envelope.
@@ -964,41 +723,6 @@ fn authorization_denied() -> Response<Full<Bytes>> {
         StatusCode::FORBIDDEN,
         &AuthoringRefusal::AuthorizationDenied,
     )
-}
-
-/// Answer a successful login: the CSRF token in a body the page can read, the
-/// session value in a cookie it cannot.
-fn session_opened(issued: &IssuedSession, ttl: Duration) -> Response<Full<Bytes>> {
-    let body = serde_json::to_vec(&SessionResponse {
-        csrf_token: issued.csrf_token(),
-        expires_at: issued.record().expires_at(),
-    })
-    .expect("contract documents serialize");
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(hyper::header::CONTENT_TYPE, "application/json")
-        .header(
-            hyper::header::SET_COOKIE,
-            set_cookie(issued.cookie(), ttl.as_secs()),
-        )
-        .body(Full::new(Bytes::from(body)))
-        .expect("static response builds")
-}
-
-/// Answer a successful logout. The clearing header is a courtesy to the browser;
-/// the revocation stamp on the row is what actually ends the session.
-fn session_closed() -> Response<Full<Bytes>> {
-    Response::builder()
-        .status(StatusCode::NO_CONTENT)
-        .header(hyper::header::SET_COOKIE, set_cookie("", 0))
-        .body(Full::new(Bytes::new()))
-        .expect("static response builds")
-}
-
-/// Frame one session cookie with the frozen attribute set. `Max-Age` mirrors the
-/// row's absolute expiry, so the browser and the database agree on the deadline.
-fn set_cookie(value: &str, max_age_secs: u64) -> String {
-    format!("{SESSION_COOKIE_NAME}={value}{SESSION_COOKIE_ATTRIBUTES}; Max-Age={max_age_secs}")
 }
 
 fn json(status: StatusCode, value: &impl Serialize) -> Response<Full<Bytes>> {
@@ -1015,88 +739,6 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
         .status(status)
         .body(Full::new(Bytes::new()))
         .expect("static response builds")
-}
-
-/// The reserved login route's request document.
-///
-/// `deny_unknown_fields` is what keeps a client from smuggling an identity
-/// assertion alongside its credential.
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LoginRequest {
-    subject: String,
-    secret: String,
-    label: String,
-}
-
-impl fmt::Debug for LoginRequest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LoginRequest")
-            .field("subject", &self.subject)
-            .field("secret", &"<redacted>")
-            .field("label", &self.label)
-            .finish()
-    }
-}
-
-/// The reserved login route's response document. Field spellings are the frozen
-/// wire contract on `login_local`, not this crate's naming convention.
-#[derive(Clone, Serialize)]
-struct LoginResponse<'a> {
-    token: &'a str,
-    expires_at: &'a str,
-}
-
-impl fmt::Debug for LoginResponse<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("LoginResponse")
-            .field("token", &"<redacted>")
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
-}
-
-/// The reserved session route's request document.
-///
-/// It carries no `label`: a browser session is not an operator-named credential
-/// the way a token is. `deny_unknown_fields` is what keeps a client from
-/// smuggling an identity assertion alongside its secret.
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SessionRequest {
-    subject: String,
-    secret: String,
-}
-
-impl fmt::Debug for SessionRequest {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SessionRequest")
-            .field("subject", &self.subject)
-            .field("secret", &"<redacted>")
-            .finish()
-    }
-}
-
-/// The reserved session route's response document. Field spellings are the
-/// frozen wire contract on `login_session`, not this crate's naming convention.
-/// The session value is deliberately absent: it travels only in `Set-Cookie`.
-#[derive(Clone, Serialize)]
-struct SessionResponse<'a> {
-    csrf_token: &'a str,
-    expires_at: &'a str,
-}
-
-impl fmt::Debug for SessionResponse<'_> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SessionResponse")
-            .field("csrf_token", &"<redacted>")
-            .field("expires_at", &self.expires_at)
-            .finish()
-    }
 }
 
 #[cfg(test)]
@@ -1245,237 +887,6 @@ mod tests {
     }
 
     #[test]
-    fn credential_documents_never_reach_debug_output() {
-        let login = LoginRequest {
-            subject: "author@example.com".to_owned(),
-            secret: "correct horse battery staple".to_owned(),
-            label: "laptop".to_owned(),
-        };
-        let rendered = format!("{login:?}");
-        assert!(!rendered.contains(&login.secret), "{rendered}");
-        assert!(rendered.contains("<redacted>"), "{rendered}");
-
-        let response = LoginResponse {
-            token: "wamn_pat_0123456789abcdef_secret",
-            expires_at: "2026-08-08T11:00:00Z",
-        };
-        let rendered = format!("{response:?}");
-        assert!(!rendered.contains(response.token), "{rendered}");
-        assert!(rendered.contains("2026-08-08T11:00:00Z"), "{rendered}");
-    }
-
-    #[test]
-    fn login_documents_refuse_a_smuggled_identity_assertion() {
-        let honest = r#"{"subject":"a@example.com","secret":"s","label":"laptop"}"#;
-        let parsed = serde_json::from_str::<LoginRequest>(honest).expect("honest login decodes");
-        assert_eq!(parsed.subject, "a@example.com");
-        for injected in [
-            r#"{"subject":"a@example.com","secret":"s","label":"l","principal":"root"}"#,
-            r#"{"subject":"a@example.com","secret":"s","label":"l","principal-id":"root"}"#,
-            r#"{"subject":"a@example.com","secret":"s","label":"l","role":"project-admin"}"#,
-        ] {
-            assert!(
-                serde_json::from_str::<LoginRequest>(injected).is_err(),
-                "accepted smuggled identity {injected}"
-            );
-        }
-    }
-
-    #[test]
-    fn login_responses_carry_the_frozen_wire_field_names() {
-        let rendered = serde_json::to_string(&LoginResponse {
-            token: "wamn_pat_0123456789abcdef_secret",
-            expires_at: "2026-08-08T11:00:00Z",
-        })
-        .unwrap();
-        assert_eq!(
-            rendered,
-            r#"{"token":"wamn_pat_0123456789abcdef_secret","expires_at":"2026-08-08T11:00:00Z"}"#
-        );
-    }
-
-    /// The cookie framing is the browser-side half of the defence, so every
-    /// attribute is pinned byte for byte.
-    #[tokio::test]
-    async fn session_cookies_carry_the_frozen_attribute_set() {
-        assert_eq!(
-            set_cookie("wamn_sess_0123456789abcdef_secret", 43200),
-            "wamn_session=wamn_sess_0123456789abcdef_secret; HttpOnly; SameSite=Strict; \
-             Secure; Path=/; Max-Age=43200"
-        );
-        // Logout clears the value and expires it immediately, with the same
-        // attributes — a browser only replaces a cookie when they all match.
-        let closed = session_closed();
-        assert_eq!(closed.status(), StatusCode::NO_CONTENT);
-        assert_eq!(
-            closed
-                .headers()
-                .get(hyper::header::SET_COOKIE)
-                .and_then(|value| value.to_str().ok()),
-            Some("wamn_session=; HttpOnly; SameSite=Strict; Secure; Path=/; Max-Age=0")
-        );
-        assert!(
-            body_of(closed).await.is_empty(),
-            "logout carries a document"
-        );
-
-        // Each attribute earns its place; none may be dropped silently.
-        for attribute in ["HttpOnly", "SameSite=Strict", "Secure", "Path=/"] {
-            assert!(
-                SESSION_COOKIE_ATTRIBUTES.contains(attribute),
-                "the session cookie lost {attribute}"
-            );
-        }
-        assert_eq!(CSRF_HEADER, "x-wamn-csrf");
-        assert_eq!(SESSION_COOKIE_NAME, "wamn_session");
-    }
-
-    #[test]
-    fn session_documents_are_frozen_and_never_carry_the_cookie() {
-        let rendered = serde_json::to_string(&SessionResponse {
-            csrf_token: "0123456789abcdef",
-            expires_at: "2026-08-08T11:00:00Z",
-        })
-        .unwrap();
-        assert_eq!(
-            rendered,
-            r#"{"csrf_token":"0123456789abcdef","expires_at":"2026-08-08T11:00:00Z"}"#
-        );
-        // The session value travels in `Set-Cookie` alone. A body field carrying
-        // it would hand it straight back to the page script `HttpOnly` exists to
-        // keep it away from.
-        for leaked in ["cookie", "session", "wamn_sess_"] {
-            assert!(!rendered.contains(leaked), "{leaked} reached the body");
-        }
-
-        let honest = r#"{"subject":"a@example.com","secret":"s"}"#;
-        let parsed = serde_json::from_str::<SessionRequest>(honest).expect("honest login decodes");
-        assert_eq!(parsed.subject, "a@example.com");
-        for injected in [
-            r#"{"subject":"a@example.com","secret":"s","principal":"root"}"#,
-            r#"{"subject":"a@example.com","secret":"s","role":"project-admin"}"#,
-            r#"{"subject":"a@example.com","secret":"s","csrf_token":"forged"}"#,
-        ] {
-            assert!(
-                serde_json::from_str::<SessionRequest>(injected).is_err(),
-                "accepted smuggled field {injected}"
-            );
-        }
-    }
-
-    #[test]
-    fn session_credentials_never_reach_debug_output() {
-        let request = SessionRequest {
-            subject: "author@example.com".to_owned(),
-            secret: "correct horse battery staple".to_owned(),
-        };
-        let rendered = format!("{request:?}");
-        assert!(!rendered.contains(&request.secret), "{rendered}");
-        assert!(rendered.contains("<redacted>"), "{rendered}");
-
-        let response = SessionResponse {
-            csrf_token: "0123456789abcdef",
-            expires_at: "2026-08-08T11:00:00Z",
-        };
-        let rendered = format!("{response:?}");
-        assert!(!rendered.contains(response.csrf_token), "{rendered}");
-        assert!(rendered.contains("2026-08-08T11:00:00Z"), "{rendered}");
-    }
-
-    #[test]
-    fn only_the_named_session_cookie_is_read_as_a_credential() {
-        let build = |cookie: Option<&str>, csrf: Option<&str>| {
-            let mut request = Request::builder().method(Method::POST).uri("/authoring");
-            if let Some(cookie) = cookie {
-                request = request.header(hyper::header::COOKIE, cookie);
-            }
-            if let Some(csrf) = csrf {
-                request = request.header(CSRF_HEADER, csrf);
-            }
-            request.body(()).unwrap()
-        };
-        assert_eq!(
-            session_cookie(&build(Some("wamn_session=abc"), None)),
-            Some("abc")
-        );
-        // The browser sends every cookie for the path; only ours is a credential.
-        assert_eq!(
-            session_cookie(&build(Some("theme=dark; wamn_session=abc; other=1"), None)),
-            Some("abc")
-        );
-        for absent in [None, Some(""), Some("wamn_session="), Some("other=abc")] {
-            assert!(
-                session_cookie(&build(absent, None)).is_none(),
-                "accepted {absent:?}"
-            );
-        }
-
-        // A cookie with no CSRF header is still a presenter, carrying an empty
-        // proof — so it is refused as an unproven session, not as an anonymous
-        // request. Those are different refusals to reason about, even though the
-        // caller sees one document.
-        let unproven = presenter(&build(Some("wamn_session=abc"), None));
-        assert!(matches!(
-            unproven,
-            Some(Presenter::Session { ref csrf, .. }) if csrf.is_empty()
-        ));
-        let proven = presenter(&build(Some("wamn_session=abc"), Some("proof")));
-        assert!(matches!(
-            proven,
-            Some(Presenter::Session { ref csrf, .. }) if csrf == "proof"
-        ));
-        assert!(presenter(&build(None, Some("proof"))).is_none());
-
-        // A bearer token wins over a cookie, so a caller holding both is never
-        // silently downgraded onto the path that needs a CSRF proof.
-        let both = Request::builder()
-            .method(Method::POST)
-            .uri("/authoring")
-            .header(hyper::header::AUTHORIZATION, "Bearer wamn_pat_abc")
-            .header(hyper::header::COOKIE, "wamn_session=abc")
-            .body(())
-            .unwrap();
-        assert!(matches!(presenter(&both), Some(Presenter::Pat(token)) if token == "wamn_pat_abc"));
-    }
-
-    /// Both presenters end at one role resolution, which is what makes the
-    /// session a presenter rather than a second authority.
-    #[test]
-    fn both_presenters_resolve_through_one_role_seam() {
-        let source = include_str!("management.rs");
-        let region = between(
-            source,
-            "pub async fn authorize(",
-            "/// Return the strongest admitted role",
-        );
-        assert!(region.contains("authenticate_pat(system_client, token)"));
-        assert!(region.contains("authenticate_session(system_client, cookie, csrf_token)"));
-        // Neither presenter reads roles for itself.
-        assert_eq!(
-            region.matches("project_roles(").count(),
-            1,
-            "a presenter resolved roles on its own instead of through role_for"
-        );
-        assert_eq!(region.matches("admitted_role(").count(), 1);
-        assert_eq!(
-            region.matches("role_for(system_client").count(),
-            2,
-            "a presenter bypassed the shared role seam"
-        );
-        // No JWT, no alternate role store, no second vocabulary of authority.
-        let implementation = source
-            .split("#[cfg(test)]")
-            .next()
-            .expect("the module has an implementation");
-        for forbidden in ["jwt", "Jwt", "jsonwebtoken", "oidc", "Oidc", "openid"] {
-            assert!(
-                !implementation.contains(forbidden),
-                "the session presenter reached for {forbidden}"
-            );
-        }
-    }
-
-    #[test]
     fn roles_order_admin_above_author_and_ignore_unknown_slugs() {
         assert!(ManagementRole::ProjectAdmin > ManagementRole::ProjectAuthor);
         assert_eq!(
@@ -1500,27 +911,28 @@ mod tests {
     }
 
     #[test]
-    fn the_surface_serves_exactly_the_four_reserved_routes() {
+    fn the_surface_serves_only_the_pat_authenticated_authoring_route() {
         let source = include_str!("management.rs");
-        let router = between(source, "async fn route(", "async fn login(");
-        for route in [
-            r#"(&Method::POST, "/login")"#,
-            r#"(&Method::POST, "/session")"#,
-            r#"(&Method::DELETE, "/session")"#,
-            r#"(&Method::POST, "/authoring")"#,
-        ] {
-            assert!(router.contains(route), "missing reserved route {route}");
-        }
+        let router = between(source, "async fn route(", "/// Run one authoring command");
+        assert!(router.contains(r#"(&Method::POST, "/authoring")"#));
         assert_eq!(
             router.matches("(&Method::").count(),
-            4,
+            1,
             "the reserved-route set changed without this guard moving"
         );
         assert!(router.contains("_ => Ok(empty(StatusCode::NOT_FOUND))"));
-        // The token route keeps its own path and its own frozen response: the
-        // browser presenter was added beside it, not over it.
-        assert!(source.contains("struct LoginResponse"));
-        assert!(source.contains("struct SessionResponse"));
+        let implementation = source.split("#[cfg(test)]").next().unwrap();
+        for removed in [
+            "\"/login\"",
+            "\"/session\"",
+            "Set-Cookie",
+            "SESSION_COOKIE",
+            "CSRF_HEADER",
+            "LoginRequest",
+            "SessionResponse",
+        ] {
+            assert!(!implementation.contains(removed), "retained {removed}");
+        }
     }
 
     #[test]
@@ -1550,100 +962,13 @@ mod tests {
             refused_at < body_at,
             "an unauthorized presenter reaches route selection before it is refused"
         );
-        // Credential headers are the only headers this handler consults, and it
-        // reads them through `presenter`, exactly once.
+        // Authorization is the only header this handler consults, through the
+        // bearer helper exactly once.
         assert_eq!(handler.matches(".headers()").count(), 0);
-        assert_eq!(handler.matches("presenter(&request)").count(), 1);
-
-        // For the session presenter the CSRF proof is part of settling identity,
-        // not a later check: it is passed into authorization, which happens
-        // before the body is read. A proof checked after this point could not
-        // stop a command that had already decoded and dispatched.
-        let csrf_at = handler
-            .find("authorize_session(")
-            .expect("the session branch authorizes");
-        assert!(
-            csrf_at < body_at,
-            "a session request reaches its body before its CSRF proof is checked"
-        );
-        // Anchored on the call, not on its formatting: the argument list has to
-        // carry the presented proof, or authorization would be deciding on the
-        // cookie alone.
-        let call = &handler[csrf_at..body_at];
-        assert!(
-            call.contains("csrf"),
-            "the session branch authorized without passing its CSRF proof"
-        );
-
-        // `presenter` is the one place a credential is read, and it reads only
-        // the three credential-bearing headers.
-        let extraction = between(
-            source,
-            "fn presenter<B>(",
-            "/// Return the presented bearer",
-        );
-        for allowed in [
-            "bearer(request)",
-            "session_cookie(request)",
-            "csrf_proof(request)",
-        ] {
-            assert!(extraction.contains(allowed), "presenter dropped {allowed}");
-        }
-        let readers = between(source, "fn session_cookie<B>(", "fn bearer<B>(");
-        assert_eq!(
-            readers.matches(".headers()").count(),
-            2,
-            "a credential reader consults a header it does not own"
-        );
-        assert!(readers.contains("hyper::header::COOKIE"));
-        assert!(readers.contains("CSRF_HEADER"));
-    }
-
-    /// Logout is a state change, so it is proven before it changes anything.
-    #[test]
-    fn logout_checks_its_csrf_proof_before_it_revokes() {
-        let source = include_str!("management.rs");
-        let handler = between(
-            source,
-            "async fn close_session(",
-            "/// Run one authoring command",
-        );
-        let checked = handler
-            .find("authenticate_session(&surface.identity")
-            .expect("logout verifies the presented session");
-        let revoked = handler
-            .find("revoke_session(&surface.identity")
-            .expect("logout revokes the session");
-        assert!(
-            checked < revoked,
-            "logout revokes before it verifies the request"
-        );
-        // A token presenter cannot drive this route at all.
-        assert!(handler.contains("Presenter::Session { cookie, csrf }"));
-        assert_eq!(handler.matches(".headers()").count(), 0);
-    }
-
-    /// Login mints a fresh session and never adopts a presented one.
-    #[test]
-    fn opening_a_session_reads_no_cookie_and_reuses_nothing() {
-        let source = include_str!("management.rs");
-        let handler = between(source, "async fn open_session(", "/// Close the presented");
-        for adopted in [
-            "session_cookie",
-            "presenter(",
-            "COOKIE",
-            "csrf_proof",
-            "Presenter::",
-        ] {
-            assert!(
-                !handler.contains(adopted),
-                "the login handler consulted {adopted}, so a planted session could survive login"
-            );
-        }
-        assert_eq!(handler.matches(".headers()").count(), 0);
-        // The only session it can answer with is the one `login_session` minted.
-        assert!(handler.contains("login_session("));
-        assert!(handler.contains("session_opened(&issued"));
+        assert_eq!(handler.matches("bearer(&request)").count(), 1);
+        let reader = between(source, "fn bearer<B>(", "/// The single response");
+        assert_eq!(reader.matches(".headers()").count(), 1);
+        assert!(reader.contains("hyper::header::AUTHORIZATION"));
     }
 
     #[test]
