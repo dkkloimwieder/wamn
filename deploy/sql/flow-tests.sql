@@ -67,6 +67,47 @@ CREATE POLICY test_cases_tenant ON wamn_run.test_cases
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.test_cases TO wamn_app;
 GRANT SELECT ON wamn_run.test_cases TO wamn_scenario_author;
 
+-- Inline test-set definitions are management-owned, content-addressed inputs.
+-- The exact submitted UTF-8 bytes are retained once; the document carries no
+-- draft selector because the `test-set-run` operation owns that selection.
+CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'authoring-test-set-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_test_set_change() FROM PUBLIC;
+
+CREATE TABLE wamn_run.authoring_test_sets (
+    tenant_id      text NOT NULL CHECK (tenant_id <> ''),
+    test_set_hash  text NOT NULL,
+    schema_version text NOT NULL CHECK (schema_version = '0.1'),
+    exact_bytes    bytea NOT NULL,
+    byte_length    int NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, test_set_hash),
+    CHECK (byte_length = octet_length(exact_bytes)),
+    CHECK (test_set_hash = 'sha256:' || encode(sha256(exact_bytes), 'hex')),
+    CHECK ((convert_from(exact_bytes, 'UTF8')::jsonb ->> 'schema-version')
+           IS NOT DISTINCT FROM schema_version)
+);
+ALTER TABLE wamn_run.authoring_test_sets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.authoring_test_sets FORCE ROW LEVEL SECURITY;
+CREATE POLICY authoring_test_sets_tenant ON wamn_run.authoring_test_sets
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+CREATE TRIGGER authoring_test_sets_update_immutable
+BEFORE UPDATE ON wamn_run.authoring_test_sets
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_authoring_test_set_change();
+CREATE TRIGGER authoring_test_sets_delete_immutable
+BEFORE DELETE ON wamn_run.authoring_test_sets
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_authoring_test_set_change();
+GRANT SELECT, INSERT ON wamn_run.authoring_test_sets TO wamn_scenario_author;
+
 -- BEGIN AUTHORING REPORT STORAGE MIGRATION (wamn-ftfc.11)
 -- Report retention is run-plane-owned: this artifact remains independently
 -- applicable before the catalog schema exists. The reconciler owns these

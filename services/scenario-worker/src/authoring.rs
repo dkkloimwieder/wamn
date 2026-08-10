@@ -41,7 +41,8 @@ WITH session_role AS ( \
            ($1::text, 'authoring_report_reservations', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'UPDATE'), \
            ($1::text, 'authoring_suite_case_facts', 'INSERT'), \
-           ($1::text, 'authoring_suite_reports', 'INSERT') \
+           ($1::text, 'authoring_suite_reports', 'INSERT'), \
+           ($1::text, 'authoring_test_sets', 'INSERT') \
 ) \
 SELECT current_user = session_user, \
        COALESCE(NOT session_role.rolsuper AND NOT session_role.rolcreatedb \
@@ -100,6 +101,8 @@ SELECT current_user = session_user, \
                      AND pg_catalog.has_any_column_privilege( \
                          current_user, $6, run_mutation.privilege)) \
          ), \
+       pg_catalog.has_table_privilege(current_user, $7, 'SELECT') \
+         AND pg_catalog.has_table_privilege(current_user, $7, 'INSERT'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_roles AS role \
             WHERE role.rolname NOT IN (session_user, 'wamn_scenario_author') \
@@ -227,6 +230,7 @@ impl InternalAuthoringBackend {
         let reservation = qualified("authoring_report_reservations");
         let case_facts = qualified("authoring_suite_case_facts");
         let reports = qualified("authoring_suite_reports");
+        let test_sets = qualified("authoring_test_sets");
         let runs = qualified("runs");
         let lock_catalog_head = format!(
             "{}.lock_catalog_head(text,text,text)",
@@ -242,6 +246,7 @@ impl InternalAuthoringBackend {
                     &reports,
                     &lock_catalog_head,
                     &runs,
+                    &test_sets,
                 ],
             )
             .await
@@ -1703,6 +1708,16 @@ mod tests {
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'INSERT')"));
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL
+                .contains("pg_catalog.has_table_privilege(current_user, $7, 'SELECT')")
+        );
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL
+                .contains("pg_catalog.has_table_privilege(current_user, $7, 'INSERT')")
+        );
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'UPDATE')"));
         assert!(
             !AUTHORING_ROLE_PROBE_SQL
                 .to_ascii_uppercase()

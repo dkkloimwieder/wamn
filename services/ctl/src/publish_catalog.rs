@@ -1414,23 +1414,17 @@ pub async fn ensure_flow_tests(
     }
 
     let authoring_storage = client
-        .query_one(
-            &format!(
-                "SELECT to_regclass('{}.authoring_report_reservations') IS NOT NULL, \
-                        to_regclass('{}.authoring_suite_case_facts') IS NOT NULL, \
-                        to_regclass('{}.authoring_suite_reports') IS NOT NULL",
-                schema.as_str(),
-                schema.as_str(),
-                schema.as_str(),
-            ),
-            &[],
-        )
+        .query_one(&authoring_run_storage_probe_sql(schema), &[])
         .await
-        .context("probe authoring report storage")?;
-    let authoring_objects = [
+        .context("probe authoring test-set and report storage")?;
+    anyhow::ensure!(
         authoring_storage.get::<_, bool>(0),
+        "authoring test-set storage is absent; reconcile it before publication"
+    );
+    let authoring_objects = [
         authoring_storage.get::<_, bool>(1),
         authoring_storage.get::<_, bool>(2),
+        authoring_storage.get::<_, bool>(3),
     ];
     let installed = if authoring_objects.iter().all(|present| *present) {
         false
@@ -1456,17 +1450,38 @@ pub async fn ensure_flow_tests(
     Ok(installed)
 }
 
+fn authoring_run_storage_probe_sql(schema: &BareSchemaName) -> String {
+    let schema = schema.as_str();
+    format!(
+        "SELECT to_regclass('{schema}.authoring_test_sets') IS NOT NULL, \
+                to_regclass('{schema}.authoring_report_reservations') IS NOT NULL, \
+                to_regclass('{schema}.authoring_suite_case_facts') IS NOT NULL, \
+                to_regclass('{schema}.authoring_suite_reports') IS NOT NULL"
+    )
+}
+
 async fn ensure_authoring_run_privileges(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
-    let schema_name = schema.quoted();
     client
-        .batch_execute(&format!(
-            "REVOKE wamn_scenario_author FROM wamn_app; \
+        .batch_execute(&authoring_run_privileges_sql(schema))
+        .await
+        .context("converge host-only authoring run privileges")
+}
+
+fn authoring_run_privileges_sql(schema: &BareSchemaName) -> String {
+    let schema_name = schema.quoted();
+    let test_sets = format!("{schema_name}.authoring_test_sets");
+    format!(
+        "REVOKE wamn_scenario_author FROM wamn_app; \
              GRANT USAGE ON SCHEMA {schema_name} TO wamn_scenario_author; \
              GRANT SELECT ON {schema_name}.runs, {schema_name}.test_suites, \
                  {schema_name}.test_cases \
+                 TO wamn_scenario_author; \
+             REVOKE ALL PRIVILEGES ON {test_sets} \
+                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
+             GRANT SELECT, INSERT ON {test_sets} \
                  TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON {schema_name}.authoring_report_reservations \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -1479,10 +1494,42 @@ async fn ensure_authoring_run_privileges(
              REVOKE ALL PRIVILEGES ON {schema_name}.authoring_suite_reports \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT, INSERT ON {schema_name}.authoring_suite_reports \
-                 TO wamn_scenario_author;"
-        ))
-        .await
-        .context("converge host-only authoring report privileges")
+                 TO wamn_scenario_author; \
+             DO $effective_acl$ BEGIN \
+               IF EXISTS ( \
+                   SELECT 1 \
+                     FROM pg_catalog.unnest(ARRAY[ \
+                         'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', \
+                         'REFERENCES', 'TRIGGER']::text[]) AS candidate(privilege) \
+                    WHERE pg_catalog.has_table_privilege( \
+                              'wamn_app', '{test_sets}', candidate.privilege) \
+                       OR (candidate.privilege IN ( \
+                               'SELECT', 'INSERT', 'UPDATE', 'REFERENCES') \
+                           AND pg_catalog.has_any_column_privilege( \
+                               'wamn_app', '{test_sets}', candidate.privilege)) \
+               ) \
+                  OR NOT pg_catalog.has_table_privilege( \
+                      'wamn_scenario_author', '{test_sets}', 'SELECT') \
+                  OR NOT pg_catalog.has_table_privilege( \
+                      'wamn_scenario_author', '{test_sets}', 'INSERT') \
+                  OR EXISTS ( \
+                      SELECT 1 \
+                        FROM pg_catalog.unnest(ARRAY[ \
+                            'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', \
+                            'TRIGGER']::text[]) AS candidate(privilege) \
+                       WHERE pg_catalog.has_table_privilege( \
+                                 'wamn_scenario_author', '{test_sets}', \
+                                 candidate.privilege) \
+                          OR (candidate.privilege IN ('UPDATE', 'REFERENCES') \
+                              AND pg_catalog.has_any_column_privilege( \
+                                  'wamn_scenario_author', '{test_sets}', \
+                                  candidate.privilege)) \
+                  ) THEN \
+                 RAISE EXCEPTION USING ERRCODE = '42501', \
+                   MESSAGE = 'authoring-effective-privilege-out-of-bounds:test-sets'; \
+               END IF; \
+             END $effective_acl$;"
+    )
 }
 
 async fn table_exists(
@@ -1738,6 +1785,27 @@ fn prepare_flow_artifact(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authoring_test_set_provisioning_is_fresh_and_privilege_closed() {
+        let schema = BareSchemaName::new("project_run").expect("valid test schema");
+        let probe = authoring_run_storage_probe_sql(&schema);
+        assert!(probe.contains("project_run.authoring_test_sets"));
+        assert!(probe.contains("project_run.authoring_report_reservations"));
+
+        let privileges = authoring_run_privileges_sql(&schema);
+        assert!(
+            privileges.contains("REVOKE ALL PRIVILEGES ON \"project_run\".authoring_test_sets")
+        );
+        assert!(privileges.contains("GRANT SELECT, INSERT ON \"project_run\".authoring_test_sets"));
+        assert!(privileges.contains("'wamn_app', '\"project_run\".authoring_test_sets'"));
+        assert!(privileges.contains("pg_catalog.has_any_column_privilege"));
+        assert!(privileges.contains("authoring-effective-privilege-out-of-bounds:test-sets"));
+        assert!(
+            !privileges
+                .contains("GRANT SELECT, INSERT, UPDATE ON \"project_run\".authoring_test_sets")
+        );
+    }
 
     fn custom_graph(node_type: &str) -> String {
         format!(

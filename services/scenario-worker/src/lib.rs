@@ -3,6 +3,7 @@
 pub mod authoring;
 pub mod management;
 pub mod projection;
+pub mod store;
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -49,7 +50,7 @@ WITH session_role AS ( \
 ), app_role AS ( \
     SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
       FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' \
-), protected(relation_name) AS (VALUES ($1::text), ($2), ($3), ($4), ($5), ($6)) \
+), protected(relation_name) AS (VALUES ($1::text), ($2), ($3), ($4), ($5), ($6), ($7)) \
 SELECT pg_catalog.current_database(), session_user, pg_catalog.inet_server_addr()::text, \
        pg_catalog.inet_server_port(), \
        current_user = session_user, \
@@ -73,6 +74,8 @@ SELECT pg_catalog.current_database(), session_user, pg_catalog.inet_server_addr(
                    AND pg_catalog.has_any_column_privilege( \
                        current_user, protected.relation_name, candidate.privilege)) \
        ), \
+       NOT pg_catalog.has_table_privilege(current_user, $7, 'SELECT') \
+         AND NOT pg_catalog.has_any_column_privilege(current_user, $7, 'SELECT'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_roles AS role \
             WHERE role.rolname NOT IN (session_user, 'wamn_app') \
@@ -84,19 +87,19 @@ SELECT pg_catalog.current_database(), session_user, pg_catalog.inet_server_addr(
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_namespace \
-            WHERE nspname IN ('catalog', $7) AND nspowner = session_role.oid \
+            WHERE nspname IN ('catalog', $8) AND nspowner = session_role.oid \
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_class AS relation \
            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-            WHERE namespace.nspname IN ('catalog', $7) \
+            WHERE namespace.nspname IN ('catalog', $8) \
               AND relation.relkind IN ('r', 'p') \
               AND relation.relowner = session_role.oid \
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_proc AS routine \
            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
-            WHERE namespace.nspname IN ('catalog', $7) \
+            WHERE namespace.nspname IN ('catalog', $8) \
               AND routine.proowner = session_role.oid \
        ) \
   FROM session_role CROSS JOIN app_role";
@@ -417,6 +420,7 @@ async fn verify_runtime_guest_credential(
     let reservations = qualified("authoring_report_reservations");
     let facts = qualified("authoring_suite_case_facts");
     let reports = qualified("authoring_suite_reports");
+    let test_sets = qualified("authoring_test_sets");
     let row = client
         .query_one(
             RUNTIME_GUEST_ROLE_PROBE_SQL,
@@ -427,6 +431,7 @@ async fn verify_runtime_guest_credential(
                 &reservations,
                 &facts,
                 &reports,
+                &test_sets,
                 &author.source_schema,
             ],
         )
@@ -1527,6 +1532,15 @@ mod tests {
             RUNTIME_GUEST_ROLE_PROBE_SQL.contains("role.rolname NOT IN (session_user, 'wamn_app')")
         );
         assert!(RUNTIME_GUEST_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
+        assert!(RUNTIME_GUEST_ROLE_PROBE_SQL.contains("($6), ($7))"));
+        assert!(
+            RUNTIME_GUEST_ROLE_PROBE_SQL
+                .contains("NOT pg_catalog.has_table_privilege(current_user, $7, 'SELECT')")
+        );
+        assert!(
+            RUNTIME_GUEST_ROLE_PROBE_SQL
+                .contains("NOT pg_catalog.has_any_column_privilege(current_user, $7, 'SELECT')")
+        );
         assert!(RUNTIME_GUEST_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));
         assert!(RUNTIME_GUEST_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(!RUNTIME_GUEST_ROLE_PROBE_SQL.contains("NOT app_role.rolcanlogin"));

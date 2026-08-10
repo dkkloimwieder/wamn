@@ -303,6 +303,23 @@ pub struct SuiteRef {
     pub flow_version: u32,
 }
 
+/// Inline, self-describing test-set document submitted to `test-set-run`.
+///
+/// `definition` is exact UTF-8 text. Its bytes are the test-set identity
+/// preimage; parsing and validation must never normalize or reserialize it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TestSetInput {
+    pub definition: String,
+}
+
+/// Content identity for one immutable inline test set.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TestSetIdentity {
+    pub hash: String,
+}
+
 /// Validate one exact saved revision for the selected stored suite.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]

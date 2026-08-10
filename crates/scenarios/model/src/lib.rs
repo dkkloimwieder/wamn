@@ -51,6 +51,7 @@ mod normalize;
 mod report;
 mod status;
 mod suite;
+mod test_set;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -67,6 +68,10 @@ pub use normalize::{Normalize, normalize};
 pub use report::{CaseReport, ScenarioRefusal, ScenarioReport};
 pub use status::{FailKind, NodeErrorKind, RunStatus};
 pub use suite::{CaseEntry, SUITE_SCHEMA_VERSION, TestSuite, TestSuiteError};
+pub use test_set::{
+    MAX_TEST_SET_BYTES, MAX_TEST_SET_CASES, MAX_TEST_SET_EXPECTATIONS, TEST_SET_SCHEMA_VERSION,
+    TestSetCase, TestSetDocument, TestSetDocumentError, TestSetDocumentErrorKind,
+};
 
 /// The case-format version this crate implements. Mirrors the
 /// `wamn_schema_model::SCHEMA_VERSION` precedent: `0.1.x` is additive/clarifying only;

@@ -1314,6 +1314,23 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
+      "id": "wamn_run.authoring_test_sets",
+      "plane": "project",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
       "id": "wamn_run.authoring_report_reservations",
       "plane": "project",
       "semantic_owner": "scenario-catalog",

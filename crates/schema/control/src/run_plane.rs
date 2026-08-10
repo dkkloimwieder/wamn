@@ -513,6 +513,42 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_schema_version_check",
+        definition: "CHECK (schema_version = '0.1'::text)",
+        origin: CheckOrigin::Inline("schema_version"),
+    },
+    CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_byte_length_check",
+        definition: "CHECK (byte_length >= 1 AND byte_length <= 1048576)",
+        origin: CheckOrigin::Inline("byte_length"),
+    },
+    CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_check",
+        definition: "CHECK (byte_length = octet_length(exact_bytes))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_check1",
+        definition: "CHECK (test_set_hash = ('sha256:'::text || encode(sha256(exact_bytes), 'hex'::text)))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_sets",
+        name: "authoring_test_sets_check2",
+        definition: "CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
         table: "authoring_report_reservations",
         name: "authoring_report_reservations_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -731,6 +767,8 @@ const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-disposition-immutable';\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-report-immutable';\nEND\n$function$\n";
+
+const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-test-set-immutable';\nEND\n$function$\n";
 
 const GUARD_AUTHORING_REPORT_WRITE_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write()
  RETURNS trigger
@@ -1014,6 +1052,18 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_report_change() FROM PUBLIC;"#;
 
+const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'authoring-test-set-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_test_set_change() FROM PUBLIC;"#;
+
 const GUARD_AUTHORING_REPORT_WRITE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1256,6 +1306,11 @@ const HELPER_SPECS: &[HelperSpec] = &[
         sql: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
     },
     HelperSpec {
+        name: "reject_immutable_authoring_test_set_change",
+        definition: REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF,
+        sql: REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL,
+    },
+    HelperSpec {
         name: "reject_immutable_authoring_report_change",
         definition: REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF,
         sql: REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL,
@@ -1354,6 +1409,18 @@ fn trigger_specs() -> Vec<TriggerSpec> {
         });
     }
     for (table, name, event, function) in [
+        (
+            "authoring_test_sets",
+            "authoring_test_sets_update_immutable",
+            "UPDATE",
+            "reject_immutable_authoring_test_set_change",
+        ),
+        (
+            "authoring_test_sets",
+            "authoring_test_sets_delete_immutable",
+            "DELETE",
+            "reject_immutable_authoring_test_set_change",
+        ),
         (
             "authoring_report_reservations",
             "authoring_report_reservations_controlled_insert",
@@ -1794,6 +1861,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         table: "test_cases",
         app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
         author: &["SELECT"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
+        table: "authoring_test_sets",
+        app: &[],
+        author: &["SELECT", "INSERT"],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
@@ -2322,7 +2395,8 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                     let expected_columns: BTreeSet<String> = expected_for(grantee)
                         .into_iter()
                         .filter(|privilege| {
-                            ["INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
+                            ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
+                                .contains(&privilege.as_str())
                         })
                         .collect();
                     obs.authoring_effective_column_privileges
@@ -2376,7 +2450,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                     ));
                 }
             }
-            for privilege in ["INSERT", "UPDATE", "REFERENCES"] {
+            for privilege in ["SELECT", "INSERT", "UPDATE", "REFERENCES"] {
                 if !expected.contains(&privilege) {
                     forbidden_checks.push(format!(
                         "pg_catalog.has_any_column_privilege(\
@@ -2883,6 +2957,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
               ('runs', 'test_suites', 'test_cases', \
+               'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', \
                'authoring_suite_reports'))) \
@@ -2913,6 +2988,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
+               'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
         AND pg_catalog.has_table_privilege( \
@@ -2920,13 +2996,14 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
       ORDER BY namespace.nspname, relation.relname, actor.rolname, privilege.name"
 }
 
-/// Effective per-column mutation/reference authority. Table-level privileges
-/// also appear here and are expected when present in the table spec; the drift
-/// of interest is a surviving column grant not represented by that spec.
+/// Effective per-column read/mutation/reference authority. Table-level
+/// privileges also appear here and are expected when present in the table
+/// spec; the drift of interest is a surviving column grant not represented by
+/// that spec.
 pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
     "SELECT namespace.nspname, relation.relname, actor.rolname, privilege.name \
        FROM pg_catalog.pg_roles AS actor \
-       CROSS JOIN (VALUES ('INSERT'::text), ('UPDATE'::text), \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
                           ('REFERENCES'::text)) AS privilege(name) \
        JOIN pg_catalog.pg_class AS relation ON relation.relkind = 'r' \
        JOIN pg_catalog.pg_namespace AS namespace \
@@ -2941,6 +3018,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
+               'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
         AND pg_catalog.has_any_column_privilege( \
@@ -2967,6 +3045,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'test_suites', 'test_cases', \
+               'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
@@ -3055,6 +3134,7 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      WHERE n.nspname = $1 \
        AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
+                         'reject_immutable_authoring_test_set_change', \
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
                          'guard_effect_fact_append', \
@@ -3159,12 +3239,17 @@ fn schema_header_section(src: &str, qualifier: &str) -> String {
 }
 
 /// One table's section: from its `CREATE TABLE` line up to (excluding) the next
-/// `CREATE TABLE <qualifier>.` line or EOF — the table body plus its indexes,
-/// RLS enablement, policy, and grants. Leading comment banners belong to the
-/// PREVIOUS section (they are comments; nothing is lost).
+/// `CREATE TABLE <qualifier>.`, independently reconciled run-plane helper
+/// function, or EOF — the table body plus its indexes, RLS enablement, policy,
+/// triggers, and grants. Catalog helpers remain part of their table sections;
+/// run-plane helpers are reconciled independently before missing table sections
+/// execute. Leading comment banners belong to the PREVIOUS section (they are
+/// comments; nothing is lost).
 fn table_section(src: &str, qualifier: &str, table: &str) -> String {
     let head = format!("CREATE TABLE {qualifier}.{table} (");
     let any_head = format!("CREATE TABLE {qualifier}.");
+    let function_head = format!("CREATE FUNCTION {qualifier}.");
+    let replace_function_head = format!("CREATE OR REPLACE FUNCTION {qualifier}.");
     let mut out = Vec::new();
     let mut in_section = false;
     for line in src.lines() {
@@ -3176,7 +3261,10 @@ fn table_section(src: &str, qualifier: &str, table: &str) -> String {
             }
             continue;
         }
-        if t.starts_with(&any_head) {
+        if t.starts_with(&any_head)
+            || (qualifier == "wamn_run"
+                && (t.starts_with(&function_head) || t.starts_with(&replace_function_head)))
+        {
             break;
         }
         if t == "-- BEGIN POST-TABLE CONSTRAINTS" {
@@ -3457,7 +3545,8 @@ CREATE INDEX event_registrations_by_entity
                     let expected_columns: BTreeSet<String> = expected
                         .into_iter()
                         .filter(|privilege| {
-                            ["INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
+                            ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
+                                .contains(&privilege.as_str())
                         })
                         .collect();
                     if !expected_columns.is_empty() {
@@ -3547,6 +3636,7 @@ CREATE INDEX event_registrations_by_entity
             [
                 "test_suites",
                 "test_cases",
+                "authoring_test_sets",
                 "authoring_report_reservations",
                 "authoring_suite_case_facts",
                 "authoring_suite_reports",
@@ -3732,10 +3822,19 @@ CREATE INDEX event_registrations_by_entity
 
         let cat = table_section(CATALOG_SCHEMA_SQL, "catalog", "catalogs");
         assert!(cat.contains("catalogs_one_applied_per_env"));
+        let artifacts = table_section(CATALOG_SCHEMA_SQL, "catalog", "flow_artifacts");
+        assert!(artifacts.contains("register_flow_artifact"));
 
         let dispositions = table_section(RUN_STATE_SQL, "wamn_run", "effect_dispositions");
         assert!(dispositions.contains("effect_dispositions_delete_immutable"));
         assert!(!dispositions.contains("node_runs_current_effect_attempt_fk"));
+
+        let cases = table_section(FLOW_TESTS_SQL, "wamn_run", "test_cases");
+        assert!(!cases.contains("reject_immutable_authoring_test_set_change"));
+        let test_sets = table_section(FLOW_TESTS_SQL, "wamn_run", "authoring_test_sets");
+        assert!(test_sets.contains("authoring_test_sets_update_immutable"));
+        assert!(test_sets.contains("GRANT SELECT, INSERT"));
+        assert!(!test_sets.contains("reject_immutable_authoring_report_change"));
 
         let hdr = header_section(RUN_STATE_SQL, "wamn_run");
         assert!(hdr.contains("CREATE SCHEMA IF NOT EXISTS wamn_run"));
@@ -3804,8 +3903,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            17,
-            "all seventeen run-plane tables at target, including retained authoring reports"
+            18,
+            "all eighteen run-plane tables at target, including test-set inputs and reports"
         );
     }
 
@@ -3869,6 +3968,41 @@ CREATE INDEX event_registrations_by_entity
                 assert!(repair.sql.contains("relation.relowner"));
             }
         }
+    }
+
+    #[test]
+    fn guest_column_select_on_authoring_test_sets_never_plans_false_clean() {
+        let mut obs = observation_at_record();
+        obs.authoring_effective_column_privileges
+            .entry((
+                "demo".to_string(),
+                "authoring_test_sets".to_string(),
+                "wamn_app".to_string(),
+            ))
+            .or_default()
+            .insert("SELECT".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let repair = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
+                    && action.target == "demo.authoring_test_sets"
+            })
+            .expect("column-level guest read authority must be surfaced");
+        assert!(repair.sql.contains("DO $effective_acl$"));
+        assert!(repair.sql.contains("pg_catalog.has_any_column_privilege"));
+        assert!(
+            repair
+                .sql
+                .contains("'wamn_app', '\"demo\".\"authoring_test_sets\"', 'SELECT'")
+        );
+        assert!(
+            repair
+                .sql
+                .contains("authoring-effective-privilege-out-of-bounds")
+        );
     }
 
     /// The v1-era drift set (the live 2jkm.41 sweep findings) plans exactly the
@@ -4212,6 +4346,7 @@ CREATE INDEX event_registrations_by_entity
                 "flows",
                 "test_suites",
                 "test_cases",
+                "authoring_test_sets",
                 "authoring_report_reservations",
                 "authoring_suite_case_facts",
                 "authoring_suite_reports",
@@ -4244,6 +4379,26 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             report_helper < report_table,
             "the standalone run-plane helper must exist before report triggers"
+        );
+        let test_set_helper = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::RepairHelperFunction
+                    && action.target == "reject_immutable_authoring_test_set_change"
+            })
+            .expect("authoring test-set helper is provisioned");
+        let test_set_table = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::CreateTable
+                    && action.target == "authoring_test_sets"
+            })
+            .expect("authoring test-set table is provisioned");
+        assert!(
+            test_set_helper < test_set_table,
+            "the standalone run-plane helper must exist before test-set triggers"
         );
         // No column/index repairs on tables being created (sections carry them).
         assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
@@ -4315,6 +4470,29 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
+    fn authoring_test_set_checks_and_privileges_are_closed_and_pinned() {
+        let checks: Vec<&CheckSpec> = CHECK_SPECS
+            .iter()
+            .filter(|spec| spec.table == "authoring_test_sets")
+            .collect();
+        assert_eq!(checks.len(), 6);
+        assert!(checks.iter().any(|spec| {
+            spec.name == "authoring_test_sets_check2"
+                && spec.definition == "CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)"
+        }));
+
+        let privileges = AUTHORING_PRIVILEGE_SPECS
+            .iter()
+            .find(|spec| {
+                matches!(spec.schema, AuthoringTableSchema::RunPlane)
+                    && spec.table == "authoring_test_sets"
+            })
+            .expect("authoring test-set privilege boundary is observed");
+        assert!(privileges.app.is_empty());
+        assert_eq!(privileges.author, ["SELECT", "INSERT"]);
+    }
+
+    #[test]
     fn extra_record_check_is_removed_but_floor_check_is_untouched() {
         let mut obs = observation_at_record();
         obs.checks.insert(
@@ -4349,7 +4527,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            7
+            8
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -4369,8 +4547,12 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            25
+            27
         );
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "authoring_test_sets.authoring_test_sets_delete_immutable"
+        }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target
@@ -4525,6 +4707,7 @@ CREATE INDEX event_registrations_by_entity
                 observation.contains("authoring_command_audit"),
                 "{observation}"
             );
+            assert!(observation.contains("authoring_test_sets"), "{observation}");
         }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
         assert!(select_authoring_effective_table_privileges_sql().contains("release_manifests"));
@@ -4532,6 +4715,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             select_authoring_effective_column_privileges_sql().contains("has_any_column_privilege")
         );
+        assert!(select_authoring_effective_column_privileges_sql().contains("('SELECT'::text)"));
         assert!(select_scenario_author_schema_usage_sql().contains("has_schema_privilege"));
         assert!(
             select_scenario_author_catalog_lock_privilege_sql()
@@ -4544,6 +4728,10 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_authoring_report_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql()
+                .contains("reject_immutable_authoring_test_set_change")
         );
         assert!(
             select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append")
