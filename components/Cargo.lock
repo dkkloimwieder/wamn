@@ -31,15 +31,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
-name = "api-gateway"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-api",
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "appendlist"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1102,17 +1093,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "wamn-api"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-entity-access",
- "wamn-event-reg",
- "wamn-pg-core",
- "wamn-schema-model",
-]
 
 [[package]]
 name = "wamn-catalog"

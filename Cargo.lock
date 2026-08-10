@@ -4175,19 +4175,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-api"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "tokio",
- "tokio-postgres",
- "wamn-entity-access",
- "wamn-event-reg",
- "wamn-pg-core",
- "wamn-schema-model",
-]
-
-[[package]]
 name = "wamn-authoring-model"
 version = "0.1.0"
 dependencies = [

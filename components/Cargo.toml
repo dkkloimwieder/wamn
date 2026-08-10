@@ -2,7 +2,7 @@
 resolver = "2"
 # Product components are grouped by runtime role. Bench fixtures, reference
 # samples, and POC components remain visibly outside those product tiers.
-members = ["ingress/api-gateway", "ingress/flow-http", "execution/flowrunner", "execution/materializer", "nodes/evaluate-specs", "nodes/normalize-receipt", "fixtures/busyloop", "fixtures/capability-class-http", "fixtures/capability-class-postgres", "fixtures/capability-class-pure", "fixtures/connection-http-custom", "fixtures/connection-http-standard", "fixtures/cred-probe", "fixtures/exact-driver-alpha", "fixtures/exact-driver-alpha-beta", "fixtures/exact-node-alpha", "fixtures/exact-node-beta", "fixtures/exact-node-unused", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
+members = ["ingress/flow-http", "execution/flowrunner", "execution/materializer", "nodes/evaluate-specs", "nodes/normalize-receipt", "fixtures/busyloop", "fixtures/capability-class-http", "fixtures/capability-class-postgres", "fixtures/capability-class-pure", "fixtures/connection-http-custom", "fixtures/connection-http-standard", "fixtures/cred-probe", "fixtures/exact-driver-alpha", "fixtures/exact-driver-alpha-beta", "fixtures/exact-node-alpha", "fixtures/exact-node-beta", "fixtures/exact-node-unused", "fixtures/flow-driver", "fixtures/hello", "fixtures/logspewer", "fixtures/memhog", "fixtures/pgprobe", "fixtures/sockprobe", "fixtures/trace-relay", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,7 +15,6 @@ serde_json = "1"
 wit-bindgen = "0.44"
 
 # Guest-owned path identities are independent of the native workspace contract.
-wamn-api = { path = "../crates/data/api", version = "0.1.0" }
 wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }
 wamn-event-reg = { path = "../crates/events/registration", version = "0.1.0" }
 wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
