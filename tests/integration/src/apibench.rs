@@ -1,5 +1,5 @@
 //! The `apibench` subcommand: the 4.1 generated-REST-API-gateway gates
-//! (docs/platform-plan.md 4.1).
+//! (docs/archive/platform-plan.md 4.1).
 //!
 //! 4.1 turns a project's catalog (3.1) into a REST surface over the 3.2 tenant
 //! floor. The pure gateway logic lives in the `wamn-api` crate (exhaustively

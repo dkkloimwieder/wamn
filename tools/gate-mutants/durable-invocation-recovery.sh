@@ -92,7 +92,7 @@ load_mutation() {
       TEST_ARGV=(cargo test --locked -p wamn-run-state --test queue "$GATE" -- --exact)
       ;;
     flow-spec-http-classifier)
-      TARGET="docs/execution/FLOW-SPEC.md"
+      TARGET="docs/archive/execution/FLOW-SPEC.md"
       EXPECTED_SHA="30d6d5035b31af70ef6aed1db5e8f989af1949479177612674232876ce2ce268"
       NEEDLE="HTTP verbs do not imply any class: GET and HEAD do not authorize replay, and"
       REPLACEMENT='HTTP verbs classify recovery: GET/HEAD `replay` policy-gated, and'

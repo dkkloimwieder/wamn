@@ -9,7 +9,7 @@ readonly WAMN_REPOSITORY_ROOT="$(
   CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
   pwd -P
 )"
-readonly WAMN_BUILD_RECIPE_DOC="$WAMN_REPOSITORY_ROOT/docs/build-and-test.md"
+readonly WAMN_BUILD_RECIPE_DOC="$WAMN_REPOSITORY_ROOT/docs/archive/build-and-test.md"
 
 wamn_fail() {
   printf 'build-recipe-test-check: %s\n' "$*" >&2

@@ -71,4 +71,4 @@ than the rest.
 Gates: `node scripts/test.mjs` (drift, typed answers, and the no-shortcut checks,
 all network-free) and `node scripts/cycle.mjs` (the composed edit-to-publish
 cycle against a live surface). Both are recorded in the
-`[6A / wamn-ftfc.14]` section of `docs/build-and-test.md`.
+`[6A / wamn-ftfc.14]` section of `docs/archive/build-and-test.md`.

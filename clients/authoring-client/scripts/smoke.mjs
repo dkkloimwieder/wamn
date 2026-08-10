@@ -3,14 +3,14 @@
 // WHAT THIS IS. A pure HTTP client. It exchanges one principal's own subject and
 // secret for a personal access token on the reserved login route, presents that
 // token as a Bearer credential, and POSTs the `save-flow-draft` request DERIVED
-// FROM docs/contracts/authoring-surface.v0.1.http. It holds no database URL, no
+// FROM docs/archive/contracts/authoring-surface.v0.1.http. It holds no database URL, no
 // platform-admin impersonation, and no test-only trusted context: the only
 // authority it ever presents is a token issued for a credential it was handed.
 //
 // WHAT THIS IS NOT. It never reads the audit ledger — that read needs storage
 // authority this client must not have. Attribution evidence is verified by the
 // GATE RUNNER around this script; see the [jvzx.4] section of
-// docs/build-and-test.md. The script's contribution to that step is the
+// docs/archive/build-and-test.md. The script's contribution to that step is the
 // AUDIT-MANIFEST line it prints, naming the command-ids that must appear with
 // which principal subject and the command-ids that must NOT appear at all.
 //
@@ -31,7 +31,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
 const COLLECTION_URL = new URL(
-  "../../../docs/contracts/authoring-surface.v0.1.http",
+  "../../../docs/archive/contracts/authoring-surface.v0.1.http",
   import.meta.url,
 );
 const SECTION = "save-flow-draft";

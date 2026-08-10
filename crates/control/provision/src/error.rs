@@ -60,7 +60,7 @@ pub enum ProvisionError {
     },
     /// A copy request uses an axis that is first-class in the API shape but
     /// specified-not-built (`scope: subset`, `mode: live-cutover` — wamn-8df.5,
-    /// docs/platform/deployment-model.md §4).
+    /// docs/archive/platform/deployment-model.md §4).
     UnbuiltCopyAxis {
         /// Which axis (a stable label).
         axis: &'static str,
@@ -109,7 +109,7 @@ impl fmt::Display for ProvisionError {
             ),
             ProvisionError::UnbuiltCopyAxis { axis } => write!(
                 f,
-                "copy axis {axis} is specified but not built (docs/platform/deployment-model.md §4)"
+                "copy axis {axis} is specified but not built (docs/archive/platform/deployment-model.md §4)"
             ),
             ProvisionError::SelfCopyWithoutCutover { triple } => write!(
                 f,

@@ -4,7 +4,7 @@
 # containers on the wamn-s5 network (Tempo/Loki are optional locally — dashproof
 # soft-skips their health in --local mode). The dashboard provider + SRE JSON are
 # shared with k8s (deploy/infra/grafana/provisioning + /dashboards) and mounted
-# directly. See docs/observability/dashboards.md / docs/build-and-test.md §[9.9].
+# directly. See docs/archive/observability/dashboards.md / docs/archive/build-and-test.md §[9.9].
 #   docker run -d --name laneb4e-grafana --network wamn-s5 -p 127.0.0.1:13001:3000 \
 #     -e GF_SECURITY_ADMIN_USER=admin -e GF_SECURITY_ADMIN_PASSWORD=admin \
 #     -v "$PWD/deploy/infra/grafana-local.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro" \

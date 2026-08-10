@@ -1,7 +1,7 @@
 //! S1 stub of the `wamn:node/control` host import (cooperative cancellation).
 //!
 //! Always answers "not cancelled". The real implementation is wired to run
-//! state by the flow-runner work (Epic 5). Contract: docs/contracts/wamn-node.wit.
+//! state by the flow-runner work (Epic 5). Contract: docs/archive/contracts/wamn-node.wit.
 //! `payloads` and `credentials` are deliberately not registered in S1.
 
 use std::collections::HashSet;

@@ -1,7 +1,7 @@
 //! Rendering an org cluster's WAL/PITR **backup** config (wamn-e1g).
 //!
 //! The first backup mechanism in the four-tier topology
-//! (docs/platform/postgres-topology.md §Backup architecture): continuous **WAL archiving +
+//! (docs/archive/platform/postgres-topology.md §Backup architecture): continuous **WAL archiving +
 //! base backups** to object storage via the CloudNativePG **Barman Cloud plugin**
 //! (`barman-cloud.cloudnative-pg.io`). The in-tree `barmanObjectStore` provider is
 //! deprecated in CNPG 1.26 with removal slated for 1.31 — so this builds on the

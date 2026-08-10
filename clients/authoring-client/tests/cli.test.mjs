@@ -4,7 +4,7 @@
 //
 // 1. REQUEST-SHAPE DRIFT. Every document the CLI can send is compared, key for
 //    key, with the matching section of the checked-in request collection
-//    (docs/contracts/authoring-surface.v0.1.http) and is decoded by the
+//    (docs/archive/contracts/authoring-surface.v0.1.http) and is decoded by the
 //    generated closed validator. The CLI owns the VALUES; the collection and
 //    the generated schema own the SHAPE. A hand-rolled, renamed, missing, or
 //    extra field fails before anything is sent.
@@ -29,8 +29,8 @@ const {
   parseAuthoringRequest,
 } = await import(process.env.WAMN_AUTHORING_CLIENT_TEST_MODULE);
 
-const COLLECTION_URL = new URL("../../../docs/contracts/authoring-surface.v0.1.http", import.meta.url);
-const SCHEMA_URL = new URL("../../../docs/contracts/authoring-surface.schema.json", import.meta.url);
+const COLLECTION_URL = new URL("../../../docs/archive/contracts/authoring-surface.v0.1.http", import.meta.url);
+const SCHEMA_URL = new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url);
 const CLI_SOURCE_URL = new URL("../src/cli/cli.ts", import.meta.url);
 const ADAPTER_URL = new URL("../scripts/wamn.mjs", import.meta.url);
 const LAUNCHER = fileURLToPath(ADAPTER_URL);

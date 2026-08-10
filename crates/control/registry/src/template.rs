@@ -2,7 +2,7 @@
 //!
 //! A [`Template`] is a one-click preset that **stamps** an org's [`Placement`]
 //! plus its initial per-org [`EnvPolicy`] set in one step, replacing the retired
-//! closed `Tier` enum (`docs/platform/deployment-model.md` §"The four tiers survive as
+//! closed `Tier` enum (`docs/archive/platform/deployment-model.md` §"The four tiers survive as
 //! configurations"). The three shipped presets re-provide the old tiers as data:
 //!
 //! | Template | Old tier | Placement | Policy set |

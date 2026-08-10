@@ -1,7 +1,7 @@
 package wamn:node@0.1.0;
 
 // Trimmed, code-line-subsequenced copy of the frozen wamn:node payload types
-// and import. The authority remains docs/contracts/wamn-node.wit.
+// and import. The authority remains docs/archive/contracts/wamn-node.wit.
 interface types {
   enum framing {
     ndjson,

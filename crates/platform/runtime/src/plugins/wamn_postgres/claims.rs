@@ -1834,14 +1834,14 @@ mod tests {
     // proves the hook passes on a stock server; this proves it REJECTS an unsafe
     // one and that the guest sees `connection-unavailable`. Gated on a SEPARATE
     // url (WAMN_SCS_OFF_PG_URL) so it never runs against the stock test server;
-    // skipped LOUDLY when unset. Recipe: docs/build-and-test.md [R18-NEG].
+    // skipped LOUDLY when unset. Recipe: docs/archive/build-and-test.md [R18-NEG].
     #[tokio::test]
     async fn live_scs_off_server_fails_checkout_closed() {
         let Some(url) = std::env::var("WAMN_SCS_OFF_PG_URL").ok() else {
             eprintln!(
                 "WAMN_SCS_OFF_PG_URL unset — skipping the wamn-2jkm.65 R18 live negative \
                  (boot a postgres:18 with -c standard_conforming_strings=off; see \
-                 docs/build-and-test.md [R18-NEG])"
+                 docs/archive/build-and-test.md [R18-NEG])"
             );
             return;
         };

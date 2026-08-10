@@ -1,5 +1,5 @@
 //! The `dispatchbench` subcommand: the 5.14 shared-trigger-dispatcher gates
-//! (docs/execution/run-queue.md § Trigger dispatcher).
+//! (docs/archive/execution/run-queue.md § Trigger dispatcher).
 //!
 //! Pure host-side like queuebench (no wasm guest — the dispatcher fires runs
 //! into the queue; driving them is the runner's job, regression-covered by

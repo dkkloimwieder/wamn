@@ -3,22 +3,22 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ACTIVE_PLAN: &str = "docs/PLAN/PLAN.md";
-const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
+const ACTIVE_PLAN: &str = "docs/archive/PLAN/PLAN.md";
+const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
 const CARGO_LOCK: &str = "Cargo.lock";
-const FORK_LEDGER: &str = "docs/platform/wash-runtime-fork.md";
+const FORK_LEDGER: &str = "docs/archive/platform/wash-runtime-fork.md";
 const ROOT_MANIFEST: &str = "Cargo.toml";
 const RUST_TOOLCHAIN: &str = "rust-toolchain.toml";
-const UPGRADE_DELTA: &str = "docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md";
+const UPGRADE_DELTA: &str = "docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.1.md";
 
 const EXPECTED_BUILD_ENVIRONMENT_PREAMBLE: &str = r#"wamn-host builds against wash-runtime consumed as a **git dependency from our
 fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.1` = upstream v2.6.1).
-`docs/platform/wash-runtime-fork.md` is the authoritative carried-policy ledger and
+`docs/archive/platform/wash-runtime-fork.md` is the authoritative carried-policy ledger and
 rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
 `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`."#;
 const EXPECTED_MANIFEST_LEDGER_COMMENT: &str = "# Upstream v2.6.1 plus the policies recorded in\n\
-# docs/platform/wash-runtime-fork.md. The ledger is authoritative.";
+# docs/archive/platform/wash-runtime-fork.md. The ledger is authoritative.";
 const EXPECTED_PLAN_REVISION: &str = "09b1132f";
 const EXPECTED_REVISION: &str = "09b1132f2bab36e6e71f4637bd0e4755e359dd43";
 const EXPECTED_UPSTREAM_BASE: &str = "df8a8bcd69adc9c23ded842e504071a5272d04ed";
@@ -276,8 +276,8 @@ fn active_plan_points_to_the_v2_6_1_delta() {
         plan.contains("**The v2.6.1 upgrade is complete.**")
             && plan.contains("as `wamn/2.6.1`, pinned at rev")
             && plan.contains(&format!("`{EXPECTED_PLAN_REVISION}`"))
-            && plan.contains("`docs/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`")
-            && plan.contains("`docs/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`")
+            && plan.contains("`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.1.md`")
+            && plan.contains("`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.0.md`")
             && plan.contains("It was a **policy re-port**, not a dependency bump"),
         "active roadmap must record the completed fork retarget and retained upgrade records"
     );

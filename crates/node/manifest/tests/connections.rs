@@ -16,7 +16,7 @@ fn published_schema_accepts(document: &Value) -> bool {
     let mut schemas = Schemas::new();
     let mut compiler = Compiler::new();
     let schema = serde_json::from_str(include_str!(
-        "../../../../docs/contracts/wamn-connection-contract.schema.json"
+        "../../../../docs/archive/contracts/wamn-connection-contract.schema.json"
     ))
     .expect("published connection contract schema parses");
     compiler
@@ -166,12 +166,12 @@ fn published_connection_contract_schema_rejects_unknown_surface() {
 
 #[test]
 fn connection_contract_schema_drift() {
-    let committed = include_str!("../../../../docs/contracts/wamn-connection-contract.schema.json");
+    let committed = include_str!("../../../../docs/archive/contracts/wamn-connection-contract.schema.json");
     assert_eq!(
         committed,
         wamn_node_manifest::connection_contract_json_schema_string(),
-        "docs/contracts/wamn-connection-contract.schema.json is out of sync with the types; \
+        "docs/archive/contracts/wamn-connection-contract.schema.json is out of sync with the types; \
          regenerate: cargo run -p wamn-node-manifest --example print-connection-contract-schema > \
-         docs/contracts/wamn-connection-contract.schema.json"
+         docs/archive/contracts/wamn-connection-contract.schema.json"
     );
 }

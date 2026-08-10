@@ -18,7 +18,7 @@ bytes = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 futures-util = { workspace = true }
 # The CDC walsender session (our pinned fork — F1 failover-slot syntax;
-# docs/events/pg-walstream-fork.md).
+# docs/archive/events/pg-walstream-fork.md).
 pg_walstream = { workspace = true }
 # The draft envelope/subject/Nats-Msg-Id wire contract.
 wamn-event-wire = { workspace = true }

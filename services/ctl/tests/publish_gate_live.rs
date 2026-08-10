@@ -1,7 +1,7 @@
 //! Live gate for the [11.7] publish gate (wamn-12g).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** maintenance url of a throwaway
-//! Postgres (recipe: docs/build-and-test.md [11.7]); skipped cleanly when unset.
+//! Postgres (recipe: docs/archive/build-and-test.md [11.7]); skipped cleanly when unset.
 //! Drives the REAL `copy-project-env --include definition` verb against the REAL
 //! storage SQL (deploy/sql/{system,catalog,run-state,flows,flow-tests}.sql),
 //! proving the four properties §11.7 actually promises:

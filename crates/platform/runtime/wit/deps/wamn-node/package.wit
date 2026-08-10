@@ -132,7 +132,7 @@ interface types {
 
   /// What a successful node execution produced: the output payload plus
   /// the output port selecting which edges the engine routes it down
-  /// (`docs/execution/flow-schema.md` ported edges). Absent port = "main". Branch
+  /// (`docs/archive/execution/flow-schema.md` ported edges). Absent port = "main". Branch
   /// nodes emit named ports (a conditional's "true"/"false"); the
   /// reserved "error" port is never emitted here -- errors travel as
   /// node-error and the engine routes them.
@@ -233,5 +233,5 @@ world stream-node {
 }
 
 // NOTE: vendored copy for host-side bindgen. The illustrative `http-node`
-// world from docs/contracts/wamn-node.wit is omitted here to avoid vendoring the
+// world from docs/archive/contracts/wamn-node.wit is omitted here to avoid vendoring the
 // wasi:http dependency tree; the host only binds interfaces, not worlds.

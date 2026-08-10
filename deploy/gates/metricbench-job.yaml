@@ -3,7 +3,7 @@
 # in-cluster Postgres: it drives the production run/queue/pool/memory emission
 # seams, then scrapes the collector's Prometheus app-metrics endpoint (:8889, the
 # 9.8 pipeline added to deploy/infra/otel-collector.yaml) and asserts each
-# wamn_* family. Local docker runs (docs/observability/metrics.md) are for iteration.
+# wamn_* family. Local docker runs (docs/archive/observability/metrics.md) are for iteration.
 #
 #   kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
 #   kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s

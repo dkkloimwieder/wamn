@@ -1,7 +1,7 @@
 //! Regenerate the published connection contract JSON Schema:
 //!
 //! ```sh
-//! cargo run -p wamn-node-manifest --example print-connection-contract-schema > docs/contracts/wamn-connection-contract.schema.json
+//! cargo run -p wamn-node-manifest --example print-connection-contract-schema > docs/archive/contracts/wamn-connection-contract.schema.json
 //! ```
 
 fn main() {

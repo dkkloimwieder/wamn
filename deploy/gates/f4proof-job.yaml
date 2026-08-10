@@ -10,7 +10,7 @@
 # run queue → runner → F2 hop → ERP callback; the ERP sim 429s the first
 # request per idempotency key, so the gate asserts the queue-park backoff (no
 # stampede, exactly-one effective delivery). Local docker runs are for
-# iteration: docs/build-and-test.md [POC-F4].
+# iteration: docs/archive/build-and-test.md [POC-F4].
 #
 #   kubectl -n wamn-system apply -f deploy/gates/f4proof-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/f4proof --timeout=600s

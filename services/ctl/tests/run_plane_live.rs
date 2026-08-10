@@ -3,7 +3,7 @@
 //! REAL Postgres in every starting state the bead's manifestations recorded.
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
-//! throwaway Postgres (recipe: docs/build-and-test.md [RUN-PLANE-RECONCILE]);
+//! throwaway Postgres (recipe: docs/archive/build-and-test.md [RUN-PLANE-RECONCILE]);
 //! skipped cleanly when unset. Eleven legs, sequential under one test entry
 //! (they share the `catalog` schema and the `wamn_app` role):
 //!

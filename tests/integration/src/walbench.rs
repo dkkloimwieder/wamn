@@ -1,9 +1,9 @@
 //! The `walbench` subcommand: the EVT-C-WAL-0 pre-CDC WAL-volume baseline
-//! (docs/events/event-plane-jetstream.md §7/§8, docs/results/ceilings.md § C-WAL-0) — the
+//! (docs/archive/events/event-plane-jetstream.md §7/§8, docs/archive/results/ceilings.md § C-WAL-0) — the
 //! *denominator* every later C-CDC WAL-delta claim (wamn-l5i9.14) divides by.
 //!
 //! A MEASUREMENT campaign, not a regression gate: curves land in
-//! `docs/results/ceilings.md` + `docs/results/ceilings-data/` (§11 provenance), and only the
+//! `docs/archive/results/ceilings.md` + `docs/results/ceilings-data/` (§11 provenance), and only the
 //! sanity asserts gate — the run is genuinely PRE-CDC (no publication, no
 //! replication slot, every table at DEFAULT replica identity), every op moved
 //! WAL (the instrument self-check), and the op counts are exact. Pure

@@ -11,7 +11,7 @@ license = "Apache-2.0"
 
 [workspace.dependencies]
 # Upstream v2.6.1 plus the policies recorded in
-# docs/platform/wash-runtime-fork.md. The ledger is authoritative.
+# docs/archive/platform/wash-runtime-fork.md. The ledger is authoritative.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
 # wamn and wash-runtime resolve one crates.io Wasmtime 47.0.1 family; enforce
 # that contract with tests/conformance/tests/wasmtime_source_identity.rs.
@@ -23,7 +23,7 @@ wasmtime-wasi-http = "47.0.1"
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork
 # emits the parenthesized option list). Pin a REV, never a branch.
-# Carried-commit ledger + sync runbook: docs/events/pg-walstream-fork.md.
+# Carried-commit ledger + sync runbook: docs/archive/events/pg-walstream-fork.md.
 pg_walstream = { git = "https://github.com/dkkloimwieder/pg-walstream", rev = "0b007cd627bb913d4b159c705a106b6d4152c91a" }
 anyhow = "1"
 argon2 = "0.5.3"

@@ -48,7 +48,7 @@
 //!
 //! Needs: `--admin-database-url` (SUPERUSER on a `wal_level=logical` PG — the
 //! gate creates/drops the throwaway `wamn_rie2e` database, the slot, and the
-//! replication role), `--nats-url` (JetStream). Recipe: docs/build-and-test.md
+//! replication role), `--nats-url` (JetStream). Recipe: docs/archive/build-and-test.md
 //! [EVT-RI-E2E].
 
 use std::path::PathBuf;

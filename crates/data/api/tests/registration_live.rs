@@ -1,7 +1,7 @@
 //! Live-apply gate for the event-registration CRUD surface (EVT-REG, D19 v3 §5).
 //!
 //! Set `WAMN_API_PG_URL` to a **superuser** url (path `/postgres`) of a
-//! throwaway Postgres (recipe: docs/build-and-test.md [EVT-REG]); skipped
+//! throwaway Postgres (recipe: docs/archive/build-and-test.md [EVT-REG]); skipped
 //! cleanly when unset. Hermetic preamble: drops+recreates the `catalog` schema
 //! and applies the REAL storage SQL (deploy/sql/catalog-schema.sql), then drives
 //! the wamn-api registration builders through create → list → get → update →

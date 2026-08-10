@@ -6,7 +6,7 @@
 # DELETE refused (tenant-unscopable), reconcile flips RI→FULL, post-flip
 # DELETE fires ONE scoped :evt: run off the real decoded WAL old image;
 # non-retroactive boundary asserted. Local docker runs are for iteration:
-# docs/build-and-test.md [EVT-RI-E2E].
+# docs/archive/build-and-test.md [EVT-RI-E2E].
 #
 #   kubectl -n wamn-system apply -f deploy/gates/rie2ebench-job.yaml
 #   kubectl -n wamn-system wait --for=condition=complete job/rie2ebench --timeout=600s

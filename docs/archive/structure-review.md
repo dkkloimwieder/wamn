@@ -1,4 +1,4 @@
-> **Archived 2026-07-19** — absorbed by `docs/findings.md` (the single findings ledger); retained for commit-message resolution (SR1–SR7 ids).
+> **Archived 2026-07-19** — absorbed by `docs/archive/findings.md` (the single findings ledger); retained for commit-message resolution (SR1–SR7 ids).
 
 # Structure & Code-Quality Review — SR1–SR7
 

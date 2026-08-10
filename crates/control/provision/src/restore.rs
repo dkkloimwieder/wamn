@@ -2,7 +2,7 @@
 //!
 //! The restore counterpart of [`crate::dump`]: given a `pg_dump -Fd` **directory**
 //! artifact (the one [`crate::dump`] produces), `pg_restore` it into a target
-//! database. Two targets, the safe one the default (docs/platform/postgres-topology.md
+//! database. Two targets, the safe one the default (docs/archive/platform/postgres-topology.md
 //! §Backup architecture, restore runbook):
 //!
 //! * **scratch database** (default, non-destructive): restore into a fresh

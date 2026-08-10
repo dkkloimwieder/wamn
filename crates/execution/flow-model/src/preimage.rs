@@ -8,7 +8,7 @@
 //! and a field listed here cannot be dropped from a digest by accident.
 //!
 //! The projection differs from the document in exactly the ways W2 requires
-//! (see `docs/authoring/authoring-surface.md` §Digest ordering):
+//! (see `docs/archive/authoring/authoring-surface.md` §Digest ordering):
 //!
 //! - **nodes are ordered by [`Node::id`]**, the stable identity every consumer
 //!   looks up by, so a pure reordering of the document's `nodes` array is not a

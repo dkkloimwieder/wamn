@@ -1,7 +1,7 @@
 //! Regenerate the published JSON Schema contract from the canonical types:
 //!
 //! ```sh
-//! cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/contracts/wamn-node-manifest.schema.json
+//! cargo run -p wamn-node-manifest --example print-node-manifest-schema > docs/archive/contracts/wamn-node-manifest.schema.json
 //! ```
 //!
 //! `schema_drift` (tests/manifest.rs) fails if the committed file falls out of

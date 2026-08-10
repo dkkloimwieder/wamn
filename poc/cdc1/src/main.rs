@@ -59,7 +59,7 @@ fn repl_config() -> ReplicationStreamConfig {
     // FINDING F1 (spike, 2026-07-18): crates.io pg_walstream 0.8.0 emitted the
     // legacy space-separated `CREATE_REPLICATION_SLOT … FAILOVER`, which only
     // exists in the PG17+ parenthesized option grammar → 42601. FIXED in our
-    // fork (wamn-l5i9.8, branch wamn/0.8.0 — see docs/events/pg-walstream-fork.md):
+    // fork (wamn-l5i9.8, branch wamn/0.8.0 — see docs/archive/events/pg-walstream-fork.md):
     // the builder now emits `(… FAILOVER)`, so the native path works and
     // setup() creates the slot through the crate.
     cfg.slot_options.failover = true;

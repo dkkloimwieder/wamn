@@ -1,4 +1,4 @@
--- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/platform-plan.md §2.4). The
+-- The per-project SYSTEM SCHEMA v1 (wamn-as5, docs/archive/platform-plan.md §2.4). The
 -- application-facing auth/RBAC/config tables that live IN a project database:
 -- users, roles (+ the user↔role linkage), permissions, configurations,
 -- audit_log, and api_keys.

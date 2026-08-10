@@ -1,4 +1,4 @@
-//! The `queuebench` subcommand: the 5.14 durable-run-queue gates (docs/execution/run-queue.md).
+//! The `queuebench` subcommand: the 5.14 durable-run-queue gates (docs/archive/execution/run-queue.md).
 //!
 //! Unlike flowbench/testhostbench, this is **pure host-side** — the queue is a
 //! Postgres mechanism (`FOR UPDATE SKIP LOCKED`) plus a NATS-core doorbell, so the
@@ -32,7 +32,7 @@
 //!                concurrent replicas (per-key serialization + in-order +
 //!                exactly-once), and a partition fails over in order when its owner
 //!                dies (the dedicated `partition_owner` lease).
-//!   ceiling    — the EVT-C7 measurement campaign (docs/events/event-plane-jetstream.md
+//!   ceiling    — the EVT-C7 measurement campaign (docs/archive/events/event-plane-jetstream.md
 //!                §10): full-lifecycle transitions/sec knee (ramp + bisect), a
 //!                sustained soak at 80% of knee with a bloat probe, and a 10×
 //!                burst/recovery profile — curves + CSVs, not pass/fail numbers
@@ -1315,7 +1315,7 @@ async fn partition_failover(app_url: &str, admin_url: &str) -> anyhow::Result<bo
 
 // ---------------------------------------------------------------------------
 // ceiling (EVT-C7): full-lifecycle transitions/sec — measurement, not gates
-// (docs/events/event-plane-jetstream.md §10; curves + CSVs, only sanity asserts gate)
+// (docs/archive/events/event-plane-jetstream.md §10; curves + CSVs, only sanity asserts gate)
 // ---------------------------------------------------------------------------
 
 /// Which lifecycle shape the claimers drive.

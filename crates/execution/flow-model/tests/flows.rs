@@ -75,7 +75,7 @@ fn fixtures_round_trip() {
 #[test]
 fn fixtures_conform_to_published_schema() {
     // The language-neutral contract must accept every example flow — this ties
-    // docs/contracts/flow-schema.schema.json to the real flows the editor/SDK will send.
+    // docs/archive/contracts/flow-schema.schema.json to the real flows the editor/SDK will send.
     let schema = wamn_flow::json_schema();
     let mut compiler = Compiler::new();
     compiler
@@ -98,16 +98,16 @@ fn fixtures_conform_to_published_schema() {
 #[test]
 fn committed_schema_matches_types() {
     // Drift guard: regenerate with
-    //   cargo run -p wamn-flow --example print-flow-schema > docs/contracts/flow-schema.schema.json
+    //   cargo run -p wamn-flow --example print-flow-schema > docs/archive/contracts/flow-schema.schema.json
     let committed = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../docs/contracts/flow-schema.schema.json"),
+            .join("../../../docs/archive/contracts/flow-schema.schema.json"),
     )
     .expect("read committed schema");
     assert_eq!(
         committed,
         wamn_flow::json_schema_string(),
-        "docs/contracts/flow-schema.schema.json is stale — regenerate it (see print-flow-schema example)"
+        "docs/archive/contracts/flow-schema.schema.json is stale — regenerate it (see print-flow-schema example)"
     );
 }
 

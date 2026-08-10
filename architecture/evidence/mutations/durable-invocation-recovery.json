@@ -153,7 +153,7 @@
     {
       "id": "flow-spec-http-classifier",
       "gate": "flow_spec_normative_policy_rejects_legacy_recovery_classifiers",
-      "target": "docs/execution/FLOW-SPEC.md",
+      "target": "docs/archive/execution/FLOW-SPEC.md",
       "command": ["cargo", "test", "--locked", "-p", "wamn-proof-conformance", "--test", "flow_spec_recovery_authority", "flow_spec_normative_policy_rejects_legacy_recovery_classifiers", "--", "--exact"],
       "baseline_sha256": "30d6d5035b31af70ef6aed1db5e8f989af1949479177612674232876ce2ce268",
       "mutant_sha256": "16430223ee3bdff6e9df10770c95750917b8a3ff1ceab67a8e7e381c924e00cc",

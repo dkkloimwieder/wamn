@@ -4,7 +4,7 @@
 # Tempo, Loki — ALL hard in-cluster, no --local), the static SRE dashboard +
 # folder, and — after `provision-dashboards` has run — every registry org's
 # per-tenant folder + dashboard (orgs read from the T1 system DB). Local docker
-# runs (docs/observability/dashboards.md) are for iteration.
+# runs (docs/archive/observability/dashboards.md) are for iteration.
 #
 #   # infra: Prometheus + Grafana (+ the SRE dashboards ConfigMaps, see grafana.yaml)
 #   kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml

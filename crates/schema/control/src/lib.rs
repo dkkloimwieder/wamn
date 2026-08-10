@@ -46,7 +46,7 @@
 //! survives — no compensation path is needed). This holds while the compiler
 //! emits no non-transactional step; `CREATE INDEX CONCURRENTLY` is the known
 //! breaker, deferred (it would need a residue janitor + an apply journal — see
-//! `docs/schema/migration-engine.md`).
+//! `docs/archive/schema/migration-engine.md`).
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!

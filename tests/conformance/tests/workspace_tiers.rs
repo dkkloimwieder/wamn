@@ -13,7 +13,7 @@ const COMPONENT_MANIFEST: &str = "components/Cargo.toml";
 const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
-const BUILD_AND_TEST_DOCS: &str = "docs/build-and-test.md";
+const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
 const SPECIALIZATION_FIXTURES: [(&str, &str); 8] = [
     (
         "capability-class-http",

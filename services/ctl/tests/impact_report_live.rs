@@ -1,7 +1,7 @@
 //! Live gate for schema-change impact analysis (11.8, wamn-wvb).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url of a throwaway Postgres (recipe:
-//! docs/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
+//! docs/archive/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
 //! machinery against the REAL storage SQL (deploy/sql/{catalog-schema,flows,
 //! flow-tests}.sql):
 //!

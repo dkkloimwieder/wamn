@@ -154,7 +154,7 @@ pub fn cargo_build_argv(package: &str) -> Vec<String> {
 }
 
 /// The jco argv that componentizes a single ES module — the exact invocation
-/// docs/build-and-test.md uses for the node-ts fixture (`--disable http` /
+/// docs/archive/build-and-test.md uses for the node-ts fixture (`--disable http` /
 /// `--disable fetch-event`, so a node exports only `wamn:node/handler`).
 pub fn jco_componentize_argv(entry: &str, wit: &str, world: &str, out: &str) -> Vec<String> {
     [
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn jco_argv_matches_the_node_ts_invocation() {
-        // The exact shape docs/build-and-test.md uses for the node-ts fixture.
+        // The exact shape docs/archive/build-and-test.md uses for the node-ts fixture.
         assert_eq!(
             jco_componentize_argv("node.js", "wit", "node-bench", "out/node-ts.wasm"),
             [

@@ -4,7 +4,7 @@
 # the CDC reader use. Unlike matbench this needs NO Postgres: the js-sample
 # guest imports only wamn:jetstream (consumer + producer), so the whole gate is
 # a component driving JetStream bind/fetch/ack/publish/dedupe/reject in-proc.
-# Local docker runs are for iteration (throwaway NATS): docs/build-and-test.md
+# Local docker runs are for iteration (throwaway NATS): docs/archive/build-and-test.md
 # [E10-E2E].
 #
 #   kubectl -n wamn-system apply -f deploy/gates/samplebench-job.yaml

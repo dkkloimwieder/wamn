@@ -4,7 +4,7 @@
 # (Service `evt-nats`, no mTLS — matbench's stream AND its doorbell observation
 # both ride it; the production doorbell path over the control-plane NATS is
 # separately proven by the deployed-Service e2e). Local docker runs are for
-# iteration (throwaway Postgres + throwaway NATS): docs/build-and-test.md
+# iteration (throwaway Postgres + throwaway NATS): docs/archive/build-and-test.md
 # [EVT-MAT].
 #
 #   kubectl -n wamn-system apply -f deploy/gates/matbench-job.yaml

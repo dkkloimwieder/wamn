@@ -741,7 +741,7 @@ fn http_request_explicit_traceparent_header_wins() {
     assert_eq!(tps[0].1, "00-explicit-01", "config header wins");
 }
 
-/// THE mechanical status → taxonomy map (docs/contracts/wamn-node.wit): 429 →
+/// THE mechanical status → taxonomy map (docs/archive/contracts/wamn-node.wit): 429 →
 /// rate-limited with the source delay + throttle host; 408/5xx → retryable;
 /// other 4xx → terminal; transport → retryable; host egress denial → terminal.
 #[test]

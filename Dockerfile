@@ -64,7 +64,7 @@ COPY deploy ./deploy
 COPY components/execution/flowrunner/src/lib.rs ./components/execution/flowrunner/src/lib.rs
 COPY components/samples/disposition-node/cases.json components/samples/disposition-node/cases-refusal-fixture.json ./components/samples/disposition-node/
 # wash-runtime resolves as a git dep from the fork pinned in Cargo.toml
-# (docs/platform/wash-runtime-fork.md); cargo fetches it during the cook/build.
+# (docs/archive/platform/wash-runtime-fork.md); cargo fetches it during the cook/build.
 # rust-toolchain.toml is deliberately absent: the base image already ships the
 # pinned Rust line, and copying it would force a rustup download in the image.
 RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \

@@ -1,6 +1,6 @@
 //! `wamn:jetstream` host plugin (E10).
 //!
-//! Contract source of truth: docs/contracts/wamn-jetstream.wit (mirrored byte-identical
+//! Contract source of truth: docs/archive/contracts/wamn-jetstream.wit (mirrored byte-identical
 //! into `wit/deps/wamn-jetstream/package.wit`; drift-guarded by
 //! `tests/jetstream_wit_coherence.rs`).
 //!

@@ -1,6 +1,6 @@
 //! The `restore-project-env` subcommand (wamn-q3n.11): restore a per-project-env
 //! logical **dump** back into a database — the restore counterpart of
-//! `dump-project-env` (docs/platform/postgres-topology.md §Backup architecture).
+//! `dump-project-env` (docs/archive/platform/postgres-topology.md §Backup architecture).
 //!
 //! `pg_restore` of a `pg_dump -Fd` directory artifact into one of two targets:
 //!

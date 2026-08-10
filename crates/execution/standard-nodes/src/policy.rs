@@ -1,4 +1,4 @@
-//! Dispatch-time capability policy enforcement (docs/platform-plan.md 5.3).
+//! Dispatch-time capability policy enforcement (docs/archive/platform-plan.md 5.3).
 //!
 //! Two layers, both here in the pure crate so both are unit-testable:
 //!

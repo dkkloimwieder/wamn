@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const ACTIVE_PLAN: &str = "docs/PLAN/PLAN.md";
+const ACTIVE_PLAN: &str = "docs/archive/PLAN/PLAN.md";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))

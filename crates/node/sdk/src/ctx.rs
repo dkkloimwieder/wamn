@@ -7,7 +7,7 @@
 //! Capability access is POLICY-GATED at dispatch time: the standard library's
 //! capability table declares what each node type may use, and the runner grants
 //! a set per dispatch — an undeclared or ungranted call fails with
-//! `NotGranted`, never silently succeeds (docs/platform-plan.md 5.3).
+//! `NotGranted`, never silently succeeds (docs/archive/platform-plan.md 5.3).
 
 use serde_json::Value;
 
@@ -30,7 +30,7 @@ pub enum Capability {
 }
 
 /// Everything the runner knows that a node execution may need. Mirrors the
-/// frozen WIT `run-context` (`docs/contracts/wamn-node.wit`, 0.1.0) with `config`
+/// frozen WIT `run-context` (`docs/archive/contracts/wamn-node.wit`, 0.1.0) with `config`
 /// pre-parsed to JSON. Deliberately contains NO secrets — credentials resolve
 /// lazily (5.9).
 #[derive(Debug, Clone, Copy)]
@@ -183,7 +183,7 @@ pub enum PgCapError {
 }
 
 /// Why a credential resolution failed. Mirrors the frozen `wamn:node`
-/// `credential-error` (docs/contracts/wamn-node.wit, the 5.9 vault) plus the
+/// `credential-error` (docs/archive/contracts/wamn-node.wit, the 5.9 vault) plus the
 /// facade-level `NotGranted`; the node maps these into the error taxonomy
 /// mechanically (unavailable is retryable at the flow level, per the WIT
 /// annotation; not-found is config-shaped and terminal).

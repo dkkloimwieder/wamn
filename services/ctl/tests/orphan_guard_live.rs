@@ -1,7 +1,7 @@
 //! Live-apply gate for the D24 registration-orphan guard (EVT-REG, wamn-rmxa).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a throwaway
-//! Postgres (recipe: docs/build-and-test.md [EVT-REG/D24]); skipped cleanly when
+//! Postgres (recipe: docs/archive/build-and-test.md [EVT-REG/D24]); skipped cleanly when
 //! unset. Drives the REAL `wamn-ctl` verbs (`publish_catalog::run` /
 //! `migrate_catalog::run`) against the REAL storage SQL
 //! (deploy/sql/catalog-schema.sql), proving both verbs REFUSE a catalog that

@@ -8,7 +8,7 @@
 #   kubectl -n wamn-system logs -f job/queuebench-ceiling
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract
-# them into docs/results/ceilings-data/ and cite them from docs/results/ceilings.md (§11
+# them into docs/results/ceilings-data/ and cite them from docs/archive/results/ceilings.md (§11
 # provenance: date, env, git rev, knobs, raw-data pointer). No NATS: the
 # ceiling mode never touches the doorbell.
 apiVersion: batch/v1

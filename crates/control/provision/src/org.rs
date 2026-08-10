@@ -32,7 +32,7 @@ const NAMESPACE: &str = "wamn-system";
 
 /// The `max_slot_wal_keep_size` WAL-retention bound every rendered cluster carries.
 ///
-/// The §11 sharp edge (docs/events/event-plane-jetstream.md): a forgotten CDC logical
+/// The §11 sharp edge (docs/archive/events/event-plane-jetstream.md): a forgotten CDC logical
 /// slot pins WAL *forever* without a bound, and the reader never GCs a slot it
 /// did not create. `max_slot_wal_keep_size` is the backstop — once a slot falls
 /// this far behind, PG invalidates it (a first-class, alerted incident) instead

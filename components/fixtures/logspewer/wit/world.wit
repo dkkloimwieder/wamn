@@ -1,6 +1,6 @@
 // S5 logging-capture bench guest. Imports wasi:logging/logging (the real v0
 // contract) and exports two bench entry points driven by the `logbench`
-// harness. See docs/p0-exit-criteria.md S5.
+// harness. See docs/archive/p0-exit-criteria.md S5.
 //
 //   overhead(n)   — emit `n` log() calls, self-timing EACH with the guest's own
 //                   monotonic clock, and return the per-call latencies (ns). The

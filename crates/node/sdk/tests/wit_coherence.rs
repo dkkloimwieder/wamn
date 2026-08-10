@@ -1,5 +1,5 @@
 //! Drift-guards tying the FROZEN `wamn:node` 0.1 contract file
-//! (`docs/contracts/wamn-node.wit`) to (a) every vendored copy of it and (b) the exact
+//! (`docs/archive/contracts/wamn-node.wit`) to (a) every vendored copy of it and (b) the exact
 //! WIT lines this SDK mirrors natively. The wamn-schema-model/wamn-flow
 //! committed-contract pattern: editing the contract without updating the
 //! mirrors (or vice versa) fails a named test instead of shipping skew.
@@ -34,8 +34,8 @@ fn root() -> &'static Path {
 }
 
 fn docs_wit() -> String {
-    fs::read_to_string(root().join("../../../docs/contracts/wamn-node.wit"))
-        .expect("docs/contracts/wamn-node.wit reads")
+    fs::read_to_string(root().join("../../../docs/archive/contracts/wamn-node.wit"))
+        .expect("docs/archive/contracts/wamn-node.wit reads")
 }
 
 fn workspace_root() -> PathBuf {
@@ -187,7 +187,7 @@ fn payload_streams_are_the_pinned_host_p2_interface() {
     let docs = docs_wit();
     let host = workspace_wit("crates/platform/runtime/wit/deps/wamn-node/package.wit");
     for (name, wit) in [
-        ("docs/contracts/wamn-node.wit", &docs),
+        ("docs/archive/contracts/wamn-node.wit", &docs),
         (
             "crates/platform/runtime/wit/deps/wamn-node/package.wit",
             &host,
@@ -280,7 +280,7 @@ fn payload_guest_import_is_bounded_and_pinned_to_the_frozen_p2_contract() {
 
 #[test]
 fn frozen_node_packages_reject_a_p3_or_0_2_drift() {
-    let mut copies = vec![("docs/contracts/wamn-node.wit", docs_wit())];
+    let mut copies = vec![("docs/archive/contracts/wamn-node.wit", docs_wit())];
     copies.extend(
         VENDORED_WIT_PATHS
             .into_iter()
@@ -317,7 +317,7 @@ fn every_invocation_wit_requires_input_context() {
 
 #[test]
 fn replacement_context_exists_only_on_success_emissions() {
-    let mut copies = vec![("docs/contracts/wamn-node.wit", docs_wit())];
+    let mut copies = vec![("docs/archive/contracts/wamn-node.wit", docs_wit())];
     copies.extend(
         FULL_TYPE_WIT_PATHS
             .into_iter()

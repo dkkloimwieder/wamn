@@ -3,7 +3,7 @@
 A wasmCloud-based managed low-code platform: a data/schema layer, a flow engine,
 and a four-tier Postgres control plane, all hosted on a customized wasmCloud
 runtime. **`docs/` is the design source of truth** — start with
-`docs/PLAN/PLAN.md` (the roadmap and decision map); `docs/platform-plan.md`
+`docs/archive/PLAN/PLAN.md` (the roadmap and decision map); `docs/archive/platform-plan.md`
 holds the D-number decision table as the archive of record.
 
 `services/host` is the production washlet host, while `services/node-host`
@@ -11,7 +11,7 @@ serves custom nodes. Both are thin deployable leaves over reusable platform
 packages. Production queue execution and deterministic scenario execution are
 separate artifacts which share `crates/execution/host` and the same flowrunner
 component. Our wash-runtime changes are carried commits on a fork — see
-`docs/platform/wash-runtime-fork.md`.
+`docs/archive/platform/wash-runtime-fork.md`.
 
 ## Repository layout
 
@@ -145,7 +145,7 @@ Postgres and skip when their `WAMN_*_PG_URL` env var is unset.
 **Proofs** live in `tests/{conformance,integration,system}`. The `wamn-gates`
 package at `tests/orchestrator` is the stable deploy-facing command router. The full per-bead
 command set — local iteration and the in-cluster gate of record for each
-subsystem — is in **`docs/build-and-test.md`**.
+subsystem — is in **`docs/archive/build-and-test.md`**.
 Example (S1, no backend):
 
 ```bash
@@ -177,14 +177,14 @@ kind load docker-image wamn-gates:dev --name wamn
 kubectl -n wamn-system rollout status deploy/hostgroup-default
 
 # 3. apply the manifests / gate Jobs for the subsystem under test
-#    (see docs/build-and-test.md for the exact per-bead steps)
+#    (see docs/archive/build-and-test.md for the exact per-bead steps)
 kubectl -n wamn-system apply -f deploy/<subsystem>-job.yaml
 kubectl -n wamn-system logs -f job/<subsystem>
 ```
 
 ## More
 
-- `docs/PLAN/PLAN.md` — the authoritative roadmap and decision map.
+- `docs/archive/PLAN/PLAN.md` — the authoritative roadmap and decision map.
 - `docs/` — design source of truth (per-subsystem specs, WIT contracts).
-- `docs/build-and-test.md` — every subsystem's build + gate commands.
+- `docs/archive/build-and-test.md` — every subsystem's build + gate commands.
 - `CLAUDE.md` / `AGENTS.md` — instructions for AI coding agents (identical).

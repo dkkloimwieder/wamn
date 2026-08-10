@@ -9,7 +9,7 @@ use wash_runtime::wasmtime::{Config, PoolingAllocationConfig};
 /// allocator's engine-wide `max_memory_size`, the largest budget any
 /// component may hold. Per-component budgets (`memory_limit_mb` /
 /// `wamn.memory-limit-mb`) are enforced BELOW this by the fork's per-store
-/// ResourceLimiter (docs/platform/wash-runtime-fork.md).
+/// ResourceLimiter (docs/archive/platform/wash-runtime-fork.md).
 pub const MEMORY_CAP_BYTES: usize = 256 << 20;
 
 /// Pooling-allocator slot counts. Slots are per *live instance* (stores are
@@ -42,7 +42,7 @@ pub fn advertise_memory_ceiling() {
 /// 256 MiB memory ceiling, epoch interruption enabled. Memory enforcement is
 /// two-tier: this pooling cap is the platform ceiling, and the fork's
 /// per-store ResourceLimiter enforces per-component budgets below it
-/// (carried commit, docs/platform/wash-runtime-fork.md; bench phase 5 is the gate).
+/// (carried commit, docs/archive/platform/wash-runtime-fork.md; bench phase 5 is the gate).
 /// Epoch interruption is our hard-cancellation layer: [`spawn_epoch_ticker`]
 /// advances the epoch and the carried epoch commit gives every store a
 /// deadline (`wamn.epoch-deadline-ticks` config / WAMN_EPOCH_DEADLINE_TICKS

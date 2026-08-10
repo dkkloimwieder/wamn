@@ -17,7 +17,7 @@ const {
 
 test("generated output covers every public schema definition", async () => {
   const schema = JSON.parse(
-    await readFile(new URL("../../../docs/contracts/authoring-surface.schema.json", import.meta.url)),
+    await readFile(new URL("../../../docs/archive/contracts/authoring-surface.schema.json", import.meta.url)),
   );
   const generated = await readFile(
     new URL("../src/generated/authoring.ts", import.meta.url),

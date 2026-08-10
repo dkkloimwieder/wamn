@@ -52,7 +52,7 @@ fn current_wasmtime_documentation_matches_executable_type_universe_contract() {
         );
     }
 
-    let fork_doc = fs::read_to_string(root.join("docs/platform/wash-runtime-fork.md"))
+    let fork_doc = fs::read_to_string(root.join("docs/archive/platform/wash-runtime-fork.md"))
         .expect("read wash-runtime fork documentation");
     let current_posture = section(
         &fork_doc,

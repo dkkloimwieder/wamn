@@ -1,5 +1,5 @@
 //! The `cdcbench` subcommand: the [EVT-C-CDC] ceiling campaign (wamn-l5i9.14,
-//! docs/events/event-plane-jetstream.md §7/§8, docs/results/ceilings.md § C-CDC).
+//! docs/archive/events/event-plane-jetstream.md §7/§8, docs/archive/results/ceilings.md § C-CDC).
 //!
 //! A MEASUREMENT campaign, not a regression gate (§8: curves and knees, no
 //! pass/fail — only sanity/completeness asserts gate). Four axes:
@@ -54,7 +54,7 @@
 //!
 //! Needs: `--admin-database-url` (SUPERUSER, path `/postgres`, on a
 //! `wal_level=logical` PG) + `--nats-url` (JetStream). Recipe:
-//! docs/build-and-test.md [EVT-C-CDC].
+//! docs/archive/build-and-test.md [EVT-C-CDC].
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

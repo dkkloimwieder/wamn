@@ -1,9 +1,9 @@
 //! Canonical control-plane registry model (wamn-q3n.1; generalized in
-//! wamn-8df.3, `docs/platform/deployment-model.md`).
+//! wamn-8df.3, `docs/archive/platform/deployment-model.md`).
 //!
 //! The registry is the platform's system-of-record for **identity** and
 //! **placement** — the foundation of the four-tier Postgres topology
-//! (`docs/platform/postgres-topology.md`, epic `wamn-q3n`). It answers two questions and
+//! (`docs/archive/platform/postgres-topology.md`, epic `wamn-q3n`). It answers two questions and
 //! deliberately nothing else:
 //!
 //! - *who exists* — [`Org`] / [`Project`] / [`ProjectEnv`] membership, keyed by

@@ -1,7 +1,7 @@
 package wamn:node@0.1.0;
 
 // TRIMMED vendored copy for the caps world: ONLY the `credentials` vault
-// import (5.9). Regenerated mechanically from docs/contracts/wamn-node.wit; the
+// import (5.9). Regenerated mechanically from docs/archive/contracts/wamn-node.wit; the
 // wit_coherence drift-guard pins every kept code line as an in-order
 // subsequence of the frozen contract (and this copy byte-identical to the
 // flowrunner component's).

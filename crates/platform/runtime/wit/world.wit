@@ -99,7 +99,7 @@ world serve-node {
 /// Host-side bindgen world for the S4 `nodebench` / `serve-node` harness: the
 /// host CALLS a bench node's exported `handler.run` and IMPLEMENTS the bench
 /// `wait-ns` import (a real async host sleep) used to model an I/O-bound node
-/// uniformly across guest languages. See docs/p0-exit-criteria.md S4.
+/// uniformly across guest languages. See docs/archive/p0-exit-criteria.md S4.
 world node-bench {
   import wamn:nodebench/host@0.1.0;
   export wamn:node/handler@0.1.0;
@@ -108,7 +108,7 @@ world node-bench {
 /// Host-side bindgen world for the S5 `wamn:logging` plugin: the host
 /// IMPLEMENTS `wasi:logging/logging` (enrich + non-blocking enqueue + drop
 /// counter), routing guest logs to an OTLP LoggerProvider the plugin owns. See
-/// docs/p0-exit-criteria.md S5.
+/// docs/archive/p0-exit-criteria.md S5.
 world logging-plugin {
   import wasi:logging/logging@0.1.0-draft;
 }

@@ -29,7 +29,7 @@
 //! saga in an ephemeral `wamn_system`-shaped schema, since the CNPG `Database` CRD
 //! and the physical cross-CLUSTER isolation of a real dedicated org need the operator.
 //! That physical-isolation gate of record is the live org-pair standup runbook
-//! (docs/platform/provisioning.md §provisionbench / CLAUDE.md).
+//! (docs/archive/platform/provisioning.md §provisionbench / CLAUDE.md).
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};

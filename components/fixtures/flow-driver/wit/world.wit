@@ -3,7 +3,7 @@
 // handler N times. `wac plug` fills the handler import with the Rust node
 // (components/samples/node-rs), yielding ONE frozen component (flow-composed.wasm) that
 // the `nodebench` harness instantiates once and drives — the "composed" arm of
-// the interpreted-vs-composed measurement (docs/p0-exit-criteria.md S4).
+// the interpreted-vs-composed measurement (docs/archive/p0-exit-criteria.md S4).
 //
 // Note: config is still passed as JSON per hop (the inner node parses it), so
 // this measures composition + single-instantiation, not config constant-

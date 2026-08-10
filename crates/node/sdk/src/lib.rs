@@ -1,7 +1,7 @@
 //! # wamn-node-sdk — the node authoring contract (5.3/5.4)
 //!
 //! The Rust mirror of the FROZEN `wamn:node` 0.1 WIT contract
-//! (`docs/contracts/wamn-node.wit`, frozen by 5.4): the [`Node`] trait every
+//! (`docs/archive/contracts/wamn-node.wit`, frozen by 5.4): the [`Node`] trait every
 //! standard-library node — and every custom node, via the
 //! `wamn-node-guest` scaffolding — is authored against, the [`RunContext`]
 //! view of a dispatch, the [`NodeCtx`] capability facade all effects flow
@@ -9,7 +9,7 @@
 //! `crates/node/sdk/tests/wit_coherence.rs` drift-guards the mirror
 //! against the WIT file and every vendored copy of it.
 //!
-//! **This crate is the purity boundary** (docs/platform-plan.md 5.3/5.13):
+//! **This crate is the purity boundary** (docs/archive/platform-plan.md 5.3/5.13):
 //! node crates depend on the SDK ONLY — never on `wamn-runner` — enforced by a
 //! dependency lint in `wamn-standard-nodes`, so no node can circumvent the `wamn:node`
 //! interface and silently break the frozen-flow composition path. `wamn-runner`
@@ -83,7 +83,7 @@ impl Emission {
 /// A node implementation: a pure function of (ctx, run-context, input) — every
 /// effect goes through the granted [`NodeCtx`] capabilities. That purity is
 /// what makes nodes unit-testable against a mock ctx and frozen-flow
-/// composition possible (`docs/contracts/wamn-node.wit`).
+/// composition possible (`docs/archive/contracts/wamn-node.wit`).
 pub trait Node {
     /// The capabilities this node type needs — its row in the dispatch-time
     /// policy table. The runner refuses the dispatch if it cannot grant them

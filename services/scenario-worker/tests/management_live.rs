@@ -28,7 +28,7 @@
 //! and a forged cookie each refuse before any command runs and leave the ledger
 //! and the store untouched.
 //!
-//! The recipe in `docs/build-and-test.md` supplies one disposable database.
+//! The recipe in `docs/archive/build-and-test.md` supplies one disposable database.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

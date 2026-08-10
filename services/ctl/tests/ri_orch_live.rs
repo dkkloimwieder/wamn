@@ -4,7 +4,7 @@
 //! entity that needs the old image on REPLICA IDENTITY DEFAULT.
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a throwaway
-//! Postgres (recipe: docs/build-and-test.md [EVT-RI-ORCH]); skipped cleanly when
+//! Postgres (recipe: docs/archive/build-and-test.md [EVT-RI-ORCH]); skipped cleanly when
 //! unset. Drives the REAL verbs (`publish_catalog::run` / `migrate_catalog::run`)
 //! against the REAL storage SQL (deploy/sql/catalog-schema.sql) + the REAL floor
 //! DDL, proving on the LIVE `pg_class.relreplident`:

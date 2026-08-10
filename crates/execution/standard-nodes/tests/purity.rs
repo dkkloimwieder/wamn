@@ -1,4 +1,4 @@
-//! THE mechanical purity lint (docs/platform-plan.md 5.3): standard node
+//! THE mechanical purity lint (docs/archive/platform-plan.md 5.3): standard node
 //! crates depend on the SDK crate ONLY — never the runner crate — so no node
 //! can circumvent the `wamn:node` interface and silently break the
 //! frozen-flow composition path (5.13). Enforced over `cargo metadata`: the

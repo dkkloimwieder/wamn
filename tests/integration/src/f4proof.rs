@@ -37,7 +37,7 @@
 //! gate owns the throwaway `wamn_f4proof` db, slot, and role), `--nats-url`
 //! (JetStream). The callback binding resolves a strict-JSON credential document
 //! and the custom-node hop uses the shared runner/node-host signing key. Recipe:
-//! docs/build-and-test.md [POC-F4].
+//! docs/archive/build-and-test.md [POC-F4].
 
 use std::collections::HashMap;
 use std::path::PathBuf;

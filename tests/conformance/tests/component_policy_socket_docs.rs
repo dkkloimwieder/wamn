@@ -40,8 +40,8 @@ fn component_policy_module_docs_match_v2_6_1_socket_enforcement() {
         "`UdpBind` remains\nservice-loopback-only",
         "`AllowedIPNameLookups` and the `allowed_hosts` allowlist are independent",
         "`allowed_hosts` governs `wasi:http` only",
-        "`docs/data-path/security-db-path.md` for the layered boundary",
-        "`docs/platform/wash-runtime-fork.md` for the authoritative branch, revision, and\ncarried-policy details",
+        "`docs/archive/data-path/security-db-path.md` for the layered boundary",
+        "`docs/archive/platform/wash-runtime-fork.md` for the authoritative branch, revision, and\ncarried-policy details",
     ] {
         assert!(
             documentation.contains(required),

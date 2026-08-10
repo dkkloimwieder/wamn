@@ -1,5 +1,5 @@
 //! POC-DM1 — build the Material Receiving data model **via the catalog API**, no
-//! UI (`docs/poc/poc-material-receiving.md` §"Data model"; bead wamn-521).
+//! UI (`docs/archive/poc/poc-material-receiving.md` §"Data model"; bead wamn-521).
 //!
 //! This is the API-first build of the POC project data model and the end-to-end
 //! acceptance test of the 2.5 migration engine. It **composes the shipped tools**

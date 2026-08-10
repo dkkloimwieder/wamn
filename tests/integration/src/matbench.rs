@@ -31,7 +31,7 @@
 //!
 //! Needs: `--admin-database-url` (superuser, throwaway DB), `--database-url`
 //! (the wamn_app pool URL), `--nats-url` (JetStream enabled). Recipe:
-//! docs/build-and-test.md [EVT-MAT].
+//! docs/archive/build-and-test.md [EVT-MAT].
 
 use std::path::PathBuf;
 use std::sync::Arc;

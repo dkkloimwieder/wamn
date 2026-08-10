@@ -369,7 +369,7 @@ async fn publish_phase(
     Ok(pass)
 }
 
-/// E14 standing guard (docs/findings.md §3): over a batch shaped like the rows of
+/// E14 standing guard (docs/archive/findings.md §3): over a batch shaped like the rows of
 /// ONE large multi-row transaction — dense consecutive per-event LSNs, one shared
 /// commit txid — the count of published events must equal the count of distinct
 /// `Nats-Msg-Id`s the stream accepted. JetStream turns any msg-id collision into a
@@ -696,7 +696,7 @@ mod tests {
         }
     }
 
-    /// E14 (docs/findings.md §3): the multi-row-txn-shaped batch carries a DENSE
+    /// E14 (docs/archive/findings.md §3): the multi-row-txn-shaped batch carries a DENSE
     /// consecutive per-event LSN — and therefore a distinct `Nats-Msg-Id` — for
     /// every row, by construction. That distinctness is exactly what `Nats-Msg-Id`
     /// dedupe depends on; a collision would be a silent drop.

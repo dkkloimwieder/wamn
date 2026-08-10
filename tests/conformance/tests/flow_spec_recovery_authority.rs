@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-const FLOW_SPEC: &str = include_str!("../../../docs/execution/FLOW-SPEC.md");
-const DOCS_INDEX: &str = include_str!("../../../docs/README.md");
+const FLOW_SPEC: &str = include_str!("../../../docs/archive/execution/FLOW-SPEC.md");
+const DOCS_INDEX: &str = include_str!("../../../docs/archive/README.md");
 const MANIFEST_SOURCE: &str = include_str!("../../../crates/node/manifest/src/lib.rs");
 const CATALOG_SOURCE: &str = include_str!("../../../crates/catalog/model/src/lib.rs");
 const FLOWRUNNER_SOURCE: &str = include_str!("../../../components/execution/flowrunner/src/lib.rs");

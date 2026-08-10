@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
+const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
 const BUILD_RECIPE_HELPER: &str = "tools/build-recipe-test-check";
 const ROOT_MANIFEST: &str = "Cargo.toml";
 const COMPONENT_MANIFEST: &str = "components/Cargo.toml";

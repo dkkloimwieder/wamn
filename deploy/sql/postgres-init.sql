@@ -138,7 +138,7 @@ GRANT USAGE ON ALL SEQUENCES IN SCHEMA s2 TO wamn_app;
 
 -- ===========================================================================
 -- S3 fixture: flow catalog, run-state checkpoints, and an idempotent business
--- sink for the flow-runner PoC (docs/p0-exit-criteria.md S3). Same security
+-- sink for the flow-runner PoC (docs/archive/p0-exit-criteria.md S3). Same security
 -- shape as s2: one app role, tenant separation via the app.tenant claim + RLS.
 -- The flow-runner reads the catalog, checkpoints run state, and writes the
 -- sink entirely through the wamn:postgres capability under its injected claim.

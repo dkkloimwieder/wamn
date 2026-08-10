@@ -8,7 +8,7 @@ license.workspace = true
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# The published JSON Schema contract (docs/contracts/catalog-model.schema.json) is
+# The published JSON Schema contract (docs/archive/contracts/catalog-model.schema.json) is
 # GENERATED from these types (single source of truth); a drift test keeps them
 # in lockstep. Same setup as crates/execution/flow-model (5.1).
 schemars = { workspace = true }

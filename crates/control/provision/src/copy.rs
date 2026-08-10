@@ -4,7 +4,7 @@
 //! cross-org: `copy(src, dst, {include, scope, mode})`. It subsumes the 3.4
 //! definition promotion (`include: definition`), the q3n.10/.11 dump/restore
 //! data path (`include: data`), and the retired tier-move (`include: both` onto
-//! a different cluster, with `cutover`). See `docs/platform/deployment-model.md` §4.
+//! a different cluster, with `cutover`). See `docs/archive/platform/deployment-model.md` §4.
 //!
 //! This module is **pure** (SR3 / house rule 1): the request/step model, the
 //! plan derivation ([`plan_copy`]), and the quiesce/verify SQL + argv builders.
@@ -74,7 +74,7 @@ pub enum CopyScope {
     /// The whole project-env.
     Whole,
     /// A referential-integrity-aware slice of a filtered row set (carries the
-    /// predicate). Specified in `docs/platform/deployment-model.md` §4; not built.
+    /// predicate). Specified in `docs/archive/platform/deployment-model.md` §4; not built.
     Subset(String),
 }
 

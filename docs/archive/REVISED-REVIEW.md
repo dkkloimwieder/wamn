@@ -1,4 +1,4 @@
-> **Archived 2026-07-31** — orphaned amendment of an earlier external review (reviewed `main` at `96f4ca4`); the review corpus's assessment lives in `docs/findings.md` §I/§U/§V. Retained for review-era provenance. (`wamn-role.1`)
+> **Archived 2026-07-31** — orphaned amendment of an earlier external review (reviewed `main` at `96f4ca4`); the review corpus's assessment lives in `docs/archive/findings.md` §I/§U/§V. Retained for review-era provenance. (`wamn-role.1`)
 
 # Amended findings
 
@@ -211,7 +211,7 @@ The current string-scanning system guard should be removed once the resolved-gra
 
 **Accepted and reframed as verification-integrity debt, not ordinary documentation drift.**
 
-`wamn-host` is now a binary-only package, but `docs/build-and-test.md` continues to direct runtime and plugin tests to commands such as:
+`wamn-host` is now a binary-only package, but `docs/archive/build-and-test.md` continues to direct runtime and plugin tests to commands such as:
 
 ```bash
 cargo test -p wamn-host guard_

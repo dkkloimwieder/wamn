@@ -897,7 +897,7 @@ new root-level peer package                         forbidden during migration
 
 <a id="e23"></a>**E23.** Checked-in platform SQL artifacts — catalog, flows, run state/queue, scenarios, per-project system schema, and global registry/provisioning schema — [directory](https://github.com/dkkloimwieder/wamn/tree/ffdbd1e0b2ce6d1c7d1faca23d9efbfe48cebfee/deploy/sql)
 
-<a id="e24"></a>**E24.** Platform plan — existing custom-node request signing is an internal service boundary; application auth/RBAC remains a distinct concern — [permalink](https://github.com/dkkloimwieder/wamn/blob/ffdbd1e0b2ce6d1c7d1faca23d9efbfe48cebfee/docs/platform-plan.md)
+<a id="e24"></a>**E24.** Platform plan — existing custom-node request signing is an internal service boundary; application auth/RBAC remains a distinct concern — [permalink](https://github.com/dkkloimwieder/wamn/blob/ffdbd1e0b2ce6d1c7d1faca23d9efbfe48cebfee/docs/archive/platform-plan.md)
 
 <a id="e25"></a>**E25.** Official wasmCloud references — [`wasi:http/incoming-handler`](https://wasmcloud.com/docs/v1/reference/wasi/incoming-http/), [WIT interface linking](https://wasmcloud.com/docs/overview/interfaces/), [HTTP component examples](https://wasmcloud.com/docs/examples/), and [runtime/Wasmtime relationship](https://wasmcloud.com/docs/v1/ecosystem/wasmtime/)
 

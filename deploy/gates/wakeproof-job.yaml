@@ -9,7 +9,7 @@
 # enqueues or doorbells — the LIVE dispatcher's cron fire must, which is the
 # acceptance criterion.
 #
-# PRECONDITIONS (the live cluster must satisfy these — see docs/build-and-test.md):
+# PRECONDITIONS (the live cluster must satisfy these — see docs/archive/build-and-test.md):
 #   * deploy/platform/waker.yaml is applied (the actuator);
 #   * the runner + its wamn_runner_demo schema (run-state + run-queue + flows) exist;
 #   * the dispatcher's wamn-dispatch-projects Secret has a runner-demo entry

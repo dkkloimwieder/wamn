@@ -50,7 +50,7 @@ fn fixtures_round_trip() {
 #[test]
 fn fixtures_conform_to_published_schema() {
     // The language-neutral contract must accept every example catalog — this
-    // ties docs/contracts/catalog-model.schema.json to the real models the API/designer
+    // ties docs/archive/contracts/catalog-model.schema.json to the real models the API/designer
     // will send.
     let schema = wamn_schema_model::json_schema();
     let mut compiler = Compiler::new();
@@ -74,16 +74,16 @@ fn fixtures_conform_to_published_schema() {
 #[test]
 fn committed_schema_matches_types() {
     // Drift guard: regenerate with
-    //   cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/contracts/catalog-model.schema.json
+    //   cargo run -p wamn-schema-model --example print-catalog-model-schema > docs/archive/contracts/catalog-model.schema.json
     let committed = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../docs/contracts/catalog-model.schema.json"),
+            .join("../../../docs/archive/contracts/catalog-model.schema.json"),
     )
     .expect("read committed schema");
     assert_eq!(
         committed,
         wamn_schema_model::json_schema_string(),
-        "docs/contracts/catalog-model.schema.json is stale — regenerate it (see print-catalog-model-schema example)"
+        "docs/archive/contracts/catalog-model.schema.json is stale — regenerate it (see print-catalog-model-schema example)"
     );
 }
 

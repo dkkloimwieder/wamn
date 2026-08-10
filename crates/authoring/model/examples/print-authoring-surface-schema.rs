@@ -2,7 +2,7 @@
 //!
 //! ```sh
 //! cargo run -p wamn-authoring-model --example print-authoring-surface-schema \
-//!   > docs/contracts/authoring-surface.schema.json
+//!   > docs/archive/contracts/authoring-surface.schema.json
 //! ```
 
 fn main() {

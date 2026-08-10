@@ -8,7 +8,7 @@ use wamn_node_manifest::{
     CapabilityClass, ConnectionRequirement, ExecutableRecoveryContract, ResolvedNodeInterface,
 };
 
-const HTTP_WIT: &[u8] = include_bytes!("../../../../docs/contracts/wamn-connection.wit");
+const HTTP_WIT: &[u8] = include_bytes!("../../../../docs/archive/contracts/wamn-connection.wit");
 
 fn digest(bytes: &[u8]) -> String {
     let value = Sha256::digest(bytes);

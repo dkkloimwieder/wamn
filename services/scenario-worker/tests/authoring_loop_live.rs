@@ -1,6 +1,6 @@
 //! Real-PostgreSQL acceptance gate for the internal flow-authoring loop.
 //!
-//! The ignored recipe in `docs/build-and-test.md` supplies one disposable
+//! The ignored recipe in `docs/archive/build-and-test.md` supplies one disposable
 //! database, distinct canonical app/author credentials, and the flowrunner
 //! component compiled from this checkout.
 

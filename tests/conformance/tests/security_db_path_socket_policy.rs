@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SECURITY_DB_PATH_DOC: &str = "docs/data-path/security-db-path.md";
+const SECURITY_DB_PATH_DOC: &str = "docs/archive/data-path/security-db-path.md";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -33,7 +33,7 @@ fn security_db_path_v2_6_1_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
         "DB-path posture must name the v2.6.1 runtime baseline"
     );
     assert!(
-        document.contains("`docs/platform/wash-runtime-fork.md` is authoritative"),
+        document.contains("`docs/archive/platform/wash-runtime-fork.md` is authoritative"),
         "branch, revision, and carried-policy details must stay in the fork ledger"
     );
 

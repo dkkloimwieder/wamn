@@ -1,7 +1,7 @@
 //! Live-promote gate for 11.2 test cases as catalog data (wamn-828).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** maintenance url (path `/wamn` or
-//! `/postgres`) of a throwaway Postgres (recipe: docs/build-and-test.md
+//! `/postgres`) of a throwaway Postgres (recipe: docs/archive/build-and-test.md
 //! [11.2/wamn-828]); skipped cleanly when unset. Drives the REAL
 //! `copy-project-env --include definition` verb across two freshly-created
 //! project-env DATABASES, proving:

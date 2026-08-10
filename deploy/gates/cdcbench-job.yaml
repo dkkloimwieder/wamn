@@ -12,7 +12,7 @@
 #
 # The curves land in the logs as `=== BEGIN CSV <name> ===` blocks; extract
 # them into docs/results/ceilings-data/ (ccdc-drain / ccdc-drain-series / ccdc-lag /
-# ccdc-lag-series / ccdc-ri) and cite them from docs/results/ceilings.md § C-CDC with
+# ccdc-lag-series / ccdc-ri) and cite them from docs/archive/results/ceilings.md § C-CDC with
 # full provenance. C-WAL-0 (measured pre-CDC on this same fixture class) is
 # the denominator the WAL-delta figures divide by.
 #

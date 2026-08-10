@@ -21,7 +21,7 @@ pub const SCHEMA_VERSION: &str = "0.1";
 ///
 /// `2^53 - 1` is the largest integer an IEEE-754 double holds exactly, so it is
 /// the whole wire domain a JavaScript `Number` can round-trip without loss. The
-/// schema publishes it as `maximum`; see `docs/authoring/authoring-surface.md`.
+/// schema publishes it as `maximum`; see `docs/archive/authoring/authoring-surface.md`.
 pub const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// A `uint64` wire value inside the exactly representable domain `[0, 2^53-1]`.

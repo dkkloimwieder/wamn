@@ -5,7 +5,7 @@
 # HOLDS (control-plane state only): the org/project/env registry (wamn-q3n.1
 # model -> wamn-q3n.3 tables), provisioning-saga state (10.1), platform RBAC
 # (8.1), plan/quota definitions, billing rollups, and platform-level audit.
-# EXCLUDES by design (docs/platform/postgres-topology.md §T1): NO tenant data (catalogs,
+# EXCLUDES by design (docs/archive/platform/postgres-topology.md §T1): NO tenant data (catalogs,
 # run state, payloads, application users live in org/pool clusters), NO
 # credentials (R8b — the registry stores Secret *references*; actual material
 # lives in K8s Secrets resolved by RBAC-holding components), and NO request-path

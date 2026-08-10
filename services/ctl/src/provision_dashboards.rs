@@ -20,7 +20,7 @@
 //!      folder-scoped multitenancy and it keeps per-tenant state with the other
 //!      control-plane provisioning verbs.
 //!
-//! **TENANT ≠ ORG (the load-bearing 9.9 caveat, verified in code — docs/observability/dashboards.md).**
+//! **TENANT ≠ ORG (the load-bearing 9.9 caveat, verified in code — docs/archive/observability/dashboards.md).**
 //! The registry models `Triple{org, project, env}` and has NO tenant table; the
 //! `wamn.tenant` claim that becomes the `wamn_tenant` metric label / the
 //! `span.wamn.tenant` trace attribute / the Loki `tenant` field is a per-workload,
@@ -30,12 +30,12 @@
 //! states "ONE TENANT PER WORKLOAD (v1): a multi-tenant project-env runs one
 //! materializer workload per tenant" — a tenant is a SUB-ORG scope, not the org.
 //! The only per-customer unit the registry enumerates is the ORG (the
-//! isolation/billing unit, docs/platform/postgres-topology.md), so this verb enumerates
+//! isolation/billing unit, docs/archive/platform/postgres-topology.md), so this verb enumerates
 //! orgs and pins the org id as the tenant filter: EXACT under the recommended
 //! single-tenant-per-org convention (`wamn.tenant` == org id), a per-org rollup
 //! otherwise. It never invents a tenant list the registry does not hold.
 //!
-//! **Coverage is PARTIAL (docs/observability/dashboards.md §per-tenant limit).** A per-tenant
+//! **Coverage is PARTIAL (docs/archive/observability/dashboards.md §per-tenant limit).** A per-tenant
 //! dashboard covers only what carries the tenant: run throughput/success, drive
 //! duration, queue depth (`wamn_tenant`), the trace surface (`span.wamn.tenant`,
 //! sliced by the WIT-namespaced span name), and logs (the Loki `tenant` field).
@@ -52,11 +52,11 @@ use tokio_postgres::NoTls;
 
 // ---------------------------------------------------------------------------
 // Metric / attribute names — the SINGLE source both the SRE render and the
-// per-tenant template draw from, drift-guarded against docs/observability/metrics.md
+// per-tenant template draw from, drift-guarded against docs/archive/observability/metrics.md
 // (`metric_names_match_docs`). Prometheus mangling: dots -> underscores,
 // add_metric_suffixes:false, so histograms keep only their structural
 // `_bucket`/`_count`/`_sum` (deploy/infra/otel-collector.yaml). Verified against
-// docs/observability/metrics.md's metric table.
+// docs/archive/observability/metrics.md's metric table.
 // ---------------------------------------------------------------------------
 
 /// run-worker executions counter — labels `outcome`, `wamn_tenant`, `wamn_project`.
@@ -79,7 +79,7 @@ const M_MEM_DENIED: &str = "wamn_memory_denied";
 const M_API_REQUESTS: &str = "wamn_api_requests";
 
 /// Every metric name a panel references — the drift-guard set (each must appear
-/// verbatim in docs/observability/metrics.md). Consumed only by `metric_names_match_docs`.
+/// verbatim in docs/archive/observability/metrics.md). Consumed only by `metric_names_match_docs`.
 #[cfg(test)]
 const ALL_METRICS: &[&str] = &[
     M_RUN_EXECUTIONS,
@@ -726,20 +726,20 @@ mod tests {
     use super::*;
 
     /// The dashboards-as-code drift guard: every metric name a panel references
-    /// must appear verbatim in docs/observability/metrics.md (the 9.8 metric-set source of
+    /// must appear verbatim in docs/archive/observability/metrics.md (the 9.8 metric-set source of
     /// truth). A corrupted constant (or a doc rename) trips this.
     #[test]
     fn metric_names_match_docs() {
-        // docs/observability/metrics.md spells names in OTel form, mixing `.` (namespace) with
+        // docs/archive/observability/metrics.md spells names in OTel form, mixing `.` (namespace) with
         // `_` (unit suffix: `duration_ms`, `budget_bytes`) and a brace family
         // (`wamn.postgres.pool.{size,available,waiting}`). Normalize both sides'
         // separators to `_`, then accept either a literal family match OR the
         // brace form `<stem>_{…<leaf>…}` — corruption of any segment still trips.
         let doc = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../docs/observability/metrics.md"
+            "/../../docs/archive/observability/metrics.md"
         ))
-        .expect("read docs/observability/metrics.md");
+        .expect("read docs/archive/observability/metrics.md");
         let doc_n = doc.replace('.', "_");
         for m in ALL_METRICS {
             // Drop a structural histogram suffix (the scrape base is documented).
@@ -754,7 +754,7 @@ mod tests {
             });
             assert!(
                 literal || brace,
-                "metric {m:?} (base {base:?}) not documented in docs/observability/metrics.md"
+                "metric {m:?} (base {base:?}) not documented in docs/archive/observability/metrics.md"
             );
         }
     }

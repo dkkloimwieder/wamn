@@ -12,7 +12,7 @@
 # Then tears down its own residue (holds/catalog tables + the gate flow's rows)
 # and restores the runner scale floored at 1.
 #
-# PRECONDITIONS (see docs/build-and-test.md + the wakeproof-job header):
+# PRECONDITIONS (see docs/archive/build-and-test.md + the wakeproof-job header):
 #   * deploy/platform/waker.yaml applied (the scale actuator);
 #   * deploy/gates/serve-echo.yaml applied (the notify reflector, serve-echo:8091,
 #     already in the runner's host-level --allowed-hosts);

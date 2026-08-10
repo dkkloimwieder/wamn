@@ -156,7 +156,7 @@ pub enum CaptureMode {
     Full,
     /// Secret scrubbing applied to the STORED payloads AND the preview
     /// (`redacted = true`). A replay still runs, but replays the scrubbed values
-    /// — the documented capture/replay tradeoff (see `docs/execution/run-state.md`).
+    /// — the documented capture/replay tradeoff (see `docs/archive/execution/run-state.md`).
     Scrubbed,
     /// Only the preview head + size + hash are stored; the payloads are NULL, so
     /// the run reconstructs to `CaptureOff` (non-replayable).
@@ -187,7 +187,7 @@ impl CaptureMode {
 /// Per-node ordering (the 5.11 plan wording) is deferred: the queue's dispatch
 /// unit is the **run** (records map 1:1 to runs, D9), so ordering is declared
 /// on the flow, not per node — a later refinement if per-node streams are ever
-/// needed. See `docs/execution/run-queue.md` §Flow-level ordering declaration.
+/// needed. See `docs/archive/execution/run-queue.md` §Flow-level ordering declaration.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "mode", rename_all = "kebab-case")]
 pub enum Ordering {

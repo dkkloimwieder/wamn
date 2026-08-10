@@ -9,7 +9,7 @@
 //! PURE (no capabilities): the value derives from the TICK the runner already
 //! handed the run, which is deterministic and virtual-time-friendly — under the
 //! gate's virtual clock a 48h offset maps to wall-clock seconds by construction
-//! (`docs/poc/poc-material-receiving.md` :39). No `SystemClock`: parsing and
+//! (`docs/archive/poc/poc-material-receiving.md` :39). No `SystemClock`: parsing and
 //! arithmetic are pure functions of the admitted trigger payload.
 //!
 //! Config:

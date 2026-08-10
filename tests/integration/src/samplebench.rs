@@ -26,7 +26,7 @@
 //!      the server rejects each publish and `publish-rejected` surfaces to the
 //!      guest as a `js-error` (the guest reports it, stores nothing).
 //!
-//! Needs `--nats-url` (JetStream enabled). Recipe: docs/build-and-test.md
+//! Needs `--nats-url` (JetStream enabled). Recipe: docs/archive/build-and-test.md
 //! [E10-E2E].
 
 use std::path::PathBuf;

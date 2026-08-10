@@ -12,8 +12,8 @@ use std::path::{Path, PathBuf};
 
 const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
-const BUILD_AND_TEST_DOC: &str = "docs/build-and-test.md";
-const PLAN_DOCUMENT: &str = "docs/PLAN/PLAN.md";
+const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
+const PLAN_DOCUMENT: &str = "docs/archive/PLAN/PLAN.md";
 const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 
@@ -318,7 +318,7 @@ fn validate_registry(
             registry.schema_version
         ));
     }
-    if !registry.authority.contains("docs/PLAN/PLAN.md")
+    if !registry.authority.contains("docs/archive/PLAN/PLAN.md")
         || !registry.authority.contains("intentionally absent")
         || registry.registry_owner != "bd:wamn-2jdm.2"
         || !registry
@@ -744,8 +744,8 @@ fn gate_evidence_terminology_has_no_legacy_aliases() {
         "architecture/gate-registry.json",
         "architecture/package-roles.json",
         "architecture/workspace-tiers.json",
-        "docs/build-and-test.md",
-        "docs/findings.md",
+        "docs/archive/build-and-test.md",
+        "docs/archive/findings.md",
         "tests/conformance/src/lib.rs",
         "tests/conformance/src/kubernetes_gate_verdict.rs",
         "tests/conformance/tests/gate_mutation_evidence.rs",

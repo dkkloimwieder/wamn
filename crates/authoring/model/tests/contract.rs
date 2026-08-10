@@ -791,7 +791,7 @@ fn every_uint64_schema_site_publishes_the_safe_integer_maximum() {
     let committed: Value = serde_json::from_str(
         &std::fs::read_to_string(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../../docs/contracts/authoring-surface.schema.json"),
+                .join("../../../docs/archive/contracts/authoring-surface.schema.json"),
         )
         .expect("read committed authoring schema"),
     )
@@ -924,7 +924,7 @@ fn assert_out_of_domain_refuses(value: u64) {
 fn committed_schema_matches_public_types() {
     let committed = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../docs/contracts/authoring-surface.schema.json"),
+            .join("../../../docs/archive/contracts/authoring-surface.schema.json"),
     )
     .expect("read committed authoring schema");
     assert_eq!(

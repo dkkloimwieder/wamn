@@ -5,13 +5,13 @@
 //! provisioned `(org, project, env)` databases — each mapped to the CNPG
 //! `Cluster` that holds it and a **reference** to the K8s Secret that
 //! credentials it. It stores no credentials (R8b) and no tenant data; it lives
-//! on the T1 system cluster (`docs/platform/postgres-topology.md` §T1).
+//! on the T1 system cluster (`docs/archive/platform/postgres-topology.md` §T1).
 //!
 //! [`Triple`] is the first-class control-plane identity every subsystem speaks —
 //! provisioning, subdomain routing, dispatcher registration, and promotion
 //! tooling key off it so nothing parses names.
 //!
-//! ## The generic deployment model (D18, `docs/platform/deployment-model.md`)
+//! ## The generic deployment model (D18, `docs/archive/platform/deployment-model.md`)
 //!
 //! The closed `Env` / `Tier` enums are gone. `env` is a validated [`Env`] slug
 //! (the default set `dev`/`prod` is **data** — rows in [`EnvPolicy`] — not a
