@@ -3,6 +3,21 @@
 verified-against: `e5de4356d9c827f86264270b34957194b8d9669e` · 2026-08-09
 errata folded through round 10
 
+> **Execution amendments (owner-ratified 2026-08-10, branch `mvp`,
+> tracker `wamn-0h0g`).** **Versioning is pinned at 0.1 for the whole
+> program**: every Cargo package version, WIT package version,
+> wire-contract/schema-version literal, and versioned artifact label is
+> 0.1 until MVP completes (greenfield — no compatibility risk).
+> Wherever this document says contract/schema/world "0.2", read: the
+> revised contract, shipped versioned 0.1. Wherever it says "0.1 is
+> refused", read: the prior contract surface is deleted wholesale in
+> the same change — no prior-version acceptance path exists and no
+> version numeral ever bumps. Pin issue: `wamn-0h0g.10.7`. Further:
+> all other docs are archived under `docs/archive/` (this charter is
+> the only live document, `wamn-0h0g.12.9`); all build artifacts were
+> purged from the repo and host Docker (`wamn-0h0g.1.5`); the full
+> execution rulings (1–8) live in the tracker notes.
+
 **Principle.** Product-thesis properties are mandatory acceptance
 *outcomes*; no supporting mechanism is exempt, and an implementation
 survives only as the smallest coherent way to satisfy its outcome. Sunk
