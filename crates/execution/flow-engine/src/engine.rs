@@ -29,9 +29,10 @@
 use std::collections::{HashMap, VecDeque};
 
 use serde_json::Value;
+use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{EntryKind, FailConfig};
 
-use crate::outcome::{ErrorDetail, NodeError, NodeOutcome};
+use crate::outcome::NodeOutcome;
 use crate::plan::Plan;
 use crate::retry::RetryPolicy;
 use crate::throttle::ThrottleKey;
@@ -782,10 +783,6 @@ impl<'f> Plan<'f> {
                     detail,
                     ExecutionFailureKind::InvalidInput,
                 );
-            }
-            NodeOutcome::Error(NodeError::Cancelled) => {
-                state.current = None;
-                state.status = ExecutionStatus::Cancelled;
             }
         }
         Ok(())

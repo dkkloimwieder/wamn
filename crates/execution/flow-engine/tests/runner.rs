@@ -6,10 +6,11 @@
 use std::cell::Cell;
 
 use serde_json::{Value, json};
+use wamn_flow::node_contract::{ErrorDetail, NodeError, RateLimitDetail};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
     ConcurrencyGate, Dispatch, EngineError, ExecutionFailureKind, ExecutionState, ExecutionStatus,
-    NodeError, NodeOutcome, Plan, RateLimitDetail, RetryPolicy, Step, ThrottleKey, ThrottleTable,
+    NodeOutcome, Plan, RetryPolicy, Step, ThrottleKey, ThrottleTable,
 };
 
 /// A recorded drive of one run to a terminal status.
@@ -296,7 +297,7 @@ fn occurrence_is_stable_across_retries_of_one_visit() {
     let t = run(&plan, "r1", json!({}), |_| {
         let n = attempts.replace(attempts.get() + 1);
         if n < 2 {
-            NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x")))
+            NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("x")))
         } else {
             NodeOutcome::ok(json!({}))
         }
@@ -326,7 +327,7 @@ fn an_error_routed_visit_advances_the_occurrence() {
     let first = Cell::new(true);
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
         "b" if first.replace(false) => {
-            NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("boom")))
+            NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("boom")))
         }
         _ => NodeOutcome::ok(json!({ "at": d.node })),
     });
@@ -370,7 +371,7 @@ fn terminal_error_routes_to_error_port_and_continues() {
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
-        "b" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail {
+        "b" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail {
             message: "boom".into(),
             code: Some("HTTP_500".into()),
             data: None,
@@ -398,7 +399,7 @@ fn terminal_error_with_no_error_path_fails_the_run() {
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
-        "b" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("boom"))),
+        "b" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("boom"))),
         _ => NodeOutcome::ok(json!({})),
     });
     assert_eq!(t.status, ExecutionStatus::Failed);
@@ -423,9 +424,7 @@ fn retryable_retries_then_succeeds_with_stable_idempotency_key() {
         let n = attempts.get();
         attempts.set(n + 1);
         if n < 2 {
-            NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
-                "try again",
-            )))
+            NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("try again")))
         } else {
             NodeOutcome::ok(json!({ "ok": true }))
         }
@@ -457,7 +456,7 @@ fn retry_budget_exhausts_to_failure() {
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| {
-        NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("nope")))
+        NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("nope")))
     });
     assert_eq!(t.status, ExecutionStatus::Failed);
     assert_eq!(t.nodes().len(), 3); // default max_attempts = 3
@@ -479,7 +478,7 @@ fn retry_config_overrides_budget_and_routes_to_error_path_when_exhausted() {
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
-        "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
+        "b" => NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
@@ -500,7 +499,7 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
     let t = run(&plan, "r1", json!({}), |_| {
         if first.replace(false) {
             NodeOutcome::Error(NodeError::RateLimited(RateLimitDetail {
-                detail: wamn_runner::ErrorDetail::msg("429"),
+                detail: ErrorDetail::msg("429"),
                 retry_after_ms: Some(5000),
                 target_host: Some("erp.example".into()),
             }))
@@ -531,9 +530,7 @@ fn invalid_input_is_never_retried() {
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| {
-        NodeOutcome::Error(NodeError::InvalidInput(wamn_runner::ErrorDetail::msg(
-            "bad shape",
-        )))
+        NodeOutcome::Error(NodeError::InvalidInput(ErrorDetail::msg("bad shape")))
     });
     assert_eq!(t.status, ExecutionStatus::Failed);
     assert_eq!(t.nodes().len(), 1); // exactly one dispatch, no retry
@@ -541,23 +538,6 @@ fn invalid_input_is_never_retried() {
         t.state.failure().unwrap().kind,
         ExecutionFailureKind::InvalidInput
     );
-}
-
-#[test]
-fn cancelled_stops_the_run_and_does_not_fire_error_branches() {
-    let f = flow(
-        r#"{"schema-version":"0.1","flow-id":"cancel","version":1,
-            "trigger":{"type":"manual"},"entry":"b",
-            "nodes":[{"id":"b","type":"call"},{"id":"h","type":"handler"}],
-            "edges":[{"from":"b","from-port":"error","to":"h"}]}"#,
-    );
-    let plan = compile(&f).unwrap();
-    let t = run(&plan, "r1", json!({}), |d| match d.node.as_str() {
-        "b" => NodeOutcome::Error(NodeError::Cancelled),
-        _ => NodeOutcome::ok(json!({})),
-    });
-    assert_eq!(t.status, ExecutionStatus::Cancelled);
-    assert_eq!(t.nodes(), ["b"]); // error branch h did NOT fire
 }
 
 // ---- dispatch context -----------------------------------------------------
@@ -1001,9 +981,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
 
     // LIVE: a fails terminally -> error-routes to h; ok never runs; h succeeds.
     let live = run(&plan, "live", json!({}), |d| match d.node.as_str() {
-        "a" => NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::coded(
-            "HTTP_500", "boom",
-        ))),
+        "a" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded("HTTP_500", "boom"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
     assert_eq!(live.status, ExecutionStatus::Completed);
@@ -1357,9 +1335,7 @@ fn retries_count_against_the_budget() {
                 plan.apply(
                     &mut st,
                     &d,
-                    NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
-                        "flaky",
-                    ))),
+                    NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("flaky"))),
                     u64::MAX / 2,
                 )
                 .unwrap();
@@ -1576,7 +1552,7 @@ fn wait_carries_the_pending_retry_attempt() {
     plan.apply(
         &mut st,
         &d,
-        NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("flaky"))),
+        NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("flaky"))),
         0,
     )
     .unwrap();
@@ -1677,9 +1653,7 @@ fn retry_budget_survives_parks_to_exhaustion() {
     let f = one_retryable_node("");
     let plan = compile(&f).unwrap();
     let t = drive_across_parks(&plan, "r1", json!({}), 50, |_| {
-        NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg(
-            "always",
-        )))
+        NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("always")))
     });
     assert_eq!(t.status, ExecutionStatus::Failed);
     assert_eq!(t.failure, Some(ExecutionFailureKind::RetryExhausted));
@@ -1703,7 +1677,7 @@ fn retry_budget_survives_parks_then_error_routes_when_exhausted() {
     );
     let plan = compile(&f).unwrap();
     let t = drive_across_parks(&plan, "r1", json!({}), 50, |d| match d.node.as_str() {
-        "b" => NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("x"))),
+        "b" => NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("x"))),
         _ => NodeOutcome::ok(json!({ "handled": true })),
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
@@ -1729,7 +1703,7 @@ fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
         _ => {
             let n = b_attempts.replace(b_attempts.get() + 1);
             if n < 2 {
-                NodeOutcome::Error(NodeError::Retryable(wamn_runner::ErrorDetail::msg("flaky")))
+                NodeOutcome::Error(NodeError::Retryable(ErrorDetail::msg("flaky")))
             } else {
                 NodeOutcome::ok(json!({ "at": "b" }))
             }
@@ -1749,9 +1723,6 @@ fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
 /// schema crate); this pins them to the engine's `wamn_flow` values.
 #[test]
 fn node_contract_port_constants_mirror_the_flow_schema() {
-    assert_eq!(wamn_flow::node_contract::MAIN_PORT, wamn_runner::MAIN_PORT);
-    assert_eq!(
-        wamn_flow::node_contract::ERROR_PORT,
-        wamn_runner::ERROR_PORT
-    );
+    assert_eq!(wamn_flow::MAIN_PORT, wamn_runner::MAIN_PORT);
+    assert_eq!(wamn_flow::ERROR_PORT, wamn_runner::ERROR_PORT);
 }

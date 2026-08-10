@@ -9,12 +9,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// The default output port.
-pub const MAIN_PORT: &str = "main";
-
-/// The reserved error-path port.
-pub const ERROR_PORT: &str = "error";
-
 /// Whether a standard node can perform an external effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -62,7 +56,6 @@ pub struct RunContext<'a> {
     pub node_id: &'a str,
     pub connection: Option<&'a str>,
     pub attempt: u32,
-    pub idempotency_key: &'a str,
     pub deadline_ms: Option<u64>,
     pub traceparent: Option<&'a str>,
     pub tracestate: Option<&'a str>,
@@ -161,14 +154,6 @@ pub enum PgCapError {
     QueryError { code: String, message: String },
 }
 
-/// A credential-resolution failure.
-#[derive(Debug, Clone, PartialEq)]
-pub enum CredentialCapError {
-    NotGranted,
-    NotFound,
-    Unavailable,
-}
-
 /// The runner-implemented capability surface used by standard nodes.
 pub trait NodeCtx {
     fn http(&mut self, req: &HttpRequest) -> Result<HttpResponse, HttpCapError>;
@@ -181,10 +166,6 @@ pub trait NodeCtx {
 
     fn raw_sql_enabled(&self) -> bool {
         false
-    }
-
-    fn credential(&mut self) -> Result<String, CredentialCapError> {
-        Err(CredentialCapError::NotGranted)
     }
 }
 
@@ -201,7 +182,7 @@ impl Emission {
     pub fn main(payload: Value) -> Self {
         Self {
             payload,
-            port: MAIN_PORT.to_string(),
+            port: crate::MAIN_PORT.to_string(),
             ctx: None,
         }
     }
@@ -243,7 +224,6 @@ pub enum NodeError {
     RateLimited(RateLimitDetail),
     Terminal(ErrorDetail),
     InvalidInput(ErrorDetail),
-    Cancelled,
 }
 
 /// Routing and display metadata carried by a node failure.
@@ -303,6 +283,7 @@ mod tests {
     use serde_json::json;
 
     use super::{EffectPolicy, Emission, NodeInterface};
+    use crate::MAIN_PORT;
 
     #[test]
     fn successful_emission_may_replace_context() {
@@ -321,7 +302,7 @@ mod tests {
 
         let interface = NodeInterface {
             node_type: "transform".to_string(),
-            output_ports: vec!["main".to_string()],
+            output_ports: vec![MAIN_PORT.to_string()],
             capabilities: Vec::new(),
             connection_requirements: Vec::new(),
             effect_policy: EffectPolicy::Pure,

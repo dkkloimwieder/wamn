@@ -3,10 +3,12 @@
 //! `as_sql`/`from_sql` (the SQL literals are exactly the serde kebab-case names,
 //! tied to `deploy/sql/run-state.sql` by a drift-guard test). `From<…>` conversions
 //! adapt the pure-engine enums
-//! (`wamn_runner::{ExecutionStatus, ExecutionFailureKind, NodeError}`)
+//! (`wamn_runner::{ExecutionStatus, ExecutionFailureKind}` and
+//! `wamn_flow::node_contract::NodeError`)
 //! into their persisted form, the way `wamn_pg_core::SqlValue` mirrors the WIT.
 
 use serde::{Deserialize, Serialize};
+use wamn_flow::node_contract::NodeError;
 
 /// A run's lifecycle status. `Dispatched` is the write-ahead pre-state (a run row
 /// exists before the runner picks it up); `InfrastructureFailure` is a janitor
@@ -196,14 +198,13 @@ impl NodeErrorKind {
     }
 }
 
-impl From<&wamn_runner::NodeError> for NodeErrorKind {
-    fn from(e: &wamn_runner::NodeError) -> NodeErrorKind {
+impl From<&NodeError> for NodeErrorKind {
+    fn from(e: &NodeError) -> NodeErrorKind {
         match e {
-            wamn_runner::NodeError::Retryable(_) => NodeErrorKind::Retryable,
-            wamn_runner::NodeError::RateLimited(_) => NodeErrorKind::RateLimited,
-            wamn_runner::NodeError::Terminal(_) => NodeErrorKind::Terminal,
-            wamn_runner::NodeError::InvalidInput(_) => NodeErrorKind::InvalidInput,
-            wamn_runner::NodeError::Cancelled => NodeErrorKind::Cancelled,
+            NodeError::Retryable(_) => NodeErrorKind::Retryable,
+            NodeError::RateLimited(_) => NodeErrorKind::RateLimited,
+            NodeError::Terminal(_) => NodeErrorKind::Terminal,
+            NodeError::InvalidInput(_) => NodeErrorKind::InvalidInput,
         }
     }
 }

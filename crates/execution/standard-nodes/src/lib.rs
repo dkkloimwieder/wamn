@@ -48,6 +48,7 @@ use std::fmt;
 use std::sync::LazyLock;
 
 use serde_json::Value;
+use wamn_flow::MAIN_PORT;
 use wamn_flow::node_contract::{
     Capability, ConnectionRequirement, EffectPolicy, Emission, ErrorDetail, Node, NodeCtx,
     NodeError, NodeInterface, RunContext,
@@ -150,103 +151,62 @@ impl fmt::Display for DescriptorError {
 
 impl std::error::Error for DescriptorError {}
 
-static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> = LazyLock::new(|| {
-    [
-        pure_descriptor(NODE_TYPES[0], &["main"]),
-        pure_descriptor(NODE_TYPES[1], &["main"]),
-        pure_descriptor(NODE_TYPES[2], &["main"]),
-        pure_descriptor(NODE_TYPES[3], &["main"]),
-        pure_descriptor(NODE_TYPES[4], &["false", "true"]),
-        http_descriptor(NODE_TYPES[5]),
-        postgres_descriptor(NODE_TYPES[6], &[Capability::Postgres]),
-        postgres_descriptor(NODE_TYPES[7], &[Capability::Postgres, Capability::RawSql]),
-        pure_descriptor(NODE_TYPES[8], &["main"]),
-    ]
-});
+static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> =
+    LazyLock::new(|| std::array::from_fn(|index| legacy_descriptor(&INTERFACES[index])));
 
-fn descriptor(
-    node_type: &str,
-    output_ports: &[&str],
-    capability_classes: Vec<CapabilityClass>,
-    executable_recovery: ExecutableRecoveryContract,
-    dispatch_capabilities: &'static [Capability],
-) -> NodeDescriptor {
+fn legacy_descriptor(interface: &'static NodeInterface) -> NodeDescriptor {
+    let is_http = interface.capabilities.contains(&Capability::HttpEgress);
+    let executable_recovery = match interface.effect_policy {
+        EffectPolicy::Pure => ExecutableRecoveryContract::pure(),
+        EffectPolicy::Effectful => ExecutableRecoveryContract::effectful(is_http),
+    };
+    let capability_classes = match interface.effect_policy {
+        EffectPolicy::Pure => vec![CapabilityClass::Pure],
+        EffectPolicy::Effectful => capability_classes(&interface.capabilities),
+    };
+    let connection_requirements = interface
+        .connection_requirements
+        .iter()
+        .map(|requirement| LegacyConnectionRequirement {
+            requirement_type: requirement.requirement_type.clone(),
+            contract: requirement.contract.clone(),
+        })
+        .collect();
+    let (connection_recovery_support, portable_connections) = if is_http {
+        let connection = ConnectionTypeDescriptor::http_v1();
+        (
+            vec![ConnectionRecoverySupport {
+                descriptor: connection.clone(),
+                supported_modes: vec![
+                    ExecutableConnectionRecoveryMode::NeverReplay,
+                    ExecutableConnectionRecoveryMode::IdempotentWithKey {
+                        claim: ExecutableRecoveryClaim::StableKeyDedupV1,
+                        key_propagation: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
+                    },
+                ],
+            }],
+            vec![
+                PortableConnectionRequirement::never_replay(connection.clone()),
+                PortableConnectionRequirement::stable_key_dedup_v1(connection, 86_400_000),
+            ],
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
     NodeDescriptor {
         descriptor_version: STANDARD_NODE_DESCRIPTOR_VERSION.to_string(),
-        node_type: node_type.to_string(),
+        node_type: interface.node_type.clone(),
         interface_contract: STANDARD_NODE_INTERFACE.to_string(),
-        output_ports: output_ports
-            .iter()
-            .map(|port| (*port).to_string())
-            .collect(),
+        output_ports: interface.output_ports.clone(),
         capability_classes,
-        connection_requirements: Vec::new(),
+        connection_requirements,
         platform_revision: STANDARD_NODE_PLATFORM_REVISION.to_string(),
         executable_recovery,
-        connection_recovery_support: Vec::new(),
-        portable_connections: Vec::new(),
-        dispatch_capabilities,
+        connection_recovery_support,
+        portable_connections,
+        dispatch_capabilities: interface.capabilities.as_slice(),
     }
-}
-
-fn pure_descriptor(node_type: &str, output_ports: &[&str]) -> NodeDescriptor {
-    descriptor(
-        node_type,
-        output_ports,
-        vec![CapabilityClass::Pure],
-        ExecutableRecoveryContract::pure(),
-        &[],
-    )
-}
-
-fn effectful_descriptor(
-    node_type: &str,
-    dispatch_capabilities: &'static [Capability],
-) -> NodeDescriptor {
-    descriptor(
-        node_type,
-        &["main"],
-        capability_classes(dispatch_capabilities),
-        ExecutableRecoveryContract::effectful(false),
-        dispatch_capabilities,
-    )
-}
-
-fn http_descriptor(node_type: &str) -> NodeDescriptor {
-    let connection = ConnectionTypeDescriptor::http_v1();
-    let mut descriptor = effectful_descriptor(node_type, &[Capability::HttpEgress]);
-    descriptor.executable_recovery = ExecutableRecoveryContract::effectful(true);
-    descriptor.connection_requirements = vec![LegacyConnectionRequirement {
-        requirement_type: connection.requirement_type.clone(),
-        contract: connection.contract.clone(),
-    }];
-    descriptor.connection_recovery_support = vec![ConnectionRecoverySupport {
-        descriptor: connection.clone(),
-        supported_modes: vec![
-            ExecutableConnectionRecoveryMode::NeverReplay,
-            ExecutableConnectionRecoveryMode::IdempotentWithKey {
-                claim: ExecutableRecoveryClaim::StableKeyDedupV1,
-                key_propagation: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
-            },
-        ],
-    }];
-    descriptor.portable_connections = vec![
-        PortableConnectionRequirement::never_replay(connection.clone()),
-        PortableConnectionRequirement::stable_key_dedup_v1(connection, 86_400_000),
-    ];
-    descriptor
-}
-
-fn postgres_descriptor(
-    node_type: &str,
-    dispatch_capabilities: &'static [Capability],
-) -> NodeDescriptor {
-    let mut descriptor = effectful_descriptor(node_type, dispatch_capabilities);
-    descriptor.connection_requirements = vec![LegacyConnectionRequirement {
-        requirement_type: "postgres".to_string(),
-        contract: "wamn:connection/postgres@0.1.0".to_string(),
-    }];
-    descriptor
 }
 
 fn capability_classes(capabilities: &[Capability]) -> Vec<CapabilityClass> {
@@ -313,15 +273,15 @@ pub fn resolve_descriptor(
 
 static INTERFACES: LazyLock<[NodeInterface; 9]> = LazyLock::new(|| {
     [
-        pure_interface(NODE_TYPES[0], &["main"]),
-        pure_interface(NODE_TYPES[1], &["main"]),
-        pure_interface(NODE_TYPES[2], &["main"]),
-        pure_interface(NODE_TYPES[3], &["main"]),
+        pure_interface(NODE_TYPES[0], &[MAIN_PORT]),
+        pure_interface(NODE_TYPES[1], &[MAIN_PORT]),
+        pure_interface(NODE_TYPES[2], &[MAIN_PORT]),
+        pure_interface(NODE_TYPES[3], &[MAIN_PORT]),
         pure_interface(NODE_TYPES[4], &["false", "true"]),
         http_interface(NODE_TYPES[5]),
         postgres_interface(NODE_TYPES[6], &[Capability::Postgres]),
         postgres_interface(NODE_TYPES[7], &[Capability::Postgres, Capability::RawSql]),
-        pure_interface(NODE_TYPES[8], &["main"]),
+        pure_interface(NODE_TYPES[8], &[MAIN_PORT]),
     ]
 });
 
@@ -355,7 +315,7 @@ fn effectful_interface(
 ) -> NodeInterface {
     node_interface(
         node_type,
-        &["main"],
+        &[MAIN_PORT],
         capabilities,
         connection_requirements,
         EffectPolicy::Effectful,
@@ -473,6 +433,28 @@ mod interface_tests {
                 interface.capabilities,
                 "interface is the retained public authority for {}",
                 interface.node_type
+            );
+        }
+    }
+
+    #[test]
+    fn temporary_legacy_descriptors_derive_their_structure_from_interfaces() {
+        for interface in INTERFACES.iter() {
+            let descriptor =
+                describe(&interface.node_type).expect("interface has a legacy descriptor");
+            assert_eq!(descriptor.node_type, interface.node_type);
+            assert_eq!(descriptor.output_ports, interface.output_ports);
+            assert_eq!(descriptor.dispatch_capabilities, interface.capabilities);
+            assert_eq!(
+                descriptor.connection_requirements,
+                interface
+                    .connection_requirements
+                    .iter()
+                    .map(|requirement| LegacyConnectionRequirement {
+                        requirement_type: requirement.requirement_type.clone(),
+                        contract: requirement.contract.clone(),
+                    })
+                    .collect::<Vec<_>>()
             );
         }
     }

@@ -311,7 +311,6 @@ dependencies = [
  "wamn-node-guest",
  "wamn-node-invoke",
  "wamn-node-manifest",
- "wamn-node-sdk",
  "wamn-run-state",
  "wamn-runner",
  "wamn-standard-nodes",
@@ -1122,6 +1121,7 @@ name = "wamn-node-guest"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "wamn-flow",
  "wamn-node-sdk",
  "wit-bindgen 0.44.0",
 ]
@@ -1179,7 +1179,6 @@ dependencies = [
  "serde",
  "serde_json",
  "wamn-flow",
- "wamn-node-sdk",
 ]
 
 [[package]]
@@ -1198,8 +1197,8 @@ dependencies = [
  "jmespath",
  "serde_json",
  "wamn-entity-access",
+ "wamn-flow",
  "wamn-node-manifest",
- "wamn-node-sdk",
  "wamn-pg-core",
  "wamn-schema-model",
 ]

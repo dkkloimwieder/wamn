@@ -1,9 +1,10 @@
 //! The capability-bearing twin of the no-caps scaffolding (SR2): the
-//! `wamn_node_sdk::NodeCtx` facade a component SHELL implements over its real
+//! `wamn_flow::node_contract::NodeCtx` facade a component shell implements over its real
 //! imports — `wamn:postgres` for data and the trusted HTTP effect — plus
-//! the WIT↔SDK value mirrors both directions. `components/execution/flowrunner` grew
-//! the first copy of this glue; this module is where it lives so the next
-//! capability-bearing component links it instead of copying it.
+//! the WIT↔flow-model contract value mirrors both directions.
+//! `components/execution/flowrunner` grew the first copy of this glue; this
+//! module is where it lives so the next capability-bearing component links it
+//! instead of copying it.
 //!
 //! Feature-gated (`caps`) so the default build stays exactly the zero-import
 //! scaffolding: a custom node built on `export_node!` alone must remain
@@ -13,7 +14,7 @@
 //! pinned in `wit-caps/world.wit`; ordinary custom-node worlds are not granted
 //! the trusted runner effect.
 
-use wamn_node_sdk as sdk;
+use wamn_flow::node_contract as sdk;
 
 mod bindings {
     wit_bindgen::generate!({
@@ -45,10 +46,10 @@ pub struct HttpEffectContext {
     pub requirement_name: String,
 }
 
-/// The component-shell capability facade: dispatch `wamn-standard-nodes` (or any
-/// SDK-authored node) over the component's real imports. The D8 raw-SQL flag
-/// defaults OFF — per-project enablement wiring lands with the user-SQL role
-/// split (wamn-1nd).
+/// The component-shell capability facade: dispatch `wamn-standard-nodes`
+/// against the flow-model contract over the component's real imports. The D8
+/// raw-SQL flag defaults OFF — per-project enablement wiring lands with the
+/// user-SQL role split (wamn-1nd).
 ///
 #[derive(Default)]
 pub struct CapsCtx {
@@ -105,7 +106,7 @@ impl sdk::NodeCtx for CapsCtx {
     }
 }
 
-/// SDK value → binding value (both are 1:1 mirrors of the WIT `sql-value`).
+/// Flow-model contract value → binding value (both mirror the WIT `sql-value`).
 fn sdk_to_wit(v: &sdk::PgValue) -> SqlValue {
     match v {
         sdk::PgValue::Null => SqlValue::Null,
@@ -122,7 +123,7 @@ fn sdk_to_wit(v: &sdk::PgValue) -> SqlValue {
     }
 }
 
-/// Binding value → SDK value.
+/// Binding value → flow-model contract value.
 fn wit_to_sdk(v: &SqlValue) -> sdk::PgValue {
     match v {
         SqlValue::Null => sdk::PgValue::Null,
@@ -139,7 +140,7 @@ fn wit_to_sdk(v: &SqlValue) -> sdk::PgValue {
     }
 }
 
-/// Binding pg-error → SDK capability error (1:1; the node classifies).
+/// Binding pg-error → flow-model capability error (the node classifies).
 fn wit_err_to_sdk(e: PgError) -> sdk::PgCapError {
     match e {
         PgError::SerializationFailure => sdk::PgCapError::SerializationFailure,
@@ -227,8 +228,8 @@ fn trusted_http_effect(
 mod tests {
     use super::*;
 
-    /// Every sql-value variant survives the SDK->WIT->SDK round trip — the
-    /// two mirrors cannot drift apart variant-for-variant.
+    /// Every sql-value variant survives the contract→WIT→contract round trip —
+    /// the two mirrors cannot drift apart variant-for-variant.
     #[test]
     fn sql_value_mirrors_round_trip() {
         let vals = [

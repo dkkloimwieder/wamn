@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
+use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
-    ApplyError, CallerState, EngineError, ErrorDetail, ExecutionStatus, NodeError, NodeOutcome,
-    Plan, Recorded, ReservedStep, SeedError, Step,
+    ApplyError, CallerState, EngineError, ExecutionStatus, NodeOutcome, Plan, Recorded,
+    ReservedStep, SeedError, Step,
 };
 
 fn flow(source: &str) -> Flow {

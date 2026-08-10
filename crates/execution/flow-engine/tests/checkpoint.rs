@@ -1,10 +1,11 @@
 //! RecoveryCheckpointV1 model and error-path tests.
 
 use serde_json::{Value, json};
+use wamn_flow::node_contract::{ErrorDetail, NodeError, RateLimitDetail};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
-    CallerState, CheckpointError, Dispatch, ExecutionState, ExecutionStatus, NodeError,
-    NodeOutcome, Plan, RateLimitDetail, ReservedStep, Step, ThrottleKey, restore, snapshot,
+    CallerState, CheckpointError, Dispatch, ExecutionState, ExecutionStatus, NodeOutcome, Plan,
+    ReservedStep, Step, ThrottleKey, restore, snapshot,
 };
 
 fn compile(source: &str) -> (Flow, ResolvedInterfaces) {
@@ -119,7 +120,7 @@ fn checkpoint_round_trips_loop_after_error_route() {
     plan.apply(
         &mut state,
         &work,
-        NodeOutcome::Error(NodeError::Terminal(wamn_runner::ErrorDetail::msg("caught"))),
+        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::msg("caught"))),
         0,
     )
     .unwrap();
@@ -158,7 +159,7 @@ fn checkpoint_round_trips_parked_retry_state() {
         &mut state,
         &call,
         NodeOutcome::Error(NodeError::RateLimited(RateLimitDetail {
-            detail: wamn_runner::ErrorDetail::msg("slow down"),
+            detail: ErrorDetail::msg("slow down"),
             retry_after_ms: Some(500),
             target_host: Some("erp.example".to_string()),
         })),

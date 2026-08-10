@@ -100,7 +100,6 @@ fn run_context<'a>(
         node_id,
         connection: None,
         attempt: 0,
-        idempotency_key: "prototype:node:0",
         deadline_ms: None,
         traceparent: None,
         tracestate: None,

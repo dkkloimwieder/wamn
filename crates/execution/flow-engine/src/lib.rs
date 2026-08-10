@@ -47,7 +47,8 @@
 //! [`resume`](Plan::resume) (rebuild a run's frontier from its recorded steps —
 //! branch-aware) and [`seed_at`](Plan::seed_at) (partial re-run from one node).
 //! Does **not** own: the `wamn:node` taxonomy (5.4 — mirrored here as
-//! [`NodeError`]), the durable `runs`/`node_runs` **schema, persistence, and
+//! [`NodeError`](wamn_flow::node_contract::NodeError)), the durable
+//! `runs`/`node_runs` **schema, persistence, and
 //! run-history read model** (5.7 — `wamn-run-state` drives these primitives over
 //! the store), per-node ordering (5.11), the cancel operation (5.12), the durable
 //! queue + NATS doorbell + dispatcher (5.14), the payload store (5.10), the
@@ -66,7 +67,7 @@ pub use engine::{
     snapshot, validate_cron_outcome, validate_event_outcome, validate_fail_outcome,
     validate_request_outcome,
 };
-pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
+pub use outcome::{ERROR_PORT, MAIN_PORT, NodeOutcome};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};
 pub use retry::RetryPolicy;
 pub use throttle::{ConcurrencyGate, ThrottleKey, ThrottleTable};

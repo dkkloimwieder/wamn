@@ -1,22 +1,22 @@
 //! Node dispatch outcomes — the driver→engine event vocabulary.
 //!
 //! The error taxonomy ([`NodeError`] / [`ErrorDetail`] / [`RateLimitDetail`])
-//! is defined in `wamn_flow::node_contract` and
-//! re-exported here, so the engine, the drivers, and every node crate share
-//! one definition while nodes stay authorable without the runner (the 5.13
-//! purity rule). It is a 1:1 mirror of the `wamn:node` `node-error` WIT
-//! variant (`docs/archive/contracts/wamn-node.wit`); the engine decides retry-vs-error-vs-fail
-//! **mechanically from the variant** — never by string-matching a message
-//! (`docs/archive/execution/wamn-node-design-notes.md` §6).
+//! is defined in `wamn_flow::node_contract` and consumed directly here, so the
+//! engine, the drivers, and every node crate share one definition while nodes
+//! stay authorable without the runner (the 5.13 purity rule). It retains the
+//! standard-node routing cases from the legacy `wamn:node` `node-error` WIT but
+//! omits its custom-node-only cancellation case; the owning driver translates
+//! that compatibility value once. The engine decides retry-vs-error-vs-fail
+//! **mechanically from the retained variant** — never by string-matching a
+//! message (`docs/archive/execution/wamn-node-design-notes.md` §6).
 
 use serde_json::Value;
+use wamn_flow::node_contract::NodeError;
 
 /// The reserved error-path port (`wamn_flow::ERROR_PORT`).
 pub use wamn_flow::ERROR_PORT;
 /// The default output port a node emits on (`wamn_flow::MAIN_PORT`).
 pub use wamn_flow::MAIN_PORT;
-
-pub use wamn_flow::node_contract::{ErrorDetail, NodeError, RateLimitDetail};
 
 /// What a dispatched node returned. `Success` carries the output payload and the
 /// **port** it chose (a branch node like `conditional` selects `"true"`/`"false"`;

@@ -5,6 +5,7 @@
 //! `WAMN_RUN_STORE_PG_URL` and skips cleanly when unset (mirrors wamn-schema-compiler/rls/seed).
 
 use serde_json::{Value, json};
+use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_run_state::{
     FailKind, NodeErrorKind, NodeRunRecord, NodeRunStatus, ReconstructError, RerunError, RunRecord,
@@ -477,14 +478,10 @@ fn status_maps_from_the_engine_taxonomy() {
         FailKind::from(wamn_runner::ExecutionFailureKind::RunawayBudget),
         FailKind::RunawayBudget
     );
-    let detail = wamn_runner::ErrorDetail::msg("x");
+    let detail = ErrorDetail::msg("x");
     assert_eq!(
-        NodeErrorKind::from(&wamn_runner::NodeError::Retryable(detail.clone())),
+        NodeErrorKind::from(&NodeError::Retryable(detail)),
         NodeErrorKind::Retryable
-    );
-    assert_eq!(
-        NodeErrorKind::from(&wamn_runner::NodeError::Cancelled),
-        NodeErrorKind::Cancelled
     );
 }
 

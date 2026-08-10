@@ -51,10 +51,11 @@ use std::cell::RefCell;
 use std::time::Instant;
 
 use serde_json::{Value, json};
+use wamn_flow::node_contract::{self as sdk, ErrorDetail, NodeError, RateLimitDetail};
 use wamn_flow::{
-    FailConfig, Flow, InvokeActorMode, InvokeFlowConfig, ResolvedInterfaces, canonical_json_sha256,
+    ERROR_PORT, FailConfig, Flow, InvokeActorMode, InvokeFlowConfig, MAIN_PORT, ResolvedInterfaces,
+    canonical_json_sha256,
 };
-use wamn_node_sdk as sdk;
 use wamn_run_state::attempt::{
     AttemptDispatchResult, AttemptStartResult, GenerationFactKind, RecoveryClass,
 };
@@ -77,10 +78,9 @@ use wamn_run_state::queue::{
     record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
-    CallerState, Dispatch, ERROR_PORT, ErrorDetail, ExecutionFailureKind, ExecutionState,
-    ExecutionStatus, MAIN_PORT, NodeError, NodeOutcome, Plan, RateLimitDetail, ReservedStep,
-    RetryPolicy, Step, ThrottleKey, validate_cron_outcome, validate_event_outcome,
-    validate_fail_outcome, validate_request_outcome,
+    CallerState, Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus, NodeOutcome,
+    Plan, ReservedStep, RetryPolicy, Step, ThrottleKey, validate_cron_outcome,
+    validate_event_outcome, validate_fail_outcome, validate_request_outcome,
 };
 
 use wamn_node_invoke::{
@@ -670,7 +670,7 @@ fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
         };
         let port = match row.get(3) {
             Some(SqlValue::Text(s)) => s.clone(),
-            _ => "main".to_string(),
+            _ => MAIN_PORT.to_string(),
         };
         // A JSON value round-trips as `Some`; a SQL NULL output_json (9.6 capture
         // off / preview) is `None`, which reconstruction surfaces as CaptureOff —
@@ -1095,7 +1095,7 @@ fn node_response_to_outcome(
                 },
                 None => Value::Null,
             };
-            let port = em.port.unwrap_or_else(|| "main".to_string());
+            let port = em.port.unwrap_or_else(|| MAIN_PORT.to_string());
             if !interface.permits_output_port(&port) {
                 return Ok(NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
                     "invalid-output-port",
@@ -1132,8 +1132,9 @@ fn node_response_to_outcome(
     Ok(outcome)
 }
 
-/// The frozen `node-error` taxonomy off the wire -> the engine's error type,
-/// variant for variant (the engine routes/ retries/fails off the variant).
+/// Translate the frozen custom-node wire taxonomy into the reduced engine type.
+/// The four retained cases map directly; legacy `cancelled` becomes a terminal
+/// compatibility failure because standard-node cancellation was removed.
 fn wire_error_to_runner(e: WireNodeError) -> NodeError {
     match e {
         WireNodeError::Retryable(d) => NodeError::Retryable(wire_detail(d)),
@@ -1144,7 +1145,10 @@ fn wire_error_to_runner(e: WireNodeError) -> NodeError {
         }),
         WireNodeError::Terminal(d) => NodeError::Terminal(wire_detail(d)),
         WireNodeError::InvalidInput(d) => NodeError::InvalidInput(wire_detail(d)),
-        WireNodeError::Cancelled => NodeError::Cancelled,
+        WireNodeError::Cancelled => NodeError::Terminal(ErrorDetail::coded(
+            "custom-node-cancelled",
+            "custom node returned the removed cancellation outcome",
+        )),
     }
 }
 
@@ -1166,18 +1170,16 @@ fn wire_detail(d: WireErrorDetail) -> ErrorDetail {
 // ---------------------------------------------------------------------------
 
 /// Whether the engine will ROUTE this error emission down the node's error
-/// edge (vs scheduling a retry, or cancelling the run) — the exact policy
+/// edge (versus scheduling a retry) — the exact policy
 /// computation `Plan::apply` makes, mirrored so a recorded error row always
 /// matches the walk the engine actually took. Terminal / invalid-input route
-/// immediately; retryable / rate-limited route only once the retry budget is
-/// spent; a cancellation never fires error branches.
+/// immediately; retryable / rate-limited route only once the retry budget is spent.
 fn will_error_route(err: &NodeError, d: &Dispatch) -> bool {
     match err {
         NodeError::Terminal(_) | NodeError::InvalidInput(_) => true,
         NodeError::Retryable(_) | NodeError::RateLimited(_) => {
             !RetryPolicy::from_config(&d.config).may_retry(d.attempt)
         }
-        NodeError::Cancelled => false,
     }
 }
 
@@ -1235,7 +1237,6 @@ fn error_row_values(err: &NodeError) -> (&'static str, Value, Value) {
         NodeError::RateLimited(r) => ("rate-limited", Some(&r.detail)),
         NodeError::Terminal(d) => ("terminal", Some(d)),
         NodeError::InvalidInput(d) => ("invalid-input", Some(d)),
-        NodeError::Cancelled => ("cancelled", None),
     };
     let payload = detail
         .map(|d| d.to_error_payload())
@@ -1542,7 +1543,6 @@ fn dispatch_node_unvalidated(
                 node_id: &d.node,
                 connection: d.connection.as_deref(),
                 attempt: d.attempt,
-                idempotency_key: &d.idempotency_key,
                 deadline_ms: d.deadline_ms,
                 // 9.2: this guest is host-invoked (exported `run`), not served
                 // over `wasi:http`, so it has no inbound request to read a
@@ -1861,7 +1861,7 @@ fn execute(
                     step.node(),
                     step.occurrence(),
                     next_seq,
-                    "main",
+                    MAIN_PORT,
                     step.payload(),
                     step.payload(),
                     &flow.capture,
@@ -2949,7 +2949,7 @@ fn commit_reserved_and_renew(
                 text(step.node()),
                 int32(step.occurrence() as i32),
                 int32(seq),
-                text("main"),
+                text(MAIN_PORT),
                 out_j,
                 in_j,
                 preview,
@@ -3038,7 +3038,7 @@ fn commit_reserved_and_renew(
             text(step.node()),
             int32(step.occurrence() as i32),
             int32(seq),
-            text("main"),
+            text(MAIN_PORT),
             out_j,
             in_j,
             preview,
@@ -3565,7 +3565,7 @@ fn execute_claimed(
                     step.node(),
                     next_seq - 1,
                     &tp,
-                    "main",
+                    MAIN_PORT,
                 );
                 plan.apply_reserved(&mut st, &step)
                     .map_err(|error| error.to_string())?;
