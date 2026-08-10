@@ -1,10 +1,9 @@
 //! Production provider for `wamn:flow-invocation@0.1.0`.
 //!
-//! The provider owns final admission, bounded waiter reconciliation, and
-//! observed-disconnect cancellation. HTTP adaptation, authentication, mapping,
-//! and flow graph execution remain outside this module.
+//! The provider owns final admission and bounded waiter reconciliation. HTTP
+//! adaptation, authentication, mapping, and flow graph execution remain outside
+//! this module.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,16 +13,13 @@ use chrono::{DateTime, TimeDelta, Utc};
 use deadpool_postgres::Pool;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
-use tokio::sync::Mutex;
 use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
 use wamn_flow_invocation::{
-    Admitted, BeginResult, CancelAck, Failure, FlowError, InvokeRequest, InvokeResult, Rejection,
-    Response,
+    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
 use wamn_run_state::admission::{AdmissionResult, admission_sql};
 use wamn_run_state::invocation::{
-    InvocationCancelResult, InvocationOutcome, InvocationPoll, InvocationRecovery,
-    InvocationTarget, cancel_inline_invocation_sql, decode_invocation_cancel,
+    InvocationOutcome, InvocationPoll, InvocationRecovery, InvocationTarget,
     lookup_invocation_recovery_sql, poll_invocation_outcome_sql, resolve_invocation_target_sql,
 };
 
@@ -98,14 +94,6 @@ pub trait InvocationBackend: Clone + Send + Sync + 'static {
     ) -> anyhow::Result<AdmissionResult>;
 
     async fn poll(&self, tenant: &str, run_id: &str) -> anyhow::Result<InvocationPoll>;
-
-    async fn cancel(
-        &self,
-        tenant: &str,
-        run_id: &str,
-        executor: &str,
-        generation: i64,
-    ) -> anyhow::Result<InvocationCancelResult>;
 }
 
 #[derive(Clone)]
@@ -114,7 +102,6 @@ pub struct InvocationService<B> {
     notification_database_url: Option<String>,
     config: InvocationServiceConfig,
     driver: Arc<dyn InlineRunDriver>,
-    handles: Arc<Mutex<HashMap<String, i64>>>,
 }
 
 impl<B: InvocationBackend> InvocationService<B> {
@@ -129,7 +116,6 @@ impl<B: InvocationBackend> InvocationService<B> {
             notification_database_url,
             config,
             driver,
-            handles: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -218,10 +204,6 @@ impl<B: InvocationBackend> InvocationService<B> {
         for attempt in 0..=1 {
             match self.backend.admit(&self.config, &admission).await? {
                 AdmissionResult::Admitted { run_id } => {
-                    self.handles
-                        .lock()
-                        .await
-                        .insert(run_id.clone(), INLINE_GENERATION);
                     self.driver.start(InlineRunClaim {
                         run_id: run_id.clone(),
                         lease_owner: self.config.executor_id.clone(),
@@ -302,22 +284,6 @@ impl<B: InvocationBackend> InvocationService<B> {
         released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
             .map(to_invoke_result)
             .transpose()
-    }
-
-    pub async fn cancel(&self, run_id: String) -> anyhow::Result<CancelAck> {
-        let generation = self.handles.lock().await.get(&run_id).copied();
-        if let Some(generation) = generation {
-            let _ = self
-                .backend
-                .cancel(
-                    &self.config.tenant_id,
-                    &run_id,
-                    &self.config.executor_id,
-                    generation,
-                )
-                .await?;
-        }
-        Ok(CancelAck { run_id })
     }
 }
 
@@ -536,28 +502,6 @@ impl InvocationBackend for PostgresInvocationBackend {
         transaction.commit().await?;
         decode_poll(&row)
     }
-
-    async fn cancel(
-        &self,
-        tenant: &str,
-        run_id: &str,
-        executor: &str,
-        generation: i64,
-    ) -> anyhow::Result<InvocationCancelResult> {
-        let mut client = self.transaction().await?;
-        let transaction = client.transaction().await?;
-        set_tenant(&transaction, tenant).await?;
-        let row = transaction
-            .query_one(
-                cancel_inline_invocation_sql(),
-                &[&run_id, &executor, &generation],
-            )
-            .await?;
-        let result = decode_invocation_cancel(row.get(0))
-            .ok_or_else(|| anyhow!("invalid invocation cancel result row"))?;
-        transaction.commit().await?;
-        Ok(result)
-    }
 }
 
 fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
@@ -707,7 +651,7 @@ fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> 
             body: serde_json::to_string(&outcome.body)?,
             status_hint: outcome.http_status,
         })),
-        "failed" | "cancelled" => {
+        "failed" => {
             let error = outcome
                 .body
                 .get("error")
@@ -726,17 +670,12 @@ fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> 
                     .ok_or_else(|| anyhow!("stored failure missing flow-version"))?
                     .try_into()?,
             };
-            let failure = Failure {
+            Ok(InvokeResult::Failed(Failure {
                 status: outcome
                     .http_status
                     .ok_or_else(|| anyhow!("stored failure missing HTTP status"))?,
                 error: flow_error,
-            };
-            if outcome.kind == "failed" {
-                Ok(InvokeResult::Failed(failure))
-            } else {
-                Ok(InvokeResult::Cancelled(failure))
-            }
+            }))
         }
         kind => Err(anyhow!("unknown stored caller outcome kind {kind:?}")),
     }
@@ -755,6 +694,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+    use tokio::sync::Mutex;
     use wamn_flow_invocation::TraceContext;
 
     #[derive(Clone, Default)]
@@ -764,7 +704,6 @@ mod tests {
         admissions: Arc<Mutex<VecDeque<AdmissionResult>>>,
         admitted_versions: Arc<Mutex<Vec<i32>>>,
         polls: Arc<Mutex<VecDeque<InvocationPoll>>>,
-        cancels: Arc<Mutex<Vec<(String, String, i64)>>>,
     }
 
     #[derive(Default)]
@@ -838,20 +777,6 @@ mod tests {
                 .await
                 .pop_front()
                 .ok_or_else(|| anyhow!("missing poll fixture"))
-        }
-
-        async fn cancel(
-            &self,
-            _tenant: &str,
-            run_id: &str,
-            executor: &str,
-            generation: i64,
-        ) -> anyhow::Result<InvocationCancelResult> {
-            self.cancels
-                .lock()
-                .await
-                .push((run_id.to_string(), executor.to_string(), generation));
-            Ok(InvocationCancelResult::Requested)
         }
     }
 
@@ -1059,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn all_five_release_races_decode_the_exact_stored_winner() {
+    fn all_three_release_paths_decode_the_exact_stored_winner() {
         for (path, stored, expected) in [
             ("respond", outcome("responded", "", 201), ("responded", 201)),
             (
@@ -1072,55 +997,13 @@ mod tests {
                 outcome("failed", "infrastructure-failure", 500),
                 ("failed", 500),
             ),
-            (
-                "response-deadline",
-                outcome("cancelled", "response-deadline", 504),
-                ("cancelled", 504),
-            ),
-            (
-                "observed-disconnect",
-                outcome("cancelled", "observed-disconnect", 499),
-                ("cancelled", 499),
-            ),
         ] {
             let result = to_invoke_result(stored).unwrap();
             let actual = match result {
                 InvokeResult::Responded(response) => ("responded", response.status_hint.unwrap()),
                 InvokeResult::Failed(failure) => ("failed", failure.status),
-                InvokeResult::Cancelled(failure) => ("cancelled", failure.status),
             };
             assert_eq!(actual, expected, "{path}");
         }
-    }
-
-    #[tokio::test]
-    async fn cancel_uses_the_inline_owner_generation_and_is_idempotently_acked() {
-        let backend = MockBackend::default();
-        backend.targets.lock().await.push_back(Some(target(true)));
-        backend
-            .recoveries
-            .lock()
-            .await
-            .push_back(InvocationRecovery::Missing);
-        backend
-            .admissions
-            .lock()
-            .await
-            .push_back(AdmissionResult::Admitted {
-                run_id: "run-1".to_string(),
-            });
-        let service = InvocationService::new(backend.clone(), None, config(), driver());
-        let _ = service.begin(request()).await.unwrap();
-
-        assert_eq!(
-            service.cancel("run-1".to_string()).await.unwrap(),
-            CancelAck {
-                run_id: "run-1".to_string()
-            }
-        );
-        assert_eq!(
-            backend.cancels.lock().await.as_slice(),
-            &[("run-1".to_string(), "invoke-1".to_string(), 1)]
-        );
     }
 }

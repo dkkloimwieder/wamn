@@ -470,7 +470,7 @@ pub fn park_sql() -> String {
 /// The `r.status IN ('dispatched', 'running')` guard on the status update is the
 /// completion-vs-failover race guard (checkpoint/resume on replica loss): a run a
 /// second replica successfully reclaimed and drove to a terminal state — `completed`
-/// above all, but also `failed`/`cancelled` — must never be relabeled
+/// above all, but also `failed`/`effect-uncertain` — must never be relabeled
 /// `infrastructure-failure` by a janitor that fires in the window between the
 /// completion write and the host's dequeue. The stale queue row is still cleaned up
 /// (the `DELETE` is unguarded — a terminal run has no business holding a queue row),

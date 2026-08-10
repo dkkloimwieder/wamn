@@ -1143,7 +1143,6 @@ fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
         "running" => Ok(RunStatus::Running),
         "completed" => Ok(RunStatus::Completed),
         "failed" => Ok(RunStatus::Failed),
-        "cancelled" => Ok(RunStatus::Cancelled),
         "infrastructure-failure" => Ok(RunStatus::InfrastructureFailure),
         "effect-uncertain" => Ok(RunStatus::EffectUncertain),
         other => bail!("unknown report run status {other:?}"),
@@ -1169,7 +1168,6 @@ fn run_status_sql(value: RunStatus) -> &'static str {
         RunStatus::Running => "running",
         RunStatus::Completed => "completed",
         RunStatus::Failed => "failed",
-        RunStatus::Cancelled => "cancelled",
         RunStatus::InfrastructureFailure => "infrastructure-failure",
         RunStatus::EffectUncertain => "effect-uncertain",
     }

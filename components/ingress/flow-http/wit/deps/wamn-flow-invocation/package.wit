@@ -56,7 +56,7 @@ interface invocation {
     status-hint: option<u16>,
   }
 
-  /// A stored failed or cancelled caller envelope.
+  /// A stored failed caller envelope.
   record flow-error {
     code: string,
     message: option<string>,
@@ -75,15 +75,6 @@ interface invocation {
   variant invoke-result {
     responded(response),
     failed(failure),
-    cancelled(failure),
-  }
-
-  /// Idempotent acknowledgement of the requested run cancellation.
-  ///
-  /// This deliberately does not claim that cancellation won: release and
-  /// terminal transitions race under the fenced caller/terminal CAS.
-  record cancel-ack {
-    run-id: string,
   }
 
   /// Admit a new run or return a typed pre-run rejection.
@@ -91,7 +82,4 @@ interface invocation {
 
   /// Wait at most `timeout-ms`; `none` means the run is still unreleased.
   wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;
-
-  /// Request observed-disconnect cancellation for an admitted run.
-  cancel: func(run-id: string) -> cancel-ack;
 }

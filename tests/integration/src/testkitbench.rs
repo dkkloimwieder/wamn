@@ -424,9 +424,6 @@ fn flow_case_ddl(schema: &str) -> String {
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS platform_revision text NOT NULL DEFAULT 'testkit'; \
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS response_deadline_at timestamptz; \
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS run_deadline_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_requested_kind text; \
-         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_requested_at timestamptz; \
-         ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS cancel_kind text; \
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS terminal_reason text; \
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_outcome_kind text; \
          ALTER TABLE {schema}.runs ADD COLUMN IF NOT EXISTS caller_outcome_json jsonb; \

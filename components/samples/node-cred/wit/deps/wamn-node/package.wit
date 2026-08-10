@@ -113,8 +113,8 @@ interface types {
     /// Input contract violated; never retried, flagged distinctly in
     /// run history (usually an upstream bug).
     invalid-input(error-detail),
-    /// The node observed a cancellation request (via `control`) and
-    /// stopped cooperatively. Recorded as cancelled, not failed.
+    /// Legacy compatibility signal translated by the platform to a terminal
+    /// failure.
     cancelled,
   }
 

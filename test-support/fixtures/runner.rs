@@ -33,7 +33,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
             status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+              CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             idempotency_key text, replay_of text, root_run_id text, \
@@ -135,10 +135,7 @@ pub async fn seed_run(
 
 /// Whether a durable run-status literal ends polling.
 pub fn is_terminal(status: &str) -> bool {
-    matches!(
-        status,
-        "completed" | "failed" | "cancelled" | "infrastructure-failure"
-    )
+    matches!(status, "completed" | "failed" | "infrastructure-failure")
 }
 
 /// Poll a durable run until it is terminal or the deadline expires.

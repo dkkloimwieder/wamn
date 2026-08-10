@@ -194,7 +194,7 @@ fn runner_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
             status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+              CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
             created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
@@ -205,8 +205,7 @@ fn runner_ddl(schema: &str) -> String {
             admission_context_version int NOT NULL DEFAULT 1, \
             platform_revision text NOT NULL DEFAULT 'nodeinvoke', \
             response_deadline_at timestamptz, run_deadline_at timestamptz, \
-            cancel_requested_kind text, cancel_requested_at timestamptz, \
-            cancel_kind text, terminal_reason text, \
+            terminal_reason text, \
             caller_outcome_kind text, caller_outcome_json jsonb, \
             caller_http_status int, caller_release_node_id text, \
             caller_outcome_hash text, caller_released_at timestamptz, \

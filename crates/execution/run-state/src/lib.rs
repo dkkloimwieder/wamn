@@ -57,8 +57,6 @@
 pub mod admission;
 /// Capture-independent node attempt protocol and recovery classes.
 pub mod attempt;
-/// Durable cancellation requests and bounded deadline reconciliation.
-pub mod cancellation;
 /// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's
 /// capture columns before the write.
@@ -66,7 +64,7 @@ pub mod capture;
 /// Occurrence-keyed child creation, parent parking, and atomic child release.
 pub mod child;
 pub mod context;
-/// Durable lookup, wait, and fenced-cancel queries for flow invocation.
+/// Durable lookup and bounded-wait queries for flow invocation.
 pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;

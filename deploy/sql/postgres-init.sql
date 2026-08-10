@@ -216,7 +216,7 @@ CREATE TABLE s3.runs (
     flow_version    int  NOT NULL,
     status          text NOT NULL DEFAULT 'running'
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'cancelled', 'infrastructure-failure', 'effect-uncertain')),
+                          'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
     input_json      jsonb,
     result_json     jsonb,

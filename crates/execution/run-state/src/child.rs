@@ -104,105 +104,6 @@ impl ChildCreateResult {
     }
 }
 
-/// Result of a generation-fenced pre-release child cancellation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChildCancelResult {
-    Cancelled { seized_generation: i64 },
-    AlreadyTerminal(RunStatus),
-    AlreadyReleased,
-    LiveAttempt,
-    StaleGeneration,
-    NotChild,
-    NotFound,
-    StateConflict,
-}
-
-impl ChildCancelResult {
-    pub fn from_parts(
-        code: &str,
-        run_status: &str,
-        seized_generation: Option<i64>,
-    ) -> Option<Self> {
-        match code {
-            "cancelled" => Some(Self::Cancelled {
-                seized_generation: seized_generation?,
-            }),
-            "run-terminal" => Some(Self::AlreadyTerminal(RunStatus::from_sql(run_status)?)),
-            "already-released" => Some(Self::AlreadyReleased),
-            "live-attempt" => Some(Self::LiveAttempt),
-            "stale-generation" => Some(Self::StaleGeneration),
-            "not-child" => Some(Self::NotChild),
-            "not-found" => Some(Self::NotFound),
-            "state-conflict" => Some(Self::StateConflict),
-            _ => None,
-        }
-    }
-}
-
-/// Seize and cancel an unreleased child before it can execute another attempt.
-///
-/// Params: child run id, observed queue generation, and persisted cancellation
-/// cause. A released child is an irreversible boundary and is never touched.
-pub fn cancel_unreleased_child_sql() -> &'static str {
-    "\
-WITH input AS ( \
-    SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
-           $1::text AS run_id, $2::bigint AS expected_generation, \
-           $3::text AS cancel_kind \
-), \
-locked_child AS MATERIALIZED ( \
-    SELECT r.* FROM runs AS r, input AS i \
-     WHERE r.tenant_id = i.tenant_id AND r.run_id = i.run_id \
-     FOR UPDATE OF r \
-), \
-locked_queue AS MATERIALIZED ( \
-    SELECT q.* FROM run_queue AS q JOIN locked_child AS r USING (tenant_id, run_id) \
-     FOR UPDATE OF q \
-), \
-classified AS ( \
-    SELECT CASE \
-      WHEN c.run_id IS NULL THEN 'not-found' \
-      WHEN c.parent_run_id IS NULL THEN 'not-child' \
-      WHEN c.caller_released_at IS NOT NULL THEN 'already-released' \
-      WHEN c.status IN ('completed','failed','cancelled','infrastructure-failure') \
-        THEN 'run-terminal' \
-      WHEN q.run_id IS NULL OR q.lease_generation <> i.expected_generation \
-        THEN 'stale-generation' \
-      WHEN EXISTS (SELECT FROM node_runs AS n \
-                    WHERE n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                      AND n.status = 'started' AND n.attempt_deadline_at > now()) \
-        THEN 'live-attempt' \
-      WHEN i.cancel_kind IS NULL OR i.cancel_kind = '' THEN 'state-conflict' \
-      ELSE 'ready' END AS result_code, c.tenant_id, c.run_id, c.status, \
-           i.cancel_kind, q.lease_generation \
-      FROM input AS i \
-      LEFT JOIN locked_child AS c ON true \
-      LEFT JOIN locked_queue AS q ON true \
-), \
-seized AS ( \
-    DELETE FROM run_queue AS q USING classified AS c \
-     WHERE c.result_code = 'ready' AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
-       AND q.lease_generation = c.lease_generation \
-    RETURNING q.tenant_id, q.run_id, q.lease_generation + 1 AS seized_generation \
-), \
-cancelled AS ( \
-    UPDATE runs AS r SET status = 'cancelled', cancel_kind = c.cancel_kind, \
-      terminal_reason = c.cancel_kind, cancel_requested_kind = c.cancel_kind, \
-      cancel_requested_at = COALESCE(r.cancel_requested_at, now()), \
-      caller_outcome_kind = 'cancelled', \
-      caller_outcome_json = jsonb_build_object('error', jsonb_build_object( \
-        'code', c.cancel_kind, 'run-id', r.run_id, 'flow-id', r.flow_id, \
-        'flow-version', r.flow_version)), \
-      caller_http_status = 499, caller_released_at = now(), updated_at = now() \
-      FROM classified AS c JOIN seized AS s USING (tenant_id, run_id) \
-     WHERE r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-    RETURNING s.seized_generation \
-) \
-SELECT CASE WHEN x.seized_generation IS NOT NULL THEN 'cancelled' ELSE c.result_code END, \
-       c.status, x.seized_generation \
-  FROM classified AS c LEFT JOIN cancelled AS x ON true"
-}
-
 /// Create or recover one occurrence-keyed child and park the fenced parent.
 ///
 /// Params are the parent fence (`$1..$4`), parent node id and occurrence,
@@ -681,26 +582,6 @@ mod tests {
         assert!(
             sql.find("inserted_child AS").expect("child insert")
                 < sql.find("parked_parent AS").expect("parent park")
-        );
-    }
-
-    #[test]
-    fn pre_release_child_cancel_seizes_the_observed_generation() {
-        let sql = cancel_unreleased_child_sql();
-        assert!(sql.contains("c.caller_released_at IS NOT NULL THEN 'already-released'"));
-        assert!(sql.contains("q.lease_generation <> i.expected_generation"));
-        assert!(sql.contains("n.attempt_deadline_at > now()"));
-        assert!(sql.contains("q.lease_generation + 1 AS seized_generation"));
-        assert!(sql.contains("DELETE FROM run_queue"));
-        assert_eq!(
-            ChildCancelResult::from_parts("cancelled", "running", Some(9)),
-            Some(ChildCancelResult::Cancelled {
-                seized_generation: 9
-            })
-        );
-        assert_eq!(
-            ChildCancelResult::from_parts("stale-generation", "running", None),
-            Some(ChildCancelResult::StaleGeneration)
         );
     }
 

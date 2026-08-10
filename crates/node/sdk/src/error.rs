@@ -17,7 +17,7 @@ use serde_json::Value;
 /// | `RateLimited`  | retry honoring the source delay + engage the shared throttle |
 /// | `Terminal`     | route to the flow's error path immediately (no retry) |
 /// | `InvalidInput` | never retried; distinct terminal reason in run history |
-/// | `Cancelled`    | run recorded `cancelled`, error branches do not fire |
+/// | `Cancelled`    | retained compatibility input; translated to a terminal failure |
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeError {
     /// Transient; the runner may retry per the node's retry policy.
@@ -32,7 +32,7 @@ pub enum NodeError {
     /// Input contract violated; never retried, flagged distinctly in run history
     /// (usually an upstream bug — does not burn retry budget).
     InvalidInput(ErrorDetail),
-    /// The node observed a cancellation request and stopped cooperatively.
+    /// Legacy compatibility signal translated by the platform to a terminal failure.
     Cancelled,
 }
 

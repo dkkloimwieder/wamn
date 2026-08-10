@@ -49,8 +49,7 @@
 //! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
 //! [`crate::RunStatus`]); per-node ordering *semantics* (5.11 — 5.14 provides the
-//! per-partition claim *mechanism*); the cancel operation (5.12); the payload byte
-//! store (5.10).
+//! per-partition claim *mechanism*); the payload byte store (5.10).
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!

@@ -1,11 +1,11 @@
-//! The always-on dispatcher reconciles durable queue and cancellation state
-//! across projects, emits best-effort NATS doorbell hints, and adapts each
-//! project's sweep cadence to observed work.
+//! The always-on dispatcher reconciles durable queue state across projects,
+//! emits best-effort NATS doorbell hints, and adapts each project's sweep
+//! cadence to observed work.
 //!
-//! One project sweep reconciles a bounded cancellation/deadline batch, hints
-//! every currently-due unleased queue row, and then tightens or decays the
-//! project's cadence. Dropped database connections are re-dialed and every
-//! sweep has a deadline so one unhealthy project cannot wedge the others.
+//! One project sweep hints every currently-due unleased queue row and then
+//! tightens or decays the project's cadence. Dropped database connections are
+//! re-dialed and every sweep has a deadline so one unhealthy project cannot
+//! wedge the others.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -17,7 +17,6 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio_postgres::{Client, NoTls};
-use wamn_run_state::cancellation::cancellation_sweep_sql;
 use wamn_run_state::queue::parked_due_sql;
 use wamn_scheduler::Cadence;
 
@@ -200,13 +199,11 @@ pub struct TickReport {
     /// (the claim is the arbiter), and a persistently-unclaimed backlog SHOULD
     /// keep the cadence tight — waking a scale-to-zero runner is the point.
     pub woken: Vec<String>,
-    /// Runs terminalized by the bounded cancellation/deadline reconciliation.
-    pub cancelled: Vec<String>,
 }
 
 impl TickReport {
     pub fn found_work(&self) -> bool {
-        !self.woken.is_empty() || !self.cancelled.is_empty()
+        !self.woken.is_empty()
     }
 }
 
@@ -320,20 +317,7 @@ impl Dispatcher {
 
         let mut doorbells: Vec<String> = Vec::new();
 
-        // 1. Cancellation/deadline reconciliation. The run-state statement
-        // owns locking, deferred seizure, terminalization, propagation, and
-        // transactional waiter notification; the dispatcher only supplies the
-        // fairness bound.
-        let sweep_batch = i64::try_from(batch).unwrap_or(i64::MAX);
-        for row in p
-            .client
-            .query(cancellation_sweep_sql(), &[&sweep_batch])
-            .await?
-        {
-            report.cancelled.push(row.get("run_id"));
-        }
-
-        // 2. Wake / reconciliation: hint every currently-due unleased row.
+        // 1. Wake / reconciliation: hint every currently-due unleased row.
         for row in p.client.query(&parked_due_sql(batch), &[]).await? {
             let run_id: String = row.get("run_id");
             doorbells.push(run_id.clone());
@@ -367,7 +351,7 @@ impl Dispatcher {
             nats.flush().await?;
         }
 
-        // 3. Adaptive cadence.
+        // 2. Adaptive cadence.
         p.interval_ms = cadence.next_interval(p.interval_ms, report.found_work());
         p.last_sweep_ms = now_ms;
         Ok(report)
@@ -536,7 +520,7 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
         projects = dispatcher.projects.len(),
         min_interval_ms = args.min_interval_ms,
         max_interval_ms = args.max_interval_ms,
-        "shared queue dispatcher up (wake + deadline reconciliation)"
+        "shared queue dispatcher up (queued-work wake reconciliation)"
     );
 
     if args.stepped_stdio {
@@ -702,17 +686,9 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DispatcherConfig, ProjectSpecInput, RUN_QUEUE_DEPTH_SQL, cancellation_sweep_sql,
-        doorbell_subject, next_reconcile, project_spec, reconcile_due, valid_tenant,
+        DispatcherConfig, ProjectSpecInput, RUN_QUEUE_DEPTH_SQL, doorbell_subject, next_reconcile,
+        project_spec, reconcile_due, valid_tenant,
     };
-
-    #[test]
-    fn dispatcher_sweep_uses_run_state_response_deadline_mapping() {
-        let sql = cancellation_sweep_sql();
-        assert!(sql.contains("e.cancel_kind = 'response-deadline'"));
-        assert!(sql.contains("THEN 504 ELSE 499"));
-        assert!(sql.contains("FOR UPDATE SKIP LOCKED"));
-    }
 
     #[test]
     fn depth_sql_counts_claimable_not_parked() {

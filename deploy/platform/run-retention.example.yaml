@@ -6,7 +6,7 @@
 # WHY (platform-plan risk #5): node I/O snapshots in `node_runs` are the biggest
 # storage-cost driver, so the hot `runs`/`node_runs` store must be bounded. This
 # verb DELETEs the tenant's runs in a TERMINAL state (completed / failed /
-# cancelled / infrastructure-failure) older than `--retention-days`; `node_runs`
+# infrastructure-failure) older than `--retention-days`; `node_runs`
 # (and any stale queue / dead-letter rows) cascade via their `ON DELETE CASCADE`
 # FK. It is idempotent and safe to repeat.
 #

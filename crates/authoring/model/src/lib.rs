@@ -622,7 +622,6 @@ pub enum FailureKind {
     RetryExhausted,
     InvalidInput,
     RunawayBudget,
-    Cancelled,
     InfrastructureFault,
 }
 

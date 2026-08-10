@@ -16,7 +16,6 @@ pub fn run_status_from_store(status: StoredRunStatus) -> RunStatus {
         StoredRunStatus::Running => RunStatus::Running,
         StoredRunStatus::Completed => RunStatus::Completed,
         StoredRunStatus::Failed => RunStatus::Failed,
-        StoredRunStatus::Cancelled => RunStatus::Cancelled,
         StoredRunStatus::InfrastructureFailure => RunStatus::InfrastructureFailure,
         StoredRunStatus::EffectUncertain => RunStatus::EffectUncertain,
     }
@@ -29,7 +28,6 @@ pub fn run_status_to_store(status: RunStatus) -> StoredRunStatus {
         RunStatus::Running => StoredRunStatus::Running,
         RunStatus::Completed => StoredRunStatus::Completed,
         RunStatus::Failed => StoredRunStatus::Failed,
-        RunStatus::Cancelled => StoredRunStatus::Cancelled,
         RunStatus::InfrastructureFailure => StoredRunStatus::InfrastructureFailure,
         RunStatus::EffectUncertain => StoredRunStatus::EffectUncertain,
     }

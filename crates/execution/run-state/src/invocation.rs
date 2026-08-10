@@ -45,16 +45,6 @@ pub enum InvocationPoll {
     NotFound,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvocationCancelResult {
-    Requested,
-    AlreadyRequested,
-    AlreadyReleased,
-    RunTerminal,
-    FenceLost,
-    NotFound,
-}
-
 /// Resolve an HTTP attachment from the applied release, even when disabled.
 ///
 /// Params: catalog id, environment, attachment id. Tombstoned/removed routes
@@ -126,70 +116,6 @@ SELECT CASE WHEN r.run_id IS NULL THEN 'not-found' \
    AND r.run_id = $1"
 }
 
-/// Request observed-disconnect cancellation under inline ownership.
-///
-/// Params: run id, executor id, expected generation. This records a durable
-/// request but never seizes a live attempt's authority.
-pub fn cancel_inline_invocation_sql() -> &'static str {
-    "\
-WITH input AS ( \
-    SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
-           $1::text AS run_id, $2::text AS executor_id, \
-           $3::bigint AS expected_generation \
-), \
-locked_run AS MATERIALIZED ( \
-    SELECT r.* FROM wamn_run.runs AS r, input AS i \
-     WHERE r.tenant_id = i.tenant_id AND r.run_id = i.run_id \
-     FOR UPDATE OF r \
-), \
-locked_queue AS MATERIALIZED ( \
-    SELECT q.* FROM wamn_run.run_queue AS q \
-      JOIN locked_run AS r USING (tenant_id, run_id) \
-     FOR UPDATE OF q \
-), \
-classified AS ( \
-    SELECT CASE \
-             WHEN r.run_id IS NULL THEN 'not-found' \
-             WHEN r.status IN ('completed','failed','cancelled','infrastructure-failure') \
-               THEN 'run-terminal' \
-             WHEN r.caller_released_at IS NOT NULL THEN 'already-released' \
-             WHEN q.run_id IS NULL OR q.lease_owner IS DISTINCT FROM i.executor_id \
-               OR q.lease_generation IS DISTINCT FROM i.expected_generation \
-               THEN 'fence-lost' \
-             WHEN r.cancel_requested_kind IS NOT NULL \
-              AND r.cancel_requested_kind <> 'observed-disconnect' THEN 'fence-lost' \
-             WHEN r.cancel_requested_kind IS NOT NULL THEN 'already-requested' \
-             ELSE 'ready' \
-           END AS result_code, r.tenant_id, r.run_id \
-      FROM input AS i \
-      LEFT JOIN locked_run AS r ON true \
-      LEFT JOIN locked_queue AS q ON true \
-), \
-requested AS ( \
-    UPDATE wamn_run.runs AS r \
-       SET cancel_requested_kind = 'observed-disconnect', \
-           cancel_requested_at = now(), updated_at = now() \
-      FROM classified AS c \
-     WHERE c.result_code = 'ready' \
-       AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-    RETURNING r.run_id \
-) \
-SELECT CASE WHEN x.run_id IS NOT NULL THEN 'requested' ELSE c.result_code END \
-  FROM classified AS c LEFT JOIN requested AS x ON true"
-}
-
-pub fn decode_invocation_cancel(code: &str) -> Option<InvocationCancelResult> {
-    match code {
-        "requested" => Some(InvocationCancelResult::Requested),
-        "already-requested" => Some(InvocationCancelResult::AlreadyRequested),
-        "already-released" => Some(InvocationCancelResult::AlreadyReleased),
-        "run-terminal" => Some(InvocationCancelResult::RunTerminal),
-        "fence-lost" => Some(InvocationCancelResult::FenceLost),
-        "not-found" => Some(InvocationCancelResult::NotFound),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,18 +149,5 @@ mod tests {
             assert!(sql.contains(column), "missing {column}");
         }
         assert!(!sql.contains("COALESCE(r.caller_http_status"));
-    }
-
-    #[test]
-    fn cancellation_is_owner_and_generation_fenced() {
-        let sql = cancel_inline_invocation_sql();
-        assert!(sql.contains("q.lease_owner IS DISTINCT FROM i.executor_id"));
-        assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.expected_generation"));
-        assert!(sql.contains("cancel_requested_kind = 'observed-disconnect'"));
-        assert!(!sql.contains("lease_generation + 1"));
-        assert_eq!(
-            decode_invocation_cancel("fence-lost"),
-            Some(InvocationCancelResult::FenceLost)
-        );
     }
 }

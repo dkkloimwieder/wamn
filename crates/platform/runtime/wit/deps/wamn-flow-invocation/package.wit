@@ -46,12 +46,8 @@ interface invocation {
   variant invoke-result {
     responded(response),
     failed(failure),
-    cancelled(failure),
   }
-
-  record cancel-ack { run-id: string }
 
   begin: func(req: invoke-request) -> begin-result;
   wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;
-  cancel: func(run-id: string) -> cancel-ack;
 }

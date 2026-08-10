@@ -208,12 +208,11 @@ fn case(case: &AuthoringCaseReport) -> CaseResultProjection {
 
 /// Classify one failed case from its lifecycle status first, then its kind.
 ///
-/// Cancellation and infrastructure failure are lifecycle states with no
-/// `FailKind`, and `EffectUncertain` is an unresolved effect rather than a
-/// product verdict, so all three land on the two non-product classifications.
+/// Infrastructure failure has no `FailKind`, and `EffectUncertain` is an
+/// unresolved effect rather than a product verdict, so both land on the
+/// non-product classification.
 fn failure_kind(case: &AuthoringCaseReport) -> FailureKind {
     match case.status {
-        RunStatus::Cancelled => return FailureKind::Cancelled,
         RunStatus::InfrastructureFailure => return FailureKind::InfrastructureFault,
         RunStatus::EffectUncertain => return FailureKind::InfrastructureFault,
         RunStatus::Dispatched | RunStatus::Running | RunStatus::Completed | RunStatus::Failed => {}
@@ -487,7 +486,6 @@ mod tests {
                 FailureKind::InfrastructureFault,
             ),
             (RunStatus::Failed, None, FailureKind::Terminal),
-            (RunStatus::Cancelled, None, FailureKind::Cancelled),
             (
                 RunStatus::InfrastructureFailure,
                 Some(FailKind::Terminal),

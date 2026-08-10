@@ -14,7 +14,7 @@ use wamn_flow::node_contract::NodeError;
 /// exists before the runner picks it up); `InfrastructureFailure` is a janitor
 /// verdict for a run that never reported back; `EffectUncertain` is an unresolved
 /// operator state after an effectful crash. The storage layer owns those three;
-/// the engine only produces the other four.
+/// the engine only produces the other three.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunStatus {
@@ -22,7 +22,6 @@ pub enum RunStatus {
     Running,
     Completed,
     Failed,
-    Cancelled,
     InfrastructureFailure,
     /// An effectful attempt may have escaped without a durable outcome, so the
     /// platform cannot safely dispatch it again or claim whether it occurred.
@@ -30,12 +29,11 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    pub const ALL: [RunStatus; 7] = [
+    pub const ALL: [RunStatus; 6] = [
         RunStatus::Dispatched,
         RunStatus::Running,
         RunStatus::Completed,
         RunStatus::Failed,
-        RunStatus::Cancelled,
         RunStatus::InfrastructureFailure,
         RunStatus::EffectUncertain,
     ];
@@ -46,7 +44,6 @@ impl RunStatus {
             RunStatus::Running => "running",
             RunStatus::Completed => "completed",
             RunStatus::Failed => "failed",
-            RunStatus::Cancelled => "cancelled",
             RunStatus::InfrastructureFailure => "infrastructure-failure",
             RunStatus::EffectUncertain => "effect-uncertain",
         }
@@ -59,10 +56,7 @@ impl RunStatus {
     pub fn is_terminal(self) -> bool {
         matches!(
             self,
-            RunStatus::Completed
-                | RunStatus::Failed
-                | RunStatus::Cancelled
-                | RunStatus::InfrastructureFailure
+            RunStatus::Completed | RunStatus::Failed | RunStatus::InfrastructureFailure
         )
     }
 }
@@ -164,7 +158,6 @@ impl From<wamn_runner::ExecutionStatus> for RunStatus {
             wamn_runner::ExecutionStatus::Running => RunStatus::Running,
             wamn_runner::ExecutionStatus::Completed => RunStatus::Completed,
             wamn_runner::ExecutionStatus::Failed => RunStatus::Failed,
-            wamn_runner::ExecutionStatus::Cancelled => RunStatus::Cancelled,
         }
     }
 }

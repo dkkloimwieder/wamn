@@ -47,7 +47,6 @@ pub enum ExecutionStatus {
     Running,
     Completed,
     Failed,
-    Cancelled,
 }
 
 impl ExecutionStatus {

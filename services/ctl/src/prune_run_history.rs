@@ -4,7 +4,7 @@
 //! Deletes a project-env's TERMINAL run history older than a retention window so
 //! the `runs`/`node_runs` HOT store stays bounded (node I/O snapshots are the
 //! biggest storage-cost driver — platform-plan risk #5). Only runs in a terminal
-//! state (completed / failed / cancelled / infrastructure-failure) are eligible; a
+//! state (completed / failed / infrastructure-failure) are eligible; a
 //! `dispatched`/`running` run is never pruned.
 //!
 //! **Role:** connects as the APP role (`wamn_app`, NOSUPERUSER/NOBYPASSRLS) under

@@ -164,10 +164,10 @@ fn run_state_live() {
 
     let terminal_script = format!(
         "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text) AS {}; \
          CREATE TEMP TABLE terminal AS \
            EXECUTE terminal_stmt('release-1','release-1','worker-a',1, \
-                                 'completed','frontier-exhausted',NULL,'{{\"done\":true}}'); \
+                                 'completed','frontier-exhausted','{{\"done\":true}}'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM terminal) = 'terminalized', 'run terminalized'; \
            ASSERT (SELECT status FROM runs WHERE run_id='release-1') = 'completed', \
@@ -205,19 +205,19 @@ fn run_state_live() {
     );
     let source_terminal_script = format!(
         "{} PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text) AS {}; \
          CREATE TEMP TABLE cron_terminal AS \
            EXECUTE terminal_stmt('terminal-cron','terminal-cron','worker-source',1, \
-                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+                                 'completed','frontier-exhausted','{{}}'); \
          CREATE TEMP TABLE event_terminal AS \
            EXECUTE terminal_stmt('terminal-event','terminal-event','worker-source',1, \
-                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+                                 'completed','frontier-exhausted','{{}}'); \
          CREATE TEMP TABLE http_open_terminal AS \
            EXECUTE terminal_stmt('terminal-http-open','terminal-http-open','worker-source',1, \
-                                 'completed','frontier-exhausted',NULL,'{{}}'); \
+                                 'completed','frontier-exhausted','{{}}'); \
          CREATE TEMP TABLE http_released_terminal AS \
            EXECUTE terminal_stmt('terminal-http-released','terminal-http-released', \
-                                 'worker-source',1,'completed','frontier-exhausted',NULL,'{{}}'); \
+                                 'worker-source',1,'completed','frontier-exhausted','{{}}'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM cron_terminal) = 'terminalized', \
                   'attached cron has no caller to release'; \
@@ -793,11 +793,11 @@ fn run_state_live() {
         "{} PREPARE release_stmt \
            (text,text,text,bigint,text,text,int,text,text) AS {}; \
          PREPARE terminal_stmt \
-           (text,text,text,bigint,text,text,text,text) AS {}; \
+           (text,text,text,bigint,text,text,text) AS {}; \
          EXECUTE release_stmt('fault-1','fault-1','worker-f',9, \
                               'failed','{{\"error\":{{\"code\":\"boom\"}}}}',500,NULL,'sha256:fault'); \
          EXECUTE terminal_stmt('fault-1','fault-1','worker-f',9, \
-                               'failed','node-failed',NULL,'null'); \
+                               'failed','node-failed','null'); \
          SELECT 1/0; COMMIT;",
         app_preamble(),
         release,

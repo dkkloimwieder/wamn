@@ -691,9 +691,6 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
             Some(InvokeResult::Responded(_)) => {
                 bail!("address escape reached the environment-owned denied target");
             }
-            Some(InvokeResult::Cancelled(failure)) => {
-                bail!("address-escape run was unexpectedly cancelled: {failure:?}");
-            }
         }
         println!(
             "credproof PASS: admitted binding delivered credentials; unbound artifact denied; address escape blocked; containment held"

@@ -253,7 +253,7 @@ pub fn select_node_runs_for_pin_sql() -> String {
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
-/// cancelled / infrastructure-failure) whose `created_at` predates `$1` days ago.
+/// infrastructure-failure) whose `created_at` predates `$1` days ago.
 /// `node_runs` (and any surviving `run_queue` / `run_dead_letters` rows) cascade
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based

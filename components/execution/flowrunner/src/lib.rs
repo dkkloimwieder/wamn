@@ -2301,7 +2301,7 @@ fn complete_attempt_success(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let (binds, _) = capture_binds(capture, output, &dispatch.payload);
     let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
     let response = client::query(
@@ -2329,7 +2329,7 @@ fn complete_attempt_success(
     decode_attempt_completion(&response.rows)
 }
 
-fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<bool, String> {
+fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<(), String> {
     let row = rows.first().ok_or("attempt completion returned no row")?;
     let code = match row.first() {
         Some(SqlValue::Text(code)) => code.as_str(),
@@ -2343,8 +2343,7 @@ fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<bool, String> {
     match CheckpointResult::from_parts(code, status)
         .ok_or_else(|| format!("unknown attempt completion result: {code}"))?
     {
-        CheckpointResult::Applied => Ok(false),
-        CheckpointResult::Cancelled => Ok(true),
+        CheckpointResult::Applied => Ok(()),
         CheckpointResult::FenceLost => Err("attempt completion refused: fence-lost".to_string()),
         other => Err(format!("attempt completion refused: {other:?}")),
     }
@@ -2366,7 +2365,7 @@ fn record_error_and_renew(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let (kind, payload, mut detail_json) = error_row_values(err);
     let (binds, redacted) = capture_binds(capture, &payload, input);
     if redacted {
@@ -2587,7 +2586,6 @@ fn terminalize_in_transaction(
                 int64(lease_generation),
                 text(status),
                 reason.map_or(SqlValue::Null, text),
-                SqlValue::Null,
                 jsonb(result),
             ],
         )
@@ -2630,7 +2628,7 @@ fn complete_respond_and_renew(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let txn = client::begin().map_err(|error| err_name(&error))?;
     let (binds, _) = capture_binds(capture, output, &dispatch.payload);
     let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
@@ -2657,10 +2655,7 @@ fn complete_respond_and_renew(
             ],
         )
         .map_err(|error| err_name(&error))?;
-    if decode_attempt_completion(&response.rows)? {
-        txn.commit().map_err(|error| err_name(&error))?;
-        return Ok(true);
-    }
+    decode_attempt_completion(&response.rows)?;
 
     let status = wamn_nodes::respond::status_for(&dispatch.config)
         .expect("validated respond config has an HTTP status");
@@ -2686,7 +2681,7 @@ fn complete_respond_and_renew(
         )?;
     }
     txn.commit().map_err(|error| err_name(&error))?;
-    Ok(false)
+    Ok(())
 }
 
 /// Complete the fail attempt, release an attached caller, and terminalize the
@@ -2706,7 +2701,7 @@ fn complete_fail_and_renew(
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let txn = client::begin().map_err(|error| err_name(&error))?;
     let (kind, output, mut detail) = error_row_values(error);
     let (binds, redacted) = capture_binds(capture, &output, &dispatch.payload);
@@ -2737,10 +2732,7 @@ fn complete_fail_and_renew(
             ],
         )
         .map_err(|error| err_name(&error))?;
-    if decode_attempt_completion(&response.rows)? {
-        txn.commit().map_err(|error| err_name(&error))?;
-        return Ok(true);
-    }
+    decode_attempt_completion(&response.rows)?;
 
     let config: FailConfig =
         serde_json::from_value(dispatch.config.clone()).expect("validated fail config");
@@ -2779,7 +2771,7 @@ fn complete_fail_and_renew(
         lease_generation,
     )?;
     txn.commit().map_err(|error| err_name(&error))?;
-    Ok(false)
+    Ok(())
 }
 
 /// Commit one engine-owned boundary under the claimed run's fence. Fail couples
@@ -2956,7 +2948,6 @@ fn terminalize_claimed(
             int64(lease_generation),
             text("completed"),
             SqlValue::Null,
-            SqlValue::Null,
             jsonb(result),
         ],
     )
@@ -3003,7 +2994,6 @@ fn terminalize_effect_uncertain(
             int64(lease_generation),
             text("failed"),
             text(&reason),
-            SqlValue::Null,
             jsonb(&json!({"code":"effect-uncertain","node":node_id})),
         ],
     )
@@ -3591,7 +3581,7 @@ fn execute_claimed(
                     let NodeOutcome::Error(error) = &outcome else {
                         unreachable!("validated fail outcome is terminal")
                     };
-                    let cancelled = complete_fail_and_renew(
+                    complete_fail_and_renew(
                         run_id,
                         &flow.flow_id,
                         flow.version,
@@ -3603,14 +3593,6 @@ fn execute_claimed(
                         owner,
                         lease_generation,
                     )?;
-                    if cancelled {
-                        return Ok(ClaimOutcome {
-                            outcome: 0,
-                            park_ms: 0,
-                            fail_reason: None,
-                            already_settled: false,
-                        });
-                    }
                     next_seq += 1;
                     emit_node_error(
                         &flow.flow_id,
@@ -3641,7 +3623,7 @@ fn execute_claimed(
                         context,
                     } => {
                         let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                        let cancelled = if d.node_type == "respond" {
+                        if d.node_type == "respond" {
                             http_status = u32::from(
                                 wamn_nodes::respond::status_for(&d.config)
                                     .expect("validated respond config has an HTTP status"),
@@ -3670,14 +3652,6 @@ fn execute_claimed(
                                 owner,
                                 lease_generation,
                             )?
-                        };
-                        if cancelled {
-                            return Ok(ClaimOutcome {
-                                outcome: 0,
-                                park_ms: 0,
-                                fail_reason: None,
-                                already_settled: false,
-                            });
                         }
                         next_seq += 1;
                         emit_node_complete(&flow.flow_id, run_id, &d.node, next_seq - 1, &tp, port);
@@ -3686,7 +3660,7 @@ fn execute_claimed(
                         if will_error_route(err, &d)
                             && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
                     {
-                        let cancelled = record_error_and_renew(
+                        record_error_and_renew(
                             run_id,
                             &d.node,
                             d.occurrence,
@@ -3698,14 +3672,6 @@ fn execute_claimed(
                             owner,
                             lease_generation,
                         )?;
-                        if cancelled {
-                            return Ok(ClaimOutcome {
-                                outcome: 0,
-                                park_ms: 0,
-                                fail_reason: None,
-                                already_settled: false,
-                            });
-                        }
                         next_seq += 1;
                         emit_node_error(
                             &flow.flow_id,

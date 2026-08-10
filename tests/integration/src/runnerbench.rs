@@ -183,7 +183,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             attachment_id text, registration_id text, \
             event_source_run_id text, event_root_run_id text, event_depth int, \
             status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+              CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
             trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
             invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
             admission_context_version int NOT NULL DEFAULT 1, \
@@ -196,8 +196,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             caller_release_node_id text, caller_outcome_hash text, \
             caller_released_at timestamptz, \
             response_deadline_at timestamptz, run_deadline_at timestamptz, \
-            cancel_requested_kind text, cancel_requested_at timestamptz, \
-            cancel_kind text, terminal_reason text, \
+            terminal_reason text, \
             fail_kind text, fail_node text, fail_reason text, \
             created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
@@ -317,7 +316,7 @@ fn aliased_columns(sql: &str, alias: &str) -> std::collections::BTreeSet<String>
 /// executes, and from the run row to the NODE_RUN row. thvs swept `runs` against
 /// the first three; run-next then walked one statement further and died `42703:
 /// column n.selected_recovery_class does not exist`, then `42703: column
-/// r.cancel_requested_kind does not exist` — the same rot, one table and one
+/// a required run column does not exist` — the same rot, one table and one
 /// statement over each time, while `testkitbench` patched its own copy of the
 /// delta by hand rather than the stand-in. Deriving both rows from the STATEMENTS
 /// names the path once and lets the columns follow.

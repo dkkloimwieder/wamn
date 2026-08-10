@@ -13,7 +13,6 @@ pub enum RunStatus {
     Running,
     Completed,
     Failed,
-    Cancelled,
     InfrastructureFailure,
     EffectUncertain,
 }
@@ -52,7 +51,6 @@ mod tests {
             (RunStatus::Running, "running"),
             (RunStatus::Completed, "completed"),
             (RunStatus::Failed, "failed"),
-            (RunStatus::Cancelled, "cancelled"),
             (RunStatus::InfrastructureFailure, "infrastructure-failure"),
             (RunStatus::EffectUncertain, "effect-uncertain"),
         ] {

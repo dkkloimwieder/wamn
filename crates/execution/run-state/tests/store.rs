@@ -517,7 +517,7 @@ fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
 #[test]
 fn canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked() {
     let exact_check = r#"CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'cancelled', 'infrastructure-failure', 'effect-uncertain'))"#;
+                          'infrastructure-failure', 'effect-uncertain'))"#;
     for ddl in [
         include_str!("../../../../deploy/sql/run-state.sql"),
         include_str!("../../../../deploy/sql/postgres-init.sql"),
@@ -532,10 +532,6 @@ fn status_maps_from_the_engine_taxonomy() {
     assert_eq!(
         RunStatus::from(wamn_runner::ExecutionStatus::Completed),
         RunStatus::Completed
-    );
-    assert_eq!(
-        RunStatus::from(wamn_runner::ExecutionStatus::Cancelled),
-        RunStatus::Cancelled
     );
     assert_eq!(
         FailKind::from(wamn_runner::ExecutionFailureKind::InvalidInput),

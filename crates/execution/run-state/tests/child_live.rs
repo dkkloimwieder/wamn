@@ -2,9 +2,7 @@
 
 use std::process::{Command, Output};
 
-use wamn_run_state::child::{
-    cancel_unreleased_child_sql, create_or_recover_child_sql, release_child_sql,
-};
+use wamn_run_state::child::{create_or_recover_child_sql, release_child_sql};
 
 fn psql(url: &str, script: &str) -> Output {
     Command::new("psql")
@@ -42,10 +40,6 @@ fn prepare_release(sql: &str) -> String {
         "PREPARE release_child_stmt \
          (text,text,text,bigint,text,text,int,text,text,text,text,int,bigint) AS {sql};"
     )
-}
-
-fn prepare_cancel(sql: &str) -> String {
-    format!("PREPARE cancel_child_stmt (text,bigint,text) AS {sql};")
 }
 
 fn execute_create(parent: &str, owner: &str, generation: i64, child: &str) -> String {
@@ -130,7 +124,6 @@ fn child_live() {
 
     let create = create_or_recover_child_sql();
     let release = release_child_sql();
-    let cancel = cancel_unreleased_child_sql();
 
     // Positive: one statement inserts and pins the child, enqueues it, records
     // the occurrence wait, and releases the parent's queue lease.
@@ -448,37 +441,4 @@ fn child_live() {
         execute_create("parent-depth", "depth-worker", 12, "child-depth")
     );
     success(&url, &depth);
-
-    // Pre-release cancellation requires the exact child generation, seizes it,
-    // and never mutates a child whose caller outcome was already released.
-    seed_parent(&url, "parent-cancel", "cancel-worker", 13);
-    let create_cancel = format!(
-        "{} {} {}; COMMIT;",
-        app_preamble(),
-        prepare_create(&create),
-        execute_create("parent-cancel", "cancel-worker", 13, "child-cancel")
-    );
-    success(&url, &create_cancel);
-    let cancel_checks = format!(
-        "{} {} \
-         CREATE TEMP TABLE stale_cancel AS \
-           EXECUTE cancel_child_stmt('child-cancel',1,'parent-operator'); \
-         DO $$ BEGIN ASSERT (SELECT result_code FROM stale_cancel)='stale-generation'; END $$; \
-         CREATE TEMP TABLE cancelled AS \
-           EXECUTE cancel_child_stmt('child-cancel',0,'parent-operator'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM cancelled)='cancelled'; \
-           ASSERT (SELECT seized_generation FROM cancelled)=1; \
-           ASSERT EXISTS (SELECT FROM runs WHERE run_id='child-cancel' \
-             AND status='cancelled' AND cancel_kind='parent-operator'); \
-           ASSERT NOT EXISTS (SELECT FROM run_queue WHERE run_id='child-cancel'); \
-         END $$; \
-         CREATE TEMP TABLE released_guard AS \
-           EXECUTE cancel_child_stmt('child-created',3,'parent-operator'); \
-         DO $$ BEGIN ASSERT (SELECT result_code FROM released_guard)='already-released'; END $$; \
-         COMMIT;",
-        app_preamble(),
-        prepare_cancel(cancel)
-    );
-    success(&url, &cancel_checks);
 }

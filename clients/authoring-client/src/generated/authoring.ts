@@ -202,7 +202,7 @@ export type FailureDetail = {
   "node-id"?: string | null;
 };
 
-export type FailureKind = "terminal" | "retry-exhausted" | "invalid-input" | "runaway-budget" | "cancelled" | "infrastructure-fault";
+export type FailureKind = "terminal" | "retry-exhausted" | "invalid-input" | "runaway-budget" | "infrastructure-fault";
 
 export type NodeOutcome = "passed" | "failed" | "not-observed" | "unknown";
 
@@ -1331,7 +1331,6 @@ export const authoringSchema: unknown = {
         "retry-exhausted",
         "invalid-input",
         "runaway-budget",
-        "cancelled",
         "infrastructure-fault"
       ],
       "type": "string"

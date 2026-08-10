@@ -42,9 +42,7 @@ fn definition(lines: &[String], header: &str) -> Vec<String> {
 fn functions(lines: &[String]) -> Vec<String> {
     lines
         .iter()
-        .filter(|line| {
-            line.starts_with("begin:") || line.starts_with("wait:") || line.starts_with("cancel:")
-        })
+        .filter(|line| line.starts_with("begin:") || line.starts_with("wait:"))
         .cloned()
         .collect()
 }
@@ -58,7 +56,6 @@ fn positive_wit_package_and_operations_are_versioned_and_complete() {
         [
             "begin: func(req: invoke-request) -> begin-result;",
             "wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;",
-            "cancel: func(run-id: string) -> cancel-ack;",
         ]
     );
 }
@@ -95,7 +92,6 @@ fn negative_result_and_rejection_variants_are_not_ambiguous() {
             "variant invoke-result {",
             "responded(response),",
             "failed(failure),",
-            "cancelled(failure),",
             "}",
         ]
     );
@@ -120,14 +116,6 @@ fn negative_every_post_admission_value_has_run_identity() {
     assert!(definition(&wit, "record flow-error {").contains(&"run-id: string,".to_string()));
     assert!(
         definition(&rust, "pub struct FlowError {").contains(&"pub run_id: String,".to_string())
-    );
-    assert_eq!(
-        definition(&wit, "record cancel-ack {"),
-        ["record cancel-ack {", "run-id: string,", "}"]
-    );
-    assert_eq!(
-        definition(&rust, "pub struct CancelAck {"),
-        ["pub struct CancelAck {", "pub run_id: String,", "}"]
     );
     assert!(
         !definition(&wit, "record rejection {")
@@ -234,7 +222,6 @@ fn fault_result_wit_rust_coherence_detects_drift() {
             "variant invoke-result {",
             "responded(response),",
             "failed(failure),",
-            "cancelled(failure),",
             "}",
         ]
     );
@@ -244,7 +231,6 @@ fn fault_result_wit_rust_coherence_detects_drift() {
             "pub enum InvokeResult {",
             "Responded(Response),",
             "Failed(Failure),",
-            "Cancelled(Failure),",
             "}",
         ]
     );

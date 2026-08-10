@@ -20,7 +20,6 @@ mutation_ids() {
   printf '%s\n' \
     invocation-generation-fence \
     admission-write-ahead-atomicity \
-    cancellation-generation-fence \
     child-release-wake-fence \
     child-occurrence-identity \
     attempt-intent-before-renewal \
@@ -45,14 +44,6 @@ load_mutation() {
       NEEDLE="FROM created_run AS r JOIN classified AS c USING (tenant_id, run_id)"
       REPLACEMENT="FROM input AS r JOIN classified AS c USING (tenant_id, run_id)"
       GATE="admission::tests::admission_recipe_locks_then_mutates_in_one_transaction"
-      TEST_ARGV=(cargo test --locked -p wamn-run-state --lib "$GATE" -- --exact)
-      ;;
-    cancellation-generation-fence)
-      TARGET="crates/execution/run-state/src/cancellation.rs"
-      EXPECTED_SHA="645d81d47a1508d1ca58da4538f4e11d2123503e20b6d7f356772afe8fca3601"
-      NEEDLE="WHEN q.run_id IS NULL OR q.lease_generation <> i.expected_generation"
-      REPLACEMENT="WHEN q.run_id IS NULL"
-      GATE="cancellation::tests::request_is_generation_fenced_and_never_seizes"
       TEST_ARGV=(cargo test --locked -p wamn-run-state --lib "$GATE" -- --exact)
       ;;
     child-release-wake-fence)

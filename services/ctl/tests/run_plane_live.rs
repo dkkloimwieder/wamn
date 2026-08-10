@@ -593,7 +593,7 @@ async fn shared_runner_legacy_leg(su: &Client) {
            tenant_id text NOT NULL CHECK (tenant_id <> ''), run_id text NOT NULL, \
            flow_id text NOT NULL, flow_version int NOT NULL, \
            status text NOT NULL DEFAULT 'running' CHECK (status IN \
-             ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+             ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
            idempotency_key text, replay_of text, root_run_id text, \
            fail_kind text CHECK (fail_kind IN \

@@ -518,7 +518,7 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
     );
 }
 
-// ---- invalid-input / cancelled --------------------------------------------
+// ---- invalid-input --------------------------------------------------------
 
 #[test]
 fn invalid_input_is_never_retried() {

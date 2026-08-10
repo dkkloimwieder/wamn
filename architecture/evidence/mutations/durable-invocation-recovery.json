@@ -4,7 +4,7 @@
   "bead": "wamn-2jdm.5.1",
   "source": {
     "git_commit": "cf9d5ffebc885629bf2f7c45a2310f6c55245f60",
-    "runner_sha256": "2991a3448360fa218403b2bae150a73e11ffe3bd0a11d6a65d0299188432b9c9"
+    "runner_sha256": "3ab11142328a75f759c2326678bec9a95f276c08d7807fc205c7e63fe46fb42c"
   },
   "profile": "debug",
   "green_runs": [
@@ -18,13 +18,6 @@
     {
       "gate": "admission::tests::admission_recipe_locks_then_mutates_in_one_transaction",
       "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "admission::tests::admission_recipe_locks_then_mutates_in_one_transaction", "--", "--exact"],
-      "exit_code": 0,
-      "log_sha256": "983f71e75ca2dbf2b4ea3a210b7d671400a089d277d773a31048aea3ce4eda8b",
-      "status": "passed"
-    },
-    {
-      "gate": "cancellation::tests::request_is_generation_fenced_and_never_seizes",
-      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "cancellation::tests::request_is_generation_fenced_and_never_seizes", "--", "--exact"],
       "exit_code": 0,
       "log_sha256": "983f71e75ca2dbf2b4ea3a210b7d671400a089d277d773a31048aea3ce4eda8b",
       "status": "passed"
@@ -86,18 +79,6 @@
       "baseline_sha256": "0912c481f9577f256fc640dde5d37ff6e7ddb71239631f0e73309b27b6bb189f",
       "mutant_sha256": "49b1b23ca2e8d3bd68ec76ac3a33635deb77cbd69f742696ba975d4dc18e7f20",
       "restored_sha256": "0912c481f9577f256fc640dde5d37ff6e7ddb71239631f0e73309b27b6bb189f",
-      "exit_code": 101,
-      "log_sha256": "12e9feaf1749160af5657ad7155273b09e82f73cb5bf6e72171f39450862edf1",
-      "status": "killed"
-    },
-    {
-      "id": "cancellation-generation-fence",
-      "gate": "cancellation::tests::request_is_generation_fenced_and_never_seizes",
-      "target": "crates/execution/run-state/src/cancellation.rs",
-      "command": ["cargo", "test", "--locked", "-p", "wamn-run-state", "--lib", "cancellation::tests::request_is_generation_fenced_and_never_seizes", "--", "--exact"],
-      "baseline_sha256": "645d81d47a1508d1ca58da4538f4e11d2123503e20b6d7f356772afe8fca3601",
-      "mutant_sha256": "e4a726727588d86a2e64a4cc0f64b233875cdebcf88bb10dda5e2a95c865dbb1",
-      "restored_sha256": "645d81d47a1508d1ca58da4538f4e11d2123503e20b6d7f356772afe8fca3601",
       "exit_code": 101,
       "log_sha256": "12e9feaf1749160af5657ad7155273b09e82f73cb5bf6e72171f39450862edf1",
       "status": "killed"

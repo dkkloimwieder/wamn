@@ -2,8 +2,7 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 use wamn_flow_invocation::{
-    Admitted, BeginResult, CancelAck, Failure, FlowError, InvokeRequest, InvokeResult, Rejection,
-    Response,
+    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
 
 use flow_http::{
@@ -17,7 +16,6 @@ enum Fault {
     Routes,
     Begin,
     Wait,
-    Cancel,
 }
 
 struct FakeBackend {
@@ -29,7 +27,6 @@ struct FakeBackend {
     auth_policies: Vec<String>,
     begins: Vec<InvokeRequest>,
     wait_timeouts: Vec<u32>,
-    cancels: Vec<String>,
 }
 
 impl FakeBackend {
@@ -45,7 +42,6 @@ impl FakeBackend {
             auth_policies: Vec::new(),
             begins: Vec::new(),
             wait_timeouts: Vec::new(),
-            cancels: Vec::new(),
         }
     }
 }
@@ -83,16 +79,6 @@ impl Backend for FakeBackend {
             return Err(ProviderError);
         }
         Ok(self.waits.pop_front().unwrap_or(None))
-    }
-
-    fn cancel(&mut self, run_id: &str) -> Result<CancelAck, ProviderError> {
-        self.cancels.push(run_id.to_string());
-        if self.fault == Fault::Cancel {
-            return Err(ProviderError);
-        }
-        Ok(CancelAck {
-            run_id: run_id.to_string(),
-        })
     }
 }
 
@@ -411,7 +397,6 @@ fn every_typed_rejection_is_adapted_without_a_run() {
             (status, code.to_string())
         );
         assert!(backend.wait_timeouts.is_empty());
-        assert!(backend.cancels.is_empty());
     }
 }
 
@@ -423,11 +408,6 @@ fn all_stored_outcomes_are_adapted_exactly() {
             InvokeResult::Failed(failure(400, "authored-fail")),
             400,
             Some("authored-fail"),
-        ),
-        (
-            InvokeResult::Cancelled(failure(499, "caller-cancelled")),
-            499,
-            Some("caller-cancelled"),
         ),
     ];
     for (result, status, code) in cases {
@@ -563,7 +543,7 @@ fn mapped_payload_ceiling_is_enforced_before_begin() {
 }
 
 #[test]
-fn wait_is_finite_and_disconnect_cancels_the_admitted_run_once() {
+fn wait_is_finite_and_disconnect_detaches_without_mutating_the_run() {
     let mut backend = FakeBackend::new(route());
     backend.waits = VecDeque::from([None, None, None]);
     let mut body = Chunks::json(&[br#"{"amount":1}"#]);
@@ -577,7 +557,6 @@ fn wait_is_finite_and_disconnect_cancels_the_admitted_run_once() {
     ));
     assert_eq!(output.status, 504);
     assert_eq!(backend.wait_timeouts, [25, 25, 25]);
-    assert!(backend.cancels.is_empty());
 
     let mut backend = FakeBackend::new(route());
     backend.waits = VecDeque::from([None]);
@@ -593,7 +572,6 @@ fn wait_is_finite_and_disconnect_cancels_the_admitted_run_once() {
         }
     );
     assert_eq!(backend.wait_timeouts, [25]);
-    assert_eq!(backend.cancels, ["run-1"]);
 }
 
 #[test]
@@ -633,21 +611,4 @@ fn routing_body_and_invocation_provider_faults_are_bounded() {
     ));
     assert_eq!(error_code(&output.body), "body-read-failed");
     assert!(backend.begins.is_empty());
-
-    let mut backend = FakeBackend::new(route());
-    backend.fault = Fault::Cancel;
-    backend.waits = VecDeque::from([None]);
-    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
-    let mut live = Liveness {
-        states: VecDeque::from([true, false]),
-    };
-    let output = response(handle_request(
-        &mut backend,
-        &mut body,
-        &mut live,
-        &head(),
-        limits(),
-    ));
-    assert_eq!(error_code(&output.body), "cancel-provider-failed");
-    assert_eq!(backend.cancels, ["run-1"]);
 }

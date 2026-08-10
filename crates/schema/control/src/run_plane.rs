@@ -101,7 +101,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {
@@ -119,7 +119,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_caller_outcome_kind_check",
-        definition: "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text, 'cancelled'::text]))",
+        definition: "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text]))",
         origin: CheckOrigin::Inline("caller_outcome_kind"),
     },
     CheckSpec {
@@ -185,30 +185,24 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check6",
-        definition: "CHECK ((cancel_requested_kind IS NULL) = (cancel_requested_at IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "runs",
-        name: "runs_check7",
         definition: "CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "runs",
-        name: "runs_check8",
+        name: "runs_check7",
         definition: "CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "runs",
-        name: "runs_check9",
+        name: "runs_check8",
         definition: "CHECK (caller_outcome_kind <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "runs",
-        name: "runs_check10",
+        name: "runs_check9",
         definition: "CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL OR response_deadline_at <= run_deadline_at)",
         origin: CheckOrigin::Table,
     },
@@ -653,7 +647,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "authoring_suite_case_facts",
         name: "authoring_suite_case_facts_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {
@@ -3752,7 +3746,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(names.contains(&"status"));
         assert!(names.contains(&"fail_kind"));
         assert!(
-            !names.contains(&"'cancelled',"),
+            !names.contains(&"'infrastructure-failure',"),
             "continuation line misparsed"
         );
         let status = &cols.iter().find(|(c, _)| c == "status").unwrap().1;
@@ -3867,7 +3861,6 @@ CREATE INDEX event_registrations_by_entity
                 "node_runs_seq",
                 "run_queue_claimable",
                 "run_queue_partition",
-                "runs_cancel_requested",
                 "runs_event_root",
                 "runs_flow",
                 "runs_idempotency",

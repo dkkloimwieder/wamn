@@ -87,7 +87,7 @@ fn runs_stand_in() -> String {
         event_source_run_id text, event_root_run_id text, event_depth int, \
         status text NOT NULL DEFAULT 'running' \
           CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
-                            'cancelled', 'infrastructure-failure', 'effect-uncertain')), \
+                            'infrastructure-failure', 'effect-uncertain')), \
         trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \
         admission_context_version int NOT NULL DEFAULT 1, \
@@ -99,8 +99,7 @@ fn runs_stand_in() -> String {
         wait_generation bigint, caller_outcome_kind text, caller_outcome_json jsonb, \
         caller_http_status int, caller_release_node_id text, caller_outcome_hash text, \
         caller_released_at timestamptz, response_deadline_at timestamptz, \
-        run_deadline_at timestamptz, cancel_requested_kind text, \
-        cancel_requested_at timestamptz, cancel_kind text, terminal_reason text, \
+        run_deadline_at timestamptz, terminal_reason text, \
         fail_kind text, fail_node text, fail_reason text, \
         created_at timestamptz NOT NULL DEFAULT now(), \
         updated_at timestamptz NOT NULL DEFAULT now(), \

@@ -4,7 +4,7 @@
 //! caller-facing boundary between ingress and flow execution from FLOW-SPEC
 //! rev18 §8, §§9.1–9.7, and §11. The two-stage handshake returns a durable run
 //! identity from [`FlowInvocation::begin`] before a caller performs bounded
-//! [`FlowInvocation::wait`] calls or requests [`FlowInvocation::cancel`].
+//! [`FlowInvocation::wait`] calls.
 //!
 //! This is not the runner-to-custom-node protocol. It deliberately shares no
 //! types or dependencies with `wamn-node-invoke`.
@@ -62,7 +62,7 @@ pub struct Response {
     pub status_hint: Option<u16>,
 }
 
-/// A stored failed or cancelled caller envelope.
+/// A stored failed caller envelope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowError {
     pub code: String,
@@ -84,16 +84,6 @@ pub struct Failure {
 pub enum InvokeResult {
     Responded(Response),
     Failed(Failure),
-    Cancelled(Failure),
-}
-
-/// Idempotent acknowledgement of the requested run cancellation.
-///
-/// This does not claim cancellation won its race with release or terminal
-/// transitions. The run identity makes the acknowledgement unambiguous.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CancelAck {
-    pub run_id: String,
 }
 
 /// The application-level mirror of the WIT `invocation` interface.
@@ -103,7 +93,4 @@ pub trait FlowInvocation {
 
     /// Wait at most `timeout_ms`; `None` means the run is still unreleased.
     fn wait(&mut self, run_id: String, timeout_ms: u32) -> Option<InvokeResult>;
-
-    /// Request observed-disconnect cancellation for an admitted run.
-    fn cancel(&mut self, run_id: String) -> CancelAck;
 }

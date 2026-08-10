@@ -1,6 +1,6 @@
 [package]
 name = "wamn-dispatcher"
-description = "wamn shared queue dispatcher: queued-work wake and bounded deadline reconciliation across all projects"
+description = "wamn shared queue dispatcher: queued-work wake reconciliation across all projects"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

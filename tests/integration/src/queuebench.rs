@@ -159,7 +159,7 @@ fn queue_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
             status text NOT NULL DEFAULT 'running' \
-              CHECK (status IN ('dispatched','running','completed','failed','cancelled','infrastructure-failure')), \
+              CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
             input_json jsonb, result_json jsonb, state_json jsonb, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             PRIMARY KEY (tenant_id, run_id));\

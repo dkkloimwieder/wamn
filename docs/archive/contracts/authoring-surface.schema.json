@@ -992,7 +992,6 @@
         "retry-exhausted",
         "invalid-input",
         "runaway-budget",
-        "cancelled",
         "infrastructure-fault"
       ],
       "type": "string"

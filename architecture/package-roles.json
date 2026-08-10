@@ -128,10 +128,10 @@
       "deployable": true,
       "native": {
         "native_kind": "transition-runtime",
-        "native_reason": "The current queued-work wake and bounded cancellation/deadline effect shell uses native PostgreSQL and JetStream clients while durable decisions remain below it.",
+        "native_reason": "The queued-work wake effect shell uses native PostgreSQL and JetStream clients while durable decisions remain below it.",
         "owner": "wamn-l5i9.71 / execution owners",
-        "credential_failure_scope": "The dispatcher owns only cross-project scheduling reads, enqueue writes, bounded cancellation/deadline transitions, and wake-doorbell publication.",
-        "tested_boundary": "Dispatcher process-boundary, ordering, cancellation/deadline race, fairness, wake, and live database proofs cover the executable shell.",
+        "credential_failure_scope": "The dispatcher owns only cross-project scheduling reads, enqueue writes, and wake-doorbell publication.",
+        "tested_boundary": "Dispatcher process-boundary, ordering, fairness, wake, and live database proofs cover the executable shell.",
         "exit_condition": "Retire after the dispatcher component reaches exact behavior, artifact, rollback, and operational parity (wamn-l5i9.71)."
       }
     },

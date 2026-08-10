@@ -223,21 +223,6 @@ impl invocation::Host for ActiveCtx<'_> {
             .map(map_result)
             .transpose()
     }
-
-    async fn cancel(
-        &mut self,
-        run_id: String,
-    ) -> wash_runtime::wasmtime::Result<invocation::CancelAck> {
-        let plugin = self.try_get_plugin::<WamnFlowInvocation>(WAMN_FLOW_INVOCATION_ID)?;
-        let service = plugin.service(&self.component_id).ok_or_else(|| {
-            wash_runtime::wasmtime::Error::msg("flow invocation component is not registered")
-        })?;
-        let ack = service
-            .cancel(run_id)
-            .await
-            .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?;
-        Ok(invocation::CancelAck { run_id: ack.run_id })
-    }
 }
 
 fn map_begin(result: wamn_flow_invocation::BeginResult) -> invocation::BeginResult {
@@ -269,9 +254,6 @@ fn map_result(
         }
         wamn_flow_invocation::InvokeResult::Failed(failure) => {
             invocation::InvokeResult::Failed(map_failure(failure))
-        }
-        wamn_flow_invocation::InvokeResult::Cancelled(failure) => {
-            invocation::InvokeResult::Cancelled(map_failure(failure))
         }
     })
 }

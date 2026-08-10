@@ -26,7 +26,8 @@ mod tests {
         assert!(
             WIT.contains("wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;")
         );
-        assert!(WIT.contains("cancel: func(run-id: string) -> cancel-ack;"));
+        assert!(!WIT.contains("cancel:"));
+        assert!(!WIT.contains("cancelled(failure)"));
         assert!(!code.contains("wamn:node"));
     }
 

@@ -189,7 +189,7 @@ CREATE TABLE wamn_run.runs (
     event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
     status          text NOT NULL DEFAULT 'running'
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'cancelled', 'infrastructure-failure', 'effect-uncertain')),
+                          'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
     input_json      jsonb,
     result_json     jsonb,
@@ -210,7 +210,7 @@ CREATE TABLE wamn_run.runs (
     waiting_child_occurrence int,
     wait_generation bigint,
     caller_outcome_kind text
-        CHECK (caller_outcome_kind IN ('responded', 'failed', 'cancelled')),
+        CHECK (caller_outcome_kind IN ('responded', 'failed')),
     caller_outcome_json jsonb,
     caller_http_status int CHECK (caller_http_status BETWEEN 100 AND 599),
     caller_release_node_id text,
@@ -218,9 +218,6 @@ CREATE TABLE wamn_run.runs (
     caller_released_at timestamptz,
     response_deadline_at timestamptz,
     run_deadline_at timestamptz,
-    cancel_requested_kind text,
-    cancel_requested_at timestamptz,
-    cancel_kind text,
     terminal_reason text,
     fail_kind       text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input',
                                               'runaway-budget', 'effect-uncertain')),
@@ -249,7 +246,6 @@ CREATE TABLE wamn_run.runs (
     CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL)),
     CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL)
        AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL)),
-    CHECK ((cancel_requested_kind IS NULL) = (cancel_requested_at IS NULL)),
     CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL)),
     CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL),
     CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
@@ -278,9 +274,6 @@ CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadli
       AND status IN ('dispatched', 'running');
 CREATE INDEX runs_run_deadline ON wamn_run.runs (tenant_id, run_deadline_at)
     WHERE run_deadline_at IS NOT NULL
-      AND status IN ('dispatched', 'running');
-CREATE INDEX runs_cancel_requested ON wamn_run.runs (tenant_id, cancel_requested_at)
-    WHERE cancel_requested_at IS NOT NULL
       AND status IN ('dispatched', 'running');
 ALTER TABLE wamn_run.runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.runs FORCE ROW LEVEL SECURITY;

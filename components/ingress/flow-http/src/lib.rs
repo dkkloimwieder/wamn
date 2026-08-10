@@ -4,9 +4,7 @@ use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
-use wamn_flow_invocation::{
-    BeginResult, CancelAck, InvokeRequest, InvokeResult, Rejection, TraceContext,
-};
+use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult, Rejection, TraceContext};
 
 /// A transport header after lowercasing its name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +140,7 @@ pub trait ClientLiveness {
 /// All external authority behind the thin adapter.
 ///
 /// Routing returns definitions, authentication applies the selected policy,
-/// and invocation is exactly the frozen begin/wait/cancel protocol.
+/// and invocation is exactly the frozen begin/wait protocol.
 pub trait Backend {
     fn routes(
         &mut self,
@@ -156,7 +154,6 @@ pub trait Backend {
         run_id: &str,
         timeout_ms: u32,
     ) -> Result<Option<InvokeResult>, ProviderError>;
-    fn cancel(&mut self, run_id: &str) -> Result<CancelAck, ProviderError>;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -269,9 +266,6 @@ fn try_handle(
 
     for _ in 0..limits.max_waits {
         if !liveness.connected() {
-            backend
-                .cancel(&admitted.run_id)
-                .map_err(|_| error_response(503, "cancel-provider-failed"))?;
             return Ok(AdapterOutcome::Disconnected {
                 run_id: admitted.run_id,
             });
@@ -649,7 +643,7 @@ fn invoke_response(result: InvokeResult) -> HttpResponse {
             status: response.status_hint.unwrap_or(200),
             body: response.body.into_bytes(),
         },
-        InvokeResult::Failed(failure) | InvokeResult::Cancelled(failure) => HttpResponse {
+        InvokeResult::Failed(failure) => HttpResponse {
             status: failure.status,
             body: serde_json::to_vec(&json!({
                 "error": {

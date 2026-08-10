@@ -18,8 +18,7 @@ use super::{
     handle_request,
 };
 use wamn_flow_invocation::{
-    Admitted, BeginResult, CancelAck, Failure, FlowError, InvokeRequest, InvokeResult, Rejection,
-    Response,
+    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
 
 struct Component;
@@ -130,16 +129,8 @@ impl Backend for GuestBackend {
                 invocation::InvokeResult::Failed(failure) => {
                     InvokeResult::Failed(convert_failure(failure))
                 }
-                invocation::InvokeResult::Cancelled(failure) => {
-                    InvokeResult::Cancelled(convert_failure(failure))
-                }
             }),
         )
-    }
-
-    fn cancel(&mut self, run_id: &str) -> Result<CancelAck, ProviderError> {
-        let ack = wamn::flow_invocation::invocation::cancel(run_id);
-        Ok(CancelAck { run_id: ack.run_id })
     }
 }
 

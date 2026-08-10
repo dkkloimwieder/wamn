@@ -4,8 +4,7 @@
 pub mod tests {
     use serde_json::json;
     use wamn_run_state::child::{
-        ChildCancelResult, ChildCreateResult, cancel_unreleased_child_sql,
-        create_or_recover_child_sql, release_child_sql,
+        ChildCreateResult, create_or_recover_child_sql, release_child_sql,
     };
     use wamn_run_state::transitions::StoredCallerOutcome;
 
@@ -93,20 +92,10 @@ pub mod tests {
     }
 
     #[test]
-    fn release_wakes_atomically_and_cancel_stops_at_release() {
+    fn release_wakes_atomically() {
         let release = release_child_sql();
         assert!(release.contains("released AS"));
         assert!(release.contains("cleared_parent AS"));
         assert!(release.contains("woken_parent AS"));
-
-        let cancel = cancel_unreleased_child_sql();
-        assert!(cancel.contains("caller_released_at IS NOT NULL THEN 'already-released'"));
-        assert!(cancel.contains("q.lease_generation <> i.expected_generation"));
-        assert!(cancel.contains("n.attempt_deadline_at > now()"));
-        assert!(cancel.contains("q.lease_generation + 1 AS seized_generation"));
-        assert_eq!(
-            ChildCancelResult::from_parts("stale-generation", "running", None),
-            Some(ChildCancelResult::StaleGeneration)
-        );
     }
 }
