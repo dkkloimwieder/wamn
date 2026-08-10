@@ -4,15 +4,15 @@
 //! running Grafana's HTTP API, not scaffolding. It proves, each a NAMED failure:
 //!
 //!   1. `GET /api/health` -> `database: ok` (Grafana + its DB are up);
-//!   2. `GET /api/datasources` -> Prometheus + Tempo + Loki all present (by the
-//!      FIXED uids deploy/infra/grafana.yaml provisions), and each datasource's
+//!   2. `GET /api/datasources` -> Prometheus + Tempo + Loki all present under
+//!      the proof's fixed datasource uids, and each datasource's
 //!      `GET /api/datasources/uid/<uid>/health` is OK. Honest-skip policy
 //!      (metricbench phase-6 precedent): Prometheus health is HARD (cheap to
 //!      stand up locally); Tempo/Loki health is soft in `--local` (their
 //!      containers may be absent), HARD in-cluster where they exist;
 //!   3. `GET /api/search?type=dash-db` + `GET /api/folders` -> the STATIC SRE
 //!      dashboard + its folder are file-provisioned and present;
-//!   4. after `provision-dashboards` has run: for EVERY registry org (read from
+//!   4. after dashboards are provisioned externally: for EVERY registry org (read from
 //!      `--system-database-url`, plus any `--expect-tenant`), its per-tenant
 //!      folder + dashboard are present.
 //!
@@ -266,8 +266,8 @@ async fn http_json(
     Ok((status, body))
 }
 
-/// The org ids recorded in the T1 registry (the same read `provision-dashboards`
-/// enumerates), so dashproof checks a folder for EVERY provisioned org.
+/// The org ids recorded in the T1 registry, so dashproof checks a folder for
+/// every provisioned org.
 async fn read_orgs(system_url: &str) -> anyhow::Result<Vec<String>> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await

@@ -26,5 +26,3 @@ mod publish_gate;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 pub mod restore_project_env;
-// [9.9] wamn-b4e: appended so cherry-picks compose (sibling lanes touch this file too).
-pub mod provision_dashboards;

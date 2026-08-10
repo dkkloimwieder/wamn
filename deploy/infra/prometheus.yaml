@@ -1,8 +1,7 @@
 # [9.9] Metrics store: single-binary Prometheus (the 9.8 metric-set has NO
 # server — the OTel Collector only EXPOSES wamn_* as Prometheus text on :8889;
-# nothing scrapes/stores it). This adds the missing scrape+TSDB so Grafana
-# (deploy/infra/grafana.yaml) has a metrics datasource. Single-binary, emptyDir,
-# short retention — the Loki/Tempo dev posture (HA is 9.5, out of scope). wamn-b4e.
+# nothing scrapes/stores it). This development-only scrape+TSDB remains outside
+# the MVP product bill of materials. Single-binary, emptyDir, short retention.
 #
 #   kubectl -n wamn-system apply -f deploy/infra/prometheus.yaml
 #   kubectl -n wamn-system rollout status deploy/prometheus --timeout=120s

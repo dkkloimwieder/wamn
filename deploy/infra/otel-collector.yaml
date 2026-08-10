@@ -1,8 +1,6 @@
-# S5 log pipeline bridge. The wamn-host OTLP log exporter is gRPC/tonic; Loki's
-# OTLP ingest is HTTP — so a collector is REQUIRED between them. This one
-# receives OTLP/gRPC on :4317 and forwards to Loki's native OTLP endpoint over
-# otlphttp. Its own telemetry (otelcol_exporter_sent_log_records, …) is exposed
-# on :8888 for the logbench loss cross-check.
+# Development OTLP collector for the retained trace and metric paths. The MVP
+# treats an OTLP collector as an optional external prerequisite; this manifest
+# is not part of the product bill of materials.
 #
 #   kubectl -n wamn-system apply -f deploy/infra/otel-collector.yaml
 #   kubectl -n wamn-system rollout status deploy/otel-collector --timeout=120s
@@ -24,16 +22,6 @@ data:
         send_batch_max_size: 16384
         timeout: 200ms
     exporters:
-      otlphttp/loki:
-        # Loki native OTLP; otlphttp appends /v1/logs to this base.
-        logs_endpoint: http://loki:3100/otlp/v1/logs
-        tls:
-          insecure: true
-        sending_queue:
-          enabled: true
-          queue_size: 10000
-        retry_on_failure:
-          enabled: true
       # [9.1] traces → Tempo's OTLP-gRPC distributor (deploy/infra/tempo.yaml).
       otlp/tempo:
         endpoint: tempo:4317
@@ -63,10 +51,6 @@ data:
                     host: 0.0.0.0
                     port: 8888
       pipelines:
-        logs:
-          receivers: [otlp]
-          processors: [batch]
-          exporters: [otlphttp/loki]
         # [9.1] host spans → Tempo.
         traces:
           receivers: [otlp]

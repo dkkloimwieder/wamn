@@ -187,8 +187,7 @@
         "pgprobe",
         "sample-node",
         "sockprobe",
-        "time-shift",
-        "trace-relay"
+        "time-shift"
       ],
       "non_cargo_inputs": [
         "components/samples/node-ts"
@@ -244,8 +243,7 @@
         "pgprobe",
         "sample-node",
         "sockprobe",
-        "time-shift",
-        "trace-relay"
+        "time-shift"
       ],
       "non_cargo_inputs": [
         "components/samples/node-ts"

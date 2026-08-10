@@ -9,15 +9,6 @@ processors:
     send_batch_max_size: 16384
     timeout: 200ms
 exporters:
-  otlphttp/loki:
-    logs_endpoint: http://wamn-s5-loki:3100/otlp/v1/logs
-    tls:
-      insecure: true
-    sending_queue:
-      enabled: true
-      queue_size: 10000
-    retry_on_failure:
-      enabled: true
   # [9.1] traces → local Tempo (deploy/infra/tempo-local.yaml).
   otlp/tempo:
     endpoint: wamn-s5-tempo:4317
@@ -43,10 +34,6 @@ service:
                 host: 0.0.0.0
                 port: 8888
   pipelines:
-    logs:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [otlphttp/loki]
     traces:
       receivers: [otlp]
       processors: [batch]

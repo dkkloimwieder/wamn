@@ -95,9 +95,8 @@ spec:
     - { name: s3, port: 9000, targetPort: 9000 }
     - { name: console, port: 9001, targetPort: 9001 }
 ---
-# Bucket bootstrap: create the buckets the backup mechanisms + Loki write to. The
-# `mc` client waits for MinIO, then `mb -p` (idempotent) the WAL + dump buckets
-# and the `wamn-loki` chunk/index bucket (wamn-yf3; deploy/infra/loki.yaml).
+# Bucket bootstrap for the backup mechanisms. The `mc` client waits for MinIO,
+# then creates the WAL and dump buckets idempotently.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -130,5 +129,5 @@ spec:
                 "$ACCESS_KEY_ID" "$ACCESS_SECRET_KEY" 2>/dev/null; do
                 echo "waiting for minio..."; sleep 3
               done
-              mc mb -p store/wamn-backups store/wamn-dumps store/wamn-loki
+              mc mb -p store/wamn-backups store/wamn-dumps
               mc ls store

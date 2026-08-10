@@ -147,7 +147,7 @@ spec:
             # structured wasi:logging records per run (node/run lifecycle) that
             # the wamn:logging plugin enriches (host-injected tenant/project +
             # guest flow/run/node + the run's traceparent) and ships OTLP/gRPC to
-            # the collector, which forwards to Loki. Without OTEL_* the plugin
+            # an optional external collector. Without OTEL_* the plugin
             # links but drops to a no-op provider (nothing exported).
             - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.wamn-system.svc:4317" }
             - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }

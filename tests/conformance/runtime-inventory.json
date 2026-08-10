@@ -68,11 +68,6 @@
         "path": "components/execution/materializer/Cargo.toml",
         "required_marker": "# A COMMAND component (wasi:cli/run via `main`), not a cdylib"
       }
-    },
-    {
-      "path": "deploy/platform/trace-relay-workload.yaml",
-      "deployment_state": "active",
-      "abi": "p2-components"
     }
   ]
 }

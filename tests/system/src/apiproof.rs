@@ -56,7 +56,7 @@ pub struct ApiProofArgs {
 }
 
 /// A minimal HTTP/1.1 client for one request per connection (`Connection: close`)
-/// — no client dependency, like the S5 Loki client. Routes by the `Host` header,
+/// — no client dependency. Routes by the `Host` header,
 /// which is the operator's key, independent of the TCP target.
 struct Client {
     host_port: String,

@@ -17,12 +17,12 @@
 //!     intentional drop point; on queue-full `log()` increments an atomic drop
 //!     counter that is also surfaced as an OTel metric (`wamn.logging.dropped`).
 //!     Everything downstream (a generously sized batch processor → collector →
-//!     Loki) is sized not to drop, so unaccounted loss ≈ 0.
+//!     an external sink) is sized not to drop, so unaccounted loss ≈ 0.
 //!
 //! # Single owner of the guest-log pipeline (9.3 / wamn-yf3)
 //!
 //! This plugin is THE guest-log pipeline: it owns its OWN `SdkLoggerProvider`
-//! (generous batch queue → OTLP gRPC → collector → Loki) rather than reusing the
+//! (generous batch queue → OTLP gRPC → external collector) rather than reusing the
 //! fork's vendored `observability.rs` logs pipeline. That fork pipeline is
 //! **host-internal tracing only** — its batch queue is fixed at 2048 and its OTLP
 //! filter is tied to `--log-level`, so it exists to ship the HOST's own `tracing`
@@ -182,7 +182,7 @@ struct Rec {
 // ---------------------------------------------------------------------------
 // Capture seam (gate-facing): an OPT-IN in-memory sink the drain task mirrors
 // each emitted record into, so a local gate (logbench `runpath`) can assert
-// enrichment + attached trace_id at the Rec layer WITHOUT a collector/Loki. Off
+// enrichment + attached trace_id at the Rec layer without an external collector. Off
 // by default (a `None` handle), so production pays nothing beyond one branch.
 // ---------------------------------------------------------------------------
 

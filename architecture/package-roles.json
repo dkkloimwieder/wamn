@@ -779,15 +779,6 @@
     },
     {
       "workspace": "components",
-      "name": "trace-relay",
-      "manifest_path": "components/fixtures/trace-relay/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
       "name": "disposition-node",
       "manifest_path": "components/samples/disposition-node/Cargo.toml",
       "role": "test",
