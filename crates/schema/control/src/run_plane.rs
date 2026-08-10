@@ -101,7 +101,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {
@@ -653,7 +653,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "authoring_suite_case_facts",
         name: "authoring_suite_case_facts_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {
@@ -3757,6 +3757,7 @@ CREATE INDEX event_registrations_by_entity
         );
         let status = &cols.iter().find(|(c, _)| c == "status").unwrap().1;
         assert!(status.contains("'infrastructure-failure'"), "{status}");
+        assert!(status.contains("'effect-uncertain'"), "{status}");
         assert!(
             status.ends_with("))"),
             "CHECK closes inside the definition: {status}"

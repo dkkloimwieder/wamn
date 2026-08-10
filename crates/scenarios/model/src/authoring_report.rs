@@ -46,7 +46,10 @@ pub struct AuthoringCaseReport {
 }
 
 impl AuthoringCaseReport {
-    /// Construct a case report whose summary cannot disagree with its outcome.
+    /// Construct a case report whose summary respects its evidence and lifecycle.
+    ///
+    /// An effect-uncertain run always fails the case summary, while retaining the
+    /// exact assertion outcome as evidence.
     pub fn new(
         case_id: impl Into<String>,
         run_id: impl Into<String>,
@@ -55,7 +58,7 @@ impl AuthoringCaseReport {
         fail_node: Option<String>,
         outcome: Outcome,
     ) -> Self {
-        let passed = outcome.passed();
+        let passed = status != RunStatus::EffectUncertain && outcome.passed();
         Self {
             case_id: case_id.into(),
             run_id: run_id.into(),
@@ -259,6 +262,39 @@ mod tests {
         assert!(!report.passed);
         assert!(!report.cases[0].passed);
         assert_eq!(report.edit_to_run_ms, Some(27));
+    }
+
+    #[test]
+    fn effect_uncertain_fails_case_and_report_without_rewriting_passing_evidence() {
+        let case = AuthoringCaseReport::new(
+            "case-a",
+            "run-a",
+            RunStatus::EffectUncertain,
+            None,
+            None,
+            outcome(true),
+        );
+        assert!(case.outcome.passed());
+        assert!(!case.passed);
+
+        let report = AuthoringReport::new(
+            "report-a",
+            "exec-a",
+            "tenant-a",
+            "flow-a",
+            3,
+            "suite-a",
+            ExecutionLineage::Release {
+                artifact_hash: "sha256:artifact".into(),
+                catalog_id: "catalog-a".into(),
+                catalog_version: 4,
+                environment: "dev".into(),
+            },
+            None,
+            None,
+            vec![case],
+        );
+        assert!(!report.passed);
     }
 
     #[test]

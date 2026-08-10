@@ -354,7 +354,7 @@ CREATE TABLE wamn_run.authoring_suite_case_facts (
     passed      boolean NOT NULL,
     status      text NOT NULL CHECK (
         status IN ('dispatched', 'running', 'completed', 'failed',
-                   'cancelled', 'infrastructure-failure')
+                   'cancelled', 'infrastructure-failure', 'effect-uncertain')
     ),
     fail_kind   text CHECK (
         fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input',

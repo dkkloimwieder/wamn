@@ -8,8 +8,9 @@ use serde_json::{Value, json};
 use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_run_state::{
-    FailKind, NodeErrorKind, NodeRunRecord, NodeRunStatus, ReconstructError, RerunError, RunRecord,
-    RunStatus, plan_partial_rerun, plan_replay, reconstruct,
+    EffectUncertainFailure, FailKind, NodeErrorKind, NodeRunRecord, NodeRunStatus,
+    ReconstructError, RerunError, RunRecord, RunStatus, plan_partial_rerun, plan_replay,
+    reconstruct,
 };
 use wamn_runner::{NodeOutcome, Plan, ResumeError, Step};
 
@@ -439,6 +440,11 @@ fn partial_rerun_requires_captured_input() {
 fn status_sql_literals_round_trip() {
     for s in RunStatus::ALL {
         assert_eq!(RunStatus::from_sql(s.as_sql()), Some(s));
+        assert_eq!(serde_json::to_value(s).unwrap(), json!(s.as_sql()));
+        assert_eq!(
+            serde_json::from_value::<RunStatus>(json!(s.as_sql())).unwrap(),
+            s
+        );
     }
     for s in NodeRunStatus::ALL {
         assert_eq!(NodeRunStatus::from_sql(s.as_sql()), Some(s));
@@ -450,14 +456,75 @@ fn status_sql_literals_round_trip() {
         assert_eq!(NodeErrorKind::from_sql(k.as_sql()), Some(k));
     }
     assert_eq!(RunStatus::from_sql("nope"), None);
+    assert!(serde_json::from_value::<RunStatus>(json!("nope")).is_err());
     // Spot-check the wire literals the DDL CHECK constraints pin.
     assert_eq!(
         RunStatus::InfrastructureFailure.as_sql(),
         "infrastructure-failure"
     );
+    assert_eq!(RunStatus::EffectUncertain.as_sql(), "effect-uncertain");
+    assert!(!RunStatus::EffectUncertain.is_terminal());
     assert_eq!(NodeErrorKind::RateLimited.as_sql(), "rate-limited");
     assert_eq!(FailKind::RetryExhausted.as_sql(), "retry-exhausted");
     assert_eq!(FailKind::RunawayBudget.as_sql(), "runaway-budget");
+}
+
+#[test]
+fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
+    let failure = EffectUncertainFailure::new("run-17").unwrap();
+    let bytes = failure.canonical_json_bytes();
+
+    assert_eq!(failure.code(), "effect-uncertain");
+    assert_eq!(failure.run_id(), "run-17");
+    assert_eq!(bytes, br#"{"code":"effect-uncertain","run_id":"run-17"}"#);
+    assert_eq!(
+        failure.canonical_json_hash(),
+        "sha256:3a751d2bbfd752e219d547bfbc1de84bf3e69baebad45b268c622b4dea0c87d1"
+    );
+    assert_eq!(
+        serde_json::from_slice::<EffectUncertainFailure>(&bytes).unwrap(),
+        failure
+    );
+
+    for malformed in [
+        br#"{"code":"unknown","run_id":"run-17"}"#.as_slice(),
+        br#"{"code":"effect-uncertain"}"#.as_slice(),
+        br#"{"code":"effect-uncertain","run_id":""}"#.as_slice(),
+        br#"{"code":"effect-uncertain","run_id":"run-17","occurred":true}"#.as_slice(),
+        br#"{"code":"effect-uncertain","run_id":17}"#.as_slice(),
+    ] {
+        assert!(serde_json::from_slice::<EffectUncertainFailure>(malformed).is_err());
+    }
+
+    let empty = EffectUncertainFailure::new("").unwrap_err();
+    assert_eq!(empty.run_id(), "");
+    assert_eq!(
+        empty.to_string(),
+        "effect-uncertain failure run_id must not be empty"
+    );
+
+    let whitespace = EffectUncertainFailure::new(" ").unwrap();
+    assert_eq!(whitespace.run_id(), " ");
+    assert_eq!(
+        serde_json::from_str::<EffectUncertainFailure>(
+            r#"{"code":"effect-uncertain","run_id":" "}"#,
+        )
+        .unwrap(),
+        whitespace
+    );
+}
+
+#[test]
+fn canonical_status_ddl_mirrors_include_effect_uncertain_without_run_level_parked() {
+    let exact_check = r#"CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
+                          'cancelled', 'infrastructure-failure', 'effect-uncertain'))"#;
+    for ddl in [
+        include_str!("../../../../deploy/sql/run-state.sql"),
+        include_str!("../../../../deploy/sql/postgres-init.sql"),
+    ] {
+        assert!(ddl.contains(exact_check));
+        assert!(!ddl.contains("'parked'"));
+    }
 }
 
 #[test]

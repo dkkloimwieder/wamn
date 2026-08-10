@@ -87,7 +87,7 @@ fn runs_stand_in() -> String {
         event_source_run_id text, event_root_run_id text, event_depth int, \
         status text NOT NULL DEFAULT 'running' \
           CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
-                            'cancelled', 'infrastructure-failure')), \
+                            'cancelled', 'infrastructure-failure', 'effect-uncertain')), \
         trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \
         admission_context_version int NOT NULL DEFAULT 1, \

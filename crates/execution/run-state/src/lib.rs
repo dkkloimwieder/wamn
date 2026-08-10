@@ -89,4 +89,7 @@ pub use capture::{Captured, derive as derive_capture};
 pub use model::{NodeRunRecord, RunRecord};
 pub use reconstruct::{ReconstructError, reconstruct, reconstruct_with_context};
 pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};
-pub use status::{FailKind, NodeErrorKind, NodeRunStatus, RunStatus};
+pub use status::{
+    EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
+    RunStatus,
+};

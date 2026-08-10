@@ -215,6 +215,7 @@ fn failure_kind(case: &AuthoringCaseReport) -> FailureKind {
     match case.status {
         RunStatus::Cancelled => return FailureKind::Cancelled,
         RunStatus::InfrastructureFailure => return FailureKind::InfrastructureFault,
+        RunStatus::EffectUncertain => return FailureKind::InfrastructureFault,
         RunStatus::Dispatched | RunStatus::Running | RunStatus::Completed | RunStatus::Failed => {}
     }
     match case.fail_kind {
@@ -492,6 +493,11 @@ mod tests {
                 Some(FailKind::Terminal),
                 FailureKind::InfrastructureFault,
             ),
+            (
+                RunStatus::EffectUncertain,
+                None,
+                FailureKind::InfrastructureFault,
+            ),
         ] {
             let state = finalized(
                 None,
@@ -519,6 +525,42 @@ mod tests {
                 "{status:?}/{kind:?} was misclassified"
             );
         }
+    }
+
+    #[test]
+    fn effect_uncertain_overrides_passing_evidence_in_the_public_projection() {
+        let state = finalized(
+            None,
+            vec![AuthoringCaseReport::new(
+                "case-a",
+                "run-a",
+                RunStatus::EffectUncertain,
+                None,
+                Some("node-a".into()),
+                outcome_of(true),
+            )],
+        );
+        let AuthoringReportState::Finalized(report) = &state else {
+            panic!("the helper always builds a finalized report");
+        };
+        assert!(report.cases[0].outcome.passed());
+        assert!(!report.cases[0].passed);
+        assert!(!report.passed);
+
+        let SuiteProjectionState::Finalized(projection) =
+            suite_projection(&state, Some(revision())).expect("an uncertain report projects")
+        else {
+            panic!("a finalized report must project as finalized");
+        };
+        assert_eq!(projection.outcome, SuiteOutcome::Failed);
+        assert_eq!(projection.cases[0].outcome, PassFail::Failed);
+        assert_eq!(
+            projection.cases[0].failure,
+            Some(FailureDetail {
+                kind: FailureKind::InfrastructureFault,
+                node_id: Some("node-a".into()),
+            })
+        );
     }
 
     #[test]

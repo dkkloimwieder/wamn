@@ -15,6 +15,7 @@ pub enum RunStatus {
     Failed,
     Cancelled,
     InfrastructureFailure,
+    EffectUncertain,
 }
 
 /// Why a captured run failed.
@@ -53,6 +54,7 @@ mod tests {
             (RunStatus::Failed, "failed"),
             (RunStatus::Cancelled, "cancelled"),
             (RunStatus::InfrastructureFailure, "infrastructure-failure"),
+            (RunStatus::EffectUncertain, "effect-uncertain"),
         ] {
             assert_eq!(serde_json::to_value(status).unwrap(), json!(wire));
         }

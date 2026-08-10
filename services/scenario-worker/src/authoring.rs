@@ -1145,6 +1145,7 @@ fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
         "failed" => Ok(RunStatus::Failed),
         "cancelled" => Ok(RunStatus::Cancelled),
         "infrastructure-failure" => Ok(RunStatus::InfrastructureFailure),
+        "effect-uncertain" => Ok(RunStatus::EffectUncertain),
         other => bail!("unknown report run status {other:?}"),
     }
 }
@@ -1170,6 +1171,7 @@ fn run_status_sql(value: RunStatus) -> &'static str {
         RunStatus::Failed => "failed",
         RunStatus::Cancelled => "cancelled",
         RunStatus::InfrastructureFailure => "infrastructure-failure",
+        RunStatus::EffectUncertain => "effect-uncertain",
     }
 }
 
@@ -1669,6 +1671,19 @@ pub(crate) async fn authoring_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authoring_case_status_round_trips_effect_uncertain_and_rejects_unknown_values() {
+        assert_eq!(
+            parse_run_status("effect-uncertain").unwrap(),
+            RunStatus::EffectUncertain
+        );
+        assert_eq!(
+            run_status_sql(RunStatus::EffectUncertain),
+            "effect-uncertain"
+        );
+        assert!(parse_run_status("effect-unknown").is_err());
+    }
 
     #[test]
     fn bundle_hash_is_bound_to_actual_flowrunner_bytes() {

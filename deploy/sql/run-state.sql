@@ -189,7 +189,7 @@ CREATE TABLE wamn_run.runs (
     event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
     status          text NOT NULL DEFAULT 'running'
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
-                          'cancelled', 'infrastructure-failure')),
+                          'cancelled', 'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
     input_json      jsonb,
     result_json     jsonb,
