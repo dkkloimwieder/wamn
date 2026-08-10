@@ -49,7 +49,7 @@ struct HttpExample {
 
 fn contract_path(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../docs/contracts")
+        .join("../../../docs/archive/contracts")
         .join(name)
 }
 
