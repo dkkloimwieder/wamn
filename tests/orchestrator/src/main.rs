@@ -12,12 +12,11 @@ mod callable_wave2;
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{buildproof, credprobe, egressbench, socketguard, testgate};
 use wamn_proof_integration::{
-    apibench, bench, callable_cron, capturebench, causation_e2e, cdcbench, credproof, dashproof,
-    dispatchbench, f1bench, f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof,
-    invocationproof, logbench, matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof,
-    pocsuiteproof, provisionbench, queuebench, readerbench, rie2ebench, runnerbench,
-    runstate_baseline, samplebench, streambench, suiteproof, testhostbench, testkitbench,
-    tracebench, wakeproof, walbench,
+    apibench, bench, capturebench, causation_e2e, cdcbench, credproof, dashproof, f1bench,
+    f2invoke, f3proof, f4proof, failoverbench, flowbench, impactproof, invocationproof, logbench,
+    matbench, metricbench, nodebench, nodeinvoke, pgbench, pinproof, pocsuiteproof, provisionbench,
+    queuebench, readerbench, rie2ebench, runnerbench, runstate_baseline, samplebench, streambench,
+    suiteproof, testhostbench, testkitbench, tracebench, wakeproof, walbench,
 };
 use wamn_proof_system::{
     apiproof, callable_f0, callable_f1, callable_f2, callable_f3, callable_f4, f1proof,
@@ -58,10 +57,6 @@ enum Command {
     Failoverbench(failoverbench::FailoverBenchArgs),
     /// Run the fqg.8 production runner gate (ExecutionHost drains run_queue to completion; drive+reuse+empty)
     Runnerbench(runnerbench::RunnerBenchArgs),
-    /// Run the 5.14 dispatcher gates (cron / ordering / race / fairness / wake / live)
-    Dispatchbench(dispatchbench::DispatchBenchArgs),
-    /// Prove rev18 cron attachments enter the queue through centralized admission.
-    CallableCron(callable_cron::CallableCronArgs),
     /// Run the 9.6 node-I/O capture gates (toggle / truncate / scrub / retention)
     Capturebench(capturebench::CaptureBenchArgs),
     /// Run the EVT-NATS data-plane JetStream gate (publish / consume / Nats-Msg-Id dedupe / R3 node-loss heal)
@@ -189,8 +184,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Queuebench(args) => queuebench::run(args).await,
         Command::Failoverbench(args) => failoverbench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
-        Command::Dispatchbench(args) => dispatchbench::run(args).await,
-        Command::CallableCron(args) => callable_cron::run(args).await,
         Command::Capturebench(args) => capturebench::run(args).await,
         Command::Streambench(args) => streambench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,

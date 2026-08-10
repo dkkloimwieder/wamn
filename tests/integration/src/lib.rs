@@ -8,7 +8,6 @@ use wamn_run_state::schema_drift;
 
 pub mod apibench;
 pub mod bench;
-pub mod callable_cron;
 pub mod capturebench;
 pub mod catalog_live;
 mod catalog_pin;
@@ -18,7 +17,6 @@ pub mod cdcbench;
 pub mod contextproof;
 pub mod credproof;
 pub mod dashproof;
-pub mod dispatchbench;
 mod dispatcher_process;
 pub mod exposure_live;
 pub mod f1bench;

@@ -3,7 +3,6 @@
 use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
@@ -22,26 +21,11 @@ pub(crate) struct ProjectSpec {
     pub(crate) schema: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct TickReport {
-    pub(crate) cron_fired: Vec<String>,
-    pub(crate) cron_lost: usize,
-    pub(crate) woken: Vec<String>,
-    #[serde(default)]
-    pub(crate) interval_ms: i64,
-}
-
 #[derive(Debug)]
 pub(crate) struct DispatcherProcess {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
-    projects_file: PathBuf,
-}
-
-#[derive(Debug)]
-pub(crate) struct LiveDispatcherProcess {
-    child: Child,
     projects_file: PathBuf,
 }
 
@@ -115,11 +99,7 @@ impl DispatcherProcess {
         })
     }
 
-    pub(crate) async fn tick_project(
-        &mut self,
-        project: usize,
-        now_ms: i64,
-    ) -> anyhow::Result<TickReport> {
+    pub(crate) async fn tick_project(&mut self, project: usize, now_ms: i64) -> anyhow::Result<()> {
         let command = serde_json::json!({"command": "tick", "project": project, "now_ms": now_ms});
         self.stdin
             .write_all(command.to_string().as_bytes())
@@ -147,21 +127,12 @@ impl DispatcherProcess {
             StepResponse::Ok {
                 project: response_project,
                 now_ms: response_now,
-                interval_ms,
-                cron_fired,
-                cron_lost,
-                woken,
             } => {
                 anyhow::ensure!(
                     (response_project, response_now) == (project, now_ms),
                     "dispatcher response ({response_project}, {response_now}) did not match command ({project}, {now_ms})"
                 );
-                Ok(TickReport {
-                    cron_fired,
-                    cron_lost,
-                    woken,
-                    interval_ms,
-                })
+                Ok(())
             }
             StepResponse::Error {
                 project: response_project,
@@ -215,82 +186,6 @@ impl DispatcherProcess {
     }
 }
 
-impl LiveDispatcherProcess {
-    pub(crate) fn spawn(
-        specs: &[ProjectSpec],
-        nats_url: &str,
-        tls: Option<(&PathBuf, &PathBuf, &PathBuf)>,
-        min_interval_ms: i64,
-        max_interval_ms: i64,
-    ) -> anyhow::Result<Self> {
-        let projects_file = write_projects_file(specs)?;
-        let binary = dispatcher_binary();
-        let mut command = dispatcher_command(
-            &binary,
-            &projects_file,
-            nats_url,
-            tls,
-            Some(min_interval_ms),
-            Some(max_interval_ms),
-            None,
-            false,
-            "error",
-        );
-        command
-            .kill_on_drop(true)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::inherit());
-        let child = command.spawn().with_context(|| {
-            format!(
-                "launch live dispatcher process {}",
-                binary.to_string_lossy()
-            )
-        })?;
-        Ok(Self {
-            child,
-            projects_file,
-        })
-    }
-
-    pub(crate) async fn shutdown(mut self, timeout: Duration) -> anyhow::Result<bool> {
-        if let Some(status) = self.child.try_wait().context("poll dispatcher process")? {
-            return Ok(status.success());
-        }
-        let pid = self
-            .child
-            .id()
-            .context("dispatcher has no process id before shutdown")?;
-        let pid = libc::pid_t::try_from(pid).context("dispatcher process id exceeds pid_t")?;
-        // SAFETY: `kill` does not dereference pointers. The PID comes from the
-        // still-running child and SIGTERM is the service's graceful boundary.
-        let result = unsafe { libc::kill(pid, libc::SIGTERM) };
-        if result != 0 {
-            let error = std::io::Error::last_os_error();
-            if error.raw_os_error() != Some(libc::ESRCH) {
-                return Err(error).context("signal dispatcher process");
-            }
-        }
-        match tokio::time::timeout(timeout, self.child.wait()).await {
-            Ok(status) => Ok(status.context("wait for dispatcher shutdown")?.success()),
-            Err(_) => {
-                self.child
-                    .start_kill()
-                    .context("kill dispatcher after shutdown timeout")?;
-                let _ = self.child.wait().await;
-                Ok(false)
-            }
-        }
-    }
-}
-
-impl Drop for LiveDispatcherProcess {
-    fn drop(&mut self) {
-        let _ = self.child.start_kill();
-        let _ = std::fs::remove_file(&self.projects_file);
-    }
-}
-
 impl Drop for DispatcherProcess {
     fn drop(&mut self) {
         let _ = self.child.start_kill();
@@ -304,10 +199,6 @@ enum StepResponse {
     Ok {
         project: usize,
         now_ms: i64,
-        interval_ms: i64,
-        cron_fired: Vec<String>,
-        cron_lost: usize,
-        woken: Vec<String>,
     },
     Error {
         project: usize,

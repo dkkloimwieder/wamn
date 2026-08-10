@@ -836,17 +836,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "croner"
-version = "3.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4aa42bcd3d846ebf66e15bd528d1087f75d1c6c1c66ebff626178a106353c576"
-dependencies = [
- "chrono",
- "derive_builder",
- "strum",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3525,9 +3514,6 @@ name = "strum"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af23d6f6c1a224baef9d3f61e287d2761385a5b88fdab4eb4c6f11aeb54c4bcf"
-dependencies = [
- "strum_macros",
-]
 
 [[package]]
 name = "strum_macros"
@@ -4388,13 +4374,9 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "wamn-catalog",
  "wamn-control-registry",
- "wamn-flow",
- "wamn-node-manifest",
  "wamn-run-state",
  "wamn-scheduler",
- "wamn-standard-nodes",
 ]
 
 [[package]]
@@ -4904,11 +4886,6 @@ dependencies = [
 [[package]]
 name = "wamn-scheduler"
 version = "0.1.0"
-dependencies = [
- "chrono",
- "croner",
- "serde_json",
-]
 
 [[package]]
 name = "wamn-schema-compiler"

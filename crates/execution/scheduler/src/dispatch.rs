@@ -1,7 +1,5 @@
-//! Dispatcher decisions — the adaptive poll cadence ("adaptive intervals … no
-//! polling herd", platform-plan 5.14) and the firing record the cron path
-//! produces. Pure: the driver owns the clock and the sleep; these are the
-//! decisions it folds.
+//! Adaptive poll cadence shared by the dispatcher and executor services. Pure:
+//! each driver owns its clock and sleep and folds these interval decisions.
 //!
 //! The cadence: each project's sweep interval TIGHTENS to `min` the moment a
 //! sweep finds work and DECAYS exponentially toward `max` while idle, so a busy
@@ -10,17 +8,15 @@
 //! polling. Intervals are per-project state in the driver (no cross-project
 //! herd: projects tighten and decay independently).
 
-use crate::Millis;
-
 /// Default tightest per-project sweep interval (a busy project's poll cadence).
-pub const DEFAULT_MIN_INTERVAL_MS: Millis = 250;
+pub const DEFAULT_MIN_INTERVAL_MS: i64 = 250;
 /// Default widest per-project sweep interval (an idle project's reconciliation
 /// cadence — the 30 s–5 min band's floor).
-pub const DEFAULT_MAX_INTERVAL_MS: Millis = 30_000;
+pub const DEFAULT_MAX_INTERVAL_MS: i64 = 30_000;
 
 /// The floor both cadence bounds are raised to: a sub-10 ms sweep interval is a
 /// busy-loop, not a cadence.
-const MIN_INTERVAL_FLOOR_MS: Millis = 10;
+const MIN_INTERVAL_FLOOR_MS: i64 = 10;
 
 /// A validated adaptive-cadence band: the tightest (`min`) and widest (`max`)
 /// per-project sweep intervals, with `min <= max` guaranteed and both floored at
@@ -32,14 +28,14 @@ const MIN_INTERVAL_FLOOR_MS: Millis = 10;
 /// boundary, not panicked on downstream during an idle sweep).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Cadence {
-    min: Millis,
-    max: Millis,
+    min: i64,
+    max: i64,
 }
 
 impl Cadence {
     /// Validate a cadence band from raw (CLI/env) millis: reject an inverted
     /// range, then floor both bounds at `MIN_INTERVAL_FLOOR_MS`.
-    pub fn new(min: Millis, max: Millis) -> Result<Cadence, CadenceError> {
+    pub fn new(min: i64, max: i64) -> Result<Cadence, CadenceError> {
         if min > max {
             return Err(CadenceError::MinExceedsMax { min, max });
         }
@@ -50,19 +46,19 @@ impl Cadence {
     }
 
     /// The tightest sweep interval (a busy project's cadence).
-    pub fn min(&self) -> Millis {
+    pub fn min(&self) -> i64 {
         self.min
     }
 
     /// The widest sweep interval (an idle project's reconciliation cadence).
-    pub fn max(&self) -> Millis {
+    pub fn max(&self) -> i64 {
         self.max
     }
 
     /// The next sweep interval for one project: work tightens to `min`, idleness
     /// doubles `current` toward `max`. `min <= max` holds by construction (it is
     /// this band's own invariant), so the `clamp` can never see an inverted range.
-    pub fn next_interval(&self, current: Millis, found_work: bool) -> Millis {
+    pub fn next_interval(&self, current: i64, found_work: bool) -> i64 {
         if found_work {
             self.min
         } else {
@@ -71,13 +67,12 @@ impl Cadence {
     }
 }
 
-/// A cadence band was rejected at construction. A structured enum (house rule 2,
-/// as [`crate::cron::CronError`]) — one variant per failure mode.
+/// A cadence band was rejected at construction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CadenceError {
     /// The tightest interval exceeds the widest — an inverted band. Names both
     /// values: the fix is to correct or swap one of the two flags.
-    MinExceedsMax { min: Millis, max: Millis },
+    MinExceedsMax { min: i64, max: i64 },
 }
 
 impl std::fmt::Display for CadenceError {
@@ -92,21 +87,6 @@ impl std::fmt::Display for CadenceError {
 }
 
 impl std::error::Error for CadenceError {}
-
-/// One trigger firing the dispatcher dispatches: the deterministic run id (the
-/// exactly-once handle — a redelivered/re-fired/replica-raced firing collides on
-/// it and the write-ahead `ON CONFLICT` absorbs the duplicate), the flow to run,
-/// the trigger input the run is replayed from (5.7), and the audit
-/// `trigger_source`. Fired via `wamn_run_state::queue::write_ahead_triggered_run_sql`
-/// + `wamn_run_state::queue::enqueue_sql` in one transaction, then a doorbell hint.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Firing {
-    pub run_id: String,
-    pub flow_id: String,
-    pub flow_version: i32,
-    pub input_json: String,
-    pub trigger_source: String,
-}
 
 #[cfg(test)]
 mod tests {

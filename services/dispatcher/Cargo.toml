@@ -1,6 +1,6 @@
 [package]
 name = "wamn-dispatcher"
-description = "wamn shared trigger dispatcher service (5.12/5.14, SR9): cron + parked-wake + bounded deadline sweep across all projects — its own deployment artifact, no runtime linked"
+description = "wamn shared queue dispatcher: parked-wake and bounded deadline reconciliation across all projects"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,13 +9,13 @@ license.workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 tokio = { workspace = true, features = ["time", "rt-multi-thread", "macros", "signal", "sync", "io-util", "io-std"] }
-tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
+tokio-postgres = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 # The dispatcher links no runtime (SR9), so it installs its own minimal trace
-# and metric providers for the trigger span and run-queue-depth gauge. Both are
+# and metric providers for service spans and the run-queue-depth gauge. Both are
 # OTEL_*-gated; version 0.31 matches the workspace.
 opentelemetry = { workspace = true, features = ["metrics", "trace"] }
 opentelemetry_sdk = { workspace = true, features = ["metrics", "trace"] }
@@ -27,17 +27,9 @@ async-nats = { workspace = true }
 # init_crypto: standardize the process rustls provider on aws-lc-rs (the local
 # copy of the fork's wash_runtime::init_crypto — same feature shape).
 rustls = { workspace = true, features = ["std", "tls12", "aws-lc-rs"] }
-# The trigger registry is the flows table's graph_json — the dispatcher parses
-# each active flow and registers its cron / row-event trigger.
-wamn-catalog = { workspace = true }
-wamn-flow = { workspace = true }
-# Durable state transitions and injected-clock scheduling decisions.
+# Durable state transitions and adaptive scheduling cadence.
 wamn-run-state = { workspace = true }
 wamn-scheduler = { workspace = true }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
 wamn-control-registry = { workspace = true }
-
-[dev-dependencies]
-wamn-node-manifest = { workspace = true }
-wamn-standard-nodes = { workspace = true }
