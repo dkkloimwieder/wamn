@@ -30,8 +30,8 @@ pub fn write_ahead_run_sql() -> String {
 
 /// Enqueue a run onto the durable queue, co-transacted with [`write_ahead_run_sql`]
 /// (one durability domain, D3). Params: `$1` run_id, `$2` partition_key (nullable),
-/// `$3` priority, `$4` delay_ms (0 = immediately claimable; >0 = a parked/delayed
-/// wake). Idempotent: a redelivered enqueue for the same run is a no-op.
+/// `$3` priority, `$4` delay_ms (0 = immediately claimable; >0 = a scheduled
+/// queue wake). Idempotent: a redelivered enqueue for the same run is a no-op.
 ///
 /// Writes no `partition_policy`, so the row takes the column default —
 /// `blocking`, the D20 decision (choosing partitioned dispatch *is* opting into
@@ -98,10 +98,10 @@ pub fn enqueue_evt_with_policy_sql() -> String {
 ///
 /// `attempts` counts **crash evidence only**: the `CASE` bumps it iff the claim
 /// reclaims an *expired* lease — the prior owner died holding the run (it never
-/// completed, parked, or dequeued). The claim predicate has already established
+/// completed, queue-parked, or dequeued). The claim predicate has already established
 /// expired-or-NULL, so `lease_expires_at IS NOT NULL` *is* "expired lease". A first
-/// claim of a never-leased row and a park→wake re-claim ([`park_sql`] releases the
-/// lease) are free, so a delay-loop flow parks unboundedly without burning
+/// claim of a never-leased row and a queue-park→wake re-claim ([`park_sql`]
+/// releases the lease) are free, so a retry loop can wait repeatedly without burning
 /// redelivery budget, while a crash-loop still exhausts at `max_attempts`
 /// (`max_attempts` = how many times a runner may die holding this run).
 ///
@@ -112,8 +112,9 @@ pub fn enqueue_evt_with_policy_sql() -> String {
 /// out and the janitor reaps it to `infrastructure-failure` — without it, each
 /// reclaim would refresh the lease and the janitor window would never open. The
 /// `lease_expires_at IS NULL` half wakes a budget-spent run whose lease was *released*
-/// by a park (wamn-fqg.7): a NULL lease is proof the last owner was alive (it parked,
-/// it did not crash), so the crash budget must not exclude it — it is claimed, its
+/// by a queue park (wamn-fqg.7): a NULL lease is proof the last owner was alive
+/// (it intentionally returned the run to the queue), so the crash budget must not
+/// exclude it — it is claimed, its
 /// `attempts` unchanged (the crash-evidence `CASE` does not bump a NULL lease). Poison
 /// stays terminal: a crash *after* the budget is spent leaves a non-NULL expired
 /// lease, which fails both halves and falls to the janitor. Every successful
@@ -439,12 +440,13 @@ pub fn dead_letter_dequeue_sql() -> String {
     )
 }
 
-/// Park a claimed run for a later wake (a `delay` node / backoff): push
-/// `available_at` out by `$2` ms and release the lease so no replica holds it while
-/// it sleeps. Param `$1` run_id. Reconciliation/doorbell picks it up at wake.
+/// Queue-park a claimed run for a later wake (for example bounded-retry backoff):
+/// push `available_at` out by `$2` ms and release the lease so no replica holds it
+/// while it waits. Param `$1` run_id. Reconciliation/doorbell picks it up at wake.
 /// Releasing the lease (rather than letting it expire) is also what makes the wake
 /// re-claim FREE: the claim's crash-evidence `CASE` sees `lease_expires_at IS NULL`
-/// and leaves `attempts` alone — parking is proof of life, not a crash.
+/// and leaves `attempts` alone — this queue operation is proof of life, not a
+/// node-level parked state or a crash.
 pub fn park_sql() -> String {
     "UPDATE run_queue \
         SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
@@ -743,12 +745,12 @@ pub fn active_flows_sql() -> String {
 
 /// The wake / reconciliation scan: every currently-due, unleased (or lease-expired)
 /// **unpartitioned** queue row that the global claim would take — budget-remaining,
-/// OR budget-spent with a released (NULL) lease (a parked run that spent its crash
-/// budget still wakes, matching `claim_batch_sql`; wamn-fqg.7). A parked run whose
+/// OR budget-spent with a released (NULL) lease (a queue-parked run that spent its
+/// crash budget still wakes, matching `claim_batch_sql`; wamn-fqg.7). A queue row whose
 /// `available_at` arrived, or a run whose enqueue-time doorbell hint was lost.
 /// The dispatcher publishes a doorbell hint per row; a duplicate hint is
 /// harmless (fire-and-forget — the claim is the arbiter), which is what lets one
-/// read-only scan double as both the parked-wake and the lost-hint
+/// read-only scan double as both the queue-wake and the lost-hint
 /// reconciliation backstop. `limit` is a numeric literal. Carries the explicit
 /// `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) — inert
 /// (RLS injects the identical filter) but defense-in-depth, like the claim.
@@ -764,7 +766,7 @@ pub fn active_flows_sql() -> String {
 /// the per-partition ownership path ([`acquire_partitions_sql`] +
 /// [`claim_partition_head_sql`]), whose own due-scan the run-worker's `run-next`
 /// drives on its independent poll-with-backoff reconcile — so excluding them here
-/// does NOT strand a due partitioned park (it wakes on the run-worker's own cadence,
+/// does NOT strand a due partitioned queue wait (it wakes on the run-worker's own cadence,
 /// the same backstop the whole system relies on for a lost doorbell hint), it only
 /// stops a never-claimable partitioned row from masquerading as work.
 pub fn parked_due_sql(limit: usize) -> String {

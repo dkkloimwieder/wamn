@@ -98,9 +98,6 @@ pub enum Mode {
     /// exactly-once (SKIP LOCKED), plus the wrong-flow guard (the claim path
     /// drives the RECORDED flow, not a fixture constant).
     Claim,
-    /// fqg.4: a delay run the guest parks (releasing the lease) then a later
-    /// run-next re-claims and completes — the queue-driven parked-wake.
-    Park,
     /// fqg.4: the per-node lease heartbeat — a live-but-slow runner keeps its
     /// lease across a long walk (no spurious reclaim), even under a short TTL and
     /// a contending replica.
@@ -290,8 +287,8 @@ impl Worker {
             .await?;
         r.map_err(|e| anyhow::anyhow!("run: {e}"))
     }
-    /// One turn of the guest's production dispatch loop (fqg.4): claim + drive +
-    /// dequeue/park the next queued run. Returns (claimed, run_id, outcome).
+    /// One turn of the guest's production dispatch loop (fqg.4): claim, drive,
+    /// and settle the next queued run. Returns (claimed, run_id, outcome).
     async fn call_run_next(
         &mut self,
         lease_ttl_ms: u64,
@@ -497,9 +494,6 @@ pub async fn run(args: FailoverBenchArgs) -> anyhow::Result<()> {
         }
         if run_all || args.mode == Mode::Claim {
             pass &= claim_phase(&harness, &app_url, &admin_url, args.iters).await?;
-        }
-        if run_all || args.mode == Mode::Park {
-            pass &= park_phase(&harness, &app_url).await?;
         }
         if run_all || args.mode == Mode::Heartbeat {
             pass &= heartbeat_phase(&harness, &app_url, &admin_url).await?;
@@ -882,7 +876,7 @@ async fn janitor_guard_phase(app_url: &str, admin_url: &str) -> anyhow::Result<b
 // path, guest-side). The flowrunner `run-next` export claims a run
 // (`FOR UPDATE SKIP LOCKED`), reads its flow + input from the dispatcher-
 // persisted `runs` row, flips it running, walks it renewing the lease per node,
-// and dequeues / parks. These phases drive that export against the SAME
+// and settles the queue row. These phases drive that export against the SAME
 // ephemeral schema (`runs`/`node_runs`/`run_queue`/`flows`/`sink`) the failover
 // phases use — so the claim path is a gate-of-record path, not a sandbox.
 // ===========================================================================
@@ -891,17 +885,11 @@ async fn janitor_guard_phase(app_url: &str, admin_url: &str) -> anyhow::Result<b
 /// tell whether the claim path drove the RECORDED flow (reverse -> "tpiecer")
 /// or a hard-coded fixture id (upper -> "RECEIPT").
 const ALT_FLOW_ID: &str = "alt-flow";
-/// A `delay`-ending flow the park gate seeds (webhook-in -> delay -> pg-write ->
-/// respond — no http-call, so no egress is needed in this bench).
-const DELAY_FLOW_ID: &str = "poc-delay";
 /// A long transform chain (heartbeat gate): enough nodes that the walk spans
 /// several lease renewals.
 const HEARTBEAT_FLOW_ID: &str = "heartbeat";
-/// The park fixture's real-clock delay, and the heartbeat fixture's chain length.
-/// Both are shape parameters of a PUBLISHED artifact, so the phase and the
-/// release must name the same value or the run would drive a graph the gate never
-/// seeded.
-const PARK_DELAY_SECS: u64 = 1;
+/// The heartbeat fixture's chain length. It is a shape parameter of a published
+/// artifact, so the phase and release must name the same value.
 const HEARTBEAT_NODES: usize = 20;
 
 /// Structurally the `poc-receipt` v1 fixture ([`crate::flowbench::flow_json`])
@@ -922,30 +910,6 @@ fn alt_flow_json() -> String {
             ],
             "edges":[{{"from":"in","to":"t"}},{{"from":"t","to":"w"}},
                      {{"from":"w","to":"c"}},{{"from":"c","to":"out"}}]}}"#
-    )
-}
-
-/// wamn-r7bg re-authored both queue fixtures below onto the current flow schema.
-///
-/// Every run these phases seed is DISPATCHER-seeded (`write_ahead_triggered_run_sql`
-/// with `trigger_source = 'cron'`) and claimed off `run_queue` — there is no HTTP
-/// caller in the loop — so the honest entry is `cron`, and `cron` is also the only
-/// entry kind that admits either graph: a `request` entry may not be made to wait
-/// on a `delay` (`delay-before-release`), which is the whole point of the park
-/// fixture, and it demands every pre-release node reach `respond` or `fail`
-/// (`unanswerable-path`). `respond` is illegal under a cron entry
-/// (`respond-without-request-entry`) and neither phase ever read one: the park
-/// phase's completion witness is its `sink` row, and the heartbeat phase's is the
-/// run outcome. Both drop it; nothing else moved.
-fn delay_flow_json(delay_secs: u64) -> String {
-    format!(
-        r#"{{"schema-version":"0.1","flow-id":"{DELAY_FLOW_ID}","version":1,
-            "nodes":[
-              {{"id":"in","type":"cron"}},
-              {{"id":"d","type":"delay","config":{{"delay-secs":{delay_secs}}}}},
-              {{"id":"w","type":"pg-write"}}
-            ],
-            "edges":[{{"from":"in","to":"d"}},{{"from":"d","to":"w"}}]}}"#
     )
 }
 
@@ -983,7 +947,6 @@ fn published_fixtures() -> Vec<String> {
     vec![
         crate::flowbench::flow_json(1),
         alt_flow_json(),
-        delay_flow_json(PARK_DELAY_SECS),
         heartbeat_flow_json(HEARTBEAT_NODES),
     ]
 }
@@ -1168,84 +1131,6 @@ async fn claim_phase(
     println!(
         "PASS(claim: guest drains the queue + concurrent exactly-once + drives the recorded flow): {pass}"
     );
-    Ok(pass)
-}
-
-// ---------------------------------------------------------------------------
-// park: a delay run parks (releasing the lease) then a later run-next re-claims
-// and completes — the queue-driven parked-wake, guest-side.
-// ---------------------------------------------------------------------------
-
-async fn park_phase(harness: &Harness, app_url: &str) -> anyhow::Result<bool> {
-    println!("\n## park — a delay run parks (lease released), a later run-next completes it");
-    let (mut seed_conn, _h) = connect_app(app_url).await?;
-    seed_flow(&seed_conn, DELAY_FLOW_ID, &delay_flow_json(PARK_DELAY_SECS)).await?;
-    let run_id = "park-1";
-    seed_claim_run(&mut seed_conn, run_id, DELAY_FLOW_ID, "\"x\"").await?;
-
-    let ttl: u64 = 30_000;
-    let mut worker = harness.worker_claim("parker").await?;
-
-    // First turn: the delay parks it. run-next returns outcome 1 (parked); the
-    // queue row survives with its lease RELEASED (NULL) and available_at pushed
-    // to the wake.
-    let (c1, _r1, out1) = worker.call_run_next(ttl).await?;
-    // query_opt: a mutant that dequeues instead of parking leaves NO row — the
-    // gate must print a clean `false`, not error on a missing row.
-    let lease_owner: Option<String> = seed_conn
-        .query_opt(
-            &format!("SELECT lease_owner FROM {SCHEMA}.run_queue WHERE run_id = $1"),
-            &[&run_id],
-        )
-        .await?
-        .and_then(|r| r.get(0));
-    let still_queued: i64 = seed_conn
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = $1"),
-            &[&run_id],
-        )
-        .await?
-        .get(0);
-    let parked = c1 && out1 == 1 && still_queued == 1 && lease_owner.is_none();
-    println!(
-        "park turn: claimed={c1}, outcome={out1} (1=parked), queue row kept={} lease released={} -> {parked}",
-        still_queued == 1,
-        lease_owner.is_none()
-    );
-
-    // Wait past the wake, then a run-next re-claims (a FREE wake — released lease)
-    // and completes.
-    tokio::time::sleep(Duration::from_millis(1300)).await;
-    let (c2, _r2, out2) = worker.call_run_next(ttl).await?;
-    let dequeued: i64 = seed_conn
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.run_queue WHERE run_id = $1"),
-            &[&run_id],
-        )
-        .await?
-        .get(0);
-    let status: String = seed_conn
-        .query_one(
-            &format!("SELECT status FROM {SCHEMA}.runs WHERE run_id = $1"),
-            &[&run_id],
-        )
-        .await?
-        .get(0);
-    let sink: i64 = seed_conn
-        .query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.sink WHERE run_id = $1"),
-            &[&run_id],
-        )
-        .await?
-        .get(0);
-    let woke = c2 && out2 == 0 && dequeued == 0 && status == "completed" && sink == 1;
-    println!(
-        "wake turn: claimed={c2}, outcome={out2} (0=completed), dequeued={} status={status} sink={sink} -> {woke}",
-        dequeued == 0
-    );
-
-    let pass = parked && woke;
-    println!("PASS(park: delay run parks + releases the lease, wakes and completes): {pass}");
     Ok(pass)
 }
 
@@ -1605,10 +1490,10 @@ mod tests {
     }
 
     /// wamn-kex2 / wamn-r7bg [GATE-DRIFT]: every fixture the claim-path phases
-    /// resolve THROUGH is a published release member — the wrong-flow alt graph,
-    /// the park fixture's delay, and the heartbeat chain. That holds only while
-    /// each is a graph a real release could carry, so a fixture edit that cannot
-    /// be published fails here instead of a mode in a cluster.
+    /// resolve THROUGH is a published release member — the wrong-flow alt graph
+    /// and the heartbeat chain. That holds only while each is a graph a real
+    /// release could carry, so a fixture edit that cannot be published fails
+    /// here instead of a mode in a cluster.
     #[test]
     fn every_published_failoverbench_fixture_is_a_releasable_graph() {
         for flow_json in super::published_fixtures() {

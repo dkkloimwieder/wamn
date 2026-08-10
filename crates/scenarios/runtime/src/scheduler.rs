@@ -1,23 +1,10 @@
-//! The scenario scheduler: drive a [`ScenarioClock`] to the next
-//! parked-wake deadline and re-drive, until nothing is parked.
+//! The scenario scheduler drives a [`ScenarioClock`] to the next deterministic
+//! retry deadline and re-drives until no retry is scheduled.
 //!
-//! A real flow with a 24h `delay` node parks: it records a wake deadline and
-//! returns. Rather than wait 24h of wall time (prod) or advance the clock by a
-//! hand-known amount (the pre-extraction bench), the scheduler reads the ACTUAL
-//! parked deadlines from the run store, advances the shared virtual clock to the
-//! EARLIEST one, and re-drives — collapsing arbitrary delays to milliseconds
-//! with no test-side knowledge of how long each delay was.
-//!
-//! Two backends plug into the same [`ScenarioScheduler`] via [`SchedulerBackend`]:
-//!
-//! - **run-s6** (the guest's single-run `run-s6` export): the wake deadline
-//!   lives in `runs.state_json->'wake'->'<node>'` as epoch seconds, read from
-//!   the guest's (virtualized) wall clock — so advancing the virtual clock
-//!   alone collapses it. Query it with [`RUN_S6_WAKE_DEADLINES_SQL`].
-//! - **run-next** (the production `ExecutionHost` claim loop): the wake lives in
-//!   `run_queue.available_at`, but scenarios treat that database timestamp only
-//!   as an opaque stale-selection token. The authoritative deadline comes from
-//!   the run's virtual `wake` or deterministic retry `delay-ms`. When the
+//! The production `ExecutionHost` claim loop represents the queue wait in
+//! `run_queue.available_at`, but scenarios treat that database timestamp only
+//! as an opaque stale-selection token. The authoritative deadline comes from
+//! the retry cursor's deterministic `delay-ms`. When the
 //!   logical clock makes that schedule due, [`DatabaseClockBoundary`](crate::DatabaseClockBoundary)
 //!   maps the decision to the captured database origin and
 //!   [`RUN_QUEUE_DUE_NUDGE_SQL`] moves only that row there so the unchanged
@@ -39,18 +26,16 @@ pub struct ScenarioScheduler {
     max_steps: usize,
 }
 
-/// A backend the scheduler drives: report the currently-parked wake deadlines,
-/// and re-drive all now-due work once. Implemented per run store (run-s6 over
-/// `runs.state_json`, run-next over `run_queue`).
+/// A backend the scheduler drives: report scheduled retry deadlines and
+/// re-drive all now-due work once.
 #[async_trait::async_trait]
 pub trait SchedulerBackend {
-    /// Every currently-parked wake deadline, in epoch NANOSECONDS, across all
-    /// parked runs. Empty ⇒ nothing is parked (quiescent — the loop ends).
+    /// Every scheduled retry deadline, in epoch NANOSECONDS. Empty means the
+    /// backend is quiescent and the loop ends.
     async fn wake_deadlines_nanos(&mut self) -> anyhow::Result<Vec<u64>>;
 
-    /// Re-drive all now-due parked work once (re-invoke the parked run / claim +
-    /// drain the queue). A run whose deadline has passed should complete; one
-    /// still in the future should re-park.
+    /// Re-drive all now-due retry work once. A retry still in the future remains
+    /// queued.
     async fn redrive(&mut self) -> anyhow::Result<()>;
 }
 
@@ -142,14 +127,12 @@ impl ScenarioScheduler {
         self
     }
 
-    /// Drive `backend` to quiescence: read the parked deadlines, advance the
+    /// Drive `backend` to quiescence: read the retry deadlines, advance the
     /// clock to the EARLIEST future one, re-drive, and repeat until nothing is
-    /// parked. Returns the number of advance/re-drive steps taken.
+    /// waiting on retry. Returns the number of advance/re-drive steps taken.
     ///
     /// Advancing to the earliest (not just any) deadline is load-bearing: it
-    /// wakes exactly the run(s) actually due and leaves later ones parked, so
-    /// independent delays fire in order — a run parked for 1h must not ride a
-    /// sibling's 24h wake.
+    /// wakes exactly the run(s) actually due and leaves later retries queued.
     pub async fn drive_to_quiescence(
         &self,
         backend: &mut impl SchedulerBackend,
@@ -157,7 +140,7 @@ impl ScenarioScheduler {
         let mut steps = 0usize;
         loop {
             let deadlines = backend.wake_deadlines_nanos().await?;
-            // The EARLIEST parked deadline — the next moment any run wakes.
+            // The EARLIEST retry deadline — the next moment any run is due.
             let Some(&next) = deadlines.iter().min() else {
                 return Ok(steps);
             };
@@ -166,25 +149,15 @@ impl ScenarioScheduler {
             steps += 1;
             anyhow::ensure!(
                 steps <= self.max_steps,
-                "scenario scheduler exceeded {} steps — a parked run never made progress",
+                "scenario scheduler exceeded {} steps — a retry never made progress",
                 self.max_steps
             );
         }
     }
 }
 
-/// Every parked-wake deadline (epoch SECONDS) across run-s6 runs: one row per
-/// still-armed `delay` node. The deadline is a JSON number under
-/// `runs.state_json->'wake'->'<node>'`. Scoped by the caller's session
-/// (`app.tenant` RLS claim + `search_path`); a completed run has cleared its
-/// wake, so it does not appear.
-pub const RUN_S6_WAKE_DEADLINES_SQL: &str = "SELECT (w.value#>>'{}')::bigint \
-     FROM runs r, jsonb_each(r.state_json->'wake') AS w \
-     WHERE r.tenant_id = current_setting('app.tenant', true) \
-       AND r.state_json ? 'wake'";
-
-/// The selected scenario run's parked-wake deadline on `run_queue`
-/// (run-next path). Parameter `$1` is the exact case-owned `run_id`. Returning
+/// The selected scenario run's queued retry schedule. Parameter `$1` is the
+/// exact case-owned `run_id`. Returning
 /// the PostgreSQL timestamp itself gives the shift statement an exact opaque
 /// stale-selection token; `state_json` carries the authoritative virtual
 /// schedule. Due/not-due is decided only from that virtual schedule, and this
@@ -231,10 +204,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::SystemTime;
 
-    /// An in-memory backend: a set of parked runs, each with a wake deadline
-    /// (nanos). `redrive` completes any run whose deadline is at/under the
-    /// clock, mirroring the guest's `now < wake` park check — so the scheduler's
-    /// earliest-first pick is observable without a database.
+    /// An in-memory backend: a set of queued retries, each with a deadline.
+    /// `redrive` completes any run whose deadline is at or before the clock.
     struct FakeBackend {
         clock: ScenarioClock,
         /// (deadline_nanos, completed)
@@ -266,14 +237,12 @@ mod tests {
 
     // Mutation target (delta 2, mutant i): the earliest-deadline pick
     // (`deadlines.iter().min()`). Two runs at 1h and 24h: the scheduler must
-    // advance to the 1h deadline FIRST (waking only run A), then the 24h
-    // (waking run B) — TWO steps. A mutant that picks `.max()` (earliest→latest
-    // swap) advances straight to 24h, wakes BOTH at once, and finishes in ONE
-    // step — failing the `steps == 2` assertion here. It also lets run A "wake"
-    // at a time later than its own deadline (still correct completion), but the
-    // step count and the intermediate parked-state pin the ordering.
+    // advance to the 1h deadline FIRST (running only retry A), then the 24h
+    // (running retry B) — TWO steps. A mutant that picks `.max()`
+    // (earliest→latest swap) advances straight to 24h, runs BOTH at once, and
+    // finishes in ONE step.
     #[tokio::test]
-    async fn scheduler_wakes_the_earliest_deadline_first() {
+    async fn scheduler_runs_the_earliest_retry_first() {
         let hour = 3_600u64 * 1_000_000_000;
         let clock = ScenarioClock::at_secs(1_000_000_000);
         let base = clock.now_nanos(); // the clock's start, in nanos
@@ -301,7 +270,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scheduler_is_quiescent_when_nothing_is_parked() {
+    async fn scheduler_is_quiescent_without_retries() {
         let clock = ScenarioClock::at_secs(100);
         let mut backend = FakeBackend {
             clock: clock.clone(),
@@ -311,11 +280,11 @@ mod tests {
             .drive_to_quiescence(&mut backend)
             .await
             .unwrap();
-        assert_eq!(steps, 0, "no parked runs ⇒ no steps");
+        assert_eq!(steps, 0, "no retries means no steps");
     }
 
     #[tokio::test]
-    async fn scheduler_collapses_a_single_far_future_delay() {
+    async fn scheduler_collapses_a_single_far_future_backoff() {
         let base = 500u64 * 1_000_000_000;
         let far = base + 86_400 * 1_000_000_000; // +24h
         let clock = ScenarioClock::at_secs(500);

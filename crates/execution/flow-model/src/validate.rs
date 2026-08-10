@@ -859,13 +859,6 @@ fn validate_request_graph(
                 ));
             }
         }
-        if node.node_type == "delay" {
-            issues.push(Issue::error(
-                "delay-before-release",
-                format!("nodes[{index}].type"),
-                "delay is not legal while a request caller is waiting",
-            ));
-        }
     }
 
     let can_answer = reverse_reachable_within(flow, &stoppers, &region);
@@ -1096,7 +1089,6 @@ mod tests {
 
     fn interfaces() -> ResolvedInterfaces {
         BTreeMap::from([
-            ("delay".into(), vec!["main".into()]),
             ("http-request".into(), vec!["main".into()]),
             ("split".into(), vec!["left".into(), "right".into()]),
             ("step".into(), vec!["main".into()]),
@@ -1394,12 +1386,12 @@ mod tests {
     }
 
     #[test]
-    fn t0_cron_event_reject_respond_but_allow_delay_and_fail() {
+    fn t0_cron_event_reject_respond_but_allow_work_and_fail() {
         for entry_type in ["cron", "event"] {
             let mut flow = request_flow();
             flow.nodes[0].node_type = entry_type.into();
             flow.nodes[0].config = json!({});
-            flow.nodes[1].node_type = "delay".into();
+            flow.nodes[1].node_type = "step".into();
             let mut fail = node("out", "fail");
             fail.config = json!({"code": "stopped", "status": 503});
             flow.nodes[2] = fail;
@@ -1448,22 +1440,6 @@ mod tests {
         multiple_errors.edges.push(edge("work", "error", "out"));
         multiple_errors.edges.push(edge("work", "error", "failed"));
         assert!(codes(&multiple_errors).contains(&"multiple-error-edges"));
-    }
-
-    #[test]
-    fn request_only_delay_before_release_is_rejected() {
-        let mut flow = request_flow();
-        flow.nodes[1].node_type = "delay".into();
-        assert!(codes(&flow).contains(&"delay-before-release"));
-
-        flow.nodes[1].node_type = "step".into();
-        flow.nodes.push(node("later", "delay"));
-        flow.edges.push(edge("out", "main", "later"));
-        assert!(
-            !codes(&flow).contains(&"delay-before-release"),
-            "{:?}",
-            flow.issues(&interfaces())
-        );
     }
 
     #[test]

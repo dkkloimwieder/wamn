@@ -956,10 +956,6 @@ fn retained_resolution_surface_uses_the_flow_model_interface() {
         !is_standard("custom"),
         "a custom node is not standard-library"
     );
-    assert!(
-        describe_interface("delay").is_none(),
-        "delay is runner-intrinsic"
-    );
     for removed in ["cron", "time-shift"] {
         assert!(!is_standard(removed), "removed node {removed:?} survived");
         assert!(
@@ -1054,11 +1050,6 @@ fn capability_table_rows_are_exact() {
     assert_eq!(
         required_capabilities("postgres-query"),
         Some(&[Capability::Postgres, Capability::RawSql][..])
-    );
-    assert_eq!(
-        required_capabilities("delay"),
-        None,
-        "delay is runner-intrinsic"
     );
     for removed in ["cron", "time-shift"] {
         assert_eq!(

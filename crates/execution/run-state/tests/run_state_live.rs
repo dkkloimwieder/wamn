@@ -6,7 +6,7 @@ use std::thread;
 use std::time::Duration;
 
 use wamn_run_state::transitions::{
-    begin_attempt_sql, complete_sql, mark_attempt_dispatched_sql, park_sql, release_caller_sql,
+    begin_attempt_sql, complete_sql, mark_attempt_dispatched_sql, release_caller_sql,
     reserved_checkpoint_sql, terminalize_sql,
 };
 
@@ -76,7 +76,6 @@ fn run_state_live() {
     let release = release_caller_sql();
     let terminalize = terminalize_sql();
     let reserved_checkpoint = reserved_checkpoint_sql();
-    let park = park_sql();
     let complete = complete_sql();
     let begin_attempt = begin_attempt_sql();
     let mark_attempt = mark_attempt_dispatched_sql();
@@ -252,35 +251,6 @@ fn run_state_live() {
         release
     );
     success(&url, &post_terminal_script);
-
-    // Cross-run authority is rejected before either run or queue state changes.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs (tenant_id,run_id,flow_id,flow_version,status,state_json) VALUES \
-           ('t1','cross-a','f',1,'running','{\"before\":true}'), \
-           ('t1','cross-b','f',1,'running','{\"before\":true}'); \
-         INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
-           ('t1','cross-a','same-worker',now()+interval '1 minute',3), \
-           ('t1','cross-b','same-worker',now()+interval '1 minute',3);",
-    );
-    let cross_script = format!(
-        "{} PREPARE park_stmt (text,text,text,bigint,text,timestamptz) AS {}; \
-         CREATE TEMP TABLE crossed AS \
-           EXECUTE park_stmt('cross-a','cross-b','same-worker',3, \
-                             '{{\"after\":true}}',now()+interval '1 hour'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM crossed) = 'cross-run-authority', \
-                  'cross-run authority is typed'; \
-           ASSERT (SELECT state_json FROM runs WHERE run_id='cross-a') = '{{\"before\":true}}', \
-                  'cross-run refusal does not write the run'; \
-           ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='cross-a') = 'same-worker', \
-                  'cross-run refusal does not release the queue'; \
-         END $$; COMMIT;",
-        app_preamble(),
-        park
-    );
-    success(&url, &cross_script);
 
     // Actual lock race: the new claimant increments generation and holds the
     // queue row while the stale worker enters release_caller. The stale statement

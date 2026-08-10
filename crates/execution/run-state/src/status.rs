@@ -122,22 +122,19 @@ impl From<wamn_runner::ExecutionFailureKind> for FailKind {
     }
 }
 
-/// A single node execution's status. `Running`/`Parked` rows are outstanding
-/// (the driver re-dispatches them on resume); `Success`/`Error` are the completed
-/// rows reconstruction replays.
+/// A single node execution's status. `Started` rows are outstanding; `Success`
+/// and `Error` are the completed rows reconstruction replays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeRunStatus {
     Started,
-    Parked,
     Success,
     Error,
 }
 
 impl NodeRunStatus {
-    pub const ALL: [NodeRunStatus; 4] = [
+    pub const ALL: [NodeRunStatus; 3] = [
         NodeRunStatus::Started,
-        NodeRunStatus::Parked,
         NodeRunStatus::Success,
         NodeRunStatus::Error,
     ];
@@ -145,7 +142,6 @@ impl NodeRunStatus {
     pub fn as_sql(self) -> &'static str {
         match self {
             NodeRunStatus::Started => "started",
-            NodeRunStatus::Parked => "parked",
             NodeRunStatus::Success => "success",
             NodeRunStatus::Error => "error",
         }

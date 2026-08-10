@@ -250,7 +250,6 @@ CREATE TABLE s3.node_runs (
     input_json    jsonb,
     error_kind    text,
     error_detail  jsonb,
-    resume_at     timestamptz,
     -- 9.6 capture seams the flowrunner guest fills (wamn-srb); mirrors
     -- deploy/sql/run-state.sql so the S3 fixture accepts the guest's writes.
     preview_head  text,

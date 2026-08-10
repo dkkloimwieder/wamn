@@ -35,12 +35,13 @@
 
 -- ---------------------------------------------------------------------------
 -- run_queue: one row per pending/in-flight run. `available_at` gates visibility
--- (future = a delayed/parked/backed-off run); a live `lease_expires_at` marks a
+-- (future = a queue-parked/backed-off run); a live `lease_expires_at` marks a
 -- row a replica currently owns, and once it expires another replica may reclaim
 -- it (crash-safe failover). `attempts` counts CRASH EVIDENCE only: a claim bumps
 -- it iff it reclaims an expired lease (the prior owner died holding the run) — a
--- first claim and a park->wake re-claim (park releases the lease) are free, so a
--- flow may park unboundedly without spending redelivery budget. Once `attempts`
+-- first claim and a queue-park->wake re-claim (the queue park releases the lease)
+-- are free, so bounded-retry waits do not spend redelivery budget. This queue
+-- eligibility operation is distinct from node execution state. Once `attempts`
 -- reaches `max_attempts` and the lease is long expired, the janitor marks the run
 -- `infrastructure-failure` and removes the row — EXCEPT a 'blocking'-policy
 -- partitioned row (D20): that row stays and WEDGES its key (operator release),

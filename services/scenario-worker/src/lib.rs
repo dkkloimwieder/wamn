@@ -651,16 +651,6 @@ fn unix_nanos(instant: SystemTime) -> anyhow::Result<u64> {
 fn logical_schedule_deadline(clock: &ScenarioClock, state_json: &str) -> anyhow::Result<u64> {
     let state: serde_json::Value =
         serde_json::from_str(state_json).context("parse scenario scheduling state")?;
-    let wake = state
-        .get("wake")
-        .and_then(serde_json::Value::as_object)
-        .and_then(|wake| wake.values().filter_map(serde_json::Value::as_u64).min())
-        .map(|seconds| {
-            seconds
-                .checked_mul(1_000_000_000)
-                .context("scenario wake deadline exceeds u64 nanos")
-        })
-        .transpose()?;
     let retry = state.get("retry").and_then(serde_json::Value::as_object);
     let retry_deadline = retry
         .and_then(|retry| retry.get("delay-ms"))
@@ -676,14 +666,12 @@ fn logical_schedule_deadline(clock: &ScenarioClock, state_json: &str) -> anyhow:
         })
         .transpose()?;
 
-    match (wake, retry_deadline) {
-        (Some(wake), Some(retry)) => Ok(wake.min(retry)),
-        (Some(wake), None) => Ok(wake),
-        (None, Some(retry)) => Ok(retry),
-        (None, None) if retry.is_some() => {
+    match retry_deadline {
+        Some(retry) => Ok(retry),
+        None if retry.is_some() => {
             bail!("legacy retry schedule has no deterministic delay-ms")
         }
-        (None, None) => bail!("parked scenario run has no virtual wake or retry schedule"),
+        None => bail!("queued scenario run has no deterministic retry schedule"),
     }
 }
 
@@ -1283,7 +1271,7 @@ async fn execute_target(
                 clock_boundary,
             ))
             .await
-            .context("resume delayed scenario work")?;
+            .context("resume scheduled scenario retry work")?;
         drop(host);
 
         scope_session(&client, &args.tenant, execution_schema).await?;
@@ -1848,21 +1836,15 @@ mod tests {
     }
 
     #[test]
-    fn virtual_wake_and_retry_schedules_ignore_database_calendar_time() {
+    fn virtual_retry_schedule_ignores_database_calendar_time() {
         let clock = ScenarioClock::at_secs(1_700_000_000);
         let now = clock.now_nanos();
-        let wake = logical_schedule_deadline(&clock, r#"{"wake":{"delay":1700000001}}"#).unwrap();
         let retry = logical_schedule_deadline(&clock, r#"{"retry":{"delay-ms":750}}"#).unwrap();
 
-        assert_eq!(wake, now + 1_000_000_000);
         assert_eq!(retry, now + 750_000_000);
-        assert!(!clock.is_due(wake));
         assert!(!clock.is_due(retry));
         clock.advance_to_nanos(retry);
         assert!(clock.is_due(retry), "retry is due at equality");
-        assert!(!clock.is_due(wake), "later wake remains parked");
-        clock.advance_to_nanos(wake);
-        assert!(clock.is_due(wake), "wake is due at equality");
     }
 
     #[test]
@@ -1881,7 +1863,6 @@ mod tests {
     fn logical_schedule_arithmetic_is_checked() {
         let clock = ScenarioClock::at_secs(u64::MAX / 1_000_000_000);
         assert!(logical_schedule_deadline(&clock, r#"{"retry":{"delay-ms":1000}}"#).is_err());
-        assert!(logical_schedule_deadline(&clock, r#"{"wake":{"delay":18446744074}}"#).is_err());
     }
 
     #[test]

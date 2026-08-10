@@ -714,7 +714,7 @@ pub enum CheckpointResult {
 impl CheckpointResult {
     pub fn from_parts(code: &str, run_status: &str) -> Option<CheckpointResult> {
         match code {
-            "parked" | "completed" => Some(CheckpointResult::Applied),
+            "completed" => Some(CheckpointResult::Applied),
             "cancelled" => Some(CheckpointResult::Cancelled),
             "already-completed" => Some(CheckpointResult::AlreadyCompleted),
             "attempt-not-found" => Some(CheckpointResult::AttemptNotFound),
@@ -733,36 +733,6 @@ impl CheckpointResult {
     pub fn permits_access(self) -> bool {
         self != CheckpointResult::FenceLost
     }
-}
-
-/// Persist a recovery checkpoint and release the lease until an absolute wake.
-///
-/// Params: target run id, authority run id, lease owner, lease generation,
-/// state JSON text, absolute wake timestamp.
-pub fn park_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         parked_run AS ( \
-             UPDATE runs AS r SET state_json = $5::text::jsonb, updated_at = now() \
-               FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND r.tenant_id = a.tenant_id AND r.run_id = a.run_id \
-             RETURNING r.tenant_id, r.run_id, r.status \
-         ), \
-         parked_queue AS ( \
-             UPDATE run_queue AS q \
-                SET available_at = $6::timestamptz, \
-                    lease_owner = NULL, lease_expires_at = NULL \
-               FROM parked_run AS r \
-              WHERE q.tenant_id = r.tenant_id AND q.run_id = r.run_id \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN p.run_id IS NOT NULL THEN 'parked' ELSE a.result_code END \
-                    AS result_code, \
-                COALESCE(p.status, a.status) AS run_status \
-           FROM authority AS a LEFT JOIN parked_run AS p ON true \
-          WHERE (SELECT count(*) FROM parked_queue) >= 0"
-    )
 }
 
 /// Complete one persisted effect attempt and advance the run checkpoint.
@@ -1178,7 +1148,6 @@ mod tests {
             release_caller_sql(),
             reserved_checkpoint_sql(),
             terminalize_sql(),
-            park_sql(),
             complete_sql(),
         ] {
             assert!(sql.contains("locked_queue AS MATERIALIZED"), "{sql}");
@@ -1228,10 +1197,6 @@ mod tests {
                 < terminal.find("dequeued AS").expect("dequeue CTE")
         );
         assert!(terminal.contains("dequeued AS"));
-
-        let park = park_sql();
-        assert!(park.contains("parked_run AS"));
-        assert!(park.contains("parked_queue AS"));
 
         let complete = complete_sql();
         assert!(complete.contains("completed_attempt AS"));

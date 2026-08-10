@@ -5,10 +5,8 @@
 //! scheduling decision in one scenario. It is an `Arc`-shared atomic nanosecond
 //! counter a scenario scheduler drives; [`VirtualWallClock`] adapts it to the
 //! fork's [`HostWallClock`] so it can be injected into a store's `WasiCtx` via
-//! `WasiCtxBuilder::wall_clock`. Guest code that reads the wall clock (a `delay`
-//! node computing its wake deadline, say) then sees the time the scheduler
-//! chooses — so a 24h delay collapses to milliseconds of real wall time once the
-//! scheduler advances the clock past the deadline.
+//! `WasiCtxBuilder::wall_clock`. Guest code that reads the wall clock sees the
+//! deterministic instant chosen by the scenario scheduler.
 //!
 //! Extracted from the S6 proof before becoming a product scenario adapter.
 
@@ -20,7 +18,7 @@ use wasmtime_wasi::HostWallClock;
 
 /// The absolute virtual Unix instant governing one scenario's scheduling.
 ///
-/// Park, wake, retry, and deadline comparisons all use the inclusive
+/// Retry and deadline comparisons all use the inclusive
 /// [`ScenarioClock::is_due`] rule. Cheap to [`Clone`] (an `Arc` to the shared
 /// instant), so the scheduler advances the same instant a store's `WasiCtx`
 /// reads.
@@ -73,8 +71,8 @@ impl ScenarioClock {
 
     /// Whether `deadline_nanos` is due at the current scenario instant.
     ///
-    /// Equality is due. This is the single comparison contract used for park,
-    /// wake, retry, and deadline decisions.
+    /// Equality is due. This is the single comparison contract used for retry
+    /// and deadline decisions.
     pub fn is_due(&self, deadline_nanos: u64) -> bool {
         deadline_nanos <= self.now_nanos()
     }
@@ -201,7 +199,7 @@ mod tests {
         let clock = ScenarioClock::at_secs(10);
         let now = clock.now_nanos();
 
-        for kind in ["park", "wake", "retry", "deadline"] {
+        for kind in ["retry", "deadline"] {
             assert!(clock.is_due(now - 1), "{kind}: just-before is due");
             assert!(clock.is_due(now), "{kind}: equality is due");
             assert!(!clock.is_due(now + 1), "{kind}: just-after is not due");

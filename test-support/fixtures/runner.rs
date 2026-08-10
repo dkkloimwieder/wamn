@@ -49,7 +49,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
+            error_kind text, error_detail jsonb, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \

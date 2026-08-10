@@ -349,7 +349,7 @@ async fn legacy_effect_attempt_backfill_leg(su: &Client) {
               'replay','replay','not-required',NULL,NULL, \
               '2026-08-07 09:00Z','2026-08-07 09:00:01Z','2026-08-07 09:01Z', \
               'sha256:done',NULL,'main','{{\"ok\":true}}','2026-08-07 09:00:02Z'), \
-             ('t1','legacy-incomplete','pure',0,0,0,'parked', \
+             ('t1','legacy-incomplete','pure',0,0,0,'started', \
               NULL,'replay',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL), \
              ('t1','legacy-unresolved','missing-http',0,0,0,'started', \
               'never-replay','never-replay','attested','erp-instance:8','credential:8', \
@@ -603,10 +603,10 @@ async fn shared_runner_legacy_leg(su: &Client) {
          CREATE TABLE {SCHEMA}.node_runs (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
            run_id text NOT NULL,node_id text NOT NULL,occurrence int NOT NULL DEFAULT 0, \
            seq int NOT NULL,attempt int NOT NULL DEFAULT 0,status text NOT NULL CHECK \
-             (status IN ('running','parked','success','error')),output_port text,output_json jsonb, \
+             (status IN ('running','success','error')),output_port text,output_json jsonb, \
            input_json jsonb,error_kind text CHECK (error_kind IN \
              ('retryable','rate-limited','terminal','invalid-input','cancelled')),error_detail jsonb, \
-           resume_at timestamptz,input_ref text,output_ref text,preview_head text,payload_size bigint, \
+           input_ref text,output_ref text,preview_head text,payload_size bigint, \
            payload_hash text,capture_mode text,redacted boolean NOT NULL DEFAULT false, \
            started_at timestamptz NOT NULL DEFAULT now(),ended_at timestamptz, \
            PRIMARY KEY(tenant_id,run_id,node_id,occurrence),FOREIGN KEY(tenant_id,run_id) \
@@ -785,7 +785,7 @@ async fn shared_runner_legacy_leg(su: &Client) {
                 "INSERT INTO {SCHEMA}.node_runs \
                    (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000042', \
-                         'other-run','n',0,0,'parked')"
+                         'other-run','n',0,0,'started')"
             ),
             &[],
         )

@@ -18,13 +18,7 @@
 //!
 //! Gates:
 //!   sameness — the identical InstancePre (one compiled component, one byte
-//!              digest) runs a delay+http flow to completion under BOTH stores.
-//!   delay    — a flow with a 24h delay node completes in < 1s wall under the
-//!              test store's virtual clock (parked-wake: the node records a
-//!              wake deadline and parks; the harness advances the clock and
-//!              re-runs). Under the prod store's real clock the same run parks
-//!              and does NOT complete — proving the delay is real, and it is the
-//!              virtual clock that collapses it.
+//!              digest) runs an HTTP flow to completion under BOTH stores.
 //!   egress   — the test store's egress spy catches an intentionally-added
 //!              unexpected outbound call: an expected call to the loopback echo
 //!              is recorded and forwarded, while a planted call to an
@@ -42,7 +36,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
@@ -68,9 +61,8 @@ use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 use wamn_scenario_runtime::{
-    EphemeralSchemaProvisioner, RUN_S6_WAKE_DEADLINES_SQL, RecordingEgress, ScenarioCapabilities,
-    ScenarioClock, ScenarioScheduler, ScenarioSchemaName, SchedulerBackend, build_virtual_wasi,
-    case_pool,
+    EphemeralSchemaProvisioner, RecordingEgress, ScenarioCapabilities, ScenarioClock,
+    ScenarioSchemaName, build_virtual_wasi, case_pool,
 };
 // 11.4: the schemacase + runworker inline asserts now route through the pure
 // assertion vocabulary (the extraction-regression proof that the vocabulary
@@ -89,13 +81,8 @@ const TEST_SEED: u64 = 0x7492_5EED_5EED_7492;
 pub enum Mode {
     /// Same binary runs under both host wirings.
     Sameness,
-    /// 24h-delay flow completes < 1s under virtual time.
-    Delay,
     /// Egress spy catches a planted unexpected outbound call.
     Egress,
-    /// The test scheduler auto-advances the virtual clock to each parked-wake
-    /// deadline (no manual advance) and drives a 24h delay to completion < 1s.
-    Scheduler,
     /// N sequential ephemeral schema CASES (create → run → drop) prove per-case
     /// isolation via the test-runner-owned provisioner.
     Schemacase,
@@ -129,10 +116,6 @@ pub struct TestHostBenchArgs {
     /// Which gate to run.
     #[arg(long, value_enum, default_value_t = Mode::All)]
     pub mode: Mode,
-
-    /// Wall-clock seconds the delay-gate flow parks for (default 24h).
-    #[arg(long, default_value_t = 86_400)]
-    pub delay_secs: u64,
 
     /// Pool max size (passed to both plugin instances).
     #[arg(long, default_value_t = 8)]
@@ -173,7 +156,8 @@ struct Worker {
 }
 
 impl Worker {
-    /// Returns (outcome, http-status): outcome 0 = completed, 1 = parked.
+    /// Returns (outcome, http-status): the retained top-level ABI uses outcome
+    /// 0 = completed, 1 = queue-waiting.
     async fn call_run_s6(&mut self, run_id: &str, payload: &str) -> anyhow::Result<(u32, u32)> {
         let (r,) = self
             .run_s6
@@ -364,7 +348,7 @@ fn template_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
-            error_kind text, error_detail jsonb, resume_at timestamptz, \
+            error_kind text, error_detail jsonb, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
@@ -390,7 +374,6 @@ fn template_ddl(schema: &str) -> String {
 async fn seed_s6_flow(
     admin: &tokio_postgres::Client,
     schema: &str,
-    delay_secs: u64,
     url: &str,
 ) -> anyhow::Result<()> {
     wamn_gate_harness::scope_session(admin, TENANT, schema).await?;
@@ -400,29 +383,7 @@ async fn seed_s6_flow(
         "poc-s6",
         1,
         true,
-        &crate::flowbench::flow_json_s6(delay_secs, url),
-        true,
-    )
-    .await
-}
-
-/// Re-seed `poc-s6` v1 as the TWO-delay fixture (wamn-2jkm.51), replacing the
-/// single-delay graph in place (ON CONFLICT DO UPDATE) so `run-s6` drives the
-/// two-delay flow. The direct `execute` path re-reads the active flow per call
-/// (no plan cache), so the new graph is picked up immediately.
-async fn seed_s6_twodelay_flow(
-    admin: &tokio_postgres::Client,
-    schema: &str,
-    delay_secs: u64,
-) -> anyhow::Result<()> {
-    wamn_gate_harness::scope_session(admin, TENANT, schema).await?;
-    wamn_gate_harness::seed_flow_version(
-        admin,
-        TENANT,
-        "poc-s6",
-        1,
-        true,
-        &crate::flowbench::flow_json_s6_twodelay(delay_secs),
+        &crate::flowbench::flow_json_s6(url),
         true,
     )
     .await
@@ -475,12 +436,7 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     let needs_testhost = run_all
         || matches!(
             args.mode,
-            Mode::Sameness
-                | Mode::Delay
-                | Mode::Egress
-                | Mode::Scheduler
-                | Mode::Schemacase
-                | Mode::Runworker
+            Mode::Sameness | Mode::Egress | Mode::Schemacase | Mode::Runworker
         );
 
     println!("# wamn-host S6 testhostbench");
@@ -593,22 +549,8 @@ pub async fn run(args: TestHostBenchArgs) -> anyhow::Result<()> {
     if run_all || args.mode == Mode::Sameness {
         pass &= sameness_phase(&mut prod, &mut test, admin, &echo_url, harness.digest).await?;
     }
-    if run_all || args.mode == Mode::Delay {
-        pass &= delay_phase(
-            &mut prod,
-            &mut test,
-            admin,
-            &vclock,
-            &echo_url,
-            args.delay_secs,
-        )
-        .await?;
-    }
     if run_all || args.mode == Mode::Egress {
         pass &= egress_phase(&mut test, admin, &echo_url, &echo_authority, &spy).await?;
-    }
-    if run_all || args.mode == Mode::Scheduler {
-        pass &= scheduler_phase(&mut test, admin, &vclock, &echo_url, args.delay_secs).await?;
     }
 
     // Tear down the main stores (and pools) before dropping the ephemeral schema
@@ -664,7 +606,7 @@ async fn sameness_phase(
     digest: u64,
 ) -> anyhow::Result<bool> {
     println!("\n## sameness — identical bytes (fnv1a {digest:#018x}) run under BOTH host wirings");
-    // A zero-delay delay+http flow: completes in one call on each store.
+    // The same HTTP flow completes in one call on each store.
     let mut ok = true;
     for (label, schema, w) in [
         ("prod", PROD_SCHEMA, &mut *prod),
@@ -672,7 +614,7 @@ async fn sameness_phase(
     ] {
         let run_id = format!("same-{label}");
         w.call_reset(&run_id).await?;
-        seed_s6_flow(admin, schema, 0, echo_url).await?;
+        seed_s6_flow(admin, schema, echo_url).await?;
         let (outcome, http) = w.call_run_s6(&run_id, "receipt").await?;
         let sink = w.call_sink_count(&run_id).await?;
         let this = outcome == 0 && sink == 1;
@@ -685,99 +627,6 @@ async fn sameness_phase(
     }
     println!("PASS(sameness: same binary completes under prod + test host): {ok}");
     Ok(ok)
-}
-
-// ---------------------------------------------------------------------------
-// delay
-// ---------------------------------------------------------------------------
-
-async fn delay_phase(
-    prod: &mut Worker,
-    test: &mut Worker,
-    admin: &tokio_postgres::Client,
-    vclock: &ScenarioClock,
-    echo_url: &str,
-    delay_secs: u64,
-) -> anyhow::Result<bool> {
-    println!(
-        "\n## delay — a {delay_secs}s ({:.1}h) delay flow completes < 1s wall under virtual time",
-        delay_secs as f64 / 3600.0
-    );
-
-    // Test store: seed the long delay, run once (parks), advance the virtual
-    // clock past the deadline, run again (completes) — all in real milliseconds.
-    let run_id = "delay-test";
-    test.call_reset(run_id).await?;
-    seed_s6_flow(admin, EPH_SCHEMA, delay_secs, echo_url).await?;
-
-    let t0 = Instant::now();
-    let (o1, _) = test.call_run_s6(run_id, "receipt").await?;
-    let parked = o1 == 1;
-    println!(
-        "test: first run -> outcome={o1} ({})",
-        if parked { "parked" } else { "NOT parked" }
-    );
-    vclock.advance_secs(delay_secs + 1);
-    let (o2, http) = test.call_run_s6(run_id, "receipt").await?;
-    let wall = t0.elapsed();
-    let completed = o2 == 0;
-    let sink = test.call_sink_count(run_id).await?;
-    println!(
-        "test: advanced virtual clock +{}s, second run -> outcome={o2} ({}), http={http}, sink_rows={sink}",
-        delay_secs + 1,
-        if completed {
-            "completed"
-        } else {
-            "NOT completed"
-        }
-    );
-    println!("test: wall time for the whole 24h-delay flow = {wall:?}");
-
-    // Prod store (real clock): the same flow parks and does NOT complete within
-    // the bench window — proving the delay is real and only virtual time
-    // collapses it. (We do not wait 24h.)
-    let prun = "delay-prod";
-    prod.call_reset(prun).await?;
-    seed_s6_flow(admin, PROD_SCHEMA, delay_secs, echo_url).await?;
-    let (po, _) = prod.call_run_s6(prun, "receipt").await?;
-    let prod_parks = po == 1;
-    println!(
-        "prod: real-clock run -> outcome={po} ({}) — stays parked",
-        if prod_parks { "parked" } else { "NOT parked" }
-    );
-
-    let time_ok = wall < Duration::from_secs(1);
-    let single_pass = parked && completed && sink == 1 && time_ok && prod_parks;
-    println!(
-        "PASS(delay < 1s under virtual time; real clock stays parked): {single_pass} (parked={parked}, completed={completed}, wall_ok={time_ok}, prod_parks={prod_parks})"
-    );
-
-    // wamn-2jkm.51: two delay nodes must park INDEPENDENTLY. Re-seed poc-s6 as a
-    // TWO-delay flow (in -> d1 -> d2 -> pg-write -> respond) and drive it. Pre-fix,
-    // one global `wake` key made d2 read d1's already-elapsed deadline and emit
-    // AT ONCE, so the run COMPLETED after a single clock advance. Post-fix (wake
-    // keyed by node id + cleared on emit), d1's elapse leaves d2 to arm a FRESH
-    // deadline and PARK again — the run needs a SECOND advance to complete.
-    println!("\n## two-delay (wamn-2jkm.51) — the second delay actually delays");
-    seed_s6_twodelay_flow(admin, EPH_SCHEMA, delay_secs).await?;
-    let r2 = "delay-twodelay";
-    test.call_reset(r2).await?;
-    let (a1, _) = test.call_run_s6(r2, "receipt").await?; // parks on d1
-    let d1_parked = a1 == 1;
-    vclock.advance_secs(delay_secs + 1);
-    let (a2, _) = test.call_run_s6(r2, "receipt").await?; // d1 emits -> d2 must PARK
-    let d2_parked = a2 == 1;
-    let sink_mid = test.call_sink_count(r2).await?; // still 0 — pg-write not reached
-    vclock.advance_secs(delay_secs + 1);
-    let (a3, _) = test.call_run_s6(r2, "receipt").await?; // d2 emits -> completes
-    let two_done = a3 == 0;
-    let sink_two = test.call_sink_count(r2).await?;
-    let two_pass = d1_parked && d2_parked && sink_mid == 0 && two_done && sink_two == 1;
-    println!(
-        "PASS(second delay actually delays): {two_pass} (d1_parked={d1_parked}, d2_parked={d2_parked} [pre-fix: false — d2 emits at once], sink_after_d1={sink_mid}, completed={two_done}, sink_final={sink_two})"
-    );
-
-    Ok(single_pass && two_pass)
 }
 
 // ---------------------------------------------------------------------------
@@ -798,7 +647,7 @@ async fn egress_phase(
     spy.clear();
     let a = "egress-expected";
     test.call_reset(a).await?;
-    seed_s6_flow(admin, EPH_SCHEMA, 0, echo_url).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, echo_url).await?;
     let (_, http_a) = test.call_run_s6(a, "receipt").await?;
     let denied_a = spy.denied();
     let saw_expected = spy.saw_authority(echo_authority);
@@ -812,7 +661,7 @@ async fn egress_phase(
     spy.clear();
     let b = "egress-planted";
     test.call_reset(b).await?;
-    seed_s6_flow(admin, EPH_SCHEMA, 0, PLANTED_URL).await?;
+    seed_s6_flow(admin, EPH_SCHEMA, PLANTED_URL).await?;
     let (outcome_b, http_b) = test.call_run_s6(b, "receipt").await?;
     let denied_b = spy.denied();
     let caught = denied_b
@@ -856,128 +705,6 @@ async fn regression_phase(args: &TestHostBenchArgs) -> anyhow::Result<bool> {
             Ok(false)
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// scheduler (delta 2): the test scheduler auto-advances the virtual clock
-// ---------------------------------------------------------------------------
-
-/// A [`SchedulerBackend`] over the run-s6 path: the parked-wake deadlines live in
-/// `runs.state_json->'wake'` (epoch seconds, from the guest's virtual wall
-/// clock), and re-driving re-invokes `run-s6` for each still-parked run.
-struct RunS6Backend<'a> {
-    worker: &'a mut Worker,
-    admin: &'a tokio_postgres::Client,
-    schema: &'a str,
-    /// (run_id, payload) for each run still being driven; completed runs are
-    /// dropped so `run-s6` is never re-invoked on a finished run.
-    runs: Vec<(String, String)>,
-}
-
-#[async_trait::async_trait]
-impl SchedulerBackend for RunS6Backend<'_> {
-    async fn wake_deadlines_nanos(&mut self) -> anyhow::Result<Vec<u64>> {
-        // The admin (superuser) session must carry the tenant claim + search_path
-        // for the RLS-scoped, unqualified `runs` read to resolve.
-        scope_session(self.admin, TENANT, self.schema).await?;
-        let rows = self.admin.query(RUN_S6_WAKE_DEADLINES_SQL, &[]).await?;
-        Ok(rows
-            .iter()
-            .map(|r| {
-                let secs: i64 = r.get(0);
-                (secs.max(0) as u64).saturating_mul(1_000_000_000)
-            })
-            .collect())
-    }
-
-    async fn redrive(&mut self) -> anyhow::Result<()> {
-        let active = std::mem::take(&mut self.runs);
-        let mut still = Vec::with_capacity(active.len());
-        for (run_id, payload) in active {
-            let (outcome, _http) = self.worker.call_run_s6(&run_id, &payload).await?;
-            if outcome != 0 {
-                still.push((run_id, payload));
-            }
-        }
-        self.runs = still;
-        Ok(())
-    }
-}
-
-async fn scheduler_phase(
-    test: &mut Worker,
-    admin: &tokio_postgres::Client,
-    vclock: &ScenarioClock,
-    echo_url: &str,
-    delay_secs: u64,
-) -> anyhow::Result<bool> {
-    println!(
-        "\n## scheduler — the test scheduler auto-advances the virtual clock to each parked-wake deadline (no manual advance)"
-    );
-
-    // (1) A single 24h delay drives to completion in < 1s wall with the scheduler
-    //     reading the ACTUAL parked deadline (contrast the delay phase, which
-    //     advances by a hand-known amount).
-    let run_id = "sched-single";
-    test.call_reset(run_id).await?;
-    seed_s6_flow(admin, EPH_SCHEMA, delay_secs, echo_url).await?;
-    let t0 = Instant::now();
-    let (o1, _) = test.call_run_s6(run_id, "receipt").await?;
-    let parked = o1 == 1;
-    let steps = {
-        let mut backend = RunS6Backend {
-            worker: &mut *test,
-            admin,
-            schema: EPH_SCHEMA,
-            runs: vec![(run_id.to_string(), "receipt".to_string())],
-        };
-        ScenarioScheduler::new(vclock.clone())
-            .drive_to_quiescence(&mut backend)
-            .await?
-    };
-    let wall = t0.elapsed();
-    let sink = test.call_sink_count(run_id).await?;
-    let single_ok = parked && steps == 1 && sink == 1 && wall < Duration::from_secs(1);
-    println!(
-        "PASS(single 24h delay auto-driven < 1s): {single_ok} (parked={parked}, steps={steps}, sink={sink}, wall={wall:?})"
-    );
-
-    // (2) Two runs with DISTINCT deadlines (delay Δ and 2Δ) must wake in ORDER:
-    //     the scheduler advances to the EARLIEST first (waking only run A), then
-    //     the later (waking run B) — TWO steps. A mutant that advanced to the
-    //     LATEST would wake both at once (ONE step) and fail this.
-    let (short_secs, long_secs) = (delay_secs.max(1), delay_secs.max(1) * 2);
-    let (ra, rb) = ("sched-a", "sched-b");
-    test.call_reset(ra).await?;
-    test.call_reset(rb).await?;
-    // Park A at +Δ, then re-seed the active flow to +2Δ and park B at +2Δ.
-    seed_s6_flow(admin, EPH_SCHEMA, short_secs, echo_url).await?;
-    let (pa, _) = test.call_run_s6(ra, "receipt").await?;
-    seed_s6_flow(admin, EPH_SCHEMA, long_secs, echo_url).await?;
-    let (pb, _) = test.call_run_s6(rb, "receipt").await?;
-    let both_parked = pa == 1 && pb == 1;
-    let ordered_steps = {
-        let mut backend = RunS6Backend {
-            worker: &mut *test,
-            admin,
-            schema: EPH_SCHEMA,
-            runs: vec![
-                (ra.to_string(), "receipt".to_string()),
-                (rb.to_string(), "receipt".to_string()),
-            ],
-        };
-        ScenarioScheduler::new(vclock.clone())
-            .drive_to_quiescence(&mut backend)
-            .await?
-    };
-    let sink_a = test.call_sink_count(ra).await?;
-    let sink_b = test.call_sink_count(rb).await?;
-    let ordered_ok = both_parked && ordered_steps == 2 && sink_a == 1 && sink_b == 1;
-    println!(
-        "PASS(distinct deadlines wake earliest-first, 2 steps): {ordered_ok} (both_parked={both_parked}, steps={ordered_steps}, sink_a={sink_a}, sink_b={sink_b})"
-    );
-
-    Ok(single_ok && ordered_ok)
 }
 
 // ---------------------------------------------------------------------------
@@ -1057,7 +784,7 @@ async fn schemacase_phase(
 
         let run_id = format!("case-{i}");
         worker.call_reset(&run_id).await?;
-        seed_s6_flow(provisioner.admin(), schema.as_str(), 0, echo_url).await?;
+        seed_s6_flow(provisioner.admin(), schema.as_str(), echo_url).await?;
         let (outcome, _http) = worker.call_run_s6(&run_id, "receipt").await?;
         let sink = worker.call_sink_count(&run_id).await?;
 
@@ -1154,14 +881,10 @@ const RW_SCHEMA: &str = "s6_runworker";
 /// The run-worker leg's own `poc-s6` graph: `request -> http-call -> pg-write ->
 /// respond`.
 ///
-/// It cannot reuse `flowbench::flow_json_s6` because that shared S3/S6 benchmark
-/// fixture is NOT publishable — its `respond` carries no `status`
-/// (`invalid-respond-config`) and its `delay` sits inside the request/respond
-/// region (`delay-before-release`) — and `run-next` resolves this leg's run only
-/// through an immutable release artifact (wamn-kex2). The `delay` was configured
-/// to 0 here and no assertion named it, while other legs depend on that node to
-/// prove parking, so the shared fixture stays as it is and this leg publishes a
-/// graph a real release could carry (the wamn-see7 precedent in `testkitbench`).
+/// This leg owns its publishable graph because `run-next` resolves the run only
+/// through an immutable release artifact (wamn-kex2). Keeping that release
+/// fixture local makes its `respond` contract and allowed host explicit (the
+/// wamn-see7 precedent in `testkitbench`).
 fn runworker_flow_json(echo_url: &str, echo_authority: &str) -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,

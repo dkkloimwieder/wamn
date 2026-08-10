@@ -17,11 +17,12 @@
 //!                (completeness), sustaining ~1–5k claims/s.
 //!   reclaim    — a claimant's lease expires; another replica reclaims the run
 //!                (crash-safe failover), and not before the lease expires.
-//!   park       — park/wake cycles are budget-free: `attempts` counts crash
-//!                evidence (expired-lease reclaims) only, so a flow that parks far
-//!                more times than `max_attempts` still completes — on BOTH claim
-//!                paths — and the janitor retires nothing. Plus the wamn-fqg.7
-//!                corollary: a budget-spent run whose lease a park released (NULL)
+//!   park       — queue-park/wake cycles are budget-free: `attempts` counts crash
+//!                evidence (expired-lease reclaims) only, so bounded-retry waits
+//!                can exceed `max_attempts` without spending crash budget — on
+//!                BOTH claim paths — and the janitor retires nothing. Plus the
+//!                wamn-fqg.7 corollary: a budget-spent run whose queue park
+//!                released its lease (NULL)
 //!                still WAKES and completes (not wedged invisible), while a
 //!                budget-spent run holding an expired lease stays terminal.
 //!   janitor    — an abandoned (expired-lease, budget-spent) run is swept to
@@ -53,8 +54,8 @@ use tokio_postgres::{Client, NoTls};
 use wamn_gate_harness::{ceiling, emit_csv, percentile};
 use wamn_run_state::queue::{
     acquire_partitions_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
-    complete_dequeue_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql, park_sql,
-    write_ahead_run_sql,
+    complete_dequeue_sql, dequeue_sql, enqueue_sql, janitor_sweep_sql, mark_running_sql,
+    park_sql as queue_park_sql, write_ahead_run_sql,
 };
 
 const SCHEMA: &str = "wamn_queue_bench";
@@ -581,13 +582,13 @@ async fn reclaim_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 }
 
 // ---------------------------------------------------------------------------
-// park: park/wake cycles are budget-free (attempts counts crash evidence only)
+// queue park: park/wake cycles are budget-free (attempts counts crash evidence only)
 // ---------------------------------------------------------------------------
 
-/// A delay-loop flow parks and wakes far more times than its `max_attempts`, on
-/// BOTH claim paths (the global claim and the partition head claim — a parked
+/// A bounded-retry loop queue-parks and wakes far more times than its
+/// `max_attempts`, on BOTH claim paths (the global claim and the partition head claim — a parked
 /// partitioned head is re-claimed on every wake). Every wake re-claim must be
-/// FREE: park releases the lease, so the claim's crash-evidence `CASE` sees no
+/// FREE: the queue park releases the lease, so the claim's crash-evidence `CASE` sees no
 /// expired lease and leaves `attempts` at 0. The runs complete with the full
 /// redelivery budget intact and a janitor sweep retires nothing. Before the
 /// wamn-fqg.5 fix each claim bumped `attempts`, so 10 parks with max_attempts=3
@@ -720,7 +721,9 @@ async fn park_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     let claim = claim_batch_sql(10);
     let acquire = acquire_partitions_sql(4);
     let claim_head = claim_partition_head_sql(4);
-    let park = park_sql();
+    // The retained `queue::park_sql` only schedules queue eligibility; it does
+    // not persist node execution state.
+    let park = queue_park_sql();
     let ttl: i64 = 60_000;
     let park_ms: i64 = 5;
 

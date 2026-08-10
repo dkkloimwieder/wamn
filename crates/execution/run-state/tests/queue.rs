@@ -51,7 +51,8 @@ fn claim_state_classifies_ready_leased_parked() {
     assert_eq!(claim_state(&ready, 100), ClaimState::Ready);
     assert!(is_claimable(&ready, 100));
 
-    // available_at in the future -> Parked (delayed / parked-wake / backoff).
+    // available_at in the future -> queue ClaimState::Parked (backoff), which is
+    // distinct from the removed node-run parked status.
     let parked = QueueEntry::ready("t1", "r", 500, 20);
     assert_eq!(claim_state(&parked, 100), ClaimState::Parked);
     assert!(!is_claimable(&parked, 100));
@@ -692,8 +693,8 @@ fn budget_spent_null_lease_wakes_but_expired_lease_stays_exhausted() {
 
 #[test]
 fn park_wake_cycles_never_consume_the_redelivery_budget() {
-    // A delay-loop flow with max_attempts = 1 parks N times and stays claimable at
-    // EVERY wake: park releases the lease, so the wake re-claim sees no crash
+    // A retry loop with max_attempts = 1 queue-parks N times and stays claimable
+    // at EVERY wake: queue park releases the lease, so the wake re-claim sees no crash
     // evidence and attempts stays 0. Before the fix each claim bumped attempts, so
     // the second wake already classified the run Exhausted — a run that never
     // failed, killed for sleeping.
@@ -708,7 +709,8 @@ fn park_wake_cycles_never_consume_the_redelivery_budget() {
         let plan = plan_claim(std::slice::from_ref(&entry), now, 1, 1_000);
         assert_eq!(plan.claimed.len(), 1);
         assert_eq!(plan.claimed[0].attempts, 0, "wake {wake}: re-claim is free");
-        // The runner parks (park_sql: lease released, available_at pushed out).
+        // The runner queue-parks (`queue::park_sql`: lease released,
+        // `available_at` pushed out); this is not node execution state.
         entry = QueueEntry {
             attempts: plan.claimed[0].attempts,
             ..QueueEntry::ready("t1", "r", now + 500, 1)
@@ -1610,8 +1612,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // rq-leased (still 'X'), and rq-spent (budget spent -> left for the janitor).
     // attempts counts CRASH EVIDENCE only: the never-leased rq-ready/rq-healthy are
     // claimed for free, while the expired-lease rq-expired/rq-reclaim (their owner
-    // died) are bumped — and a park->wake re-claim through the REAL park_sql is
-    // free too (park releases the lease, so the claim sees no crash evidence).
+    // died) are bumped — and a queue-park->wake re-claim through the REAL
+    // `queue::park_sql` is free too (the queue park releases the lease, so the
+    // claim sees no crash evidence).
     script.push_str(&format!(
         "BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
@@ -1786,8 +1789,9 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n"
     ));
-    // The wake/reconciliation scan (parked_due_sql): a due unleased row is
-    // surfaced for a doorbell hint; a future (parked) or live-leased row is not.
+    // The queue wake/reconciliation scan (`queue::parked_due_sql`): a due
+    // unleased row is surfaced for a doorbell hint; a future queue-parked or
+    // live-leased row is not.
     script.push_str(&format!(
         "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
            ('t1','wk-due','f',1,'dispatched'), \

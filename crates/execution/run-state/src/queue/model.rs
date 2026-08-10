@@ -54,10 +54,10 @@ impl PartitionPolicy {
 }
 
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
-/// is when the row becomes claimable — future for a delayed/parked/backed-off run;
+/// is when the row becomes claimable — future for a queue-parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
 /// owns. `attempts` counts crash evidence — it bumps only when a claim reclaims an
-/// expired lease (redelivery budget vs `max_attempts`); parks/wakes are free.
+/// expired lease (redelivery budget vs `max_attempts`); queue parks/wakes are free.
 /// `partition_key` is reserved for the per-partition ownership follow-up (5.14
 /// scaling); the walking skeleton leaves it null.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,10 +78,11 @@ pub struct QueueEntry {
     /// Dispatch priority tiebreaker (claim orders by `available_at` first).
     #[serde(default)]
     pub priority: i32,
-    /// When this row becomes claimable. Future = parked (delay node / backoff).
+    /// When this row becomes claimable. Future = queue-parked (for example,
+    /// bounded-retry backoff).
     pub available_at: Millis,
     /// When this row was enqueued — stamped **once** and never updated, unlike
-    /// `available_at` which a park/backoff pushes into the future. This is the
+    /// `available_at` which a queue park/backoff pushes into the future. This is the
     /// stable per-key stream order (`(enqueued_at, stream_seq, run_id)`) the
     /// `blocking` policy ranks by: a parked head sorts *later* than its ready
     /// sibling on `available_at`, so blocking order cannot be expressed over it.

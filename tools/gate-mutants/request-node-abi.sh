@@ -4,9 +4,9 @@ set -euo pipefail
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
 readonly MUTATION="request-success-bypasses-exact-emission-validation"
 readonly TEST="tests::malformed_request_actions_are_refused_before_durable_checkpointing"
-readonly NEEDLE='if let NodeAction::Emit(outcome) = action {'
-readonly REPLACEMENT='if dispatch.node_type != "request" && let NodeAction::Emit(outcome) = action {'
-readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
+readonly NEEDLE='validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
+readonly REPLACEMENT='if dispatch.node_type != "request" { validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
+readonly EXPECTED_SHA="25498ff8eac774926c6df401b052e7fe78cb6808980e6c74a793eeca7adaabcc"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

@@ -465,14 +465,9 @@ fn flow_case_ddl(schema: &str) -> String {
 /// the poc-s6 shape the checked-in case judges (one admitted egress call to the
 /// loopback echo, one `sink` row, a completed run).
 ///
-/// This leg owns its graph rather than reusing `flowbench::flow_json_s6` because
-/// that shared S3/S6 benchmark fixture is NOT publishable: its `respond` node
-/// carries no `status` (`invalid-respond-config`) and its `delay` sits inside the
-/// request/respond region (`delay-before-release`). Its `delay` is configured to 0
-/// here anyway — it drove straight through and no assertion named it — while
-/// other gates depend on that node to prove parking, so the fixture stays as it
-/// is and this leg publishes a graph a real release could carry. `authority` is a
-/// locally built `127.0.0.1:<port>`, so it needs no escaping.
+/// This leg owns its publishable graph because its release artifact must carry
+/// an explicit `respond` contract and allowed host. `authority` is a locally
+/// built `127.0.0.1:<port>`, so it needs no escaping.
 fn poc_s6_flow_json(authority: &str) -> String {
     format!(
         r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,

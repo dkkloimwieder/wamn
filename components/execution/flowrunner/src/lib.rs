@@ -20,11 +20,9 @@
 //! exactly like the tenant claim (S6 / design-note 9).
 //!
 //! The S3 flow is `webhook-in -> transform -> pg-write -> conditional ->
-//! respond`; the S6 flow is `webhook-in -> delay -> http-call -> pg-write ->
-//! respond`. `delay` reads wall-clock time and parks (durable parked-wake);
-//! `http-call` makes a `wasi:http` outbound request. Both touch host capabilities
-//! the test host virtualizes/interposes — the SAME compiled binary runs under
-//! both hosts.
+//! respond`; the legacy S6 fixture adds an `http-call` through `wasi:http`.
+//! The test host interposes that capability while running the same compiled
+//! binary as the production host.
 //!
 //! ## Checkpoint / resume (5.7)
 //! Durable run state is the `runs` / `node_runs` tables (`deploy/sql/run-state.sql`):
@@ -36,10 +34,8 @@
 //! a node with none is outstanding and re-runs, so an effect that committed in
 //! the crash window between its DB write and its `node_runs` row replays
 //! at-least-once and is absorbed by the node's own idempotency (`pg-write`'s
-//! `sink` `ON CONFLICT DO NOTHING`). `delay` parks by recording a wake deadline
-//! in `runs.state_json` without writing a `node_runs` row, so it re-enters on the
-//! next invocation — the durable parked-wake the S6 24-hour test exercises under
-//! virtual time. A resumed run finishes down exactly the branch it took.
+//! `sink` `ON CONFLICT DO NOTHING`). A resumed run finishes down exactly the
+//! branch it took.
 
 wit_bindgen::generate!({
     world: "flowrunner",
@@ -74,8 +70,9 @@ use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
     acquire_partitions_sql, begin_claimed_run_sql, claim_dispatch_sql, claim_partition_head_sql,
-    dead_letter_dequeue_sql, mark_running_sql, park_sql, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
+    dead_letter_dequeue_sql, mark_running_sql, park_sql as queue_park_sql,
+    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
+    renew_partition_sql,
 };
 use wamn_runner::{
     CallerState, Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus, NodeOutcome,
@@ -93,7 +90,6 @@ use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
 use wamn::runner::node_invocation::{self, InvocationContext};
 
-use wasi::clocks::wall_clock;
 use wasi::http::outgoing_handler;
 use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
 
@@ -103,7 +99,7 @@ export!(Component);
 /// The S3 PoC flow. Two versions differ only in the transform op, so a
 /// hot-reloaded version is observable in the run's return value.
 const FLOW_ID: &str = "poc-receipt";
-/// The S6 delay+http flow.
+/// The legacy S6 HTTP flow.
 const FLOW_ID_S6: &str = "poc-s6";
 /// Database-local project-environment setting that grants the POC's RawSql node.
 ///
@@ -646,7 +642,7 @@ fn open_run(run_id: &str, flow_id: &str, flow_version: u32, input: &Value) -> Re
 
 /// Load a run's already-completed node executions in dispatch (`seq`) order — the
 /// branch-aware reconstruction source. Only `success`/`error` rows are completed
-/// steps; a `parked`/`running` row is an outstanding node the walk re-dispatches.
+/// steps; a `started` row is an outstanding node the walk re-dispatches.
 /// An error-routed node was recorded as an emission on the `error` port, so
 /// reconstruction needs no error taxonomy here.
 fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
@@ -765,97 +761,16 @@ fn mark_completed(run_id: &str, result: &Value) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// S6: wall-clock (delay / parked-wake) + wasi:http (http-call / egress)
+// Retry cursor + wasi:http egress
 // ---------------------------------------------------------------------------
-
-/// Current wall-clock time in whole seconds since the epoch. Time enters the
-/// flow ONLY here (design-note 9), so the test host virtualizes it.
-fn wall_now_secs() -> u64 {
-    wall_clock::now().seconds
-}
-
-/// Load the parked-wake deadline (epoch seconds) recorded for delay node `node`
-/// in the run's `state_json`, if any. Wake is keyed BY NODE ID
-/// (`{"wake": {"<node>": secs}}`, wamn-2jkm.51): a single global `wake` key let a
-/// flow's SECOND delay node read the FIRST's stale (already-elapsed) deadline and
-/// emit without ever delaying. A LEGACY bare `{"wake": <number>}` (a run parked
-/// before this upgrade) is IGNORED (None), so the node re-parks once under the
-/// keyed form — a benign one-time re-delay, not a lost or double-run.
-fn load_wake(run_id: &str, node: &str) -> Result<Option<u64>, String> {
-    let v = load_checkpoint(run_id)?;
-    // A keyed wake object -> this node's deadline; a legacy bare number -> None.
-    Ok(v.get("wake")
-        .and_then(|w| w.as_object())
-        .and_then(|m| m.get(node))
-        .and_then(|w| w.as_u64()))
-}
-
-/// Persist the parked-wake deadline for delay node `node`, keyed by node id
-/// (wamn-2jkm.51). Shares the `state_json` home with the retry cursor; the engine
-/// drives ONE node at a time, so at most one park's state is live and this
-/// replaces only the wake cursor while preserving durable run context (each
-/// reader re-validates against the reconstructed frontier: `load_wake` fires
-/// only while its node is outstanding).
-fn save_wake(run_id: &str, node: &str, wake_secs: u64) -> Result<(), String> {
-    let mut top = checkpoint_object(load_checkpoint(run_id)?);
-    let mut per_node = serde_json::Map::new();
-    per_node.insert(node.to_string(), Value::from(wake_secs));
-    top.insert("wake".to_string(), Value::Object(per_node));
-    client::execute(
-        &run_sql::update_run_state_sql(),
-        &[text(run_id), text(Value::Object(top).to_string())],
-    )
-    .map_err(|e| err_name(&e))?;
-    Ok(())
-}
-
-/// Clear delay node `node`'s recorded wake when it EMITS (its deadline elapsed),
-/// so a later REVISIT of the same node (a cycle) re-arms a fresh deadline instead
-/// of reading the stale (elapsed) one and emitting immediately (wamn-2jkm.51).
-/// Removes only this node's entry (dropping the `wake` object once empty) and any
-/// legacy bare `wake` scalar, preserving a co-resident retry cursor.
-fn clear_wake(run_id: &str, node: &str) -> Result<(), String> {
-    let rs = client::query(&run_sql::select_run_state_sql(), &[text(run_id)])
-        .map_err(|e| err_name(&e))?;
-    let raw = match rs.rows.first().and_then(|r| r.first()) {
-        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s.clone(),
-        _ => return Ok(()), // no state -> nothing to clear
-    };
-    let mut v: Value = serde_json::from_str(&raw).map_err(|e| format!("state_json parse: {e}"))?;
-    let Some(obj) = v.as_object_mut() else {
-        return Ok(());
-    };
-    match obj.get_mut("wake").and_then(|w| w.as_object_mut()) {
-        Some(map) => {
-            map.remove(node);
-            if map.is_empty() {
-                obj.remove("wake");
-            }
-        }
-        // A legacy bare `wake` scalar (or none): drop it so the stale deadline
-        // cannot leak to another node.
-        None => {
-            obj.remove("wake");
-        }
-    }
-    client::execute(
-        &run_sql::update_run_state_sql(),
-        &[text(run_id), text(v.to_string())],
-    )
-    .map_err(|e| err_name(&e))?;
-    Ok(())
-}
 
 /// Persist the in-flight retry cursor — the retrying node + the attempt the next
 /// dispatch runs as — in the run's `state_json`, so the retry budget survives
-/// park→reclaim→reconstruct (R32): the outstanding node re-enters carrying its
+/// queue-wait→reclaim→reconstruct (R32): the outstanding node re-enters carrying its
 /// attempt instead of resetting to 0 (reconstruction replays only COMPLETED
-/// node_runs, so a mid-retry node otherwise loses its count). Home-shares
-/// `state_json` with the delay node's `wake`; the engine has one `current` node,
-/// so at most one park's state is live at a time. The write preserves durable
-/// run context, and both cursor readers re-validate against the reconstructed
-/// frontier (`restore_retry` no-ops off the front; `load_wake` only fires while
-/// its node is outstanding).
+/// node_runs, so a mid-retry node otherwise loses its count). The write preserves
+/// durable run context, and `restore_retry` re-validates the cursor against the
+/// reconstructed frontier.
 fn save_retry(
     run_id: &str,
     node: &str,
@@ -864,7 +779,7 @@ fn save_retry(
     throttle: Option<&ThrottleKey>,
 ) -> Result<(), String> {
     // wamn-2jkm.66: persist the shared-throttle key alongside (node, attempt) so
-    // a `rate-limited` retry's CROSS-run gate identity survives the park.
+    // a `rate-limited` retry's CROSS-run gate identity survives the queue wait.
     // `delay-ms` records the same engine-produced backoff that the production
     // queue materializes in `available_at`, allowing scenarios to replay it
     // without treating that database timestamp as logical time. Absent key =>
@@ -905,7 +820,7 @@ fn retry_state(node: &str, attempt: u32, delay_ms: u64, throttle: Option<&Thrott
 /// Load a persisted in-flight retry cursor `(node, attempt, throttle)` from
 /// `state_json`, if any — the reconstruction seam feeds it to
 /// [`Plan::restore_retry`]. The `throttle` sub-object (wamn-2jkm.66) restores the
-/// shared-throttle key a `rate-limited` retry parked with; it is absent for a
+/// shared-throttle key a `rate-limited` retry waited with; it is absent for a
 /// plain retryable retry, which restores with no key.
 fn load_retry(run_id: &str) -> Result<Option<(String, u32, Option<ThrottleKey>)>, String> {
     let v = load_checkpoint(run_id)?;
@@ -1010,7 +925,7 @@ fn custom_node_dispatch(
     flow: &Flow,
     artifact: Option<&wamn_catalog::PinnedArtifact>,
     effect_run: Option<&EffectRunClaims>,
-) -> Result<NodeAction, String> {
+) -> Result<NodeOutcome, String> {
     let artifact = artifact.ok_or_else(|| {
         "custom node invocation requires an immutable admitted artifact".to_string()
     })?;
@@ -1070,7 +985,7 @@ fn custom_node_dispatch(
     let response = node_invocation::invoke(&context, body.as_bytes())
         .map_err(|error| format!("custom node infrastructure refusal: {error:?}"))?;
     let outcome = node_response_to_outcome(&response, &contract.interface)?;
-    Ok(NodeAction::Emit(outcome))
+    Ok(outcome)
 }
 
 fn node_response_to_outcome(
@@ -1266,14 +1181,8 @@ fn fail_kind_sql(kind: &ExecutionFailureKind) -> &'static str {
 // Executor: drive the wamn-runner engine over the loaded flow
 // ---------------------------------------------------------------------------
 
-/// A dispatched node's result: emit an outcome to advance the walk, or park the
-/// whole run (the `delay` node before its deadline).
-enum NodeAction {
-    Emit(NodeOutcome),
-    Park,
-}
-
-/// The outcome of one `execute` call. `outcome`: 0 = completed, 1 = parked.
+/// The outcome of one `execute` call. The retained top-level ABI uses
+/// `outcome`: 0 = completed, 1 = queue-waiting.
 struct RunOutcome {
     version: u32,
     outcome: u32,
@@ -1290,7 +1199,6 @@ enum ResolvedNode {
     LegacyTransform,
     LegacyConditional,
     PgWrite,
-    Delay,
     HttpCall,
     Custom,
     InvokeFlow,
@@ -1364,7 +1272,6 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
             Some(ResolvedNode::LegacyConditional)
         }
         "pg-write" => Some(ResolvedNode::PgWrite),
-        "delay" => Some(ResolvedNode::Delay),
         "http-call" => Some(ResolvedNode::HttpCall),
         "custom" => Some(ResolvedNode::Custom),
         "invoke-flow" => Some(ResolvedNode::InvokeFlow),
@@ -1387,7 +1294,6 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
 fn s3_fixture_interfaces() -> ResolvedInterfaces {
     ResolvedInterfaces::from([
         ("conditional".to_string(), vec![MAIN_PORT.to_string()]),
-        ("delay".to_string(), vec![MAIN_PORT.to_string()]),
         ("http-call".to_string(), vec![MAIN_PORT.to_string()]),
         ("pg-write".to_string(), vec![MAIN_PORT.to_string()]),
         ("transform".to_string(), vec![MAIN_PORT.to_string()]),
@@ -1422,8 +1328,8 @@ fn dispatch_node(
     effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
-) -> Result<NodeAction, String> {
-    let action = dispatch_node_unvalidated(
+) -> Result<NodeOutcome, String> {
+    let outcome = dispatch_node_unvalidated(
         d,
         run_id,
         flow,
@@ -1432,17 +1338,15 @@ fn dispatch_node(
         kill_after_write,
         http_status,
     )?;
-    validate_dispatched_action(d, &action)?;
-    Ok(action)
+    validate_dispatched_action(d, &outcome)?;
+    Ok(outcome)
 }
 
-fn validate_dispatched_action(dispatch: &Dispatch, action: &NodeAction) -> Result<(), String> {
-    if let NodeAction::Emit(outcome) = action {
-        validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
-        validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
-        validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
-        validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
-    }
+fn validate_dispatched_action(dispatch: &Dispatch, outcome: &NodeOutcome) -> Result<(), String> {
+    validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+    validate_cron_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+    validate_event_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
+    validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?;
     Ok(())
 }
 
@@ -1454,12 +1358,12 @@ fn dispatch_node_unvalidated(
     effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
-) -> Result<NodeAction, String> {
+) -> Result<NodeOutcome, String> {
     let resolved = resolve_node(&d.node_type, &d.config)
         .ok_or_else(|| format!("unknown node type: {}", d.node_type))?;
     match resolved {
         // The trigger payload already sits in the node's input.
-        ResolvedNode::WebhookIn => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        ResolvedNode::WebhookIn => Ok(NodeOutcome::ok(d.payload.clone())),
         // An `expression` config routes to the standard library's JMESPath
         // transform/conditional below; the S3 fixture shapes (`op`/`min-len`)
         // keep their legacy semantics byte-identical.
@@ -1473,11 +1377,11 @@ fn dispatch_node_unvalidated(
                 "reverse" => value_str(&d.payload).chars().rev().collect::<String>(),
                 _ => value_str(&d.payload).to_uppercase(),
             };
-            Ok(NodeAction::Emit(NodeOutcome::ok(Value::String(out))))
+            Ok(NodeOutcome::ok(Value::String(out)))
         }
         // Records a branch decision but keeps the fixture's linear main path;
         // true branching is exercised in the wamn-runner / wamn-run-state tests.
-        ResolvedNode::LegacyConditional => Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone()))),
+        ResolvedNode::LegacyConditional => Ok(NodeOutcome::ok(d.payload.clone())),
         ResolvedNode::PgWrite => {
             pg_write(run_id, node_index(flow, &d.node), value_str(&d.payload))?;
             if kill_after_write {
@@ -1490,38 +1394,12 @@ fn dispatch_node_unvalidated(
                     core::hint::black_box(x);
                 }
             }
-            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
-        }
-        ResolvedNode::Delay => {
-            let delay_secs = d
-                .config
-                .get("delay-secs")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            let now = wall_now_secs();
-            // First reach records the deadline (keyed by node id, wamn-2jkm.51)
-            // and parks WITHOUT writing a node_runs row, so a resume re-enters this
-            // node; later reaches compare against it, and the emit CLEARS it so a
-            // revisit (a cycle) re-arms a fresh deadline instead of firing at once.
-            let wake = match load_wake(run_id, &d.node)? {
-                Some(w) => w,
-                None => {
-                    let w = now.saturating_add(delay_secs);
-                    save_wake(run_id, &d.node, w)?;
-                    w
-                }
-            };
-            if now < wake {
-                Ok(NodeAction::Park)
-            } else {
-                clear_wake(run_id, &d.node)?;
-                Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
-            }
+            Ok(NodeOutcome::ok(d.payload.clone()))
         }
         ResolvedNode::HttpCall => {
             let url = d.config.get("url").and_then(|v| v.as_str()).unwrap_or("");
             *http_status = http_get(url);
-            Ok(NodeAction::Emit(NodeOutcome::ok(d.payload.clone())))
+            Ok(NodeOutcome::ok(d.payload.clone()))
         }
         // A supplied component is addressed only by the implementation digest
         // pinned into this run's immutable artifact. The trusted host resolves
@@ -1588,7 +1466,7 @@ fn dispatch_node_unvalidated(
                 },
             };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
-            Ok(NodeAction::Emit(
+            Ok(
                 match wamn_nodes::dispatch(node_type, granted, &mut ctx, &run_ctx, &d.payload) {
                     Ok(em) => match em.ctx {
                         Some(context) => NodeOutcome::ok_with_context(em.payload, em.port, context),
@@ -1596,7 +1474,7 @@ fn dispatch_node_unvalidated(
                     },
                     Err(e) => NodeOutcome::Error(e),
                 },
-            ))
+            )
         }
     }
 }
@@ -1604,7 +1482,7 @@ fn dispatch_node_unvalidated(
 /// Walk the active flow via the engine, resuming branch-aware from the persisted
 /// `node_runs` (5.7). `kill_after_write` makes the runner busy-loop right after
 /// `pg-write` commits and before its `node_runs` row is written (the pod-death
-/// window). Returns the version, the outcome (0 = completed, 1 = parked), and the
+/// window). Returns the version, the outcome (0 = completed, 1 = queue-waiting), and the
 /// last observed HTTP status.
 /// cjv.3: declare this run's credential grant to the host BEFORE dispatching
 /// any node, so the host can enforce the frozen `wamn:node/credentials`
@@ -1805,7 +1683,7 @@ fn execute(
         load_context(run_id)?,
     )
     .map_err(|e| e.to_string())?;
-    // R32: restore an in-flight retry parked on a prior invocation — the
+    // R32: restore an in-flight retry queue-waiting from a prior invocation — the
     // outstanding node re-enters carrying its persisted attempt (the queue served
     // the backoff) so the retry budget advances instead of resetting to 0.
     if let Some((node, attempt, throttle)) = load_retry(run_id)? {
@@ -1815,8 +1693,7 @@ fn execute(
 
     loop {
         // now_ms = 0: the queue's available_at is the retry clock (R32), so a
-        // scheduled retry re-enters DUE after its park; `delay` parks via
-        // NodeAction::Park.
+        // scheduled retry re-enters DUE after its queue wait.
         match plan.next(&mut st, 0) {
             Step::Done(ExecutionStatus::Completed) => {
                 mark_completed(run_id, st.result())?;
@@ -1835,9 +1712,9 @@ fn execute(
                 return Err(format!("run ended in {status:?}"));
             }
             // R32: a scheduled retry not yet due. Cross-invocation retry belongs
-            // to the queue layer (run_queue.available_at / park_sql) — persist the
-            // attempt and PARK the run (outcome=1), so the next invocation restores
-            // the attempt (DUE now, the park served the backoff) and re-dispatches;
+            // to the queue layer (`run_queue.available_at` / `queue::park_sql`) —
+            // persist the attempt and return outcome=1, so the next invocation
+            // restores the attempt (DUE now, the queue wait served the backoff) and re-dispatches;
             // the budget advances until success, error-route, or RetryExhausted.
             Step::Wait {
                 node,
@@ -1872,7 +1749,7 @@ fn execute(
                     .map_err(|error| error.to_string())?;
             }
             Step::Dispatch(d) => {
-                match dispatch_node(
+                let outcome = dispatch_node(
                     &d,
                     run_id,
                     &flow,
@@ -1880,104 +1757,94 @@ fn execute(
                     None,
                     kill_after_write,
                     &mut http_status,
-                )? {
-                    NodeAction::Emit(outcome) => {
-                        if d.node_type == "fail" {
-                            let config: FailConfig = serde_json::from_value(d.config.clone())
-                                .expect("validated fail config");
-                            http_status = u32::from(config.status);
-                            let NodeOutcome::Error(error) = &outcome else {
-                                unreachable!("validated fail outcome is terminal")
-                            };
-                            record_error(
-                                run_id,
-                                &d.node,
-                                d.occurrence,
-                                next_seq,
-                                error,
-                                &d.payload,
-                                &flow.capture,
-                            )?;
-                            next_seq += 1;
-                            plan.apply(&mut st, &d, outcome, 0)
-                                .map_err(|error| error.to_string())?;
-                            continue;
-                        }
-                        match &outcome {
-                            // Record the completed node (after its effect
-                            // commits) so a later invocation reconstructs past it.
-                            NodeOutcome::Success {
-                                payload,
-                                port,
-                                context,
-                            } => {
-                                if d.node_type == "respond" {
-                                    http_status = u32::from(
-                                        wamn_nodes::respond::status_for(&d.config)
-                                            .expect("validated respond config has an HTTP status"),
-                                    );
-                                }
-                                record_node_run(
-                                    run_id,
-                                    &d.node,
-                                    d.occurrence,
-                                    next_seq,
-                                    port,
-                                    payload,
-                                    &d.payload,
-                                    &flow.capture,
-                                    context.as_ref().unwrap_or(&d.context),
-                                )?;
-                                next_seq += 1;
-                            }
-                            // Record an error row ONLY when the engine will
-                            // ROUTE the emission (an error edge exists AND no
-                            // retry follows): 5.7 reconstruction folds every
-                            // recorded row as a routed emission, so a row for
-                            // a retried or edge-less failure would resume the
-                            // run down a path the live walk never took.
-                            NodeOutcome::Error(err)
-                                if will_error_route(err, &d)
-                                    && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
-                            {
-                                record_error(
-                                    run_id,
-                                    &d.node,
-                                    d.occurrence,
-                                    next_seq,
-                                    err,
-                                    &d.payload,
-                                    &flow.capture,
-                                )?;
-                                next_seq += 1;
-                            }
-                            NodeOutcome::Error(_) => {}
-                        }
-                        plan.apply(&mut st, &d, outcome, 0)
-                            .map_err(|error| error.to_string())?;
-                    }
-                    NodeAction::Park => {
-                        return Ok(RunOutcome {
-                            version,
-                            outcome: 1,
-                            http_status,
-                        });
-                    }
+                )?;
+                if d.node_type == "fail" {
+                    let config: FailConfig =
+                        serde_json::from_value(d.config.clone()).expect("validated fail config");
+                    http_status = u32::from(config.status);
+                    let NodeOutcome::Error(error) = &outcome else {
+                        unreachable!("validated fail outcome is terminal")
+                    };
+                    record_error(
+                        run_id,
+                        &d.node,
+                        d.occurrence,
+                        next_seq,
+                        error,
+                        &d.payload,
+                        &flow.capture,
+                    )?;
+                    next_seq += 1;
+                    plan.apply(&mut st, &d, outcome, 0)
+                        .map_err(|error| error.to_string())?;
+                    continue;
                 }
+                match &outcome {
+                    // Record the completed node (after its effect
+                    // commits) so a later invocation reconstructs past it.
+                    NodeOutcome::Success {
+                        payload,
+                        port,
+                        context,
+                    } => {
+                        if d.node_type == "respond" {
+                            http_status = u32::from(
+                                wamn_nodes::respond::status_for(&d.config)
+                                    .expect("validated respond config has an HTTP status"),
+                            );
+                        }
+                        record_node_run(
+                            run_id,
+                            &d.node,
+                            d.occurrence,
+                            next_seq,
+                            port,
+                            payload,
+                            &d.payload,
+                            &flow.capture,
+                            context.as_ref().unwrap_or(&d.context),
+                        )?;
+                        next_seq += 1;
+                    }
+                    // Record an error row ONLY when the engine will
+                    // ROUTE the emission (an error edge exists AND no
+                    // retry follows): 5.7 reconstruction folds every
+                    // recorded row as a routed emission, so a row for
+                    // a retried or edge-less failure would resume the
+                    // run down a path the live walk never took.
+                    NodeOutcome::Error(err)
+                        if will_error_route(err, &d)
+                            && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
+                    {
+                        record_error(
+                            run_id,
+                            &d.node,
+                            d.occurrence,
+                            next_seq,
+                            err,
+                            &d.payload,
+                            &flow.capture,
+                        )?;
+                        next_seq += 1;
+                    }
+                    NodeOutcome::Error(_) => {}
+                }
+                plan.apply(&mut st, &d, outcome, 0)
+                    .map_err(|error| error.to_string())?;
             }
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Guest-side queue claim (fqg.4): claim -> drive (heartbeat) -> dequeue/park.
+// Guest-side queue claim (fqg.4): claim -> drive (heartbeat) -> settle queue.
 // The production dispatch path, guest-side. The runner reads its OWN work from
 // run_queue instead of being handed a run_id — the same builders the host-side
 // dispatcher/claimers use (wamn-run-state::queue), called through wamn:postgres.
 // ---------------------------------------------------------------------------
 
-/// The claim-path result: `outcome` (0 = completed, 1 = parked, 2 = failed) plus
-/// the wake delay to park the queue row by when `outcome == 1`, and — for
+/// The claim-path result: `outcome` (0 = completed, 1 = queue-waiting, 2 = failed)
+/// plus the wake delay to queue-park the row by when `outcome == 1`, and — for
 /// `outcome == 2` — the failure verdict the dead-letter marker records
 /// (wamn-v8cv; the structured fail_kind/fail_node/fail_reason stay on `runs`).
 struct ClaimOutcome {
@@ -3232,12 +3099,13 @@ fn dead_letter_dequeue(run_id: &str, reason: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Park a run for a later wake: push `available_at` by `park_ms` and RELEASE the
-/// lease so no replica holds it while it sleeps (the wake re-claim is free —
-/// wamn-fqg.5/.7). Reconciliation/doorbell re-offers it at `available_at`.
-fn park(run_id: &str, park_ms: u64) -> Result<(), String> {
+/// Queue-park a run for a bounded-retry wake: push `available_at` by `park_ms`
+/// and RELEASE the lease so no replica holds it while it waits (the wake
+/// re-claim is free — wamn-fqg.5/.7). This retained queue operation is distinct
+/// from the removed node-level parked state.
+fn park_queue_for_retry(run_id: &str, park_ms: u64) -> Result<(), String> {
     let ms = i64::try_from(park_ms).unwrap_or(i64::MAX);
-    client::execute(&park_sql(), &[text(run_id), int64(ms)]).map_err(|e| err_name(&e))?;
+    client::execute(&queue_park_sql(), &[text(run_id), int64(ms)]).map_err(|e| err_name(&e))?;
     Ok(())
 }
 
@@ -3372,8 +3240,9 @@ fn release_partition(partition_key: &str, owner: &str) -> Result<(), String> {
 }
 
 /// Settle a driven run's terminal outcome (shared by both claim paths): completed
-/// (0) already dropped its queue row inside the fenced terminal transition; parked (1)
-/// pushes `available_at` and releases the run lease; failed (2) dequeues — via
+/// (0) already dropped its queue row inside the fenced terminal transition;
+/// queue-waiting (1) pushes `available_at` and releases the run lease; failed
+/// (2) dequeues — via
 /// [`dead_letter_dequeue`], so a `blocking`-partition head's key continues past
 /// the failure WITH its ledger marker in the same transaction (wamn-v8cv).
 fn settle(run_id: &str, claim: &ClaimOutcome) -> Result<(), String> {
@@ -3381,8 +3250,8 @@ fn settle(run_id: &str, claim: &ClaimOutcome) -> Result<(), String> {
         return Ok(());
     }
     match claim.outcome {
-        0 => {}                            // completed: already dequeued
-        1 => park(run_id, claim.park_ms)?, // parked -> re-offered at wake
+        0 => {} // completed: already dequeued
+        1 => park_queue_for_retry(run_id, claim.park_ms)?,
         _ => dead_letter_dequeue(run_id, claim.fail_reason.as_deref().unwrap_or("failed"))?,
     }
     Ok(())
@@ -3426,7 +3295,7 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
 /// Drive a run CLAIMED from the queue: like [`execute`] but the flow + input come
 /// from the dispatcher-persisted `runs` row (not a fixture id / wrapped string),
 /// the lease is renewed per node, and terminal states become an `outcome` code
-/// (the caller dequeues/parks) rather than a `Result` return. The dispatcher
+/// (the caller settles the queue row) rather than a `Result` return. The dispatcher
 /// already wrote the `runs` row and the claim flipped it `running`, so this does
 /// NOT re-open the run — it reconstructs from `node_runs` and continues.
 fn execute_claimed(
@@ -3467,7 +3336,7 @@ fn execute_claimed(
         load_context(run_id)?,
     )
     .map_err(|e| e.to_string())?;
-    // R32: restore an in-flight retry parked on a prior claim — the outstanding
+    // R32: restore an in-flight retry queue-waiting from a prior claim — the outstanding
     // node re-enters carrying its persisted attempt (the queue served the
     // backoff) so the retry budget advances instead of resetting to 0.
     if let Some((node, attempt, throttle)) = load_retry(run_id)? {
@@ -3523,11 +3392,11 @@ fn execute_claimed(
                     already_settled: false,
                 });
             }
-            // R32: a scheduled retry not yet due — persist the attempt and PARK
-            // the queue row for the backoff (release the lease), the
+            // R32: a scheduled retry not yet due — persist the attempt and queue-park
+            // the row for the backoff (release the lease), the
             // cross-invocation retry the `execute` note deferred to the queue
             // layer. `now_ms` is 0, so `until_ms` IS the backoff to wait; the next
-            // claim reconstructs, restores the attempt (DUE now, the park served
+            // claim reconstructs, restores the attempt (DUE now, the queue wait served
             // the wait), and re-dispatches — the budget advances until success,
             // error-route, or RetryExhausted.
             Step::Wait {
@@ -3709,7 +3578,7 @@ fn execute_claimed(
                     }
                     other => return Err(format!("attempt intent refused: {other:?}")),
                 }
-                match dispatch_node(
+                let outcome = dispatch_node(
                     &d,
                     run_id,
                     flow,
@@ -3717,182 +3586,156 @@ fn execute_claimed(
                     Some(&effect_run),
                     false,
                     &mut http_status,
-                )? {
-                    NodeAction::Emit(outcome) => {
-                        if d.node_type == "fail" {
-                            let NodeOutcome::Error(error) = &outcome else {
-                                unreachable!("validated fail outcome is terminal")
-                            };
-                            let cancelled = complete_fail_and_renew(
-                                run_id,
-                                &flow.flow_id,
-                                flow.version,
-                                &d,
-                                error,
-                                st.caller_state(),
-                                &flow.capture,
-                                ttl_ms,
-                                owner,
-                                lease_generation,
-                            )?;
-                            if cancelled {
-                                return Ok(ClaimOutcome {
-                                    outcome: 0,
-                                    park_ms: 0,
-                                    fail_reason: None,
-                                    already_settled: false,
-                                });
-                            }
-                            next_seq += 1;
-                            emit_node_error(
-                                &flow.flow_id,
-                                run_id,
-                                &d.node,
-                                next_seq - 1,
-                                &tp,
-                                error_row_values(error).0,
-                            );
-                            plan.apply(&mut st, &d, outcome, 0)
-                                .map_err(|error| error.to_string())?;
-                            let failure = st.failure().expect("fail transition is terminal");
-                            return Ok(ClaimOutcome {
-                                outcome: 2,
-                                park_ms: 0,
-                                fail_reason: Some(format!(
-                                    "{}: {}",
-                                    failure.detail.code.as_deref().unwrap_or("failed"),
-                                    failure.detail.message
-                                )),
-                                already_settled: false,
-                            });
-                        }
-                        match &outcome {
-                            NodeOutcome::Success {
-                                payload,
-                                port,
-                                context,
-                            } => {
-                                let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                                let cancelled = if d.node_type == "respond" {
-                                    http_status = u32::from(
-                                        wamn_nodes::respond::status_for(&d.config)
-                                            .expect("validated respond config has an HTTP status"),
-                                    );
-                                    complete_respond_and_renew(
-                                        run_id,
-                                        &d,
-                                        port,
-                                        payload,
-                                        &flow.capture,
-                                        checkpoint_context,
-                                        plan.successors(&d.node, port).is_empty(),
-                                        ttl_ms,
-                                        owner,
-                                        lease_generation,
-                                    )?
-                                } else {
-                                    complete_attempt_success(
-                                        run_id,
-                                        &d,
-                                        port,
-                                        payload,
-                                        &flow.capture,
-                                        checkpoint_context,
-                                        ttl_ms,
-                                        owner,
-                                        lease_generation,
-                                    )?
-                                };
-                                if cancelled {
-                                    return Ok(ClaimOutcome {
-                                        outcome: 0,
-                                        park_ms: 0,
-                                        fail_reason: None,
-                                        already_settled: false,
-                                    });
-                                }
-                                next_seq += 1;
-                                emit_node_complete(
-                                    &flow.flow_id,
-                                    run_id,
-                                    &d.node,
-                                    next_seq - 1,
-                                    &tp,
-                                    port,
-                                );
-                            }
-                            NodeOutcome::Error(err)
-                                if will_error_route(err, &d)
-                                    && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
-                            {
-                                let cancelled = record_error_and_renew(
-                                    run_id,
-                                    &d.node,
-                                    d.occurrence,
-                                    next_seq,
-                                    err,
-                                    &d.payload,
-                                    &flow.capture,
-                                    ttl_ms,
-                                    owner,
-                                    lease_generation,
-                                )?;
-                                if cancelled {
-                                    return Ok(ClaimOutcome {
-                                        outcome: 0,
-                                        park_ms: 0,
-                                        fail_reason: None,
-                                        already_settled: false,
-                                    });
-                                }
-                                next_seq += 1;
-                                emit_node_error(
-                                    &flow.flow_id,
-                                    run_id,
-                                    &d.node,
-                                    next_seq - 1,
-                                    &tp,
-                                    error_row_values(err).0,
-                                );
-                            }
-                            NodeOutcome::Error(_) => {}
-                        }
-                        // fqg.9: when driving a partition HEAD, renew the partition
-                        // lease alongside the run lease so this replica stays the
-                        // key's stable owner across a long head walk (no needless
-                        // mid-run partition steal). Owner-guarded, so a lease this
-                        // replica already lost is a no-op. Inert (never called) for
-                        // the unpartitioned path.
-                        if let Some(pk) = partition {
-                            renew_partition(pk, ttl_ms, owner)?;
-                        }
-                        plan.apply(&mut st, &d, outcome, 0)
-                            .map_err(|error| error.to_string())?;
-                    }
-                    NodeAction::Park => {
-                        // The delay node recorded a wake deadline in state_json;
-                        // park the queue row until then (the wall clock is the
-                        // host's — the test host virtualizes it, so a 24h delay is
-                        // instant there and the wake is immediate).
-                        let now = wall_now_secs();
-                        let park_ms = load_wake(run_id, &d.node)?
-                            .map(|wake| wake.saturating_sub(now).saturating_mul(1000))
-                            .unwrap_or(0);
+                )?;
+                if d.node_type == "fail" {
+                    let NodeOutcome::Error(error) = &outcome else {
+                        unreachable!("validated fail outcome is terminal")
+                    };
+                    let cancelled = complete_fail_and_renew(
+                        run_id,
+                        &flow.flow_id,
+                        flow.version,
+                        &d,
+                        error,
+                        st.caller_state(),
+                        &flow.capture,
+                        ttl_ms,
+                        owner,
+                        lease_generation,
+                    )?;
+                    if cancelled {
                         return Ok(ClaimOutcome {
-                            outcome: 1,
-                            park_ms,
+                            outcome: 0,
+                            park_ms: 0,
                             fail_reason: None,
                             already_settled: false,
                         });
                     }
+                    next_seq += 1;
+                    emit_node_error(
+                        &flow.flow_id,
+                        run_id,
+                        &d.node,
+                        next_seq - 1,
+                        &tp,
+                        error_row_values(error).0,
+                    );
+                    plan.apply(&mut st, &d, outcome, 0)
+                        .map_err(|error| error.to_string())?;
+                    let failure = st.failure().expect("fail transition is terminal");
+                    return Ok(ClaimOutcome {
+                        outcome: 2,
+                        park_ms: 0,
+                        fail_reason: Some(format!(
+                            "{}: {}",
+                            failure.detail.code.as_deref().unwrap_or("failed"),
+                            failure.detail.message
+                        )),
+                        already_settled: false,
+                    });
                 }
+                match &outcome {
+                    NodeOutcome::Success {
+                        payload,
+                        port,
+                        context,
+                    } => {
+                        let checkpoint_context = context.as_ref().unwrap_or(&d.context);
+                        let cancelled = if d.node_type == "respond" {
+                            http_status = u32::from(
+                                wamn_nodes::respond::status_for(&d.config)
+                                    .expect("validated respond config has an HTTP status"),
+                            );
+                            complete_respond_and_renew(
+                                run_id,
+                                &d,
+                                port,
+                                payload,
+                                &flow.capture,
+                                checkpoint_context,
+                                plan.successors(&d.node, port).is_empty(),
+                                ttl_ms,
+                                owner,
+                                lease_generation,
+                            )?
+                        } else {
+                            complete_attempt_success(
+                                run_id,
+                                &d,
+                                port,
+                                payload,
+                                &flow.capture,
+                                checkpoint_context,
+                                ttl_ms,
+                                owner,
+                                lease_generation,
+                            )?
+                        };
+                        if cancelled {
+                            return Ok(ClaimOutcome {
+                                outcome: 0,
+                                park_ms: 0,
+                                fail_reason: None,
+                                already_settled: false,
+                            });
+                        }
+                        next_seq += 1;
+                        emit_node_complete(&flow.flow_id, run_id, &d.node, next_seq - 1, &tp, port);
+                    }
+                    NodeOutcome::Error(err)
+                        if will_error_route(err, &d)
+                            && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
+                    {
+                        let cancelled = record_error_and_renew(
+                            run_id,
+                            &d.node,
+                            d.occurrence,
+                            next_seq,
+                            err,
+                            &d.payload,
+                            &flow.capture,
+                            ttl_ms,
+                            owner,
+                            lease_generation,
+                        )?;
+                        if cancelled {
+                            return Ok(ClaimOutcome {
+                                outcome: 0,
+                                park_ms: 0,
+                                fail_reason: None,
+                                already_settled: false,
+                            });
+                        }
+                        next_seq += 1;
+                        emit_node_error(
+                            &flow.flow_id,
+                            run_id,
+                            &d.node,
+                            next_seq - 1,
+                            &tp,
+                            error_row_values(err).0,
+                        );
+                    }
+                    NodeOutcome::Error(_) => {}
+                }
+                // fqg.9: when driving a partition HEAD, renew the partition
+                // lease alongside the run lease so this replica stays the
+                // key's stable owner across a long head walk (no needless
+                // mid-run partition steal). Owner-guarded, so a lease this
+                // replica already lost is a no-op. Inert (never called) for
+                // the unpartitioned path.
+                if let Some(pk) = partition {
+                    renew_partition(pk, ttl_ms, owner)?;
+                }
+                plan.apply(&mut st, &d, outcome, 0)
+                    .map_err(|error| error.to_string())?;
             }
         }
     }
 }
 
 /// One turn of the production dispatch loop: claim the next run, drive it with a
-/// per-node heartbeat, and dequeue (terminal) or park (delay). See the WIT doc.
+/// per-node heartbeat, and dequeue or queue-wait settlement. See the WIT doc.
 fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
     let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
     let owner = runner_owner()?;
@@ -4190,7 +4033,7 @@ mod tests {
             "nodes":[
                 {"id":"request","type":"request"},
                 {"id":"known","type":"webhook-in"},
-                {"id":"standard","type":"time-shift"},
+                {"id":"standard","type":"event"},
                 {"id":"z1","type":"z-unsupported"},
                 {"id":"a","type":"a-unsupported"},
                 {"id":"z2","type":"z-unsupported"}
@@ -4240,7 +4083,7 @@ mod tests {
     #[test]
     fn s3_fixture_interfaces_resolve_every_s6_node_type_on_main() {
         let interfaces = s3_fixture_interfaces();
-        for node_type in ["conditional", "delay", "http-call", "pg-write", "transform"] {
+        for node_type in ["conditional", "http-call", "pg-write", "transform"] {
             assert_eq!(
                 interfaces.get(node_type).map(Vec::as_slice),
                 Some([MAIN_PORT.to_string()].as_slice()),
@@ -4249,12 +4092,11 @@ mod tests {
         }
     }
 
-    /// The S6 fixture shapes `run-s6` drives (`tests/integration/src/flowbench.rs`
-    /// owns the JSON, SR2): the caller is released BEFORE any delay parks, so
-    /// both compile against the fixture map.
+    /// The S6 fixture `run-s6` drives (`tests/integration/src/flowbench.rs`
+    /// owns the JSON, SR2) compiles against the fixture map.
     #[test]
-    fn the_s6_fixture_shapes_compile_under_the_fixture_interfaces() {
-        let single = r#"{
+    fn the_s6_fixture_compiles_under_the_fixture_interfaces() {
+        let fixture = r#"{
             "schema-version":"0.1",
             "flow-id":"poc-s6",
             "version":1,
@@ -4263,71 +4105,17 @@ mod tests {
                 {"id":"in","type":"request","config":{"input-schema":true}},
                 {"id":"out","type":"respond","config":{"status":200}},
                 {"id":"h","type":"http-call","config":{"url":"http://127.0.0.1:18080/echo"}},
-                {"id":"w","type":"pg-write"},
-                {"id":"d","type":"delay","config":{"delay-secs":86400}}
-            ],
-            "edges":[
-                {"from":"in","to":"out"},
-                {"from":"out","to":"h"},
-                {"from":"h","to":"w"},
-                {"from":"w","to":"d"}
-            ]
-        }"#;
-        let two_delay = r#"{
-            "schema-version":"0.1",
-            "flow-id":"poc-s6",
-            "version":1,
-            "nodes":[
-                {"id":"in","type":"request","config":{"input-schema":true}},
-                {"id":"out","type":"respond","config":{"status":200}},
-                {"id":"d1","type":"delay","config":{"delay-secs":7}},
-                {"id":"d2","type":"delay","config":{"delay-secs":7}},
                 {"id":"w","type":"pg-write"}
             ],
             "edges":[
                 {"from":"in","to":"out"},
-                {"from":"out","to":"d1"},
-                {"from":"d1","to":"d2"},
-                {"from":"d2","to":"w"}
+                {"from":"out","to":"h"},
+                {"from":"h","to":"w"}
             ]
         }"#;
-        for fixture in [single, two_delay] {
-            let flow = Flow::from_json(fixture).expect("S6 fixture shape parses");
-            Plan::compile(&flow, &s3_fixture_interfaces())
-                .expect("S6 fixture shape compiles with the fixture interfaces");
-        }
-    }
-
-    /// Resolving `delay` arms `delay-before-release`; the guard must stay armed.
-    /// A graph that parks a still-waiting request caller is refused, not
-    /// silently skipped the way an unresolved node type was.
-    #[test]
-    fn a_delay_inside_the_request_region_is_refused() {
-        let flow = Flow::from_json(
-            r#"{
-                "schema-version":"0.1",
-                "flow-id":"poc-s6",
-                "version":1,
-                "nodes":[
-                    {"id":"in","type":"request","config":{"input-schema":true}},
-                    {"id":"d","type":"delay","config":{"delay-secs":86400}},
-                    {"id":"w","type":"pg-write"},
-                    {"id":"out","type":"respond","config":{"status":200}}
-                ],
-                "edges":[
-                    {"from":"in","to":"d"},
-                    {"from":"d","to":"w"},
-                    {"from":"w","to":"out"}
-                ]
-            }"#,
-        )
-        .expect("delay-before-release shape parses");
-        let error = Plan::compile(&flow, &s3_fixture_interfaces())
-            .expect_err("a delay while the caller waits is not a compilable graph");
-        assert!(
-            error.to_string().contains("delay-before-release"),
-            "{error}"
-        );
+        let flow = Flow::from_json(fixture).expect("S6 fixture shape parses");
+        Plan::compile(&flow, &s3_fixture_interfaces())
+            .expect("S6 fixture shape compiles with the fixture interfaces");
     }
 
     #[test]
@@ -4369,24 +4157,6 @@ mod tests {
         )
         .expect("request descriptor resolves");
         assert_eq!(contract.interface.node_type, "request");
-        assert_eq!(contract.interface.output_ports, ["main"]);
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
-    }
-
-    #[test]
-    fn cron_resolves_through_the_standard_node_abi() {
-        assert_eq!(
-            resolve_node("cron", &serde_json::Value::Null),
-            Some(ResolvedNode::Standard)
-        );
-        let contract = wamn_nodes::resolve_descriptor(
-            wamn_nodes::describe("cron").expect("cron descriptor is shipped"),
-        )
-        .expect("cron descriptor resolves");
-        assert_eq!(contract.interface.node_type, "cron");
         assert_eq!(contract.interface.output_ports, ["main"]);
         assert_eq!(
             contract.executable_recovery,
@@ -4464,7 +4234,7 @@ mod tests {
             ))),
         ] {
             assert_eq!(
-                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                validate_dispatched_action(&dispatch, &outcome),
                 Err("fail must return its authored terminal detail".to_string())
             );
         }
@@ -4495,7 +4265,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                validate_dispatched_action(&dispatch, &outcome),
                 Err(
                     "event must emit its externally admitted input unchanged on main without context"
                         .to_string()
@@ -4529,7 +4299,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                validate_dispatched_action(&dispatch, &outcome),
                 Err(
                     "cron must emit its scheduler-admitted input unchanged on main without context"
                         .to_string()
@@ -4563,7 +4333,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                validate_dispatched_action(&dispatch, &NodeAction::Emit(outcome)),
+                validate_dispatched_action(&dispatch, &outcome),
                 Err(
                     "request must emit its admitted input unchanged on main without context"
                         .to_string()

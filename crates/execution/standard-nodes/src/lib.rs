@@ -19,10 +19,8 @@
 //! | `postgres-query` | `Postgres` + `RawSql`   | author-written SQL, `$n`-bound — D8 flag, DEFAULT OFF |
 //! | `respond`        | —                       | webhook-response terminal (status via [`respond::status_for`]) |
 //!
-//! Deliberately NOT here (v1 scope decisions, wamn-3xa): `delay` is
-//! runner-intrinsic (parking is an engine concern, not a node effect); event and
-//! request admission remain outside their capability-free node data paths. Loops are
-//! STRUCTURAL (cycles + `conditional`
+//! Event and request admission remain outside their capability-free node data
+//! paths. Loops are STRUCTURAL (cycles + `conditional`
 //! express them; dedicated split/merge nodes land with the 5.11 ordering
 //! semantics); `email`/`notify` wait for an email egress capability decision.
 //! Expression power is the JMESPath spec plus the single `context()` reader;

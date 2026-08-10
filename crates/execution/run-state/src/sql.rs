@@ -119,7 +119,7 @@ pub fn update_run_failed_sql() -> String {
     )
 }
 
-/// Read the run's `state_json` (the parked-wake deadline home). `$1` run_id.
+/// Read the run's durable retry/context checkpoint. `$1` run_id.
 pub fn select_run_state_sql() -> String {
     "SELECT state_json::text FROM runs WHERE run_id = $1".to_string()
 }
@@ -144,8 +144,8 @@ pub fn select_run_dispatch_sql() -> String {
     )
 }
 
-/// Persist the run's `state_json` (parking WITHOUT a `node_runs` row, so a
-/// resume re-enters the parked node). `$1` run_id, `$2` state_json.
+/// Persist the run's durable retry/context checkpoint. `$1` run_id, `$2`
+/// state_json.
 pub fn update_run_state_sql() -> String {
     "UPDATE runs SET state_json = $2, updated_at = now() WHERE run_id = $1".to_string()
 }
@@ -209,7 +209,7 @@ pub fn insert_node_run_error_sql() -> String {
 
 /// Load a run's already-completed node executions in dispatch (`seq`) order —
 /// the branch-aware reconstruction source. Only `success`/`error` rows are
-/// completed steps; a `parked`/`running` row is an outstanding node the walk
+/// completed steps; a `started` row is an outstanding node the walk
 /// re-dispatches. `$1` run_id.
 pub fn select_completed_node_runs_sql() -> String {
     format!(

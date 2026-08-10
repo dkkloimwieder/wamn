@@ -227,7 +227,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "node_runs",
         name: "node_runs_status_check",
-        definition: "CHECK (status = ANY (ARRAY['started'::text, 'parked'::text, 'success'::text, 'error'::text]))",
+        definition: "CHECK (status = ANY (ARRAY['started'::text, 'success'::text, 'error'::text]))",
         origin: CheckOrigin::Inline("status"),
     },
     CheckSpec {

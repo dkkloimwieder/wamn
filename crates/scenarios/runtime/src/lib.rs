@@ -7,8 +7,8 @@
 //!   every scenario scheduling comparison.
 //! - [`DatabaseClockBoundary`] — the one-way boundary from a logical due
 //!   decision to a claimable PostgreSQL release marker.
-//! - [`ScenarioScheduler`] — advance the virtual clock to the next parked-wake
-//!   deadline and re-drive, collapsing arbitrary delays (delta 2).
+//! - [`ScenarioScheduler`] — advance the virtual clock to the next deterministic
+//!   retry deadline and re-drive (delta 2).
 //! - [`RecordingEgress`] — record every outbound request after enforcing the
 //!   trusted host/flow authorization intersection (delta 3).
 //! - [`EphemeralSchemaProvisioner`] / [`case_pool`] — an isolated schema and app
@@ -46,8 +46,8 @@ pub use db::{
 pub use egress::{EgressObservation, RecordingEgress};
 pub use random::{SeededRng, build_virtual_wasi};
 pub use scheduler::{
-    QueueScheduleShiftError, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL,
-    RUN_S6_WAKE_DEADLINES_SQL, ScenarioScheduler, SchedulerBackend, validate_queue_due_nudge,
+    QueueScheduleShiftError, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, ScenarioScheduler,
+    SchedulerBackend, validate_queue_due_nudge,
 };
 pub use schema::{
     EphemeralSchemaProvisioner, InvalidScenarioSchemaName, ScenarioSchemaName, case_pool,

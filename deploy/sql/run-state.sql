@@ -162,8 +162,8 @@ $$;
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the trigger payload replay
 -- seeds the entry node with; `result_json` is the last node's output on
--- completion; `state_json` carries transient run state (e.g. a `delay` node's
--- parked-wake deadline). A replay/partial-re-run is a NEW row (fresh run_id)
+-- completion; `state_json` carries transient run state such as bounded-retry
+-- scheduling and execution context. A replay/partial-re-run is a NEW row (fresh run_id)
 -- linked to its origin via `replay_of` + `root_run_id`, so the original run's
 -- history stays immutable (audit/billing-safe lineage). `idempotency_key` dedupes
 -- at-least-once REDELIVERY of the same trigger (a partial-unique index); a replay
@@ -340,8 +340,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 -- constrained current pointer — they never copy authority facts onto this row.
 -- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
 -- (status success/error) in `seq` order, folding each as an emission on
--- `output_port` carrying `output_json`; a `running`/`parked` row is an
--- outstanding node the driver re-dispatches. `input_json` is what a partial
+-- `output_port` carrying `output_json`; a `started` row is an outstanding node
+-- the driver re-dispatches. `input_json` is what a partial
 -- re-run seeds the node with. The `*_ref` / `preview_*` / `capture_mode` /
 -- `redacted` columns are RESERVED nullable seams for 5.10 (payload byte store)
 -- and 9.6 (capture policy) — 5.7 leaves them null and stores I/O inline.
@@ -362,7 +362,7 @@ CREATE TABLE wamn_run.node_runs (
     -- additive schema/reconcile child is published.
     attempt       int  NOT NULL DEFAULT 0,
     status        text NOT NULL
-        CHECK (status IN ('started', 'parked', 'success', 'error')),
+        CHECK (status IN ('started', 'success', 'error')),
     selected_recovery_class text
         CHECK (selected_recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
     recovery_class text
@@ -382,7 +382,6 @@ CREATE TABLE wamn_run.node_runs (
     error_kind    text CHECK (error_kind IN ('retryable', 'rate-limited', 'terminal',
                                             'invalid-input', 'cancelled')),
     error_detail  jsonb,
-    resume_at     timestamptz,
     -- Reserved seams (5.10 payload byte store / 9.6 capture policy):
     input_ref     text,
     output_ref    text,

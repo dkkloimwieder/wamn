@@ -72,11 +72,11 @@ struct Member {
 /// Publication resolves every node type to a capability class and a recovery
 /// contract. The gates' fixtures draw from the standard node library, whose
 /// classification is fixed: effectful types are never-replay (their outputs are
-/// recorded and skipped on resume — the property the failover and merge-resume
-/// phases actually prove), pure types replay.
+/// recorded and skipped on resume — the property the failover phases prove),
+/// pure types replay.
 fn node_capability(node_type: &str) -> anyhow::Result<CapabilityClass> {
     Ok(match node_type {
-        "conditional" | "cron" | "delay" | "event" | "request" | "respond" | "transform" => {
+        "conditional" | "cron" | "event" | "request" | "respond" | "transform" => {
             CapabilityClass::Pure
         }
         "http-call" => CapabilityClass::Http,
@@ -349,11 +349,10 @@ pub(crate) async fn pin_run(client: &Client, run_id: &str) -> anyhow::Result<()>
 
 /// A fixture a gate publishes must be a graph a REAL release could carry:
 /// [`Artifact::new`] parses it against the current flow schema and validates it
-/// (entry kind, `respond` legality and config, `delay` placement, resolved
-/// interfaces). `flowbench::flow_json_s6` is the standing counterexample
-/// (`invalid-respond-config`, `delay-before-release`), so each gate names this over
-/// the fixtures IT publishes: an edit that makes one unpublishable then fails a
-/// named test instead of that gate's run-next leg in a cluster.
+/// (entry kind, `respond` legality and config, and resolved interfaces). Each
+/// gate names this over the fixtures it publishes: an edit that makes one
+/// unpublishable then fails a named test instead of that gate's run-next leg in
+/// a cluster.
 #[cfg(test)]
 pub(crate) fn assert_releasable(fixture: &str, flow_json: &str) {
     if let Err(error) = member("gate-drift-tenant", flow_json) {

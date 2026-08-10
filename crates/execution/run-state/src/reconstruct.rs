@@ -46,7 +46,7 @@ impl From<ResumeError> for ReconstructError {
 /// Rebuild the [`ExecutionState`] for `run` from its persisted `node_runs`, branch-aware.
 ///
 /// Only COMPLETED node-runs (`success`/`error`) are replayed, in `seq` order;
-/// a `running`/`parked` row is an outstanding node the driver re-dispatches
+/// a `started` row is an outstanding node the driver re-dispatches
 /// (its effect runs at-least-once, deduped by the node's own idempotency). The
 /// run's `input` seeds the entry node. The returned state is positioned to
 /// continue — the driver calls `next`/`apply` from there.

@@ -104,9 +104,9 @@ fn reconstruct_linear_resumes_at_the_killed_node() {
 }
 
 #[test]
-fn reconstruct_ignores_running_and_parked_rows() {
-    // A `running` row (in-flight when killed) and a `parked` row are outstanding,
-    // not completed — reconstruction must NOT replay them.
+fn reconstruct_ignores_started_rows() {
+    // A `started` row is outstanding, not completed, so reconstruction must not
+    // replay it.
     let f = linear4();
     let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
