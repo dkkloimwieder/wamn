@@ -1,8 +1,8 @@
 //! wamn-waker: the scale-to-zero / parked-project wake actuator (wamn-fqg.12, POC-F3).
 //!
 //! A tiny always-on service that turns a doorbell hint into a Kubernetes scale
-//! action: when the dispatcher publishes `wamn.doorbell.<tenant>` for a project
-//! whose runner Deployment sits at 0 replicas, the waker scales it `0 -> 1` so
+//! action: when the dispatcher publishes a project's execution-target doorbell
+//! and its runner Deployment sits at 0 replicas, the waker scales it `0 -> 1` so
 //! the runner comes up, subscribes to the same doorbell, and drains the enqueued
 //! run. It scales UP only — idle `-> 0` (scale-down) automation is out of scope.
 //!
@@ -18,7 +18,7 @@
 //! only ever reacts to a hint; async-nats reconnects the subscription itself.
 //!
 //! ## Decisions vs. effects
-//! The load-bearing decision ([`decide`]) is pure over `(tenant, mappings,
+//! The load-bearing decision ([`decide`]) is pure over `(target, mappings,
 //! current_replicas)` and unit-tested; the k8s call and the NATS doorbell are
 //! the service's private effect shell.
 
@@ -28,66 +28,81 @@ use std::time::Duration;
 use anyhow::{Context as _, bail};
 use clap::Args;
 use futures_util::StreamExt as _;
+use wamn_control_registry::identifiers::{ExecutionTargetId, doorbell_subject};
 
 /// The in-cluster service-account directory Kubernetes mounts into every pod.
 const SA_DIR: &str = "/var/run/secrets/kubernetes.io/serviceaccount";
 /// The in-cluster Kubernetes API server (its serving cert is signed by `ca.crt`).
 const API_BASE: &str = "https://kubernetes.default.svc";
-/// The doorbell subject prefix the dispatcher publishes to (`+ <tenant>`).
-const DOORBELL_PREFIX: &str = "wamn.doorbell.";
-
 // ---------------------------------------------------------------------------
 // Pure decision logic (no I/O — unit-tested; the mutation loop's assert target).
 // ---------------------------------------------------------------------------
 
-/// A parsed `--wake <tenant>=<deployment>` mapping: the doorbell tenant to watch
-/// and the Deployment to scale up when it fires while parked.
+/// A parsed `--wake <execution-target-id>=<deployment>` mapping.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WakeMapping {
-    pub tenant: String,
+    pub execution_target_id: ExecutionTargetId,
     pub deployment: String,
 }
 
-/// Parse one `<tenant>=<deployment>` mapping (the clap value parser for
+/// Parse one `<execution-target-id>=<deployment>` mapping (the clap value parser for
 /// `--wake`). Returns a `String` error so clap can surface it directly.
 pub fn parse_wake_mapping(s: &str) -> Result<WakeMapping, String> {
-    let (tenant, deployment) = s
-        .split_once('=')
-        .ok_or_else(|| format!("invalid --wake {s:?}: expected <tenant>=<deployment>"))?;
-    if tenant.is_empty() || deployment.is_empty() {
+    let (execution_target_id, deployment) = s.split_once('=').ok_or_else(|| {
+        format!("invalid --wake {s:?}: expected <execution-target-id>=<deployment>")
+    })?;
+    if deployment.is_empty() {
         return Err(format!(
-            "invalid --wake {s:?}: tenant and deployment must both be non-empty"
+            "invalid --wake {s:?}: deployment must be non-empty"
         ));
     }
+    let execution_target_id = execution_target_id
+        .parse()
+        .map_err(|error| format!("invalid --wake {s:?}: {error}"))?;
     Ok(WakeMapping {
-        tenant: tenant.to_string(),
+        execution_target_id,
         deployment: deployment.to_string(),
     })
 }
 
-/// The Deployment a doorbell tenant maps to, if any.
-pub fn mapping_for<'a>(tenant: &str, mappings: &'a [WakeMapping]) -> Option<&'a WakeMapping> {
-    mappings.iter().find(|m| m.tenant == tenant)
+/// The Deployment an execution target maps to, if any.
+pub fn mapping_for<'a>(
+    execution_target_id: &ExecutionTargetId,
+    mappings: &'a [WakeMapping],
+) -> Option<&'a WakeMapping> {
+    mappings
+        .iter()
+        .find(|mapping| &mapping.execution_target_id == execution_target_id)
+}
+
+fn mapping_for_subject<'a>(subject: &str, mappings: &'a [WakeMapping]) -> Option<&'a WakeMapping> {
+    mappings
+        .iter()
+        .find(|mapping| doorbell_subject(&mapping.execution_target_id) == subject)
 }
 
 /// What a doorbell hint should actuate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WakeAction {
-    /// Do nothing: the tenant is unmapped, or its Deployment already has replicas.
+    /// Do nothing: the target is unmapped, or its Deployment already has replicas.
     None,
     /// The mapped Deployment is parked (`replicas == 0`); scale it to `to`.
     Scale { deployment: String, to: i32 },
 }
 
-/// Decide the wake action from a hint's tenant, the configured mappings, and the
+/// Decide the wake action from a hint's target, the configured mappings, and the
 /// mapped Deployment's CURRENT (desired) replica count.
 ///
-/// A wake fires only for a MAPPED tenant whose Deployment sits at exactly 0
+/// A wake fires only for a MAPPED target whose Deployment sits at exactly 0
 /// replicas (parked). A Deployment already running (`replicas > 0`) is a no-op —
 /// the runner is up and drains the hint itself. This is the load-bearing
 /// decision the `wakeproof` gate and the fqg.12 mutation loop pin.
-pub fn decide(tenant: &str, mappings: &[WakeMapping], current_replicas: i32) -> WakeAction {
-    match mapping_for(tenant, mappings) {
+pub fn decide(
+    execution_target_id: &ExecutionTargetId,
+    mappings: &[WakeMapping],
+    current_replicas: i32,
+) -> WakeAction {
+    match mapping_for(execution_target_id, mappings) {
         None => WakeAction::None,
         Some(m) => {
             if current_replicas == 0 {
@@ -100,11 +115,6 @@ pub fn decide(tenant: &str, mappings: &[WakeMapping], current_replicas: i32) -> 
             }
         }
     }
-}
-
-/// Extract the tenant from a doorbell subject `wamn.doorbell.<tenant>`.
-fn tenant_of_subject(subject: &str) -> Option<&str> {
-    subject.strip_prefix(DOORBELL_PREFIX)
 }
 
 /// Parse the desired replica count from Kubernetes `Scale` subresource JSON.
@@ -227,9 +237,9 @@ impl KubeScale {
 
 #[derive(Debug, Args)]
 pub struct WakeArgs {
-    /// Doorbell-tenant -> Deployment mappings (repeatable): `--wake demo-tenant=runner`.
-    /// The waker subscribes to `wamn.doorbell.<tenant>` for each and scales the
-    /// named Deployment `0 -> 1` on a hint that arrives while it is parked.
+    /// Execution-target -> Deployment mappings (repeatable): `--wake target-a=runner`.
+    /// The waker subscribes to the target's doorbell subject and scales the named
+    /// Deployment `0 -> 1` on a hint that arrives while it is parked.
     #[arg(long = "wake", value_parser = parse_wake_mapping, required = true)]
     pub wake: Vec<WakeMapping>,
 
@@ -252,13 +262,8 @@ pub struct WakeArgs {
 /// parked) scale it up. A read/patch error is logged, never fatal — the
 /// dispatcher's next sweep re-hints, which is the retry path.
 async fn handle_hint(scale: &KubeScale, mappings: &[WakeMapping], subject: &str) {
-    let Some(tenant) = tenant_of_subject(subject) else {
+    let Some(mapping) = mapping_for_subject(subject, mappings) else {
         tracing::warn!(subject, "waker: hint on an unexpected subject; ignored");
-        return;
-    };
-    // Only mapped tenants are subscribed, but re-checking keeps the GET off any
-    // stray subject a wildcard/broker quirk could deliver.
-    let Some(mapping) = mapping_for(tenant, mappings) else {
         return;
     };
     let current = match scale.get_scale(&mapping.deployment).await {
@@ -269,13 +274,15 @@ async fn handle_hint(scale: &KubeScale, mappings: &[WakeMapping], subject: &str)
             return;
         }
     };
-    match decide(tenant, mappings, current) {
+    match decide(&mapping.execution_target_id, mappings, current) {
         WakeAction::None => {
-            tracing::debug!(tenant, deployment = %mapping.deployment, current,
+            tracing::debug!(execution_target_id = %mapping.execution_target_id,
+                deployment = %mapping.deployment, current,
                 "waker: runner already up; no-op");
         }
         WakeAction::Scale { deployment, to } => match scale.set_replicas(&deployment, to).await {
-            Ok(()) => tracing::info!(tenant, %deployment, from = current, to,
+            Ok(()) => tracing::info!(execution_target_id = %mapping.execution_target_id,
+                %deployment, from = current, to,
                 "waker: scaled parked runner up"),
             Err(e) => tracing::warn!(%deployment, error = %e,
                 "waker: scale patch failed; the dispatcher will re-hint"),
@@ -303,17 +310,18 @@ pub async fn run(args: WakeArgs) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("connect NATS {}", args.nats_url))?;
 
-    // One subscription per configured tenant's doorbell subject, merged into one
-    // stream. Subscribing per configured tenant scopes the watch to mapped work.
+    // One subscription per configured target's doorbell subject, merged into one
+    // stream. Subscribing per target scopes the watch to mapped work.
     let mut subs = Vec::with_capacity(mappings.len());
     for m in &mappings {
-        let subject = format!("{DOORBELL_PREFIX}{}", m.tenant);
+        let subject = doorbell_subject(&m.execution_target_id);
         subs.push(
             nats.subscribe(subject.clone())
                 .await
                 .with_context(|| format!("subscribe {subject}"))?,
         );
-        tracing::info!(tenant = %m.tenant, deployment = %m.deployment, subject,
+        tracing::info!(execution_target_id = %m.execution_target_id,
+            deployment = %m.deployment, subject,
             "waker: watching doorbell");
     }
     let mut hints = futures_util::stream::select_all(subs);
@@ -423,11 +431,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_wake_mapping_splits_tenant_and_deployment() {
+    fn parse_wake_mapping_splits_target_and_deployment() {
         assert_eq!(
             parse_wake_mapping("demo-tenant=runner"),
             Ok(WakeMapping {
-                tenant: "demo-tenant".into(),
+                execution_target_id: "demo-tenant".parse().unwrap(),
                 deployment: "runner".into(),
             })
         );
@@ -439,20 +447,24 @@ mod tests {
         assert!(parse_wake_mapping("no-separator").is_err());
         assert!(parse_wake_mapping("=runner").is_err());
         assert!(parse_wake_mapping("demo-tenant=").is_err());
+        assert!(parse_wake_mapping("bad.target=runner").is_err());
+        assert!(parse_wake_mapping("bad*=runner").is_err());
+        assert!(parse_wake_mapping("bad target=runner").is_err());
+        assert!(parse_wake_mapping(&format!("{}=runner", "x".repeat(65))).is_err());
     }
 
     fn mappings() -> Vec<WakeMapping> {
         vec![WakeMapping {
-            tenant: "demo-tenant".into(),
+            execution_target_id: "target-a".parse().unwrap(),
             deployment: "runner".into(),
         }]
     }
 
     #[test]
     fn decide_wakes_a_parked_mapped_deployment() {
-        // A mapped tenant whose deployment sits at 0 replicas is woken to 1.
+        // A mapped target whose deployment sits at 0 replicas is woken to 1.
         assert_eq!(
-            decide("demo-tenant", &mappings(), 0),
+            decide(&"target-a".parse().unwrap(), &mappings(), 0),
             WakeAction::Scale {
                 deployment: "runner".into(),
                 to: 1,
@@ -464,23 +476,32 @@ mod tests {
     fn decide_skips_an_already_awake_deployment() {
         // Replicas > 0 => the runner is up; do NOT re-scale. This is the mutation
         // target: flip `current_replicas == 0` and this run-1/run-2 case fails.
-        assert_eq!(decide("demo-tenant", &mappings(), 1), WakeAction::None);
-        assert_eq!(decide("demo-tenant", &mappings(), 2), WakeAction::None);
+        let target = "target-a".parse().unwrap();
+        assert_eq!(decide(&target, &mappings(), 1), WakeAction::None);
+        assert_eq!(decide(&target, &mappings(), 2), WakeAction::None);
     }
 
     #[test]
-    fn decide_ignores_an_unmapped_tenant() {
-        // An unmapped tenant is never woken, even parked at 0.
-        assert_eq!(decide("other-tenant", &mappings(), 0), WakeAction::None);
-    }
-
-    #[test]
-    fn tenant_of_subject_strips_the_doorbell_prefix() {
+    fn decide_ignores_an_unmapped_target() {
+        // An unmapped target is never woken, even parked at 0.
         assert_eq!(
-            tenant_of_subject("wamn.doorbell.demo-tenant"),
-            Some("demo-tenant")
+            decide(&"other-target".parse().unwrap(), &mappings(), 0),
+            WakeAction::None
         );
-        assert_eq!(tenant_of_subject("wamn.other.demo-tenant"), None);
+    }
+
+    #[test]
+    fn subject_mapping_routes_by_target_not_tenant() {
+        let mappings = mappings();
+        assert_eq!(
+            mapping_for_subject("wamn.doorbell.target-a", &mappings),
+            mappings.first()
+        );
+        assert_eq!(
+            mapping_for_subject("wamn.doorbell.tenant-a", &mappings),
+            None
+        );
+        assert_eq!(mapping_for_subject("wamn.other.target-a", &mappings), None);
     }
 
     #[test]

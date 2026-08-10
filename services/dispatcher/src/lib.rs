@@ -24,7 +24,9 @@ use wamn_scheduler::Cadence;
 // R16b (wamn-2jkm.20): the dispatcher's pinned session `SET`s interpolate the
 // tenant/schema, so these validators are the injection boundary HERE — and they
 // are the SAME rule the wamn:postgres plugin enforces, held in one owner.
-use wamn_control_registry::identifiers::{valid_schema, valid_tenant};
+use wamn_control_registry::identifiers::{
+    ExecutionTargetId, doorbell_subject, mvp_execution_target_id, valid_schema, valid_tenant,
+};
 
 /// [9.8] The claimable run-queue depth for the pinned session's tenant. Mirrors
 /// EXACTLY the claim predicate of `wamn_run_state::queue::claim_batch_sql`
@@ -55,7 +57,8 @@ pub type DepthRegistry = Arc<Mutex<HashMap<String, DepthSample>>>;
 #[derive(Debug, Args)]
 pub struct DispatchArgs {
     /// JSON projects map the dispatcher serves:
-    /// {"<name>": {"url": "...", "tenant": "...", "schema": "wamn_run"}}
+    /// {"<name>": {"url": "...", "tenant": "...", "execution_target_id":
+    /// "...", "schema": "wamn_run"}}
     /// (a mounted Secret/ConfigMap in production — the 2.2 projects-file shape).
     #[arg(long, env = "WAMN_DISPATCH_PROJECTS_FILE")]
     pub projects_file: Option<PathBuf>,
@@ -68,6 +71,11 @@ pub struct DispatchArgs {
     /// Tenant claim for the single-project fallback.
     #[arg(long, default_value = "default")]
     pub tenant: String,
+
+    /// Opaque doorbell routing target for the single-project fallback. When
+    /// omitted, the MVP placement adapter assigns the validated tenant value.
+    #[arg(long, env = "WAMN_EXECUTION_TARGET_ID")]
+    pub execution_target_id: Option<ExecutionTargetId>,
 
     /// search_path for the single-project fallback (e.g. wamn_run).
     #[arg(long)]
@@ -110,16 +118,40 @@ pub struct DispatchArgs {
     pub stepped_stdio: bool,
 }
 
-/// One project the dispatcher serves: where its flow/queue tables live
-/// (connection URL + search_path) and the tenant claim its session carries.
-#[derive(Debug, Clone, serde::Deserialize)]
+/// One project the dispatcher serves: its database location, tenant data key,
+/// and distinct doorbell execution target.
+#[derive(Debug, Clone)]
 pub struct ProjectSpec {
-    #[serde(skip)]
     pub name: String,
     pub url: String,
     pub tenant: String,
-    #[serde(default)]
+    pub execution_target_id: ExecutionTargetId,
     pub schema: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ProjectSpecInput {
+    url: String,
+    tenant: String,
+    #[serde(default)]
+    execution_target_id: Option<ExecutionTargetId>,
+    #[serde(default)]
+    schema: Option<String>,
+}
+
+fn project_spec(name: String, input: ProjectSpecInput) -> anyhow::Result<ProjectSpec> {
+    let execution_target_id = match input.execution_target_id {
+        Some(target) => target,
+        None => mvp_execution_target_id(&input.tenant)
+            .with_context(|| format!("project {name}: derive MVP execution target from tenant"))?,
+    };
+    Ok(ProjectSpec {
+        name,
+        url: input.url,
+        tenant: input.tenant,
+        execution_target_id,
+        schema: input.schema,
+    })
 }
 
 /// Dial one project: a pinned session with `search_path` + the tenant claim set
@@ -327,7 +359,7 @@ impl Dispatcher {
         if let Some(nats) = nats
             && !doorbells.is_empty()
         {
-            let subject = format!("wamn.doorbell.{}", p.spec.tenant);
+            let subject = doorbell_subject(&p.spec.execution_target_id);
             for run_id in doorbells {
                 nats.publish(subject.clone(), run_id.into_bytes().into())
                     .await?;
@@ -440,18 +472,15 @@ fn resolve_projects(args: &DispatchArgs) -> anyhow::Result<Vec<ProjectSpec>> {
     if let Some(path) = &args.projects_file {
         let raw = std::fs::read_to_string(path)
             .with_context(|| format!("read projects file {}", path.display()))?;
-        let map: std::collections::BTreeMap<String, ProjectSpec> =
+        let map: std::collections::BTreeMap<String, ProjectSpecInput> =
             serde_json::from_str(&raw).context("parse projects file")?;
         if map.is_empty() {
             bail!("projects file has no projects");
         }
-        return Ok(map
+        return map
             .into_iter()
-            .map(|(name, mut spec)| {
-                spec.name = name;
-                spec
-            })
-            .collect());
+            .map(|(name, input)| project_spec(name, input))
+            .collect();
     }
     let url = args
         .database_url
@@ -459,12 +488,15 @@ fn resolve_projects(args: &DispatchArgs) -> anyhow::Result<Vec<ProjectSpec>> {
         .or_else(|| std::env::var("WAMN_PG_URL").ok())
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .context("no projects: pass --projects-file or --database-url / WAMN_PG_URL")?;
-    Ok(vec![ProjectSpec {
-        name: "default".to_string(),
-        url,
-        tenant: args.tenant.clone(),
-        schema: args.schema.clone(),
-    }])
+    Ok(vec![project_spec(
+        "default".to_string(),
+        ProjectSpecInput {
+            url,
+            tenant: args.tenant.clone(),
+            execution_target_id: args.execution_target_id.clone(),
+            schema: args.schema.clone(),
+        },
+    )?])
 }
 
 pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
@@ -670,8 +702,8 @@ fn init_crypto() {
 #[cfg(test)]
 mod tests {
     use super::{
-        DispatcherConfig, RUN_QUEUE_DEPTH_SQL, cancellation_sweep_sql, next_reconcile,
-        reconcile_due, valid_tenant,
+        DispatcherConfig, ProjectSpecInput, RUN_QUEUE_DEPTH_SQL, cancellation_sweep_sql,
+        doorbell_subject, next_reconcile, project_spec, reconcile_due, valid_tenant,
     };
 
     #[test]
@@ -708,6 +740,41 @@ mod tests {
     fn dispatcher_and_plugin_agree_on_a_65_char_tenant() {
         assert!(valid_tenant(&"a".repeat(64)));
         assert!(!valid_tenant(&"a".repeat(65)));
+    }
+
+    #[test]
+    fn project_routing_uses_execution_target_not_tenant() {
+        let input: ProjectSpecInput = serde_json::from_str(
+            r#"{
+                "url": "postgres://db/project-a",
+                "tenant": "tenant-a",
+                "execution_target_id": "worker-b"
+            }"#,
+        )
+        .expect("projects-file entry carries a validated execution target");
+        let spec = project_spec("project-a".into(), input).expect("valid project spec");
+
+        assert_eq!(spec.tenant, "tenant-a");
+        assert_eq!(
+            doorbell_subject(&spec.execution_target_id),
+            "wamn.doorbell.worker-b"
+        );
+    }
+
+    #[test]
+    fn omitted_project_target_uses_the_mvp_adapter() {
+        let spec = project_spec(
+            "project-a".into(),
+            ProjectSpecInput {
+                url: "postgres://db/project-a".into(),
+                tenant: "tenant-a".into(),
+                execution_target_id: None,
+                schema: None,
+            },
+        )
+        .expect("tenant-safe MVP placement");
+
+        assert_eq!(spec.execution_target_id.as_str(), "tenant-a");
     }
 
     #[test]

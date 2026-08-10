@@ -49,6 +49,7 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_event_wire::Op;
 use wamn_run_state::queue::mint_evt_run_id;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
@@ -480,8 +481,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     .context("create throwaway stream")?;
 
     // The doorbell observer — subscribe BEFORE the guest can ring.
+    let execution_target_id = mvp_execution_target_id(TENANT)
+        .context("derive materializer harness MVP execution target")?;
     let mut bells = nats
-        .subscribe(format!("wamn.doorbell.{TENANT}"))
+        .subscribe(doorbell_subject(&execution_target_id))
         .await
         .context("subscribe doorbell")?;
 
@@ -632,7 +635,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         })
         .with_doorbell(nats.clone()),
     );
-    jsp.set_tenant(BENCH_ID, TENANT)?;
+    jsp.set_execution_target(BENCH_ID, execution_target_id);
 
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);

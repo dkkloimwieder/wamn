@@ -144,8 +144,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     .await
     .context("failed to connect to scheduler NATS")?;
     // l5i9.17: the wamn:jetstream doorbell rides the SAME control-plane
-    // connection (the dispatcher publishes and the run-worker subscribes
-    // `wamn.doorbell.<tenant>` on this NATS) — no second connection.
+    // connection (the dispatcher publishes and the run-worker subscribes on the
+    // shared execution-target doorbell subject) — no second connection.
     let doorbell_client = scheduler_nats_client.clone();
 
     let engine = Arc::new(build_engine(&args.wasm_proposals)?);

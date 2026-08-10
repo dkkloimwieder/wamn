@@ -17,6 +17,9 @@ use opentelemetry::metrics::{Counter, Histogram};
 use tokio::sync::watch;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
+use wamn_control_registry::identifiers::{
+    ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
+};
 use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, production_capabilities,
 };
@@ -41,6 +44,11 @@ pub struct ExecutorArgs {
     /// Tenant claim applied to the execution session.
     #[arg(long, default_value = "default")]
     pub tenant: String,
+
+    /// Opaque doorbell routing target. When omitted, the MVP placement adapter
+    /// assigns the validated tenant value.
+    #[arg(long, env = "WAMN_EXECUTION_TARGET_ID")]
+    pub execution_target_id: Option<ExecutionTargetId>,
 
     /// Execution session search path.
     #[arg(long)]
@@ -105,8 +113,15 @@ fn resolve_owner(arg: Option<String>) -> String {
         .unwrap_or_else(|| "wamn-runner".to_string())
 }
 
-fn doorbell_subject(tenant: &str) -> String {
-    format!("wamn.doorbell.{tenant}")
+fn resolve_execution_target_id(
+    configured: Option<ExecutionTargetId>,
+    tenant: &str,
+) -> anyhow::Result<ExecutionTargetId> {
+    match configured {
+        Some(target) => Ok(target),
+        None => mvp_execution_target_id(tenant)
+            .context("derive MVP execution target from tenant configuration"),
+    }
 }
 
 /// Map a guest drive outcome code to its bounded metric attribute.
@@ -262,6 +277,8 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .context("no database url: pass --database-url or set WAMN_PG_URL / DATABASE_URL")?;
     let owner = resolve_owner(args.runner.clone());
+    let execution_target_id =
+        resolve_execution_target_id(args.execution_target_id.clone(), &args.tenant)?;
     let guest = std::fs::read(&args.flowrunner)
         .with_context(|| format!("read flowrunner component {}", args.flowrunner.display()))?;
 
@@ -351,6 +368,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     tracing::info!(
         runner = %owner,
         tenant = %args.tenant,
+        execution_target_id = %execution_target_id,
         schema = args.schema.as_deref().unwrap_or("<default>"),
         lease_ttl_ms = args.lease_ttl_ms,
         "executor up"
@@ -360,7 +378,7 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
     let result = serve(
         &mut executor,
         nats,
-        doorbell_subject(&args.tenant),
+        doorbell_subject(&execution_target_id),
         cadence,
         &metrics,
         shutdown_rx,
@@ -397,8 +415,19 @@ mod tests {
     }
 
     #[test]
-    fn doorbell_subject_is_tenant_scoped() {
-        assert_eq!(doorbell_subject("acme"), "wamn.doorbell.acme");
+    fn doorbell_subject_routes_by_target_not_tenant() {
+        let target = resolve_execution_target_id(
+            Some("worker-b".parse().expect("valid target")),
+            "tenant-a",
+        )
+        .expect("explicit target");
+        assert_eq!(doorbell_subject(&target), "wamn.doorbell.worker-b");
+    }
+
+    #[test]
+    fn omitted_executor_target_uses_the_mvp_adapter() {
+        let target = resolve_execution_target_id(None, "tenant-a").expect("tenant-safe target");
+        assert_eq!(target.as_str(), "tenant-a");
     }
 
     #[test]
@@ -429,6 +458,7 @@ mod tests {
             "async-nats",
             "futures-util",
             "opentelemetry",
+            "wamn-control-registry",
             "wamn-scheduler",
         ] {
             assert!(

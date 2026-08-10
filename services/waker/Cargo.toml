@@ -13,6 +13,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
+wamn-control-registry = { workspace = true }
 # The doorbell client. Same version req as the runtime's so cargo unifies to one
 # crate instance across the workspace build (the dispatcher/run-worker pattern).
 async-nats = { workspace = true }

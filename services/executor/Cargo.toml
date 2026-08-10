@@ -23,4 +23,5 @@ futures-util = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 tracing = { workspace = true }
+wamn-control-registry = { workspace = true }
 wamn-scheduler = { workspace = true }

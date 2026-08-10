@@ -4375,6 +4375,7 @@ dependencies = [
  "opentelemetry",
  "tokio",
  "tracing",
+ "wamn-control-registry",
  "wamn-execution-host",
  "wamn-runtime",
  "wamn-scheduler",
@@ -4892,6 +4893,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "wamn-control-registry",
 ]
 
 [[package]]

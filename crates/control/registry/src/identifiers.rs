@@ -16,6 +16,99 @@
 //! two sides must share exactly one rule. The `valid_schema` no-hyphen rule also
 //! still matters where a schema name is quoted into DDL elsewhere.
 
+use std::fmt;
+use std::str::FromStr;
+
+use serde::Deserialize;
+
+/// A validated opaque execution-placement token.
+///
+/// The token is exactly one NATS subject segment: 1–64 ASCII characters from
+/// `[A-Za-z0-9_-]`. Tenant identity and execution placement are deliberately
+/// different types even though the MVP placement adapter initially gives them
+/// equal values.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ExecutionTargetId(String);
+
+/// A value cannot be used as an [`ExecutionTargetId`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidExecutionTargetId;
+
+impl fmt::Display for InvalidExecutionTargetId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("execution target id must be 1-64 ASCII characters from [A-Za-z0-9_-]")
+    }
+}
+
+impl std::error::Error for InvalidExecutionTargetId {}
+
+impl ExecutionTargetId {
+    /// Validate an execution-placement token.
+    pub fn new(value: impl Into<String>) -> Result<Self, InvalidExecutionTargetId> {
+        let value = value.into();
+        if !valid_tenant(&value) {
+            return Err(InvalidExecutionTargetId);
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the validated subject-token value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ExecutionTargetId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl AsRef<str> for ExecutionTargetId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl FromStr for ExecutionTargetId {
+    type Err = InvalidExecutionTargetId;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Self::new(value)
+    }
+}
+
+impl TryFrom<String> for ExecutionTargetId {
+    type Error = InvalidExecutionTargetId;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::new(value)
+    }
+}
+
+impl<'de> Deserialize<'de> for ExecutionTargetId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).map_err(serde::de::Error::custom)
+    }
+}
+
+/// The sole MVP placement adapter: initially map a tenant key to its equal,
+/// independently validated execution target.
+pub fn mvp_execution_target_id(
+    tenant: &str,
+) -> Result<ExecutionTargetId, InvalidExecutionTargetId> {
+    ExecutionTargetId::new(tenant)
+}
+
+/// Format the one shared doorbell subject for an execution target.
+pub fn doorbell_subject(execution_target_id: &ExecutionTargetId) -> String {
+    format!("wamn.doorbell.{execution_target_id}")
+}
+
 /// A tenant claim: 1–64 chars of `[A-Za-z0-9_-]`.
 pub fn valid_tenant(tenant: &str) -> bool {
     !tenant.is_empty()
@@ -68,6 +161,51 @@ pub fn valid_schema(schema: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn execution_target_id_guards_the_subject_token() {
+        let max_length = "x".repeat(64);
+        for valid in ["a", "tenant-a", "T_1", max_length.as_str()] {
+            assert!(
+                ExecutionTargetId::new(valid).is_ok(),
+                "valid target {valid:?}"
+            );
+        }
+        let over_length = "x".repeat(65);
+        for invalid in [
+            "",
+            "tenant.a",
+            "tenant*",
+            "tenant>",
+            "tenant a",
+            " tenant",
+            "tenant\n",
+            over_length.as_str(),
+        ] {
+            assert!(
+                ExecutionTargetId::new(invalid).is_err(),
+                "invalid target {invalid:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mvp_adapter_and_subject_formatter_are_explicit() {
+        let target = mvp_execution_target_id("tenant-a").expect("tenant-safe target");
+        assert_eq!(target.as_str(), "tenant-a");
+        assert_eq!(doorbell_subject(&target), "wamn.doorbell.tenant-a");
+    }
+
+    #[test]
+    fn execution_target_deserialization_enforces_the_type_invariant() {
+        assert_eq!(
+            serde_json::from_str::<ExecutionTargetId>(r#""target-a""#)
+                .expect("valid JSON target")
+                .as_str(),
+            "target-a"
+        );
+        assert!(serde_json::from_str::<ExecutionTargetId>(r#""bad.target""#).is_err());
+    }
 
     #[test]
     fn tenant_validation() {

@@ -70,6 +70,7 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::ctl_process;
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
+use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
@@ -547,8 +548,10 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("connect NATS at {}", args.nats_url))?;
     let js = async_nats::jetstream::new(nats.clone());
     let _ = js.delete_stream(&stream_name).await;
+    let execution_target_id =
+        mvp_execution_target_id(TENANT).context("derive RIE2E MVP execution target")?;
     let mut bells = nats
-        .subscribe(format!("wamn.doorbell.{TENANT}"))
+        .subscribe(doorbell_subject(&execution_target_id))
         .await
         .context("subscribe doorbell")?;
 
@@ -582,7 +585,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         })
         .with_doorbell(nats.clone()),
     );
-    jsp.set_tenant(BENCH_ID, TENANT)?;
+    jsp.set_execution_target(BENCH_ID, execution_target_id);
     let engine = build_engine(&[])?;
     let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let raw: &RawEngine = engine.inner();
