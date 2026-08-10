@@ -53,7 +53,7 @@ enum Command {
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
-    /// Prune a project-env's TERMINAL run history older than --retention-days (9.6): app-role, tenant-scoped DELETE; node_runs cascade, cron_anchor untouched (wamn-srb)
+    /// Prune a project-env's TERMINAL run history older than --retention-days (9.6): app-role, tenant-scoped DELETE; node_runs cascade (wamn-srb)
     PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
     /// Pin a recorded run as a versioned test case (11.3): secret-scrubbed + volatile-field-normalized, written to test_suites/test_cases; refuses an off/preview (non-replayable) run (wamn-htn)
     PinRun(pin_run::PinRunArgs),

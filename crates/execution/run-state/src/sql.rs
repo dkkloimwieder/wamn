@@ -255,10 +255,8 @@ pub fn select_node_runs_for_pin_sql() -> String {
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
 /// cancelled / infrastructure-failure) whose `created_at` predates `$1` days ago.
 /// `node_runs` (and any surviving `run_queue` / `run_dead_letters` rows) cascade
-/// via their `ON DELETE CASCADE` FK to `runs`; `cron_anchor` is a SEPARATE table
-/// this never touches, so a pruned cron run cannot re-fire its tick (the durable
-/// anchor decouples cron dedupe from prunable history — wamn-fqg.6). A
-/// `dispatched`/`running` run is never pruned (it may still complete). Age-based
+/// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
+/// never pruned (it may still complete). Age-based
 /// only in v0 — replay lineage (`replay_of`/`root_run_id`) is not consulted.
 /// Param: `$1` retention_days. RLS + the explicit tenant predicate scope it to
 /// the claimed tenant, exactly like the other builders.
@@ -510,7 +508,7 @@ mod tests {
 
     /// The 9.6 prune statement targets `runs` (cascading to `node_runs`), scoped
     /// to the claim, and only TERMINAL statuses over an age predicate — never a
-    /// `running`/`dispatched` run, and never `cron_anchor`.
+    /// `running`/`dispatched` run.
     #[test]
     fn prune_targets_terminal_runs_only() {
         let sql = prune_terminal_runs_sql();
@@ -531,10 +529,6 @@ mod tests {
                 if s.is_terminal() { "present" } else { "absent" }
             );
         }
-        assert!(
-            !sql.contains("cron_anchor"),
-            "prune never touches cron_anchor"
-        );
         assert!(
             !sql.contains("node_runs"),
             "node_runs cascades, not deleted directly"

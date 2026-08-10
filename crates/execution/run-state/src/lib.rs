@@ -37,8 +37,8 @@
 //! assert_eq!(st.step_seq(), 1); // `a` folded; `b` is the outstanding frontier
 //! ```
 //!
-//! Trigger schedule evaluation and polling cadence live in `wamn-scheduler`;
-//! this crate owns the durable anchor and enqueue operations they invoke.
+//! Event admission and enqueue operations use the transaction builders exposed
+//! by this crate.
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!

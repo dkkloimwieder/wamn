@@ -10,11 +10,6 @@
 # (and any stale queue / dead-letter rows) cascade via their `ON DELETE CASCADE`
 # FK. It is idempotent and safe to repeat.
 #
-# NOT the cron anchor: `cron_anchor` is a SEPARATE table this NEVER touches, so a
-# pruned cron run cannot re-fire its tick — the durable anchor (wamn-fqg.6)
-# decouples cron dedupe from prunable history. dispatchbench's `retention` mode
-# proves exactly this: a pruned run does not re-fire; the anchor survives.
-#
 # ROLE (differs from the reconcile CronJobs): pruning is an ORDINARY tenant-scoped
 # DELETE the `wamn_app` role is granted — NO superuser needed. The verb connects
 # as `wamn_app`, sets the `app.tenant` claim RLS scopes the delete to, and pins

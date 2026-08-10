@@ -497,12 +497,10 @@ pub fn janitor_sweep_sql() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Trigger dispatcher (5.14): the always-on control-plane loop that fires cron
-// ticks into the queue and wakes parked runners. Each firing is the same
-// write-ahead + enqueue co-transaction as above, with the trigger payload
-// persisted (`write_ahead_triggered_run_sql`). Row events are the D19 v3 event
-// plane's (CDC reader → JetStream → materializer — the outbox path was torn
-// down at l5i9.19). Trigger timing decisions live in `wamn-scheduler`.
+// Trigger admission uses the same write-ahead + enqueue co-transaction as
+// above, with the trigger payload persisted (`write_ahead_triggered_run_sql`).
+// Row events are the D19 v3 event plane's (CDC reader → JetStream →
+// materializer — the outbox path was torn down at l5i9.19).
 // ---------------------------------------------------------------------------
 
 /// The dispatcher's write-ahead run row: [`write_ahead_run_sql`] plus the trigger
@@ -510,9 +508,8 @@ pub fn janitor_sweep_sql() -> String {
 /// `trigger_source`. Params: `$1` run_id, `$2` flow_id, `$3` flow_version,
 /// `$4` trigger_source, `$5` input_json as JSON **text** (`$5::text::jsonb` —
 /// a bare `::jsonb` would type the param as jsonb, which the driver cannot bind
-/// a string into). Idempotent on redelivery: trigger run ids are deterministic
-/// (one per cron tick), so a re-fired tick from a restarted or racing
-/// dispatcher is a no-op.
+/// a string into). Idempotent on redelivery: deterministic trigger run ids make
+/// a redelivered event a no-op.
 pub fn write_ahead_triggered_run_sql() -> String {
     format!(
         "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json) \
@@ -733,65 +730,14 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
     )
 }
 
-/// The dispatcher's trigger-registry scan: every active flow's graph JSON. The
-/// trigger lives INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no
-/// trigger column — so the driver parses each flow and registers the `cron` /
-/// `row-event` ones (webhook is the gateway's, manual the editor's). Carries the
-/// explicit `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) —
+/// The trigger-registry scan: every active flow's graph JSON. The trigger lives
+/// INSIDE `graph_json` (wamn-flow `Flow.trigger`) — there is no trigger column.
+/// Carries the explicit `tenant_id = current_setting('app.tenant', true)` predicate (R8b-b) —
 /// behaviorally inert (RLS injects the identical filter) but defense-in-depth,
 /// matching the ack/prune/insert builders rather than relying on RLS alone.
 pub fn active_flows_sql() -> String {
     "SELECT flow_id, version, graph_json::text AS graph_json FROM flows \
       WHERE tenant_id = current_setting('app.tenant', true) AND active"
-        .to_string()
-}
-
-/// Recover a flow's last fired cron tick: the max run id among `$1`'s own
-/// cron-sourced runs. The predicate is FLOW-EXCLUSIVE (`flow_id` +
-/// `trigger_source = 'cron'`), never a lexical run-id range — flow ids are
-/// unconstrained user text and `text` ordering is collation-dependent, so a
-/// range scan can leak a *foreign* flow's ids into the max (a wrong anchor =
-/// silently lost ticks). Within one flow's cron ids the minted ticks are
-/// equal-length zero-padded digits (`wamn_scheduler::mint_cron_run_id`), so
-/// `max(run_id)` IS the latest tick under any collation. The `runs` table is
-/// the dispatcher's only cron state: restarted or concurrently racing
-/// dispatchers recover the same anchor by construction.
-pub fn cron_last_run_sql() -> String {
-    "SELECT max(run_id) FROM runs \
-      WHERE tenant_id = current_setting('app.tenant', true) \
-        AND flow_id = $1 AND trigger_source = 'cron'"
-        .to_string()
-}
-
-/// Recover a flow's last fired cron tick from the DURABLE anchor (wamn-fqg.6):
-/// the `cron_anchor` row's `last_tick`, tenant-scoped exactly like the sibling
-/// builders. The anchor is upserted inside the fire transaction
-/// ([`upsert_cron_anchor_sql`]) and — unlike the `runs`-derived
-/// [`cron_last_run_sql`] — is NOT subject to 9.6 retention pruning, so it
-/// survives when a flow's cron runs are pruned with retention shorter than the
-/// cron period. That is what stops an already-fired tick from re-firing: the
-/// write-ahead `ON CONFLICT` cannot absorb a re-fire once the conflicting run
-/// row is pruned, so the anchor must outlive the run. Param: `$1` flow_id.
-/// Zero rows (a pre-anchor flow whose last fire predates this table) means the
-/// dispatcher falls back to [`cron_last_run_sql`].
-pub fn cron_anchor_sql() -> String {
-    "SELECT last_tick FROM cron_anchor \
-      WHERE tenant_id = current_setting('app.tenant', true) AND flow_id = $1"
-        .to_string()
-}
-
-/// Upsert a flow's last fired cron tick into the durable anchor (wamn-fqg.6),
-/// co-transacted with the write-ahead run + enqueue inside `fire()`. The
-/// conflict target is the `(tenant_id, flow_id)` PK, and the update is
-/// MONOTONIC — `GREATEST(existing, incoming)` — so a losing replica, a
-/// redelivered fire, or a misfire-collapsed catch-up can only advance the
-/// anchor, never rewind it (a rewind would let an already-fired tick re-fire).
-/// Params: `$1` flow_id, `$2` last_tick (epoch ms).
-pub fn upsert_cron_anchor_sql() -> String {
-    "INSERT INTO cron_anchor (tenant_id, flow_id, last_tick) \
-     VALUES (current_setting('app.tenant', true), $1, $2) \
-     ON CONFLICT (tenant_id, flow_id) DO UPDATE \
-       SET last_tick = GREATEST(cron_anchor.last_tick, EXCLUDED.last_tick)"
         .to_string()
 }
 

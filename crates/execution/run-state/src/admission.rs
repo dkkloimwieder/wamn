@@ -1,6 +1,6 @@
 //! Callable-flow admission.
 //!
-//! Every HTTP, cron, and event producer enters the run plane through the ordered
+//! Every HTTP and event producer enters the run plane through the ordered
 //! same-transaction recipe returned by [`admission_sql`]. Its first statement
 //! takes the stable catalog-head key-share lock; its second rechecks the
 //! producer-specific definition and writes the run, queue row, and (for HTTP)
@@ -41,7 +41,6 @@ impl Default for RunStateSchema {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionProducer {
     Http,
-    Cron,
     Event,
 }
 
@@ -49,7 +48,6 @@ impl AdmissionProducer {
     pub const fn as_sql(self) -> &'static str {
         match self {
             Self::Http => "http",
-            Self::Cron => "cron",
             Self::Event => "event",
         }
     }
@@ -232,12 +230,12 @@ fn lock_catalog_head_sql() -> String {
 ///
 /// Parameters:
 ///
-/// 1. producer (`http | cron | event`)
+/// 1. producer (`http | event`)
 /// 2. catalog id
 /// 3. environment
 /// 4. expected catalog version
-/// 5. attachment id (HTTP/cron)
-/// 6. expected definition hash (HTTP/cron)
+/// 5. attachment id (HTTP)
+/// 6. expected definition hash (HTTP)
 /// 7. flow id
 /// 8. flow version
 /// 9. run id
@@ -252,17 +250,15 @@ fn lock_catalog_head_sql() -> String {
 /// 18. admission expiry (HTTP)
 /// 19. inline executor identity (HTTP)
 /// 20. inline lease TTL milliseconds (HTTP)
-/// 21. cron generation (cron)
-/// 22. canonical tick identity (cron)
-/// 23. registration id (event)
-/// 24. event sequence (event)
-/// 25. RFC 8785 registration JSON text (event)
-/// 26. canonical registration hash (event)
-/// 27. immediate source run id (event)
-/// 28. causal root run id (event)
-/// 29. causal depth (event)
-/// 30. resolved partition key (all producers; null means unordered)
-/// 31. resolved partition policy (all producers; `blocking | leapfrog`)
+/// 21. registration id (event)
+/// 22. event sequence (event)
+/// 23. RFC 8785 registration JSON text (event)
+/// 24. canonical registration hash (event)
+/// 25. immediate source run id (event)
+/// 26. causal root run id (event)
+/// 27. causal depth (event)
+/// 28. resolved partition key (all producers; null means unordered)
+/// 29. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -280,12 +276,11 @@ WITH input AS ( \
            $14::timestamptz AS run_deadline_at, $15::text AS principal_digest, \
            $16::text AS client_key_digest, $17::text AS request_fingerprint, \
            $18::timestamptz AS admission_expires_at, $19::text AS executor_id, \
-           $20::bigint AS lease_ttl_ms, $21::bigint AS cron_generation, \
-           $22::text AS cron_tick, $23::text AS registration_id, \
-           $24::bigint AS event_seq, $25::text::jsonb AS registration_document, \
-           $26::text AS registration_hash, $27::text AS event_source_run_id, \
-           $28::text AS event_root_run_id, $29::int AS event_depth, \
-           $30::text AS partition_key, $31::text AS partition_policy \
+           $20::bigint AS lease_ttl_ms, $21::text AS registration_id, \
+           $22::bigint AS event_seq, $23::text::jsonb AS registration_document, \
+           $24::text AS registration_hash, $25::text AS event_source_run_id, \
+           $26::text AS event_root_run_id, $27::int AS event_depth, \
+           $28::text AS partition_key, $29::text AS partition_policy \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -304,8 +299,7 @@ active_definition AS MATERIALIZED ( \
       JOIN catalog.release_flows AS f \
         ON f.tenant_id = a.tenant_id AND f.catalog_id = a.catalog_id \
        AND f.catalog_version = a.catalog_version AND f.flow_id = a.flow_id \
-     WHERE i.producer IN ('http', 'cron') \
-       AND a.attachment_kind = CASE WHEN i.producer = 'http' THEN 'http' ELSE 'cron' END \
+     WHERE i.producer = 'http' AND a.attachment_kind = 'http' \
 ), \
 live_registration AS MATERIALIZED ( \
     SELECT r.registration_id, r.flow_id, r.registration \
@@ -363,7 +357,7 @@ existing_identity_run AS MATERIALIZED ( \
 ), \
 classified AS ( \
     SELECT CASE \
-      WHEN i.producer IS NULL OR i.producer NOT IN ('http', 'cron', 'event') \
+      WHEN i.producer IS NULL OR i.producer NOT IN ('http', 'event') \
         THEN 'invalid-producer' \
       WHEN i.tenant_id IS NULL OR i.catalog_id IS NULL OR i.catalog_id = '' \
         OR i.environment IS NULL OR i.environment = '' \
@@ -387,23 +381,10 @@ classified AS ( \
         OR i.request_fingerprint = '' OR i.admission_expires_at IS NULL \
         OR i.executor_id IS NULL OR i.executor_id = '' \
         OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0 \
-        OR i.cron_generation IS NOT NULL OR i.cron_tick IS NOT NULL \
         OR i.registration_id IS NOT NULL OR i.event_seq IS NOT NULL \
         OR i.registration_document IS NOT NULL OR i.registration_hash IS NOT NULL \
         OR i.event_source_run_id IS NOT NULL OR i.event_root_run_id IS NOT NULL \
         OR i.event_depth IS NOT NULL) \
-        THEN 'invalid-input' \
-      WHEN i.producer = 'cron' AND (i.attachment_id IS NULL \
-        OR i.expected_definition_hash IS NULL OR i.cron_generation IS NULL \
-        OR i.cron_generation < 0 OR i.cron_tick IS NULL OR i.cron_tick = '' \
-        OR i.run_id <> i.flow_id || ':cron:' || i.cron_generation::text || ':' || i.cron_tick \
-        OR i.response_deadline_at IS NOT NULL OR i.principal_digest IS NOT NULL \
-        OR i.client_key_digest IS NOT NULL OR i.request_fingerprint IS NOT NULL \
-        OR i.admission_expires_at IS NOT NULL OR i.executor_id IS NOT NULL \
-        OR i.lease_ttl_ms IS NOT NULL OR i.registration_id IS NOT NULL \
-        OR i.event_seq IS NOT NULL OR i.registration_document IS NOT NULL \
-        OR i.registration_hash IS NOT NULL OR i.event_source_run_id IS NOT NULL \
-        OR i.event_root_run_id IS NOT NULL OR i.event_depth IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN i.producer = 'event' AND (i.registration_id IS NULL \
         OR i.registration_id = '' OR i.event_seq IS NULL OR i.event_seq < 0 \
@@ -415,14 +396,13 @@ classified AS ( \
         OR i.expected_definition_hash IS NOT NULL OR i.response_deadline_at IS NOT NULL \
         OR i.principal_digest IS NOT NULL OR i.client_key_digest IS NOT NULL \
         OR i.request_fingerprint IS NOT NULL OR i.admission_expires_at IS NOT NULL \
-        OR i.executor_id IS NOT NULL OR i.lease_ttl_ms IS NOT NULL \
-        OR i.cron_generation IS NOT NULL OR i.cron_tick IS NOT NULL) \
+        OR i.executor_id IS NOT NULL OR i.lease_ttl_ms IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> i.expected_catalog_version THEN 'head-drift' \
       WHEN rf.flow_id IS NULL THEN 'definition-drift' \
-      WHEN i.producer IN ('http', 'cron') AND d.attachment_id IS NULL THEN 'inactive-definition' \
-      WHEN i.producer IN ('http', 'cron') \
+      WHEN i.producer = 'http' AND d.attachment_id IS NULL THEN 'inactive-definition' \
+      WHEN i.producer = 'http' \
        AND (d.definition_hash <> i.expected_definition_hash \
          OR d.flow_id <> i.flow_id OR d.flow_version <> i.flow_version) \
         THEN 'definition-drift' \
@@ -432,7 +412,7 @@ classified AS ( \
         THEN 'registration-drift' \
       WHEN i.producer = 'event' \
        AND i.registration_hash <> ('sha256:' || encode( \
-         sha256(convert_to($25::text, 'UTF8')), 'hex')) \
+         sha256(convert_to($23::text, 'UTF8')), 'hex')) \
         THEN 'invalid-registration-hash' \
       WHEN i.producer = 'event' AND ( \
         i.input_json ? 'causation' OR i.invocation_context ? 'causation' \
@@ -501,7 +481,7 @@ created_run AS ( \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
            c.expected_catalog_version, c.environment, \
-           CASE WHEN c.producer IN ('http', 'cron') THEN c.attachment_id END, \
+           CASE WHEN c.producer = 'http' THEN c.attachment_id END, \
            CASE WHEN c.producer = 'event' THEN c.registration_id END, \
            'dispatched', c.producer, c.input_json, \
            CASE WHEN c.producer = 'event' THEN c.event_source_run_id END, \
@@ -563,8 +543,12 @@ mod tests {
     #[test]
     fn producer_literals_are_stable() {
         assert_eq!(AdmissionProducer::Http.as_sql(), "http");
-        assert_eq!(AdmissionProducer::Cron.as_sql(), "cron");
         assert_eq!(AdmissionProducer::Event.as_sql(), "event");
+        assert!(
+            admission_sql()
+                .admit()
+                .contains("producer NOT IN ('http', 'event')")
+        );
     }
 
     #[test]

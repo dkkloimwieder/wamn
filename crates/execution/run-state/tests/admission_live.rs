@@ -35,7 +35,7 @@ fn prepare(sql: &str) -> String {
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
           timestamptz,timestamptz,text,text,text,timestamptz,text,bigint, \
-          bigint,text,text,bigint,text,text,text,text,int,text,text) AS {sql};"
+          text,bigint,text,text,text,text,int,text,text) AS {sql};"
     )
 }
 
@@ -59,47 +59,13 @@ fn execute_http_ordered(
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
          'principal','{key}','{fingerprint}',now()+interval '1 day',\
-         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
+         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
         ordering(partition_key, partition_policy)
     )
 }
 
 fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
     execute_http_ordered(run_id, key, fingerprint, None, "blocking")
-}
-
-fn execute_cron_ordered(
-    generation: i64,
-    tick: &str,
-    partition_key: Option<&str>,
-    partition_policy: &str,
-) -> String {
-    let run_id = format!("flow-cron:cron:{generation}:{tick}");
-    format!(
-        "EXECUTE admit_stmt(\
-         'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
-         '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
-         '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
-         NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
-        ordering(partition_key, partition_policy)
-    )
-}
-
-fn execute_cron(generation: i64, tick: &str) -> String {
-    execute_cron_ordered(generation, tick, None, "blocking")
-}
-
-fn execute_cron_with_http_principal(generation: i64, tick: &str) -> String {
-    let run_id = format!("flow-cron:cron:{generation}:{tick}");
-    format!(
-        "EXECUTE admit_stmt(\
-         'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
-         '{run_id}','{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}',\
-         '{{\"scheduled-at\":\"2026-07-27T00:00:00Z\"}}','rev-test',\
-         NULL,now()+interval '1 minute','swapped',NULL,NULL,NULL,NULL,NULL,\
-         {generation},'{tick}',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking')"
-    )
 }
 
 fn execute_event_ordered(
@@ -140,7 +106,7 @@ fn execute_event_lineage_ordered(
          'event','c1','dev',1,NULL,NULL,'flow-event',1,\
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
-         NULL,NULL,'reg-a',{seq},'{document}','{hash}',\
+         'reg-a',{seq},'{document}','{hash}',\
          '{source_run_id}','{root_run_id}',{depth},{})",
         ordering(partition_key, partition_policy)
     )
@@ -212,39 +178,32 @@ fn admission_live() {
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
                 artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) VALUES \
                ('t1','flow-http',1,'0.1','{{}}','gh-http','ah-http','[]','ih-http','[]'), \
-               ('t1','flow-cron',1,'0.1','{{}}','gh-cron','ah-cron','[]','ih-cron','[]'), \
                ('t1','flow-event',1,'0.1','{{}}','gh-event','ah-event','[]','ih-event','[]'); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version,members_json) VALUES \
                ('t1','c1',1,'[\
                  {{\"flow-id\":\"flow-http\",\"flow-version\":1,\"artifact-hash\":\"ah-http\"}},\
-                 {{\"flow-id\":\"flow-cron\",\"flow-version\":1,\"artifact-hash\":\"ah-cron\"}},\
                  {{\"flow-id\":\"flow-event\",\"flow-version\":1,\"artifact-hash\":\"ah-event\"}}\
                ]'); \
              INSERT INTO catalog.release_flows \
                (tenant_id,catalog_id,catalog_version,flow_id,flow_version) VALUES \
-               ('t1','c1',1,'flow-http',1),('t1','c1',1,'flow-cron',1),\
-               ('t1','c1',1,'flow-event',1); \
+               ('t1','c1',1,'flow-http',1),('t1','c1',1,'flow-event',1); \
              INSERT INTO catalog.release_exposure_manifests \
                (tenant_id,catalog_id,catalog_version,definitions_json) \
              VALUES ('t1','c1',1,'{{}}'); \
              INSERT INTO catalog.release_sources \
                (tenant_id,catalog_id,catalog_version,source_id,source_kind,definition_json,source_hash) VALUES \
-               ('t1','c1',1,'auth-a','auth','{{}}','source-http'), \
-               ('t1','c1',1,'schedule-a','schedule','{{}}','source-cron'); \
+               ('t1','c1',1,'auth-a','auth','{{}}','source-http'); \
              INSERT INTO catalog.release_attachments \
                (tenant_id,catalog_id,catalog_version,attachment_id,attachment_kind,flow_id,source_id, \
                 definition_hash,definition_json,route_host,route_path,route_template,route_method) VALUES \
                ('t1','c1',1,'http-a','http','flow-http','auth-a','sha256:http','{{}}',\
-                'example.test','/echo','/echo','POST'), \
-               ('t1','c1',1,'cron-a','cron','flow-cron','schedule-a','sha256:cron','{{}}',\
-                NULL,NULL,NULL,NULL); \
+                'example.test','/echo','/echo','POST'); \
              INSERT INTO catalog.catalog_heads \
                (tenant_id,catalog_id,environment,applied_catalog_version) VALUES ('t1','c1','dev',1); \
              INSERT INTO catalog.attachment_activation \
                (tenant_id,catalog_id,environment,attachment_id,confirmed_definition_hash,enabled) VALUES \
-               ('t1','c1','dev','http-a','sha256:http',true), \
-               ('t1','c1','dev','cron-a','sha256:cron',true); \
+               ('t1','c1','dev','http-a','sha256:http',true); \
              INSERT INTO catalog.event_registrations \
                (tenant_id,catalog_id,registration_id,flow_id,entity_id,registration) VALUES \
                ('t1','c1','reg-a','flow-event','hold','{registration_document}'); \
@@ -256,14 +215,10 @@ fn admission_live() {
     let admit = recipe.admit().to_string();
     let prepared = prepare(&admit);
 
-    // All producer variants use the same statement, while their initial queue
+    // Both producer variants use the same statement, while their initial queue
     // state stays producer-shaped.
     for (execution, expected) in [
         (execute_http("http-1", "key-1", "fp-1"), "admitted|http-1"),
-        (
-            execute_cron(1, "2026-07-27T00:00:00Z"),
-            "admitted|flow-cron:cron:1:2026-07-27T00:00:00Z",
-        ),
         (
             execute_event("event-1", &registration_document, &registration_digest, 41),
             "admitted|event-1",
@@ -282,8 +237,6 @@ fn admission_live() {
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='http-1') = 'inline-1'; \
                ASSERT (SELECT lease_generation FROM wamn_run.run_queue WHERE run_id='http-1') = 1; \
                ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions WHERE run_id='http-1') = 1; \
-               ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
-                        WHERE run_id='flow-cron:cron:1:2026-07-27T00:00:00Z') IS NULL; \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='event-1') IS NULL; \
                ASSERT (SELECT stream_seq FROM wamn_run.run_queue WHERE run_id='event-1') = 41; \
                ASSERT (SELECT invocation_context->'source'->>'registration-hash' FROM wamn_run.runs \
@@ -368,8 +321,14 @@ fn admission_live() {
             "admitted|http-ordered",
         ),
         (
-            execute_cron_ordered(5, "ordered", Some("site-strict"), "blocking"),
-            "admitted|flow-cron:cron:5:ordered",
+            execute_http_ordered(
+                "http-blocking-head",
+                "key-blocking-head",
+                "fp-blocking-head",
+                Some("site-strict"),
+                "blocking",
+            ),
+            "admitted|http-blocking-head",
         ),
         (
             execute_event_ordered(
@@ -383,8 +342,14 @@ fn admission_live() {
             "admitted|event-ordered",
         ),
         (
-            execute_cron_ordered(6, "ordered-next", Some("site-strict"), "blocking"),
-            "admitted|flow-cron:cron:6:ordered-next",
+            execute_http_ordered(
+                "http-blocking-next",
+                "key-blocking-next",
+                "fp-blocking-next",
+                Some("site-strict"),
+                "blocking",
+            ),
+            "admitted|http-blocking-next",
         ),
         (
             execute_event_ordered(
@@ -412,7 +377,7 @@ fn admission_live() {
            ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
                      FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
            ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='flow-cron:cron:5:ordered'); \
+                     FROM wamn_run.run_queue WHERE run_id='http-blocking-head'); \
            ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
                      FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
          END $$;",
@@ -426,7 +391,7 @@ fn admission_live() {
         &format!(
             "{} SET LOCAL search_path=wamn_run,public; \
              UPDATE wamn_run.run_queue SET available_at=now()+interval '1 hour' \
-              WHERE run_id IN ('flow-cron:cron:5:ordered','event-ordered'); \
+              WHERE run_id IN ('http-blocking-head','event-ordered'); \
              INSERT INTO wamn_run.partition_owner \
                (tenant_id,partition_key,lease_owner,lease_expires_at) VALUES \
                ('t1','site-strict','ordering-probe',now()+interval '1 minute'),\
@@ -435,7 +400,7 @@ fn admission_live() {
              EXECUTE ordering_claim_stmt('ordering-probe',30000); \
              DO $$ BEGIN \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
-                 WHERE run_id='flow-cron:cron:6:ordered-next') IS NULL, \
+                 WHERE run_id='http-blocking-next') IS NULL, \
                  'blocking admission holds the later sibling'; \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
                  WHERE run_id='event-ordered-next') = 'ordering-probe', \
@@ -455,7 +420,13 @@ fn admission_live() {
             Some("changed"),
             "blocking",
         ),
-        execute_cron_ordered(5, "ordered", Some("changed"), "blocking"),
+        execute_http_ordered(
+            "http-blocking-head-retry",
+            "key-blocking-head",
+            "fp-blocking-head",
+            Some("changed"),
+            "blocking",
+        ),
         execute_event_ordered(
             "event-ordered-retry",
             &registration_document,
@@ -480,11 +451,12 @@ fn admission_live() {
            ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
                      FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
            ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='flow-cron:cron:5:ordered'); \
+                     FROM wamn_run.run_queue WHERE run_id='http-blocking-head'); \
            ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
                      FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
            ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-                     WHERE run_id IN ('http-ordered-retry','event-ordered-retry')); \
+                     WHERE run_id IN ('http-ordered-retry','http-blocking-head-retry',\
+                                      'event-ordered-retry')); \
          END $$;",
     );
 
@@ -495,21 +467,24 @@ fn admission_live() {
          CREATE TEMP TABLE reused AS {}; \
          CREATE TEMP TABLE bad_hash AS {}; \
          CREATE TEMP TABLE stale_head AS EXECUTE admit_stmt(\
-           'cron','c1','dev',99,'cron-a','sha256:cron','flow-cron',1,\
-           'flow-cron:cron:9:stale','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           9,'stale',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           'http','c1','dev',99,'http-a','sha256:http','flow-http',1,\
+           'http-stale','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
+           now()+interval '1 minute','principal-stale','key-stale','fp-stale',\
+           now()+interval '1 day','inline-stale',30000,\
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
-           'cron','c1','dev',1,'missing','sha256:cron','flow-cron',1,\
-           'flow-cron:cron:10:inactive','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           10,'inactive',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           'http','c1','dev',1,'missing','sha256:http','flow-http',1,\
+           'http-inactive','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
+           now()+interval '1 minute','principal-inactive','key-inactive','fp-inactive',\
+           now()+interval '1 day','inline-inactive',30000,\
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
            ASSERT (SELECT result_code FROM bad_hash) = 'invalid-registration-hash'; \
            ASSERT (SELECT result_code FROM stale_head) = 'head-drift'; \
            ASSERT (SELECT result_code FROM inactive) = 'inactive-definition'; \
            ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-             WHERE run_id IN ('http-reused','event-bad','flow-cron:cron:9:stale',\
-                              'flow-cron:cron:10:inactive')); \
+             WHERE run_id IN ('http-reused','event-bad','http-stale','http-inactive')); \
          END $$; COMMIT;",
         app_preamble(),
         prepared,
@@ -523,21 +498,16 @@ fn admission_live() {
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
            'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',now()+interval '1 day',\
-           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
-         CREATE TEMP TABLE bad_cron AS EXECUTE admit_stmt(\
-           'cron','c1','dev',1,'cron-a','sha256:cron','flow-cron',1,\
-           'caller-chosen','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           1,'tick',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
-           'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,\
-           NULL,NULL,'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
+           'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,\
+           'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
-           ASSERT (SELECT result_code FROM bad_cron) = 'invalid-input'; \
            ASSERT (SELECT result_code FROM bad_event) = 'invalid-input'; \
            ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-             WHERE run_id IN ('bad-http','caller-chosen','bad-event')); \
+             WHERE run_id IN ('bad-http','bad-event')); \
          END $$; COMMIT;",
         app_preamble(),
         prepared,
@@ -690,10 +660,28 @@ fn admission_live() {
     assert!(!mutation.status.success(), "lineage mutation must fail");
 
     for execution in [
-        execute_cron_ordered(11, "unknown-policy", Some("site"), "unknown"),
-        execute_cron_ordered(12, "unkeyed-leapfrog", None, "leapfrog"),
-        execute_cron_ordered(13, "empty-key", Some(""), "blocking"),
-        execute_cron_with_http_principal(14, "swapped"),
+        execute_http_ordered(
+            "http-unknown-policy",
+            "key-unknown-policy",
+            "fp-unknown-policy",
+            Some("site"),
+            "unknown",
+        ),
+        execute_event_ordered(
+            "event-unkeyed-leapfrog",
+            &registration_document,
+            &registration_digest,
+            55,
+            None,
+            "leapfrog",
+        ),
+        execute_http_ordered(
+            "http-empty-key",
+            "key-empty",
+            "fp-empty",
+            Some(""),
+            "blocking",
+        ),
     ] {
         let result = success(
             &url,
@@ -705,17 +693,24 @@ fn admission_live() {
         &url,
         "DO $$ BEGIN \
            ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
-             'flow-cron:cron:11:unknown-policy',\
-             'flow-cron:cron:12:unkeyed-leapfrog',\
-             'flow-cron:cron:13:empty-key',\
-             'flow-cron:cron:14:swapped')); \
+             'http-unknown-policy','event-unkeyed-leapfrog','http-empty-key')); \
          END $$;",
     );
 
     // A failure at every run -> queue -> HTTP-ledger seam rolls back every
     // preceding CTE.
-    for (name, target, execution) in [
-        ("run", "wamn_run.runs", execute_cron(3, "run-fault")),
+    for (name, target, execution, run_id) in [
+        (
+            "run",
+            "wamn_run.runs",
+            execute_event(
+                "event-run-fault",
+                &registration_document,
+                &registration_digest,
+                54,
+            ),
+            "event-run-fault",
+        ),
         (
             "queue",
             "wamn_run.run_queue",
@@ -727,11 +722,13 @@ fn admission_live() {
                 Some("fault-key"),
                 "leapfrog",
             ),
+            "event-fault",
         ),
         (
             "ledger",
             "wamn_run.invocation_admissions",
             execute_http("http-fault", "key-fault", "fp-fault"),
+            "http-fault",
         ),
     ] {
         let trigger = format!(
@@ -762,27 +759,7 @@ fn admission_live() {
                    ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id='{}'); \
                    ASSERT NOT EXISTS (SELECT FROM wamn_run.invocation_admissions WHERE run_id='{}'); \
                  END $$;",
-                if name == "queue" {
-                    "event-fault"
-                } else if name == "run" {
-                    "flow-cron:cron:3:run-fault"
-                } else {
-                    "http-fault"
-                },
-                if name == "queue" {
-                    "event-fault"
-                } else if name == "run" {
-                    "flow-cron:cron:3:run-fault"
-                } else {
-                    "http-fault"
-                },
-                if name == "queue" {
-                    "event-fault"
-                } else if name == "run" {
-                    "flow-cron:cron:3:run-fault"
-                } else {
-                    "http-fault"
-                },
+                run_id, run_id, run_id,
             ),
         );
     }
@@ -890,7 +867,7 @@ fn admission_live() {
             app_preamble(),
             recipe.lock_head(),
             prepared,
-            execute_cron(4, "promotion-race")
+            execute_http("promotion-race", "key-promotion", "fp-promotion")
         ),
     );
     assert_eq!(drifted.trim(), "2\nhead-drift|");
@@ -899,6 +876,6 @@ fn admission_live() {
     success(
         &url,
         "DO $$ BEGIN ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-           WHERE run_id='flow-cron:cron:4:promotion-race'), 'promotion wrote no run'; END $$;",
+           WHERE run_id='promotion-race'), 'promotion wrote no run'; END $$;",
     );
 }

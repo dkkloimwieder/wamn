@@ -13,10 +13,7 @@
 //! `app.tenant` claim (RLS + the explicit predicate), and `node_runs` (plus any
 //! stale `run_queue`/`run_dead_letters` rows) cascade via their `ON DELETE
 //! CASCADE` FK to `runs`.
-//!
-//! **`cron_anchor` is a SEPARATE table this NEVER touches**, so a pruned cron
-//! run cannot re-fire its tick — the durable anchor decouples cron dedupe from
-//! prunable history (wamn-fqg.6). Idempotent and safe to repeat on a cadence
+//! Idempotent and safe to repeat on a cadence
 //! (`deploy/platform/run-retention.example.yaml`).
 //!
 //! **v0 is age-based only:** replay lineage (`replay_of`/`root_run_id`) is not
@@ -92,7 +89,7 @@ pub async fn run(args: PruneRunHistoryArgs) -> anyhow::Result<()> {
     } else {
         println!(
             "prune-run-history: pruned {pruned} terminal run(s) older than {} day(s) in schema {} \
-             (tenant {}) — node_runs cascaded, cron_anchor untouched",
+             (tenant {}) — node_runs cascaded",
             args.retention_days, args.schema, args.tenant
         );
     }

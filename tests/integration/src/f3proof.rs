@@ -584,7 +584,6 @@ async fn deactivate_authoritative_cron_release(
 
 #[derive(Debug, PartialEq, Eq)]
 struct RuntimeCleanupSql {
-    cron_anchor: String,
     node_runs: String,
     run_queue: String,
     runs: String,
@@ -593,7 +592,6 @@ struct RuntimeCleanupSql {
 
 fn runtime_cleanup_sql(schema: &str) -> RuntimeCleanupSql {
     RuntimeCleanupSql {
-        cron_anchor: format!("DELETE FROM {schema}.cron_anchor WHERE tenant_id=$1 AND flow_id=$2"),
         node_runs: format!(
             "DELETE FROM {schema}.node_runs WHERE tenant_id=$1 AND run_id IN \
              (SELECT run_id FROM {schema}.runs WHERE tenant_id=$1 AND flow_id=$2)"
@@ -614,7 +612,6 @@ async fn clear_in_cluster_runtime(
 ) -> anyhow::Result<()> {
     let sql = runtime_cleanup_sql(schema);
     let parameters: [&(dyn tokio_postgres::types::ToSql + Sync); 2] = [&tenant, &FLOW_ID];
-    admin.execute(&sql.cron_anchor, &parameters).await?;
     admin.execute(&sql.node_runs, &parameters).await?;
     admin.execute(&sql.run_queue, &parameters).await?;
     admin.execute(&sql.runs, &parameters).await?;
@@ -1483,7 +1480,6 @@ mod tests {
         assert_eq!(
             runtime_cleanup_sql("wamn_runner_demo"),
             RuntimeCleanupSql {
-                cron_anchor: "DELETE FROM wamn_runner_demo.cron_anchor WHERE tenant_id=$1 AND flow_id=$2".to_owned(),
                 node_runs: "DELETE FROM wamn_runner_demo.node_runs WHERE tenant_id=$1 AND run_id IN (SELECT run_id FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2)".to_owned(),
                 run_queue: "DELETE FROM wamn_runner_demo.run_queue WHERE tenant_id=$1 AND run_id IN (SELECT run_id FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2)".to_owned(),
                 runs: "DELETE FROM wamn_runner_demo.runs WHERE tenant_id=$1 AND flow_id=$2".to_owned(),

@@ -86,11 +86,10 @@ pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
 pub use sql::{
     acquire_partitions_sql, active_flows_sql, admit_pinned_draft_scenario_run_sql,
     admit_pinned_triggered_run_sql, begin_claimed_run_sql, claim_batch_sql, claim_dispatch_sql,
-    claim_partition_head_sql, complete_dequeue_sql, cron_anchor_sql, cron_last_run_sql,
-    dead_letter_dequeue_sql, dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql,
-    enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, janitor_sweep_sql,
-    lock_pinned_trigger_catalog_head_sql, mark_running_sql, park_sql, parked_due_sql,
-    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, upsert_cron_anchor_sql, write_ahead_run_sql,
-    write_ahead_triggered_run_sql,
+    claim_partition_head_sql, complete_dequeue_sql, dead_letter_dequeue_sql, dequeue_sql,
+    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
+    gc_orphan_partitions_sql, janitor_sweep_sql, lock_pinned_trigger_catalog_head_sql,
+    mark_running_sql, park_sql, parked_due_sql, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
+    write_ahead_run_sql, write_ahead_triggered_run_sql,
 };

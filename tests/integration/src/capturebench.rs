@@ -18,11 +18,10 @@
 //!   scrub     — a payload carrying a KNOWN secret is written through a `scrubbed`
 //!               flow (success + error rows); a containment scan asserts the raw
 //!               secret appears NOWHERE in `node_runs` and `redacted` is set.
-//!   retention — old + recent terminal runs (plus a non-terminal run and a
-//!               `cron_anchor` row) are seeded; the REAL `prune-run-history` verb
+//!   retention — old + recent terminal runs (plus a non-terminal run) are
+//!               seeded; the REAL `prune-run-history` verb
 //!               logic prunes the old terminal run (cascading its node_runs), keeps
-//!               the recent one and the non-terminal one, and leaves cron_anchor
-//!               untouched (so a pruned cron tick cannot re-fire — wamn-fqg.6).
+//!               the recent one and the non-terminal one.
 //!   all       — every mode in sequence.
 
 use anyhow::{Context as _, bail};
@@ -109,11 +108,7 @@ async fn teardown(admin_url: &str) -> anyhow::Result<()> {
 }
 
 async fn reset(admin_url: &str) -> anyhow::Result<()> {
-    admin_exec(
-        admin_url,
-        &format!("TRUNCATE {SCHEMA}.runs CASCADE; TRUNCATE {SCHEMA}.cron_anchor;"),
-    )
-    .await
+    admin_exec(admin_url, &format!("TRUNCATE {SCHEMA}.runs CASCADE;")).await
 }
 
 /// A wamn_app session pinned to the capture schema + tenant claim.
@@ -495,7 +490,6 @@ async fn scrub_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
 
 // ---------------------------------------------------------------------------
 // retention: the real prune verb removes old terminal runs, keeps the rest,
-// leaves cron_anchor untouched
 // ---------------------------------------------------------------------------
 
 async fn run_exists(client: &Client, run_id: &str) -> anyhow::Result<bool> {
@@ -509,7 +503,7 @@ async fn run_exists(client: &Client, run_id: &str) -> anyhow::Result<bool> {
 async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
         "\n## retention — the real prune-run-history verb prunes old TERMINAL runs \
-         (cascading node_runs), keeps recent + non-terminal, leaves cron_anchor"
+         (cascading node_runs), keeps recent + non-terminal"
     );
     reset(admin_url).await?;
     let (app, _h) = connect_app(app_url).await?;
@@ -521,14 +515,6 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     write_success(&app, "old-done", "a", 0, "main", &c).await?;
     seed_run(&app, "recent-done", "completed", 1).await?;
     seed_run(&app, "old-running", "running", 40).await?;
-
-    // A durable cron anchor — pruning runs must NOT touch it (wamn-fqg.6).
-    app.execute(
-        "INSERT INTO cron_anchor (tenant_id, flow_id, last_tick) \
-         VALUES (current_setting('app.tenant', true), 'f', 123456)",
-        &[],
-    )
-    .await?;
 
     let prune = ctl_process::run_checked([
         "prune-run-history",
@@ -557,19 +543,12 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
         .await?
         .get::<_, i64>(0)
         == 0;
-    let anchor_survived = app
-        .query_one("SELECT count(*) FROM cron_anchor WHERE flow_id = 'f'", &[])
-        .await?
-        .get::<_, i64>(0)
-        == 1;
-
-    let pass =
-        reported_one && old_gone && recent_kept && running_kept && cascaded && anchor_survived;
+    let pass = reported_one && old_gone && recent_kept && running_kept && cascaded;
     println!(
         "  reported_one={reported_one} old_gone={old_gone} recent_kept={recent_kept} \
-         running_kept={running_kept} node_runs_cascaded={cascaded} anchor_survived={anchor_survived}"
+         running_kept={running_kept} node_runs_cascaded={cascaded}"
     );
-    println!("PASS(retention: old terminal pruned + cascade, recent/running/anchor kept): {pass}");
+    println!("PASS(retention: old terminal pruned + cascade, recent/running kept): {pass}");
     Ok(pass)
 }
 

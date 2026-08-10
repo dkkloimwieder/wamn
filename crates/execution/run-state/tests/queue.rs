@@ -10,15 +10,14 @@ use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
     acquire_partitions_sql, active_flows_sql, admit_pinned_triggered_run_sql,
     begin_claimed_run_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
-    claim_state, complete_dequeue_sql, cron_anchor_sql, cron_last_run_sql, dead_letter_dequeue_sql,
-    dead_letters_on_terminal, dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql,
-    enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable,
-    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live,
-    lock_pinned_trigger_catalog_head_sql, mark_running_sql, mint_evt_run_id, orphans, park_sql,
-    parked_due_sql, partition_lease_live, plan_acquire, plan_claim, plan_partition_claim,
-    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, should_renew, upsert_cron_anchor_sql,
-    write_ahead_run_sql, write_ahead_triggered_run_sql,
+    claim_state, complete_dequeue_sql, dead_letter_dequeue_sql, dead_letters_on_terminal,
+    dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
+    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
+    janitor_verdict, lease_deadline, lease_live, lock_pinned_trigger_catalog_head_sql,
+    mark_running_sql, mint_evt_run_id, orphans, park_sql, parked_due_sql, partition_lease_live,
+    plan_acquire, plan_claim, plan_partition_claim, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
+    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };
 
 const RECORD_SUCCESS_RENEW_PARAM_TYPES: [&str; 14] = [
@@ -1195,35 +1194,6 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(wat.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
     assert!(wat.contains("current_setting('app.tenant', true)"));
 
-    // Last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source),
-    // never a lexical run-id range — flow ids are unconstrained user text and
-    // text ordering is collation-dependent, so a range scan can leak a foreign
-    // flow's ids into the max (the runs table IS the dispatcher's cron state).
-    let last = cron_last_run_sql();
-    assert!(last.contains("max(run_id)"));
-    assert!(last.contains("flow_id = $1"));
-    assert!(last.contains("trigger_source = 'cron'"));
-    assert!(!last.contains("run_id >="));
-    assert!(last.contains("current_setting('app.tenant', true)"));
-
-    // wamn-fqg.6: the DURABLE anchor recovery (the primary path, demoting
-    // cron_last_run_sql to a bootstrap fallback) reads last_tick from the
-    // cron_anchor table, tenant-scoped and flow-keyed ($1).
-    let anchor = cron_anchor_sql();
-    assert!(anchor.contains("SELECT last_tick FROM cron_anchor"));
-    assert!(anchor.contains("flow_id = $1"));
-    assert!(anchor.contains("current_setting('app.tenant', true)"));
-
-    // The anchor upsert co-transacted with the fire: monotonic (GREATEST) so a
-    // losing replica / redelivery / misfire-collapse never REWINDS the anchor
-    // (a rewind would let an already-fired tick re-fire), keyed on the PK.
-    let up = upsert_cron_anchor_sql();
-    assert!(up.contains("INSERT INTO cron_anchor (tenant_id, flow_id, last_tick)"));
-    assert!(up.contains("current_setting('app.tenant', true), $1, $2"));
-    assert!(up.contains("ON CONFLICT (tenant_id, flow_id) DO UPDATE"));
-    assert!(up.contains("GREATEST(cron_anchor.last_tick, EXCLUDED.last_tick)"));
-    assert!(!up.contains("LEAST("));
-
     // The registry scan: active flows only; the trigger lives in graph_json.
     // R8b-b: the tenant predicate now precedes the `active` filter (explicit
     // defense-in-depth; inert under RLS).
@@ -1439,8 +1409,7 @@ fn run_queue_sql_matches_the_model() {
 /// and assert the queue's real behaviour: the `SKIP LOCKED` claim predicate
 /// (Ready claimed, Parked/Leased skipped), lease-expiry reclaim, the janitor sweep
 /// (orphan → `infrastructure-failure` + dequeued), tenant RLS isolation, the
-/// FK cascade from `runs`, and the trigger dispatcher's cron path (triggered
-/// write-ahead, cron last-tick recovery, the wake scan). Gated on
+/// FK cascade from `runs`, and the wake scan. Gated on
 /// `WAMN_RUN_QUEUE_PG_URL` (a superuser URL — the harness provisions `wamn_app`);
 /// skips cleanly when unset. Mirrors the wamn-run-state / wamn-schema-compiler
 /// gates. (True concurrent contention is the queuebench/dispatchbench gates; this
@@ -1481,12 +1450,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let park_stmt_sql = park_sql();
     let acquire_sql = acquire_partitions_sql(10);
     let claim_head_sql = claim_partition_head_sql(10);
-    // The trigger dispatcher's builders (cron/wake).
     let triggered_sql = write_ahead_triggered_run_sql();
-    let last_run_sql = cron_last_run_sql();
-    // The durable cron anchor builders (wamn-fqg.6).
-    let anchor_sel_sql = cron_anchor_sql();
-    let upsert_anchor_sql = upsert_cron_anchor_sql();
     let parked_sql = parked_due_sql(50);
     // R8b-b / SR12b: the registry scan — the one bead-4 builder not otherwise
     // PREPARE/EXECUTE'd on the live path (the dispatcher reads it every sweep).
@@ -1822,30 +1786,6 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          END $$;\n\
          COMMIT;\n"
     ));
-    // Cron last-fired-tick recovery: FLOW-EXCLUSIVE (flow_id + trigger_source
-    // predicate, cron_last_run_sql) — foreign flows whose ids sort inside a
-    // lexical range under the deployed collation (or literally nest ':cron:' in
-    // their flow id) must never leak into another flow's anchor.
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE last_stmt (text) AS {last_run_sql};\n\
-         PREPARE triggered_stmt (text, text, int, text, text) AS {triggered_sql};\n\
-         EXECUTE triggered_stmt('cronflow:cron:0000000000100', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 100}}');\n\
-         EXECUTE triggered_stmt('cronflow:cron:0000000000200', 'cronflow', 1, 'cron', '{{\"fire-at-ms\": 200}}');\n\
-         -- Foreign-anchor poison: a flow whose id embeds ':cron:' and a colon-free\n\
-         -- neighbor that sorts inside 'cronflow's lexical range under en_US-style\n\
-         -- collations, both with LATER ticks; and a non-cron run for the flow itself.\n\
-         EXECUTE triggered_stmt('cronflow:cron:5x:cron:0000000000999', 'cronflow:cron:5x', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
-         EXECUTE triggered_stmt('cronflowx:cron:0000000000999', 'cronflowx', 1, 'cron', '{{\"fire-at-ms\": 999}}');\n\
-         EXECUTE triggered_stmt('cronflow:manual:7', 'cronflow', 1, 'manual', '{{\"seq\": 7}}');\n\
-         CREATE TEMP TABLE lastrun AS EXECUTE last_stmt('cronflow');\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT max FROM lastrun) = 'cronflow:cron:0000000000200', 'last-fired recovery is flow-exclusive (no foreign/non-cron leak)'; \
-         END $$;\n\
-         COMMIT;\n",
-    ));
-
     // The wake/reconciliation scan (parked_due_sql): a due unleased row is
     // surfaced for a doorbell hint; a future (parked) or live-leased row is not.
     script.push_str(&format!(
@@ -2260,48 +2200,6 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM run_dead_letters) = 0, 'the dead-letter ledger is tenant-isolated (RLS)'; \
          END $$;\n\
-         COMMIT;\n"
-    ));
-
-    // wamn-fqg.6: the DURABLE cron anchor, through the REAL builders. The upsert
-    // is monotonic (a lower tick never rewinds — a rewind would let an
-    // already-fired tick re-fire), and the anchor SURVIVES a prune of the flow's
-    // cron runs (the exact retention bug: a re-fire the write-ahead ON CONFLICT
-    // could not absorb once the run was gone), while the runs-based FALLBACK
-    // loses it — the demoted bootstrap path.
-    script.push_str(&format!(
-        "BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
-         PREPARE anchor_sel (text) AS {anchor_sel_sql};\n\
-         PREPARE anchor_up (text, bigint) AS {upsert_anchor_sql};\n\
-         PREPARE last_sel (text) AS {last_run_sql};\n\
-         -- First upsert creates the row; the SELECT reads it back.\n\
-         EXECUTE anchor_up('anchorflow', 200);\n\
-         CREATE TEMP TABLE a0 AS EXECUTE anchor_sel('anchorflow');\n\
-         DO $$ BEGIN ASSERT (SELECT last_tick FROM a0) = 200, 'the anchor upsert persists last_tick'; END $$;\n\
-         -- Monotonic: a HIGHER tick advances; a LOWER tick does NOT rewind.\n\
-         EXECUTE anchor_up('anchorflow', 500);\n\
-         EXECUTE anchor_up('anchorflow', 300);\n\
-         CREATE TEMP TABLE a1 AS EXECUTE anchor_sel('anchorflow');\n\
-         DO $$ BEGIN ASSERT (SELECT last_tick FROM a1) = 500, 'GREATEST: a lower upsert never rewinds the anchor'; END $$;\n\
-         -- Seed a cron run then PRUNE it (9.6 retention): the anchor + its SELECT\n\
-         -- are unchanged, while the runs-based fallback now finds nothing.\n\
-         INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, trigger_source) \
-           VALUES ('t1','anchorflow:cron:0000000000500','anchorflow',1,'completed','cron');\n\
-         DELETE FROM runs WHERE flow_id='anchorflow' AND trigger_source='cron';\n\
-         CREATE TEMP TABLE a2 AS EXECUTE anchor_sel('anchorflow');\n\
-         CREATE TEMP TABLE lf AS EXECUTE last_sel('anchorflow');\n\
-         DO $$ BEGIN \
-           ASSERT (SELECT last_tick FROM a2) = 500, 'the durable anchor survives a prune of the flow''s cron runs (wamn-fqg.6)'; \
-           ASSERT (SELECT max FROM lf) IS NULL, 'the runs-based fallback loses the anchor once the runs are pruned (the demoted bootstrap path)'; \
-         END $$;\n\
-         COMMIT;\n\
-         -- RLS: the anchor is tenant-scoped — t2 sees no row.\n\
-         BEGIN;\n\
-         SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't2';\n\
-         PREPARE anchor_sel_t2 (text) AS {anchor_sel_sql};\n\
-         CREATE TEMP TABLE a_t2 AS EXECUTE anchor_sel_t2('anchorflow');\n\
-         DO $$ BEGIN ASSERT (SELECT count(*) FROM a_t2) = 0, 'the cron anchor is tenant-isolated (RLS)'; END $$;\n\
          COMMIT;\n"
     ));
 

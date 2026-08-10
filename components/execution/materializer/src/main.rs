@@ -427,8 +427,6 @@ fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, St
                 null(),
                 null(),
                 null(),
-                null(),
-                null(),
                 text(&serving.reg.registration_id),
                 int64(plan.stream_seq),
                 text(&serving.registration_document),

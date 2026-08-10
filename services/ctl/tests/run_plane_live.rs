@@ -600,8 +600,6 @@ async fn shared_runner_legacy_leg(su: &Client) {
              ('terminal','retry-exhausted','invalid-input','runaway-budget')), \
            fail_node text, fail_reason text, created_at timestamptz NOT NULL DEFAULT now(), \
            updated_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (tenant_id,run_id)); \
-         CREATE TABLE {SCHEMA}.cron_anchor (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
-           flow_id text NOT NULL,last_tick bigint NOT NULL,PRIMARY KEY(tenant_id,flow_id)); \
          CREATE TABLE {SCHEMA}.node_runs (tenant_id text NOT NULL CHECK (tenant_id <> ''), \
            run_id text NOT NULL,node_id text NOT NULL,occurrence int NOT NULL DEFAULT 0, \
            seq int NOT NULL,attempt int NOT NULL DEFAULT 0,status text NOT NULL CHECK \

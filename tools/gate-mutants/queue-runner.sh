@@ -20,7 +20,6 @@ mutation_ids() {
   printf '%s\n' \
     queue-stream-sequence-order \
     queue-blocking-dead-letter-policy \
-    dispatch-monotonic-cron-anchor \
     failover-lease-expiry-boundary \
     wakeproof-parked-only-actuation \
     capturebench-oversize-preview \
@@ -44,14 +43,6 @@ load_mutation() {
       NEEDLE="entry.partition_key.is_some() && entry.partition_policy == PartitionPolicy::Blocking"
       REPLACEMENT="entry.partition_key.is_some() || entry.partition_policy == PartitionPolicy::Blocking"
       GATE="dead_letters_on_terminal_is_blocking_partitioned_only"
-      TEST_ARGV=(cargo test --locked -p wamn-run-state --test queue "$GATE" -- --exact)
-      ;;
-    dispatch-monotonic-cron-anchor)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="ef9c1d0d1eda6a997f3de1fff5f148e11d77fc92908e2e198412c0ac9bdce693"
-      NEEDLE="SET last_tick = GREATEST(cron_anchor.last_tick, EXCLUDED.last_tick)"
-      REPLACEMENT="SET last_tick = LEAST(cron_anchor.last_tick, EXCLUDED.last_tick)"
-      GATE="dispatcher_sql_builders_are_shaped_and_tenant_scoped"
       TEST_ARGV=(cargo test --locked -p wamn-run-state --test queue "$GATE" -- --exact)
       ;;
     failover-lease-expiry-boundary)

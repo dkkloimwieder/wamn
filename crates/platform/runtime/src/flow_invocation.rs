@@ -508,8 +508,6 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &expires_at,
                     &config.executor_id,
                     &lease_ttl,
-                    &none_i64,
-                    &none_text,
                     &none_text,
                     &none_i64,
                     &none_text,

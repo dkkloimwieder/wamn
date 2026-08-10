@@ -530,8 +530,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
                 &admission_expires_at,
                 &executor_id,
                 &lease_ttl_ms,
-                &none_i64,
-                &none_text,
                 &none_text,
                 &none_i64,
                 &none_text,

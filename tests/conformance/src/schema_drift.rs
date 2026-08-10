@@ -52,11 +52,10 @@ fn stand_in_guard_rejects_column_named_only_by_an_index() {
 // ---------------------------------------------------------------------------
 
 /// Every table `run-state.sql` ships, all Required.
-fn all_run_state_required() -> [(&'static str, Need); 9] {
+fn all_run_state_required() -> [(&'static str, Need); 8] {
     [
         ("runs", Need::Required),
         ("invocation_admissions", Need::Required),
-        ("cron_anchor", Need::Required),
         ("node_runs", Need::Required),
         ("effect_attempts", Need::Required),
         ("effect_attempt_dispatches", Need::Required),
@@ -68,7 +67,7 @@ fn all_run_state_required() -> [(&'static str, Need); 9] {
 
 /// `runs` Required, every other shipped table absent — the shape of a gate that
 /// materializes only the run row.
-fn runs_only_spec() -> [(&'static str, Need); 9] {
+fn runs_only_spec() -> [(&'static str, Need); 8] {
     let mut spec = all_run_state_required();
     for entry in spec.iter_mut().skip(1) {
         entry.1 = Need::AbsentByDesign;
@@ -143,17 +142,4 @@ fn run_state_guard_rejects_a_status_check_the_run_writers_outgrew() {
     let mutant = runs_stand_in().replacen(", 'infrastructure-failure'", "", 1);
 
     assert_run_state_stand_in("narrow-status-check-mutant", &mutant, &runs_only_spec());
-}
-
-#[test]
-#[should_panic(expected = "does not classify schema-of-record table `wamn_run.cron_anchor`")]
-fn run_state_guard_rejects_a_spec_that_leaves_a_shipped_table_undecided() {
-    let spec = runs_only_spec();
-    let undecided = spec
-        .iter()
-        .filter(|(table, _)| *table != "cron_anchor")
-        .copied()
-        .collect::<Vec<_>>();
-
-    assert_run_state_stand_in("undecided-cron-anchor-mutant", &runs_stand_in(), &undecided);
 }

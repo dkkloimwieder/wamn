@@ -219,12 +219,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
-        table: "cron_anchor",
-        name: "cron_anchor_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
         table: "node_runs",
         name: "node_runs_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -3539,7 +3533,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "runs",
                 "invocation_admissions",
-                "cron_anchor",
                 "node_runs",
                 "effect_attempts",
                 "effect_attempt_dispatches",
@@ -3775,7 +3768,6 @@ CREATE INDEX event_registrations_by_entity
                 "run_queue_claimable",
                 "run_queue_partition",
                 "runs_cancel_requested",
-                "runs_cron_anchor",
                 "runs_event_root",
                 "runs_flow",
                 "runs_idempotency",
@@ -3812,8 +3804,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            18,
-            "all eighteen run-plane tables at target, including retained authoring reports"
+            17,
+            "all seventeen run-plane tables at target, including retained authoring reports"
         );
     }
 
@@ -4211,7 +4203,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "runs",
                 "invocation_admissions",
-                "cron_anchor",
                 "node_runs",
                 "effect_attempts",
                 "effect_attempt_dispatches",
