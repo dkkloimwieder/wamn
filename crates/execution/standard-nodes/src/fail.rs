@@ -1,7 +1,7 @@
 //! `fail` returns the authored terminal failure detail.
 
 use serde_json::Value;
-use wamn_node_sdk::{Emission, ErrorDetail, Node, NodeCtx, NodeError, RunContext};
+use wamn_flow::node_contract::{Emission, ErrorDetail, Node, NodeCtx, NodeError, RunContext};
 
 pub(crate) struct Fail;
 

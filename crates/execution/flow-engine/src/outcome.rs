@@ -1,7 +1,7 @@
 //! Node dispatch outcomes — the driver→engine event vocabulary.
 //!
 //! The error taxonomy ([`NodeError`] / [`ErrorDetail`] / [`RateLimitDetail`])
-//! is DEFINED in `wamn-node-sdk` (the node authoring contract, 5.3) and
+//! is defined in `wamn_flow::node_contract` and
 //! re-exported here, so the engine, the drivers, and every node crate share
 //! one definition while nodes stay authorable without the runner (the 5.13
 //! purity rule). It is a 1:1 mirror of the `wamn:node` `node-error` WIT
@@ -16,7 +16,7 @@ pub use wamn_flow::ERROR_PORT;
 /// The default output port a node emits on (`wamn_flow::MAIN_PORT`).
 pub use wamn_flow::MAIN_PORT;
 
-pub use wamn_node_sdk::{ErrorDetail, NodeError, RateLimitDetail};
+pub use wamn_flow::node_contract::{ErrorDetail, NodeError, RateLimitDetail};
 
 /// What a dispatched node returned. `Success` carries the output payload and the
 /// **port** it chose (a branch node like `conditional` selects `"true"`/`"false"`;

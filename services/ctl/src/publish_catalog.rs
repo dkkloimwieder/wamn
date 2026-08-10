@@ -2597,7 +2597,7 @@ mod tests {
         invalid_mutants.push(("capability-classes", capabilities));
 
         let mut dispatch = baseline_descriptor.clone();
-        dispatch.dispatch_capabilities = &[wamn_standard_nodes::Capability::HttpEgress];
+        dispatch.dispatch_capabilities = &[wamn_flow::node_contract::Capability::HttpEgress];
         invalid_mutants.push(("dispatch-capabilities", dispatch));
 
         let mut support = baseline_descriptor.clone();

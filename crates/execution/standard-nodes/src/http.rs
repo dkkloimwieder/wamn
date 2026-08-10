@@ -21,7 +21,7 @@
 //! heal). 3xx is NOT followed — it lands in the success payload.
 
 use serde_json::{Map, Value};
-use wamn_node_sdk::{
+use wamn_flow::node_contract::{
     Capability, Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, Node, NodeCtx,
     NodeError, RateLimitDetail, RunContext,
 };

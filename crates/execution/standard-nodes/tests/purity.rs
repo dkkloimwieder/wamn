@@ -1,5 +1,5 @@
 //! THE mechanical purity lint (docs/archive/platform-plan.md 5.3): standard node
-//! crates depend on the SDK crate ONLY — never the runner crate — so no node
+//! crate depends on the flow model's pure node contract — never the runner — so no node
 //! can circumvent the `wamn:node` interface and silently break the
 //! frozen-flow composition path (5.13). Enforced over `cargo metadata`: the
 //! test walks `wamn-standard-nodes`' resolved NORMAL dependency edges and fails the
@@ -22,13 +22,14 @@ const FORBIDDEN: &[&str] = &[
     "wamn-scheduler",
     "wamn-runtime",
     "wamn-node-runtime",
-    "wamn-flow",
 ];
 
 /// The EXACT direct (normal) dependencies wamn-standard-nodes may have. Growing this
 /// list is a conscious, test-updating act.
 const ALLOWED_DIRECT: &[&str] = &[
-    "wamn-node-sdk",
+    "wamn-flow",
+    // Temporary E3 compatibility descriptor surface; retained execution uses
+    // `wamn-flow::node_contract` and E3 deletes this edge with its consumers.
     "wamn-node-manifest",
     "wamn-entity-access",
     "wamn-pg-core",
@@ -88,10 +89,10 @@ fn package<'a>(meta: &'a Value, name: &str) -> &'a Value {
 }
 
 #[test]
-fn node_crates_depend_on_the_sdk_only_never_the_runner() {
+fn standard_nodes_depend_on_the_flow_contract_never_the_runner() {
     let meta = metadata();
 
-    for crate_name in ["wamn-standard-nodes", "wamn-node-sdk"] {
+    for crate_name in ["wamn-standard-nodes"] {
         let root = package(&meta, crate_name)["id"].as_str().unwrap();
         let closure = normal_closure(&meta, root);
         let names: HashSet<&str> = meta["packages"]
@@ -127,19 +128,5 @@ fn direct_dependencies_are_exactly_the_declared_allowlist() {
         direct, allowed,
         "wamn-standard-nodes' direct dependencies changed — adding one is a conscious, \
          test-updating act (and never the runner)"
-    );
-
-    // The SDK itself stays minimal: serde_json and nothing else.
-    let sdk_direct: HashSet<String> = package(&meta, "wamn-node-sdk")["dependencies"]
-        .as_array()
-        .expect("dependencies")
-        .iter()
-        .filter(|d| d["kind"].is_null())
-        .map(|d| d["name"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(
-        sdk_direct,
-        HashSet::from(["serde_json".to_string()]),
-        "wamn-node-sdk must stay a minimal leaf"
     );
 }

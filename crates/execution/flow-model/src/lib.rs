@@ -20,6 +20,7 @@
 
 mod canonical;
 mod diff;
+pub mod node_contract;
 mod preimage;
 mod types;
 mod validate;

@@ -11,7 +11,7 @@
 //!    cannot reach a capability outside its declared row — undeclared calls
 //!    fail with `NotGranted` at the facade.
 
-use wamn_node_sdk::{
+use wamn_flow::node_contract::{
     Capability, CredentialCapError, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, NodeCtx,
     NodeError, PgCapError, PgRows, PgValue,
 };

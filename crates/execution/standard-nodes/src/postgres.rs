@@ -19,7 +19,7 @@ use wamn_entity_access::{
     CompareOp, EntityAccessError, EntityOperation, EntityRequest, Filter, ListOptions, PlanKind,
     Planner, Sort, SortDirection, UpdateMode, shape_rows,
 };
-use wamn_node_sdk::{
+use wamn_flow::node_contract::{
     Capability, Emission, ErrorDetail, Node, NodeCtx, NodeError, PgCapError, PgValue, RunContext,
 };
 use wamn_pg_core::SqlValue;

@@ -7,7 +7,7 @@
 //! numbers — including `0` — are truthy per the spec). No capabilities.
 
 use serde_json::Value;
-use wamn_node_sdk::{Emission, Node, NodeCtx, NodeError, RunContext};
+use wamn_flow::node_contract::{Emission, Node, NodeCtx, NodeError, RunContext};
 
 use crate::expr::{config_str, eval_truthy};
 

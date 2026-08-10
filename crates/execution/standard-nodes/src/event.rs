@@ -1,7 +1,7 @@
 //! `event` emits the externally admitted event payload unchanged.
 
 use serde_json::Value;
-use wamn_node_sdk::{Emission, Node, NodeCtx, NodeError, RunContext};
+use wamn_flow::node_contract::{Emission, Node, NodeCtx, NodeError, RunContext};
 
 pub(crate) struct Event;
 

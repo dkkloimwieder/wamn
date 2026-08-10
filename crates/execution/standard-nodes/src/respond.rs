@@ -5,7 +5,7 @@
 //! transport. No capabilities.
 
 use serde_json::Value;
-use wamn_node_sdk::{Emission, Node, NodeCtx, NodeError, RunContext};
+use wamn_flow::node_contract::{Emission, Node, NodeCtx, NodeError, RunContext};
 
 /// The configured response status (`{"status": 201}`), when present and a
 /// valid HTTP status. The driver's default applies otherwise (200).

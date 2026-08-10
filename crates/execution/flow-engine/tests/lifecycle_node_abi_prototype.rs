@@ -4,11 +4,11 @@
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
-use wamn_flow::{Flow, ResolvedInterfaces};
-use wamn_node_sdk::{
+use wamn_flow::node_contract::{
     Emission, ErrorDetail, HttpCapError, HttpRequest, HttpResponse, Node, NodeCtx, NodeError,
     PgCapError, PgRows, PgValue, RunContext,
 };
+use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
     CallerState, ExecutionState, ExecutionStatus, MAIN_PORT, NodeOutcome, Plan, Step,
 };

@@ -1748,7 +1748,10 @@ fn a_completed_predecessor_is_not_re_run_across_a_retry_park() {
 /// The SDK defines its own port constants (it must not depend on the flow
 /// schema crate); this pins them to the engine's `wamn_flow` values.
 #[test]
-fn sdk_port_constants_mirror_the_flow_schema() {
-    assert_eq!(wamn_node_sdk::MAIN_PORT, wamn_runner::MAIN_PORT);
-    assert_eq!(wamn_node_sdk::ERROR_PORT, wamn_runner::ERROR_PORT);
+fn node_contract_port_constants_mirror_the_flow_schema() {
+    assert_eq!(wamn_flow::node_contract::MAIN_PORT, wamn_runner::MAIN_PORT);
+    assert_eq!(
+        wamn_flow::node_contract::ERROR_PORT,
+        wamn_runner::ERROR_PORT
+    );
 }

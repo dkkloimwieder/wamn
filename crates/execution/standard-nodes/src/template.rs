@@ -7,7 +7,7 @@
 //! array/object as compact JSON.
 
 use serde_json::Value;
-use wamn_node_sdk::{ErrorDetail, NodeError};
+use wamn_flow::node_contract::{ErrorDetail, NodeError};
 
 use crate::expr::eval_to_value;
 

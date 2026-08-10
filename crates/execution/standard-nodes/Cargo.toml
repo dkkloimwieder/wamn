@@ -1,15 +1,14 @@
 [package]
 name = "wamn-standard-nodes"
-description = "wamn standard node library v1 (5.3): transform/conditional (JMESPath), http-request, catalog-derived Postgres entity ops, the flag-gated raw-SQL node (D8, default OFF), respond — plus the dispatch-time capability policy table. Pure: every effect flows through the wamn-node-sdk NodeCtx facade; depends on the SDK, never the runner (the 5.13 purity rule, lint-enforced)."
+description = "Built-in standard nodes over the pure flow-model node contract."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# THE purity boundary: node logic is authored against the SDK contract only.
-# wamn-runner must never appear in this crate's dependency closure — enforced
-# by the `purity_lint` test walking `cargo metadata`.
-wamn-node-sdk = { workspace = true }
+# The canonical pure execution and publication contract for standard nodes.
+wamn-flow = { workspace = true }
+# Temporary E3 compatibility surface for custom publication consumers.
 wamn-node-manifest = { workspace = true }
 # The `postgres` entity-op node compiles ops through the SAME audited,
 # injection-safe surface the generated REST gateway uses (4.1) — catalog

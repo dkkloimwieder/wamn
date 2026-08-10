@@ -6,11 +6,11 @@
 use std::collections::VecDeque;
 
 use serde_json::{Value, json};
-use wamn_standard_nodes::{
-    Capability, HttpCapError, HttpRequest, HttpResponse, NodeCtx, NodeError, PgCapError, PgRows,
-    PgValue, RunContext, STANDARD_NODE_DESCRIPTOR_VERSION, STANDARD_NODE_PLATFORM_REVISION,
-    dispatch, granted_for, required_capabilities, respond,
+use wamn_flow::node_contract::{
+    Capability, EffectPolicy, Emission, HttpCapError, HttpRequest, HttpResponse, NodeCtx,
+    NodeError, PgCapError, PgRows, PgValue, RunContext,
 };
+use wamn_standard_nodes::{dispatch, granted_for, required_capabilities, respond};
 
 // ---------------------------------------------------------------------------
 // Mock capability facade
@@ -79,7 +79,7 @@ fn go(
     mock: &mut Mock,
     config: &Value,
     input: &Value,
-) -> Result<wamn_standard_nodes::Emission, NodeError> {
+) -> Result<Emission, NodeError> {
     dispatch(
         node_type,
         granted_for(mock.raw_sql),
@@ -95,7 +95,7 @@ fn go_with_context(
     config: &Value,
     context: &Value,
     input: &Value,
-) -> Result<wamn_standard_nodes::Emission, NodeError> {
+) -> Result<Emission, NodeError> {
     dispatch(
         node_type,
         granted_for(mock.raw_sql),
@@ -914,24 +914,25 @@ fn removed_node_types_are_unknown_to_dispatch() {
 /// C2-3 (wamn-bd5): the PUBLIC node-resolution surface is descriptor-only — a
 /// caller can learn that a type exists and what it may touch, but can NOT obtain
 /// a runnable `&dyn Node` and skip the capability gate. This test pins that
-/// surface: it references `describe` / `NodeDescriptor` / `is_standard` (so
+/// surface: it references `describe_interface` / `NodeInterface` / `is_standard` (so
 /// reverting the tightening — re-exposing `pub fn node` and dropping the
 /// descriptor surface — fails to COMPILE here) and asserts the descriptor
 /// carries the same policy row `required_capabilities` reports. The ONLY run
 /// path out of the crate stays `dispatch`, which is gate-tested below.
 #[test]
-fn public_resolution_surface_is_descriptor_only() {
-    use wamn_standard_nodes::{NodeDescriptor, describe, is_standard};
+fn retained_resolution_surface_uses_the_flow_model_interface() {
+    use wamn_flow::node_contract::NodeInterface;
+    use wamn_standard_nodes::{describe_interface, is_standard};
 
     // Pin the descriptor-returning signature (compile-time API-surface guard).
-    let resolve: fn(&str) -> Option<&'static NodeDescriptor> = describe;
+    let resolve: fn(&str) -> Option<&'static NodeInterface> = describe_interface;
 
     let d = resolve("http-request").expect("http-request is a standard node");
     assert_eq!(d.node_type, "http-request");
-    assert_eq!(d.dispatch_capabilities, &[Capability::HttpEgress][..]);
+    assert_eq!(d.capabilities, [Capability::HttpEgress]);
     // The descriptor's row and the capability query agree, by construction.
     assert_eq!(
-        Some(d.dispatch_capabilities),
+        Some(d.capabilities.as_slice()),
         required_capabilities("http-request")
     );
 
@@ -958,131 +959,82 @@ fn public_resolution_surface_is_descriptor_only() {
         !is_standard("custom"),
         "a custom node is not standard-library"
     );
-    assert!(describe("delay").is_none(), "delay is runner-intrinsic");
+    assert!(
+        describe_interface("delay").is_none(),
+        "delay is runner-intrinsic"
+    );
     for removed in ["cron", "time-shift"] {
         assert!(!is_standard(removed), "removed node {removed:?} survived");
         assert!(
-            describe(removed).is_none(),
+            describe_interface(removed).is_none(),
             "removed node {removed:?} retained a descriptor"
         );
     }
 }
 
 #[test]
-fn every_standard_node_has_one_complete_versioned_resolution_descriptor() {
-    use wamn_node_manifest::{
-        CapabilityClass, ExecutableConnectionRecoveryMode, RecoveryClass, ResolvedPurity,
-    };
-    use wamn_standard_nodes::{describe, resolve_descriptor};
+fn every_standard_node_has_one_reduced_interface() {
+    use wamn_flow::node_contract::ConnectionRequirement;
+    use wamn_standard_nodes::describe_interface;
 
     for node_type in wamn_standard_nodes::NODE_TYPES {
-        let descriptor = describe(node_type).expect("every shipped node has a descriptor");
-        assert_eq!(
-            descriptor.descriptor_version,
-            STANDARD_NODE_DESCRIPTOR_VERSION
-        );
-        assert_eq!(descriptor.node_type, node_type);
-        assert_eq!(descriptor.interface_contract, "wamn:node/node@0.1.0");
-        assert_eq!(
-            descriptor.platform_revision,
-            STANDARD_NODE_PLATFORM_REVISION
-        );
-        assert!(!descriptor.output_ports.is_empty());
+        let interface = describe_interface(node_type).expect("every shipped node has an interface");
+        assert_eq!(interface.node_type, node_type);
+        assert!(!interface.output_ports.is_empty());
         assert!(
-            descriptor
+            interface
                 .output_ports
                 .windows(2)
                 .all(|pair| pair[0] < pair[1]),
             "ports are canonical for {node_type}"
         );
-        let contract = resolve_descriptor(descriptor).expect("descriptor converts losslessly");
-        assert_eq!(contract.interface.node_type, descriptor.node_type);
-        assert_eq!(contract.interface.output_ports, descriptor.output_ports);
         assert_eq!(
-            contract.interface.capability_classes,
-            descriptor.capability_classes
-        );
-        assert_eq!(
-            contract.interface.connection_requirements,
-            descriptor.connection_requirements
-        );
-        assert_eq!(contract.executable_recovery, descriptor.executable_recovery);
-        assert_eq!(
-            contract.connection_recovery_support,
-            descriptor.connection_recovery_support
-        );
-        assert_eq!(
-            contract.portable_connections,
-            descriptor.portable_connections
+            interface.effect_policy,
+            if interface.capabilities.is_empty() {
+                EffectPolicy::Pure
+            } else {
+                EffectPolicy::Effectful
+            }
         );
 
-        if descriptor.executable_recovery.purity == ResolvedPurity::Pure {
-            assert_eq!(descriptor.capability_classes, [CapabilityClass::Pure]);
-            assert_eq!(
-                descriptor.executable_recovery.supported_classes,
-                [RecoveryClass::Replay]
-            );
-        } else {
-            assert_eq!(
-                descriptor.executable_recovery.conservative_class,
-                RecoveryClass::NeverReplay
-            );
+        let serialized = serde_json::to_value(interface).expect("interface serializes");
+        for removed in [
+            "recovery",
+            "portable-connections",
+            "executable-recovery",
+            "connection-recovery-support",
+            "platform-revision",
+            "interface-contract",
+        ] {
             assert!(
-                !descriptor
-                    .executable_recovery
-                    .supported_classes
-                    .contains(&RecoveryClass::Replay)
+                serialized.get(removed).is_none(),
+                "removed field {removed} survived"
             );
         }
     }
 
-    let http = describe("http-request").unwrap();
-    assert_eq!(http.connection_requirements.len(), 1);
-    assert_eq!(http.portable_connections.len(), 2);
-    assert!(matches!(
-        http.connection_recovery_support[0]
-            .supported_modes
-            .as_slice(),
-        [
-            ExecutableConnectionRecoveryMode::NeverReplay,
-            ExecutableConnectionRecoveryMode::IdempotentWithKey { .. }
-        ]
-    ));
+    let http = describe_interface("http-request").unwrap();
+    assert_eq!(http.effect_policy, EffectPolicy::Effectful);
+    assert_eq!(
+        http.connection_requirements,
+        [ConnectionRequirement {
+            requirement_type: "http".to_string(),
+            contract: "wamn:connection/http@0.1.0".to_string(),
+        }]
+    );
 
     for node_type in ["postgres", "postgres-query"] {
-        let postgres = describe(node_type).unwrap();
+        let postgres = describe_interface(node_type).unwrap();
         assert_eq!(
             postgres.connection_requirements,
-            [wamn_node_manifest::ConnectionRequirement {
+            [ConnectionRequirement {
                 requirement_type: "postgres".to_string(),
                 contract: "wamn:connection/postgres@0.1.0".to_string(),
             }],
             "{node_type} retains its exact portable Postgres interface requirement"
         );
-        assert!(postgres.connection_recovery_support.is_empty());
-        assert!(postgres.portable_connections.is_empty());
-        assert_eq!(
-            postgres.executable_recovery.conservative_class,
-            RecoveryClass::NeverReplay
-        );
-        assert_eq!(
-            postgres.executable_recovery.supported_classes,
-            [RecoveryClass::NeverReplay]
-        );
+        assert_eq!(postgres.effect_policy, EffectPolicy::Effectful);
     }
-}
-
-#[test]
-fn descriptor_version_and_dispatch_divergence_fail_before_publication() {
-    use wamn_standard_nodes::{describe, resolve_descriptor};
-
-    let mut unknown_version = describe("transform").unwrap().clone();
-    unknown_version.descriptor_version = "99".to_string();
-    assert!(resolve_descriptor(&unknown_version).is_err());
-
-    let mut divergent_capabilities = describe("http-request").unwrap().clone();
-    divergent_capabilities.dispatch_capabilities = &[];
-    assert!(resolve_descriptor(&divergent_capabilities).is_err());
 }
 
 /// The dispatch-time capability policy table, pinned row by row.

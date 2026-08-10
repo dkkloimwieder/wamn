@@ -16,7 +16,7 @@
 use jmespath::functions::{CustomFunction, Signature};
 use jmespath::{Context, Rcvar, Runtime, Variable};
 use serde_json::Value;
-use wamn_node_sdk::{ErrorDetail, NodeError};
+use wamn_flow::node_contract::{ErrorDetail, NodeError};
 
 fn runtime(context: &Value) -> Runtime {
     let mut runtime = Runtime::new();

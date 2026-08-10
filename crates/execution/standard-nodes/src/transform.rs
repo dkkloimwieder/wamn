@@ -6,7 +6,7 @@
 //! capabilities: a transform is physically incapable of I/O.
 
 use serde_json::Value;
-use wamn_node_sdk::{Emission, Node, NodeCtx, NodeError, RunContext};
+use wamn_flow::node_contract::{Emission, Node, NodeCtx, NodeError, RunContext};
 
 use crate::expr::{config_str, eval_to_value};
 
