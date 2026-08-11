@@ -4,7 +4,7 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
 //! throwaway Postgres (recipe: docs/archive/build-and-test.md [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. Eleven legs, sequential under one test entry
+//! skipped cleanly when unset. Twelve legs, sequential under one test entry
 //! (they share the `catalog` schema and the `wamn_app` role):
 //!
 //! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
@@ -12,9 +12,11 @@
 //!   columns, CHECKs, helper functions, and lineage trigger without losing its
 //!   compatible history. The materializer catalog-head lock and immutable
 //!   lineage are exercised, then a second reconcile is a no-op.
-//! - **legacy effect attempts** (wamn-4u7p.42.2): the prior mutable attempt
-//!   projection is transactionally copied into immutable attempt, dispatch,
-//!   and outcome facts before the composite current-attempt FK activates.
+//! - **legacy effect-attempt retirement** (wamn-0h0g.4.3): safe immutable
+//!   attempt/dispatch/outcome history and terminal node projections remain
+//!   byte-identical while recovery/successor constraints become inert. Duplicate
+//!   successor history and active mutable-only projections refuse before any
+//!   retirement DDL, and a drifted occurrence key is atomically restored.
 //! - **forced-RLS owner refusal**: a plain table owner cannot observe hidden
 //!   tenant rows, so dry-run and apply both refuse before the pointer or ledger
 //!   schema can be activated.
@@ -193,7 +195,8 @@ async fn run_plane_reconcile_live() {
     };
     let su = connect(&url).await;
     shared_runner_legacy_leg(&su).await;
-    legacy_effect_attempt_backfill_leg(&su).await;
+    attempt_retirement_leg(&su).await;
+    unsafe_attempt_retirement_refusal_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
     v1_era_drifted_leg(&su, &url).await;
     queue_missing_leg(&su).await;
@@ -206,9 +209,8 @@ async fn run_plane_reconcile_live() {
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
-/// role reconcile would make the hidden legacy set look empty and permit the
-/// nullable pointer/FK cutover without immutable facts, so refuse before even
-/// a dry-run observation can claim completeness.
+/// role reconciliation would hide tenant history, so refuse before even a
+/// dry-run observation can claim completeness.
 async fn forced_rls_owner_refusal_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -275,7 +277,7 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     );
     assert!(
         !column_exists(su, "node_runs", "current_effect_attempt_id").await,
-        "refusal occurs before pointer activation"
+        "refusal performs no schema mutation"
     );
     assert!(
         !table_exists(su, SCHEMA, "effect_attempts").await,
@@ -283,10 +285,124 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
     );
 }
 
-/// wamn-4u7p.42.2: the additive rollout boundary. A database at the prior
-/// canonical node-attempt shape receives the new ledgers and pointer, catalog
-/// provenance columns, and a transactional backfill before the FK activates.
-async fn legacy_effect_attempt_backfill_leg(su: &Client) {
+/// Add the exact retired recovery/successor shape to an otherwise current
+/// schema so upgrade tests exercise in-place retirement.
+async fn add_retired_attempt_shape(su: &Client) {
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.node_runs \
+             ADD COLUMN current_effect_attempt_id uuid, \
+             ADD COLUMN attempt int NOT NULL DEFAULT 0, \
+             ADD COLUMN selected_recovery_class text, \
+             ADD COLUMN recovery_class text, \
+             ADD COLUMN generation_fact_kind text, \
+             ADD COLUMN connection_generation text, \
+             ADD COLUMN credential_generation text, \
+             ADD COLUMN attempt_started_at timestamptz, \
+             ADD COLUMN attempt_dispatched_at timestamptz, \
+             ADD COLUMN attempt_deadline_at timestamptz, \
+             ADD COLUMN attempt_input_ref text, \
+             ADD COLUMN attempt_key text; \
+         ALTER TABLE {SCHEMA}.node_runs \
+             ADD CONSTRAINT node_runs_selected_recovery_class_check CHECK (true), \
+             ADD CONSTRAINT node_runs_recovery_class_check CHECK (true), \
+             ADD CONSTRAINT node_runs_generation_fact_kind_check CHECK (true), \
+             ADD CONSTRAINT node_runs_check CHECK (true), \
+             ADD CONSTRAINT node_runs_check1 CHECK (true), \
+             ADD CONSTRAINT node_runs_check2 CHECK (true), \
+             ADD CONSTRAINT node_runs_check3 CHECK (true); \
+         ALTER TABLE {SCHEMA}.effect_attempts \
+             DROP CONSTRAINT effect_attempts_occurrence_key, \
+             ADD COLUMN attempt_index int NOT NULL DEFAULT 0, \
+             ADD COLUMN predecessor_attempt_id uuid, \
+             ADD COLUMN legacy_imported boolean NOT NULL DEFAULT false, \
+             ADD COLUMN selected_recovery_class text NOT NULL DEFAULT 'never-replay', \
+             ADD COLUMN recovery_class text NOT NULL DEFAULT 'never-replay', \
+             ADD CONSTRAINT effect_attempts_attempt_index_check CHECK (attempt_index >= 0), \
+             ADD CONSTRAINT effect_attempts_lineage_check CHECK (true), \
+             ADD CONSTRAINT effect_attempts_recovery_class_check CHECK (true), \
+             ADD CONSTRAINT effect_attempts_key_check CHECK (true), \
+             ADD CONSTRAINT effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key \
+               UNIQUE (tenant_id,attempt_id,run_id,node_id,occurrence), \
+             ADD CONSTRAINT effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key \
+               UNIQUE (tenant_id,run_id,node_id,occurrence,attempt_index); \
+         ALTER TABLE {SCHEMA}.node_runs \
+             ADD CONSTRAINT node_runs_current_effect_attempt_fk \
+             FOREIGN KEY (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence) \
+             REFERENCES {SCHEMA}.effect_attempts \
+               (tenant_id,attempt_id,run_id,node_id,occurrence); \
+         ALTER TABLE {SCHEMA}.effect_attempts \
+             ADD CONSTRAINT effect_attempts_predecessor_fk \
+             FOREIGN KEY (tenant_id,predecessor_attempt_id,run_id,node_id,occurrence) \
+             REFERENCES {SCHEMA}.effect_attempts \
+               (tenant_id,attempt_id,run_id,node_id,occurrence); \
+         CREATE INDEX effect_attempts_occurrence ON {SCHEMA}.effect_attempts \
+             (tenant_id,run_id,node_id,occurrence,attempt_index);"
+    ))
+    .await
+    .expect("add retired attempt shape");
+}
+
+async fn retired_history_snapshot(su: &Client) -> String {
+    su.query_one(
+        &format!(
+            "SELECT jsonb_build_object( \
+               'counts', jsonb_build_array( \
+                 (SELECT count(*) FROM {SCHEMA}.runs WHERE run_id='retired-terminal'), \
+                 (SELECT count(*) FROM {SCHEMA}.node_runs WHERE run_id='retired-terminal'), \
+                 (SELECT count(*) FROM {SCHEMA}.effect_attempts WHERE run_id='retired-terminal'), \
+                 (SELECT count(*) FROM {SCHEMA}.effect_attempt_dispatches \
+                   WHERE attempt_id='00000000-0000-0000-0000-000000000043'), \
+                 (SELECT count(*) FROM {SCHEMA}.effect_attempt_outcomes \
+                   WHERE attempt_id='00000000-0000-0000-0000-000000000043')), \
+               'run', (SELECT to_jsonb(r) FROM {SCHEMA}.runs r \
+                        WHERE run_id='retired-terminal'), \
+               'node', (SELECT to_jsonb(n) FROM {SCHEMA}.node_runs n \
+                         WHERE run_id='retired-terminal'), \
+               'attempt', (SELECT to_jsonb(a) FROM {SCHEMA}.effect_attempts a \
+                            WHERE attempt_id='00000000-0000-0000-0000-000000000043'), \
+               'dispatch', (SELECT to_jsonb(d) FROM {SCHEMA}.effect_attempt_dispatches d \
+                             WHERE attempt_id='00000000-0000-0000-0000-000000000043'), \
+               'outcome', (SELECT to_jsonb(o) FROM {SCHEMA}.effect_attempt_outcomes o \
+                            WHERE attempt_id='00000000-0000-0000-0000-000000000043'))::text"
+        ),
+        &[],
+    )
+    .await
+    .expect("read full retired history snapshot")
+    .get(0)
+}
+
+async fn retired_shape_schema_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'constraints', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(c.relname,p.conname, \
+                                                pg_get_constraintdef(p.oid,true)) \
+                              ORDER BY c.relname,p.conname) \
+               FROM pg_constraint p JOIN pg_class c ON c.oid=p.conrelid \
+              WHERE p.connamespace=to_regnamespace($1::text) \
+                AND c.relname IN ('node_runs','effect_attempts')), '[]'::jsonb), \
+           'indexes', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(indexname,indexdef) ORDER BY indexname) \
+               FROM pg_indexes WHERE schemaname=$1 \
+                AND tablename IN ('node_runs','effect_attempts')), '[]'::jsonb), \
+           'columns', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attnotnull, \
+                                                pg_get_expr(d.adbin,d.adrelid)) \
+                              ORDER BY c.relname,a.attnum) \
+               FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid \
+               LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum \
+              WHERE c.relnamespace=to_regnamespace($1::text) \
+                AND c.relname IN ('node_runs','effect_attempts') \
+                AND a.attnum > 0 AND NOT a.attisdropped), '[]'::jsonb))::text",
+        &[&SCHEMA],
+    )
+    .await
+    .expect("read retired schema snapshot")
+    .get(0)
+}
+
+async fn attempt_retirement_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
     for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
@@ -297,293 +413,308 @@ async fn legacy_effect_attempt_backfill_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply current catalog record");
-
-    su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.node_runs \
-             DROP CONSTRAINT node_runs_current_effect_attempt_fk; \
-         ALTER TABLE {SCHEMA}.node_runs DROP COLUMN current_effect_attempt_id; \
-         DROP TABLE {SCHEMA}.effect_dispositions, \
-                    {SCHEMA}.effect_disposition_requests, \
-                    {SCHEMA}.effect_attempt_outcomes, \
-                    {SCHEMA}.effect_attempt_dispatches, \
-                    {SCHEMA}.effect_attempts; \
-         ALTER TABLE catalog.flow_artifacts DROP COLUMN verified_author_principal; \
-         ALTER TABLE catalog.release_manifests \
-             DROP CONSTRAINT release_manifests_verified_publisher_principal_check; \
-         ALTER TABLE catalog.release_manifests \
-             ADD CONSTRAINT release_manifests_verified_publisher_principal_check CHECK (true); \
-         INSERT INTO catalog.catalogs \
-             (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('t1','legacy-cat',1,'dev','1','applied'); \
-         INSERT INTO catalog.flow_artifacts \
-             (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-              artifact_hash) \
-             VALUES ('t1','legacy-flow',1,'1', \
-                     '{{\"nodes\":[{{\"id\":\"http\",\"type\":\"http-request\", \
-                                      \"connection\":\"erp\"}}, \
-                                    {{\"id\":\"pure\",\"type\":\"map\"}}]}}', \
-                     'graph','artifact-legacy'); \
-         INSERT INTO {SCHEMA}.runs \
-             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-              environment,status,state_json,invocation_context) VALUES \
-             ('t1','legacy-live','legacy-flow',1,'legacy-cat',1,'dev','running','{{}}', \
-              '{{\"principal\":{{\"artifact-digest\":\"artifact-legacy\"}}}}'), \
-             ('t1','legacy-done','legacy-flow',1,'legacy-cat',1,'dev','completed','{{}}', \
-              '{{\"principal\":{{\"artifact-digest\":\"artifact-legacy\"}}}}'), \
-             ('t1','legacy-incomplete','legacy-flow',1,'legacy-cat',1,'dev','running','{{}}', \
-              '{{\"principal\":{{\"artifact-digest\":\"artifact-legacy\"}}}}'), \
-             ('t1','legacy-unresolved','legacy-flow',1,'legacy-cat',1,'dev','running','{{}}', \
-              '{{\"principal\":{{\"artifact-digest\":\"artifact-legacy\"}}}}'); \
-         SET session_replication_role=replica; \
-         INSERT INTO {SCHEMA}.node_runs \
-             (tenant_id,run_id,node_id,occurrence,seq,attempt,status, \
-              selected_recovery_class,recovery_class,generation_fact_kind, \
-              connection_generation,credential_generation,attempt_started_at, \
-              attempt_dispatched_at,attempt_deadline_at,attempt_input_ref,attempt_key, \
-              output_port,output_json,ended_at) VALUES \
-             ('t1','legacy-live','http',0,0,3,'started', \
-              'never-replay','never-replay','attested','erp-instance:7','credential:7', \
-              '2026-08-07 10:00Z','2026-08-07 10:00:01Z','2026-08-07 10:01Z', \
-              'sha256:live',NULL,NULL,NULL,NULL), \
-             ('t1','legacy-done','pure',0,0,0,'success', \
-              'replay','replay','not-required',NULL,NULL, \
-              '2026-08-07 09:00Z','2026-08-07 09:00:01Z','2026-08-07 09:01Z', \
-              'sha256:done',NULL,'main','{{\"ok\":true}}','2026-08-07 09:00:02Z'), \
-             ('t1','legacy-incomplete','pure',0,0,0,'started', \
-              NULL,'replay',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL), \
-             ('t1','legacy-unresolved','missing-http',0,0,0,'started', \
-              'never-replay','never-replay','attested','erp-instance:8','credential:8', \
-              '2026-08-07 08:30Z','2026-08-07 08:30:01Z','2026-08-07 08:31Z', \
-              'sha256:unresolved',NULL,NULL,NULL,NULL), \
-             ('t1','legacy-orphan','pure',0,0,0,'started', \
-              'replay','replay','not-required',NULL,NULL, \
-              '2026-08-07 08:00Z','2026-08-07 08:00:01Z','2026-08-07 08:01Z', \
-              'sha256:orphan',NULL,NULL,NULL,NULL); \
-         SET session_replication_role=origin;"
-    ))
-    .await
-    .expect("seed pre-ledger canonical attempts");
-
-    let plan = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("plan legacy effect-attempt migration");
-    for kind in [
-        RunPlaneActionKind::CreateTable,
-        RunPlaneActionKind::AddColumn,
-        RunPlaneActionKind::EnsureCatalogProvenance,
-        RunPlaneActionKind::BackfillEffectAttempts,
-        RunPlaneActionKind::RepairForeignKey,
-    ] {
-        assert!(
-            plan.actions.iter().any(|action| action.kind == kind),
-            "legacy attempt migration plans {kind:?}: {:#?}",
-            plan.actions
-        );
-    }
-    let order = |kind| {
-        plan.actions
-            .iter()
-            .position(|action| action.kind == kind)
-            .expect("planned action")
-    };
-    assert!(
-        order(RunPlaneActionKind::EnsureCatalogProvenance)
-            < order(RunPlaneActionKind::BackfillEffectAttempts)
-            && order(RunPlaneActionKind::BackfillEffectAttempts)
-                < order(RunPlaneActionKind::RepairForeignKey)
-    );
-
-    let error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("NULL-incomplete legacy authority must abort");
-    assert!(
-        format!("{error:#}").contains("legacy-effect-attempt-incomplete"),
-        "explicit incomplete-authority refusal: {error:#}"
-    );
-    assert!(
-        column_exists(su, "node_runs", "current_effect_attempt_id").await,
-        "partial apply may add the nullable pointer before refusal"
-    );
-    assert!(
-        table_exists(su, SCHEMA, "effect_attempts").await,
-        "partial apply may create the empty ledger before refusal"
-    );
-    assert_eq!(
-        su.query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.effect_attempts"),
-            &[]
-        )
-        .await
-        .expect("failed backfill leaves no partial facts")
-        .get::<_, i64>(0),
-        0
-    );
-    let pointer_fk_after_refusal: i64 = su
-        .query_one(
-            "SELECT count(*) FROM pg_constraint con \
-             JOIN pg_class rel ON rel.oid=con.conrelid \
-             JOIN pg_namespace ns ON ns.oid=rel.relnamespace \
-             WHERE ns.nspname=$1 AND rel.relname='node_runs' \
-               AND con.conname='node_runs_current_effect_attempt_fk'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("pointer FK is still inactive")
-        .get(0);
-    assert_eq!(pointer_fk_after_refusal, 0);
-
-    su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.node_runs \
-           WHERE tenant_id='t1' AND run_id='legacy-incomplete'; \
-         DELETE FROM {SCHEMA}.runs \
-           WHERE tenant_id='t1' AND run_id='legacy-incomplete';"
-    ))
-    .await
-    .expect("remove the explicitly refused malformed fixture row");
-    let unresolved_error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("an attested attempt without a pinned connection identity must abort");
-    assert!(
-        format!("{unresolved_error:#}").contains("legacy-effect-attempt-connection-unresolved"),
-        "explicit unresolved-connection refusal: {unresolved_error:#}"
-    );
-    assert_eq!(
-        su.query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.effect_attempts"),
-            &[]
-        )
-        .await
-        .expect("unresolved-connection refusal precedes immutable append")
-        .get::<_, i64>(0),
-        0
-    );
-    su.batch_execute(&format!(
-        "DELETE FROM {SCHEMA}.node_runs \
-           WHERE tenant_id='t1' AND run_id='legacy-unresolved'; \
-         DELETE FROM {SCHEMA}.runs \
-           WHERE tenant_id='t1' AND run_id='legacy-unresolved';"
-    ))
-    .await
-    .expect("remove the explicitly refused unresolved-connection fixture row");
-    let orphan_error = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect_err("a complete projection lost by the legacy join must abort");
-    assert!(
-        format!("{orphan_error:#}").contains("legacy-effect-attempt-backfill-incomplete"),
-        "explicit post-backfill zero-set refusal: {orphan_error:#}"
-    );
-    assert_eq!(
-        su.query_one(
-            &format!("SELECT count(*) FROM {SCHEMA}.effect_attempts"),
-            &[]
-        )
-        .await
-        .expect("post-backfill refusal rolls immutable facts back")
-        .get::<_, i64>(0),
-        0
-    );
-    su.execute(
-        &format!(
-            "DELETE FROM {SCHEMA}.node_runs \
-             WHERE tenant_id='t1' AND run_id='legacy-orphan'"
-        ),
-        &[],
-    )
-    .await
-    .expect("remove the explicitly refused orphan fixture row");
-
-    let retry = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("partial migration reapply converges");
-    let retry_backfill = retry
-        .actions
-        .iter()
-        .position(|action| action.kind == RunPlaneActionKind::BackfillEffectAttempts)
-        .expect("reapply retains the legacy backfill");
-    let retry_fk = retry
-        .actions
-        .iter()
-        .position(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
-        .expect("reapply activates the pointer FK");
-    assert!(retry_backfill < retry_fk);
-
-    let facts = su
+    let lineage_before: String = su
         .query_one(
             &format!(
-                "SELECT \
-                   (SELECT count(*) FROM {SCHEMA}.effect_attempts), \
-                   (SELECT count(*) FROM {SCHEMA}.effect_attempt_dispatches), \
-                   (SELECT count(*) FROM {SCHEMA}.effect_attempt_outcomes), \
-                   (SELECT count(*) FROM {SCHEMA}.node_runs \
-                     WHERE current_effect_attempt_id IS NOT NULL), \
-                   (SELECT connection_name FROM {SCHEMA}.effect_attempts \
-                     WHERE run_id='legacy-live'), \
-                   (SELECT attempt_index FROM {SCHEMA}.effect_attempts \
-                     WHERE run_id='legacy-live'), \
-                   (SELECT legacy_imported FROM {SCHEMA}.effect_attempts \
-                     WHERE run_id='legacy-live')"
+                "SELECT pg_get_triggerdef(oid, true) FROM pg_trigger \
+                  WHERE tgrelid='{SCHEMA}.runs'::regclass \
+                    AND tgname='runs_event_lineage_immutable'"
             ),
             &[],
         )
         .await
-        .expect("read immutable backfill facts");
-    assert_eq!(facts.get::<_, i64>(0), 2);
-    assert_eq!(facts.get::<_, i64>(1), 2);
-    assert_eq!(facts.get::<_, i64>(2), 1);
-    assert_eq!(facts.get::<_, i64>(3), 2);
-    assert_eq!(facts.get::<_, Option<String>>(4).as_deref(), Some("erp"));
-    assert_eq!(facts.get::<_, i32>(5), 3);
-    assert!(
-        facts.get::<_, bool>(6),
-        "legacy lineage exception is explicit"
-    );
-    let catalog_columns: i64 = su
-        .query_one(
-            "SELECT count(*) FROM information_schema.columns \
-             WHERE table_schema='catalog' AND \
-               ((table_name='flow_artifacts' AND column_name='verified_author_principal') OR \
-                (table_name='release_manifests' AND column_name='verified_publisher_principal'))",
-            &[],
-        )
-        .await
-        .expect("read catalog provenance columns")
+        .expect("read CDC lineage trigger")
         .get(0);
-    assert_eq!(catalog_columns, 2);
-    let catalog_checks: i64 = su
-        .query_one(
-            "SELECT count(*) FROM pg_constraint con \
-             JOIN pg_class rel ON rel.oid=con.conrelid \
-             JOIN pg_namespace ns ON ns.oid=rel.relnamespace \
-             WHERE ns.nspname='catalog' AND \
-               ((rel.relname='flow_artifacts' \
-                 AND con.conname='flow_artifacts_verified_author_principal_check' \
-                 AND pg_get_constraintdef(con.oid,true) = \
-                   'CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''''::text)') \
-                OR \
-                (rel.relname='release_manifests' \
-                 AND con.conname='release_manifests_verified_publisher_principal_check' \
-                 AND pg_get_constraintdef(con.oid,true) = \
-                   'CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''''::text)'))",
-            &[],
-        )
-        .await
-        .expect("read catalog provenance CHECKs")
-        .get(0);
-    assert_eq!(catalog_checks, 2);
 
+    add_retired_attempt_shape(su).await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+             (tenant_id,run_id,registration_id,trigger_source,event_source_run_id, \
+              event_root_run_id,event_depth,flow_id,flow_version,catalog_id, \
+              catalog_version,environment,status,input_json,invocation_context, \
+              idempotency_key,root_run_id,terminal_reason,created_at,updated_at) \
+           VALUES ('t1','retired-terminal','reg-43','event','retired-terminal', \
+                   'retired-terminal',0,'f',1,'catalog-43',9,'production','completed', \
+                   '{{\"bytes\":\"00ff43\"}}','{{\"source\":{{\"kind\":\"cdc\"}}}}', \
+                   'idem-43','retired-terminal','completed', \
+                   '2025-01-01 00:00:00 UTC','2025-01-01 00:30:00 UTC'); \
+         INSERT INTO {SCHEMA}.node_runs \
+             (tenant_id,run_id,node_id,occurrence,seq,status,output_port,output_json, \
+              input_json,input_ref,output_ref,preview_head,payload_size,payload_hash, \
+              capture_mode,redacted,started_at,ended_at,attempt, \
+              selected_recovery_class,recovery_class,generation_fact_kind, \
+              attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+           VALUES ('t1','retired-terminal','effect',0,1,'success','main', \
+                   '{{\"result\":\"preserved\"}}','{{\"input\":\"preserved\"}}', \
+                   'sha256:node-input','sha256:node-output','preview-43',43, \
+                   'sha256:payload-43','full',false, \
+                   '2025-01-01 00:00:00 UTC','2025-01-01 00:20:00 UTC',7, \
+                   'never-replay','never-replay','not-required', \
+                   '2025-01-01 00:00:00 UTC','2025-01-01 01:00:00 UTC','sha256:legacy'); \
+         INSERT INTO {SCHEMA}.effect_attempts \
+             (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+              generation_fact_kind,connection_name,connection_generation, \
+              credential_generation,verified_author_principal, \
+              verified_publisher_principal,attempt_started_at,attempt_deadline_at, \
+              attempt_input_ref,attempt_key,created_at,attempt_index,legacy_imported, \
+              selected_recovery_class,recovery_class) \
+           VALUES ('t1','00000000-0000-0000-0000-000000000043', \
+                   'retired-terminal','effect',0,1,'attested','connection-43', \
+                   'connection-generation-43','credential-generation-43', \
+                   'author-43','publisher-43','2025-01-01 00:00:00 UTC', \
+                   '2025-01-01 01:00:00 UTC','sha256:legacy','legacy-key', \
+                   '2025-01-01 00:00:01 UTC',7,true,'never-replay','never-replay'); \
+         INSERT INTO {SCHEMA}.effect_attempt_dispatches \
+             (tenant_id,attempt_id,attempt_started_at,dispatched_at) \
+           VALUES ('t1','00000000-0000-0000-0000-000000000043', \
+                   '2025-01-01 00:00:00 UTC','2025-01-01 00:10:00 UTC'); \
+         INSERT INTO {SCHEMA}.effect_attempt_outcomes \
+             (tenant_id,attempt_id,dispatched_at,outcome_status,recorded_at) \
+           VALUES ('t1','00000000-0000-0000-0000-000000000043', \
+                   '2025-01-01 00:10:00 UTC','success','2025-01-01 00:20:00 UTC');"
+    ))
+    .await
+    .expect("seed safe upgraded history");
+    let history_before = retired_history_snapshot(su).await;
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("retire safe attempt shape");
+    assert!(
+        plan.actions
+            .iter()
+            .any(|action| { action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage })
+    );
+    assert_eq!(
+        retired_history_snapshot(su).await,
+        history_before,
+        "retirement preserves full run/node/attempt/dispatch/outcome bytes and counts"
+    );
+    for constraint in [
+        "node_runs_current_effect_attempt_fk",
+        "node_runs_selected_recovery_class_check",
+        "node_runs_recovery_class_check",
+        "node_runs_generation_fact_kind_check",
+        "node_runs_check",
+        "node_runs_check1",
+        "node_runs_check2",
+        "node_runs_check3",
+        "effect_attempts_predecessor_fk",
+        "effect_attempts_attempt_index_check",
+        "effect_attempts_lineage_check",
+        "effect_attempts_recovery_class_check",
+        "effect_attempts_key_check",
+    ] {
+        let present: bool = su
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM pg_constraint \
+                  WHERE connamespace=to_regnamespace($1::text) AND conname=$2)",
+                &[&SCHEMA, &constraint],
+            )
+            .await
+            .expect("read retired constraint")
+            .get(0);
+        assert!(!present, "retired constraint remains: {constraint}");
+    }
+    assert!(indexdef(su, "effect_attempts_occurrence").await.is_none());
+    assert!(
+        indexdef(su, "effect_attempts_occurrence_key")
+            .await
+            .is_some()
+    );
     let second = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("re-run immutable attempt migration");
+        .expect("retirement reapply");
     assert!(
-        second.is_noop(),
-        "backfill is idempotent: {:#?}",
-        second.actions
+        !second
+            .actions
+            .iter()
+            .any(|action| { action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage })
     );
+
+    // A same-name non-unique index is not the one-attempt boundary. Reconcile
+    // replaces it atomically and the repaired identity rejects a successor.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.effect_attempts \
+           DROP CONSTRAINT effect_attempts_occurrence_key; \
+         CREATE INDEX effect_attempts_occurrence_key ON {SCHEMA}.effect_attempts \
+           (tenant_id,run_id,node_id,occurrence);"
+    ))
+    .await
+    .expect("install drifted occurrence index");
+    let repaired = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("repair drifted occurrence identity");
+    assert!(
+        repaired
+            .actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+    );
+    let repaired_index = indexdef(su, "effect_attempts_occurrence_key")
+        .await
+        .expect("repaired occurrence identity");
+    assert!(
+        repaired_index.starts_with("CREATE UNIQUE INDEX"),
+        "occurrence identity is unique: {repaired_index}"
+    );
+    let duplicate = su
+        .batch_execute(&format!(
+            "INSERT INTO {SCHEMA}.effect_attempts \
+               (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+                generation_fact_kind,attempt_started_at,attempt_deadline_at, \
+                attempt_input_ref) VALUES \
+               ('t1','00000000-0000-0000-0000-000000000044', \
+                'retired-terminal','effect',0,2,'not-required', \
+                '2025-01-01 00:30:00 UTC','2025-01-01 01:30:00 UTC', \
+                'sha256:second')"
+        ))
+        .await
+        .expect_err("one occurrence refuses a second attempt");
+    assert_db_code(duplicate, "23505", "single-shot occurrence identity");
+
+    let lineage_after: String = su
+        .query_one(
+            &format!(
+                "SELECT pg_get_triggerdef(oid, true) FROM pg_trigger \
+                  WHERE tgrelid='{SCHEMA}.runs'::regclass \
+                    AND tgname='runs_event_lineage_immutable'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read unchanged CDC lineage trigger")
+        .get(0);
+    assert_eq!(lineage_after, lineage_before);
+
+    // A failure after the ALTERs proves the transaction-free action batch is
+    // still one implicit PostgreSQL transaction and leaves the client usable.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.effect_attempts DROP CONSTRAINT effect_attempts_occurrence_key; \
+         ALTER TABLE {SCHEMA}.effect_attempts \
+             ALTER COLUMN attempt_index SET NOT NULL, \
+             ALTER COLUMN attempt_index SET DEFAULT 0;"
+    ))
+    .await
+    .expect("restore retirement target");
+    let action = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("plan rollback probe")
+        .actions
+        .into_iter()
+        .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+        .expect("retirement action");
+    let error = su
+        .batch_execute(&format!("{} SELECT 1 / 0;", action.sql))
+        .await
+        .expect_err("late retirement failure");
+    assert_db_code(error, "22012", "late retirement failure");
+    let nullable: String = su
+        .query_one(
+            "SELECT is_nullable FROM information_schema.columns \
+              WHERE table_schema=$1 AND table_name='effect_attempts' \
+                AND column_name='attempt_index'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read rolled-back nullability")
+        .get(0);
+    assert_eq!(nullable, "NO");
+    su.query_one("SELECT 1", &[])
+        .await
+        .expect("client remains usable after implicit rollback");
 }
 
-/// The exact durable shape found under the deployed shared runner: legacy
-/// runs/node_runs/run_queue tables with compatible history rows, but no
-/// admission table, causation columns, helper functions, or lineage trigger.
+async fn unsafe_attempt_retirement_refusal_leg(su: &Client) {
+    let schema = schema();
+    for case in ["successors", "active-without-intent"] {
+        reset(su).await;
+        for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
+            su.batch_execute(&rewrite_schema(ddl, &schema))
+                .await
+                .expect("apply current record for refusal");
+        }
+        su.batch_execute(CATALOG_SCHEMA_SQL)
+            .await
+            .expect("apply catalog for refusal");
+        add_retired_attempt_shape(su).await;
+        if case == "successors" {
+            su.batch_execute(&format!(
+                "ALTER TABLE {SCHEMA}.effect_attempts \
+                   DROP CONSTRAINT effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key; \
+                 INSERT INTO {SCHEMA}.effect_attempts \
+                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+                    generation_fact_kind,attempt_started_at,attempt_deadline_at, \
+                    attempt_input_ref,attempt_index) VALUES \
+                   ('t1','00000000-0000-0000-0000-000000000051','r','n',0,1, \
+                    'not-required','2025-01-01 UTC','2025-01-02 UTC','sha256:a',0), \
+                   ('t1','00000000-0000-0000-0000-000000000052','r','n',0,1, \
+                    'not-required','2025-01-01 UTC','2025-01-02 UTC','sha256:b',1);"
+            ))
+            .await
+            .expect("seed successor history");
+        } else {
+            su.batch_execute(&format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status) \
+                   VALUES ('t1','active-orphan','f',1,'running'); \
+                 INSERT INTO {SCHEMA}.node_runs \
+                   (tenant_id,run_id,node_id,occurrence,seq,status) \
+                   VALUES ('t1','active-orphan','effect',0,1,'started');"
+            ))
+            .await
+            .expect("seed active projection without intent");
+        }
+        let schema_before = retired_shape_schema_snapshot(su).await;
+        let error = reconcile_run_plane::reconcile(su, &schema, true)
+            .await
+            .expect_err("unsafe attempt history must refuse");
+        let expected = if case == "successors" {
+            "legacy-effect-attempt-successors-present"
+        } else {
+            "legacy-active-attempt-without-immutable-intent"
+        };
+        assert!(
+            format!("{error:#}").contains(expected),
+            "missing {expected} refusal: {error:#}"
+        );
+        let retained_checks: i64 = su
+            .query_one(
+                "SELECT count(*) FROM pg_constraint \
+                  WHERE connamespace=to_regnamespace($1::text) \
+                    AND conname = ANY($2::text[])",
+                &[
+                    &SCHEMA,
+                    &&[
+                        "node_runs_selected_recovery_class_check",
+                        "node_runs_recovery_class_check",
+                        "node_runs_generation_fact_kind_check",
+                        "node_runs_check",
+                        "node_runs_check1",
+                        "node_runs_check2",
+                        "node_runs_check3",
+                        "effect_attempts_attempt_index_check",
+                        "effect_attempts_lineage_check",
+                        "effect_attempts_recovery_class_check",
+                        "effect_attempts_key_check",
+                    ][..],
+                ],
+            )
+            .await
+            .expect("read refusal-preserved schema")
+            .get(0);
+        assert_eq!(
+            retained_checks, 11,
+            "refusal leaves retirement DDL untouched"
+        );
+        assert_eq!(
+            retired_shape_schema_snapshot(su).await,
+            schema_before,
+            "unsafe-history refusal leaves all constraints, indexes, defaults, and nullability unchanged"
+        );
+    }
+}
+
 async fn shared_runner_legacy_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -682,8 +813,8 @@ async fn shared_runner_legacy_leg(su: &Client) {
     assert_eq!(counts.get::<_, i64>(0), 1);
     assert_eq!(counts.get::<_, i64>(1), 2);
     assert!(
-        column_exists(su, "node_runs", "current_effect_attempt_id").await,
-        "current-attempt pointer added before its composite FK"
+        !column_exists(su, "node_runs", "current_effect_attempt_id").await,
+        "fresh target does not add a mutable current-attempt pointer"
     );
     for table in [
         "effect_attempts",
@@ -711,44 +842,19 @@ async fn shared_runner_legacy_leg(su: &Client) {
             .get(0);
         assert!(present, "{trigger} migrated");
     }
-    let pointer_fk: String = su
-        .query_one(
-            "SELECT pg_get_constraintdef(con.oid, true) FROM pg_constraint con \
-             JOIN pg_class c ON c.oid = con.conrelid \
-             JOIN pg_namespace n ON n.oid = c.relnamespace \
-             WHERE n.nspname = $1 AND c.relname = 'node_runs' \
-               AND con.conname = 'node_runs_current_effect_attempt_fk'",
-            &[&SCHEMA],
-        )
-        .await
-        .expect("read composite current-attempt FK")
-        .get(0);
-    for key in ["tenant_id", "run_id", "node_id", "occurrence"] {
-        assert!(
-            pointer_fk.contains(key),
-            "pointer FK covers {key}: {pointer_fk}"
-        );
-    }
-
-    // Attempt audit outlives prunable run history by design: the pointer is
-    // from the cascading projection to the independent ledger, never back.
+    // Attempt audit outlives prunable run history by design.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs(tenant_id,run_id,flow_id,flow_version,status) \
            VALUES ('t1','prunable-run','f',1,'completed'); \
          INSERT INTO {SCHEMA}.effect_attempts \
-           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
-            selected_recovery_class,recovery_class,generation_fact_kind, \
+           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
             attempt_started_at,attempt_deadline_at,attempt_input_ref) \
            VALUES ('t1','00000000-0000-0000-0000-000000000042', \
-                   'prunable-run','n',0,0,0,'never-replay','never-replay', \
-                   'not-required',now(),now()+interval '1 minute','sha256:input'); \
+                   'prunable-run','n',0,0,'not-required', \
+                   now(),now()+interval '1 minute','sha256:input'); \
          INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status, \
-            selected_recovery_class,recovery_class,generation_fact_kind, \
-            attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-           VALUES ('t1','00000000-0000-0000-0000-000000000042', \
-                   'prunable-run','n',0,0,'started','never-replay','never-replay', \
-                   'not-required',now(),now()+interval '1 minute','sha256:input'); \
+           (tenant_id,run_id,node_id,occurrence,seq,status) \
+           VALUES ('t1','prunable-run','n',0,0,'started'); \
          DELETE FROM {SCHEMA}.runs \
            WHERE tenant_id='t1' AND run_id='prunable-run';"
     ))
@@ -769,73 +875,6 @@ async fn shared_runner_legacy_leg(su: &Client) {
         retained, 1,
         "run pruning cannot erase immutable attempt facts"
     );
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.runs \
-               (tenant_id,run_id,flow_id,flow_version,status) \
-             VALUES ('t1','other-run','f',1,'running')"
-        ),
-        &[],
-    )
-    .await
-    .expect("seed cross-run pointer target");
-    let cross_run_pointer = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.node_runs \
-                   (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence,seq,status) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000042', \
-                         'other-run','n',0,0,'started')"
-            ),
-            &[],
-        )
-        .await;
-    let pointer_error =
-        cross_run_pointer.expect_err("current-attempt pointer cannot cross run/node/occurrence");
-    assert!(
-        pointer_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "node_runs_current_effect_attempt_fk"),
-        "typed cross-run current-pointer refusal: {pointer_error}"
-    );
-    su.execute(
-        &format!(
-            "DELETE FROM {SCHEMA}.runs \
-             WHERE tenant_id='t1' AND run_id='other-run'"
-        ),
-        &[],
-    )
-    .await
-    .expect("remove cross-run pointer fixture");
-
-    let cross_occurrence_predecessor = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
-                    predecessor_attempt_id,selected_recovery_class,recovery_class, \
-                    generation_fact_kind,attempt_started_at,attempt_deadline_at, \
-                    attempt_input_ref) \
-                 VALUES ('t1','00000000-0000-0000-0000-000000000043', \
-                         'other-run','other-node',0,0,1, \
-                         '00000000-0000-0000-0000-000000000042', \
-                         'never-replay','never-replay','not-required', \
-                         now(),now()+interval '1 minute','sha256:other')"
-            ),
-            &[],
-        )
-        .await;
-    let predecessor_error = cross_occurrence_predecessor
-        .expect_err("successor lineage cannot cross run/node/occurrence");
-    assert!(
-        predecessor_error
-            .as_db_error()
-            .and_then(|error| error.constraint())
-            .is_some_and(|constraint| constraint == "effect_attempts_predecessor_fk"),
-        "typed cross-occurrence predecessor refusal: {predecessor_error}"
-    );
-
     su.batch_execute(
         "INSERT INTO catalog.catalogs \
            (tenant_id,catalog_id,version,environment,schema_version,state) \
@@ -2067,8 +2106,6 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
          ALTER TABLE {SCHEMA}.effect_dispositions \
              ADD CONSTRAINT effect_dispositions_outcome_check CHECK (true); \
          ALTER TABLE {SCHEMA}.effect_attempts \
-             DROP CONSTRAINT effect_attempts_predecessor_fk; \
-         ALTER TABLE {SCHEMA}.effect_attempts \
              DISABLE TRIGGER effect_attempts_insert_guard; \
          CREATE OR REPLACE FUNCTION {SCHEMA}.guard_effect_disposition_append() \
              RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog \
@@ -2108,10 +2145,6 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
         (
             RunPlaneActionKind::RepairHelperFunction,
             "guard_effect_disposition_append",
-        ),
-        (
-            RunPlaneActionKind::RepairForeignKey,
-            "effect_attempts.effect_attempts_predecessor_fk",
         ),
         (
             RunPlaneActionKind::RepairTrigger,
@@ -2240,12 +2273,11 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
-                    selected_recovery_class,recovery_class,generation_fact_kind, \
+                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000509', \
-                         'forged','effect',0,0,0,'never-replay','never-replay', \
-                         'not-required',now(),now()+interval '1 minute','sha256:forged')"
+                         'forged','effect',0,0,'not-required', \
+                         now(),now()+interval '1 minute','sha256:forged')"
             ),
             &[],
         )
@@ -2320,16 +2352,15 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     // append identity's history order.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.effect_attempts \
-             (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index, \
-              selected_recovery_class,recovery_class,generation_fact_kind, \
+             (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
               attempt_started_at,attempt_deadline_at,attempt_input_ref) \
              VALUES \
              ('t1','00000000-0000-0000-0000-000000000530', \
-                     'audit-run','n',0,0,0,'never-replay','never-replay', \
-                     'not-required',now(),now()+interval '1 minute','sha256:audit'), \
+                     'audit-run','n',0,0,'not-required', \
+                     now(),now()+interval '1 minute','sha256:audit'), \
              ('t1','00000000-0000-0000-0000-000000000540', \
-                     'audit-run','temporal',0,1,0,'never-replay','never-replay', \
-                     'not-required',now(),now()+interval '1 minute','sha256:temporal'); \
+                     'audit-run','temporal',0,1,'not-required', \
+                     now(),now()+interval '1 minute','sha256:temporal'); \
          INSERT INTO {SCHEMA}.effect_attempt_dispatches \
              (tenant_id,attempt_id,attempt_started_at,dispatched_at) \
              SELECT tenant_id,attempt_id,attempt_started_at, \

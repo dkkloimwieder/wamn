@@ -207,32 +207,16 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, current_effect_attempt_id uuid, \
+            tenant_id text NOT NULL, \
             run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
+            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, \
             status text NOT NULL, \
-            selected_recovery_class text \
-              CHECK (selected_recovery_class IN ('replay','idempotent-with-key','never-replay')), \
-            recovery_class text \
-              CHECK (recovery_class IN ('replay','idempotent-with-key','never-replay')), \
-            generation_fact_kind text \
-              CHECK (generation_fact_kind IN ('not-required','attested')), \
-            connection_generation text, credential_generation text, \
-            attempt_started_at timestamptz, attempt_dispatched_at timestamptz, \
-            attempt_deadline_at timestamptz, attempt_input_ref text, attempt_key text, \
             output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
             input_ref text, output_ref text, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
             started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
-            CHECK ((status <> 'started') OR \
-                   (selected_recovery_class IS NOT NULL AND recovery_class IS NOT NULL \
-                    AND selected_recovery_class = recovery_class \
-                    AND generation_fact_kind IS NOT NULL \
-                    AND attempt_started_at IS NOT NULL \
-                    AND attempt_deadline_at IS NOT NULL \
-                    AND attempt_input_ref IS NOT NULL)), \
             PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
@@ -314,7 +298,6 @@ fn aliased_columns(sql: &str, alias: &str) -> std::collections::BTreeSet<String>
 /// wamn-kex2 widened it from three statements to the whole set the claim path
 /// executes, and from the run row to the NODE_RUN row. thvs swept `runs` against
 /// the first three; run-next then walked one statement further and died `42703:
-/// column n.selected_recovery_class does not exist`, then `42703: column
 /// a required run column does not exist` — the same rot, one table and one
 /// statement over each time, while `testkitbench` patched its own copy of the
 /// delta by hand rather than the stand-in. Deriving both rows from the STATEMENTS
@@ -322,12 +305,10 @@ fn aliased_columns(sql: &str, alias: &str) -> std::collections::BTreeSet<String>
 #[cfg(test)]
 pub(crate) fn assert_carries_every_run_next_column(gate: &str, ddl: &str) {
     // The statements a `run-next` turn executes: claim + dispatch read, the
-    // per-node attempt lifecycle, and the settle.
+    // per-node checkpoint and settle transitions.
     let run_next_statements = [
         wamn_run_state::queue::claim_dispatch_sql(),
         wamn_run_state::sql::select_run_dispatch_sql(),
-        wamn_run_state::transitions::begin_attempt_sql(),
-        wamn_run_state::transitions::mark_attempt_dispatched_sql(),
         wamn_run_state::transitions::complete_attempt_success_sql(),
         wamn_run_state::transitions::complete_attempt_error_sql(),
         wamn_run_state::transitions::reserved_checkpoint_sql(),

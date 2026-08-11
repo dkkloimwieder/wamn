@@ -46,7 +46,6 @@
       "type": "postgres-query",
       "config": {
         "mode": "query",
-        "idempotent-with-key": true,
         "params": [
           "context().disposition.hold_id",
           "context().disposition.decided_at",
@@ -76,7 +75,6 @@
       "type": "postgres-query",
       "config": {
         "mode": "query",
-        "idempotent-with-key": true,
         "params": [
           "@",
           "context().disposition.id"

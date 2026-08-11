@@ -180,11 +180,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 2,
     },
     GovernedLiteral {
-        path: "crates/execution/run-state/src/transitions.rs",
-        exact: "r.admission_context_version = '0.1'",
-        expected_count: 2,
-    },
-    GovernedLiteral {
         path: "components/execution/flowrunner/src/lib.rs",
         exact: "r.admission_context_version = '0.1'",
         expected_count: 1,

@@ -216,13 +216,9 @@ fn runner_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.node_runs (\
             tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
-            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
+            occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
-            selected_recovery_class text, recovery_class text, \
-            generation_fact_kind text, connection_generation text, credential_generation text, \
-            attempt_started_at timestamptz, attempt_dispatched_at timestamptz, \
-            attempt_deadline_at timestamptz, attempt_input_ref text, attempt_key text, \
             input_ref text, output_ref text, \
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \

@@ -79,8 +79,7 @@
       "config": {
         "mode": "execute",
         "sql": "UPDATE quality_holds SET status = 'escalated' WHERE id = $1::uuid AND status = 'open'",
-        "params": ["context().hold.id"],
-        "idempotent-with-key": true
+        "params": ["context().hold.id"]
       }
     },
     {

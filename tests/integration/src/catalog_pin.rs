@@ -64,11 +64,11 @@ struct Member {
 
 /// The capability class each gate-fixture node type is published with.
 ///
-/// Publication resolves every node type to a capability class and a recovery
-/// contract. The gates' fixtures draw from the standard node library, whose
-/// classification is fixed: effectful types are never-replay (their outputs are
-/// recorded and skipped on resume — the property the failover phases prove),
-/// pure types replay.
+/// Publication resolves every node type to a capability class and effect
+/// policy. The gates' fixtures draw from the standard node library, whose
+/// classification is fixed: effectful types use the immutable-attempt boundary
+/// (their outputs are recorded and skipped on resume — the property the
+/// failover phases prove), while pure types may be recomputed.
 fn node_capability(node_type: &str) -> anyhow::Result<CapabilityClass> {
     Ok(match node_type {
         "conditional" | "cron" | "event" | "request" | "respond" | "transform" => {

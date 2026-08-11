@@ -55,7 +55,7 @@
 
 /// The single producer-shaped callable-flow admission transition.
 pub mod admission;
-/// Capture-independent node attempt protocol and recovery classes.
+/// Capture-independent effect-attempt generation facts.
 pub mod attempt;
 /// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
 /// preview-derivation the flowrunner guest links to fill a `node_runs` row's

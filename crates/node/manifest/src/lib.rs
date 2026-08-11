@@ -93,7 +93,7 @@ pub enum OrderingPolicy {
 /// The only manifest-level purity assertion a custom node may make.
 ///
 /// Absence is intentionally not represented by another wire value: an absent
-/// declaration resolves to effectful, never-replay semantics.
+/// declaration resolves to effectful semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Purity {
@@ -428,7 +428,7 @@ pub struct NodeManifest {
     )]
     pub output_ports: Vec<String>,
     /// Trusted semantic override. Absent custom-node manifests resolve to
-    /// effectful + never-replay; only the typed value `pure` authorizes replay.
+    /// effectful; only the typed value `pure` authorizes recomputation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub purity: Option<Purity>,
 }

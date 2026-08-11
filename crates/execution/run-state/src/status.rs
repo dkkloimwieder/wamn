@@ -173,7 +173,7 @@ pub enum FailKind {
     /// The run spent its per-invocation node-execution budget (cjv.4) — a
     /// permitted loop that never terminated.
     RunawayBudget,
-    /// A never-replay effect may have escaped before its durable completion
+    /// An effect may have escaped before its durable completion
     /// record was written, so repeating it would be unsafe.
     EffectUncertain,
     /// The root run exhausted its maximum call depth.

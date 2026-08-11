@@ -47,9 +47,7 @@ fn semantic_attestation_freshness_decision_is_folded_back_fail_closed() {
         "proxy route or header policy, TLS-authenticated service identity, credential principal or tenant scope, named idempotency domain",
         "DNS answers are neither semantic proof nor an automatic invalidation",
         "resolution outside the attested TLS service identity and idempotency scope is an explicit refusal",
-        "absence of a policy means only the conservative recovery default is available",
         "fails explicitly",
-        "never silently downgrades to `never-replay`",
     ] {
         assert!(
             connections.contains(required),
@@ -63,8 +61,6 @@ fn semantic_attestation_freshness_decision_is_folded_back_fail_closed() {
             "~~What evidence, freshness, and invalidation rules apply per semantic-attestation type~~"
         ) && open_decisions.contains(
             "**Settled (wamn-ko5r.4):** each strengthening connection claim declares bounded evidence"
-        ) && open_decisions.contains(
-            "No expiry, revocation, or invalidation may silently downgrade to `never-replay`. | — |"
         ),
         "the semantic-attestation question must remain visibly settled and unblocked"
     );

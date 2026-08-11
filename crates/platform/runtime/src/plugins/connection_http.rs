@@ -675,12 +675,10 @@ mod tests {
         ));
     }
 
-    /// The live `run_state_live` fixture leaves an exact, already-dispatched
-    /// draft attempt on generation 1, then revokes that generation. Exercise
-    /// the production `send` path against a real snapshot and prove that the
-    /// revocation is observed before a socket reaches the local listener.
+    /// Until .4.9 installs the immutable attempt reader/writer together, the
+    /// production `send` path refuses before a socket reaches the listener.
     #[tokio::test]
-    async fn live_revoked_draft_generation_is_denied_before_wire() {
+    async fn live_missing_immutable_attempt_authority_is_denied_before_wire() {
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         use tokio::io::AsyncWriteExt as _;
@@ -758,8 +756,8 @@ mod tests {
             .expect("load live draft authorization snapshot")
             .expect("live exact draft run exists");
         assert!(snapshot.source_admitted);
-        assert!(snapshot.attempt_matches);
-        assert!(snapshot.attempt_recorded);
+        assert!(!snapshot.attempt_matches);
+        assert!(!snapshot.attempt_recorded);
         assert_eq!(snapshot.active_generation, Some(1));
         assert_eq!(snapshot.generation, Some(1));
         assert!(!snapshot.draft_generation_granted);
@@ -804,10 +802,10 @@ mod tests {
         let observed_wires = wire_count.load(Ordering::SeqCst);
         server.abort();
 
-        assert!(matches!(result, Err(EffectError::AuthorityDenied)));
+        assert!(matches!(result, Err(EffectError::InvalidContext)));
         assert_eq!(
             observed_wires, 0,
-            "revoked draft authority must be denied before any network access"
+            "missing immutable attempt authority must deny all network access"
         );
     }
 

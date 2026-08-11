@@ -50,312 +50,6 @@ authority AS ( \
       LEFT JOIN locked_queue AS q ON true \
 )";
 
-/// Persist an attempt intent and renew the exact queue lease before dispatch.
-///
-/// Params: target run id, authority run id, lease owner, lease generation,
-/// node id, occurrence, sequence, selected and effective recovery classes,
-/// generation fact kind, exact optional connection and credential generations,
-/// immutable input reference, optional attempt key, and lease TTL milliseconds.
-/// Parameter 16 is the optional portable connection requirement name; when
-/// present, the transaction derives both generation facts from admitted state
-/// and ignores caller-supplied generation values.
-/// An authorized redispatch advances the durable attempt counter in the same
-/// statement only when those immutable admission facts match.
-pub fn begin_attempt_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         locked_attempt AS MATERIALIZED ( \
-             SELECT n.* FROM node_runs AS n, authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
-              FOR UPDATE OF n \
-         ), \
-         connection_facts AS MATERIALIZED ( \
-             SELECT CASE \
-                      WHEN $16::text IS NULL THEN 'ready' \
-                      WHEN NOT COALESCE(resolved.source_admitted, false) \
-                        OR resolved.requirement_json IS NULL THEN 'undeclared-requirement' \
-                      WHEN resolved.node_connection IS DISTINCT FROM $16::text \
-                        OR NOT COALESCE(resolved.node_permitted, false) \
-                        THEN 'node-not-permitted' \
-                      WHEN resolved.binding_instance_id IS NULL \
-                        OR resolved.binding_status IS DISTINCT FROM 'active' \
-                        OR resolved.validation_status IS DISTINCT FROM 'valid' \
-                        OR resolved.instance_id IS NULL THEN 'unbound' \
-                      WHEN resolved.lifecycle_status IS DISTINCT FROM 'enabled' \
-                        OR resolved.active_generation IS NULL \
-                        OR resolved.generation IS NULL \
-                        OR resolved.active_generation IS DISTINCT FROM resolved.generation \
-                        THEN 'inactive-generation' \
-                      WHEN NOT COALESCE(resolved.draft_generation_granted, false) \
-                        THEN 'authority-denied' \
-                      WHEN resolved.requirement_json #>> '{{descriptor,requirement-type}}' \
-                             IS DISTINCT FROM 'http' \
-                        OR resolved.requirement_json #>> '{{descriptor,contract}}' \
-                             IS DISTINCT FROM 'wamn:connection/http@0.1.0' \
-                        OR resolved.requirement_type IS DISTINCT FROM 'http' \
-                        OR resolved.contract IS DISTINCT FROM 'wamn:connection/http@0.1.0' \
-                        THEN 'incompatible' \
-                      ELSE 'ready' \
-                    END AS result_code, \
-                    CASE WHEN $16::text IS NULL THEN $10::text ELSE 'attested' END \
-                        AS generation_fact_kind, \
-                    CASE WHEN $16::text IS NULL THEN $11::text \
-                         ELSE resolved.instance_id || ':' || resolved.generation::text END \
-                        AS connection_generation, \
-                    CASE WHEN $16::text IS NULL THEN $12::text \
-                         ELSE resolved.credential_set_handle END AS credential_generation \
-               FROM authority AS a \
-               LEFT JOIN locked_run AS r ON true \
-               LEFT JOIN LATERAL ( \
-                   SELECT true AS source_admitted, requirement.requirement_json, \
-                          node.value ->> 'connection' AS node_connection, \
-                          EXISTS ( \
-                              SELECT 1 \
-                                FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) \
-                                     AS implementation(value), \
-                                     jsonb_array_elements(implementation.value -> 'interface' \
-                                         -> 'connection-requirements') AS permitted(value) \
-                               WHERE implementation.value #>> '{{interface,node-type}}' = \
-                                     node.value ->> 'type' \
-                                 AND permitted.value ->> 'requirement-type' = 'http' \
-                                 AND permitted.value ->> 'contract' = \
-                                     'wamn:connection/http@0.1.0' \
-                          ) AS node_permitted, \
-                          binding.binding_status, binding.validation_status, \
-                          binding.instance_id AS binding_instance_id, \
-                          instance.instance_id, instance.requirement_type, instance.contract, \
-                          instance.lifecycle_status, instance.active_generation, \
-                          generation.generation, generation.credential_set_handle, \
-                          COALESCE(NOT artifact.is_draft \
-                                   OR (grant_row.generation IS NOT NULL \
-                                       AND grant_row.revoked_at IS NULL), false) \
-                              AS draft_generation_granted \
-                     FROM ( \
-                         SELECT released.tenant_id, released.graph_json, \
-                                released.interface_bundle_json, \
-                                released.artifact_hash AS execution_artifact_hash, \
-                                released.artifact_hash AS binding_artifact_hash, \
-                                false AS is_draft \
-                           FROM catalog.flow_artifacts AS released \
-                          WHERE released.tenant_id = r.tenant_id \
-                            AND released.flow_id = r.flow_id \
-                            AND released.flow_version = r.flow_version \
-                            AND released.artifact_hash = r.invocation_context \
-                                #>> '{{principal,artifact-digest}}' \
-                            AND r.trigger_source IS DISTINCT FROM 'scenario-draft' \
-                            AND r.invocation_context #>> '{{source,producer}}' \
-                                IS DISTINCT FROM 'draft-scenario' \
-                         UNION ALL \
-                         SELECT draft.tenant_id, draft.graph_json, \
-                                draft.interface_bundle_json::text, draft.draft_artifact_hash, \
-                                draft.binding_base_artifact_hash, true \
-                           FROM catalog.validated_flow_drafts AS draft \
-                          WHERE draft.tenant_id = r.tenant_id \
-                            AND draft.flow_id = r.flow_id \
-                            AND draft.runtime_flow_version = r.flow_version \
-                            AND draft.catalog_id = r.catalog_id \
-                            AND draft.catalog_version = r.catalog_version \
-                            AND draft.environment = r.environment \
-                            AND draft.draft_artifact_hash = r.invocation_context \
-                                #>> '{{principal,artifact-digest}}' \
-                            AND draft.draft_id = r.invocation_context \
-                                #>> '{{principal,draft-id}}' \
-                            AND draft.draft_revision::text = r.invocation_context \
-                                #>> '{{principal,draft-revision}}' \
-                            AND draft.validated_draft_hash = r.invocation_context \
-                                #>> '{{principal,validated-draft-hash}}' \
-                            AND draft.execution_bundle_hash = r.invocation_context \
-                                #>> '{{principal,execution-bundle-hash}}' \
-                            AND draft.binding_base_artifact_hash = r.invocation_context \
-                                #>> '{{principal,binding-base-artifact-hash}}' \
-                            AND draft.suite_flow_version::text = r.invocation_context \
-                                #>> '{{principal,suite-flow-version}}' \
-                            AND r.trigger_source = 'scenario-draft' \
-                            AND r.invocation_context #>> '{{source,producer}}' = 'draft-scenario' \
-                            AND r.admission_context_version = '0.1' \
-                            AND r.invocation_context ->> 'version' = '0.1' \
-                            AND r.invocation_context #>> '{{principal,tenant-id}}' = r.tenant_id \
-                            AND r.invocation_context #>> '{{principal,environment}}' = r.environment \
-                            AND r.invocation_context #>> '{{principal,catalog-id}}' = r.catalog_id \
-                            AND r.invocation_context #>> '{{principal,catalog-version}}' \
-                                = r.catalog_version::text \
-                            AND r.invocation_context #>> '{{principal,run-id}}' = r.run_id \
-                            AND r.invocation_context #>> '{{principal,flow-id}}' = r.flow_id \
-                            AND r.invocation_context #>> '{{principal,flow-version}}' \
-                                = r.flow_version::text \
-                     ) AS artifact \
-                     LEFT JOIN LATERAL jsonb_array_elements( \
-                         COALESCE(artifact.graph_json -> 'connection-requirements', '[]'::jsonb) \
-                     ) AS declared_requirement(value) \
-                       ON declared_requirement.value ->> 'name' = $16 \
-                     LEFT JOIN catalog.connection_requirements AS requirement \
-                       ON requirement.tenant_id = artifact.tenant_id \
-                      AND requirement.artifact_hash = artifact.binding_artifact_hash \
-                      AND requirement.requirement_name = $16 \
-                      AND (NOT artifact.is_draft OR requirement.requirement_json \
-                           = declared_requirement.value -> 'requirement') \
-                     LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') \
-                          AS node(value) ON node.value ->> 'id' = $5 \
-                     LEFT JOIN catalog.connection_bindings AS binding \
-                       ON binding.tenant_id = r.tenant_id \
-                      AND binding.catalog_id = r.catalog_id \
-                      AND binding.catalog_version = r.catalog_version \
-                      AND binding.artifact_hash = artifact.binding_artifact_hash \
-                      AND binding.requirement_name = $16 \
-                      AND binding.environment = r.environment \
-                     LEFT JOIN catalog.connection_instances AS instance \
-                       ON instance.tenant_id = binding.tenant_id \
-                      AND instance.environment = binding.environment \
-                      AND instance.instance_id = binding.instance_id \
-                     LEFT JOIN catalog.connection_generations AS generation \
-                       ON generation.tenant_id = instance.tenant_id \
-                      AND generation.environment = instance.environment \
-                      AND generation.instance_id = instance.instance_id \
-                      AND generation.generation = instance.active_generation \
-                     LEFT JOIN catalog.draft_safe_connection_grants AS grant_row \
-                       ON grant_row.tenant_id = generation.tenant_id \
-                      AND grant_row.environment = generation.environment \
-                      AND grant_row.instance_id = generation.instance_id \
-                      AND grant_row.generation = generation.generation \
-               ) AS resolved ON $16::text IS NOT NULL \
-         ), \
-         classified AS ( \
-             SELECT CASE \
-                      WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN f.result_code <> 'ready' THEN f.result_code \
-                      WHEN n.run_id IS NULL AND $9::text = 'idempotent-with-key' \
-                       AND ($14::text IS NULL OR $14::text = '') \
-                        THEN 'missing-attempt-key' \
-                      WHEN n.run_id IS NULL THEN 'new' \
-                      WHEN n.selected_recovery_class IS DISTINCT FROM $8::text \
-                        OR n.recovery_class IS DISTINCT FROM $9::text \
-                        OR n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind \
-                        OR n.connection_generation IS DISTINCT FROM f.connection_generation \
-                        OR n.credential_generation IS DISTINCT FROM f.credential_generation \
-                        THEN 'effect-uncertain' \
-                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
-                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      WHEN n.recovery_class = 'idempotent-with-key' \
-                       AND (n.attempt_key IS NULL OR n.attempt_key = '' \
-                            OR $14::text IS NULL OR $14::text = '' \
-                            OR n.attempt_key <> $14::text) THEN 'missing-attempt-key' \
-                      WHEN n.attempt_dispatched_at IS NULL THEN 'prepared' \
-                      WHEN n.recovery_class = 'never-replay' THEN 'effect-uncertain' \
-                      WHEN n.recovery_class IN ('replay', 'idempotent-with-key') \
-                        THEN 'redispatch' \
-                      ELSE 'effect-uncertain' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status, \
-                    a.run_deadline_at \
-               FROM authority AS a \
-               LEFT JOIN locked_attempt AS n ON true \
-               CROSS JOIN connection_facts AS f \
-         ), \
-         inserted AS ( \
-             INSERT INTO node_runs \
-                    (tenant_id, run_id, node_id, occurrence, seq, status, \
-                     selected_recovery_class, recovery_class, \
-                     generation_fact_kind, connection_generation, credential_generation, \
-                     attempt_started_at, attempt_deadline_at, attempt_input_ref, attempt_key) \
-             SELECT c.tenant_id, c.run_id, $5, $6, $7, 'started', $8, $9, \
-                    f.generation_fact_kind, f.connection_generation, \
-                    f.credential_generation, now(), \
-                    LEAST( \
-                        now() + ($15::bigint * interval '1 millisecond'), \
-                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
-                    ), $13, $14 \
-               FROM classified AS c CROSS JOIN connection_facts AS f \
-              WHERE c.result_code = 'new' \
-             RETURNING run_id \
-         ), \
-         redispatched AS ( \
-             UPDATE node_runs AS n \
-                SET attempt = n.attempt + 1, attempt_started_at = now(), \
-                    attempt_dispatched_at = NULL, \
-                    attempt_deadline_at = LEAST( \
-                        now() + ($15::bigint * interval '1 millisecond'), \
-                        COALESCE(c.run_deadline_at, 'infinity'::timestamptz) \
-                    ) \
-               FROM classified AS c \
-              WHERE c.result_code = 'redispatch' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($15::bigint * interval '1 millisecond') \
-               FROM classified AS c \
-              WHERE c.result_code IN ('new', 'prepared', 'redispatch') \
-                AND q.tenant_id = c.tenant_id AND q.run_id = c.run_id \
-                AND (SELECT count(*) FROM inserted) >= 0 \
-                AND (SELECT count(*) FROM redispatched) >= 0 \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE \
-                  WHEN i.run_id IS NOT NULL THEN 'started' \
-                  WHEN c.result_code = 'prepared' AND r.run_id IS NOT NULL THEN 'started' \
-                  WHEN d.run_id IS NOT NULL AND r.run_id IS NOT NULL THEN 'redispatch' \
-                  ELSE c.result_code \
-                END AS result_code, c.status AS run_status \
-           FROM classified AS c \
-           LEFT JOIN inserted AS i ON true \
-           LEFT JOIN redispatched AS d ON true \
-           LEFT JOIN renewed AS r ON true"
-    )
-}
-
-/// Mark the durable send boundary immediately before external dispatch.
-///
-/// Params: fence `$1..$4`, node id, occurrence, and lease TTL milliseconds.
-/// A second mark is a typed refusal, so no caller can accidentally dispatch
-/// twice without first passing the recovery-class transition above.
-pub fn mark_attempt_dispatched_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         locked_attempt AS MATERIALIZED ( \
-             SELECT n.* FROM node_runs AS n, authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
-              FOR UPDATE OF n \
-         ), \
-         classified AS ( \
-             SELECT CASE \
-                      WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
-                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      WHEN n.attempt_deadline_at <= now() \
-                        THEN 'attempt-deadline-expired' \
-                      WHEN a.run_deadline_at IS NOT NULL \
-                       AND a.run_deadline_at <= now() THEN 'run-deadline-expired' \
-                      WHEN n.attempt_dispatched_at IS NOT NULL THEN 'already-dispatched' \
-                      ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
-               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
-         ), \
-         marked AS ( \
-             UPDATE node_runs AS n SET attempt_dispatched_at = now() \
-               FROM classified AS c \
-              WHERE c.result_code = 'ready' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($7::bigint * interval '1 millisecond') \
-               FROM marked AS m, classified AS c \
-              WHERE q.tenant_id = c.tenant_id AND q.run_id = m.run_id \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'marked' ELSE c.result_code END \
-                    AS result_code, c.status AS run_status \
-           FROM classified AS c LEFT JOIN renewed AS r ON true"
-    )
-}
-
 /// A caller outcome returned with `already-released`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -1050,76 +744,6 @@ mod tests {
     }
 
     #[test]
-    fn attempt_intent_precedes_dispatch_and_classifies_recovery() {
-        let sql = begin_attempt_sql();
-        assert!(sql.contains("INSERT INTO node_runs"));
-        assert!(sql.contains("'started', $8, $9"));
-        assert!(sql.contains("selected_recovery_class, recovery_class"));
-        assert!(sql.contains("generation_fact_kind, connection_generation, credential_generation"));
-        assert!(sql.contains("n.selected_recovery_class IS DISTINCT FROM $8::text"));
-        assert!(sql.contains("n.generation_fact_kind IS DISTINCT FROM f.generation_fact_kind"));
-        assert!(sql.contains("connection_facts AS MATERIALIZED"));
-        assert!(sql.contains("artifact.interface_bundle_json::jsonb"));
-        assert!(sql.contains("FROM catalog.flow_artifacts AS released"));
-        assert!(sql.contains("UNION ALL"));
-        assert!(sql.contains("FROM catalog.validated_flow_drafts AS draft"));
-        assert!(sql.contains("r.trigger_source = 'scenario-draft'"));
-        assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
-        assert!(sql.contains("r.admission_context_version = '0.1'"));
-        assert!(sql.contains("r.invocation_context ->> 'version' = '0.1'"));
-        for pin in [
-            "draft-id",
-            "draft-revision",
-            "validated-draft-hash",
-            "execution-bundle-hash",
-            "binding-base-artifact-hash",
-            "suite-flow-version",
-        ] {
-            assert!(sql.contains(pin), "draft effect recheck omits {pin}");
-        }
-        assert!(sql.contains("requirement.requirement_json "));
-        assert!(sql.contains("= declared_requirement.value -> 'requirement'"));
-        assert!(sql.contains("catalog.draft_safe_connection_grants AS grant_row"));
-        assert!(sql.contains("grant_row.revoked_at IS NULL"));
-        assert!(sql.contains("WHEN NOT COALESCE(resolved.draft_generation_granted, false)"));
-        assert!(sql.contains("THEN 'authority-denied'"));
-        for refusal in [
-            "undeclared-requirement",
-            "node-not-permitted",
-            "unbound",
-            "inactive-generation",
-            "authority-denied",
-            "incompatible",
-        ] {
-            assert!(sql.contains(refusal), "missing typed refusal {refusal}");
-        }
-        assert!(!sql.contains("connection-refused"));
-        assert!(sql.contains("attempt_input_ref, attempt_key"));
-        assert!(sql.contains("COALESCE(c.run_deadline_at, 'infinity'::timestamptz)"));
-        assert!(sql.contains("n.recovery_class = 'never-replay'"));
-        assert!(sql.contains("n.attempt_dispatched_at IS NULL THEN 'prepared'"));
-        assert!(sql.contains("THEN 'effect-uncertain'"));
-        assert!(sql.contains("n.recovery_class = 'idempotent-with-key'"));
-        assert!(sql.contains("THEN 'missing-attempt-key'"));
-        assert!(sql.contains("THEN 'redispatch'"));
-        assert!(
-            sql.find("inserted AS").expect("intent") < sql.find("renewed AS").expect("renewal"),
-            "intent and renewal must share one statement"
-        );
-        assert!(
-            !sql.contains("output_json"),
-            "intent is capture-independent"
-        );
-
-        let dispatched = mark_attempt_dispatched_sql();
-        assert!(dispatched.contains("SET attempt_dispatched_at = now()"));
-        assert!(dispatched.contains("THEN 'attempt-deadline-expired'"));
-        assert!(dispatched.contains("THEN 'run-deadline-expired'"));
-        assert!(dispatched.contains("THEN 'already-dispatched'"));
-        assert!(dispatched.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
-    }
-
-    #[test]
     fn attempt_completion_updates_existing_intent_atomically() {
         let success = complete_attempt_success_sql();
         assert!(success.contains("UPDATE node_runs AS n"));
@@ -1185,16 +809,6 @@ mod tests {
             "admission_context_version",
             "platform_revision",
             "terminal_reason",
-            "recovery_class",
-            "selected_recovery_class",
-            "generation_fact_kind",
-            "connection_generation",
-            "credential_generation",
-            "attempt_started_at",
-            "attempt_dispatched_at",
-            "attempt_deadline_at",
-            "attempt_input_ref",
-            "attempt_key",
         ] {
             assert!(run.contains(field), "run-state DDL missing {field}");
         }
@@ -1204,5 +818,86 @@ mod tests {
 
         let queue = include_str!("../../../../deploy/sql/run-queue.sql");
         assert!(queue.contains("lease_generation bigint NOT NULL DEFAULT 0"));
+    }
+
+    #[test]
+    fn recovery_and_successor_lineage_residue_is_absent() {
+        let attempt = include_str!("attempt.rs");
+        let transitions = include_str!("transitions.rs")
+            .split_once("#[cfg(test)]")
+            .map_or(include_str!("transitions.rs"), |(production, _)| production);
+        for residue in [
+            "RecoveryClass",
+            "AttemptStartResult",
+            "AttemptDispatchResult",
+            "begin_attempt_sql",
+            "mark_attempt_dispatched_sql",
+            "redispatch",
+            "missing-attempt-key",
+        ] {
+            assert!(!attempt.contains(residue), "attempt API retains {residue}");
+            assert!(
+                !transitions.contains(residue),
+                "transition API retains {residue}"
+            );
+        }
+    }
+
+    #[test]
+    fn effect_attempt_schema_has_one_identity_and_no_successor_shape() {
+        let ddl = include_str!("../../../../deploy/sql/run-state.sql");
+        let nodes = ddl
+            .split_once("CREATE TABLE wamn_run.node_runs (")
+            .and_then(|(_, tail)| tail.split_once("\n);"))
+            .map(|(table, _)| table)
+            .expect("node_runs table");
+        let attempts = ddl
+            .split_once("CREATE TABLE wamn_run.effect_attempts (")
+            .and_then(|(_, tail)| tail.split_once("\n);"))
+            .map(|(table, _)| table)
+            .expect("effect_attempts table");
+        assert!(attempts.contains("UNIQUE (tenant_id, run_id, node_id, occurrence)"));
+        for residue in [
+            "attempt_index",
+            "predecessor_attempt_id",
+            "legacy_imported",
+            "selected_recovery_class",
+            "recovery_class",
+        ] {
+            assert!(
+                !attempts.contains(residue),
+                "attempt table retains {residue}"
+            );
+        }
+        for residue in [
+            "current_effect_attempt_id",
+            "selected_recovery_class",
+            "recovery_class",
+            "attempt_index",
+            "attempt_dispatched_at",
+        ] {
+            assert!(!nodes.contains(residue), "node table retains {residue}");
+        }
+    }
+
+    #[test]
+    fn effect_ledger_and_cdc_lineage_remain_immutable() {
+        let ddl = include_str!("../../../../deploy/sql/run-state.sql");
+        for trigger in [
+            "CREATE TRIGGER effect_attempts_update_immutable",
+            "CREATE TRIGGER effect_attempts_delete_immutable",
+            "CREATE TRIGGER effect_attempt_dispatches_update_immutable",
+            "CREATE TRIGGER effect_attempt_dispatches_delete_immutable",
+            "CREATE TRIGGER effect_attempt_outcomes_update_immutable",
+            "CREATE TRIGGER effect_attempt_outcomes_delete_immutable",
+        ] {
+            assert!(ddl.contains(trigger), "effect ledger lacks {trigger}");
+        }
+        assert!(ddl.contains("event_source_run_id IS NOT NULL AND event_source_run_id <> ''"));
+        assert!(ddl.contains("event_root_run_id IS NOT NULL AND event_root_run_id <> ''"));
+        assert!(ddl.contains("event_depth IS NOT NULL"));
+        assert!(ddl.contains(
+            "CREATE TRIGGER runs_event_lineage_immutable\nBEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth"
+        ));
     }
 }

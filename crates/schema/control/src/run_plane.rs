@@ -45,13 +45,14 @@
 //!    or replaced and non-record checks are removed. The run-state helper
 //!    functions and lineage trigger are likewise repaired from record.
 //!
-//! **Data preserving:** the plan never
-//! drops a live column, table, or index other than the named legacy outbox-era
-//! objects and a stale-definition record index; live columns not in the record
-//! are SURFACED (`extra_columns`), never touched. CHECK/trigger definitions may
-//! be replaced to converge with record, but rows are never rewritten or
-//! deleted: PostgreSQL validates new CHECKs against existing rows and aborts on
-//! incompatible legacy data.
+//! **Data preserving:** the plan never drops a live column or table. It drops
+//! only named legacy outbox-era indexes, stale-definition record indexes, and
+//! the retired attempt-authority indexes; live columns not in the record are
+//! SURFACED (`extra_columns`) and preserved. The named retired attempt columns
+//! additionally lose obsolete defaults and NOT NULL authority. CHECK/trigger
+//! definitions may be replaced to converge with record, but rows are never
+//! rewritten or deleted: PostgreSQL validates new CHECKs against existing rows
+//! and aborts on incompatible legacy data.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -226,51 +227,9 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "node_runs",
-        name: "node_runs_selected_recovery_class_check",
-        definition: "CHECK (selected_recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text]))",
-        origin: CheckOrigin::Inline("selected_recovery_class"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_recovery_class_check",
-        definition: "CHECK (recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text]))",
-        origin: CheckOrigin::Inline("recovery_class"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_generation_fact_kind_check",
-        definition: "CHECK (generation_fact_kind = ANY (ARRAY['not-required'::text, 'attested'::text]))",
-        origin: CheckOrigin::Inline("generation_fact_kind"),
-    },
-    CheckSpec {
-        table: "node_runs",
         name: "node_runs_error_kind_check",
         definition: "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))",
         origin: CheckOrigin::Inline("error_kind"),
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_check",
-        definition: "CHECK (status <> 'started'::text OR selected_recovery_class IS NOT NULL AND recovery_class IS NOT NULL AND selected_recovery_class = recovery_class AND generation_fact_kind IS NOT NULL AND attempt_started_at IS NOT NULL AND attempt_deadline_at IS NOT NULL AND attempt_input_ref IS NOT NULL)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_check1",
-        definition: "CHECK (generation_fact_kind = 'not-required'::text AND connection_generation IS NULL AND credential_generation IS NULL OR generation_fact_kind = 'attested'::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND credential_generation IS NOT NULL AND credential_generation <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_check2",
-        definition: "CHECK (attempt_deadline_at IS NULL OR attempt_started_at IS NULL OR attempt_started_at <= attempt_deadline_at)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "node_runs",
-        name: "node_runs_check3",
-        definition: "CHECK (attempt_dispatched_at IS NULL OR attempt_started_at IS NULL OR attempt_started_at <= attempt_dispatched_at)",
-        origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "effect_attempts",
@@ -288,24 +247,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         table: "effect_attempts",
         name: "effect_attempts_seq_check",
         definition: "CHECK (seq >= 0)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "effect_attempts",
-        name: "effect_attempts_attempt_index_check",
-        definition: "CHECK (attempt_index >= 0)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "effect_attempts",
-        name: "effect_attempts_lineage_check",
-        definition: "CHECK (legacy_imported AND predecessor_attempt_id IS NULL OR NOT legacy_imported AND (attempt_index = 0 AND predecessor_attempt_id IS NULL OR attempt_index > 0 AND predecessor_attempt_id IS NOT NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "effect_attempts",
-        name: "effect_attempts_recovery_class_check",
-        definition: "CHECK ((selected_recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text])) AND (recovery_class = ANY (ARRAY['replay'::text, 'idempotent-with-key'::text, 'never-replay'::text])) AND selected_recovery_class = recovery_class)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -342,12 +283,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         table: "effect_attempts",
         name: "effect_attempts_input_ref_check",
         definition: "CHECK (attempt_input_ref <> ''::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "effect_attempts",
-        name: "effect_attempts_key_check",
-        definition: "CHECK (recovery_class <> 'idempotent-with-key'::text OR attempt_key IS NOT NULL AND attempt_key <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -1486,21 +1421,6 @@ fn trigger_specs() -> Vec<TriggerSpec> {
     specs
 }
 
-const CURRENT_EFFECT_ATTEMPT_FK_NAME: &str = "node_runs_current_effect_attempt_fk";
-const CURRENT_EFFECT_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, run_id, node_id, occurrence)";
-const CURRENT_EFFECT_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.node_runs \
-    ADD CONSTRAINT node_runs_current_effect_attempt_fk \
-    FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence) \
-    REFERENCES wamn_run.effect_attempts \
-        (tenant_id, attempt_id, run_id, node_id, occurrence)";
-
-const PREDECESSOR_EFFECT_ATTEMPT_FK_NAME: &str = "effect_attempts_predecessor_fk";
-const PREDECESSOR_EFFECT_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, run_id, node_id, occurrence)";
-const PREDECESSOR_EFFECT_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempts \
-    ADD CONSTRAINT effect_attempts_predecessor_fk \
-    FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence) \
-    REFERENCES wamn_run.effect_attempts \
-        (tenant_id, attempt_id, run_id, node_id, occurrence)";
 const EFFECT_DISPATCH_ATTEMPT_FK_NAME: &str = "effect_attempt_dispatches_attempt_fk";
 const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, attempt_started_at)";
 const EFFECT_DISPATCH_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_dispatches \
@@ -1523,7 +1443,8 @@ const RELEASE_PUBLISHER_CHECK_NAME: &str = "release_manifests_verified_publisher
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
 
-const LEGACY_EFFECT_AUTHORITY_COLUMNS: [&str; 11] = [
+const RETIRED_NODE_ATTEMPT_COLUMNS: &[&str] = &[
+    "current_effect_attempt_id",
     "attempt",
     "selected_recovery_class",
     "recovery_class",
@@ -1537,195 +1458,133 @@ const LEGACY_EFFECT_AUTHORITY_COLUMNS: [&str; 11] = [
     "attempt_key",
 ];
 
-/// Count legacy node projections that still need immutable effect authority.
-/// Called only after the observer has established that every named column and
-/// `current_effect_attempt_id` exists.
-pub fn count_legacy_effect_attempt_rows_sql(schema: &BareSchemaName) -> String {
-    format!(
-        "SELECT count(*) FROM {}.node_runs \
-          WHERE current_effect_attempt_id IS NULL \
-            AND (status = 'started' OR selected_recovery_class IS NOT NULL \
-                 OR recovery_class IS NOT NULL OR generation_fact_kind IS NOT NULL \
-                 OR connection_generation IS NOT NULL OR credential_generation IS NOT NULL \
-                 OR attempt_started_at IS NOT NULL OR attempt_dispatched_at IS NOT NULL \
-                 OR attempt_deadline_at IS NOT NULL OR attempt_input_ref IS NOT NULL \
-                 OR attempt_key IS NOT NULL)",
-        schema.quoted(),
+const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
+    "attempt_index",
+    "predecessor_attempt_id",
+    "legacy_imported",
+    "selected_recovery_class",
+    "recovery_class",
+];
+
+const EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
+effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree \
+(tenant_id, run_id, node_id, occurrence)";
+
+const RETIRED_EFFECT_ATTEMPT_INDEXES: &[&str] = &[
+    "effect_attempts_occurrence",
+    "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
+    "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
+];
+
+fn retirement_owned_check(table: &str, name: &str) -> bool {
+    matches!(
+        (table, name),
+        (
+            "node_runs",
+            "node_runs_selected_recovery_class_check"
+                | "node_runs_recovery_class_check"
+                | "node_runs_generation_fact_kind_check"
+                | "node_runs_check"
+                | "node_runs_check1"
+                | "node_runs_check2"
+                | "node_runs_check3"
+        ) | (
+            "effect_attempts",
+            "effect_attempts_attempt_index_check"
+                | "effect_attempts_lineage_check"
+                | "effect_attempts_recovery_class_check"
+                | "effect_attempts_key_check"
+        )
     )
 }
 
-/// One additive, idempotent cutover from legacy mutable attempt columns to the
-/// immutable attempt/dispatch/outcome ledgers. The planner schedules it after
-/// all tables and the nullable current pointer exist, but before the composite
-/// pointer FK is installed.
-fn legacy_effect_attempt_backfill_sql(schema: &BareSchemaName) -> String {
+fn retire_attempt_recovery_lineage_sql(
+    schema: &BareSchemaName,
+    node_columns: &BTreeSet<String>,
+    attempt_columns: &BTreeSet<String>,
+    occurrence_key_present: bool,
+) -> String {
     let schema = schema.quoted();
-    format!(
-        r#"DO $backfill$
-DECLARE
-    backfilled_attempts bigint;
-    backfilled_dispatches bigint;
-    backfilled_outcomes bigint;
+    let mut sql = format!(
+        r#"LOCK TABLE {schema}.effect_attempts IN SHARE ROW EXCLUSIVE MODE;
+LOCK TABLE {schema}.node_runs IN SHARE ROW EXCLUSIVE MODE;
+DO $retire$
 BEGIN
-    LOCK TABLE {schema}.node_runs IN SHARE ROW EXCLUSIVE MODE;
-
     IF EXISTS (
-        SELECT 1 FROM {schema}.node_runs AS n
-         WHERE n.current_effect_attempt_id IS NULL
-           AND (n.status = 'started' OR n.selected_recovery_class IS NOT NULL
-                OR n.recovery_class IS NOT NULL OR n.generation_fact_kind IS NOT NULL
-                OR n.connection_generation IS NOT NULL OR n.credential_generation IS NOT NULL
-                OR n.attempt_started_at IS NOT NULL OR n.attempt_dispatched_at IS NOT NULL
-                OR n.attempt_deadline_at IS NOT NULL OR n.attempt_input_ref IS NOT NULL
-                OR n.attempt_key IS NOT NULL)
-           AND (
-               n.attempt >= 0 AND n.occurrence >= 0 AND n.seq >= 0
-               AND n.selected_recovery_class IN
-                   ('replay','idempotent-with-key','never-replay')
-               AND n.recovery_class = n.selected_recovery_class
-               AND n.generation_fact_kind IN ('not-required','attested')
-               AND n.attempt_started_at IS NOT NULL
-               AND n.attempt_deadline_at IS NOT NULL
-               AND NULLIF(n.attempt_input_ref, '') IS NOT NULL
-               AND n.attempt_started_at <= n.attempt_deadline_at
-               AND (n.attempt_dispatched_at IS NULL
-                    OR n.attempt_started_at <= n.attempt_dispatched_at)
-               AND (n.status NOT IN ('success','error')
-                    OR (n.attempt_dispatched_at IS NOT NULL
-                        AND n.ended_at IS NOT NULL
-                        AND n.attempt_dispatched_at <= n.ended_at))
-               AND (n.recovery_class <> 'idempotent-with-key'
-                    OR NULLIF(n.attempt_key, '') IS NOT NULL)
-               AND ((n.generation_fact_kind = 'not-required'
-                     AND n.connection_generation IS NULL
-                     AND n.credential_generation IS NULL)
-                    OR (n.generation_fact_kind = 'attested'
-                        AND NULLIF(n.connection_generation, '') IS NOT NULL
-                        AND NULLIF(n.credential_generation, '') IS NOT NULL))
-           ) IS NOT TRUE
+        SELECT 1 FROM {schema}.effect_attempts
+         GROUP BY tenant_id,run_id,node_id,occurrence
+        HAVING count(*) > 1
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
-            MESSAGE = 'legacy-effect-attempt-incomplete';
+            MESSAGE = 'legacy-effect-attempt-successors-present';
     END IF;
 
     IF EXISTS (
-        SELECT 1
-          FROM {schema}.node_runs AS n
-          JOIN {schema}.runs AS r
-            ON r.tenant_id = n.tenant_id AND r.run_id = n.run_id
-          LEFT JOIN catalog.flow_artifacts AS artifact
-            ON artifact.tenant_id = r.tenant_id
-           AND artifact.flow_id = r.flow_id
-           AND artifact.flow_version = r.flow_version
-           AND artifact.artifact_hash =
-               r.invocation_context #>> '{{principal,artifact-digest}}'
-          LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value)
-            ON node.value ->> 'id' = n.node_id
-         WHERE n.current_effect_attempt_id IS NULL
-           AND n.generation_fact_kind = 'attested'
-           AND NULLIF(node.value ->> 'connection', '') IS NULL
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'legacy-effect-attempt-connection-unresolved';
-    END IF;
-
-WITH candidates AS MATERIALIZED (
-    SELECT n.tenant_id, gen_random_uuid() AS attempt_id,
-           n.run_id, n.node_id, n.occurrence, n.seq,
-           n.attempt AS attempt_index,
-           n.selected_recovery_class, n.recovery_class,
-           n.generation_fact_kind,
-           CASE WHEN n.generation_fact_kind = 'attested'
-                THEN node.value ->> 'connection' END AS connection_name,
-           n.connection_generation, n.credential_generation,
-           n.attempt_started_at, n.attempt_dispatched_at,
-           n.attempt_deadline_at, n.attempt_input_ref, n.attempt_key,
-           n.status, n.ended_at
-      FROM {schema}.node_runs AS n
-      JOIN {schema}.runs AS r
-        ON r.tenant_id = n.tenant_id AND r.run_id = n.run_id
-      LEFT JOIN catalog.flow_artifacts AS artifact
-        ON artifact.tenant_id = r.tenant_id
-       AND artifact.flow_id = r.flow_id
-       AND artifact.flow_version = r.flow_version
-       AND artifact.artifact_hash =
-           r.invocation_context #>> '{{principal,artifact-digest}}'
-      LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value)
-        ON node.value ->> 'id' = n.node_id
-     WHERE n.current_effect_attempt_id IS NULL
-       AND n.selected_recovery_class IS NOT NULL
-),
-attempts AS (
-    INSERT INTO {schema}.effect_attempts
-           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index,
-            predecessor_attempt_id,legacy_imported,
-            selected_recovery_class,recovery_class,
-            generation_fact_kind,connection_name,connection_generation,
-            credential_generation,verified_author_principal,
-            verified_publisher_principal,attempt_started_at,attempt_deadline_at,
-            attempt_input_ref,attempt_key)
-    SELECT tenant_id,attempt_id,run_id,node_id,occurrence,seq,attempt_index,
-           NULL,true,selected_recovery_class,recovery_class,generation_fact_kind,
-           connection_name,connection_generation,credential_generation,
-           NULL,NULL,attempt_started_at,attempt_deadline_at,attempt_input_ref,attempt_key
-      FROM candidates
-    RETURNING tenant_id,attempt_id
-),
-dispatches AS (
-    INSERT INTO {schema}.effect_attempt_dispatches
-           (tenant_id,attempt_id,attempt_started_at,dispatched_at)
-    SELECT c.tenant_id,c.attempt_id,c.attempt_started_at,c.attempt_dispatched_at
-      FROM candidates AS c
-      JOIN attempts AS a
-        ON a.tenant_id = c.tenant_id AND a.attempt_id = c.attempt_id
-     WHERE c.attempt_dispatched_at IS NOT NULL
-    RETURNING tenant_id,attempt_id,dispatched_at
-),
-outcomes AS (
-    INSERT INTO {schema}.effect_attempt_outcomes
-           (tenant_id,attempt_id,dispatched_at,outcome_status,recorded_at)
-    SELECT c.tenant_id,c.attempt_id,d.dispatched_at,c.status,
-           c.ended_at
-      FROM candidates AS c
-      JOIN dispatches AS d
-        ON d.tenant_id = c.tenant_id AND d.attempt_id = c.attempt_id
-     WHERE c.status IN ('success','error')
-    RETURNING tenant_id,attempt_id
-),
-updated AS (
-    UPDATE {schema}.node_runs AS n
-       SET current_effect_attempt_id = c.attempt_id
-      FROM candidates AS c
-      JOIN attempts AS a
-        ON a.tenant_id = c.tenant_id AND a.attempt_id = c.attempt_id
-     WHERE n.tenant_id = c.tenant_id AND n.run_id = c.run_id
-       AND n.node_id = c.node_id AND n.occurrence = c.occurrence
-    RETURNING n.tenant_id,n.run_id
-)
-SELECT (SELECT count(*) FROM updated),
-       (SELECT count(*) FROM dispatches),
-       (SELECT count(*) FROM outcomes)
-  INTO backfilled_attempts, backfilled_dispatches, backfilled_outcomes;
-
-    IF EXISTS (
         SELECT 1 FROM {schema}.node_runs AS n
-         WHERE n.current_effect_attempt_id IS NULL
-           AND (n.status = 'started' OR n.selected_recovery_class IS NOT NULL
-                OR n.recovery_class IS NOT NULL OR n.generation_fact_kind IS NOT NULL
-                OR n.connection_generation IS NOT NULL OR n.credential_generation IS NOT NULL
-                OR n.attempt_started_at IS NOT NULL OR n.attempt_dispatched_at IS NOT NULL
-                OR n.attempt_deadline_at IS NOT NULL OR n.attempt_input_ref IS NOT NULL
-                OR n.attempt_key IS NOT NULL)
+         WHERE n.status = 'started'
+           AND NOT EXISTS (
+               SELECT 1 FROM {schema}.effect_attempts AS a
+                WHERE a.tenant_id = n.tenant_id
+                  AND a.run_id = n.run_id
+                  AND a.node_id = n.node_id
+                  AND a.occurrence = n.occurrence
+           )
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
-            MESSAGE = 'legacy-effect-attempt-backfill-incomplete';
+            MESSAGE = 'legacy-active-attempt-without-immutable-intent';
     END IF;
 END
-$backfill$;"#,
-    )
+$retire$;
+ALTER TABLE {schema}.node_runs
+    DROP CONSTRAINT IF EXISTS node_runs_current_effect_attempt_fk,
+    DROP CONSTRAINT IF EXISTS node_runs_selected_recovery_class_check,
+    DROP CONSTRAINT IF EXISTS node_runs_recovery_class_check,
+    DROP CONSTRAINT IF EXISTS node_runs_generation_fact_kind_check,
+    DROP CONSTRAINT IF EXISTS node_runs_check,
+    DROP CONSTRAINT IF EXISTS node_runs_check1,
+    DROP CONSTRAINT IF EXISTS node_runs_check2,
+    DROP CONSTRAINT IF EXISTS node_runs_check3;
+ALTER TABLE {schema}.effect_attempts
+    DROP CONSTRAINT IF EXISTS effect_attempts_predecessor_fk,
+    DROP CONSTRAINT IF EXISTS effect_attempts_attempt_index_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_lineage_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_recovery_class_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_key_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence;
+DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+"#,
+    );
+    for column in RETIRED_NODE_ATTEMPT_COLUMNS {
+        if node_columns.contains(*column) {
+            sql.push_str(&format!(
+                "ALTER TABLE {schema}.node_runs ALTER COLUMN {} DROP NOT NULL, ALTER COLUMN {} DROP DEFAULT;\n",
+                quote_ident(column),
+                quote_ident(column),
+            ));
+        }
+    }
+    for column in RETIRED_EFFECT_ATTEMPT_COLUMNS {
+        if attempt_columns.contains(*column) {
+            sql.push_str(&format!(
+                "ALTER TABLE {schema}.effect_attempts ALTER COLUMN {} DROP NOT NULL, ALTER COLUMN {} DROP DEFAULT;\n",
+                quote_ident(column),
+                quote_ident(column),
+            ));
+        }
+    }
+    if !occurrence_key_present {
+        sql.push_str(&format!(
+            "ALTER TABLE {schema}.effect_attempts DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key;\n\
+             DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence_key;\n\
+             ALTER TABLE {schema}.effect_attempts ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,node_id,occurrence);\n",
+        ));
+    }
+    sql
 }
 
 fn disposition_provenance_migration_sql() -> &'static str {
@@ -2057,6 +1916,10 @@ pub struct RunPlaneObservation {
     /// Includes entity/floor tables (ignored by the planner) and any legacy
     /// outbox-era tables (planned for teardown).
     pub tables: BTreeMap<String, BTreeSet<String>>,
+    /// Live columns that still carry NOT NULL authority.
+    pub non_nullable_columns: BTreeSet<(String, String)>,
+    /// Live columns that still synthesize values through a default.
+    pub defaulted_columns: BTreeSet<(String, String)>,
     /// EVERY index in the target schema → its live `pg_indexes.indexdef`.
     pub indexes: BTreeMap<String, String>,
     /// Tables in the target schema carrying the legacy `wamn_outbox_event`
@@ -2073,9 +1936,6 @@ pub struct RunPlaneObservation {
     pub catalog_columns: BTreeMap<String, BTreeSet<String>>,
     /// Catalog CHECKs owned by additive cross-plane migrations.
     pub catalog_checks: BTreeMap<(String, String), String>,
-    /// Legacy node projections still carrying effect authority without an
-    /// immutable current-attempt pointer.
-    pub legacy_effect_attempt_rows: i64,
     /// Rows in `catalog.event_registrations` still carrying the legacy `state`
     /// key (0 when the table is absent — nothing to strip).
     pub stale_registration_state_rows: i64,
@@ -2106,9 +1966,9 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
-    /// Backfill immutable attempt/dispatch/outcome facts from the legacy
-    /// mutable node projection before readers switch authority.
-    BackfillEffectAttempts,
+    /// Refuse unsafe history, then retire legacy recovery/successor schema
+    /// without rewriting immutable attempt facts.
+    RetireAttemptRecoveryLineage,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
     RepairConstraint,
     /// Drop/re-add a missing or drifted named record foreign key.
@@ -2257,7 +2117,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
     plan.actions.extend(creates);
 
-    // Catalog storage must converge before any legacy effect-attempt backfill:
+    // Catalog storage converges before run-plane constraint reconciliation:
     // attested rows derive their portable connection name from the pinned flow
     // graph, and the next runtime child reads the nullable provenance columns.
     if !obs.catalog_schema_present {
@@ -2560,6 +2420,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
+            && !retirement_owned_check(table, name)
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::DropExtraConstraint,
@@ -2574,65 +2435,70 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     }
 
-    // 2c. Backfill the immutable attempt boundary before the pointer FK makes
-    // it authoritative. A present legacy table with a newly added pointer is
-    // always scheduled once; subsequent observations count only rows still
-    // carrying legacy effect authority without a pointer.
-    if let Some(columns) = obs.tables.get("node_runs") {
-        let legacy_authority_present = LEGACY_EFFECT_AUTHORITY_COLUMNS
-            .iter()
-            .all(|column| columns.contains(*column));
-        let pointer_missing = !columns.contains("current_effect_attempt_id");
-        if pointer_missing || (legacy_authority_present && obs.legacy_effect_attempt_rows > 0) {
+    // 2c. Existing recovery/successor shape is retired in place. The action
+    // locks both projections, refuses histories that cannot represent the
+    // single-shot boundary, removes only obsolete schema objects, and leaves
+    // every row and retired column value untouched.
+    if let Some(node_columns) = obs.tables.get("node_runs") {
+        let record_attempt_columns: BTreeSet<String> =
+            record_columns(RUN_STATE_SQL, "wamn_run", "effect_attempts")
+                .into_iter()
+                .map(|(column, _)| column)
+                .collect();
+        let attempt_columns = obs
+            .tables
+            .get("effect_attempts")
+            .unwrap_or(&record_attempt_columns);
+        let occurrence_key_present = !obs.tables.contains_key("effect_attempts")
+            || obs
+                .indexes
+                .get("effect_attempts_occurrence_key")
+                .is_some_and(|definition| {
+                    normalize_observed_schema(definition, schema)
+                        == EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF
+                });
+        let retired_authority_present = RETIRED_NODE_ATTEMPT_COLUMNS.iter().any(|column| {
+            let key = ("node_runs".to_string(), (*column).to_string());
+            node_columns.contains(*column)
+                && (obs.non_nullable_columns.contains(&key) || obs.defaulted_columns.contains(&key))
+        }) || RETIRED_EFFECT_ATTEMPT_COLUMNS.iter().any(|column| {
+            let key = ("effect_attempts".to_string(), (*column).to_string());
+            attempt_columns.contains(*column)
+                && (obs.non_nullable_columns.contains(&key) || obs.defaulted_columns.contains(&key))
+        });
+        let retired_shape_present = retired_authority_present
+            || obs
+                .checks
+                .keys()
+                .any(|(table, name)| retirement_owned_check(table, name))
+            || obs.foreign_keys.contains_key(&(
+                "node_runs".to_string(),
+                "node_runs_current_effect_attempt_fk".to_string(),
+            ))
+            || obs.foreign_keys.contains_key(&(
+                "effect_attempts".to_string(),
+                "effect_attempts_predecessor_fk".to_string(),
+            ))
+            || RETIRED_EFFECT_ATTEMPT_INDEXES
+                .iter()
+                .any(|name| obs.indexes.contains_key(*name));
+        if retired_shape_present || !occurrence_key_present {
             plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::BackfillEffectAttempts,
-                target: "node_runs.current_effect_attempt_id".to_string(),
-                sql: legacy_effect_attempt_backfill_sql(schema),
+                kind: RunPlaneActionKind::RetireAttemptRecoveryLineage,
+                target: "effect_attempts.single-shot-boundary".to_string(),
+                sql: retire_attempt_recovery_lineage_sql(
+                    schema,
+                    node_columns,
+                    attempt_columns,
+                    occurrence_key_present,
+                ),
             });
         }
     }
 
-    // 2d. The composite current-attempt pointer is added only after missing
-    // tables and additive columns exist. This avoids the legacy-upgrade bug in
-    // which creating `effect_attempts` tried to reference a not-yet-added
-    // `node_runs.current_effect_attempt_id`.
-    let fk_key = (
-        "node_runs".to_string(),
-        CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
-    );
-    if obs.foreign_keys.get(&fk_key).is_none_or(|definition| {
-        normalize_observed_schema(definition, schema) != CURRENT_EFFECT_ATTEMPT_FK_DEF
-    }) {
-        let drop = if obs.foreign_keys.contains_key(&fk_key) {
-            format!(
-                "ALTER TABLE {}.{} DROP CONSTRAINT {}; ",
-                schema.quoted(),
-                quote_ident("node_runs"),
-                quote_ident(CURRENT_EFFECT_ATTEMPT_FK_NAME),
-            )
-        } else {
-            String::new()
-        };
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::RepairForeignKey,
-            target: format!("node_runs.{CURRENT_EFFECT_ATTEMPT_FK_NAME}"),
-            sql: format!(
-                "{drop}{}",
-                rewrite_schema(CURRENT_EFFECT_ATTEMPT_FK_SQL, schema)
-            ),
-        });
-    }
-
-    // Existing effect ledgers also converge their typed predecessor and
-    // temporal boundary FKs. A missing table's canonical CREATE section
-    // already carries these, so repair only observed live tables.
+    // 2d. The dispatch and outcome temporal FKs remain exact. A missing table's
+    // canonical CREATE section carries these, so repair only observed tables.
     for (table, name, definition, sql) in [
-        (
-            "effect_attempts",
-            PREDECESSOR_EFFECT_ATTEMPT_FK_NAME,
-            PREDECESSOR_EFFECT_ATTEMPT_FK_DEF,
-            PREDECESSOR_EFFECT_ATTEMPT_FK_SQL,
-        ),
         (
             "effect_attempt_dispatches",
             EFFECT_DISPATCH_ATTEMPT_FK_NAME,
@@ -3077,11 +2943,13 @@ pub fn select_scenario_author_catalog_lock_privilege_sql() -> &'static str {
          'EXECUTE'), false)"
 }
 
-/// Every ordinary table + column in `$1`: `(relname, attname)` in attnum order.
+/// Every ordinary table + column in `$1`: `(relname, attname, not-null,
+/// has-default)` in attnum order.
 pub fn select_schema_columns_sql() -> &'static str {
-    "SELECT c.relname, a.attname FROM pg_class c \
+    "SELECT c.relname, a.attname, a.attnotnull, ad.adbin IS NOT NULL FROM pg_class c \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      JOIN pg_attribute a ON a.attrelid = c.oid \
+     LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
      WHERE n.nspname = $1 AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped \
      ORDER BY c.relname, a.attnum"
 }
@@ -3584,19 +3452,9 @@ CREATE INDEX event_registrations_by_entity
             obs.triggers
                 .insert((spec.table, spec.name), spec.definition);
         }
-        obs.foreign_keys.insert(
-            (
-                "node_runs".to_string(),
-                CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
-            ),
-            CURRENT_EFFECT_ATTEMPT_FK_DEF.to_string(),
-        );
-        obs.foreign_keys.insert(
-            (
-                "effect_attempts".to_string(),
-                PREDECESSOR_EFFECT_ATTEMPT_FK_NAME.to_string(),
-            ),
-            PREDECESSOR_EFFECT_ATTEMPT_FK_DEF.to_string(),
+        obs.indexes.insert(
+            "effect_attempts_occurrence_key".to_string(),
+            "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
         );
         obs.foreign_keys.insert(
             (
@@ -3884,7 +3742,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "authoring_suite_reports_flow",
                 "effect_attempts_bulk_scope",
-                "effect_attempts_occurrence",
                 "effect_dispositions_append_order",
                 "effect_dispositions_attempt_history",
                 "effect_dispositions_one_resolution",
@@ -4197,63 +4054,200 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn legacy_attempt_backfill_precedes_current_pointer_fk() {
+    fn upgraded_attempt_rows_are_preserved_but_retired() {
         let mut obs = observation_at_record();
-        let node_columns = obs.tables.get_mut("node_runs").expect("record node table");
-        node_columns.remove("current_effect_attempt_id");
-        node_columns.remove("attempt_input_ref");
-        obs.foreign_keys.remove(&(
-            "node_runs".to_string(),
-            CURRENT_EFFECT_ATTEMPT_FK_NAME.to_string(),
-        ));
+        let node_columns = obs.tables.get_mut("node_runs").expect("node table");
+        for column in RETIRED_NODE_ATTEMPT_COLUMNS {
+            node_columns.insert((*column).to_string());
+        }
+        let attempt_columns = obs
+            .tables
+            .get_mut("effect_attempts")
+            .expect("attempt table");
+        for column in RETIRED_EFFECT_ATTEMPT_COLUMNS {
+            attempt_columns.insert((*column).to_string());
+        }
+        for (table, column) in [
+            ("node_runs", "attempt"),
+            ("effect_attempts", "attempt_index"),
+            ("effect_attempts", "legacy_imported"),
+        ] {
+            obs.non_nullable_columns
+                .insert((table.to_string(), column.to_string()));
+            obs.defaulted_columns
+                .insert((table.to_string(), column.to_string()));
+        }
+        obs.indexes.insert(
+            "effect_attempts_occurrence".to_string(),
+            "CREATE INDEX effect_attempts_occurrence ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence, attempt_index)".to_string(),
+        );
+        obs.foreign_keys.insert(
+            (
+                "node_runs".to_string(),
+                "node_runs_current_effect_attempt_fk".to_string(),
+            ),
+            "legacy current pointer".to_string(),
+        );
+        obs.foreign_keys.insert(
+            (
+                "effect_attempts".to_string(),
+                "effect_attempts_predecessor_fk".to_string(),
+            ),
+            "legacy predecessor".to_string(),
+        );
 
-        let plan = plan_run_plane(&schema("demo"), &obs);
-        let add_pointer = plan
+        let action = plan_run_plane(&schema("demo"), &obs)
             .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::AddColumn
-                    && action.target == "node_runs.current_effect_attempt_id"
-            })
-            .expect("add current pointer");
-        let add_legacy_column = plan
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+            .expect("attempt retirement");
+        assert!(
+            action
+                .sql
+                .contains("legacy-effect-attempt-successors-present")
+        );
+        assert!(
+            action
+                .sql
+                .contains("legacy-active-attempt-without-immutable-intent")
+        );
+        assert!(
+            action
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS node_runs_check3")
+        );
+        assert!(
+            action
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS effect_attempts_key_check")
+        );
+        assert!(
+            action
+                .sql
+                .contains(r#"ALTER COLUMN "attempt_index" DROP NOT NULL"#)
+        );
+        assert!(!action.sql.contains("UPDATE "));
+        assert!(!action.sql.contains("DELETE "));
+        assert!(!action.sql.contains("INSERT INTO "));
+    }
+
+    #[test]
+    fn check_and_index_only_attempt_residue_still_retires() {
+        for (check, index) in [
+            (Some("node_runs_check3"), None),
+            (
+                None,
+                Some("effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key"),
+            ),
+        ] {
+            let mut obs = observation_at_record();
+            if let Some(name) = check {
+                obs.checks.insert(
+                    ("node_runs".to_string(), name.to_string()),
+                    "CHECK (true)".to_string(),
+                );
+            }
+            if let Some(name) = index {
+                obs.indexes.insert(
+                    name.to_string(),
+                    format!("CREATE UNIQUE INDEX {name} ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence, attempt_index)"),
+                );
+            }
+
+            let action = plan_run_plane(&schema("demo"), &obs)
+                .actions
+                .into_iter()
+                .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+                .expect("residual retired object plans retirement");
+            if let Some(name) = check {
+                assert!(action.sql.contains(name));
+            }
+            if let Some(name) = index {
+                assert!(action.sql.contains(name));
+            }
+        }
+    }
+
+    #[test]
+    fn drifted_occurrence_key_is_replaced_by_exact_single_shot_identity() {
+        let mut obs = observation_at_record();
+        obs.indexes.insert(
+            "effect_attempts_occurrence_key".to_string(),
+            "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+        );
+
+        let action = plan_run_plane(&schema("demo"), &obs)
             .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::AddColumn
-                    && action.target == "node_runs.attempt_input_ref"
-            })
-            .expect("add missing legacy authority column");
-        let backfill = plan
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+            .expect("drifted occurrence identity plans replacement");
+        assert!(
+            action
+                .sql
+                .contains("DROP INDEX IF EXISTS \"demo\".effect_attempts_occurrence_key")
+        );
+        assert!(action.sql.contains(
+            "ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,node_id,occurrence)"
+        ));
+    }
+
+    #[test]
+    fn unsafe_legacy_attempt_upgrade_refuses() {
+        let mut obs = observation_at_record();
+        obs.tables
+            .get_mut("effect_attempts")
+            .expect("attempt table")
+            .insert("attempt_index".to_string());
+        obs.non_nullable_columns
+            .insert(("effect_attempts".to_string(), "attempt_index".to_string()));
+        let action = plan_run_plane(&schema("demo"), &obs)
             .actions
-            .iter()
-            .position(|action| action.kind == RunPlaneActionKind::BackfillEffectAttempts)
-            .expect("legacy effect backfill");
-        let foreign_key = plan
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+            .expect("attempt retirement");
+        assert!(
+            action
+                .sql
+                .contains("GROUP BY tenant_id,run_id,node_id,occurrence")
+        );
+        assert!(action.sql.contains("HAVING count(*) > 1"));
+        assert!(
+            action
+                .sql
+                .contains("legacy-effect-attempt-successors-present")
+        );
+        assert!(action.sql.contains("n.status = 'started'"));
+        assert!(
+            action
+                .sql
+                .contains("legacy-active-attempt-without-immutable-intent")
+        );
+    }
+
+    #[test]
+    fn trusted_cdc_lineage_is_unchanged_by_attempt_retirement() {
+        let mut obs = observation_at_record();
+        obs.tables
+            .get_mut("effect_attempts")
+            .expect("attempt table")
+            .insert("attempt_index".to_string());
+        obs.non_nullable_columns
+            .insert(("effect_attempts".to_string(), "attempt_index".to_string()));
+        let action = plan_run_plane(&schema("demo"), &obs)
             .actions
-            .iter()
-            .position(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
-            .expect("current pointer FK");
-        assert!(add_pointer < backfill && add_legacy_column < backfill && backfill < foreign_key);
-        let sql = &plan.actions[backfill].sql;
-        assert!(sql.contains("LOCK TABLE \"demo\".node_runs IN SHARE ROW EXCLUSIVE MODE"));
-        assert!(sql.contains("legacy-effect-attempt-incomplete"));
-        assert!(sql.contains("legacy-effect-attempt-backfill-incomplete"));
-        assert!(sql.contains(") IS NOT TRUE"), "NULL facts must refuse");
-        assert!(sql.contains("legacy-effect-attempt-connection-unresolved"));
-        assert!(sql.contains("INSERT INTO \"demo\".effect_attempts"));
-        assert!(sql.contains("INSERT INTO \"demo\".effect_attempt_dispatches"));
-        assert!(sql.contains("INSERT INTO \"demo\".effect_attempt_outcomes"));
-        assert!(sql.contains("predecessor_attempt_id,legacy_imported"));
-        assert!(sql.contains("SET current_effect_attempt_id = c.attempt_id"));
-        assert!(!sql.contains("verified_author_principal AS"));
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+            .expect("attempt retirement");
+        for lineage in ["event_source_run_id", "event_root_run_id", "event_depth"] {
+            assert!(!action.sql.contains(lineage));
+        }
+        assert!(!action.sql.contains("runs_event_lineage_immutable"));
     }
 
     #[test]
     fn effect_lineage_and_temporal_fks_are_repaired_on_existing_ledgers() {
         let mut obs = observation_at_record();
         for (table, name) in [
-            ("effect_attempts", PREDECESSOR_EFFECT_ATTEMPT_FK_NAME),
             ("effect_attempt_dispatches", EFFECT_DISPATCH_ATTEMPT_FK_NAME),
             ("effect_attempt_outcomes", EFFECT_OUTCOME_DISPATCH_FK_NAME),
         ] {
@@ -4268,7 +4262,6 @@ CREATE INDEX event_registrations_by_entity
             .map(|action| action.target)
             .collect();
         for target in [
-            "effect_attempts.effect_attempts_predecessor_fk",
             "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk",
             "effect_attempt_outcomes.effect_attempt_outcomes_dispatch_fk",
         ] {
@@ -4335,14 +4328,6 @@ CREATE INDEX event_registrations_by_entity
                 .sql
                 .contains("ADD CONSTRAINT flow_artifacts_verified_author_principal_check")
         );
-    }
-
-    #[test]
-    fn legacy_attempt_observation_is_schema_scoped() {
-        let sql = count_legacy_effect_attempt_rows_sql(&schema("demo"));
-        assert!(sql.contains("FROM \"demo\".node_runs"));
-        assert!(sql.contains("current_effect_attempt_id IS NULL"));
-        assert!(sql.contains("attempt_dispatched_at IS NOT NULL"));
     }
 
     /// From zero (an empty database): the full run-plane set in FK order behind
@@ -4432,7 +4417,7 @@ CREATE INDEX event_registrations_by_entity
         // No column/index repairs on tables being created (sections carry them).
         assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
         assert!(!kinds.contains(&RunPlaneActionKind::CreateIndex));
-        assert!(kinds.contains(&RunPlaneActionKind::RepairForeignKey));
+        assert!(!kinds.contains(&RunPlaneActionKind::RepairForeignKey));
         // The rewrite reached the sections.
         let rq = plan
             .actions

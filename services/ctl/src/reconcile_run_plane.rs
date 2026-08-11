@@ -29,8 +29,8 @@
 //! PostgreSQL validates each canonical CHECK against existing rows and the verb
 //! fails loudly rather than rewriting incompatible history.
 //!
-//! **Ownership:** CREATE/ALTER/DROP need table ownership, and the legacy-attempt
-//! backfill must see every tenant through forced RLS. `wamn_app` and a plain
+//! **Ownership:** CREATE/ALTER/DROP need table ownership, and attempt-history
+//! retirement must see every tenant through forced RLS. `wamn_app` and a plain
 //! schema owner cannot safely run it, so apply requires an administrative role
 //! with `SUPERUSER` or explicit `BYPASSRLS`, like `publish-catalog --provision`
 //! / `reconcile-replica-identity`.
@@ -50,9 +50,8 @@ use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
     BareSchemaName, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
-    catalog_schema_present_sql, count_legacy_effect_attempt_rows_sql,
-    count_stale_registration_state_sql, plan_run_plane, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    catalog_schema_present_sql, count_stale_registration_state_sql, plan_run_plane,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_outbox_function_present_sql,
     select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
@@ -232,6 +231,14 @@ async fn observe(
     {
         let table: String = row.get(0);
         let column: String = row.get(1);
+        if row.get(2) {
+            obs.non_nullable_columns
+                .insert((table.clone(), column.clone()));
+        }
+        if row.get(3) {
+            obs.defaulted_columns
+                .insert((table.clone(), column.clone()));
+        }
         obs.tables.entry(table).or_default().insert(column);
     }
     for row in client
@@ -282,31 +289,6 @@ async fn observe(
         .await
         .context("survey legacy outbox function")?
         .get(0);
-
-    if obs.tables.get("node_runs").is_some_and(|columns| {
-        columns.contains("current_effect_attempt_id")
-            && [
-                "attempt",
-                "selected_recovery_class",
-                "recovery_class",
-                "generation_fact_kind",
-                "connection_generation",
-                "credential_generation",
-                "attempt_started_at",
-                "attempt_dispatched_at",
-                "attempt_deadline_at",
-                "attempt_input_ref",
-                "attempt_key",
-            ]
-            .iter()
-            .all(|column| columns.contains(*column))
-    }) {
-        obs.legacy_effect_attempt_rows = client
-            .query_one(&count_legacy_effect_attempt_rows_sql(schema), &[])
-            .await
-            .context("count legacy effect-attempt rows")?
-            .get(0);
-    }
 
     obs.catalog_schema_present = client
         .query_one(catalog_schema_present_sql(), &[])

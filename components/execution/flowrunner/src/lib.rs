@@ -52,16 +52,13 @@ use wamn_flow::{
     ERROR_PORT, FailConfig, Flow, InvokeActorMode, InvokeFlowConfig, MAIN_PORT, ResolvedInterfaces,
     canonical_json_sha256,
 };
-use wamn_run_state::attempt::{
-    AttemptDispatchResult, AttemptStartResult, GenerationFactKind, RecoveryClass,
-};
 use wamn_run_state::child::{
     ChildCreateResult, ChildReleaseResult, create_or_recover_child_sql, release_child_sql,
 };
 use wamn_run_state::transitions::{
     CallerReleaseResult, CheckpointResult, ReservedCheckpointResult, StoredCallerOutcome,
-    TerminalizeResult, begin_attempt_sql, complete_attempt_error_sql, complete_attempt_success_sql,
-    mark_attempt_dispatched_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
+    TerminalizeResult, complete_attempt_error_sql, complete_attempt_success_sql,
+    release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
 };
 use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
@@ -1014,41 +1011,6 @@ enum ResolvedNode {
     Standard,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct RecoveryAdmission {
-    selected_class: RecoveryClass,
-    effective_class: RecoveryClass,
-    generation_fact_kind: GenerationFactKind,
-    connection_required: bool,
-}
-
-fn recovery_admission(
-    plan: &wamn_catalog::ExecutionPlanV2,
-    dispatch: &Dispatch,
-) -> Result<RecoveryAdmission, String> {
-    let node = plan
-        .body
-        .nodes
-        .iter()
-        .find(|node| node.path.to_string() == dispatch.node)
-        .ok_or_else(|| format!("execution plan omits dispatched node {:?}", dispatch.node))?;
-    let selected_class = match node.effect_policy {
-        wamn_catalog::ExecutionEffectPolicy::Pure => RecoveryClass::Replay,
-        wamn_catalog::ExecutionEffectPolicy::Effectful => RecoveryClass::NeverReplay,
-    };
-    let connection_required = node.source_connection_requirement.is_some();
-    Ok(RecoveryAdmission {
-        selected_class,
-        effective_class: selected_class,
-        generation_fact_kind: if connection_required {
-            GenerationFactKind::Attested
-        } else {
-            GenerationFactKind::NotRequired
-        },
-        connection_required,
-    })
-}
-
 fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
     match node_type {
         "webhook-in" => Some(ResolvedNode::WebhookIn),
@@ -1932,142 +1894,6 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         flow_version,
         lease_generation,
     }))
-}
-
-fn begin_attempt(
-    run_id: &str,
-    dispatch: &Dispatch,
-    seq: i32,
-    admission: RecoveryAdmission,
-    owner: &str,
-    lease_generation: i64,
-    ttl_ms: i64,
-) -> Result<AttemptStartResult, String> {
-    let input_ref = if admission.connection_required {
-        http_operation_fingerprint(dispatch)?
-    } else {
-        canonical_json_sha256(&dispatch.attempt_input())
-    };
-    let attempt_key = (admission.connection_required
-        || admission.effective_class == RecoveryClass::IdempotentWithKey)
-        .then_some(dispatch.idempotency_key.as_str())
-        .filter(|key| !key.is_empty());
-    let connection =
-        if admission.connection_required {
-            Some(dispatch.connection.as_deref().ok_or_else(|| {
-                format!("effectful plan node {} has no connection", dispatch.node)
-            })?)
-        } else {
-            None
-        };
-    let response = client::query(
-        &begin_attempt_sql(),
-        &[
-            text(run_id),
-            text(run_id),
-            text(owner),
-            int64(lease_generation),
-            text(&dispatch.node),
-            int32(dispatch.occurrence as i32),
-            int32(seq),
-            text(admission.selected_class.as_sql()),
-            text(admission.effective_class.as_sql()),
-            text(admission.generation_fact_kind.as_sql()),
-            SqlValue::Null,
-            SqlValue::Null,
-            text(input_ref),
-            attempt_key.map_or(SqlValue::Null, text),
-            int64(ttl_ms),
-            connection.map_or(SqlValue::Null, text),
-        ],
-    )
-    .map_err(|error| err_name(&error))?;
-    let code = match response.rows.first().and_then(|row| row.first()) {
-        Some(SqlValue::Text(code)) => code.as_str(),
-        other => return Err(format!("attempt intent result shape: {other:?}")),
-    };
-    AttemptStartResult::from_code(code)
-        .ok_or_else(|| format!("unknown attempt intent result: {code}"))
-}
-
-fn http_operation_fingerprint(dispatch: &Dispatch) -> Result<String, String> {
-    let requirement = dispatch
-        .connection
-        .as_deref()
-        .ok_or_else(|| format!("HTTP node {} has no connection", dispatch.node))?;
-    let request = wamn_nodes::prepare_http_request(
-        requirement,
-        &dispatch.config,
-        &dispatch.payload,
-        &dispatch.context,
-    )
-    .map_err(|error| format!("prepare HTTP effect intent: {error:?}"))?;
-    let target = wamn_node_manifest::normalize_portable_http_target(&request.path_and_query)
-        .map_err(|error| format!("normalize HTTP effect intent: {error}"))?;
-    let semantic_headers = request
-        .headers
-        .iter()
-        .filter(|(name, _)| wamn_node_manifest::is_http_operation_semantic_header(name))
-        .map(|(name, value)| wamn_node_manifest::HttpSemanticHeader { name, value })
-        .collect::<Vec<_>>();
-    let fingerprint =
-        wamn_node_manifest::fingerprint_http_operation(&wamn_node_manifest::HttpOperation {
-            method: &request.method,
-            target,
-            semantic_headers: &semantic_headers,
-            body_digest: wamn_node_manifest::HttpBodyDigest::sha256(
-                request.body.as_deref().unwrap_or_default(),
-            ),
-        })
-        .map_err(|error| format!("fingerprint HTTP effect intent: {error}"))?;
-    let mut encoded = String::with_capacity(71);
-    encoded.push_str("sha256:");
-    for byte in fingerprint.digest() {
-        use std::fmt::Write as _;
-        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    Ok(encoded)
-}
-
-fn mark_attempt_dispatched(
-    run_id: &str,
-    dispatch: &Dispatch,
-    owner: &str,
-    lease_generation: i64,
-    ttl_ms: i64,
-) -> Result<(), String> {
-    let response = client::query(
-        &mark_attempt_dispatched_sql(),
-        &[
-            text(run_id),
-            text(run_id),
-            text(owner),
-            int64(lease_generation),
-            text(&dispatch.node),
-            int32(dispatch.occurrence as i32),
-            int64(ttl_ms),
-        ],
-    )
-    .map_err(|error| err_name(&error))?;
-    let code = match response.rows.first().and_then(|row| row.first()) {
-        Some(SqlValue::Text(code)) => code.as_str(),
-        other => return Err(format!("attempt dispatch marker result shape: {other:?}")),
-    };
-    match AttemptDispatchResult::from_code(code)
-        .ok_or_else(|| format!("unknown attempt dispatch marker result: {code}"))?
-    {
-        AttemptDispatchResult::Marked => Ok(()),
-        AttemptDispatchResult::FenceLost => {
-            Err("attempt dispatch marker refused: fence-lost".to_string())
-        }
-        AttemptDispatchResult::AttemptDeadlineExpired => {
-            Err("attempt dispatch refused: attempt-deadline-expired".to_string())
-        }
-        AttemptDispatchResult::RunDeadlineExpired => {
-            Err("attempt dispatch refused: run-deadline-expired".to_string())
-        }
-        other => Err(format!("attempt dispatch marker refused: {other:?}")),
-    }
 }
 
 #[expect(

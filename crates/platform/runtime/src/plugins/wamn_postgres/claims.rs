@@ -162,7 +162,7 @@ WITH admitted_artifact AS MATERIALIZED ( \
 SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
        r.invocation_context #>> '{principal,artifact-digest}', \
        artifact.execution_artifact_hash IS NOT NULL, \
-       (nr.status = 'started' AND nr.attempt = $4), \
+       ($3::int IS NOT NULL AND $4::int IS NOT NULL AND false), \
        requirement.requirement_json::text, node.value ->> 'connection', \
        EXISTS (SELECT 1 \
                  FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS resolved(value), \
@@ -177,15 +177,8 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
        generation.credential_set_handle, \
        COALESCE(NOT artifact.is_draft \
                 OR (grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL), false), \
-       (nr.attempt = $4 AND nr.generation_fact_kind = 'attested' \
-        AND nr.connection_generation = instance.instance_id || ':' || generation.generation::text \
-        AND nr.credential_generation = generation.credential_set_handle \
-        AND nr.attempt_input_ref = $6 AND nr.attempt_key = $7 \
-        AND nr.attempt_dispatched_at IS NOT NULL) \
+       ($6::text IS NOT NULL AND $7::text IS NOT NULL AND false) \
   FROM runs AS r \
-  LEFT JOIN node_runs AS nr \
-    ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
-   AND nr.node_id = $2 AND nr.occurrence = $3 \
   LEFT JOIN admitted_artifact AS artifact ON true \
   LEFT JOIN LATERAL jsonb_array_elements( \
       COALESCE(artifact.graph_json -> 'connection-requirements', '[]'::jsonb) \
@@ -287,17 +280,13 @@ WITH admitted_artifact AS MATERIALIZED ( \
 SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
        r.invocation_context #>> '{principal,artifact-digest}', \
        artifact.artifact_hash IS NOT NULL, \
-       (nr.status = 'started' AND nr.attempt = $4 \
-        AND nr.attempt_dispatched_at IS NOT NULL), \
+       ($3::int IS NOT NULL AND $4::int IS NOT NULL AND false), \
        node.value ->> 'type', contract.value #>> '{executable,kind}', \
        contract.value #>> '{executable,digest}', \
        COALESCE(node.value -> 'config', 'null'::jsonb)::text, \
        node.value ->> 'connection', node.value ->> 'credential', \
-       nr.attempt_input_ref, nr.attempt_key \
+       NULL::text, NULL::text \
   FROM runs AS r \
-  LEFT JOIN node_runs AS nr \
-    ON nr.tenant_id = r.tenant_id AND nr.run_id = r.run_id \
-   AND nr.node_id = $2 AND nr.occurrence = $3 \
   LEFT JOIN admitted_artifact AS artifact ON true \
   LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
     ON node.value ->> 'id' = $2 \
@@ -1335,10 +1324,27 @@ mod tests {
     }
 
     #[test]
-    fn connection_effect_snapshot_sql_uses_the_injected_run_schema() {
+    fn effect_runtime_adapters_are_deny_only_without_retired_attempt_readers() {
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("FROM runs AS r"));
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("LEFT JOIN node_runs AS nr"));
         assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("wamn_run."));
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$7::text IS NOT NULL AND false"));
+        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
+        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text, NULL::text"));
+        for sql in [CONNECTION_EFFECT_SNAPSHOT_SQL, NODE_INVOCATION_SNAPSHOT_SQL] {
+            assert!(!sql.contains("JOIN node_runs"));
+            for retired in [
+                "nr.attempt",
+                "nr.generation_fact_kind",
+                "nr.connection_generation",
+                "nr.credential_generation",
+                "nr.attempt_dispatched_at",
+                "nr.attempt_input_ref",
+                "nr.attempt_key",
+            ] {
+                assert!(!sql.contains(retired), "runtime snapshot retains {retired}");
+            }
+        }
     }
 
     #[test]
@@ -1667,10 +1673,10 @@ mod tests {
         assert_eq!(scs, "on");
     }
 
-    /// The adapter's read-only lookup accepts only the exact durable intent
-    /// written and marked by `run_state_live` for the portable HTTP attempt.
+    /// The adapter preserves source/binding observation but denies attempt
+    /// authority until .4.9 installs the immutable writer and reader together.
     #[tokio::test]
-    async fn live_connection_effect_snapshot_requires_exact_marked_intent() {
+    async fn live_effect_runtime_snapshots_are_deny_only_until_writer_activation() {
         let Some(url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
             return;
         };
@@ -1705,8 +1711,8 @@ mod tests {
             .expect("admitted run exists");
         assert!(snapshot.source_admitted);
         assert!(snapshot.draft_generation_granted);
-        assert!(snapshot.attempt_matches);
-        assert!(snapshot.attempt_recorded);
+        assert!(!snapshot.attempt_matches);
+        assert!(!snapshot.attempt_recorded);
         assert_eq!(snapshot.active_generation, Some(1));
         assert_eq!(snapshot.generation, Some(1));
         assert_eq!(snapshot.instance_id.as_deref(), Some("manager-dev"));
@@ -1748,8 +1754,8 @@ mod tests {
             .unwrap()
             .expect("exact validated draft exists");
         assert!(draft_snapshot.source_admitted);
-        assert!(draft_snapshot.attempt_matches);
-        assert!(draft_snapshot.attempt_recorded);
+        assert!(!draft_snapshot.attempt_matches);
+        assert!(!draft_snapshot.attempt_recorded);
         assert_eq!(draft_snapshot.active_generation, Some(1));
         assert_eq!(draft_snapshot.generation, Some(1));
         assert_eq!(draft_snapshot.instance_id.as_deref(), Some("manager-dev"));
@@ -1794,21 +1800,15 @@ mod tests {
             .unwrap()
             .expect("exact validated draft node exists");
         assert!(exact_node.admitted_artifact);
-        assert!(exact_node.attempt_matches);
+        assert!(!exact_node.attempt_matches);
         assert_eq!(exact_node.node_type.as_deref(), Some("http-request"));
         assert_eq!(exact_node.executable_kind.as_deref(), Some("component"));
         assert_eq!(
             exact_node.admitted_implementation_digest.as_deref(),
             Some("sha256:http-node-draft")
         );
-        assert_eq!(
-            exact_node.attempt_input_ref.as_deref(),
-            Some("sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79")
-        );
-        assert_eq!(
-            exact_node.attempt_key.as_deref(),
-            Some("draft-http-granted:notify:0")
-        );
+        assert_eq!(exact_node.attempt_input_ref, None);
+        assert_eq!(exact_node.attempt_key, None);
 
         let mismatched_node = pg
             .node_invocation_snapshot(

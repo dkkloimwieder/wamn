@@ -285,6 +285,20 @@ fn schema_drift() {
 }
 
 #[test]
+fn connection_contract_schema_drift() {
+    let committed =
+        include_str!("../../../../docs/archive/contracts/wamn-connection-contract.schema.json");
+    assert_eq!(
+        committed,
+        wamn_node_manifest::connection_contract_json_schema_string(),
+        "docs/archive/contracts/wamn-connection-contract.schema.json is out of sync with the \
+         types; regenerate: cargo run -p wamn-node-manifest --example \
+         print-connection-contract-schema > \
+         docs/archive/contracts/wamn-connection-contract.schema.json"
+    );
+}
+
+#[test]
 fn annotation_key_is_pinned() {
     // Design-note 8: the registry palette scans this exact key.
     assert_eq!(ANNOTATION_KEY, "wamn.node.manifest");

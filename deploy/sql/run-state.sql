@@ -330,9 +330,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 -- ---------------------------------------------------------------------------
 -- node_runs: one row per node execution, the branch-aware reconstruction source.
 -- The idempotency key is (tenant_id, run_id, node_id, occurrence): `occurrence`
--- disambiguates a node the flow LOOPS through (0 = first visit). Effect
--- redispatches append a new immutable effect_attempts row and advance only the
--- constrained current pointer — they never copy authority facts onto this row.
+-- disambiguates a node the flow LOOPS through (0 = first visit).
 -- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
 -- (status success/error) in `seq` order, folding each as an emission on
 -- `output_port` carrying `output_json`; a `started` row is an outstanding node
@@ -343,34 +341,12 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.node_runs (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),
-    -- Mutable occurrence projection only: points at the current row in the
-    -- append-only effect_attempts ledger. Never expose this pointer as an
-    -- immutable attempt identity without joining that ledger.
-    current_effect_attempt_id uuid,
     run_id        text NOT NULL,
     node_id       text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
     seq           int  NOT NULL,
-    -- Compatibility projection retained through the immutable-ledger
-    -- activation. New runtime authority moves to effect_attempts in the next
-    -- ordered rollout child; legacy binaries must remain valid after this
-    -- additive schema/reconcile child is published.
-    attempt       int  NOT NULL DEFAULT 0,
     status        text NOT NULL
         CHECK (status IN ('started', 'success', 'error')),
-    selected_recovery_class text
-        CHECK (selected_recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
-    recovery_class text
-        CHECK (recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')),
-    generation_fact_kind text
-        CHECK (generation_fact_kind IN ('not-required', 'attested')),
-    connection_generation text,
-    credential_generation text,
-    attempt_started_at timestamptz,
-    attempt_dispatched_at timestamptz,
-    attempt_deadline_at timestamptz,
-    attempt_input_ref text,
-    attempt_key text,
     output_port   text,
     output_json   jsonb,
     input_json    jsonb,
@@ -387,26 +363,6 @@ CREATE TABLE wamn_run.node_runs (
     redacted      boolean NOT NULL DEFAULT false,
     started_at    timestamptz NOT NULL DEFAULT now(),
     ended_at      timestamptz,
-    CHECK ((status <> 'started') OR
-           (selected_recovery_class IS NOT NULL
-            AND recovery_class IS NOT NULL
-            AND selected_recovery_class = recovery_class
-            AND generation_fact_kind IS NOT NULL
-            AND attempt_started_at IS NOT NULL
-            AND attempt_deadline_at IS NOT NULL
-            AND attempt_input_ref IS NOT NULL)),
-    CHECK ((generation_fact_kind = 'not-required'
-            AND connection_generation IS NULL
-            AND credential_generation IS NULL)
-           OR (generation_fact_kind = 'attested'
-               AND connection_generation IS NOT NULL
-               AND connection_generation <> ''
-               AND credential_generation IS NOT NULL
-               AND credential_generation <> '')),
-    CHECK (attempt_deadline_at IS NULL OR attempt_started_at IS NULL
-           OR attempt_started_at <= attempt_deadline_at),
-    CHECK (attempt_dispatched_at IS NULL OR attempt_started_at IS NULL
-           OR attempt_started_at <= attempt_dispatched_at),
     PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
@@ -421,10 +377,9 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt ledger. `node_runs` remains the current occurrence
--- projection; every actual dispatch generation gets its own server-minted id
--- here. A crash before the send boundary reuses its prepared row. An authorized
--- replay/idempotent redispatch appends a successor and advances only the
--- node_runs pointer. Never-replay cannot mint a successor.
+-- projection; every effectful occurrence has one server-minted identity here.
+-- The replacement writer is activated by wamn-0h0g.4.9; until then execution
+-- remains hard-refused.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.effect_attempts (
     tenant_id       text NOT NULL,
@@ -433,14 +388,6 @@ CREATE TABLE wamn_run.effect_attempts (
     node_id         text NOT NULL,
     occurrence      int NOT NULL,
     seq             int NOT NULL,
-    attempt_index   int NOT NULL,
-    predecessor_attempt_id uuid,
-    -- Legacy mutable rows had no predecessor identity. The migration marks
-    -- that one exception explicitly; new successor attempts must carry typed
-    -- same-occurrence lineage.
-    legacy_imported boolean NOT NULL DEFAULT false,
-    selected_recovery_class text NOT NULL,
-    recovery_class  text NOT NULL,
     generation_fact_kind text NOT NULL,
     connection_name text,
     connection_generation text,
@@ -455,18 +402,6 @@ CREATE TABLE wamn_run.effect_attempts (
     CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
     CONSTRAINT effect_attempts_occurrence_check CHECK (occurrence >= 0),
     CONSTRAINT effect_attempts_seq_check CHECK (seq >= 0),
-    CONSTRAINT effect_attempts_attempt_index_check CHECK (attempt_index >= 0),
-    CONSTRAINT effect_attempts_lineage_check CHECK (
-        (legacy_imported AND predecessor_attempt_id IS NULL)
-        OR
-        (NOT legacy_imported
-         AND ((attempt_index = 0 AND predecessor_attempt_id IS NULL)
-              OR (attempt_index > 0 AND predecessor_attempt_id IS NOT NULL)))
-    ),
-    CONSTRAINT effect_attempts_recovery_class_check
-        CHECK (selected_recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')
-               AND recovery_class IN ('replay', 'idempotent-with-key', 'never-replay')
-               AND selected_recovery_class = recovery_class),
     CONSTRAINT effect_attempts_generation_fact_check
         CHECK (generation_fact_kind IN ('not-required', 'attested')),
     CONSTRAINT effect_attempts_generation_values_check CHECK (
@@ -487,26 +422,15 @@ CREATE TABLE wamn_run.effect_attempts (
         CHECK (attempt_started_at <= attempt_deadline_at),
     CONSTRAINT effect_attempts_input_ref_check
         CHECK (attempt_input_ref <> ''),
-    CONSTRAINT effect_attempts_key_check
-        CHECK (recovery_class <> 'idempotent-with-key'
-               OR (attempt_key IS NOT NULL AND attempt_key <> '')),
     PRIMARY KEY (tenant_id, attempt_id),
-    UNIQUE (tenant_id, attempt_id, run_id, node_id, occurrence),
-    UNIQUE (tenant_id, attempt_id, attempt_started_at),
-    UNIQUE (tenant_id, run_id, node_id, occurrence, attempt_index),
-    CONSTRAINT effect_attempts_predecessor_fk
-        FOREIGN KEY (tenant_id, predecessor_attempt_id, run_id, node_id, occurrence)
-        REFERENCES wamn_run.effect_attempts
-            (tenant_id, attempt_id, run_id, node_id, occurrence)
+    CONSTRAINT effect_attempts_occurrence_key
+        UNIQUE (tenant_id, run_id, node_id, occurrence),
+    UNIQUE (tenant_id, attempt_id, attempt_started_at)
 );
 -- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
 -- audit ledger with an independent retention lifetime. Pruning terminal run
 -- history cascades through the mutable node projection but must leave these
--- immutable facts intact. The current projection pointer below is constrained
--- in the opposite direction so it cannot name a nonexistent/cross-tenant fact.
-CREATE INDEX effect_attempts_occurrence
-    ON wamn_run.effect_attempts
-       (tenant_id, run_id, node_id, occurrence, attempt_index);
+-- immutable facts intact.
 CREATE INDEX effect_attempts_bulk_scope
     ON wamn_run.effect_attempts
        (tenant_id, connection_name, connection_generation, attempt_started_at);
@@ -768,14 +692,3 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 CREATE TRIGGER effect_dispositions_delete_immutable
 BEFORE DELETE ON wamn_run.effect_dispositions
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
-
--- BEGIN POST-TABLE CONSTRAINTS
--- The full occurrence identity makes a cross-run/node pointer structurally
--- impossible. This lives after both tables so from-zero apply and additive
--- reconciliation can establish it without weakening the append-only ledger.
-ALTER TABLE wamn_run.node_runs
-    ADD CONSTRAINT node_runs_current_effect_attempt_fk
-    FOREIGN KEY (tenant_id, current_effect_attempt_id, run_id, node_id, occurrence)
-    REFERENCES wamn_run.effect_attempts
-        (tenant_id, attempt_id, run_id, node_id, occurrence);
--- END POST-TABLE CONSTRAINTS

@@ -377,7 +377,7 @@ fn validate_request_context(
 }
 
 fn authorize_request(
-    context: &InvocationContext,
+    _context: &InvocationContext,
     request: &NodeInvokeRequest,
     snapshot: &NodeInvocationSnapshot,
 ) -> Result<(), EffectError> {
@@ -404,12 +404,10 @@ fn authorize_request(
         "input": input,
     });
     let attempt_input_ref = wamn_flow::canonical_json_sha256(&attempt_input);
-    let admitted_attempt_key = snapshot.attempt_key.clone().unwrap_or_else(|| {
-        format!(
-            "{}:{}:{}",
-            context.run_id, context.node_id, context.occurrence
-        )
-    });
+    let admitted_attempt_key = snapshot
+        .attempt_key
+        .as_deref()
+        .ok_or(EffectError::InvalidContext)?;
     if snapshot.admitted_config.as_ref() != Some(&config)
         || snapshot.attempt_input_ref.as_deref() != Some(attempt_input_ref.as_str())
         || request.ctx.idempotency_key != admitted_attempt_key
@@ -639,20 +637,16 @@ mod tests {
     }
 
     #[test]
-    fn never_replay_uses_the_exact_deterministic_wire_key() {
+    fn missing_immutable_attempt_key_is_refused() {
         let context = invocation_context();
         let mut snapshot = invocation_snapshot(&context);
         snapshot.attempt_key = None;
-        let expected_key = format!(
-            "{}:{}:{}",
-            context.run_id, context.node_id, context.occurrence
-        );
-        let request = invocation_request(&expected_key);
-        assert!(authorize_request(&context, &request, &snapshot).is_ok());
-
-        let wrong_request = invocation_request("wrong-key");
         assert!(matches!(
-            authorize_request(&context, &wrong_request, &snapshot),
+            authorize_request(
+                &context,
+                &invocation_request("durable-attempt-key"),
+                &snapshot
+            ),
             Err(EffectError::InvalidContext)
         ));
     }

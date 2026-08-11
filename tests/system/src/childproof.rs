@@ -76,19 +76,27 @@ pub mod tests {
     #[test]
     fn runner_has_a_dedicated_non_egress_child_path() {
         let runner = include_str!("../../../components/execution/flowrunner/src/lib.rs");
-        let invoke = runner
-            .find("if d.node_type == \"invoke-flow\"")
-            .expect("dedicated invoke-flow branch");
-        let attempt = runner[invoke..]
-            .find("let admission = recovery_admission")
+        let invoke = runner.find("fn invoke_child(").expect("child SQL path");
+        let next = runner[invoke..]
+            .find("\nfn ")
             .map(|offset| invoke + offset)
-            .expect("ordinary attempt path");
-        assert!(invoke < attempt);
-        assert!(runner.contains("ChildInvocation::Parked"));
-        assert!(runner.contains("already_settled: true"));
-        assert!(runner.contains("ChildInvocation::Released(child_outcome(outcome))"));
-        assert!(runner.contains("release_child_sql()"));
-        assert!(!runner[invoke..attempt].contains("dispatch_node("));
+            .expect("end of child SQL path");
+        let child_path = &runner[invoke..next];
+
+        assert!(child_path.contains("create_or_recover_child_sql()"));
+        assert!(child_path.contains("ChildInvocation::Parked"));
+        assert!(child_path.contains("ChildInvocation::Released(child_outcome(outcome))"));
+        assert!(!child_path.contains("dispatch_node("));
+        assert!(!child_path.contains("http_get("));
+        assert!(!child_path.contains("custom_node_dispatch("));
+
+        // .4.3 retains the child transition without activating execution: all
+        // production entry points still refuse before they can reach it.
+        assert!(runner.contains("fn execute_claimed("));
+        assert!(runner.contains("fn execute_admitted_claimed("));
+        assert!(runner.contains(
+            "execution refuses until authoritative execution-plan interpretation is installed"
+        ));
     }
 
     #[test]
