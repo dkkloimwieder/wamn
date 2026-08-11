@@ -187,7 +187,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "components/execution/flowrunner/src/lib.rs",
         exact: "r.admission_context_version = '0.1'",
-        expected_count: 2,
+        expected_count: 1,
     },
     GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
