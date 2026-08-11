@@ -108,7 +108,7 @@ SELECT pg_catalog.current_database(), session_user, pg_catalog.inet_server_addr(
 const RELEASE_CANDIDATES_SQL: &str = "\
 SELECT h.tenant_id, h.catalog_id, h.applied_catalog_version, h.environment, \
        rf.flow_id, rf.flow_version, a.graph_json::text, a.graph_hash, \
-       a.artifact_hash, \
+       a.artifact_hash, rf.execution_bundle_hash, \
        (SELECT count(*) FROM jsonb_array_elements(rm.members_json) AS member \
          WHERE member ->> 'flow-id' = rf.flow_id \
            AND (member ->> 'flow-version')::int = rf.flow_version \
@@ -137,6 +137,7 @@ struct ReleaseCandidate {
     graph_json: String,
     graph_hash: String,
     artifact_hash: String,
+    execution_bundle_hash: String,
     manifest_matches: i64,
 }
 
@@ -146,6 +147,7 @@ struct ReleasePin {
     catalog_version: i32,
     environment: String,
     artifact_hash: String,
+    execution_bundle_hash: String,
     graph_json: String,
 }
 
@@ -153,6 +155,8 @@ struct ReleasePin {
 enum ScenarioAdmissionResult {
     Admitted,
     MembershipDrift,
+    MissingRootPlan,
+    ConflictingRunIdentity,
     Duplicate,
 }
 
@@ -161,6 +165,8 @@ impl ScenarioAdmissionResult {
         match value {
             "admitted" => Ok(Self::Admitted),
             "membership-drift" => Ok(Self::MembershipDrift),
+            "missing-root-plan" => Ok(Self::MissingRootPlan),
+            "conflicting-run-identity" => Ok(Self::ConflictingRunIdentity),
             "duplicate" => Ok(Self::Duplicate),
             other => bail!("unknown scenario admission result {other:?}"),
         }
@@ -171,7 +177,9 @@ impl ScenarioAdmissionResult {
 enum DraftScenarioAdmissionResult {
     Admitted,
     DraftDrift,
+    MissingRootPlan,
     ConnectionsDenied,
+    ConflictingRunIdentity,
     Duplicate,
 }
 
@@ -180,7 +188,9 @@ impl DraftScenarioAdmissionResult {
         match value {
             "admitted" => Ok(Self::Admitted),
             "draft-drift" => Ok(Self::DraftDrift),
+            "missing-root-plan" => Ok(Self::MissingRootPlan),
             "draft-connections-denied" => Ok(Self::ConnectionsDenied),
+            "conflicting-run-identity" => Ok(Self::ConflictingRunIdentity),
             "duplicate" => Ok(Self::Duplicate),
             other => bail!("unknown draft-scenario admission result {other:?}"),
         }
@@ -571,7 +581,8 @@ async fn release_candidates(
                 graph_json: row.try_get(6)?,
                 graph_hash: row.try_get(7)?,
                 artifact_hash: row.try_get(8)?,
-                manifest_matches: row.try_get(9)?,
+                execution_bundle_hash: row.try_get(9)?,
+                manifest_matches: row.try_get(10)?,
             })
         })
         .collect()
@@ -623,6 +634,7 @@ fn resolve_release_member(
         catalog_version: candidate.catalog_version,
         environment: candidate.environment,
         artifact_hash: candidate.artifact_hash,
+        execution_bundle_hash: candidate.execution_bundle_hash,
         graph_json: artifact.flow().to_json(),
     })
 }
@@ -1200,12 +1212,28 @@ async fn execute_target(
                     )
                     .await
                     .context("atomically admit and enqueue pinned release scenario run")?;
+                let admitted_bundle_hash: Option<String> = row.try_get(1)?;
                 match ScenarioAdmissionResult::from_sql(row.get(0))? {
                     ScenarioAdmissionResult::Admitted => None,
                     ScenarioAdmissionResult::MembershipDrift => {
                         bail!("scenario immutable release membership drifted before admission")
                     }
+                    ScenarioAdmissionResult::MissingRootPlan => {
+                        bail!("missing-root-plan: scenario release has no durable root plan")
+                    }
+                    ScenarioAdmissionResult::ConflictingRunIdentity => {
+                        bail!(
+                            "conflicting-run-identity: scenario run {run_id:?} has different immutable pins"
+                        )
+                    }
                     ScenarioAdmissionResult::Duplicate => {
+                        if admitted_bundle_hash.as_deref()
+                            != Some(release.execution_bundle_hash.as_str())
+                        {
+                            bail!(
+                                "conflicting-run-identity: duplicate scenario run {run_id:?} changed root plan"
+                            )
+                        }
                         if report_sink.is_some() {
                             duplicate_admission = true;
                             None
@@ -1242,15 +1270,31 @@ async fn execute_target(
                     )
                     .await
                     .context("atomically admit and enqueue exact draft scenario run")?;
+                let admitted_bundle_hash: Option<String> = row.try_get(1)?;
                 match DraftScenarioAdmissionResult::from_sql(row.get(0))? {
                     DraftScenarioAdmissionResult::Admitted => None,
                     DraftScenarioAdmissionResult::DraftDrift => {
                         Some(ScenarioRefusal::ValidatedDraftDrift)
                     }
+                    DraftScenarioAdmissionResult::MissingRootPlan => {
+                        bail!("missing-root-plan: validated draft has no durable root plan")
+                    }
                     DraftScenarioAdmissionResult::ConnectionsDenied => {
                         Some(ScenarioRefusal::DraftConnectionsDenied)
                     }
+                    DraftScenarioAdmissionResult::ConflictingRunIdentity => {
+                        bail!(
+                            "conflicting-run-identity: draft scenario run {run_id:?} has different immutable pins"
+                        )
+                    }
                     DraftScenarioAdmissionResult::Duplicate => {
+                        if admitted_bundle_hash.as_deref()
+                            != Some(pin.execution_bundle_hash.as_str())
+                        {
+                            bail!(
+                                "conflicting-run-identity: duplicate draft scenario run {run_id:?} changed root plan"
+                            )
+                        }
                         duplicate_admission = true;
                         None
                     }
@@ -1698,6 +1742,7 @@ mod tests {
             graph_json: graph_json.into(),
             graph_hash: artifact.graph_hash().into(),
             artifact_hash: artifact.identity().artifact_hash().as_str().into(),
+            execution_bundle_hash: "sha256:execution-bundle".into(),
             manifest_matches: 1,
         }
     }
@@ -1808,6 +1853,14 @@ mod tests {
         assert_eq!(
             ScenarioAdmissionResult::from_sql("duplicate").unwrap(),
             ScenarioAdmissionResult::Duplicate
+        );
+        assert_eq!(
+            ScenarioAdmissionResult::from_sql("missing-root-plan").unwrap(),
+            ScenarioAdmissionResult::MissingRootPlan
+        );
+        assert_eq!(
+            ScenarioAdmissionResult::from_sql("conflicting-run-identity").unwrap(),
+            ScenarioAdmissionResult::ConflictingRunIdentity
         );
     }
 

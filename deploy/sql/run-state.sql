@@ -158,6 +158,23 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
+       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
+       OR NEW.environment IS DISTINCT FROM OLD.environment
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-admission-pin-immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;
+
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the trigger payload replay
 -- seeds the entry node with; `result_json` is the last node's output on
@@ -176,9 +193,10 @@ CREATE TABLE wamn_run.runs (
     run_id          text NOT NULL,
     flow_id         text NOT NULL,
     flow_version    int  NOT NULL,
-    catalog_id      text,
-    catalog_version bigint,
-    environment     text,
+    catalog_id      text NOT NULL,
+    catalog_version int NOT NULL,
+    environment     text NOT NULL,
+    execution_bundle_hash text NOT NULL,
     attachment_id   text,
     registration_id text,
     -- Trusted CDC causation is distinct from replay lineage. The immediate
@@ -227,8 +245,10 @@ CREATE TABLE wamn_run.runs (
     fail_reason     text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
-    CHECK ((catalog_id IS NULL) = (catalog_version IS NULL)),
-    CHECK (environment IS NULL OR environment <> ''),
+    CHECK (catalog_id <> ''
+           AND catalog_version > 0
+           AND environment <> ''
+           AND execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (jsonb_typeof(invocation_context) = 'object'
            AND octet_length(invocation_context::text) <= 16384),
     CHECK (
@@ -253,13 +273,21 @@ CREATE TABLE wamn_run.runs (
     CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
     CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
            OR response_deadline_at <= run_deadline_at),
-    PRIMARY KEY (tenant_id, run_id)
+    PRIMARY KEY (tenant_id, run_id),
+    CONSTRAINT runs_release_fk
+        FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+    CONSTRAINT runs_execution_bundle_fk
+        FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
 );
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 -- History listing / lineage traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
+CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version);
+CREATE INDEX runs_execution_bundle ON wamn_run.runs (tenant_id, execution_bundle_hash);
 CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
@@ -287,6 +315,10 @@ CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
+CREATE TRIGGER runs_admission_pins_immutable
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash
+ON wamn_run.runs
+FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 

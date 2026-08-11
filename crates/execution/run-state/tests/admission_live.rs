@@ -1,6 +1,7 @@
 //! Ignored live gate for the callable-flow admission transaction.
 
-use std::process::{Command, Output};
+use std::io::Write;
+use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,10 +10,19 @@ use wamn_run_state::admission::{admission_sql, registration_evidence};
 use wamn_run_state::queue::claim_partition_head_sql;
 
 fn psql(url: &str, script: &str) -> Output {
-    Command::new("psql")
-        .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", url, "-c", script])
-        .output()
-        .expect("run psql")
+    let mut child = Command::new("psql")
+        .args(["-X", "-v", "ON_ERROR_STOP=1", "-Atq", url])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("run psql");
+    let _ = child
+        .stdin
+        .take()
+        .expect("psql stdin")
+        .write_all(script.as_bytes());
+    child.wait_with_output().expect("wait for psql")
 }
 
 fn success(url: &str, script: &str) -> String {
@@ -150,6 +160,9 @@ fn admission_live() {
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+               END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
@@ -173,21 +186,33 @@ fn admission_live() {
             "BEGIN; \
              INSERT INTO catalog.catalogs \
                (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ('t1','c1',1,'dev','0.1','applied'); \
+             VALUES ('t1','c1',1,'dev','0.1','applied'), \
+                    ('t2','c1',1,'dev','0.1','applied'); \
              INSERT INTO catalog.flow_artifacts \
-               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) VALUES \
-               ('t1','flow-http',1,'0.1','{{}}','gh-http','ah-http','[]','ih-http','[]'), \
-               ('t1','flow-event',1,'0.1','{{}}','gh-event','ah-event','[]','ih-event','[]'); \
+               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) VALUES \
+               ('t1','flow-http',1,'0.1','{{}}','gh-http','ah-http'), \
+               ('t1','flow-event',1,'0.1','{{}}','gh-event','ah-event'); \
+             INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             SELECT tenant_id, 'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                    '0.1', convert_to('{{}}','UTF8'), 2 \
+               FROM (VALUES ('t1'), ('t2')) AS tenants(tenant_id); \
+             INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             SELECT 't2', 'sha256:' || encode(sha256(convert_to('{{\"tenant\":\"t2\"}}','UTF8')), 'hex'), \
+                    '0.1', convert_to('{{\"tenant\":\"t2\"}}','UTF8'), \
+                    octet_length(convert_to('{{\"tenant\":\"t2\"}}','UTF8')); \
              INSERT INTO catalog.release_manifests \
                (tenant_id,catalog_id,catalog_version,members_json) VALUES \
                ('t1','c1',1,'[\
                  {{\"flow-id\":\"flow-http\",\"flow-version\":1,\"artifact-hash\":\"ah-http\"}},\
                  {{\"flow-id\":\"flow-event\",\"flow-version\":1,\"artifact-hash\":\"ah-event\"}}\
-               ]'); \
+               ]'), \
+               ('t2','c1',1,'[]'); \
              INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) VALUES \
-               ('t1','c1',1,'flow-http',1),('t1','c1',1,'flow-event',1); \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) VALUES \
+               ('t1','c1',1,'flow-http',1,'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex')), \
+               ('t1','c1',1,'flow-event',1,'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex')); \
              INSERT INTO catalog.release_exposure_manifests \
                (tenant_id,catalog_id,catalog_version,definitions_json) \
              VALUES ('t1','c1',1,'{{}}'); \
@@ -247,10 +272,88 @@ fn admission_live() {
                         FROM wamn_run.runs WHERE run_id='event-1') = 'ah-event'; \
                ASSERT (SELECT invocation_context->'principal'->>'run-id' \
                         FROM wamn_run.runs WHERE run_id='event-1') = 'event-1'; \
+               ASSERT (SELECT execution_bundle_hash FROM wamn_run.runs WHERE run_id='http-1') \
+                        = (SELECT execution_bundle_hash FROM catalog.release_flows \
+                            WHERE tenant_id='t1' AND catalog_id='c1' AND flow_id='flow-http'); \
+               ASSERT (SELECT execution_bundle_hash FROM wamn_run.runs WHERE run_id='event-1') \
+                        = (SELECT execution_bundle_hash FROM catalog.release_flows \
+                            WHERE tenant_id='t1' AND catalog_id='c1' AND flow_id='flow-event'); \
              END $$;",
             registration_digest
         ),
     );
+
+    // Simulate a legacy/corrupt release member whose scalar hash names a plan
+    // that exists only in another tenant. Admission must resolve through the
+    // tenant-scoped bundle join and refuse before any of its three writes.
+    let missing_plan = success(
+        &url,
+        &format!(
+            "CREATE TEMP TABLE missing_plan_counts AS \
+               SELECT (SELECT count(*) FROM wamn_run.runs) AS runs, \
+                      (SELECT count(*) FROM wamn_run.run_queue) AS queue, \
+                      (SELECT count(*) FROM wamn_run.invocation_admissions) AS admissions; \
+             CREATE TEMP TABLE original_release_bundle AS \
+               SELECT execution_bundle_hash FROM catalog.release_flows \
+                WHERE tenant_id='t1' AND catalog_id='c1' AND catalog_version=1 \
+                  AND flow_id='flow-http'; \
+             ALTER TABLE catalog.release_flows \
+               DROP CONSTRAINT release_flows_execution_bundle_fk; \
+             DROP TRIGGER release_flows_immutable ON catalog.release_flows; \
+             UPDATE catalog.release_flows \
+                SET execution_bundle_hash = ( \
+                  SELECT execution_bundle_hash FROM catalog.execution_bundles \
+                   WHERE tenant_id='t2' \
+                     AND exact_bytes = convert_to('{{\"tenant\":\"t2\"}}','UTF8')) \
+              WHERE tenant_id='t1' AND catalog_id='c1' AND catalog_version=1 \
+                AND flow_id='flow-http'; \
+             {} {} \
+             CREATE TEMP TABLE missing_plan_result AS {}; COMMIT; \
+             DO $$ BEGIN \
+               ASSERT (SELECT count(*) FROM catalog.execution_bundles AS bundle \
+                         JOIN catalog.release_flows AS rf \
+                           ON bundle.execution_bundle_hash = rf.execution_bundle_hash \
+                        WHERE rf.tenant_id='t1' AND rf.catalog_id='c1' \
+                          AND rf.catalog_version=1 AND rf.flow_id='flow-http' \
+                          AND bundle.tenant_id='t2') = 1; \
+               ASSERT NOT EXISTS (SELECT FROM catalog.execution_bundles AS bundle \
+                         JOIN catalog.release_flows AS rf \
+                           ON bundle.tenant_id = rf.tenant_id \
+                          AND bundle.execution_bundle_hash = rf.execution_bundle_hash \
+                        WHERE rf.tenant_id='t1' AND rf.catalog_id='c1' \
+                          AND rf.catalog_version=1 AND rf.flow_id='flow-http'); \
+               ASSERT (SELECT result_code FROM missing_plan_result) = 'missing-root-plan'; \
+               ASSERT (SELECT run_id FROM missing_plan_result) IS NULL; \
+               ASSERT (SELECT count(*) FROM wamn_run.runs) \
+                    = (SELECT runs FROM missing_plan_counts); \
+               ASSERT (SELECT count(*) FROM wamn_run.run_queue) \
+                    = (SELECT queue FROM missing_plan_counts); \
+               ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions) \
+                    = (SELECT admissions FROM missing_plan_counts); \
+               ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id='missing-plan-run'); \
+               ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id='missing-plan-run'); \
+               ASSERT NOT EXISTS (SELECT FROM wamn_run.invocation_admissions \
+                                   WHERE run_id='missing-plan-run'); \
+             END $$; \
+             UPDATE catalog.release_flows AS rf \
+                SET execution_bundle_hash = original.execution_bundle_hash \
+               FROM original_release_bundle AS original \
+              WHERE rf.tenant_id='t1' AND rf.catalog_id='c1' AND rf.catalog_version=1 \
+                AND rf.flow_id='flow-http'; \
+             ALTER TABLE catalog.release_flows \
+               ADD CONSTRAINT release_flows_execution_bundle_fk \
+               FOREIGN KEY (tenant_id, execution_bundle_hash) \
+               REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash); \
+             CREATE TRIGGER release_flows_immutable \
+               BEFORE UPDATE ON catalog.release_flows FOR EACH ROW \
+               EXECUTE FUNCTION catalog.reject_immutable_row_change(); \
+             SELECT result_code || '|' || COALESCE(run_id, '') FROM missing_plan_result;",
+            app_preamble(),
+            prepared,
+            execute_http("missing-plan-run", "key-missing-plan", "fp-missing-plan")
+        ),
+    );
+    assert_eq!(missing_plan.trim(), "missing-root-plan|");
 
     // Trusted causal ancestry is stored outside both the business input and
     // invocation context. A non-event source roots at itself; subsequent event
@@ -390,6 +493,8 @@ fn admission_live() {
         &url,
         &format!(
             "{} SET LOCAL search_path=wamn_run,public; \
+             UPDATE wamn_run.run_queue SET lease_owner=NULL, lease_expires_at=NULL \
+              WHERE run_id IN ('http-blocking-head','http-blocking-next'); \
              UPDATE wamn_run.run_queue SET available_at=now()+interval '1 hour' \
               WHERE run_id IN ('http-blocking-head','event-ordered'); \
              INSERT INTO wamn_run.partition_owner \
@@ -502,6 +607,7 @@ fn admission_live() {
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
            'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,\
+           NULL,NULL,\
            'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
@@ -521,8 +627,10 @@ fn admission_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,status,trigger_source) \
-         VALUES ('t2','foreign-source','flow-http',1,'completed','http');",
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status,trigger_source) \
+         VALUES ('t2','foreign-source','flow-http',1,'c1',1,'dev', \
+           'sha256:' || encode(sha256(convert_to('{}','UTF8')), 'hex'),'completed','http');",
     );
     let forged_input = execute_event(
         "event-forged",
@@ -875,7 +983,12 @@ fn admission_live() {
     publisher.join().expect("publisher");
     success(
         &url,
-        "DO $$ BEGIN ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-           WHERE run_id='promotion-race'), 'promotion wrote no run'; END $$;",
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
+             WHERE run_id='promotion-race'), 'promotion wrote no run'; \
+           ASSERT (SELECT execution_bundle_hash FROM wamn_run.runs WHERE run_id='http-1') \
+             = 'sha256:' || encode(sha256(convert_to('{}','UTF8')), 'hex'), \
+             'head movement changed the admitted run bundle'; \
+         END $$;",
     );
 }

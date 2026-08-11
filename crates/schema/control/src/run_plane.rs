@@ -68,6 +68,17 @@ const FLOW_TESTS_SQL: &str = include_str!("../../../../deploy/sql/flow-tests.sql
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
+const RUNS_EXECUTION_PINS_CHECK_DEF: &str = "CHECK (catalog_id <> ''::text AND catalog_version > 0 AND environment <> ''::text AND execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
+const RELEASE_FLOWS_BUNDLE_CHECK_DEF: &str =
+    "CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
+const RUNS_RELEASE_FK_DEF: &str = "FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.release_manifests(tenant_id, catalog_id, catalog_version)";
+const RUNS_EXECUTION_BUNDLE_FK_DEF: &str = "FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)";
+const RELEASE_FLOWS_EXECUTION_BUNDLE_FK_DEF: &str = "FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)";
+const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
+const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
+const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+
 #[derive(Clone, Copy)]
 enum CheckOrigin {
     Inline(&'static str),
@@ -138,13 +149,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_check",
-        definition: "CHECK ((catalog_id IS NULL) = (catalog_version IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "runs",
-        name: "runs_environment_check",
-        definition: "CHECK (environment IS NULL OR environment <> ''::text)",
+        definition: RUNS_EXECUTION_PINS_CHECK_DEF,
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -693,6 +698,8 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-disposition-immutable';\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-report-immutable';\nEND\n$function$\n";
@@ -952,6 +959,23 @@ BEGIN
        OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id
        OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN
         RAISE EXCEPTION 'event causation lineage is immutable';
+    END IF;
+    RETURN NEW;
+END
+$$;"#;
+
+const GUARD_RUN_ADMISSION_PINS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
+       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
+       OR NEW.environment IS DISTINCT FROM OLD.environment
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-admission-pin-immutable';
     END IF;
     RETURN NEW;
 END
@@ -1228,6 +1252,11 @@ const HELPER_SPECS: &[HelperSpec] = &[
         name: "guard_event_lineage_immutable",
         definition: GUARD_EVENT_LINEAGE_DEF,
         sql: GUARD_EVENT_LINEAGE_SQL,
+    },
+    HelperSpec {
+        name: "guard_run_admission_pins_immutable",
+        definition: GUARD_RUN_ADMISSION_PINS_DEF,
+        sql: GUARD_RUN_ADMISSION_PINS_SQL,
     },
     HelperSpec {
         name: "reject_immutable_effect_fact_change",
@@ -1888,6 +1917,9 @@ impl fmt::Display for BareSchemaName {
 /// pure planner turns it into the action list.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlaneObservation {
+    /// Exact row counts for the two execution-pin cutover targets.
+    pub run_rows: i64,
+    pub release_flow_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
@@ -1918,6 +1950,8 @@ pub struct RunPlaneObservation {
     pub tables: BTreeMap<String, BTreeSet<String>>,
     /// Live columns that still carry NOT NULL authority.
     pub non_nullable_columns: BTreeSet<(String, String)>,
+    /// PostgreSQL-formatted live column types, keyed by `(table, column)`.
+    pub column_types: BTreeMap<(String, String), String>,
     /// Live columns that still synthesize values through a default.
     pub defaulted_columns: BTreeSet<(String, String)>,
     /// EVERY index in the target schema → its live `pg_indexes.indexdef`.
@@ -1934,8 +1968,16 @@ pub struct RunPlaneObservation {
     pub catalog_tables: BTreeSet<String>,
     /// Catalog table columns used by additive cross-plane migrations.
     pub catalog_columns: BTreeMap<String, BTreeSet<String>>,
+    /// Catalog columns that carry NOT NULL authority.
+    pub catalog_non_nullable_columns: BTreeSet<(String, String)>,
+    /// PostgreSQL-formatted catalog column types.
+    pub catalog_column_types: BTreeMap<(String, String), String>,
     /// Catalog CHECKs owned by additive cross-plane migrations.
     pub catalog_checks: BTreeMap<(String, String), String>,
+    /// Catalog indexes, foreign keys, and user triggers observed exactly.
+    pub catalog_indexes: BTreeMap<String, String>,
+    pub catalog_foreign_keys: BTreeMap<(String, String), String>,
+    pub catalog_triggers: BTreeMap<(String, String), String>,
     /// Rows in `catalog.event_registrations` still carrying the legacy `state`
     /// key (0 when the table is absent — nothing to strip).
     pub stale_registration_state_rows: i64,
@@ -1999,6 +2041,9 @@ pub enum RunPlaneActionKind {
     /// Add the nullable verified author/publisher provenance columns required
     /// before immutable attempt writers activate.
     EnsureCatalogProvenance,
+    /// Atomically install the release/run execution pins after an empty-only
+    /// preflight under ACCESS EXCLUSIVE locks on both tables.
+    ExecutionPinCutover,
     /// Converge authoring-state schema/table grants and remove guest write
     /// authority or membership in the host-only role.
     RepairAuthoringPrivilege,
@@ -2036,11 +2081,242 @@ impl RunPlanePlan {
     }
 }
 
+fn run_execution_pin_contract_complete(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+    if !obs.tables.contains_key("runs") {
+        return false;
+    }
+
+    let run_column = |name: &str, ty: &str| {
+        let key = ("runs".to_string(), name.to_string());
+        obs.tables
+            .get("runs")
+            .is_some_and(|columns| columns.contains(name))
+            && obs.non_nullable_columns.contains(&key)
+            && obs
+                .column_types
+                .get(&key)
+                .is_some_and(|actual| actual == ty)
+    };
+    let run_object = |actual: Option<&String>, expected: &str| {
+        actual.is_some_and(|definition| normalize_observed_schema(definition, schema) == expected)
+    };
+
+    run_column("catalog_id", "text")
+        && run_column("catalog_version", "integer")
+        && run_column("environment", "text")
+        && run_column("execution_bundle_hash", "text")
+        && obs
+            .checks
+            .get(&("runs".to_string(), "runs_check".to_string()))
+            .is_some_and(|definition| definition == RUNS_EXECUTION_PINS_CHECK_DEF)
+        && run_object(
+            obs.foreign_keys
+                .get(&("runs".to_string(), "runs_release_fk".to_string())),
+            RUNS_RELEASE_FK_DEF,
+        )
+        && run_object(
+            obs.foreign_keys
+                .get(&("runs".to_string(), "runs_execution_bundle_fk".to_string())),
+            RUNS_EXECUTION_BUNDLE_FK_DEF,
+        )
+        && run_object(obs.indexes.get("runs_release"), RUNS_RELEASE_INDEX_DEF)
+        && run_object(
+            obs.indexes.get("runs_execution_bundle"),
+            RUNS_EXECUTION_BUNDLE_INDEX_DEF,
+        )
+        && run_object(
+            obs.triggers.get(&(
+                "runs".to_string(),
+                "runs_admission_pins_immutable".to_string(),
+            )),
+            RUNS_ADMISSION_PINS_TRIGGER_DEF,
+        )
+        && obs
+            .helper_functions
+            .get("guard_run_admission_pins_immutable")
+            .is_some_and(|definition| {
+                let normalized = normalize_observed_schema(definition, schema);
+                normalized.contains("run-admission-pin-immutable")
+                    && normalized.contains("NEW.catalog_id IS DISTINCT FROM OLD.catalog_id")
+                    && normalized.contains(
+                        "NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash",
+                    )
+            })
+}
+
+fn release_flow_execution_pin_contract_complete(obs: &RunPlaneObservation) -> bool {
+    if !obs.catalog_tables.contains("release_flows") {
+        return false;
+    }
+
+    let key = (
+        "release_flows".to_string(),
+        "execution_bundle_hash".to_string(),
+    );
+    obs.catalog_columns
+        .get("release_flows")
+        .is_some_and(|columns| columns.contains("execution_bundle_hash"))
+        && obs.catalog_non_nullable_columns.contains(&key)
+        && obs
+            .catalog_column_types
+            .get(&key)
+            .is_some_and(|actual| actual == "text")
+        && obs
+            .catalog_checks
+            .get(&(
+                "release_flows".to_string(),
+                "release_flows_execution_bundle_hash_check".to_string(),
+            ))
+            .is_some_and(|definition| definition == RELEASE_FLOWS_BUNDLE_CHECK_DEF)
+        && obs
+            .catalog_foreign_keys
+            .get(&(
+                "release_flows".to_string(),
+                "release_flows_execution_bundle_fk".to_string(),
+            ))
+            .is_some_and(|definition| definition == RELEASE_FLOWS_EXECUTION_BUNDLE_FK_DEF)
+        && obs
+            .catalog_indexes
+            .get("release_flows_execution_bundle")
+            .is_some_and(|definition| definition == RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF)
+}
+
+fn partial_execution_pin_refusal_sql(
+    schema: &BareSchemaName,
+    has_runs: bool,
+    has_release_flows: bool,
+) -> String {
+    debug_assert!(has_runs ^ has_release_flows);
+    let (lock_target, populated) = if has_runs {
+        let runs = format!("{}.runs", schema.quoted());
+        (runs.clone(), format!("EXISTS (SELECT 1 FROM {runs})"))
+    } else {
+        (
+            "catalog.release_flows".to_string(),
+            "EXISTS (SELECT 1 FROM catalog.release_flows)".to_string(),
+        )
+    };
+    format!(
+        r#"LOCK TABLE {lock_target} IN ACCESS EXCLUSIVE MODE;
+DO $execution_pin_preflight$
+BEGIN
+    IF {populated} THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'execution-pin-cutover-requires-empty-run-and-release-membership';
+    END IF;
+END
+$execution_pin_preflight$;"#
+    )
+}
+
+fn execution_pin_cutover_sql(schema: &BareSchemaName) -> String {
+    let target = schema.quoted();
+    format!(
+        r#"LOCK TABLE catalog.release_flows, {target}.runs IN ACCESS EXCLUSIVE MODE;
+DO $execution_pin_preflight$
+BEGIN
+    IF EXISTS (SELECT 1 FROM catalog.release_flows)
+       OR EXISTS (SELECT 1 FROM {target}.runs) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'execution-pin-cutover-requires-empty-run-and-release-membership';
+    END IF;
+END
+$execution_pin_preflight$;
+ALTER TABLE catalog.release_flows
+    ADD COLUMN IF NOT EXISTS execution_bundle_hash text;
+ALTER TABLE catalog.release_flows
+    ALTER COLUMN execution_bundle_hash TYPE text USING execution_bundle_hash::text,
+    ALTER COLUMN execution_bundle_hash SET NOT NULL,
+    DROP CONSTRAINT IF EXISTS release_flows_execution_bundle_hash_check,
+    DROP CONSTRAINT IF EXISTS release_flows_execution_bundle_fk,
+    ADD CONSTRAINT release_flows_execution_bundle_hash_check
+        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT release_flows_execution_bundle_fk
+        FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash);
+DROP INDEX IF EXISTS catalog.release_flows_execution_bundle;
+CREATE INDEX release_flows_execution_bundle
+    ON catalog.release_flows (tenant_id, execution_bundle_hash);
+ALTER TABLE {target}.runs
+    ADD COLUMN IF NOT EXISTS execution_bundle_hash text;
+ALTER TABLE {target}.runs
+    ALTER COLUMN catalog_id TYPE text USING catalog_id::text,
+    ALTER COLUMN catalog_version TYPE integer USING catalog_version::integer,
+    ALTER COLUMN environment TYPE text USING environment::text,
+    ALTER COLUMN execution_bundle_hash TYPE text USING execution_bundle_hash::text,
+    ALTER COLUMN catalog_id SET NOT NULL,
+    ALTER COLUMN catalog_version SET NOT NULL,
+    ALTER COLUMN environment SET NOT NULL,
+    ALTER COLUMN execution_bundle_hash SET NOT NULL,
+    DROP CONSTRAINT IF EXISTS runs_check,
+    DROP CONSTRAINT IF EXISTS runs_environment_check,
+    DROP CONSTRAINT IF EXISTS runs_release_fk,
+    DROP CONSTRAINT IF EXISTS runs_execution_bundle_fk,
+    ADD CONSTRAINT runs_check CHECK (
+        catalog_id <> '' AND catalog_version > 0 AND environment <> ''
+        AND execution_bundle_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT runs_release_fk
+        FOREIGN KEY (tenant_id, catalog_id, catalog_version)
+        REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
+    ADD CONSTRAINT runs_execution_bundle_fk
+        FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash);
+DROP INDEX IF EXISTS {target}.runs_release;
+DROP INDEX IF EXISTS {target}.runs_execution_bundle;
+CREATE INDEX runs_release ON {target}.runs (tenant_id, catalog_id, catalog_version);
+CREATE INDEX runs_execution_bundle ON {target}.runs (tenant_id, execution_bundle_hash);
+CREATE OR REPLACE FUNCTION {target}.guard_run_admission_pins_immutable()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $execution_pin_guard$
+BEGIN
+    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
+       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
+       OR NEW.environment IS DISTINCT FROM OLD.environment
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-admission-pin-immutable';
+    END IF;
+    RETURN NEW;
+END
+$execution_pin_guard$;
+DROP TRIGGER IF EXISTS runs_admission_pins_immutable ON {target}.runs;
+CREATE TRIGGER runs_admission_pins_immutable
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash
+ON {target}.runs
+FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
+    )
+}
+
 /// Reconcile one project-env's run-plane schema (+ the per-database `catalog`
 /// metadata schema) against the schema of record. Pure: `obs` is what the
 /// driver read; the returned plan is what it should execute, in order.
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
+    let has_runs = obs.tables.contains_key("runs");
+    let has_release_flows = obs.catalog_tables.contains("release_flows");
+    let execution_pin_cutover_needed = (has_runs
+        && !run_execution_pin_contract_complete(schema, obs))
+        || (has_release_flows && !release_flow_execution_pin_contract_complete(obs));
+
+    if (has_runs || has_release_flows)
+        && execution_pin_cutover_needed
+        && (obs.run_rows != 0 || obs.release_flow_rows != 0)
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::ExecutionPinCutover,
+            target: format!("catalog.release_flows+{}.runs", schema.as_str()),
+            sql: if has_runs && has_release_flows {
+                execution_pin_cutover_sql(schema)
+            } else {
+                partial_execution_pin_refusal_sql(schema, has_runs, has_release_flows)
+            },
+        });
+        return plan;
+    }
 
     // The standalone record files grant privileged authoring writes to this
     // role, so it must exist (and remain non-login/non-bypass) before any
@@ -2115,8 +2391,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             ),
         });
     }
-    plan.actions.extend(creates);
-
     // Catalog storage converges before run-plane constraint reconciliation:
     // attested rows derive their portable connection name from the pinned flow
     // graph, and the next runtime child reads the nullable provenance columns.
@@ -2173,6 +2447,18 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 sql: disposition_provenance_migration_sql().to_string(),
             });
         }
+    }
+
+    // `runs` now has immediate catalog FKs, so catalog creation must precede
+    // every missing run-table section.
+    plan.actions.extend(creates);
+
+    if execution_pin_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::ExecutionPinCutover,
+            target: format!("catalog.release_flows+{}.runs", schema.as_str()),
+            sql: execution_pin_cutover_sql(schema),
+        });
     }
 
     // The host-only role needs schema visibility even when an existing schema
@@ -2353,6 +2639,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             };
             let record_cols = record_columns(file, "wamn_run", &table);
             for (col, def) in &record_cols {
+                if table == "runs" && col == "execution_bundle_hash" {
+                    continue;
+                }
                 if !live_cols.contains(col) {
                     plan.actions.push(RunPlaneAction {
                         kind: RunPlaneActionKind::AddColumn,
@@ -2385,6 +2674,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         .map(|spec| (spec.table, spec.name))
         .collect();
     for spec in CHECK_SPECS {
+        if spec.table == "runs" && spec.name == "runs_check" {
+            continue;
+        }
         let Some(columns) = obs.tables.get(spec.table) else {
             continue;
         };
@@ -2421,6 +2713,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
             && !retirement_owned_check(table, name)
+            && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::DropExtraConstraint,
@@ -2578,6 +2871,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if record_table_names().contains(table.as_str())
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
+            && !(table == "runs" && name == "runs_admission_pins_immutable")
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::DropExtraTrigger,
@@ -2598,6 +2892,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     for file in RUN_PLANE_FILES {
         for (name, table, stmt) in index_statements(file, "wamn_run") {
             if !obs.tables.contains_key(&table) {
+                continue;
+            }
+            if matches!(name.as_str(), "runs_release" | "runs_execution_bundle") {
                 continue;
             }
             match obs.indexes.get(&name) {
@@ -2944,14 +3241,26 @@ pub fn select_scenario_author_catalog_lock_privilege_sql() -> &'static str {
 }
 
 /// Every ordinary table + column in `$1`: `(relname, attname, not-null,
-/// has-default)` in attnum order.
+/// has-default, formatted-type)` in attnum order.
 pub fn select_schema_columns_sql() -> &'static str {
-    "SELECT c.relname, a.attname, a.attnotnull, ad.adbin IS NOT NULL FROM pg_class c \
+    "SELECT c.relname, a.attname, a.attnotnull, ad.adbin IS NOT NULL, \
+            pg_catalog.format_type(a.atttypid, a.atttypmod) FROM pg_class c \
      JOIN pg_namespace n ON n.oid = c.relnamespace \
      JOIN pg_attribute a ON a.attrelid = c.oid \
      LEFT JOIN pg_attrdef ad ON ad.adrelid = a.attrelid AND ad.adnum = a.attnum \
      WHERE n.nspname = $1 AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped \
      ORDER BY c.relname, a.attnum"
+}
+
+/// Count rows in the selected run table before planning the empty-only pin
+/// cutover. The cutover repeats this check while holding both table locks.
+pub fn count_run_rows_sql(schema: &BareSchemaName) -> String {
+    format!("SELECT count(*) FROM {}.runs", schema.quoted())
+}
+
+/// Count release membership rows before planning the empty-only pin cutover.
+pub fn count_release_flow_rows_sql() -> &'static str {
+    "SELECT count(*) FROM catalog.release_flows"
 }
 
 /// Every index in `$1`: `(indexname, indexdef)`.
@@ -3006,7 +3315,8 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
                          'guard_effect_fact_append', \
-                         'guard_effect_disposition_append') \
+                         'guard_effect_disposition_append', \
+                         'guard_run_admission_pins_immutable') \
      ORDER BY p.proname"
 }
 
@@ -3438,6 +3748,35 @@ CREATE INDEX event_registrations_by_entity
             ),
             RELEASE_PUBLISHER_CHECK_DEF.to_string(),
         );
+        obs.catalog_checks.insert(
+            (
+                "release_flows".to_string(),
+                "release_flows_execution_bundle_hash_check".to_string(),
+            ),
+            RELEASE_FLOWS_BUNDLE_CHECK_DEF.to_string(),
+        );
+        obs.catalog_non_nullable_columns.insert((
+            "release_flows".to_string(),
+            "execution_bundle_hash".to_string(),
+        ));
+        obs.catalog_column_types.insert(
+            (
+                "release_flows".to_string(),
+                "execution_bundle_hash".to_string(),
+            ),
+            "text".to_string(),
+        );
+        obs.catalog_indexes.insert(
+            "release_flows_execution_bundle".to_string(),
+            RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF.to_string(),
+        );
+        obs.catalog_foreign_keys.insert(
+            (
+                "release_flows".to_string(),
+                "release_flows_execution_bundle_fk".to_string(),
+            ),
+            RELEASE_FLOWS_EXECUTION_BUNDLE_FK_DEF.to_string(),
+        );
         for spec in CHECK_SPECS {
             obs.checks.insert(
                 (spec.table.to_string(), spec.name.to_string()),
@@ -3455,6 +3794,39 @@ CREATE INDEX event_registrations_by_entity
         obs.indexes.insert(
             "effect_attempts_occurrence_key".to_string(),
             "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+        );
+        for (column, ty) in [
+            ("catalog_id", "text"),
+            ("catalog_version", "integer"),
+            ("environment", "text"),
+            ("execution_bundle_hash", "text"),
+        ] {
+            let key = ("runs".to_string(), column.to_string());
+            obs.non_nullable_columns.insert(key.clone());
+            obs.column_types.insert(key, ty.to_string());
+        }
+        obs.indexes.insert(
+            "runs_release".to_string(),
+            RUNS_RELEASE_INDEX_DEF.to_string(),
+        );
+        obs.indexes.insert(
+            "runs_execution_bundle".to_string(),
+            RUNS_EXECUTION_BUNDLE_INDEX_DEF.to_string(),
+        );
+        obs.foreign_keys.insert(
+            ("runs".to_string(), "runs_release_fk".to_string()),
+            RUNS_RELEASE_FK_DEF.to_string(),
+        );
+        obs.foreign_keys.insert(
+            ("runs".to_string(), "runs_execution_bundle_fk".to_string()),
+            RUNS_EXECUTION_BUNDLE_FK_DEF.to_string(),
+        );
+        obs.triggers.insert(
+            (
+                "runs".to_string(),
+                "runs_admission_pins_immutable".to_string(),
+            ),
+            RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
         );
         obs.foreign_keys.insert(
             (
@@ -3600,6 +3972,54 @@ CREATE INDEX event_registrations_by_entity
             "partition_policy text NOT NULL DEFAULT 'blocking' \
              CHECK (partition_policy IN ('blocking', 'leapfrog'))"
         );
+    }
+
+    #[test]
+    fn execution_pin_schema_of_record_is_exact_and_complete() {
+        let runs = table_section(RUN_STATE_SQL, "wamn_run", "runs");
+        for column in [
+            "catalog_id      text NOT NULL",
+            "catalog_version int NOT NULL",
+            "environment     text NOT NULL",
+            "execution_bundle_hash text NOT NULL",
+        ] {
+            assert!(runs.contains(column), "runs contract missing {column}");
+        }
+        assert!(runs.contains("catalog_version > 0"));
+        assert!(runs.contains("execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'"));
+        assert!(runs.contains("CONSTRAINT runs_release_fk"));
+        assert!(runs.contains(
+            "FOREIGN KEY (tenant_id, catalog_id, catalog_version)\n        REFERENCES catalog.release_manifests"
+        ));
+        assert!(runs.contains("CONSTRAINT runs_execution_bundle_fk"));
+        assert!(runs.contains(
+            "FOREIGN KEY (tenant_id, execution_bundle_hash)\n        REFERENCES catalog.execution_bundles"
+        ));
+        assert!(runs.contains(
+            "CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version)"
+        ));
+        assert!(runs.contains(
+            "CREATE INDEX runs_execution_bundle ON wamn_run.runs (tenant_id, execution_bundle_hash)"
+        ));
+        assert!(runs.contains(
+            "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash"
+        ));
+        assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-admission-pin-immutable'"));
+
+        let release_flows = table_section(CATALOG_SCHEMA_SQL, "catalog", "release_flows");
+        assert!(release_flows.contains("execution_bundle_hash text NOT NULL"));
+        assert!(release_flows.contains(
+            "CONSTRAINT release_flows_execution_bundle_hash_check\n        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$')"
+        ));
+        assert!(release_flows.contains("CONSTRAINT release_flows_execution_bundle_fk"));
+        assert!(
+            release_flows.contains(
+                "REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)"
+            )
+        );
+        assert!(release_flows.contains(
+            "CREATE INDEX release_flows_execution_bundle\n    ON catalog.release_flows (tenant_id, execution_bundle_hash)"
+        ));
     }
 
     /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
@@ -3754,10 +4174,12 @@ CREATE INDEX event_registrations_by_entity
                 "run_queue_claimable",
                 "run_queue_partition",
                 "runs_event_root",
+                "runs_execution_bundle",
                 "runs_flow",
                 "runs_idempotency",
                 "runs_invoke_root",
                 "runs_parent_occurrence",
+                "runs_release",
                 "runs_response_deadline",
                 "runs_root",
                 "runs_run_deadline",
@@ -3791,6 +4213,192 @@ CREATE INDEX event_registrations_by_entity
             plan.at_target.len(),
             18,
             "all eighteen run-plane tables at target, including test-set inputs and reports"
+        );
+    }
+
+    #[test]
+    fn empty_execution_pin_drift_plans_one_atomic_cutover() {
+        let mut obs = observation_at_record();
+        obs.column_types.insert(
+            ("runs".to_string(), "catalog_version".to_string()),
+            "bigint".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutovers: Vec<&RunPlaneAction> = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+            .collect();
+        assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
+        assert!(!plan.actions.iter().any(|action| {
+            matches!(
+                action.kind,
+                RunPlaneActionKind::AddColumn
+                    | RunPlaneActionKind::RepairConstraint
+                    | RunPlaneActionKind::RepairForeignKey
+                    | RunPlaneActionKind::CreateIndex
+                    | RunPlaneActionKind::RecreateIndex
+                    | RunPlaneActionKind::RepairTrigger
+            ) && (action.target.starts_with("runs.")
+                || action.target.starts_with("runs_")
+                || action.target.starts_with("release_flows"))
+        }));
+
+        let sql = &cutovers[0].sql;
+        let lock = sql
+            .find("LOCK TABLE catalog.release_flows, \"demo\".runs IN ACCESS EXCLUSIVE MODE")
+            .unwrap();
+        let release_count = sql
+            .find("EXISTS (SELECT 1 FROM catalog.release_flows)")
+            .unwrap();
+        let run_count = sql.find("EXISTS (SELECT 1 FROM \"demo\".runs)").unwrap();
+        let first_ddl = sql.find("ALTER TABLE catalog.release_flows").unwrap();
+        assert!(lock < release_count && release_count < first_ddl);
+        assert!(lock < run_count && run_count < first_ddl);
+        assert!(sql.contains("execution-pin-cutover-requires-empty-run-and-release-membership"));
+        assert!(sql.contains("ALTER COLUMN catalog_version TYPE integer"));
+        assert!(sql.contains("REFERENCES catalog.release_manifests"));
+        assert!(sql.contains("runs_admission_pins_immutable"));
+        assert!(!sql.contains("BEGIN;"));
+        assert!(!sql.contains("COMMIT;"));
+    }
+
+    #[test]
+    fn populated_execution_pin_drift_refuses_before_every_other_action() {
+        let mut obs = observation_at_record();
+        obs.catalog_indexes.remove("release_flows_execution_bundle");
+        obs.run_rows = 1;
+        obs.release_flow_rows = 1;
+        obs.scenario_author_role = None;
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        assert_eq!(
+            plan.actions[0].kind,
+            RunPlaneActionKind::ExecutionPinCutover
+        );
+        assert!(plan.actions[0].sql.starts_with(
+            "LOCK TABLE catalog.release_flows, \"demo\".runs IN ACCESS EXCLUSIVE MODE;"
+        ));
+    }
+
+    #[test]
+    fn populated_partial_execution_pin_schema_refuses_before_every_other_action() {
+        let mut runs_only = observation_at_record();
+        runs_only.catalog_tables.remove("release_flows");
+        runs_only.column_types.insert(
+            ("runs".to_string(), "catalog_version".to_string()),
+            "bigint".to_string(),
+        );
+        runs_only.run_rows = 1;
+        runs_only.scenario_author_role = None;
+
+        let plan = plan_run_plane(&schema("demo"), &runs_only);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let sql = &plan.actions[0].sql;
+        assert_eq!(
+            plan.actions[0].kind,
+            RunPlaneActionKind::ExecutionPinCutover
+        );
+        assert!(sql.starts_with("LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE;"));
+        assert!(sql.contains("EXISTS (SELECT 1 FROM \"demo\".runs)"));
+        assert!(!sql.contains("ALTER TABLE") && !sql.contains("CREATE TABLE"));
+
+        let mut release_only = observation_at_record();
+        release_only.tables.remove("runs");
+        release_only
+            .catalog_indexes
+            .remove("release_flows_execution_bundle");
+        release_only.release_flow_rows = 1;
+        release_only.scenario_author_role = None;
+
+        let plan = plan_run_plane(&schema("demo"), &release_only);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let sql = &plan.actions[0].sql;
+        assert_eq!(
+            plan.actions[0].kind,
+            RunPlaneActionKind::ExecutionPinCutover
+        );
+        assert!(sql.starts_with("LOCK TABLE catalog.release_flows IN ACCESS EXCLUSIVE MODE;"));
+        assert!(sql.contains("EXISTS (SELECT 1 FROM catalog.release_flows)"));
+        assert!(!sql.contains("ALTER TABLE") && !sql.contains("CREATE TABLE"));
+    }
+
+    #[test]
+    fn empty_partial_execution_pin_schema_converges_in_one_plan() {
+        let mut release_missing = observation_at_record();
+        release_missing.catalog_tables.remove("release_flows");
+        release_missing.column_types.insert(
+            ("runs".to_string(), "catalog_version".to_string()),
+            "bigint".to_string(),
+        );
+        let plan = plan_run_plane(&schema("demo"), &release_missing);
+        let create = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::CreateCatalogTable
+                    && action.target == "release_flows"
+            })
+            .expect("missing release_flows is created");
+        let cutover = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+            .expect("the existing runs table is converged after catalog creation");
+        assert!(create < cutover, "actions: {:#?}", plan.actions);
+
+        let mut runs_missing = observation_at_record();
+        runs_missing.tables.remove("runs");
+        runs_missing
+            .catalog_indexes
+            .remove("release_flows_execution_bundle");
+        let plan = plan_run_plane(&schema("demo"), &runs_missing);
+        let create = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::CreateTable && action.target == "runs"
+            })
+            .expect("missing runs is created");
+        let cutover = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+            .expect("the existing release membership is converged after run creation");
+        assert!(create < cutover, "actions: {:#?}", plan.actions);
+    }
+
+    #[test]
+    fn populated_current_single_target_creates_missing_peer_without_refusal() {
+        let mut release_missing = observation_at_record();
+        release_missing.catalog_tables.remove("release_flows");
+        release_missing.run_rows = 1;
+        let plan = plan_run_plane(&schema("demo"), &release_missing);
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::CreateCatalogTable
+                && action.target == "release_flows"
+        }));
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+        );
+
+        let mut runs_missing = observation_at_record();
+        runs_missing.tables.remove("runs");
+        runs_missing.release_flow_rows = 1;
+        let plan = plan_run_plane(&schema("demo"), &runs_missing);
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::CreateTable && action.target == "runs"
+        }));
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
         );
     }
 
@@ -4414,6 +5022,25 @@ CREATE INDEX event_registrations_by_entity
             test_set_helper < test_set_table,
             "the standalone run-plane helper must exist before test-set triggers"
         );
+        let pin_helper = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::RepairHelperFunction
+                    && action.target == "guard_run_admission_pins_immutable"
+            })
+            .expect("run admission-pin helper is provisioned");
+        let runs_table = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::CreateTable && action.target == "runs"
+            })
+            .expect("runs table is provisioned");
+        assert!(
+            pin_helper < runs_table,
+            "the admission-pin helper must exist before the runs trigger"
+        );
         // No column/index repairs on tables being created (sections carry them).
         assert!(!kinds.contains(&RunPlaneActionKind::AddColumn));
         assert!(!kinds.contains(&RunPlaneActionKind::CreateIndex));
@@ -4541,7 +5168,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            8
+            9
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger

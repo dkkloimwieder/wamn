@@ -1261,6 +1261,80 @@ cargo fmt -p wamn-catalog -p wamn-schema-control -p wamn-scenario-worker --check
 cargo fmt --manifest-path components/Cargo.toml -p flowrunner --check
 ```
 
+### [SR-MVP / wamn-0h0g.2.4] admission-owned execution-bundle pin
+
+This gate is debug-only. It proves that release and validated-draft admission
+copy the root plan hash from catalog storage, persist the four immutable run
+pins without an invocation-JSON duplicate, distinguish `missing-root-plan`
+before writes, and apply the empty-only run/release schema cutover atomically.
+The PostgreSQL legs require one disposable PostgreSQL 18 database; they do not
+target the development cluster.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-run-state -p wamn-runtime \
+  -p wamn-schema-control -p wamn-ctl -p wamn-scenario-worker \
+  -p wamn-proof-integration
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked -p wamn-run-state -p wamn-runtime \
+  -p wamn-schema-control -p wamn-ctl -p wamn-scenario-worker \
+  -p wamn-proof-integration --all-targets -- -D warnings
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4-components CARGO_INCREMENTAL=0 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4-components CARGO_INCREMENTAL=0 \
+  cargo build --locked --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2
+# The retired interpreter is intentionally unreachable during the fail-closed
+# transition; preserve only the established dead-code allowance.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4-components CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2 -- -D warnings -A dead_code
+
+docker run --rm -d --name wamn-0h0g-2-4-pg \
+  -p 127.0.0.1:15624:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-2-4-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-run-state --test admission_live \
+  admission_live -- --ignored --exact --nocapture
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-ctl --test run_plane_live \
+  execution_pin_cutover_live -- --exact --nocapture
+WAMN_MIGRATE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-ctl --lib \
+  publish_catalog::tests::missing_root_plan_rolls_back_without_publication_writes \
+  -- --exact --nocapture
+
+WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
+WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15624/wamn \
+WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15624/wamn \
+WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-0h0g-2-4-components/wasm32-wasip2/debug/flowrunner.wasm \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-scenario-worker --test authoring_loop_live \
+  authoring_loop_live -- --ignored --exact --nocapture
+
+docker stop wamn-0h0g-2-4-pg
+
+# Each mutant first runs the named clean debug gate, then must fail that same
+# gate after an exact-one source mutation; every target is restored byte-for-byte.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/admission-execution-pin.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/admission-execution-pin.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/admission-execution-pin.sh run-all
+
+cargo fmt -p wamn-run-state -p wamn-runtime -p wamn-schema-control \
+  -p wamn-ctl -p wamn-scenario-worker -p wamn-proof-integration --check
+cargo fmt --manifest-path components/Cargo.toml -p flowrunner --check
+git diff --check
+```
+
 ### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.42] pure receipt components
 
 Docs: `docs/archive/execution/FLOW-SPEC.md` §10.3 and `docs/archive/poc/POC-PLAN.md` F1 / Named mechanical

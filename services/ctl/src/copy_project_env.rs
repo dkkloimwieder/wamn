@@ -692,6 +692,8 @@ async fn exec_copy_definition(
                 let graph_json: String = artifact.get(3);
                 let graph_hash: String = artifact.get(4);
                 let artifact_hash: String = artifact.get(5);
+                let execution_bundle_hash: String = artifact.get(6);
+                let execution_bundle_bytes: Vec<u8> = artifact.get(7);
                 let flow_version_u32 =
                     u32::try_from(flow_version).context("copied flow version must be positive")?;
                 wamn_catalog::PinnedArtifact::from_storage(
@@ -719,6 +721,12 @@ async fn exec_copy_definition(
                 )
                 .await
                 .with_context(|| format!("copy immutable flow {flow_id} v{flow_version}"))?;
+                tx.execute(
+                    wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                    &[&tenant, &execution_bundle_hash, &execution_bundle_bytes],
+                )
+                .await
+                .with_context(|| format!("copy execution bundle for {flow_id} v{flow_version}"))?;
             }
             tx.execute(
                 wamn_schema_control::sql::publication_boundary_sql(),
@@ -735,6 +743,7 @@ async fn exec_copy_definition(
             for artifact in &artifacts {
                 let flow_id: String = artifact.get(0);
                 let flow_version: i32 = artifact.get(1);
+                let execution_bundle_hash: String = artifact.get(6);
                 tx.execute(
                     wamn_schema_control::sql::insert_release_flow_sql(),
                     &[
@@ -743,6 +752,7 @@ async fn exec_copy_definition(
                         &catalog_version,
                         &flow_id,
                         &flow_version,
+                        &execution_bundle_hash,
                     ],
                 )
                 .await
@@ -751,13 +761,15 @@ async fn exec_copy_definition(
                     .query_one(
                         "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
                          WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
-                           AND flow_id = $4 AND flow_version = $5)",
+                           AND flow_id = $4 AND flow_version = $5 \
+                           AND execution_bundle_hash = $6)",
                         &[
                             &tenant,
                             &catalog_id,
                             &catalog_version,
                             &flow_id,
                             &flow_version,
+                            &execution_bundle_hash,
                         ],
                     )
                     .await?

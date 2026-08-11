@@ -50,8 +50,9 @@ use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
     BareSchemaName, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
-    catalog_schema_present_sql, count_stale_registration_state_sql, plan_run_plane,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    catalog_schema_present_sql, count_release_flow_rows_sql, count_run_rows_sql,
+    count_stale_registration_state_sql, plan_run_plane, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_outbox_function_present_sql,
     select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
@@ -119,8 +120,19 @@ pub async fn reconcile(
     let obs = observe(client, schema).await?;
     let plan = plan_run_plane(schema, &obs);
     if apply {
+        let mut applied = 0;
+        if plan.actions.first().is_some_and(|action| {
+            action.kind == wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
+        }) {
+            let action = &plan.actions[0];
+            client
+                .batch_execute(&action.sql)
+                .await
+                .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
+            applied = 1;
+        }
         crate::publish_catalog::ensure_wamn_app_role(client).await?;
-        for action in &plan.actions {
+        for action in &plan.actions[applied..] {
             client
                 .batch_execute(&action.sql)
                 .await
@@ -239,7 +251,16 @@ async fn observe(
             obs.defaulted_columns
                 .insert((table.clone(), column.clone()));
         }
+        obs.column_types
+            .insert((table.clone(), column.clone()), row.get(4));
         obs.tables.entry(table).or_default().insert(column);
+    }
+    if obs.tables.contains_key("runs") {
+        obs.run_rows = client
+            .query_one(&count_run_rows_sql(schema), &[])
+            .await
+            .context("count run rows for execution-pin cutover")?
+            .get(0);
     }
     for row in client
         .query(select_schema_indexes_sql(), &[&schema.as_str()])
@@ -303,8 +324,21 @@ async fn observe(
         {
             let table: String = row.get(0);
             let column: String = row.get(1);
+            if row.get(2) {
+                obs.catalog_non_nullable_columns
+                    .insert((table.clone(), column.clone()));
+            }
+            obs.catalog_column_types
+                .insert((table.clone(), column.clone()), row.get(4));
             obs.catalog_tables.insert(table.clone());
             obs.catalog_columns.entry(table).or_default().insert(column);
+        }
+        for row in client
+            .query(select_schema_indexes_sql(), &[&"catalog"])
+            .await
+            .context("read catalog indexes")?
+        {
+            obs.catalog_indexes.insert(row.get(0), row.get(1));
         }
         for row in client
             .query(select_schema_checks_sql(), &[&"catalog"])
@@ -313,6 +347,29 @@ async fn observe(
         {
             obs.catalog_checks
                 .insert((row.get(0), row.get(1)), row.get(2));
+        }
+        for row in client
+            .query(select_schema_foreign_keys_sql(), &[&"catalog"])
+            .await
+            .context("read catalog foreign keys")?
+        {
+            obs.catalog_foreign_keys
+                .insert((row.get(0), row.get(1)), row.get(2));
+        }
+        for row in client
+            .query(select_schema_triggers_sql(), &[&"catalog"])
+            .await
+            .context("read catalog triggers")?
+        {
+            obs.catalog_triggers
+                .insert((row.get(0), row.get(1)), row.get(2));
+        }
+        if obs.catalog_tables.contains("release_flows") {
+            obs.release_flow_rows = client
+                .query_one(count_release_flow_rows_sql(), &[])
+                .await
+                .context("count release-flow rows for execution-pin cutover")?
+                .get(0);
         }
         if obs.catalog_tables.contains("event_registrations") {
             obs.stale_registration_state_rows = client

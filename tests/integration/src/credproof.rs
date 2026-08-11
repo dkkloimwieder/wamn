@@ -312,12 +312,25 @@ async fn provision(admin_url: &str, echo_url: &str, escape_url: &str) -> anyhow:
             &[&TENANT, &CATALOG_ID, &members],
         )
         .await?;
+    release
+        .execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             VALUES ($1, \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+               '0.1',decode('7b7d','hex'),2) \
+             ON CONFLICT DO NOTHING",
+            &[&TENANT],
+        )
+        .await?;
     for flow_id in [FLOW_ID, DENY_FLOW_ID, ESCAPE_FLOW_ID] {
         release
             .execute(
                 "INSERT INTO catalog.release_flows \
-                   (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-                 VALUES ($1,$2,1,$3,1)",
+                   (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
+                    execution_bundle_hash) \
+                 VALUES ($1,$2,1,$3,1, \
+                   'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')",
                 &[&TENANT, &CATALOG_ID, &flow_id],
             )
             .await?;

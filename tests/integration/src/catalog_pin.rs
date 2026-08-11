@@ -234,6 +234,18 @@ pub(crate) async fn publish_release(
             }
             transaction
                 .execute(
+                    "INSERT INTO catalog.execution_bundles \
+                       (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+                     VALUES ($1, \
+                       'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                       '0.1',decode('7b7d','hex'),2) \
+                     ON CONFLICT DO NOTHING",
+                    &[&tenant],
+                )
+                .await
+                .context("seed the fixture execution bundle")?;
+            transaction
+                .execute(
                     "INSERT INTO catalog.release_manifests \
                        (tenant_id,catalog_id,catalog_version,members_json) VALUES ($1,$2,$3,$4)",
                     &[&tenant, &catalog_id, &CATALOG_VERSION, &members_json],
@@ -244,8 +256,10 @@ pub(crate) async fn publish_release(
                 transaction
                     .execute(
                         "INSERT INTO catalog.release_flows \
-                           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-                         VALUES ($1,$2,$3,$4,$5)",
+                           (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
+                            execution_bundle_hash) \
+                         VALUES ($1,$2,$3,$4,$5, \
+                           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')",
                         &[
                             &tenant,
                             &catalog_id,
@@ -290,7 +304,7 @@ pub(crate) async fn pin_run(client: &Client, run_id: &str) -> anyhow::Result<()>
         .execute(
             "UPDATE runs AS r \
                 SET catalog_id = rf.catalog_id, catalog_version = rf.catalog_version, \
-                    environment = $2, \
+                    environment = $2, execution_bundle_hash = rf.execution_bundle_hash, \
                     invocation_context = jsonb_build_object( \
                       'version', 1, \
                       'principal', jsonb_build_object( \

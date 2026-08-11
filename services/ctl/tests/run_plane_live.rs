@@ -67,6 +67,8 @@ const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 const SCHEMA: &str = "rp_live";
+const EMPTY_EXECUTION_BUNDLE_HASH: &str =
+    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
 fn schema() -> BareSchemaName {
     BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
@@ -88,6 +90,39 @@ async fn connect_as(url: &str, role: &str, password: &str) -> Client {
         let _ = conn.await;
     });
     client
+}
+
+async fn seed_run_pin_parents(
+    su: &Client,
+    tenant_id: &str,
+    catalog_id: &str,
+    catalog_version: i32,
+    environment: &str,
+) {
+    su.execute(
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) \
+         VALUES ($1,$2,$3,$4,'0.1','applied')",
+        &[&tenant_id, &catalog_id, &catalog_version, &environment],
+    )
+    .await
+    .expect("seed run-pin catalog");
+    su.execute(
+        "INSERT INTO catalog.execution_bundles \
+           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+         VALUES ($1,$2,'0.1',''::bytea,0)",
+        &[&tenant_id, &EMPTY_EXECUTION_BUNDLE_HASH],
+    )
+    .await
+    .expect("seed run-pin execution bundle");
+    su.execute(
+        "INSERT INTO catalog.release_manifests \
+           (tenant_id,catalog_id,catalog_version,members_json) \
+         VALUES ($1,$2,$3,'[]'::jsonb)",
+        &[&tenant_id, &catalog_id, &catalog_version],
+    )
+    .await
+    .expect("seed run-pin release manifest");
 }
 
 /// Hermetic reset: drop the target schema + the shared `catalog` schema and
@@ -206,6 +241,242 @@ async fn run_plane_reconcile_live() {
     catalog_head_share_lock_leg(&su, &url).await;
     effect_disposition_security_drift_leg(&su).await;
     fail_kind_check_drift_leg(&su).await;
+}
+
+#[tokio::test]
+async fn execution_pin_cutover_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the execution-pin cutover gate");
+        return;
+    };
+    let su = connect(&url).await;
+    execution_pin_cutover_leg(&su).await;
+}
+
+async fn regress_execution_pin_contract(su: &Client) {
+    su.batch_execute(&format!(
+        "DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
+         DROP FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
+         DROP INDEX {SCHEMA}.runs_release; \
+         DROP INDEX {SCHEMA}.runs_execution_bundle; \
+         ALTER TABLE {SCHEMA}.runs \
+           DROP CONSTRAINT runs_release_fk, \
+           DROP CONSTRAINT runs_execution_bundle_fk, \
+           DROP CONSTRAINT runs_check, \
+           ALTER COLUMN catalog_id DROP NOT NULL, \
+           ALTER COLUMN catalog_version DROP NOT NULL, \
+           ALTER COLUMN catalog_version TYPE bigint USING catalog_version::bigint, \
+           ALTER COLUMN environment DROP NOT NULL, \
+           DROP COLUMN execution_bundle_hash; \
+         ALTER TABLE {SCHEMA}.runs \
+           ADD CONSTRAINT runs_check CHECK ((catalog_id IS NULL) = (catalog_version IS NULL)), \
+           ADD CONSTRAINT runs_environment_check CHECK (environment IS NULL OR environment <> ''); \
+         DROP INDEX catalog.release_flows_execution_bundle; \
+         ALTER TABLE catalog.release_flows \
+           DROP CONSTRAINT release_flows_execution_bundle_fk, \
+           DROP CONSTRAINT release_flows_execution_bundle_hash_check, \
+           DROP COLUMN execution_bundle_hash;"
+    ))
+    .await
+    .expect("regress execution-pin contract");
+}
+
+async fn execution_pin_cutover_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog for pin cutover");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply current runs for pin cutover");
+    regress_execution_pin_contract(su).await;
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("empty legacy schema accepts execution-pin cutover");
+    assert_eq!(
+        plan.actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::ExecutionPinCutover)
+            .count(),
+        1
+    );
+    let columns = su
+        .query(
+            "SELECT table_schema, table_name, column_name, data_type, is_nullable \
+             FROM information_schema.columns \
+             WHERE (table_schema='catalog' AND table_name='release_flows' \
+                    AND column_name='execution_bundle_hash') \
+                OR (table_schema=$1 AND table_name='runs' \
+                    AND column_name IN ('catalog_id','catalog_version','environment', \
+                                        'execution_bundle_hash')) \
+             ORDER BY table_schema, table_name, column_name",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read converged execution-pin columns");
+    assert_eq!(columns.len(), 5);
+    for row in &columns {
+        let column: String = row.get(2);
+        let data_type: String = row.get(3);
+        let nullable: String = row.get(4);
+        assert_eq!(nullable, "NO", "{column} is mandatory");
+        assert_eq!(
+            data_type,
+            if column == "catalog_version" {
+                "integer"
+            } else {
+                "text"
+            }
+        );
+    }
+    for object in [
+        "release_flows_execution_bundle_fk",
+        "runs_release_fk",
+        "runs_execution_bundle_fk",
+        "release_flows_execution_bundle",
+        "runs_release",
+        "runs_execution_bundle",
+        "runs_admission_pins_immutable",
+    ] {
+        let present: bool = su
+            .query_one(
+                "SELECT to_regclass($1) IS NOT NULL \
+                    OR to_regclass('catalog.' || $2) IS NOT NULL \
+                    OR EXISTS (SELECT 1 FROM pg_constraint WHERE conname=$2) \
+                    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=$2 AND NOT tgisinternal)",
+                &[&format!("{SCHEMA}.{object}"), &object],
+            )
+            .await
+            .expect("observe execution-pin object")
+            .get(0);
+        assert!(present, "missing execution-pin object {object}");
+    }
+    su.batch_execute(&format!(
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version) \
+           VALUES ('pin','cat',1,'dev','0.1'); \
+         INSERT INTO catalog.execution_bundles \
+           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+           VALUES ('pin','{EMPTY_EXECUTION_BUNDLE_HASH}','0.1',''::bytea,0); \
+         INSERT INTO catalog.release_manifests \
+           (tenant_id,catalog_id,catalog_version,members_json) \
+           VALUES ('pin','cat',1,'[]'::jsonb); \
+         INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+           VALUES ('pin','run','flow',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}')"
+    ))
+    .await
+    .expect("seed conforming execution pins");
+    let update = su
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET environment='prod' \
+                 WHERE tenant_id='pin' AND run_id='run'"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("run admission pin update must refuse");
+    let update_db = update
+        .as_db_error()
+        .expect("pin update is a database refusal");
+    assert_eq!(update_db.code().code(), "55000");
+    assert_eq!(update_db.message(), "run-admission-pin-immutable");
+    let environment: String = su
+        .query_one(
+            &format!(
+                "SELECT environment FROM {SCHEMA}.runs \
+                 WHERE tenant_id='pin' AND run_id='run'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read unchanged execution pins")
+        .get(0);
+    assert_eq!(environment, "dev");
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("execution-pin cutover is idempotent");
+    assert!(again.is_noop(), "cutover converged: {:#?}", again.actions);
+
+    reset(su).await;
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog for refusal");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply current runs for refusal");
+    regress_execution_pin_contract(su).await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs (tenant_id,run_id,flow_id,flow_version) \
+         VALUES ('legacy','legacy-run','flow',1)"
+    ))
+    .await
+    .expect("seed structurally unpinned legacy run");
+
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("populated legacy execution-pin cutover must refuse");
+    assert_db_code(
+        error.downcast().expect("postgres refusal"),
+        "55000",
+        "legacy pin cutover",
+    );
+    assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
+    assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
+    let version_type: String = su
+        .query_one(
+            "SELECT data_type FROM information_schema.columns \
+             WHERE table_schema=$1 AND table_name='runs' AND column_name='catalog_version'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read rolled-back catalog_version type")
+        .get(0);
+    assert_eq!(version_type, "bigint");
+
+    reset(su).await;
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog for release-row refusal");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply current runs for release-row refusal");
+    regress_execution_pin_contract(su).await;
+    su.batch_execute(
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version) \
+           VALUES ('legacy','cat',1,'dev','0.1'); \
+         INSERT INTO catalog.flow_artifacts \
+           (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
+           VALUES ('legacy','flow',1,'0.1','{}'::jsonb,'graph','artifact'); \
+         INSERT INTO catalog.release_manifests \
+           (tenant_id,catalog_id,catalog_version,members_json) \
+           VALUES ('legacy','cat',1, \
+             '[{\"flow-id\":\"flow\",\"flow-version\":1,\"artifact-hash\":\"artifact\"}]'::jsonb); \
+         INSERT INTO catalog.release_flows \
+           (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
+           VALUES ('legacy','cat',1,'flow',1);",
+    )
+    .await
+    .expect("seed structurally unpinned legacy release member");
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("populated release membership must refuse pin cutover");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres
+        .as_db_error()
+        .expect("release-row cutover is a database refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "execution-pin-cutover-requires-empty-run-and-release-membership"
+    );
+    assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
+    assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
@@ -405,14 +676,14 @@ async fn retired_shape_schema_snapshot(su: &Client) -> String {
 async fn attempt_retirement_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog record");
     for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane record");
     }
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply current catalog record");
     let lineage_before: String = su
         .query_one(
             &format!(
@@ -428,13 +699,24 @@ async fn attempt_retirement_leg(su: &Client) {
 
     add_retired_attempt_shape(su).await;
     su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
+        "INSERT INTO catalog.catalogs \
+             (tenant_id,catalog_id,version,environment,schema_version,state) \
+           VALUES ('t1','catalog-43',9,'production','0.1','applied'); \
+         INSERT INTO catalog.execution_bundles \
+             (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+           VALUES ('t1','sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                   '0.1',convert_to('{{}}','UTF8'),2); \
+         INSERT INTO catalog.release_manifests \
+             (tenant_id,catalog_id,catalog_version,members_json) \
+           VALUES ('t1','catalog-43',9,'[]'); \
+         INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,registration_id,trigger_source,event_source_run_id, \
               event_root_run_id,event_depth,flow_id,flow_version,catalog_id, \
-              catalog_version,environment,status,input_json,invocation_context, \
+              catalog_version,environment,execution_bundle_hash,status,input_json,invocation_context, \
               idempotency_key,root_run_id,terminal_reason,created_at,updated_at) \
            VALUES ('t1','retired-terminal','reg-43','event','retired-terminal', \
-                   'retired-terminal',0,'f',1,'catalog-43',9,'production','completed', \
+                   'retired-terminal',0,'f',1,'catalog-43',9,'production', \
+                   'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'),'completed', \
                    '{{\"bytes\":\"00ff43\"}}','{{\"source\":{{\"kind\":\"cdc\"}}}}', \
                    'idem-43','retired-terminal','completed', \
                    '2025-01-01 00:00:00 UTC','2025-01-01 00:30:00 UTC'); \
@@ -629,14 +911,14 @@ async fn unsafe_attempt_retirement_refusal_leg(su: &Client) {
     let schema = schema();
     for case in ["successors", "active-without-intent"] {
         reset(su).await;
+        su.batch_execute(CATALOG_SCHEMA_SQL)
+            .await
+            .expect("apply catalog for refusal");
         for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
             su.batch_execute(&rewrite_schema(ddl, &schema))
                 .await
                 .expect("apply current record for refusal");
         }
-        su.batch_execute(CATALOG_SCHEMA_SQL)
-            .await
-            .expect("apply catalog for refusal");
         add_retired_attempt_shape(su).await;
         if case == "successors" {
             su.batch_execute(&format!(
@@ -655,9 +937,22 @@ async fn unsafe_attempt_retirement_refusal_leg(su: &Client) {
             .expect("seed successor history");
         } else {
             su.batch_execute(&format!(
-                "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status) \
-                   VALUES ('t1','active-orphan','f',1,'running'); \
+                "INSERT INTO catalog.catalogs \
+                   (tenant_id,catalog_id,version,environment,schema_version,state) \
+                   VALUES ('t1','refusal-catalog',1,'dev','0.1','applied'); \
+                 INSERT INTO catalog.execution_bundles \
+                   (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+                   VALUES ('t1','sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                           '0.1',convert_to('{{}}','UTF8'),2); \
+                 INSERT INTO catalog.release_manifests \
+                   (tenant_id,catalog_id,catalog_version,members_json) \
+                   VALUES ('t1','refusal-catalog',1,'[]'); \
+                 INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,status) \
+                   VALUES ('t1','active-orphan','f',1,'refusal-catalog',1,'dev', \
+                           'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                           'running'); \
                  INSERT INTO {SCHEMA}.node_runs \
                    (tenant_id,run_id,node_id,occurrence,seq,status) \
                    VALUES ('t1','active-orphan','effect',0,1,'started');"
@@ -784,22 +1079,19 @@ async fn shared_runner_legacy_leg(su: &Client) {
     .await
     .expect("seed compatible shared history");
 
-    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
         .await
-        .expect("upgrade shared-runner legacy fixture");
-    for kind in [
-        RunPlaneActionKind::AddColumn,
-        RunPlaneActionKind::CreateTable,
-        RunPlaneActionKind::RepairConstraint,
-        RunPlaneActionKind::RepairHelperFunction,
-        RunPlaneActionKind::RepairTrigger,
-    ] {
-        assert!(
-            plan.actions.iter().any(|action| action.kind == kind),
-            "shared fixture plans {kind:?}: {:#?}",
-            plan.actions
-        );
-    }
+        .expect_err("populated shared-runner legacy fixture must refuse pin cutover");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres
+        .as_db_error()
+        .expect("shared-runner cutover is a database refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "execution-pin-cutover-requires-empty-run-and-release-membership"
+    );
+
     let counts = su
         .query_one(
             &format!(
@@ -809,126 +1101,23 @@ async fn shared_runner_legacy_leg(su: &Client) {
             &[],
         )
         .await
-        .expect("read preserved row counts");
+        .expect("read refusal-preserved row counts");
     assert_eq!(counts.get::<_, i64>(0), 1);
     assert_eq!(counts.get::<_, i64>(1), 2);
-    assert!(
-        !column_exists(su, "node_runs", "current_effect_attempt_id").await,
-        "fresh target does not add a mutable current-attempt pointer"
-    );
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-        "effect_disposition_requests",
-        "effect_dispositions",
+    for column in [
+        "catalog_id",
+        "catalog_version",
+        "environment",
+        "execution_bundle_hash",
     ] {
-        assert!(table_exists(su, SCHEMA, table).await, "{table} migrated");
+        assert!(
+            !column_exists(su, "runs", column).await,
+            "refusal leaves pin column {column} absent"
+        );
     }
-    for trigger in [
-        "effect_disposition_requests_insert_guard",
-        "effect_dispositions_insert_guard",
-    ] {
-        let present: bool = su
-            .query_one(
-                "SELECT EXISTS (SELECT FROM pg_trigger t \
-                 JOIN pg_class c ON c.oid=t.tgrelid \
-                 JOIN pg_namespace n ON n.oid=c.relnamespace \
-                 WHERE n.nspname=$1 AND t.tgname=$2 AND NOT t.tgisinternal)",
-                &[&SCHEMA, &trigger],
-            )
-            .await
-            .expect("probe disposition insert guard")
-            .get(0);
-        assert!(present, "{trigger} migrated");
-    }
-    // Attempt audit outlives prunable run history by design.
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs(tenant_id,run_id,flow_id,flow_version,status) \
-           VALUES ('t1','prunable-run','f',1,'completed'); \
-         INSERT INTO {SCHEMA}.effect_attempts \
-           (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
-            attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-           VALUES ('t1','00000000-0000-0000-0000-000000000042', \
-                   'prunable-run','n',0,0,'not-required', \
-                   now(),now()+interval '1 minute','sha256:input'); \
-         INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status) \
-           VALUES ('t1','prunable-run','n',0,0,'started'); \
-         DELETE FROM {SCHEMA}.runs \
-           WHERE tenant_id='t1' AND run_id='prunable-run';"
-    ))
-    .await
-    .expect("run pruning does not conflict with independent attempt retention");
-    let retained: i64 = su
-        .query_one(
-            &format!(
-                "SELECT count(*) FROM {SCHEMA}.effect_attempts \
-                 WHERE tenant_id='t1' AND run_id='prunable-run'"
-            ),
-            &[],
-        )
-        .await
-        .expect("read retained attempt audit")
-        .get(0);
-    assert_eq!(
-        retained, 1,
-        "run pruning cannot erase immutable attempt facts"
-    );
-    su.batch_execute(
-        "INSERT INTO catalog.catalogs \
-           (tenant_id,catalog_id,version,environment,schema_version,state) \
-           VALUES ('t1','cat',1,'dev','1','applied'); \
-         INSERT INTO catalog.catalog_heads \
-           (tenant_id,catalog_id,environment,applied_catalog_version) \
-           VALUES ('t1','cat','dev',1);",
-    )
-    .await
-    .expect("seed a stable catalog head");
-    su.batch_execute("SET ROLE wamn_app; SELECT set_config('app.tenant','t1',false)")
-        .await
-        .expect("enter tenant role");
-    let head: Option<i32> = su
-        .query_one(
-            &format!("SELECT {SCHEMA}.lock_catalog_head('t1','cat','dev')"),
-            &[],
-        )
-        .await
-        .expect("materializer lock boundary is callable")
-        .get(0);
-    assert_eq!(head, Some(1));
-    su.batch_execute("RESET ROLE; SELECT set_config('app.tenant','',false)")
-        .await
-        .expect("leave tenant role");
-
-    su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs \
-           (tenant_id,run_id,flow_id,flow_version,trigger_source,event_source_run_id,event_root_run_id,event_depth) \
-           VALUES ('t1','event-run','f',1,'event','event-run','event-run',0);"
-    ))
-    .await
-    .expect("insert canonical event lineage");
-    let mutation = su
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.runs SET event_depth=1 \
-                 WHERE tenant_id='t1' AND run_id='event-run'"
-            ),
-            &[],
-        )
-        .await;
     assert!(
-        mutation.is_err(),
-        "lineage trigger rejects ancestry mutation"
-    );
-
-    let again = reconcile_run_plane::reconcile(su, &schema, false)
-        .await
-        .expect("re-plan upgraded shared fixture");
-    assert!(
-        again.is_noop(),
-        "shared fixture converged: {:#?}",
-        again.actions
+        !table_exists(su, SCHEMA, "effect_attempts").await,
+        "refusal occurs before unrelated run-plane DDL"
     );
 }
 
@@ -936,6 +1125,9 @@ async fn shared_runner_legacy_leg(su: &Client) {
 async fn v1_era_drifted_leg(su: &Client, url: &str) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
 
     // Current-era runs/node_runs/flows (the drift was queue-side)…
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
@@ -986,9 +1178,7 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     ))
     .await
     .expect("build the v1-era queue + outbox era");
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
+    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.execute(
         "INSERT INTO catalog.event_registrations \
            (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
@@ -1000,8 +1190,10 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     .expect("seed a legacy state-carrying registration");
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version) \
-             VALUES ('t1', 'r-old', 'f', 1); \
+        "INSERT INTO {SCHEMA}.runs \
+             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+              environment,execution_bundle_hash) \
+             VALUES ('t1','r-old','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r-old');"
     ))
     .await
@@ -1125,6 +1317,9 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
 async fn queue_missing_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
@@ -1145,9 +1340,12 @@ async fn queue_missing_leg(su: &Client) {
         );
     }
     // The FK to runs resolves: a run then its queue row insert cleanly.
+    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version) \
-             VALUES ('t1', 'r1', 'f', 1); \
+        "INSERT INTO {SCHEMA}.runs \
+             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+              environment,execution_bundle_hash) \
+             VALUES ('t1','r1','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -1267,11 +1465,14 @@ async fn from_zero_leg(su: &Client) {
     }
 
     // Functional smoke as the runtime role: the sections' grants + RLS hold.
+    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.batch_execute(&format!(
         "SET ROLE wamn_app; \
          SELECT set_config('app.tenant', 't1', false); \
-         INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version) \
-             VALUES ('t1', 'r1', 'f', 1); \
+         INSERT INTO {SCHEMA}.runs \
+             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+              environment,execution_bundle_hash) \
+             VALUES ('t1','r1','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}'); \
          INSERT INTO {SCHEMA}.run_queue (tenant_id, run_id) VALUES ('t1', 'r1');"
     ))
     .await
@@ -1301,6 +1502,9 @@ async fn from_zero_leg(su: &Client) {
 async fn current_noop_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
         .expect("apply run-state");
@@ -1313,9 +1517,6 @@ async fn current_noop_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
 
     let dry = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -1348,21 +1549,11 @@ async fn current_noop_leg(su: &Client) {
 async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     reset(su).await;
     let schema = schema();
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply run-state before authoring additive upgrade");
-    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
-        .await
-        .expect("apply flows before authoring additive upgrade");
-
     let legacy_flow_tests = without_marked_section(
         FLOW_TESTS_SQL,
         "-- BEGIN AUTHORING REPORT STORAGE MIGRATION",
         "-- END AUTHORING REPORT STORAGE MIGRATION",
     );
-    su.batch_execute(&rewrite_schema(&legacy_flow_tests, &schema))
-        .await
-        .expect("apply pre-authoring flow-test storage");
     let legacy_catalog = without_marked_section(
         CATALOG_SCHEMA_SQL,
         "-- BEGIN AUTHORING DRAFT STORAGE MIGRATION",
@@ -1393,6 +1584,15 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     su.batch_execute(&legacy_catalog)
         .await
         .expect("apply pre-authoring catalog storage");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply run-state before authoring additive upgrade");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
+        .await
+        .expect("apply flows before authoring additive upgrade");
+    su.batch_execute(&rewrite_schema(&legacy_flow_tests, &schema))
+        .await
+        .expect("apply pre-authoring flow-test storage");
 
     for table in [
         "flow_drafts",
@@ -2010,12 +2210,12 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
 async fn catalog_head_share_lock_leg(su: &Client, url: &str) {
     reset(su).await;
     let schema = schema();
-    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
-        .await
-        .expect("apply lock bridge");
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog storage for lock probe");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply lock bridge");
     su.batch_execute(
         "INSERT INTO catalog.catalogs \
            (tenant_id,catalog_id,version,environment,schema_version,state) VALUES \
@@ -2079,14 +2279,14 @@ async fn catalog_head_share_lock_leg(su: &Client, url: &str) {
 async fn effect_disposition_security_drift_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
     for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane record");
     }
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
 
     su.batch_execute(&format!(
         "DROP INDEX {SCHEMA}.effect_dispositions_attempt_history; \
@@ -2640,6 +2840,9 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
 async fn fail_kind_check_drift_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
     // Provision the CURRENT run plane (fresh 5-literal fail_kind CHECK)…
     su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
         .await
@@ -2650,9 +2853,6 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    su.batch_execute(CATALOG_SCHEMA_SQL)
-        .await
-        .expect("apply catalog-schema");
     // …then REGRESS runs.fail_kind to the pre-cjv.4 3-literal CHECK (drop the
     // fresh auto-named one, re-add without 'runaway-budget') — the exact state a
     // schema provisioned from the old run-state.sql carries.
@@ -2664,9 +2864,12 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     .await
     .expect("regress fail_kind CHECK to the legacy 3 literals");
     // A run whose runaway verdict we will try to record.
+    seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.batch_execute(&format!(
-        "INSERT INTO {SCHEMA}.runs (tenant_id, run_id, flow_id, flow_version) \
-             VALUES ('t1', 'r-budget', 'f', 1);"
+        "INSERT INTO {SCHEMA}.runs \
+             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+              environment,execution_bundle_hash) \
+             VALUES ('t1','r-budget','f',1,'cat',1,'dev','{EMPTY_EXECUTION_BUNDLE_HASH}');"
     ))
     .await
     .expect("seed a run");

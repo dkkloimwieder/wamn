@@ -143,7 +143,7 @@ WITH admitted_artifact AS MATERIALIZED ( \
        AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
        AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
        AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND draft.execution_bundle_hash = source_run.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND draft.execution_bundle_hash = source_run.execution_bundle_hash \
        AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
        AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
      WHERE source_run.run_id = $1 \
@@ -261,7 +261,7 @@ WITH admitted_artifact AS MATERIALIZED ( \
        AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
        AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
        AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND draft.execution_bundle_hash = source_run.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND draft.execution_bundle_hash = source_run.execution_bundle_hash \
        AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
        AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
      WHERE source_run.run_id = $1 \
@@ -1362,12 +1362,14 @@ mod tests {
                 "draft-id",
                 "draft-revision",
                 "validated-draft-hash",
-                "execution-bundle-hash",
                 "binding-base-artifact-hash",
                 "suite-flow-version",
             ] {
                 assert!(sql.contains(pin), "draft snapshot omits {pin}");
             }
+            assert!(sql.contains("draft.execution_bundle_hash = source_run.execution_bundle_hash"));
+            let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+            assert!(!sql.contains(&retired_json_pin));
         }
 
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(

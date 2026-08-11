@@ -45,21 +45,8 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
     let migration_start = CATALOG_SCHEMA
         .find("-- BEGIN CONNECTION STORAGE MIGRATION")
         .expect("connection migration start");
-    let migration_end = CATALOG_SCHEMA
-        .find("-- END CONNECTION STORAGE MIGRATION")
-        .expect("connection migration end");
-    let migration_end = migration_end
-        + CATALOG_SCHEMA[migration_end..]
-            .find('\n')
-            .expect("connection migration end line")
-        + 1;
-    let legacy_schema = format!(
-        "{}{}",
-        &CATALOG_SCHEMA[..migration_start],
-        &CATALOG_SCHEMA[migration_end..]
-    );
     client
-        .batch_execute(&legacy_schema)
+        .batch_execute(&CATALOG_SCHEMA[..migration_start])
         .await
         .expect("install pre-connection catalog schema");
     let absent_before_upgrade: bool = client
@@ -114,6 +101,13 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
              ) VALUES \
                ('tenant-a', 'release', 1, 'dev', '0.1', 'applied'), \
                ('tenant-a', 'release', 2, 'prod', '0.1', 'applied'); \
+             INSERT INTO catalog.execution_bundles ( \
+               tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length \
+             ) VALUES ( \
+               'tenant-a', \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+               '0.1', decode('7b7d', 'hex'), 2 \
+             ); \
              BEGIN; \
              INSERT INTO catalog.release_manifests ( \
                tenant_id, catalog_id, catalog_version, members_json \
@@ -123,10 +117,13 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
                ('tenant-a', 'release', 2, \
                 '[{\"flow-id\":\"flow-a\",\"flow-version\":1,\"artifact-hash\":\"artifact-a\"}]'); \
              INSERT INTO catalog.release_flows ( \
-               tenant_id, catalog_id, catalog_version, flow_id, flow_version \
+               tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
+               execution_bundle_hash \
              ) VALUES \
-               ('tenant-a', 'release', 1, 'flow-a', 1), \
-               ('tenant-a', 'release', 2, 'flow-a', 1); \
+               ('tenant-a', 'release', 1, 'flow-a', 1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+               ('tenant-a', 'release', 2, 'flow-a', 1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
              COMMIT; \
              INSERT INTO catalog.connection_bindings ( \
                tenant_id, catalog_id, catalog_version, artifact_hash, requirement_name, \

@@ -547,7 +547,7 @@ pub fn lock_pinned_trigger_catalog_head_sql() -> String {
 pub fn admit_pinned_triggered_run_sql() -> String {
     format!(
         "WITH release_member AS MATERIALIZED ( \
-           SELECT h.tenant_id, a.artifact_hash \
+           SELECT h.tenant_id, rf.execution_bundle_hash, a.artifact_hash \
              FROM catalog.catalog_heads AS h \
              JOIN catalog.release_flows AS rf \
                ON rf.tenant_id = h.tenant_id AND rf.catalog_id = h.catalog_id \
@@ -568,12 +568,24 @@ pub fn admit_pinned_triggered_run_sql() -> String {
                     WHERE member ->> 'flow-id' = rf.flow_id \
                       AND (member ->> 'flow-version')::int = rf.flow_version \
                       AND member ->> 'artifact-hash' = a.artifact_hash) = 1 \
+         ), root_plan AS MATERIALIZED ( \
+           SELECT member.* \
+             FROM release_member AS member \
+             JOIN catalog.execution_bundles AS bundle \
+               ON bundle.tenant_id = member.tenant_id \
+              AND bundle.execution_bundle_hash = member.execution_bundle_hash \
+         ), existing_run AS MATERIALIZED ( \
+           SELECT r.* FROM runs AS r \
+            WHERE r.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+              AND r.run_id = $1 \
+            FOR KEY SHARE OF r \
          ), inserted_run AS ( \
            INSERT INTO runs \
              (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-              environment, status, trigger_source, input_json, invocation_context, \
+              environment, execution_bundle_hash, status, trigger_source, input_json, invocation_context, \
               admission_context_version, platform_revision) \
-           SELECT member.tenant_id, $1, $2, $3, $4, $5::int, $6, '{dispatched}', 'scenario', \
+           SELECT member.tenant_id, $1, $2, $3, $4, $5::int, $6, \
+                  member.execution_bundle_hash, '{dispatched}', 'scenario', \
                   $7::text::jsonb, \
                   jsonb_build_object( \
                     'version', '0.1', \
@@ -585,9 +597,9 @@ pub fn admit_pinned_triggered_run_sql() -> String {
                     'source', jsonb_build_object( \
                       'producer', 'scenario', 'suite-id', $8::text, 'case-id', $9::text)), \
                   '0.1', $11 \
-             FROM release_member AS member \
+             FROM root_plan AS member \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
-           RETURNING tenant_id, run_id \
+           RETURNING tenant_id, run_id, execution_bundle_hash \
          ), inserted_queue AS ( \
            INSERT INTO run_queue \
              (tenant_id, run_id, partition_key, priority, available_at) \
@@ -596,9 +608,26 @@ pub fn admit_pinned_triggered_run_sql() -> String {
          ) \
          SELECT CASE \
                   WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted' \
-                  WHEN EXISTS (SELECT 1 FROM release_member) THEN 'duplicate' \
-                  ELSE 'membership-drift' \
-                END AS result_code",
+                  WHEN NOT EXISTS (SELECT 1 FROM release_member) THEN 'membership-drift' \
+                  WHEN NOT EXISTS (SELECT 1 FROM root_plan) THEN 'missing-root-plan' \
+                  WHEN EXISTS ( \
+                    SELECT 1 FROM existing_run AS existing, root_plan AS member \
+                     WHERE existing.flow_id IS DISTINCT FROM $2 \
+                        OR existing.flow_version IS DISTINCT FROM $3 \
+                        OR existing.catalog_id IS DISTINCT FROM $4 \
+                        OR existing.catalog_version IS DISTINCT FROM $5::int \
+                        OR existing.environment IS DISTINCT FROM $6 \
+                        OR existing.trigger_source IS DISTINCT FROM 'scenario' \
+                        OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
+                        OR existing.execution_bundle_hash \
+                           IS DISTINCT FROM member.execution_bundle_hash) \
+                    THEN 'conflicting-run-identity' \
+                  ELSE 'duplicate' \
+                END AS result_code, \
+                COALESCE((SELECT execution_bundle_hash FROM inserted_run), \
+                         (SELECT execution_bundle_hash FROM existing_run), \
+                         (SELECT execution_bundle_hash FROM root_plan)) \
+                  AS execution_bundle_hash",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
 }
@@ -634,6 +663,12 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
               AND d.binding_base_artifact_hash = $15 \
               AND d.suite_flow_version = $16 AND d.validated_draft_hash = $17 \
               AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $18 <> '' \
+         ), root_plan AS MATERIALIZED ( \
+           SELECT d.* \
+             FROM draft AS d \
+             JOIN catalog.execution_bundles AS bundle \
+               ON bundle.tenant_id = d.tenant_id \
+              AND bundle.execution_bundle_hash = d.execution_bundle_hash \
          ), connection_decisions AS MATERIALIZED ( \
            SELECT requirement.value ->> 'name' AS requirement_name, \
                   (base_requirement.requirement_name IS NOT NULL \
@@ -642,7 +677,7 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                    AND generation.generation IS NOT NULL \
                    AND grant_row.generation IS NOT NULL \
                    AND grant_row.revoked_at IS NULL) AS authorized \
-             FROM draft AS d \
+             FROM root_plan AS d \
              CROSS JOIN LATERAL jsonb_array_elements( \
                  COALESCE(d.graph_json -> 'connection-requirements', '[]'::jsonb) \
              ) AS requirement(value) \
@@ -680,18 +715,24 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
               AND grant_row.instance_id = generation.instance_id \
               AND grant_row.generation = generation.generation \
          ), authorized_draft AS MATERIALIZED ( \
-           SELECT d.* FROM draft AS d \
+           SELECT d.* FROM root_plan AS d \
             WHERE NOT EXISTS ( \
               SELECT 1 FROM connection_decisions AS decision \
                WHERE NOT decision.authorized \
             ) \
+         ), existing_run AS MATERIALIZED ( \
+           SELECT r.* FROM runs AS r \
+            WHERE r.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+              AND r.run_id = $1 \
+            FOR KEY SHARE OF r \
          ), inserted_run AS ( \
            INSERT INTO runs \
              (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-              environment, status, trigger_source, input_json, invocation_context, \
+              environment, execution_bundle_hash, status, trigger_source, input_json, invocation_context, \
               admission_context_version, platform_revision) \
            SELECT d.tenant_id, $1, d.flow_id, d.runtime_flow_version, d.catalog_id, \
-                  d.catalog_version, d.environment, '{dispatched}', 'scenario-draft', \
+                  d.catalog_version, d.environment, d.execution_bundle_hash, \
+                  '{dispatched}', 'scenario-draft', \
                   $7::text::jsonb, \
                   jsonb_build_object( \
                     'version', '0.1', \
@@ -703,7 +744,6 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                       'artifact-digest', d.draft_artifact_hash, \
                       'draft-id', d.draft_id, 'draft-revision', d.draft_revision, \
                       'validated-draft-hash', d.validated_draft_hash, \
-                      'execution-bundle-hash', d.execution_bundle_hash, \
                       'binding-base-artifact-hash', d.binding_base_artifact_hash, \
                       'suite-flow-version', d.suite_flow_version), \
                     'source', jsonb_build_object( \
@@ -712,7 +752,7 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                   '0.1', $18 \
              FROM authorized_draft AS d \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
-           RETURNING tenant_id, run_id \
+           RETURNING tenant_id, run_id, execution_bundle_hash \
          ), inserted_queue AS ( \
            INSERT INTO run_queue \
              (tenant_id, run_id, partition_key, priority, available_at) \
@@ -722,10 +762,27 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
          SELECT CASE \
                   WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted' \
                   WHEN NOT EXISTS (SELECT 1 FROM draft) THEN 'draft-drift' \
+                  WHEN NOT EXISTS (SELECT 1 FROM root_plan) THEN 'missing-root-plan' \
                   WHEN NOT EXISTS (SELECT 1 FROM authorized_draft) \
                     THEN 'draft-connections-denied' \
+                  WHEN EXISTS ( \
+                    SELECT 1 FROM existing_run AS existing, root_plan AS d \
+                     WHERE existing.flow_id IS DISTINCT FROM d.flow_id \
+                        OR existing.flow_version IS DISTINCT FROM d.runtime_flow_version \
+                        OR existing.catalog_id IS DISTINCT FROM d.catalog_id \
+                        OR existing.catalog_version IS DISTINCT FROM d.catalog_version \
+                        OR existing.environment IS DISTINCT FROM d.environment \
+                        OR existing.trigger_source IS DISTINCT FROM 'scenario-draft' \
+                        OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
+                        OR existing.execution_bundle_hash \
+                           IS DISTINCT FROM d.execution_bundle_hash) \
+                    THEN 'conflicting-run-identity' \
                   ELSE 'duplicate' \
-                END AS result_code",
+                END AS result_code, \
+                COALESCE((SELECT execution_bundle_hash FROM inserted_run), \
+                         (SELECT execution_bundle_hash FROM existing_run), \
+                         (SELECT execution_bundle_hash FROM root_plan)) \
+                  AS execution_bundle_hash",
         dispatched = RunStatus::Dispatched.as_sql(),
     )
 }

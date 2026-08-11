@@ -206,9 +206,21 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         .await?;
     release
         .execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             VALUES ($1,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                     '0.1',decode('7b7d','hex'),2) \
+             ON CONFLICT DO NOTHING",
+            &[&TENANT],
+        )
+        .await?;
+    release
+        .execute(
             "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-             VALUES ($1,$2,1,$3,1)",
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
+                execution_bundle_hash) \
+             VALUES ($1,$2,1,$3,1, \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')",
             &[&TENANT, &CATALOG_ID, &FLOW_ID],
         )
         .await?;
@@ -303,9 +315,11 @@ async fn seed_claimed(
         .execute(
             "INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-                attachment_id,status,trigger_source,input_json,invocation_context, \
+                execution_bundle_hash,attachment_id,status,trigger_source,input_json,invocation_context, \
                 response_deadline_at,run_deadline_at) \
-             VALUES ($1,$2,$3,1,$4,1,'proof',$5,$6,'http','{\"echo\":\"ok\"}',$7, \
+             VALUES ($1,$2,$3,1,$4,1,'proof', \
+                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                     $5,$6,'http','{\"echo\":\"ok\"}',$7, \
                      now()+make_interval(secs => $8),now()+make_interval(secs => $8))",
             &[
                 &TENANT,
@@ -383,7 +397,7 @@ async fn promote_attachment_definition(
            FROM catalog.release_manifests \
            WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
         "INSERT INTO catalog.release_flows \
-           SELECT tenant_id,catalog_id,2,flow_id,flow_version \
+           SELECT tenant_id,catalog_id,2,flow_id,flow_version,execution_bundle_hash \
            FROM catalog.release_flows \
            WHERE tenant_id=$1 AND catalog_id=$2 AND catalog_version=1",
         "INSERT INTO catalog.release_exposure_manifests \

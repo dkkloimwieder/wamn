@@ -290,12 +290,20 @@ CREATE TABLE catalog.release_flows (
     catalog_version int  NOT NULL,
     flow_id         text NOT NULL,
     flow_version    int  NOT NULL,
+    execution_bundle_hash text NOT NULL,
     PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
         REFERENCES catalog.release_manifests (tenant_id, catalog_id, catalog_version),
     FOREIGN KEY (tenant_id, flow_id, flow_version)
-        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version)
+        REFERENCES catalog.flow_artifacts (tenant_id, flow_id, flow_version),
+    CONSTRAINT release_flows_execution_bundle_hash_check
+        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT release_flows_execution_bundle_fk
+        FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
 );
+CREATE INDEX release_flows_execution_bundle
+    ON catalog.release_flows (tenant_id, execution_bundle_hash);
 ALTER TABLE catalog.release_flows ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.release_flows FORCE ROW LEVEL SECURITY;
 CREATE POLICY release_flows_tenant ON catalog.release_flows

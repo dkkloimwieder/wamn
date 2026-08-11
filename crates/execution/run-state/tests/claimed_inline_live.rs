@@ -52,14 +52,41 @@ fn exact_claimed_run_live_faults_and_single_driver() {
                    NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
              END $$; \
-             DROP SCHEMA IF EXISTS wamn_run CASCADE; {run_state} {run_queue} \
+             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             CREATE SCHEMA catalog; \
+             CREATE TABLE catalog.release_manifests ( \
+               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+               PRIMARY KEY (tenant_id, catalog_id, catalog_version) \
+             ); \
+             CREATE TABLE catalog.execution_bundles ( \
+               tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, \
+               PRIMARY KEY (tenant_id, execution_bundle_hash) \
+             ); \
+             INSERT INTO catalog.release_manifests VALUES \
+               ('t1','claimed-inline-fixture',1), ('t2','claimed-inline-fixture',1); \
+             INSERT INTO catalog.execution_bundles VALUES \
+               ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+               ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
+             {run_state} {run_queue} \
              INSERT INTO wamn_run.runs \
-               (tenant_id,run_id,flow_id,flow_version,status,input_json) VALUES \
-               ('t1','exact','flow-a',7,'dispatched','{{\"v\":1}}'), \
-               ('t1','stale','flow-a',7,'dispatched','{{}}'), \
-               ('t1','partitioned','flow-a',7,'dispatched','{{}}'), \
-               ('t1','terminal','flow-a',7,'completed','{{}}'), \
-               ('t2','other-tenant','flow-a',7,'dispatched','{{}}'); \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                execution_bundle_hash,status,input_json) VALUES \
+               ('t1','exact','flow-a',7,'claimed-inline-fixture',1,'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                'dispatched','{{\"v\":1}}'), \
+               ('t1','stale','flow-a',7,'claimed-inline-fixture',1,'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                'dispatched','{{}}'), \
+               ('t1','partitioned','flow-a',7,'claimed-inline-fixture',1,'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                'dispatched','{{}}'), \
+               ('t1','terminal','flow-a',7,'claimed-inline-fixture',1,'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                'completed','{{}}'), \
+               ('t2','other-tenant','flow-a',7,'claimed-inline-fixture',1,'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                'dispatched','{{}}'); \
              INSERT INTO wamn_run.run_queue \
                (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation,partition_key) \
              VALUES \

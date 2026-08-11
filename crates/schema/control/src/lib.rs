@@ -98,9 +98,10 @@ pub use replica_identity::{
 pub use run_plane::{
     BareSchemaName, InvalidBareSchemaName, LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME,
     RunPlaneAction, RunPlaneActionKind, RunPlaneObservation, RunPlanePlan,
-    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_stale_registration_state_sql,
-    ensure_scenario_author_role_sql, plan_run_plane, rewrite_schema,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
+    count_run_rows_sql, count_stale_registration_state_sql, ensure_scenario_author_role_sql,
+    plan_run_plane, rewrite_schema, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_outbox_function_present_sql,
     select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,

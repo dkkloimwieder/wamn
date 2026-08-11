@@ -488,6 +488,16 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         }
         transaction
             .execute(
+                "INSERT INTO catalog.execution_bundles \
+                   (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+                 VALUES ($1,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                         '0.1',decode('7b7d','hex'),2) \
+                 ON CONFLICT DO NOTHING",
+                &[&TENANT],
+            )
+            .await?;
+        transaction
+            .execute(
                 "INSERT INTO catalog.release_manifests \
                    (tenant_id,catalog_id,catalog_version,members_json) \
                  VALUES ($1,$2,$3,$4)",
@@ -498,8 +508,10 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             transaction
                 .execute(
                     "INSERT INTO catalog.release_flows \
-                       (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-                     VALUES ($1,$2,$3,$4,1)",
+                       (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
+                        execution_bundle_hash) \
+                     VALUES ($1,$2,$3,$4,1, \
+                       'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')",
                     &[&TENANT, &CATALOG_ID, &CATALOG_VERSION, &artifact.flow_id],
                 )
                 .await?;
@@ -1088,7 +1100,7 @@ mod tests {
         }
         assert!(ddl.contains(&format!("CREATE TABLE {SCHEMA}.runs")));
         assert!(ddl.contains("catalog_id      text"));
-        assert!(ddl.contains("catalog_version bigint"));
+        assert!(ddl.contains("catalog_version int NOT NULL"));
         assert!(
             !ddl.contains(&format!("CREATE TABLE {SCHEMA}.flows")),
             "metricbench must not fall back to the legacy mutable flow table"

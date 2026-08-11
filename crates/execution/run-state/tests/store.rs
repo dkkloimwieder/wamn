@@ -726,15 +726,40 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
-         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n",
+         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+         DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         CREATE SCHEMA catalog;\n\
+         CREATE TABLE catalog.release_manifests (\n\
+           tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\n\
+           PRIMARY KEY (tenant_id, catalog_id, catalog_version)\n\
+         );\n\
+         CREATE TABLE catalog.execution_bundles (\n\
+           tenant_id text NOT NULL, execution_bundle_hash text NOT NULL,\n\
+           PRIMARY KEY (tenant_id, execution_bundle_hash)\n\
+         );\n\
+         INSERT INTO catalog.release_manifests VALUES\n\
+           ('t1','run-state-fixture',1), ('t2','run-state-fixture',1),\n\
+           ('t3','run-state-fixture',1);\n\
+         INSERT INTO catalog.execution_bundles VALUES\n\
+           ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
+           ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
+           ('t3','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');\n",
     );
     script.push_str(&ddl);
     script.push('\n');
     // Seed two tenants as the superuser (bypasses RLS): tenant t1 has a run with
     // two node-runs, tenant t2 has one run — the RLS witness.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, idempotency_key) \
-           VALUES ('t1','run-a','f',1,'running','k-a'), ('t2','run-b','f',1,'running','k-b');\n\
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+           execution_bundle_hash, status, idempotency_key\
+         ) VALUES\
+           ('t1','run-a','f',1,'run-state-fixture',1,'test',\
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+            'running','k-a'),\
+           ('t2','run-b','f',1,'run-state-fixture',1,'test',\
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+            'running','k-b');\n\
          INSERT INTO wamn_run.node_runs (tenant_id, run_id, node_id, seq, status, output_port, output_json) \
            VALUES ('t1','run-a','n0',0,'success','main','{}'::jsonb), \
                   ('t1','run-a','n1',1,'success','main','{}'::jsonb);\n",
@@ -762,13 +787,21 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
     script.push_str(
         "DO $$ BEGIN \
            BEGIN \
-             INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, idempotency_key) \
-               VALUES ('t1','run-a2','f',1,'k-a'); \
+             INSERT INTO wamn_run.runs (\
+               tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+               execution_bundle_hash, idempotency_key\
+             ) VALUES ('t1','run-a2','f',1,'run-state-fixture',1,'test',\
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+               'k-a'); \
              ASSERT false, 'duplicate idempotency key must be rejected'; \
            EXCEPTION WHEN unique_violation THEN NULL; END; \
          END $$;\n\
-         INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, idempotency_key) \
-           VALUES ('t3','run-c','f',1,'k-a');\n",
+         INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment,\
+           execution_bundle_hash, idempotency_key\
+         ) VALUES ('t3','run-c','f',1,'run-state-fixture',1,'test',\
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+           'k-a');\n",
     );
     // The FK cascades: deleting a run removes its node-runs.
     script.push_str(
@@ -776,7 +809,7 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
          DO $$ BEGIN ASSERT (SELECT count(*) FROM wamn_run.node_runs WHERE run_id='run-a') = 0, \
                'FK ON DELETE CASCADE removed node-runs'; END $$;\n",
     );
-    script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
+    script.push_str("DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n");
 
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};

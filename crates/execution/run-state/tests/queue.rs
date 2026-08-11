@@ -1241,7 +1241,7 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert_eq!(sql.matches("inserted_run AS").count(), 1);
     assert_eq!(sql.matches("inserted_queue AS").count(), 1);
     assert!(sql.contains("catalog_id, catalog_version"));
-    assert!(sql.contains("environment, status, trigger_source"));
+    assert!(sql.contains("environment, execution_bundle_hash, status, trigger_source"));
     assert!(sql.contains("invocation_context"));
     assert!(sql.contains("admission_context_version"));
     for context_field in [
@@ -1266,9 +1266,24 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert!(sql.contains("$11"));
     assert!(sql.contains("SELECT tenant_id, run_id, NULL, 0, now() FROM inserted_run"));
     assert!(sql.contains("WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted'"));
-    assert!(sql.contains("THEN 'duplicate'"));
-    assert!(sql.contains("ELSE 'membership-drift'"));
+    assert!(sql.contains("WHEN NOT EXISTS (SELECT 1 FROM release_member) THEN 'membership-drift'"));
+    assert!(sql.contains("ELSE 'duplicate'"));
     assert!(!sql.contains("FROM flows"));
+}
+
+#[test]
+fn admission_derives_root_bundle_from_authoritative_member() {
+    let sql = admit_pinned_triggered_run_sql();
+
+    assert!(sql.contains("rf.execution_bundle_hash"));
+    assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
+    assert!(sql.contains("bundle.execution_bundle_hash = member.execution_bundle_hash"));
+    assert!(sql.contains("environment, execution_bundle_hash, status"));
+    assert!(sql.contains("member.execution_bundle_hash, 'dispatched'"));
+    assert!(sql.contains("THEN 'missing-root-plan'"));
+    assert!(sql.contains("THEN 'conflicting-run-identity'"));
+    let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+    assert!(!sql.contains(&format!("'{retired_json_pin}'")));
 }
 
 // [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —
@@ -1459,7 +1474,22 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     script.push_str(
         "DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_app') THEN \
          CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; END IF; END $$;\n\
-         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n",
+         DROP SCHEMA IF EXISTS wamn_run CASCADE;\n\
+         DROP SCHEMA IF EXISTS catalog CASCADE;\n\
+         CREATE SCHEMA catalog;\n\
+         CREATE TABLE catalog.release_manifests (\n\
+           tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL,\n\
+           PRIMARY KEY (tenant_id, catalog_id, catalog_version)\n\
+         );\n\
+         CREATE TABLE catalog.execution_bundles (\n\
+           tenant_id text NOT NULL, execution_bundle_hash text NOT NULL,\n\
+           PRIMARY KEY (tenant_id, execution_bundle_hash)\n\
+         );\n\
+         INSERT INTO catalog.release_manifests VALUES\n\
+           ('t1','run-queue-fixture',1), ('t2','run-queue-fixture',1);\n\
+         INSERT INTO catalog.execution_bundles VALUES\n\
+           ('t1','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'),\n\
+           ('t2','sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');\n",
     );
     script.push_str(&run_state);
     script.push('\n');
@@ -1474,7 +1504,12 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // spent) so the janitor's orphan-vs-reclaimable check and the claim's
     // budget guard are both exercised.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','rq-ready','f',1,'dispatched'), \
            ('t1','rq-parked','f',1,'dispatched'), \
            ('t1','rq-leased','f',1,'dispatched'), \
@@ -1484,7 +1519,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ('t1','rq-spent','f',1,'dispatched'), \
            ('t1','rq-healthy','f',1,'dispatched'), \
            ('t1','rq-completed','f',1,'completed'), \
-           ('t2','rq-other','f',1,'dispatched');\n\
+           ('t2','rq-other','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','rq-ready',   now() - interval '1 min', NULL,  NULL,                     0,  20), \
@@ -1503,9 +1539,15 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // pb-0<pb-1), all ready now (order within a key = run_id). These exercise the
     // per-partition ownership path; the global claim above skips them.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','pa-0','f',1,'dispatched'),('t1','pa-1','f',1,'dispatched'),('t1','pa-2','f',1,'dispatched'), \
-           ('t1','pb-0','f',1,'dispatched'),('t1','pb-1','f',1,'dispatched');\n\
+           ('t1','pb-0','f',1,'dispatched'),('t1','pb-1','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, attempts, max_attempts) VALUES \
            ('t1','pa-0','site-a', now(), 0, 20), \
@@ -1556,14 +1598,20 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     script.push_str(
         "INSERT INTO wamn_run.runs \
            (tenant_id, run_id, flow_id, flow_version, status, trigger_source, input_json, \
-            event_source_run_id, event_root_run_id, event_depth) VALUES \
+            event_source_run_id, event_root_run_id, event_depth, catalog_id, catalog_version, \
+            environment, execution_bundle_hash) \
+         SELECT fixture.*, 'run-queue-fixture', 1, 'test', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','lineage-combined','f',3,'dispatched','event', \
             '{\"event\":\"update\",\"new\":{\"id\":1}}'::jsonb,'parent-run','root-run',3), \
            ('t1','lineage-split','f',3,'dispatched','event', \
             '{\"event\":\"delete\",\"causation\":{\"run\":\"forged\",\"root\":\"forged\",\"depth\":99}}'::jsonb, \
             'parent-run','trusted-root',7), \
            ('t1','lineage-ordinary','f',3,'dispatched','manual', \
-            '{\"request\":1}'::jsonb,NULL,NULL,NULL);\n\
+            '{\"request\":1}'::jsonb,NULL,NULL,NULL) \
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status,trigger_source,input_json, \
+                      event_source_run_id,event_root_run_id,event_depth);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, attempts, max_attempts) VALUES \
            ('t1','lineage-combined',now() - interval '10 years',0,20);\n",
@@ -1699,8 +1747,12 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // leased/parked/spent by now, so the LIMIT-1 combined claim deterministically
     // takes cd-0.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, input_json) \
-           VALUES ('t1','cd-0','f',3,'dispatched','\"rec\"'::jsonb);\n\
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, input_json, catalog_id,\
+           catalog_version, environment, execution_bundle_hash\
+         ) VALUES ('t1','cd-0','f',3,'dispatched','\"rec\"'::jsonb,\
+                   'run-queue-fixture',1,'test',\
+                   'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');\n\
          INSERT INTO wamn_run.run_queue (tenant_id, run_id, available_at, attempts, max_attempts) \
            VALUES ('t1','cd-0', now(), 0, 20);\n\
          INSERT INTO wamn_run.flows (tenant_id, flow_id, version, active, graph_json) VALUES \
@@ -1776,10 +1828,16 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // unleased row is surfaced for a doorbell hint; a future queue-parked or
     // live-leased row is not.
     script.push_str(&format!(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','wk-due','f',1,'dispatched'), \
            ('t1','wk-future','f',1,'dispatched'), \
-           ('t1','wk-leased','f',1,'dispatched');\n\
+           ('t1','wk-leased','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','wk-due',    now() - interval '1 min', NULL, NULL,                      0, 20), \
@@ -1809,10 +1867,16 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // (b) an unpartitioned due park IS still woken; (c) a non-wedged partitioned
     // due park stays claimable via its OWN partition path (never stranded).
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','wc-unp','f',1,'dispatched'), \
            ('t1','wc-wg-0','f',1,'running'),('t1','wc-wg-1','f',1,'dispatched'), \
-           ('t1','wc-ok-0','f',1,'dispatched');\n\
+           ('t1','wc-ok-0','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','wc-unp', NULL,     now() - interval '1 min', now() - interval '2 min', NULL,  NULL,                      0,  20), \
@@ -1855,9 +1919,15 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // terminal: not claimed, not woken, reaped by the janitor. Both are exercised through
     // the REAL builders (claim_batch_sql / parked_due_sql / janitor_sweep_sql).
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','rq-wedge-woken','f',1,'running'), \
-           ('t1','rq-wedge-poison','f',1,'running');\n\
+           ('t1','rq-wedge-poison','f',1,'running')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','rq-wedge-woken', now() - interval '1 min', NULL,  NULL,                     20, 20), \
@@ -1896,8 +1966,14 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // sibling (in-order preserved). Exercises the `OR ... IS NULL` disjunct on all three
     // partition builders (acquire candidate, head candidate `c`, sibling sub-check `b`).
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
-           ('t1','pw-0','f',1,'running'),('t1','pw-1','f',1,'dispatched');\n\
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
+           ('t1','pw-0','f',1,'running'),('t1','pw-1','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','pw-0','site-w', now() - interval '1 min', NULL, NULL, 20, 20), \
@@ -1932,8 +2008,14 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     let enqueue_policy_sql = enqueue_with_policy_sql();
     let enqueue_plain_sql = enqueue_sql();
     script.push_str(&format!(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
-           ('t1','ep-lf','f',1,'dispatched'),('t1','ep-def','f',1,'dispatched');\n\
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
+           ('t1','ep-lf','f',1,'dispatched'),('t1','ep-def','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          BEGIN;\n\
          SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; SET LOCAL app.tenant = 't1';\n\
          PREPARE enq_policy (text, text, int, bigint, text) AS {enqueue_policy_sql};\n\
@@ -1951,9 +2033,15 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // stream order. `blk` uses the DEFAULT policy (no column written) to also
     // prove the default is 'blocking'; `lf` opts into 'leapfrog'.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','blk-0','f',1,'dispatched'),('t1','blk-1','f',1,'dispatched'), \
-           ('t1','lf-0','f',1,'dispatched'),('t1','lf-1','f',1,'dispatched');\n\
+           ('t1','lf-0','f',1,'dispatched'),('t1','lf-1','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts) VALUES \
            ('t1','blk-0','blk', now() + interval '1 hour', now() - interval '2 min', 0, 20), \
@@ -1979,9 +2067,15 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // is blocking (default): the janitor must NOT reap it (it wedges the key);
     // `lx` is leapfrog: the janitor reaps it and the key releases.
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','wg-0','f',1,'running'),('t1','wg-1','f',1,'dispatched'), \
-           ('t1','lx-0','f',1,'running'),('t1','lx-1','f',1,'dispatched');\n\
+           ('t1','lx-0','f',1,'running'),('t1','lx-1','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, enqueued_at, lease_owner, lease_expires_at, attempts, max_attempts) VALUES \
            ('t1','wg-0','wg', now() - interval '3 hour', now() - interval '2 min','dead', now() - interval '2 hour', 20, 20), \
@@ -2018,9 +2112,15 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // 10 -> 11 by lexical run-id. This is the assertion that FAILS before the fix.
     // ------------------------------------------------------------------------
     script.push_str(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, catalog_id, catalog_version,\
+           environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','f1:evt:8','f',1,'dispatched'),('t1','f1:evt:9','f',1,'dispatched'), \
-           ('t1','f1:evt:10','f',1,'dispatched'),('t1','f1:evt:11','f',1,'dispatched');\n\
+           ('t1','f1:evt:10','f',1,'dispatched'),('t1','f1:evt:11','f',1,'dispatched')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status);\n\
          -- One statement: available_at and enqueued_at are the SAME now() for all\n\
          -- four rows, so stream_seq is the sole differentiator of the claim order.\n\
          INSERT INTO wamn_run.run_queue \
@@ -2134,11 +2234,17 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
     // the ledger is tenant-isolated under RLS.
     // ------------------------------------------------------------------------
     script.push_str(&format!(
-        "INSERT INTO wamn_run.runs (tenant_id, run_id, flow_id, flow_version, status, fail_kind) VALUES \
+        "INSERT INTO wamn_run.runs (\
+           tenant_id, run_id, flow_id, flow_version, status, fail_kind, catalog_id,\
+           catalog_version, environment, execution_bundle_hash\
+         ) SELECT fixture.*, 'run-queue-fixture', 1, 'test',\
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+         FROM (VALUES \
            ('t1','dl-blk-0','f',1,'failed','terminal'), \
            ('t1','dl-blk-1','f',1,'dispatched',NULL), \
            ('t1','dl-lf-0','f',1,'failed','terminal'), \
-           ('t1','dl-un-0','f',1,'failed','terminal');\n\
+           ('t1','dl-un-0','f',1,'failed','terminal')\
+         ) AS fixture(tenant_id,run_id,flow_id,flow_version,status,fail_kind);\n\
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, partition_key, available_at, enqueued_at, attempts, max_attempts) VALUES \
            ('t1','dl-blk-0','dl-key', now(), now() - interval '2 min', 0, 20), \
@@ -2190,7 +2296,7 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          COMMIT;\n"
     ));
 
-    script.push_str("DROP SCHEMA wamn_run CASCADE;\n");
+    script.push_str("DROP SCHEMA wamn_run CASCADE; DROP SCHEMA catalog CASCADE;\n");
 
     use std::io::Write;
     use std::process::{Command as Proc, Stdio};

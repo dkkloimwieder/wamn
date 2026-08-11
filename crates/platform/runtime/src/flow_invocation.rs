@@ -638,6 +638,7 @@ fn admission_refusal(result: AdmissionResult) -> BeginResult {
         | AdmissionResult::HeadDrift
         | AdmissionResult::DefinitionDrift => (409, "admission-retry"),
         AdmissionResult::HeadNotFound => (404, "attachment-not-found"),
+        AdmissionResult::MissingRootPlan => (409, "missing-root-plan"),
         AdmissionResult::ConflictingRunIdentity => (409, "conflicting-run-identity"),
         _ => (400, "invalid-admission"),
     };
@@ -846,6 +847,14 @@ mod tests {
             flow_id: "flow-a".to_string(),
             flow_version: 3,
         }
+    }
+
+    #[test]
+    fn missing_root_plan_maps_to_its_frozen_http_refusal() {
+        assert_eq!(
+            admission_refusal(AdmissionResult::MissingRootPlan),
+            rejected(409, "missing-root-plan")
+        );
     }
 
     #[tokio::test]

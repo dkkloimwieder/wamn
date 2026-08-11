@@ -109,7 +109,7 @@ pub fn insert_validated_flow_draft_sql() -> &'static str {
         validated_draft_hash) \
      SELECT document.tenant_id, document.draft_id, document.revision, document.edited_at, \
             $4, $5, $6, $7, $8, \
-            document.flow_id, $9, $10, $11, $12, $13, $14, $15 \
+            document.flow_id, $9, $10::text::jsonb, $11, $12, $13, $14, $15 \
        FROM catalog.flow_drafts AS document \
       WHERE document.tenant_id = $1 AND document.draft_id = $2 \
         AND document.revision = $3 \
@@ -295,7 +295,7 @@ mod tests {
         assert!(!insert.contains("release_manifests"));
         assert!(!insert.contains("INSERT INTO catalog.flow_artifacts"));
         assert!(insert.contains("COALESCE(document.definition, document.graph_json::text) = $16"));
-        assert!(insert.contains("document.flow_id, $9, $10"));
+        assert!(insert.contains("document.flow_id, $9, $10::text::jsonb"));
         assert!(
             insert.contains("ON CONFLICT (tenant_id, draft_id, draft_revision, draft_content_hash")
         );

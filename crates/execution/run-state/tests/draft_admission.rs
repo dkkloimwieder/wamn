@@ -25,6 +25,20 @@ fn draft_admission_uses_one_exact_nonrelease_executable_pin() {
 }
 
 #[test]
+fn draft_admission_persists_validated_bundle_without_json_duplicate() {
+    let sql = admit_pinned_draft_scenario_run_sql();
+
+    assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
+    assert!(sql.contains("bundle.execution_bundle_hash = d.execution_bundle_hash"));
+    assert!(sql.contains("environment, execution_bundle_hash, status"));
+    assert!(sql.contains("d.environment, d.execution_bundle_hash"));
+    assert!(sql.contains("THEN 'missing-root-plan'"));
+    assert!(sql.contains("THEN 'conflicting-run-identity'"));
+    let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+    assert!(!sql.contains(&format!("'{retired_json_pin}'")));
+}
+
+#[test]
 fn draft_connection_authority_is_exact_generation_and_default_deny() {
     let sql = admit_pinned_draft_scenario_run_sql();
 

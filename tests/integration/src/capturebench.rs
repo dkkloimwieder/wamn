@@ -36,6 +36,7 @@ use wamn_runner::Plan;
 use crate::ctl_process;
 
 const SCHEMA: &str = "wamn_capture";
+const CATALOG_SCHEMA: &str = "wamn_capture_catalog";
 const TENANT: &str = "capture-t";
 /// The known secret seeded through the scrub gate — asserted to appear NOWHERE.
 const SECRET: &str = "hunter2-TOPSECRET-9f3c";
@@ -71,7 +72,20 @@ pub struct CaptureBenchArgs {
 // ---------------------------------------------------------------------------
 
 fn run_state_ddl() -> String {
-    include_str!("../../../deploy/sql/run-state.sql").replace("wamn_run", SCHEMA)
+    include_str!("../../../deploy/sql/run-state.sql")
+        .replace("wamn_run", SCHEMA)
+        .replace(
+            "catalog.catalog_heads",
+            &format!("{CATALOG_SCHEMA}.catalog_heads"),
+        )
+        .replace(
+            "catalog.release_manifests",
+            &format!("{CATALOG_SCHEMA}.release_manifests"),
+        )
+        .replace(
+            "catalog.execution_bundles",
+            &format!("{CATALOG_SCHEMA}.execution_bundles"),
+        )
 }
 
 async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
@@ -93,7 +107,24 @@ async fn admin_exec(admin_url: &str, sql: &str) -> anyhow::Result<()> {
 async fn provision(admin_url: &str) -> anyhow::Result<()> {
     admin_exec(
         admin_url,
-        &format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"),
+        &format!(
+            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+             DROP SCHEMA IF EXISTS {CATALOG_SCHEMA} CASCADE; \
+             CREATE SCHEMA {CATALOG_SCHEMA}; \
+             CREATE TABLE {CATALOG_SCHEMA}.release_manifests ( \
+               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+               PRIMARY KEY (tenant_id, catalog_id, catalog_version) \
+             ); \
+             CREATE TABLE {CATALOG_SCHEMA}.execution_bundles ( \
+               tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, \
+               PRIMARY KEY (tenant_id, execution_bundle_hash) \
+             ); \
+             INSERT INTO {CATALOG_SCHEMA}.release_manifests \
+             VALUES ('capture-t','capture-fixture',1); \
+             INSERT INTO {CATALOG_SCHEMA}.execution_bundles \
+             VALUES ('capture-t', \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a');"
+        ),
     )
     .await?;
     admin_exec(admin_url, &run_state_ddl()).await
@@ -102,7 +133,10 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
 async fn teardown(admin_url: &str) -> anyhow::Result<()> {
     admin_exec(
         admin_url,
-        &format!("DROP SCHEMA IF EXISTS {SCHEMA} CASCADE;"),
+        &format!(
+            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+             DROP SCHEMA IF EXISTS {CATALOG_SCHEMA} CASCADE;"
+        ),
     )
     .await
 }
@@ -142,8 +176,12 @@ async fn seed_run(
 ) -> anyhow::Result<()> {
     client
         .execute(
-            "INSERT INTO runs (tenant_id, run_id, flow_id, flow_version, status, created_at) \
-             VALUES (current_setting('app.tenant', true), $1, 'f', 1, $2, \
+            "INSERT INTO runs ( \
+               tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
+               execution_bundle_hash, status, created_at \
+             ) VALUES (current_setting('app.tenant', true), $1, 'f', 1, \
+                     'capture-fixture', 1, 'test', \
+                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', $2, \
                      now() - ($3::bigint * interval '1 day'))",
             &[&run_id, &status, &age_days],
         )

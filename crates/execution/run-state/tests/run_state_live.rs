@@ -68,7 +68,18 @@ fn run_state_live() {
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
-             {catalog} {run_state} {run_queue}"
+             {catalog} {run_state} {run_queue} \
+             INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state) \
+             VALUES ('t1','cat',1,'prod','0.1','draft'); \
+             INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             VALUES ('t1', \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+               '0.1',decode('7b7d','hex'),2); \
+             INSERT INTO catalog.release_manifests \
+               (tenant_id,catalog_id,catalog_version,members_json) \
+             VALUES ('t1','cat',1,'[]');"
         ),
     );
 
@@ -82,8 +93,11 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,status) \
-         VALUES ('t1','entry-1','f',1,'running'); \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','entry-1','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','entry-1','worker-entry',now()+interval '1 minute',8);",
@@ -122,8 +136,11 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id, run_id, flow_id, flow_version, attachment_id, status) \
-         VALUES ('t1', 'release-1', 'f', 1, 'http-a', 'running'); \
+           (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
+            execution_bundle_hash, attachment_id, status) \
+         VALUES ('t1', 'release-1', 'f', 1, 'cat', 1, 'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'http-a', 'running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation) \
          VALUES ('t1', 'release-1', 'worker-a', now() + interval '1 minute', 1);",
@@ -183,15 +200,25 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,attachment_id,status,trigger_source) VALUES \
-           ('t1','terminal-cron','f',1,'cron-a','running','cron'), \
-           ('t1','terminal-event','f',1,'event-a','running','event'), \
-           ('t1','terminal-http-open','f',1,'http-open','running','http'); \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,attachment_id,status,trigger_source) VALUES \
+           ('t1','terminal-cron','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'cron-a','running','cron'), \
+           ('t1','terminal-event','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'event-a','running','event'), \
+           ('t1','terminal-http-open','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'http-open','running','http'); \
          INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,attachment_id,status,trigger_source, \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,attachment_id,status,trigger_source, \
             caller_outcome_kind,caller_outcome_json,caller_http_status,caller_release_node_id, \
             caller_outcome_hash,caller_released_at) VALUES \
-           ('t1','terminal-http-released','f',1,'http-released','running','http', \
+           ('t1','terminal-http-released','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'http-released','running','http', \
             'responded','{}',200,'respond','sha256:released',now()); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
@@ -255,8 +282,11 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,attachment_id,status) \
-         VALUES ('t1','race-1','f',1,'http-race','running'); \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,attachment_id,status) \
+         VALUES ('t1','race-1','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'http-race','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','race-1','stale-worker',now()+interval '1 minute',7);",
@@ -298,8 +328,11 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,status,state_json) \
-         VALUES ('t1','attempt-1','f',1,'running','{\"step\":0}'); \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status,state_json) \
+         VALUES ('t1','attempt-1','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running','{\"step\":0}'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','attempt-1','worker-c',now()+interval '1 minute',4); \
@@ -329,8 +362,15 @@ fn run_state_live() {
     // InvocationAdmissionRefusal mapping.
     success(
         &url,
-        "INSERT INTO wamn_run.runs (tenant_id,run_id,flow_id,flow_version,status) \
-         VALUES ('t1','admit-1','f',1,'running'),('t1','admit-2','f',1,'running'); \
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) VALUES \
+           ('t1','admit-1','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'running'), \
+           ('t1','admit-2','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'running'); \
          INSERT INTO wamn_run.invocation_admissions \
            (tenant_id,catalog_id,environment,attachment_id,definition_hash, \
             principal_digest,client_key_digest,client_request_fingerprint, \
@@ -359,8 +399,11 @@ fn run_state_live() {
     success(
         &url,
         "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,attachment_id,status) \
-         VALUES ('t1','fault-1','f',1,'http-fault','running'); \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,attachment_id,status) \
+         VALUES ('t1','fault-1','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'http-fault','running'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','fault-1','worker-f',now()+interval '1 minute',9);",

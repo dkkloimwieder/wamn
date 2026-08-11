@@ -613,8 +613,9 @@ async fn carry_forward_release(
     if let Some(source_version) = current_version {
         tx.execute(
             "INSERT INTO catalog.release_flows \
-               (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
-             SELECT tenant_id, catalog_id, $4, flow_id, flow_version \
+               (tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
+                execution_bundle_hash) \
+             SELECT tenant_id, catalog_id, $4, flow_id, flow_version, execution_bundle_hash \
              FROM catalog.release_flows \
              WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
              ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING",
@@ -770,10 +771,30 @@ mod tests {
             )
             .await
             .unwrap();
+        let execution_bundle_bytes = br#"{}"#;
+        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
+        client
+            .execute(
+                wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                &[
+                    &tenant,
+                    &execution_bundle_hash,
+                    &execution_bundle_bytes.as_slice(),
+                ],
+            )
+            .await
+            .unwrap();
         client
             .execute(
                 wamn_schema_control::sql::insert_release_flow_sql(),
-                &[&tenant, &catalog_id, &1_i32, &"flow", &1_i32],
+                &[
+                    &tenant,
+                    &catalog_id,
+                    &1_i32,
+                    &"flow",
+                    &1_i32,
+                    &execution_bundle_hash,
+                ],
             )
             .await
             .unwrap();
@@ -814,11 +835,12 @@ mod tests {
             .query_one(
                 "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 2 \
-                   AND flow_id = 'flow' AND flow_version = 1) \
+                   AND flow_id = 'flow' AND flow_version = 1 \
+                   AND execution_bundle_hash = $3) \
                  AND EXISTS (SELECT 1 FROM catalog.catalog_heads \
                  WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev' \
                    AND applied_catalog_version = 2)",
-                &[&tenant, &catalog_id],
+                &[&tenant, &catalog_id, &execution_bundle_hash],
             )
             .await
             .unwrap()

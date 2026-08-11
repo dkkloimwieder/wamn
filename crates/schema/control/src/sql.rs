@@ -189,12 +189,14 @@ pub fn count_nonterminal_release_runs_sql(schema: &str) -> String {
     )
 }
 
-/// Persist one release member. A missing artifact is rejected by the FK; an
-/// identical retry converges through `DO NOTHING`.
+/// Persist one release member. Missing artifacts or execution bundles are
+/// rejected by tenant-scoped FKs; an identical retry converges through
+/// `DO NOTHING`.
 pub fn insert_release_flow_sql() -> &'static str {
     "INSERT INTO catalog.release_flows \
-       (tenant_id, catalog_id, catalog_version, flow_id, flow_version) \
-     VALUES ($1, $2, $3, $4, $5) \
+       (tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
+        execution_bundle_hash) \
+     VALUES ($1, $2, $3, $4, $5, $6) \
      ON CONFLICT (tenant_id, catalog_id, catalog_version, flow_id) DO NOTHING"
 }
 
@@ -265,11 +267,14 @@ pub fn record_release_publication_sql() -> &'static str {
 /// Read the immutable artifacts and memberships copied by `copy-project-env`.
 pub fn select_release_artifacts_sql() -> &'static str {
     "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash \
+            a.graph_hash, a.artifact_hash, r.execution_bundle_hash, b.exact_bytes \
      FROM catalog.release_flows r \
      JOIN catalog.flow_artifacts a \
        ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
       AND a.flow_version = r.flow_version \
+     JOIN catalog.execution_bundles b \
+       ON b.tenant_id = r.tenant_id \
+      AND b.execution_bundle_hash = r.execution_bundle_hash \
      WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
      ORDER BY a.flow_id"
 }
@@ -586,11 +591,14 @@ mod tests {
         assert_eq!(
             super::select_release_artifacts_sql(),
             "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash \
+            a.graph_hash, a.artifact_hash, r.execution_bundle_hash, b.exact_bytes \
      FROM catalog.release_flows r \
      JOIN catalog.flow_artifacts a \
        ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
       AND a.flow_version = r.flow_version \
+     JOIN catalog.execution_bundles b \
+       ON b.tenant_id = r.tenant_id \
+      AND b.execution_bundle_hash = r.execution_bundle_hash \
      WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3 \
      ORDER BY a.flow_id"
         );
@@ -603,6 +611,7 @@ mod tests {
             super::count_nonterminal_release_runs_sql("app")
                 .contains("catalog_version = $3::integer")
         );
+        assert!(super::insert_release_flow_sql().contains("flow_version, execution_bundle_hash"));
         assert!(super::insert_release_flow_sql().contains("DO NOTHING"));
         assert!(super::insert_release_source_sql().contains("DO NOTHING"));
         assert!(super::insert_release_attachment_sql().contains("DO NOTHING"));

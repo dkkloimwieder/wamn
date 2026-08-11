@@ -813,19 +813,7 @@ async fn publish_release(
     document: &str,
     expected_base: Option<i32>,
 ) -> anyhow::Result<()> {
-    let members = wamn_schema_control::canonical_release_flows(
-        artifacts
-            .iter()
-            .map(|prepared| {
-                let id = prepared.artifact.identity().id();
-                Ok(wamn_schema_control::ReleaseFlow {
-                    flow_id: id.flow_id().to_string(),
-                    flow_version: i32::try_from(id.flow_version()).context("flow version")?,
-                })
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?,
-    )
-    .map_err(anyhow::Error::new)?;
+    let members = release_members(&artifacts)?;
     let release_manifest = serde_json::to_string(
         &members
             .iter()
@@ -1052,6 +1040,7 @@ async fn publish_release(
             .await
             .context("seal release membership")?;
         for member in &members {
+            let execution_bundle_hash = execution_bundle_hash_for(member, &artifacts);
             client
                 .execute(
                     wamn_schema_control::sql::insert_release_flow_sql(),
@@ -1061,6 +1050,7 @@ async fn publish_release(
                         &catalog_version,
                         &member.flow_id,
                         &member.flow_version,
+                        &execution_bundle_hash,
                     ],
                 )
                 .await
@@ -1069,13 +1059,15 @@ async fn publish_release(
                 .query_one(
                     "SELECT EXISTS (SELECT 1 FROM catalog.release_flows \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3 \
-                       AND flow_id = $4 AND flow_version = $5)",
+                       AND flow_id = $4 AND flow_version = $5 \
+                       AND execution_bundle_hash = $6)",
                     &[
                         &tenant,
                         &cat.catalog_id,
                         &catalog_version,
                         &member.flow_id,
                         &member.flow_version,
+                        &execution_bundle_hash,
                     ],
                 )
                 .await?
@@ -1523,6 +1515,47 @@ struct PreparedFlowArtifact {
     entry_kind: wamn_flow::EntryKind,
     artifact: wamn_catalog::Artifact,
     supplied_node_types: BTreeSet<String>,
+    execution_bundle_hash: Option<String>,
+}
+
+fn release_members(
+    artifacts: &[PreparedFlowArtifact],
+) -> anyhow::Result<Vec<wamn_schema_control::ReleaseFlow>> {
+    wamn_schema_control::canonical_release_flows(
+        artifacts
+            .iter()
+            .map(|prepared| {
+                let id = prepared.artifact.identity().id();
+                let flow_version = i32::try_from(id.flow_version()).context("flow version")?;
+                prepared.execution_bundle_hash.as_ref().ok_or_else(|| {
+                    wamn_schema_control::PublicationError::MissingRootPlan {
+                        flow_id: id.flow_id().to_string(),
+                        flow_version,
+                    }
+                })?;
+                Ok(wamn_schema_control::ReleaseFlow {
+                    flow_id: id.flow_id().to_string(),
+                    flow_version,
+                })
+            })
+            .collect::<anyhow::Result<Vec<_>>>()?,
+    )
+    .map_err(anyhow::Error::new)
+}
+
+fn execution_bundle_hash_for<'a>(
+    member: &wamn_schema_control::ReleaseFlow,
+    artifacts: &'a [PreparedFlowArtifact],
+) -> &'a str {
+    artifacts
+        .iter()
+        .find(|prepared| {
+            let id = prepared.artifact.identity().id();
+            id.flow_id() == member.flow_id
+                && i32::try_from(id.flow_version()).ok() == Some(member.flow_version)
+        })
+        .and_then(|prepared| prepared.execution_bundle_hash.as_deref())
+        .expect("release members were built only after every root plan was present")
 }
 
 #[derive(Debug)]
@@ -1729,12 +1762,33 @@ fn prepare_flow_artifact(
             .expect("validated flow has one entry"),
         artifact,
         supplied_node_types,
+        execution_bundle_hash: None,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const TEST_EXECUTION_BUNDLE_BYTES: &[u8] = br#"{}"#;
+
+    fn with_test_execution_bundle(mut prepared: PreparedFlowArtifact) -> PreparedFlowArtifact {
+        prepared.execution_bundle_hash = Some(wamn_catalog::execution_bundle_hash(
+            TEST_EXECUTION_BUNDLE_BYTES,
+        ));
+        prepared
+    }
+
+    async fn seed_test_execution_bundle(client: &tokio_postgres::Client, tenant: &str) {
+        let hash = wamn_catalog::execution_bundle_hash(TEST_EXECUTION_BUNDLE_BYTES);
+        client
+            .execute(
+                wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                &[&tenant, &hash, &TEST_EXECUTION_BUNDLE_BYTES],
+            )
+            .await
+            .expect("seed test execution bundle");
+    }
 
     #[test]
     fn authoring_test_set_provisioning_is_fresh_and_privilege_closed() {
@@ -1755,6 +1809,22 @@ mod tests {
             !privileges
                 .contains("GRANT SELECT, INSERT, UPDATE ON \"project_run\".authoring_test_sets")
         );
+    }
+
+    #[test]
+    fn legacy_publication_without_validated_plan_returns_missing_root_plan() {
+        let (_, graph) = release_fixture("missing-plan");
+        let prepared =
+            prepare_flow_artifact("tenant-a", &graph, &BTreeMap::new()).expect("prepare flow");
+
+        let error = release_members(&[prepared]).expect_err("legacy flow must lack a root plan");
+        assert!(matches!(
+            error.downcast_ref::<wamn_schema_control::PublicationError>(),
+            Some(wamn_schema_control::PublicationError::MissingRootPlan {
+                flow_id,
+                flow_version: 1,
+            }) if flow_id == "flow-missing-plan"
+        ));
     }
 
     fn custom_graph(node_type: &str) -> String {
@@ -1850,7 +1920,8 @@ mod tests {
                      FROM catalog.flow_artifacts a WHERE tenant_id = $1), '[]'), \
                    (SELECT members_json::text FROM catalog.release_manifests \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), \
-                   COALESCE((SELECT jsonb_agg(jsonb_build_array(flow_id, flow_version) \
+                   COALESCE((SELECT jsonb_agg(jsonb_build_array( \
+                       flow_id, flow_version, execution_bundle_hash) \
                      ORDER BY flow_id)::text FROM catalog.release_flows \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), '[]'), \
                    (SELECT jsonb_build_array(from_version, to_version, confirmation, \
@@ -1877,6 +1948,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_root_plan_rolls_back_without_publication_writes() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        ensure_wamn_app_role(&client).await.unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+        let tenant = format!("missing-root-plan-{}", std::process::id());
+        let (catalog, graph) = release_fixture("missing-root-plan");
+        let document = catalog.to_json();
+
+        client.batch_execute("BEGIN").await.unwrap();
+        let refusal = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &BareSchemaName::new("pg_temp").unwrap(),
+            vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
+            None,
+            &document,
+            None,
+        )
+        .await;
+        let error = finish_publication_transaction(&client, refusal)
+            .await
+            .expect_err("legacy publication must refuse a missing root plan");
+        assert!(format!("{error:#}").contains("missing-root-plan"));
+
+        let counts = client
+            .query_one(
+                "SELECT \
+                   (SELECT count(*) FROM catalog.flow_artifacts WHERE tenant_id = $1), \
+                   (SELECT count(*) FROM catalog.release_manifests WHERE tenant_id = $1), \
+                   (SELECT count(*) FROM catalog.release_flows WHERE tenant_id = $1), \
+                   (SELECT count(*) FROM catalog.schema_migrations WHERE tenant_id = $1), \
+                   (SELECT count(*) FROM catalog.catalog_heads WHERE tenant_id = $1)",
+                &[&tenant],
+            )
+            .await
+            .unwrap();
+        for column in 0..5 {
+            assert_eq!(counts.get::<_, i64>(column), 0);
+        }
+        drop(client);
+        let _ = connection_task.await;
+    }
+
+    #[tokio::test]
     async fn every_failed_publication_boundary_rolls_back_and_same_connection_retries_identically()
     {
         let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
@@ -1900,6 +2021,7 @@ mod tests {
             let tenant = format!("release-retry-{index}");
             let (catalog, graph) = release_fixture(&suffix);
             let document = catalog.to_json();
+            seed_test_execution_bundle(&client, &tenant).await;
 
             client.batch_execute("BEGIN").await.unwrap();
             client
@@ -1914,7 +2036,9 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
+                vec![with_test_execution_bundle(
+                    prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap(),
+                )],
                 None,
                 &document,
                 None,
@@ -1951,7 +2075,9 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
+                vec![with_test_execution_bundle(
+                    prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap(),
+                )],
                 None,
                 &document,
                 None,
@@ -1969,7 +2095,9 @@ mod tests {
                 &tenant,
                 "dev",
                 &run_schema,
-                vec![prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap()],
+                vec![with_test_execution_bundle(
+                    prepare_flow_artifact(&tenant, &graph, &BTreeMap::new()).unwrap(),
+                )],
                 None,
                 &document,
                 Some(1),
@@ -2012,6 +2140,7 @@ mod tests {
         );
         let supplied = load_supplied_components(&[descriptor]).unwrap();
         let graph = custom_graph("custom-example");
+        seed_test_execution_bundle(&client, &tenant).await;
 
         client.batch_execute("BEGIN").await.unwrap();
         client
@@ -2024,7 +2153,9 @@ mod tests {
             &tenant,
             "dev",
             &BareSchemaName::new("pg_temp").unwrap(),
-            vec![prepare_flow_artifact(&tenant, &graph, &supplied).unwrap()],
+            vec![with_test_execution_bundle(
+                prepare_flow_artifact(&tenant, &graph, &supplied).unwrap(),
+            )],
             None,
             &catalog_json,
             None,
@@ -2051,7 +2182,9 @@ mod tests {
             &tenant,
             "dev",
             &BareSchemaName::new("pg_temp").unwrap(),
-            vec![prepare_flow_artifact(&tenant, &graph, &supplied).unwrap()],
+            vec![with_test_execution_bundle(
+                prepare_flow_artifact(&tenant, &graph, &supplied).unwrap(),
+            )],
             None,
             &catalog_json,
             None,

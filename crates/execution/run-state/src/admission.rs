@@ -116,6 +116,7 @@ pub enum AdmissionResult {
     HeadDrift,
     InactiveDefinition,
     DefinitionDrift,
+    MissingRootPlan,
     RegistrationNotFound,
     RegistrationDrift,
     InvalidRegistrationHash,
@@ -137,6 +138,7 @@ impl AdmissionResult {
             "head-drift" => Some(Self::HeadDrift),
             "inactive-definition" => Some(Self::InactiveDefinition),
             "definition-drift" => Some(Self::DefinitionDrift),
+            "missing-root-plan" => Some(Self::MissingRootPlan),
             "registration-not-found" => Some(Self::RegistrationNotFound),
             "registration-drift" => Some(Self::RegistrationDrift),
             "invalid-registration-hash" => Some(Self::InvalidRegistrationHash),
@@ -317,7 +319,8 @@ source_lineage AS MATERIALIZED ( \
      FOR KEY SHARE OF r \
 ), \
 release_flow AS MATERIALIZED ( \
-    SELECT f.flow_id, f.flow_version, a.artifact_hash \
+    SELECT f.tenant_id, f.flow_id, f.flow_version, f.execution_bundle_hash, \
+           a.artifact_hash \
       FROM catalog.release_flows AS f \
       JOIN catalog.flow_artifacts AS a \
         ON a.tenant_id = f.tenant_id AND a.flow_id = f.flow_id \
@@ -326,6 +329,13 @@ release_flow AS MATERIALIZED ( \
      WHERE f.tenant_id = i.tenant_id AND f.catalog_id = i.catalog_id \
        AND f.catalog_version = h.applied_catalog_version \
        AND f.flow_id = i.flow_id AND f.flow_version = i.flow_version \
+), \
+root_plan AS MATERIALIZED ( \
+    SELECT rf.* \
+      FROM release_flow AS rf \
+      JOIN catalog.execution_bundles AS bundle \
+        ON bundle.tenant_id = rf.tenant_id \
+       AND bundle.execution_bundle_hash = rf.execution_bundle_hash \
 ), \
 existing_http AS MATERIALIZED ( \
     SELECT a.* FROM wamn_run.invocation_admissions AS a, input AS i \
@@ -350,7 +360,7 @@ existing_queue AS MATERIALIZED ( \
 existing_identity_run AS MATERIALIZED ( \
     SELECT r.* FROM wamn_run.runs AS r, input AS i \
      WHERE r.tenant_id = i.tenant_id \
-       AND (r.run_id = i.run_id \
+       AND (r.run_id = COALESCE((SELECT run_id FROM existing_http), i.run_id) \
          OR (i.producer = 'event' \
            AND r.idempotency_key = 'evt:' || i.registration_id || ':' || i.event_seq::text)) \
      FOR KEY SHARE OF r \
@@ -401,6 +411,7 @@ classified AS ( \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> i.expected_catalog_version THEN 'head-drift' \
       WHEN rf.flow_id IS NULL THEN 'definition-drift' \
+      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
       WHEN i.producer = 'http' AND d.attachment_id IS NULL THEN 'inactive-definition' \
       WHEN i.producer = 'http' \
        AND (d.definition_hash <> i.expected_definition_hash \
@@ -432,12 +443,13 @@ classified AS ( \
        AND (eq.partition_key IS DISTINCT FROM i.partition_key \
          OR eq.partition_policy <> i.partition_policy) \
         THEN 'conflicting-run-identity' \
-      WHEN i.producer = 'http' AND eh.run_id IS NOT NULL THEN 'duplicate' \
       WHEN xr.run_id IS NOT NULL \
        AND (xr.trigger_source <> i.producer \
          OR xr.flow_id <> i.flow_id OR xr.flow_version <> i.flow_version \
          OR xr.catalog_id IS DISTINCT FROM i.catalog_id \
          OR xr.catalog_version IS DISTINCT FROM i.expected_catalog_version \
+         OR xr.environment IS DISTINCT FROM i.environment \
+         OR xr.execution_bundle_hash IS DISTINCT FROM rp.execution_bundle_hash \
          OR xr.attachment_id IS DISTINCT FROM i.attachment_id \
          OR xr.registration_id IS DISTINCT FROM i.registration_id \
          OR xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
@@ -445,15 +457,18 @@ classified AS ( \
          OR xr.event_depth IS DISTINCT FROM i.event_depth \
          OR xr.input_json IS DISTINCT FROM i.input_json) \
         THEN 'conflicting-run-identity' \
+      WHEN i.producer = 'http' AND eh.run_id IS NOT NULL THEN 'duplicate' \
       WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
       ELSE 'ready' END AS result_code, \
-      i.*, rf.artifact_hash, eh.run_id AS admitted_run_id, xr.run_id AS existing_run_id \
+      i.*, rp.artifact_hash, rp.execution_bundle_hash, \
+      eh.run_id AS admitted_run_id, xr.run_id AS existing_run_id \
     FROM input AS i \
     LEFT JOIN locked_head AS h ON true \
     LEFT JOIN active_definition AS d ON true \
     LEFT JOIN live_registration AS er ON true \
     LEFT JOIN source_lineage AS sl ON true \
     LEFT JOIN release_flow AS rf ON true \
+    LEFT JOIN root_plan AS rp ON true \
     LEFT JOIN existing_http AS eh ON true \
     LEFT JOIN existing_queue AS eq ON true \
     LEFT JOIN existing_identity_run AS xr ON true \
@@ -475,12 +490,13 @@ created_http AS ( \
 created_run AS ( \
     INSERT INTO wamn_run.runs \
       (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
-       attachment_id, registration_id, status, trigger_source, input_json, \
+       execution_bundle_hash, attachment_id, registration_id, status, trigger_source, input_json, \
        event_source_run_id, event_root_run_id, event_depth, \
        invocation_context, admission_context_version, platform_revision, idempotency_key, \
        response_deadline_at, run_deadline_at) \
     SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
            c.expected_catalog_version, c.environment, \
+           c.execution_bundle_hash, \
            CASE WHEN c.producer = 'http' THEN c.attachment_id END, \
            CASE WHEN c.producer = 'event' THEN c.registration_id END, \
            'dispatched', c.producer, c.input_json, \
@@ -682,6 +698,19 @@ mod tests {
     }
 
     #[test]
+    fn admission_derives_root_bundle_from_authoritative_member() {
+        let recipe = admission_sql();
+        let sql = recipe.admit();
+
+        assert!(sql.contains("f.execution_bundle_hash"));
+        assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
+        assert!(sql.contains("bundle.execution_bundle_hash = rf.execution_bundle_hash"));
+        assert!(sql.contains("execution_bundle_hash, attachment_id"));
+        assert!(sql.contains("xr.execution_bundle_hash IS DISTINCT FROM rp.execution_bundle_hash"));
+        assert!(sql.contains("THEN 'missing-root-plan'"));
+    }
+
+    #[test]
     fn producer_specific_checks_and_queue_states_are_pinned() {
         let sql = admission_sql().admit().to_string();
         for refusal in [
@@ -728,6 +757,14 @@ mod tests {
         assert_eq!(
             AdmissionResult::from_parts("registration-drift", None),
             Some(AdmissionResult::RegistrationDrift)
+        );
+    }
+
+    #[test]
+    fn missing_root_plan_decodes_as_distinct_admission_refusal() {
+        assert_eq!(
+            AdmissionResult::from_parts("missing-root-plan", None),
+            Some(AdmissionResult::MissingRootPlan)
         );
     }
 }

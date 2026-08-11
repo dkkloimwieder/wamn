@@ -324,7 +324,6 @@ WITH classified_run AS MATERIALIZED ( \
     SELECT r.trigger_source, \
            r.invocation_context #>> '{source,producer}' AS source_producer, \
            r.invocation_context #>> '{principal,artifact-digest}' AS artifact_digest, \
-           r.invocation_context #>> '{principal,execution-bundle-hash}' AS bundle_hash, \
            CASE \
              WHEN r.trigger_source = 'scenario-draft' \
               AND r.invocation_context #>> '{source,producer}' = 'draft-scenario' \
@@ -345,7 +344,7 @@ WITH classified_run AS MATERIALIZED ( \
      WHERE r.artifact_lineage <> 'draft' \
 ), draft_plan AS ( \
     SELECT r.trigger_source, r.source_producer, bundle.exact_bytes, \
-           d.execution_bundle_hash, d.draft_artifact_hash \
+           r.execution_bundle_hash, d.draft_artifact_hash \
       FROM classified_run AS r \
       JOIN catalog.validated_flow_drafts AS d \
         ON d.tenant_id = r.tenant_id \
@@ -360,14 +359,14 @@ WITH classified_run AS MATERIALIZED ( \
              r.invocation_context #>> '{principal,draft-revision}' \
        AND d.validated_draft_hash = \
              r.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND d.execution_bundle_hash = r.bundle_hash \
+       AND d.execution_bundle_hash = r.execution_bundle_hash \
        AND d.binding_base_artifact_hash = \
              r.invocation_context #>> '{principal,binding-base-artifact-hash}' \
        AND d.suite_flow_version::text = \
              r.invocation_context #>> '{principal,suite-flow-version}' \
       JOIN catalog.execution_bundles AS bundle \
-        ON bundle.tenant_id = d.tenant_id \
-       AND bundle.execution_bundle_hash = d.execution_bundle_hash \
+        ON bundle.tenant_id = r.tenant_id \
+       AND bundle.execution_bundle_hash = r.execution_bundle_hash \
      WHERE r.artifact_lineage = 'draft' \
        AND r.admission_context_version = '0.1' \
        AND r.invocation_context ->> 'version' = '0.1' \
@@ -411,8 +410,8 @@ fn load_execution_plan(run_id: &str) -> Result<wamn_catalog::ExecutionPlanV2, St
         Some(SqlValue::Bytes(value)) => value,
         other => return Err(format!("execution_bundles.exact_bytes shape: {other:?}")),
     };
-    let bundle_hash = optional_string(3, "validated_flow_drafts.execution_bundle_hash")?
-        .ok_or("validated draft omits execution bundle hash")?;
+    let bundle_hash = optional_string(3, "runs.execution_bundle_hash")?
+        .ok_or("admitted run omits execution bundle hash")?;
     let artifact_hash = optional_string(4, "validated_flow_drafts.draft_artifact_hash")?
         .ok_or("validated draft omits artifact hash")?;
     let plan = wamn_catalog::read_execution_plan(bundle_hash, exact_bytes)
@@ -3550,8 +3549,11 @@ mod tests {
         assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.execution_bundles AS bundle"));
         assert!(PINNED_ARTIFACT_SQL.contains("bundle.exact_bytes"));
         assert!(
-            PINNED_ARTIFACT_SQL.contains("bundle.execution_bundle_hash = d.execution_bundle_hash")
+            PINNED_ARTIFACT_SQL.contains("bundle.execution_bundle_hash = r.execution_bundle_hash")
         );
+        assert!(PINNED_ARTIFACT_SQL.contains("d.execution_bundle_hash = r.execution_bundle_hash"));
+        let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+        assert!(!PINNED_ARTIFACT_SQL.contains(&retired_json_pin));
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog.release_flows"));
         assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_artifacts"));
         assert!(!PINNED_ARTIFACT_SQL.contains("graph_json"));

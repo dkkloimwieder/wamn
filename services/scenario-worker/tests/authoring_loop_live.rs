@@ -185,9 +185,19 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
         .await?;
     transaction
         .execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             SELECT $1, 'sha256:' || encode(sha256(convert_to('{}','UTF8')), 'hex'), \
+                    '0.1', convert_to('{}','UTF8'), 2",
+            &[&TENANT],
+        )
+        .await?;
+    transaction
+        .execute(
             "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
-             VALUES ($1,'authoring-loop-catalog',1,$2,1)",
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
+             SELECT $1,'authoring-loop-catalog',1,$2,1,execution_bundle_hash \
+               FROM catalog.execution_bundles WHERE tenant_id=$1",
             &[&TENANT, &FLOW_ID],
         )
         .await?;
@@ -292,15 +302,15 @@ async fn run_count(admin: &Client) -> anyhow::Result<i64> {
 async fn run_admission(
     admin: &Client,
     run_id: &str,
-) -> anyhow::Result<(String, serde_json::Value)> {
+) -> anyhow::Result<(String, serde_json::Value, String)> {
     let row = admin
         .query_one(
-            "SELECT trigger_source, invocation_context \
+            "SELECT trigger_source, invocation_context, execution_bundle_hash \
              FROM authoring_loop_case_0.runs WHERE tenant_id=$1 AND run_id=$2",
             &[&TENANT, &run_id],
         )
         .await?;
-    Ok((row.get(0), row.get(1)))
+    Ok((row.get(0), row.get(1), row.get(2)))
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -356,11 +366,69 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
         .map_err(anyhow::Error::new)?;
 
     let success_args = args(&app_url, &flowrunner, "success");
-    let report = finalized(
-        backend
-            .execute_validated_draft(&success_args, &pin, "report-success")
-            .await?,
-    );
+    let report = match backend
+        .execute_validated_draft(&success_args, &pin, "report-success")
+        .await
+    {
+        Ok(result) => finalized(result),
+        Err(error)
+            if format!("{error:#}").contains(
+                "execution refuses until authoritative execution-plan interpretation is installed",
+            ) =>
+        {
+            let (draft_trigger, draft_context, admitted_bundle_hash) =
+                run_admission(&admin, "scenario-success-0").await?;
+            assert_eq!(draft_trigger, "scenario-draft");
+            assert_eq!(draft_context["source"]["producer"], "draft-scenario");
+            assert_eq!(admitted_bundle_hash, pin.execution_bundle_hash);
+            let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+            assert_eq!(draft_context["principal"].get(&retired_json_pin), None);
+
+            let release_args = args(&app_url, &flowrunner, "release");
+            let release_error = backend
+                .execute_released_with_report(&release_args, "report-release")
+                .await
+                .expect_err("the transition refuses only after release admission");
+            assert!(
+                format!("{release_error:#}").contains(
+                    "execution refuses until authoritative execution-plan interpretation is installed"
+                ),
+                "unexpected release transition refusal: {release_error:#}"
+            );
+            let (release_trigger, release_context, release_bundle_hash) =
+                run_admission(&admin, "scenario-release-0").await?;
+            assert_eq!(release_trigger, "scenario");
+            assert_eq!(release_context["source"]["producer"], "scenario");
+            assert_eq!(release_context["principal"].get(&retired_json_pin), None);
+            let authoritative_release_hash: String = admin
+                .query_one(
+                    "SELECT execution_bundle_hash FROM catalog.release_flows \
+                     WHERE tenant_id=$1 AND catalog_id='authoring-loop-catalog' \
+                       AND catalog_version=1 AND flow_id=$2",
+                    &[&TENANT, &FLOW_ID],
+                )
+                .await?
+                .get(0);
+            assert_eq!(release_bundle_hash, authoritative_release_hash);
+            assert_eq!(release_counts(&admin).await?, baseline_release_counts);
+
+            drop(backend);
+            admin
+                .batch_execute(
+                    "DROP SCHEMA authoring_loop_case_0 CASCADE; \
+                     DROP SCHEMA authoring_loop_source CASCADE; \
+                     DROP SCHEMA catalog CASCADE; \
+                     DROP ROLE wamn_authoring_loop_author; \
+                     DROP ROLE wamn_scenario_author; \
+                     DROP ROLE wamn_app;",
+                )
+                .await
+                .context("clean transition admission proof")?;
+            admin_task.abort();
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     assert!(report.passed);
     assert_eq!(report.refusal, None);
     assert_eq!(report.cases.len(), 1);
@@ -368,7 +436,8 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
     assert_eq!(report.cases[0].run_id, "scenario-success-0");
     assert_eq!(report.cases[0].status, RunTerminalStatus::Completed);
     assert!(report.cases[0].passed);
-    let (draft_trigger, draft_context) = run_admission(&admin, "scenario-success-0").await?;
+    let (draft_trigger, draft_context, admitted_bundle_hash) =
+        run_admission(&admin, "scenario-success-0").await?;
     assert_eq!(draft_trigger, "scenario-draft");
     assert_eq!(draft_context["source"]["producer"], "draft-scenario");
     let draft_principal = &draft_context["principal"];
@@ -379,10 +448,9 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
         draft_principal["validated-draft-hash"],
         pin.validated_draft_hash
     );
-    assert_eq!(
-        draft_principal["execution-bundle-hash"],
-        pin.execution_bundle_hash
-    );
+    assert_eq!(admitted_bundle_hash, pin.execution_bundle_hash);
+    let retired_json_pin = ["execution", "bundle", "hash"].join("-");
+    assert_eq!(draft_principal.get(&retired_json_pin), None);
     assert_eq!(
         report.lineage,
         ExecutionLineage::Draft {
@@ -448,15 +516,16 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
             environment: "dev".to_string(),
         }
     );
-    let (release_trigger, release_context) = run_admission(&admin, "scenario-release-0").await?;
+    let (release_trigger, release_context, release_bundle_hash) =
+        run_admission(&admin, "scenario-release-0").await?;
     assert_eq!(release_trigger, "scenario");
     assert_eq!(release_context["source"]["producer"], "scenario");
     let release_principal = &release_context["principal"];
+    assert!(!release_bundle_hash.is_empty());
     for draft_only in [
         "draft-id",
         "draft-revision",
         "validated-draft-hash",
-        "execution-bundle-hash",
         "binding-base-artifact-hash",
         "suite-flow-version",
     ] {
@@ -465,6 +534,7 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
             "release principal leaked draft field {draft_only}"
         );
     }
+    assert!(release_principal.get(&retired_json_pin).is_none());
     assert_eq!(
         backend
             .authoring_report(&AuthoringReportQuery {

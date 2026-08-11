@@ -169,10 +169,32 @@ pub(crate) mod tests {
                 ],
             )
             .await?;
+        let execution_bundle_bytes = br#"{}"#;
+        let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
+        client
+            .execute(
+                "INSERT INTO catalog.execution_bundles \
+                   (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) \
+                 VALUES ($1, $2, '0.1', $3, octet_length($3::bytea)) \
+                 ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING",
+                &[
+                    &tenant,
+                    &execution_bundle_hash,
+                    &execution_bundle_bytes.as_slice(),
+                ],
+            )
+            .await?;
         client
             .execute(
                 wamn_schema_control::sql::insert_release_flow_sql(),
-                &[&tenant, &"catalog", &1_i32, &"flow", &1_i32],
+                &[
+                    &tenant,
+                    &"catalog",
+                    &1_i32,
+                    &"flow",
+                    &1_i32,
+                    &execution_bundle_hash,
+                ],
             )
             .await?;
         client
@@ -203,7 +225,7 @@ pub(crate) mod tests {
                    (SELECT (to_jsonb(a) - 'created_at')::text FROM catalog.flow_artifacts a \
                      WHERE tenant_id = $1), \
                    (SELECT members_json::text FROM catalog.release_manifests WHERE tenant_id = $1), \
-                   (SELECT jsonb_build_array(flow_id, flow_version)::text \
+                   (SELECT jsonb_build_array(flow_id, flow_version, execution_bundle_hash)::text \
                      FROM catalog.release_flows WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(from_version, to_version, confirmation, \
                      statement_count, destructive, checksum)::text \
@@ -243,6 +265,9 @@ pub(crate) mod tests {
                 "DO $$ BEGIN \
                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                      CREATE ROLE wamn_app; \
+                   END IF; \
+                   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                     CREATE ROLE wamn_scenario_author NOLOGIN; \
                    END IF; \
                  END $$; \
                  DROP SCHEMA IF EXISTS catalog CASCADE;",

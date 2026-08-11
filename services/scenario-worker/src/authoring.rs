@@ -42,6 +42,7 @@ WITH session_role AS ( \
            ('catalog', 'draft_safe_connection_grants', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
            ('catalog', 'authoring_command_audit', 'INSERT'), \
+           ('catalog', 'publish_gate_audit', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'UPDATE'), \
            ($1::text, 'authoring_suite_case_facts', 'INSERT'), \
@@ -1854,6 +1855,7 @@ mod tests {
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'INSERT')"));
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("('catalog', 'publish_gate_audit', 'INSERT')"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("pg_catalog.has_table_privilege(current_user, $7, 'SELECT')")

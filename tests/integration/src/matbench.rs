@@ -298,6 +298,10 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await
         .context("hermetic preamble")?;
     admin
+        .batch_execute(CATALOG_SQL)
+        .await
+        .context("apply catalog-schema.sql")?;
+    admin
         .batch_execute(RUN_STATE_SQL)
         .await
         .context("apply run-state.sql")?;
@@ -305,10 +309,6 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .batch_execute(RUN_QUEUE_SQL)
         .await
         .context("apply run-queue.sql")?;
-    admin
-        .batch_execute(CATALOG_SQL)
-        .await
-        .context("apply catalog-schema.sql")?;
     println!("provisioned wamn_run + catalog from deploy/sql (include_str! — drift-proof)");
 
     admin
@@ -372,10 +372,22 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .context("seed release manifest")?;
     admin
         .batch_execute(
-            "INSERT INTO catalog.release_flows \
-               (tenant_id,catalog_id,catalog_version,flow_id,flow_version) VALUES \
-               ('t1','matcat',1,'f-plain',1),('t1','matcat',1,'f-cond',1), \
-               ('t1','matcat',1,'f-key',1),('t1','matcat',1,'f-old',1); \
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) VALUES \
+               ('t1', \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                '0.1',decode('7b7d','hex'),2); \
+             INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
+                execution_bundle_hash) VALUES \
+               ('t1','matcat',1,'f-plain',1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+               ('t1','matcat',1,'f-cond',1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+               ('t1','matcat',1,'f-key',1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+               ('t1','matcat',1,'f-old',1, \
+                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
              INSERT INTO catalog.catalog_heads \
                (tenant_id,catalog_id,environment,applied_catalog_version) \
              VALUES ('t1','matcat','menv',1);",
@@ -441,12 +453,21 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     admin
         .execute(
             "INSERT INTO wamn_run.runs \
-             (tenant_id,run_id,flow_id,flow_version,status,trigger_source, \
+             (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+              execution_bundle_hash,status,trigger_source, \
               event_source_run_id,event_root_run_id,event_depth) VALUES \
-             ($1,$2,'fixture-lineage',1,'completed','event',$2,$2,0), \
-             ($1,$3,'fixture-lineage',1,'completed','event',$2,$2,1), \
-             ($1,$4,'fixture-lineage',1,'completed','event',$3,$2,2), \
-             ($1,$5,'fixture-lineage',1,'completed','event',$4,$2,3)",
+             ($1,$2,'fixture-lineage',1,'matcat',1,'menv', \
+              'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+              'completed','event',$2,$2,0), \
+             ($1,$3,'fixture-lineage',1,'matcat',1,'menv', \
+              'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+              'completed','event',$2,$2,1), \
+             ($1,$4,'fixture-lineage',1,'matcat',1,'menv', \
+              'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+              'completed','event',$3,$2,2), \
+             ($1,$5,'fixture-lineage',1,'matcat',1,'menv', \
+              'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+              'completed','event',$4,$2,3)",
             &[
                 &TENANT,
                 &"origin-root",

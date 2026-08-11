@@ -179,6 +179,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             flow_version int NOT NULL, \
             catalog_id text, catalog_version bigint, environment text, \
+            execution_bundle_hash text, \
             attachment_id text, registration_id text, \
             event_source_run_id text, event_root_run_id text, event_depth int, \
             status text NOT NULL DEFAULT 'running' \
