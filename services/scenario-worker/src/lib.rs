@@ -651,13 +651,22 @@ fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind
         .map(|value| {
             let stored = StoredFailKind::from_sql(value)
                 .with_context(|| format!("unknown persisted fail_kind {value:?}"))?;
-            Ok(match stored {
-                StoredFailKind::Terminal => FlowFailureKind::Terminal,
-                StoredFailKind::RetryExhausted => FlowFailureKind::RetryExhausted,
-                StoredFailKind::InvalidInput => FlowFailureKind::InvalidInput,
-                StoredFailKind::RunawayBudget => FlowFailureKind::RunawayBudget,
-                StoredFailKind::EffectUncertain => FlowFailureKind::EffectUncertain,
-            })
+            match stored {
+                StoredFailKind::Terminal => Ok(FlowFailureKind::Terminal),
+                StoredFailKind::RetryExhausted => Ok(FlowFailureKind::RetryExhausted),
+                StoredFailKind::InvalidInput => Ok(FlowFailureKind::InvalidInput),
+                StoredFailKind::RunawayBudget => Ok(FlowFailureKind::RunawayBudget),
+                StoredFailKind::EffectUncertain => Ok(FlowFailureKind::EffectUncertain),
+                StoredFailKind::DepthBudget
+                | StoredFailKind::DispatchBudget
+                | StoredFailKind::UnresolvableName
+                | StoredFailKind::HashInvalidBytes
+                | StoredFailKind::ForeignRevision
+                | StoredFailKind::IncompatibleContract
+                | StoredFailKind::UnboundRequirement => {
+                    bail!("persisted fail_kind {value:?} is not an authoring report failure kind")
+                }
+            }
         })
         .transpose()
 }
@@ -1712,6 +1721,25 @@ mod tests {
         );
         assert!(!RELEASE_CANDIDATES_SQL.contains("FROM flows"));
         assert!(!RELEASE_CANDIDATES_SQL.contains("LEFT JOIN"));
+    }
+
+    #[test]
+    fn report_fail_kind_parser_refuses_storage_only_vocabulary() {
+        for literal in [
+            "depth-budget",
+            "dispatch-budget",
+            "unresolvable-name",
+            "hash-invalid-bytes",
+            "foreign-revision",
+            "incompatible-contract",
+            "unbound-requirement",
+        ] {
+            let error = parse_fail_kind(Some(literal)).unwrap_err().to_string();
+            assert!(
+                error.contains("not an authoring report failure kind"),
+                "{error}"
+            );
+        }
     }
 
     #[test]

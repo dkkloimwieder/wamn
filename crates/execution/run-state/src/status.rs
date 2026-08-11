@@ -162,7 +162,8 @@ impl From<wamn_runner::ExecutionStatus> for RunStatus {
     }
 }
 
-/// Why a run failed — the persisted form of `wamn_runner::ExecutionFailureKind`.
+/// Why a run failed — the persisted vocabulary, including engine failures and
+/// failures owned by claim-time resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FailKind {
@@ -175,15 +176,36 @@ pub enum FailKind {
     /// A never-replay effect may have escaped before its durable completion
     /// record was written, so repeating it would be unsafe.
     EffectUncertain,
+    /// The root run exhausted its maximum call depth.
+    DepthBudget,
+    /// The root run exhausted its total-dispatched-node budget.
+    DispatchBudget,
+    /// A referenced flow name could not be resolved in the pinned release.
+    UnresolvableName,
+    /// A resolved artifact's bytes did not match its content hash.
+    HashInvalidBytes,
+    /// A resolved artifact belongs to a different revision.
+    ForeignRevision,
+    /// A resolved flow's contract is incompatible with its call site.
+    IncompatibleContract,
+    /// A resolved flow has a requirement without an environment binding.
+    UnboundRequirement,
 }
 
 impl FailKind {
-    pub const ALL: [FailKind; 5] = [
+    pub const ALL: [FailKind; 12] = [
         FailKind::Terminal,
         FailKind::RetryExhausted,
         FailKind::InvalidInput,
         FailKind::RunawayBudget,
         FailKind::EffectUncertain,
+        FailKind::DepthBudget,
+        FailKind::DispatchBudget,
+        FailKind::UnresolvableName,
+        FailKind::HashInvalidBytes,
+        FailKind::ForeignRevision,
+        FailKind::IncompatibleContract,
+        FailKind::UnboundRequirement,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -193,6 +215,13 @@ impl FailKind {
             FailKind::InvalidInput => "invalid-input",
             FailKind::RunawayBudget => "runaway-budget",
             FailKind::EffectUncertain => "effect-uncertain",
+            FailKind::DepthBudget => "depth-budget",
+            FailKind::DispatchBudget => "dispatch-budget",
+            FailKind::UnresolvableName => "unresolvable-name",
+            FailKind::HashInvalidBytes => "hash-invalid-bytes",
+            FailKind::ForeignRevision => "foreign-revision",
+            FailKind::IncompatibleContract => "incompatible-contract",
+            FailKind::UnboundRequirement => "unbound-requirement",
         }
     }
 

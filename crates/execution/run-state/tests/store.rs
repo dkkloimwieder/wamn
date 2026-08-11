@@ -470,6 +470,54 @@ fn status_sql_literals_round_trip() {
 }
 
 #[test]
+fn persisted_fail_kind_vocabulary_is_exact_and_alias_free() {
+    const EXPECTED: [&str; 12] = [
+        "terminal",
+        "retry-exhausted",
+        "invalid-input",
+        "runaway-budget",
+        "effect-uncertain",
+        "depth-budget",
+        "dispatch-budget",
+        "unresolvable-name",
+        "hash-invalid-bytes",
+        "foreign-revision",
+        "incompatible-contract",
+        "unbound-requirement",
+    ];
+
+    assert_eq!(FailKind::ALL.map(FailKind::as_sql), EXPECTED);
+    for literal in EXPECTED {
+        let kind = FailKind::from_sql(literal).expect("frozen fail_kind literal parses");
+        assert_eq!(serde_json::to_value(kind).unwrap(), json!(literal));
+        assert_eq!(
+            serde_json::from_value::<FailKind>(json!(literal)).unwrap(),
+            kind
+        );
+    }
+
+    for alias in [
+        "depth_budget",
+        "dispatch_budget",
+        "unresolvable_name",
+        "hash_invalid_bytes",
+        "foreign_revision",
+        "incompatible_contract",
+        "unbound_requirement",
+        "hash-invalid",
+        "foreign-catalog-revision",
+        "contract-incompatible",
+        "requirement-unbound",
+    ] {
+        assert_eq!(FailKind::from_sql(alias), None, "alias {alias:?} parsed");
+        assert!(
+            serde_json::from_value::<FailKind>(json!(alias)).is_err(),
+            "wire alias {alias:?} parsed"
+        );
+    }
+}
+
+#[test]
 fn effect_uncertain_failure_has_one_exact_non_committal_shape() {
     let failure = EffectUncertainFailure::new("run-17").unwrap();
     let bytes = failure.canonical_json_bytes();
@@ -639,6 +687,17 @@ fn run_state_sql_matches_the_model() {
             k.as_sql()
         );
     }
+
+    let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains(
+            "fail_kind text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input', \
+             'runaway-budget', 'effect-uncertain', 'depth-budget', 'dispatch-budget', \
+             'unresolvable-name', 'hash-invalid-bytes', 'foreign-revision', \
+             'incompatible-contract', 'unbound-requirement')),"
+        ),
+        "runs.fail_kind CHECK must carry exactly the frozen vocabulary"
+    );
 }
 
 // ---- live-apply gate (optional) --------------------------------------------

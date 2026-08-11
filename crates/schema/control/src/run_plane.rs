@@ -131,7 +131,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_fail_kind_check",
-        definition: "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text]))",
+        definition: "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
         origin: CheckOrigin::Inline("fail_kind"),
     },
     CheckSpec {
@@ -3762,6 +3762,34 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             status.ends_with("))"),
             "CHECK closes inside the definition: {status}"
+        );
+    }
+
+    #[test]
+    fn runs_failure_and_outcome_check_mirrors_are_exact_and_frozen() {
+        let expected_fail_kind = "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))";
+        let fail_kind = CHECK_SPECS
+            .iter()
+            .find(|spec| spec.table == "runs" && spec.name == "runs_fail_kind_check")
+            .expect("runs.fail_kind CHECK mirror exists");
+        assert_eq!(fail_kind.definition, expected_fail_kind);
+
+        let status = CHECK_SPECS
+            .iter()
+            .find(|spec| spec.table == "runs" && spec.name == "runs_status_check")
+            .expect("runs.status CHECK mirror exists");
+        assert_eq!(
+            status.definition,
+            "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))"
+        );
+
+        let caller_outcome = CHECK_SPECS
+            .iter()
+            .find(|spec| spec.table == "runs" && spec.name == "runs_caller_outcome_kind_check")
+            .expect("runs.caller_outcome_kind CHECK mirror exists");
+        assert_eq!(
+            caller_outcome.definition,
+            "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text]))"
         );
     }
 
