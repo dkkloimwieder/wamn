@@ -3,6 +3,10 @@
 //! This crate owns only the pure definition plane. Persistence, publication,
 //! activation transitions, and compatibility readers live in effect crates.
 
+mod execution_node_path;
+
+pub use execution_node_path::{ExecutionNodePath, ExecutionNodePathError};
+
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
