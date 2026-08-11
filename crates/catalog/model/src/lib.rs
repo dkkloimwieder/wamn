@@ -3,16 +3,17 @@
 //! This crate owns only the pure definition plane. Persistence, publication,
 //! activation transitions, and compatibility readers live in effect crates.
 
-mod execution_node_path;
+mod execution_node_id;
 mod execution_plan;
 
-pub use execution_node_path::{ExecutionNodePath, ExecutionNodePathError};
+pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
 pub use execution_plan::{
-    CallFrameMetadata, EXECUTION_PLAN_FORMAT_VERSION, ExecutionConnectionRequirement,
+    CALLABLE_CONTRACT_VERSION, CallFlowInstruction, CallableContract, CallableEffectCeiling,
+    CallableReturnContract, EXECUTION_PLAN_FORMAT_VERSION, ExecutionConnectionRequirement,
     ExecutionEffectPolicy, ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanHeader,
     ExecutionPlanNode, ExecutionPlanV2, ExecutionRuntimeRevision, ExecutionSourceMapEntry,
-    HOST_EFFECT_CONTRACT_VERSION, ReturnContinuation, RootTerminalBehavior,
-    RuntimeInputSchemaGuard, SyntheticInstruction,
+    HOST_EFFECT_CONTRACT_VERSION, PLAN_COMPILER_REVISION, RootTerminalBehavior,
+    entry_input_schema_hash, execution_bundle_hash, read_execution_plan,
 };
 
 use std::cmp::Ordering;
@@ -48,6 +49,7 @@ pub enum CatalogIdentityError {
     ValidatedDraftIdentityMismatch,
     ArtifactIdMismatch,
     ArtifactHashMismatch,
+    ExecutionBundleHashMismatch,
     UnresolvedInterface { node_type: String },
     UnexpectedInterface { node_type: String },
     FlowInvalid { codes: Vec<&'static str> },
@@ -115,6 +117,12 @@ impl fmt::Display for CatalogIdentityError {
                 )
             }
             Self::ArtifactHashMismatch => write!(formatter, "flow artifact hash does not match"),
+            Self::ExecutionBundleHashMismatch => {
+                write!(
+                    formatter,
+                    "execution bundle hash differs from its exact bytes"
+                )
+            }
             Self::UnresolvedInterface { node_type } => {
                 write!(
                     formatter,
@@ -691,7 +699,7 @@ impl DraftArtifact {
         interfaces: Vec<ResolvedNodeInterface>,
         execution_plan: ExecutionPlanV2,
     ) -> Result<Self, CatalogIdentityError> {
-        let execution_plan = execution_plan.into_canonical()?;
+        execution_plan.validate()?;
         let content_hash = DraftContentHash::for_flow(flow);
         let artifact = Artifact::new(tenant_id, flow, interfaces)?;
         if execution_plan.header.root_artifact_hash != artifact.identity().artifact_hash().as_str()
@@ -865,12 +873,7 @@ impl PinnedDraftArtifact {
         if content_hash != DraftContentHash::for_flow(artifact.flow()) {
             return Err(CatalogIdentityError::DraftContentHashMismatch);
         }
-        let execution_plan = ExecutionPlanV2::from_canonical_bytes(execution_plan_bytes)?;
-        if execution_plan.execution_bundle_hash()? != execution_bundle_hash {
-            return Err(CatalogIdentityError::InvalidDigest {
-                field: "execution-bundle-hash",
-            });
-        }
+        let execution_plan = read_execution_plan(execution_bundle_hash, execution_plan_bytes)?;
         if execution_plan.header.root_artifact_hash != draft_artifact_hash {
             return Err(CatalogIdentityError::ArtifactMismatch);
         }

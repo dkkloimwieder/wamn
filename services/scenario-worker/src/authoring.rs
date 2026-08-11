@@ -13,10 +13,12 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_catalog::{
-    DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy, ExecutionNodePath,
+    CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling, CallableReturnContract,
+    DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy, ExecutionNodeId,
     ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode, ExecutionPlanV2,
     ExecutionRuntimeRevision, ExecutionSourceMapEntry, PinnedDraftArtifact, RootTerminalBehavior,
     StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
+    entry_input_schema_hash, execution_bundle_hash,
 };
 use wamn_scenario_model::{
     AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
@@ -728,13 +730,22 @@ fn build_root_execution_plan(
     root_artifact_hash: &str,
     runtime_revision: ExecutionRuntimeRevision,
 ) -> anyhow::Result<ExecutionPlanV2> {
-    let path = |node_id: &str| ExecutionNodePath::new(vec![node_id.to_string()]);
-    let entry_instruction = flow
+    let node_id = |value: &str| ExecutionNodeId::new(value);
+    let entry = flow
         .nodes
         .iter()
         .find(|node| node.entry_kind().is_some())
-        .context("validated flow has no entry node")
-        .and_then(|node| path(&node.id).map_err(anyhow::Error::new))?;
+        .context("validated flow has no entry node")?;
+    let entry_instruction = node_id(&entry.id)?;
+    let entry_input_schema_guard = match entry.entry_kind().expect("entry node membership checked")
+    {
+        wamn_flow::EntryKind::Request => {
+            serde_json::from_value::<wamn_flow::RequestConfig>(entry.config.clone())
+                .context("validated request entry config is invalid")?
+                .input_schema
+        }
+        wamn_flow::EntryKind::Cron | wamn_flow::EntryKind::Event => serde_json::Value::Bool(true),
+    };
     let nodes = flow
         .nodes
         .iter()
@@ -761,8 +772,7 @@ fn build_root_execution_plan(
                 })
                 .transpose()?;
             Ok(ExecutionPlanNode {
-                path: path(&node.id)?,
-                source_artifact_hash: root_artifact_hash.to_string(),
+                local_node_id: node_id(&node.id)?,
                 source_node_id: node.id.clone(),
                 node_type: node.node_type.clone(),
                 config: node.config.clone(),
@@ -781,32 +791,48 @@ fn build_root_execution_plan(
         .iter()
         .map(|edge| {
             Ok(ExecutionPlanEdge {
-                source: path(&edge.from)?,
+                source: node_id(&edge.from)?,
                 source_port: edge.from_port.clone(),
-                destination: path(&edge.to)?,
+                destination: node_id(&edge.to)?,
                 destination_port: edge.to_port.clone(),
                 fan_out_ordinal: edge.ordinal.unwrap_or(0),
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let responder_paths = flow
+    let responder_ids = flow
         .nodes
         .iter()
         .filter(|node| node.node_type == "respond")
-        .map(|node| path(&node.id).map_err(anyhow::Error::new))
+        .map(|node| node_id(&node.id).map_err(anyhow::Error::new))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let root_terminal_behavior = if responder_paths.is_empty() {
+    let root_terminal_behavior = if responder_ids.is_empty() {
         RootTerminalBehavior::FrontierExhaustion
     } else {
         RootTerminalBehavior::Respond {
-            paths: responder_paths,
+            responders: responder_ids,
         }
+    };
+    let callable_contract = if entry.node_type == "request"
+        && flow.nodes.iter().any(|node| node.node_type == "respond")
+        && flow
+            .nodes
+            .iter()
+            .filter(|node| node.node_type == "respond")
+            .all(|responder| flow.edges.iter().all(|edge| edge.from != responder.id))
+    {
+        Some(CallableContract {
+            version: CALLABLE_CONTRACT_VERSION.to_string(),
+            input_schema_hash: entry_input_schema_hash(&entry_input_schema_guard),
+            return_contract: CallableReturnContract::UntypedJsonBody,
+            effect_ceiling: CallableEffectCeiling::Effectful,
+        })
+    } else {
+        None
     };
     let source_map = nodes
         .iter()
         .map(|node| ExecutionSourceMapEntry {
-            path: node.path.clone(),
-            source_artifact_hash: node.source_artifact_hash.clone(),
+            local_node_id: node.local_node_id.clone(),
             source_node_id: node.source_node_id.clone(),
         })
         .collect();
@@ -818,9 +844,8 @@ fn build_root_execution_plan(
             nodes,
             edges,
             root_terminal_behavior,
-            synthetic_instructions: Vec::new(),
-            input_schema_guards: Vec::new(),
-            call_frames: Vec::new(),
+            entry_input_schema_guard,
+            callable_contract,
             source_map,
         },
     )
@@ -948,7 +973,9 @@ pub(crate) async fn validate_flow_draft(
         .context("suite flow version must be a positive u32")?;
     let draft_revision =
         u64::try_from(request.draft_revision).context("draft revision must be a positive u64")?;
-    let execution_bundle_hash = draft.execution_plan().execution_bundle_hash()?;
+    let execution_bundle_bytes =
+        serde_json::to_vec(draft.execution_plan()).context("serialize exact execution bundle")?;
+    let execution_bundle_hash = execution_bundle_hash(&execution_bundle_bytes);
     let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
         tenant_id: &request.tenant_id,
         draft_id: &request.draft_id,
@@ -965,7 +992,6 @@ pub(crate) async fn validate_flow_draft(
         binding_base_artifact_hash: &binding_base_artifact_hash,
     })?;
     let graph_json = flow.to_json();
-    let execution_bundle_bytes = draft.execution_plan().canonical_bytes()?;
     transaction
         .execute(
             wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
@@ -976,7 +1002,7 @@ pub(crate) async fn validate_flow_draft(
             ],
         )
         .await
-        .context("persist canonical execution bundle")?;
+        .context("persist exact execution bundle")?;
     let inserted = transaction
         .query_opt(
             wamn_scenario_catalog::authoring::insert_validated_flow_draft_sql(),
@@ -1052,7 +1078,7 @@ pub(crate) async fn validate_flow_draft(
         catalog_id: request.catalog_id.clone(),
         catalog_version: request.catalog_version,
         environment: request.environment.clone(),
-        execution_bundle_hash: draft.execution_plan().execution_bundle_hash()?,
+        execution_bundle_hash,
         validated_draft_hash: validated_identity.as_str().to_string(),
         binding_base_artifact_hash,
     }))
@@ -1213,12 +1239,6 @@ pub(crate) async fn load_validated_draft(
         Err(_) => return Ok(Err(DraftRunRefusal::CatalogDrift)),
     };
     if artifact.validated_identity().as_str() != pin.validated_draft_hash
-        || artifact
-            .execution_plan()
-            .execution_bundle_hash()
-            .ok()
-            .as_deref()
-            != Some(pin.execution_bundle_hash.as_str())
         || draft_artifact_hash != pin.draft_artifact_hash
         || stored_binding_base != pin.binding_base_artifact_hash
     {
@@ -1871,7 +1891,7 @@ mod tests {
     }
 
     #[test]
-    fn root_plan_retains_every_responder_in_canonical_order() {
+    fn root_plan_retains_responder_order_and_derives_callable_contract() {
         let flow = wamn_flow::Flow::from_json(
             r#"{
               "schema-version":"0.1","flow-id":"multi-respond","version":1,
@@ -1903,11 +1923,21 @@ mod tests {
         assert_eq!(
             plan.body.root_terminal_behavior,
             RootTerminalBehavior::Respond {
-                paths: vec![
-                    ExecutionNodePath::new(vec!["respond-a".into()]).unwrap(),
-                    ExecutionNodePath::new(vec!["respond-z".into()]).unwrap(),
+                responders: vec![
+                    ExecutionNodeId::new("respond-z").unwrap(),
+                    ExecutionNodeId::new("respond-a").unwrap(),
                 ],
             }
+        );
+        assert_eq!(plan.body.entry_input_schema_guard, serde_json::json!(true));
+        assert_eq!(
+            plan.body.callable_contract,
+            Some(CallableContract {
+                version: "0.1".into(),
+                input_schema_hash: entry_input_schema_hash(&serde_json::json!(true)),
+                return_contract: CallableReturnContract::UntypedJsonBody,
+                effect_ceiling: CallableEffectCeiling::Effectful,
+            })
         );
     }
 }

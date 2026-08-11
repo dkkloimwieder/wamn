@@ -392,6 +392,8 @@ mod tests {
     //! schema of record so a renamed column fails HERE, not only against a live
     //! PG (the include_str! mirror of the gates `schema_drift` discipline).
 
+    use sha2::{Digest as _, Sha256};
+
     const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
     const FLOWS_SCHEMA: &str = include_str!("../../../../deploy/sql/flows.sql");
     const FLOW_TESTS_SCHEMA: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
@@ -525,6 +527,34 @@ mod tests {
         // Append-only: the ledger carries the shared immutability trigger.
         assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER publish_gate_audit_immutable"));
         assert!(CATALOG_SCHEMA.contains("BEFORE UPDATE OR DELETE ON catalog.publish_gate_audit"));
+    }
+
+    #[test]
+    fn execution_bundles_ddl_is_byte_for_byte_unchanged() {
+        const START: &str = "CREATE TABLE catalog.execution_bundles (";
+        const NEXT_SECTION: &str = "\n-- The sealed canonical member set.";
+        const EXPECTED_SHA256: &str =
+            "960e6f2e9f5db1e6752f32ca7518791f1fdd6e94d23af481bb63559472a5a952";
+
+        assert_eq!(CATALOG_SCHEMA.match_indices(START).count(), 1);
+
+        let start = CATALOG_SCHEMA
+            .find(START)
+            .expect("catalog schema contains the execution_bundles table");
+        let (ddl, _) = CATALOG_SCHEMA[start..]
+            .split_once(NEXT_SECTION)
+            .expect("execution_bundles DDL precedes the sealed member section");
+
+        assert_eq!(
+            ddl.len(),
+            1_324,
+            "execution_bundles DDL byte length drifted"
+        );
+        let actual_sha256 = Sha256::digest(ddl.as_bytes())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(actual_sha256, EXPECTED_SHA256);
     }
 
     #[test]

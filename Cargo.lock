@@ -4218,6 +4218,7 @@ dependencies = [
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
+ "boon",
  "ryu-js",
  "schemars",
  "serde",

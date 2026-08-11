@@ -1230,6 +1230,37 @@ cargo clippy --locked -p wamn-catalog --all-targets -- -D warnings
 cargo fmt -p wamn-catalog --check
 ```
 
+### [SR-MVP / wamn-0h0g.2.10] own-flow plan wire and exact-byte reader
+
+This gate is local and debug-only. It proves the scalar node-id wire, required
+own-flow members, callable guard/hash agreement, hash-before-parse ordering,
+matching-hash noncanonical JSON acceptance, semantic validation after hash
+success, the transitional scenario producer, and byte-for-byte preservation of
+`catalog.execution_bundles`. It does not run PostgreSQL or a cluster Job.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-10 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-catalog -p wamn-schema-control \
+  -p wamn-scenario-worker
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-10 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked -p wamn-catalog -p wamn-schema-control \
+  -p wamn-scenario-worker --all-targets -- -D warnings
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-10-components CARGO_INCREMENTAL=0 \
+  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-10-components CARGO_INCREMENTAL=0 \
+  cargo check --locked --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2
+# The fail-closed transition intentionally leaves the retired interpreter
+# unreachable; retain the established dead-code allowance and deny every other warning.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-10-components CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2 -- -D warnings -A dead_code
+
+cargo fmt -p wamn-catalog -p wamn-schema-control -p wamn-scenario-worker --check
+cargo fmt --manifest-path components/Cargo.toml -p flowrunner --check
+```
+
 ### [CALLABLE-FLOWS-POC-F1 / wamn-5wd1.42] pure receipt components
 
 Docs: `docs/archive/execution/FLOW-SPEC.md` §10.3 and `docs/archive/poc/POC-PLAN.md` F1 / Named mechanical

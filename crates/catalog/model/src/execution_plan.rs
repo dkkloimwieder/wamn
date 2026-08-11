@@ -1,20 +1,26 @@
-//! Canonical executable-plan identity for validated flow closures.
+//! Exact-byte executable-plan wire and semantic validation.
 
 use std::collections::BTreeSet;
 
+use boon::{Compiler, Draft, Schemas};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use wamn_node_manifest::ConnectionTypeDescriptor;
 
-use crate::{
-    CatalogIdentityError, ExecutionNodePath, canonical_serialized, digest, validate_digest,
-};
+use crate::{CatalogIdentityError, ExecutionNodeId, digest, validate_digest};
 
 /// The only execution-plan format shipped by the MVP.
 pub const EXECUTION_PLAN_FORMAT_VERSION: &str = "0.1";
+/// The only plan compiler revision shipped by the MVP.
+pub const PLAN_COMPILER_REVISION: &str = "0.1";
 /// The only host-effect contract understood by execution plan format 0.1.
 pub const HOST_EFFECT_CONTRACT_VERSION: &str = "0.1";
+/// The only callable-contract version shipped by the MVP.
+pub const CALLABLE_CONTRACT_VERSION: &str = "0.1";
+
+const ENTRY_SCHEMA_URI: &str = "mem://execution-entry-input-schema.json";
+const JSON_SCHEMA_2020_12: &str = "https://json-schema.org/draft/2020-12/schema";
 
 /// Exact executable revision required by one plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -30,6 +36,7 @@ pub struct ExecutionRuntimeRevision {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionPlanHeader {
     pub format_version: String,
+    pub plan_compiler_revision: String,
     pub runtime_revision: ExecutionRuntimeRevision,
     pub root_artifact_hash: String,
 }
@@ -50,12 +57,19 @@ pub struct ExecutionConnectionRequirement {
     pub descriptor: ConnectionTypeDescriptor,
 }
 
-/// One executable node in the fully expanded closure.
+/// The complete durable config for an ordinary `call-flow` node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CallFlowInstruction {
+    pub site: ExecutionNodeId,
+    pub flow_id: String,
+}
+
+/// One executable node in its owning flow.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionPlanNode {
-    pub path: ExecutionNodePath,
-    pub source_artifact_hash: String,
+    pub local_node_id: ExecutionNodeId,
     pub source_node_id: String,
     #[serde(rename = "type")]
     pub node_type: String,
@@ -69,9 +83,9 @@ pub struct ExecutionPlanNode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionPlanEdge {
-    pub source: ExecutionNodePath,
+    pub source: ExecutionNodeId,
     pub source_port: String,
-    pub destination: ExecutionNodePath,
+    pub destination: ExecutionNodeId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub destination_port: Option<String>,
     pub fan_out_ordinal: u32,
@@ -81,117 +95,58 @@ pub struct ExecutionPlanEdge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", tag = "kind", deny_unknown_fields)]
 pub enum RootTerminalBehavior {
-    Respond { paths: Vec<ExecutionNodePath> },
+    Respond { responders: Vec<ExecutionNodeId> },
     FrontierExhaustion,
 }
 
-/// The exact continuation taken when an expanded callee responds.
+/// The only response body contract shipped by the MVP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CallableReturnContract {
+    UntypedJsonBody,
+}
+
+/// The only callable effect ceiling shipped by the MVP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum CallableEffectCeiling {
+    Effectful,
+}
+
+/// The intrinsic callable boundary recorded by one own-flow plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ReturnContinuation {
-    pub destination: ExecutionNodePath,
-    pub destination_port: String,
+pub struct CallableContract {
+    pub version: String,
+    pub input_schema_hash: String,
+    pub return_contract: CallableReturnContract,
+    pub effect_ceiling: CallableEffectCeiling,
 }
 
-/// Synthetic instructions introduced only by call expansion.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", tag = "kind", deny_unknown_fields)]
-pub enum SyntheticInstruction {
-    CallEnter {
-        call_path: ExecutionNodePath,
-        callee_entry: ExecutionNodePath,
-        input_guard: ExecutionNodePath,
-    },
-    CallReturn {
-        call_path: ExecutionNodePath,
-        callee_respond: ExecutionNodePath,
-        continuation: ReturnContinuation,
-    },
-}
-
-/// One compiled runtime input-schema guard.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct RuntimeInputSchemaGuard {
-    pub path: ExecutionNodePath,
-    pub schema: Value,
-}
-
-/// Metadata delimiting one expanded call frame.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CallFrameMetadata {
-    pub call_path: ExecutionNodePath,
-    pub callee_artifact_hash: String,
-    pub return_continuation: ReturnContinuation,
-}
-
-/// Source coordinates for one expanded node path.
+/// Source coordinates for one own-flow node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionSourceMapEntry {
-    pub path: ExecutionNodePath,
-    pub source_artifact_hash: String,
+    pub local_node_id: ExecutionNodeId,
     pub source_node_id: String,
 }
 
-/// The complete executable body of a validated closure.
+/// The complete executable body of one validated flow.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionPlanBody {
-    pub entry_instruction: ExecutionNodePath,
+    pub entry_instruction: ExecutionNodeId,
     pub nodes: Vec<ExecutionPlanNode>,
     pub edges: Vec<ExecutionPlanEdge>,
     pub root_terminal_behavior: RootTerminalBehavior,
-    pub synthetic_instructions: Vec<SyntheticInstruction>,
-    pub input_schema_guards: Vec<RuntimeInputSchemaGuard>,
-    pub call_frames: Vec<CallFrameMetadata>,
+    pub entry_input_schema_guard: Value,
+    #[serde(deserialize_with = "deserialize_required_option")]
+    #[schemars(required)]
+    pub callable_contract: Option<CallableContract>,
     pub source_map: Vec<ExecutionSourceMapEntry>,
 }
 
-impl ExecutionPlanBody {
-    fn normalize(&mut self) {
-        if let RootTerminalBehavior::Respond { paths } = &mut self.root_terminal_behavior {
-            paths.sort();
-        }
-        for node in &mut self.nodes {
-            if let Some(requirement) = &mut node.source_connection_requirement {
-                requirement
-                    .descriptor
-                    .field_ownership
-                    .sort_by_key(|ownership| ownership.field);
-            }
-        }
-        self.nodes.sort_by(|left, right| left.path.cmp(&right.path));
-        self.edges.sort_by(|left, right| {
-            (
-                &left.source,
-                &left.source_port,
-                left.fan_out_ordinal,
-                &left.destination,
-                &left.destination_port,
-            )
-                .cmp(&(
-                    &right.source,
-                    &right.source_port,
-                    right.fan_out_ordinal,
-                    &right.destination,
-                    &right.destination_port,
-                ))
-        });
-        self.synthetic_instructions.sort_by(|left, right| {
-            synthetic_instruction_key(left).cmp(&synthetic_instruction_key(right))
-        });
-        self.input_schema_guards
-            .sort_by(|left, right| left.path.cmp(&right.path));
-        self.call_frames
-            .sort_by(|left, right| left.call_path.cmp(&right.call_path));
-        self.source_map
-            .sort_by(|left, right| left.path.cmp(&right.path));
-    }
-}
-
-/// The sole canonical executable representation stored for a validated flow.
+/// The sole executable representation stored for a validated flow.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ExecutionPlanV2 {
@@ -200,13 +155,7 @@ pub struct ExecutionPlanV2 {
 }
 
 impl ExecutionPlanV2 {
-    pub(crate) fn into_canonical(mut self) -> Result<Self, CatalogIdentityError> {
-        self.body.normalize();
-        self.validate()?;
-        Ok(self)
-    }
-
-    /// Validate and normalize one complete plan.
+    /// Construct and validate one complete own-flow plan without normalizing it.
     pub fn new(
         runtime_revision: ExecutionRuntimeRevision,
         root_artifact_hash: impl Into<String>,
@@ -215,46 +164,80 @@ impl ExecutionPlanV2 {
         let plan = Self {
             header: ExecutionPlanHeader {
                 format_version: EXECUTION_PLAN_FORMAT_VERSION.to_string(),
+                plan_compiler_revision: PLAN_COMPILER_REVISION.to_string(),
                 runtime_revision,
                 root_artifact_hash: root_artifact_hash.into(),
             },
             body,
         };
-        plan.into_canonical()
-    }
-
-    /// Parse bytes that must already be the exact canonical plan representation.
-    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<Self, CatalogIdentityError> {
-        let mut plan: Self = serde_json::from_slice(bytes).map_err(|error| {
-            CatalogIdentityError::InvalidDefinition {
-                message: format!("execution plan JSON is invalid: {error}"),
-            }
-        })?;
-        let original = plan.clone();
-        plan.body.normalize();
         plan.validate()?;
-        if plan != original || plan.canonical_bytes()? != bytes {
-            return Err(CatalogIdentityError::NonCanonicalJson);
-        }
         Ok(plan)
     }
 
-    /// RFC 8785 canonical UTF-8 JSON bytes used as the bundle hash preimage.
-    pub fn canonical_bytes(&self) -> Result<Vec<u8>, CatalogIdentityError> {
-        let mut canonical = self.clone();
-        canonical.body.normalize();
-        canonical.validate()?;
-        Ok(canonical_serialized(&canonical))
+    pub(crate) fn validate(&self) -> Result<(), CatalogIdentityError> {
+        self.validate_header()?;
+        if self.body.nodes.is_empty() {
+            return invalid("execution plan must contain at least one node");
+        }
+
+        let node_ids = self
+            .body
+            .nodes
+            .iter()
+            .map(|node| &node.local_node_id)
+            .collect::<BTreeSet<_>>();
+        if node_ids.len() != self.body.nodes.len() {
+            return invalid("execution plan local node ids must be unique");
+        }
+        if !node_ids.contains(&self.body.entry_instruction) {
+            return invalid("execution plan entry instruction must name a plan node");
+        }
+
+        let entry = self
+            .node_for(&self.body.entry_instruction)
+            .expect("execution plan entry membership checked");
+        if !matches!(entry.node_type.as_str(), "request" | "cron" | "event") {
+            return invalid("execution plan entry must be request, cron, or event");
+        }
+
+        for node in &self.body.nodes {
+            self.validate_node(node)?;
+        }
+        self.validate_edges(&node_ids)?;
+
+        if self
+            .body
+            .edges
+            .iter()
+            .any(|edge| edge.destination == self.body.entry_instruction)
+        {
+            return invalid("execution plan entry instruction cannot have an incoming edge");
+        }
+        if reachable_from(
+            &self.body.entry_instruction,
+            &self.body.nodes,
+            &self.body.edges,
+            false,
+        )
+        .len()
+            != self.body.nodes.len()
+        {
+            return invalid("every execution plan node must be reachable from the entry");
+        }
+
+        self.validate_source_map(&node_ids)?;
+        self.validate_terminal_behavior(entry)?;
+        self.validate_entry_guard(entry)?;
+        self.validate_callable_contract(entry)?;
+        Ok(())
     }
 
-    /// Content address of [`Self::canonical_bytes`].
-    pub fn execution_bundle_hash(&self) -> Result<String, CatalogIdentityError> {
-        Ok(digest(&self.canonical_bytes()?))
-    }
-
-    fn validate(&self) -> Result<(), CatalogIdentityError> {
+    fn validate_header(&self) -> Result<(), CatalogIdentityError> {
         if self.header.format_version != EXECUTION_PLAN_FORMAT_VERSION {
             return invalid("execution plan format-version must be textual 0.1");
+        }
+        if self.header.plan_compiler_revision != PLAN_COMPILER_REVISION {
+            return invalid("plan-compiler-revision must be textual 0.1");
         }
         validate_digest(
             &self.header.runtime_revision.flowrunner_component_digest,
@@ -269,52 +252,55 @@ impl ExecutionPlanV2 {
         {
             return invalid("host-effect-contract-version must be textual 0.1");
         }
-        if self.body.nodes.is_empty() {
-            return invalid("execution plan must contain at least one node");
+        Ok(())
+    }
+
+    fn validate_node(&self, node: &ExecutionPlanNode) -> Result<(), CatalogIdentityError> {
+        if node.source_node_id.is_empty() || node.node_type.is_empty() {
+            return invalid("execution plan source node id and type must not be empty");
+        }
+        if let Some(requirement) = &node.source_connection_requirement {
+            if requirement.name.is_empty()
+                || !requirement
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            {
+                return invalid("execution plan connection requirement name must be a slug");
+            }
+            if requirement.descriptor != ConnectionTypeDescriptor::http_v1() {
+                return invalid("execution plan connection descriptor must be canonical HTTP v1");
+            }
         }
 
-        let paths = self
-            .body
-            .nodes
-            .iter()
-            .map(|node| &node.path)
-            .collect::<BTreeSet<_>>();
-        if paths.len() != self.body.nodes.len() {
-            return invalid("execution plan node paths must be unique");
-        }
-        if !paths.contains(&self.body.entry_instruction) {
-            return invalid("execution plan entry instruction must name a plan node");
-        }
-        let node_for =
-            |path: &ExecutionNodePath| self.body.nodes.iter().find(|node| node.path == *path);
-        let entry = node_for(&self.body.entry_instruction)
-            .expect("execution plan entry membership checked");
-        if entry.source_artifact_hash != self.header.root_artifact_hash {
-            return invalid("execution plan entry must belong to the root artifact");
-        }
-        for node in &self.body.nodes {
-            validate_digest(&node.source_artifact_hash, "source-artifact-hash")?;
-            if node.source_node_id.is_empty() || node.node_type.is_empty() {
-                return invalid("execution plan source node id and type must not be empty");
+        if node.node_type == "call-flow" {
+            let instruction = serde_json::from_value::<CallFlowInstruction>(node.config.clone())
+                .map_err(|error| CatalogIdentityError::InvalidDefinition {
+                    message: format!("call-flow config is invalid: {error}"),
+                })?;
+            if instruction.site != node.local_node_id {
+                return invalid("call-flow site must equal its local-node-id");
             }
-            if let Some(requirement) = &node.source_connection_requirement {
-                if requirement.name.is_empty()
-                    || !requirement.name.bytes().all(|byte| {
-                        byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-'
-                    })
-                {
-                    return invalid("execution plan connection requirement name must be a slug");
-                }
-                if requirement.descriptor != ConnectionTypeDescriptor::http_v1() {
-                    return invalid(
-                        "execution plan connection descriptor must be canonical HTTP v1",
-                    );
-                }
+            if !valid_flow_slug(&instruction.flow_id) {
+                return invalid("call-flow flow-id must be a lowercase slug");
+            }
+            if node.effect_policy != ExecutionEffectPolicy::Effectful {
+                return invalid("call-flow nodes must be effectful");
+            }
+            if node.source_connection_requirement.is_some() {
+                return invalid("call-flow nodes cannot require a connection");
             }
         }
+        Ok(())
+    }
+
+    fn validate_edges(
+        &self,
+        node_ids: &BTreeSet<&ExecutionNodeId>,
+    ) -> Result<(), CatalogIdentityError> {
         let mut fan_out = BTreeSet::new();
         for edge in &self.body.edges {
-            if !paths.contains(&edge.source) || !paths.contains(&edge.destination) {
+            if !node_ids.contains(&edge.source) || !node_ids.contains(&edge.destination) {
                 return invalid("execution plan edges must name existing nodes");
             }
             if edge.source_port.is_empty()
@@ -330,243 +316,300 @@ impl ExecutionPlanV2 {
                 );
             }
         }
+        Ok(())
+    }
+
+    fn validate_source_map(
+        &self,
+        node_ids: &BTreeSet<&ExecutionNodeId>,
+    ) -> Result<(), CatalogIdentityError> {
+        let mut mapped = BTreeSet::new();
         for source in &self.body.source_map {
-            validate_digest(&source.source_artifact_hash, "source-artifact-hash")?;
-            if !paths.contains(&source.path) || source.source_node_id.is_empty() {
-                return invalid("execution source-map entries must name existing nodes");
+            if source.source_node_id.is_empty()
+                || !node_ids.contains(&source.local_node_id)
+                || !mapped.insert(&source.local_node_id)
+            {
+                return invalid("execution source-map must name every local node exactly once");
             }
             let node = self
-                .body
-                .nodes
-                .iter()
-                .find(|node| node.path == source.path)
-                .expect("source-map path membership checked");
-            if source.source_artifact_hash != node.source_artifact_hash
-                || source.source_node_id != node.source_node_id
-            {
-                return invalid("execution source-map entry must match its plan node source");
+                .node_for(&source.local_node_id)
+                .expect("source-map local node membership checked");
+            if source.source_node_id != node.source_node_id {
+                return invalid("execution source-map entry must match its node source");
             }
         }
-        if self
-            .body
-            .source_map
-            .windows(2)
-            .any(|pair| pair[0].path == pair[1].path)
-        {
-            return invalid("execution source-map paths must be unique");
-        }
-        if self.body.source_map.len() != self.body.nodes.len() {
+        if mapped != *node_ids {
             return invalid("execution source-map must cover every plan node exactly once");
         }
+        Ok(())
+    }
+
+    fn validate_terminal_behavior(
+        &self,
+        entry: &ExecutionPlanNode,
+    ) -> Result<(), CatalogIdentityError> {
         match (&entry.node_type[..], &self.body.root_terminal_behavior) {
-            ("request", RootTerminalBehavior::FrontierExhaustion) => {
-                return invalid("request-entry plans require a root responder");
-            }
-            ("request", RootTerminalBehavior::Respond { paths: responders }) => {
-                if responders.is_empty()
-                    || responders.iter().collect::<BTreeSet<_>>().len() != responders.len()
-                {
+            ("request", RootTerminalBehavior::Respond { responders }) => {
+                let responder_ids = responders.iter().collect::<BTreeSet<_>>();
+                if responders.is_empty() || responder_ids.len() != responders.len() {
                     return invalid("request root responders must be nonempty and unique");
                 }
-                for path in responders {
-                    let Some(responder) = node_for(path) else {
+                for responder_id in responders {
+                    let Some(responder) = self.node_for(responder_id) else {
                         return invalid("execution plan root terminal must name existing nodes");
                     };
-                    if responder.node_type != "respond"
-                        || responder.source_artifact_hash != self.header.root_artifact_hash
-                    {
-                        return invalid(
-                            "root responders must be respond nodes from the root artifact",
-                        );
+                    if responder.node_type != "respond" {
+                        return invalid("root responders must name respond nodes");
                     }
                 }
-                let complete_root_responders = self
+                let complete = self
                     .body
                     .nodes
                     .iter()
-                    .filter(|node| {
-                        node.node_type == "respond"
-                            && node.source_artifact_hash == self.header.root_artifact_hash
-                    })
-                    .map(|node| &node.path);
-                if responders.iter().ne(complete_root_responders) {
-                    return invalid(
-                        "request root responders must name every respond node from the root artifact",
-                    );
+                    .filter(|node| node.node_type == "respond")
+                    .map(|node| &node.local_node_id)
+                    .collect::<BTreeSet<_>>();
+                if responder_ids != complete {
+                    return invalid("request root responders must name every respond node");
                 }
+            }
+            ("request", RootTerminalBehavior::FrontierExhaustion) => {
+                return invalid("request-entry plans require root responders");
             }
             (_, RootTerminalBehavior::Respond { .. }) => {
                 return invalid("only request-entry plans may name root responders");
             }
-            (_, RootTerminalBehavior::FrontierExhaustion) => {}
-        }
-        if self
-            .body
-            .synthetic_instructions
-            .windows(2)
-            .any(|pair| synthetic_instruction_key(&pair[0]) == synthetic_instruction_key(&pair[1]))
-        {
-            return invalid("synthetic instruction keys must be unique");
-        }
-        for instruction in &self.body.synthetic_instructions {
-            let referenced = match instruction {
-                SyntheticInstruction::CallEnter {
-                    call_path,
-                    callee_entry,
-                    input_guard,
-                } => [call_path, callee_entry, input_guard],
-                SyntheticInstruction::CallReturn {
-                    call_path,
-                    callee_respond,
-                    continuation,
-                } => [call_path, callee_respond, &continuation.destination],
-            };
-            if referenced.into_iter().any(|path| !paths.contains(path)) {
-                return invalid("synthetic instructions must name existing plan nodes");
-            }
-        }
-        if self
-            .body
-            .input_schema_guards
-            .windows(2)
-            .any(|pair| pair[0].path == pair[1].path)
-        {
-            return invalid("runtime input-schema guard paths must be unique");
-        }
-        if self
-            .body
-            .input_schema_guards
-            .iter()
-            .any(|guard| !paths.contains(&guard.path))
-        {
-            return invalid("runtime input-schema guards must name existing plan nodes");
-        }
-        if self
-            .body
-            .call_frames
-            .windows(2)
-            .any(|pair| pair[0].call_path == pair[1].call_path)
-        {
-            return invalid("call-frame paths must be unique");
-        }
-        for frame in &self.body.call_frames {
-            validate_digest(&frame.callee_artifact_hash, "callee-artifact-hash")?;
-            if !paths.contains(&frame.call_path)
-                || !paths.contains(&frame.return_continuation.destination)
-                || frame.return_continuation.destination_port.is_empty()
-            {
-                return invalid("call-frame paths and continuations must name existing plan nodes");
-            }
-            if node_for(&frame.call_path).is_none_or(|node| node.node_type != "call-flow") {
-                return invalid("call-frame call path must name a call-flow plan node");
-            }
-            let enters = self
-                .body
-                .synthetic_instructions
-                .iter()
-                .filter(|instruction| {
-                    matches!(instruction, SyntheticInstruction::CallEnter { call_path, .. } if call_path == &frame.call_path)
-                })
-                .count();
-            let returns = self
-                .body
-                .synthetic_instructions
-                .iter()
-                .filter(|instruction| {
-                    matches!(instruction, SyntheticInstruction::CallReturn { call_path, .. } if call_path == &frame.call_path)
-                })
-                .count();
-            if enters != 1 || returns == 0 {
-                return invalid(
-                    "every call frame requires exactly one enter and at least one return",
-                );
-            }
-        }
-        for instruction in &self.body.synthetic_instructions {
-            match instruction {
-                SyntheticInstruction::CallEnter {
-                    call_path,
-                    callee_entry,
-                    input_guard,
-                } => {
-                    let Some(frame) = self
-                        .body
-                        .call_frames
-                        .iter()
-                        .find(|frame| frame.call_path == *call_path)
-                    else {
-                        return invalid("call-enter instruction must have call-frame metadata");
-                    };
-                    if !self
-                        .body
-                        .input_schema_guards
-                        .iter()
-                        .any(|guard| guard.path == *input_guard)
-                        || node_for(callee_entry).is_none_or(|node| {
-                            node.source_artifact_hash != frame.callee_artifact_hash
-                        })
-                    {
-                        return invalid("call-enter guard and callee entry must match its frame");
-                    }
+            (_, RootTerminalBehavior::FrontierExhaustion) => {
+                if self
+                    .body
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_type == "respond")
+                {
+                    return invalid("event and cron plans cannot contain respond nodes");
                 }
-                SyntheticInstruction::CallReturn {
-                    call_path,
-                    callee_respond,
-                    continuation,
-                } => {
-                    let Some(frame) = self
-                        .body
-                        .call_frames
-                        .iter()
-                        .find(|frame| frame.call_path == *call_path)
-                    else {
-                        return invalid("call-return instruction must have call-frame metadata");
-                    };
-                    if continuation.destination_port.is_empty()
-                        || continuation != &frame.return_continuation
-                        || node_for(callee_respond).is_none_or(|node| {
-                            node.node_type != "respond"
-                                || node.source_artifact_hash != frame.callee_artifact_hash
-                        })
-                    {
-                        return invalid(
-                            "call-return responder and continuation must match its frame",
-                        );
-                    }
-                }
-            }
-        }
-        for guard in &self.body.input_schema_guards {
-            if !self.body.synthetic_instructions.iter().any(|instruction| {
-                matches!(instruction, SyntheticInstruction::CallEnter { input_guard, .. } if input_guard == &guard.path)
-            }) {
-                return invalid("runtime input-schema guards must be referenced by call-enter");
             }
         }
         Ok(())
     }
-}
 
-fn synthetic_instruction_key(
-    instruction: &SyntheticInstruction,
-) -> (&ExecutionNodePath, u8, &ExecutionNodePath) {
-    match instruction {
-        SyntheticInstruction::CallEnter {
-            call_path,
-            callee_entry,
-            ..
-        } => (call_path, 0, callee_entry),
-        SyntheticInstruction::CallReturn {
-            call_path,
-            callee_respond,
-            ..
-        } => (call_path, 1, callee_respond),
+    fn validate_entry_guard(&self, entry: &ExecutionPlanNode) -> Result<(), CatalogIdentityError> {
+        if entry.node_type == "request" {
+            let guard = entry.config.get("input-schema").ok_or_else(|| {
+                CatalogIdentityError::InvalidDefinition {
+                    message: "request entry config must contain input-schema".to_string(),
+                }
+            })?;
+            if guard != &self.body.entry_input_schema_guard {
+                return invalid("entry input-schema guard must match request config");
+            }
+        } else if self.body.entry_input_schema_guard != Value::Bool(true) {
+            return invalid("event and cron entry input-schema guard must be true");
+        }
+        validate_entry_schema(&self.body.entry_input_schema_guard)
+    }
+
+    fn validate_callable_contract(
+        &self,
+        entry: &ExecutionPlanNode,
+    ) -> Result<(), CatalogIdentityError> {
+        let callable = self.is_intrinsically_callable(entry);
+        if callable != self.body.callable_contract.is_some() {
+            return invalid("callable-contract presence must match intrinsic callability");
+        }
+        if let Some(contract) = &self.body.callable_contract {
+            if contract.version != CALLABLE_CONTRACT_VERSION {
+                return invalid("callable contract version must be textual 0.1");
+            }
+            validate_digest(&contract.input_schema_hash, "input-schema-hash")?;
+            if contract.input_schema_hash
+                != entry_input_schema_hash(&self.body.entry_input_schema_guard)
+            {
+                return invalid("callable input-schema-hash must match the entry guard");
+            }
+        }
+        Ok(())
+    }
+
+    fn is_intrinsically_callable(&self, entry: &ExecutionPlanNode) -> bool {
+        let RootTerminalBehavior::Respond { responders } = &self.body.root_terminal_behavior else {
+            return false;
+        };
+        if entry.node_type != "request"
+            || responders
+                .iter()
+                .any(|responder| self.body.edges.iter().any(|edge| edge.source == *responder))
+        {
+            return false;
+        }
+
+        let region = reachable_from(
+            &self.body.entry_instruction,
+            &self.body.nodes,
+            &self.body.edges,
+            true,
+        );
+        let stoppers = region
+            .iter()
+            .filter(|node_id| {
+                self.node_for(node_id)
+                    .is_some_and(|node| matches!(node.node_type.as_str(), "respond" | "fail"))
+            })
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        if stoppers.iter().all(|node_id| {
+            self.node_for(node_id)
+                .is_none_or(|node| node.node_type != "respond")
+        }) {
+            return false;
+        }
+
+        let mut can_answer = stoppers;
+        loop {
+            let before = can_answer.len();
+            for edge in &self.body.edges {
+                if region.contains(&edge.source)
+                    && region.contains(&edge.destination)
+                    && can_answer.contains(&edge.destination)
+                {
+                    can_answer.insert(edge.source.clone());
+                }
+            }
+            if can_answer.len() == before {
+                break;
+            }
+        }
+        region.is_subset(&can_answer)
+    }
+
+    fn node_for(&self, node_id: &ExecutionNodeId) -> Option<&ExecutionPlanNode> {
+        self.body
+            .nodes
+            .iter()
+            .find(|node| node.local_node_id == *node_id)
     }
 }
 
-fn invalid<T>(message: &str) -> Result<T, CatalogIdentityError> {
+/// Compute the byte identity of one exact stored execution plan.
+pub fn execution_bundle_hash(exact_bytes: &[u8]) -> String {
+    digest(exact_bytes)
+}
+
+/// Compute the semantic callable-input hash over RFC 8785 guard bytes.
+pub fn entry_input_schema_hash(guard: &Value) -> String {
+    wamn_flow::canonical_json_sha256(guard)
+}
+
+/// Verify exact bytes before parsing and semantically validating their plan.
+pub fn read_execution_plan(
+    expected_execution_bundle_hash: &str,
+    exact_bytes: &[u8],
+) -> Result<ExecutionPlanV2, CatalogIdentityError> {
+    validate_digest(expected_execution_bundle_hash, "execution-bundle-hash")?;
+    if execution_bundle_hash(exact_bytes) != expected_execution_bundle_hash {
+        return Err(CatalogIdentityError::ExecutionBundleHashMismatch);
+    }
+    let plan = serde_json::from_slice::<ExecutionPlanV2>(exact_bytes).map_err(|error| {
+        CatalogIdentityError::InvalidDefinition {
+            message: format!("execution plan JSON is invalid: {error}"),
+        }
+    })?;
+    plan.validate()?;
+    Ok(plan)
+}
+
+fn deserialize_required_option<'de, D>(
+    deserializer: D,
+) -> Result<Option<CallableContract>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<CallableContract>::deserialize(deserializer)
+}
+
+fn validate_entry_schema(schema: &Value) -> Result<(), CatalogIdentityError> {
+    if let Some(declared) = schema.get("$schema")
+        && declared.as_str() != Some(JSON_SCHEMA_2020_12)
+    {
+        return invalid("entry input-schema guard must use JSON Schema draft 2020-12");
+    }
+    if has_remote_ref(schema) {
+        return invalid("entry input-schema guard may only use document-local references");
+    }
+
+    let mut compiler = Compiler::new();
+    compiler.set_default_draft(Draft::V2020_12);
+    compiler
+        .add_resource(ENTRY_SCHEMA_URI, schema.clone())
+        .map_err(|error| CatalogIdentityError::InvalidDefinition {
+            message: format!("entry input-schema guard is invalid: {error}"),
+        })?;
+    let mut schemas = Schemas::new();
+    compiler
+        .compile(ENTRY_SCHEMA_URI, &mut schemas)
+        .map_err(|error| CatalogIdentityError::InvalidDefinition {
+            message: format!("entry input-schema guard is invalid: {error}"),
+        })?;
+    Ok(())
+}
+
+fn has_remote_ref(value: &Value) -> bool {
+    match value {
+        Value::Array(values) => values.iter().any(has_remote_ref),
+        Value::Object(values) => values.iter().any(|(key, value)| {
+            (key == "$ref"
+                && value
+                    .as_str()
+                    .is_none_or(|reference| !reference.starts_with('#')))
+                || has_remote_ref(value)
+        }),
+        _ => false,
+    }
+}
+
+fn reachable_from(
+    start: &ExecutionNodeId,
+    nodes: &[ExecutionPlanNode],
+    edges: &[ExecutionPlanEdge],
+    stop_at_release: bool,
+) -> BTreeSet<ExecutionNodeId> {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![start.clone()];
+    while let Some(node_id) = stack.pop() {
+        if !seen.insert(node_id.clone()) {
+            continue;
+        }
+        if stop_at_release
+            && nodes.iter().any(|node| {
+                node.local_node_id == node_id
+                    && matches!(node.node_type.as_str(), "respond" | "fail")
+            })
+        {
+            continue;
+        }
+        stack.extend(
+            edges
+                .iter()
+                .filter(|edge| edge.source == node_id)
+                .map(|edge| edge.destination.clone()),
+        );
+    }
+    seen
+}
+
+fn valid_flow_slug(value: &str) -> bool {
+    let alphanumeric = |byte: u8| byte.is_ascii_lowercase() || byte.is_ascii_digit();
+    let bytes = value.as_bytes();
+    bytes
+        .iter()
+        .all(|byte| alphanumeric(*byte) || *byte == b'-')
+        && bytes.first().copied().is_some_and(alphanumeric)
+        && bytes.last().copied().is_some_and(alphanumeric)
+}
+
+fn invalid<T>(message: impl Into<String>) -> Result<T, CatalogIdentityError> {
     Err(CatalogIdentityError::InvalidDefinition {
-        message: message.to_string(),
+        message: message.into(),
     })
 }
 
@@ -579,360 +622,414 @@ mod tests {
     const DIGEST_B: &str =
         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-    fn path(value: &str) -> ExecutionNodePath {
-        value.parse().unwrap()
+    fn node_id(value: &str) -> ExecutionNodeId {
+        ExecutionNodeId::new(value).unwrap()
     }
 
-    fn plan(reverse_unordered_members: bool) -> ExecutionPlanV2 {
-        let node = |path_value: &str, source: &str, node_type: &str| ExecutionPlanNode {
-            path: path(path_value),
-            source_artifact_hash: source.into(),
-            source_node_id: path_value.replace('/', "-"),
+    fn runtime_revision() -> ExecutionRuntimeRevision {
+        ExecutionRuntimeRevision {
+            flowrunner_component_digest: DIGEST_B.into(),
+            effect_provider_revision: DIGEST_A.into(),
+            host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.into(),
+        }
+    }
+
+    fn node(id: &str, node_type: &str, config: Value) -> ExecutionPlanNode {
+        ExecutionPlanNode {
+            local_node_id: node_id(id),
+            source_node_id: id.into(),
             node_type: node_type.into(),
-            config: serde_json::json!({}),
+            config,
             effect_policy: ExecutionEffectPolicy::Pure,
             source_connection_requirement: None,
-        };
-        let mut descriptor = ConnectionTypeDescriptor::http_v1();
-        if reverse_unordered_members {
-            descriptor.field_ownership.reverse();
         }
-        let mut nodes = vec![
-            node("entry", DIGEST_A, "event"),
-            ExecutionPlanNode {
-                source_connection_requirement: Some(ExecutionConnectionRequirement {
-                    name: "database".into(),
-                    descriptor,
-                }),
-                ..node("call-a", DIGEST_A, "call-flow")
+    }
+
+    fn source_map(nodes: &[ExecutionPlanNode]) -> Vec<ExecutionSourceMapEntry> {
+        nodes
+            .iter()
+            .map(|node| ExecutionSourceMapEntry {
+                local_node_id: node.local_node_id.clone(),
+                source_node_id: node.source_node_id.clone(),
+            })
+            .collect()
+    }
+
+    fn event_plan() -> ExecutionPlanV2 {
+        let nodes = vec![node("entry", "event", serde_json::json!({}))];
+        ExecutionPlanV2::new(
+            runtime_revision(),
+            DIGEST_A,
+            ExecutionPlanBody {
+                entry_instruction: node_id("entry"),
+                source_map: source_map(&nodes),
+                nodes,
+                edges: Vec::new(),
+                root_terminal_behavior: RootTerminalBehavior::FrontierExhaustion,
+                entry_input_schema_guard: Value::Bool(true),
+                callable_contract: None,
             },
-            node("call-b", DIGEST_A, "call-flow"),
-            node("call-a/entry", DIGEST_B, "request"),
-            node("call-a/respond", DIGEST_B, "respond"),
-            node("call-b/entry", DIGEST_B, "request"),
-            node("call-b/respond", DIGEST_B, "respond"),
+        )
+        .unwrap()
+    }
+
+    fn request_plan() -> ExecutionPlanV2 {
+        let guard = serde_json::json!({
+            "$schema": JSON_SCHEMA_2020_12,
+            "type": "object",
+            "properties": {"name": {"type": "string"}}
+        });
+        let nodes = vec![
+            node(
+                "request",
+                "request",
+                serde_json::json!({"input-schema": guard}),
+            ),
+            node("respond-z", "respond", serde_json::json!({"status": 200})),
+            node("respond-a", "respond", serde_json::json!({"status": 201})),
         ];
-        let mut edges = vec![
+        let edges = vec![
             ExecutionPlanEdge {
-                source: path("entry"),
+                source: node_id("request"),
                 source_port: "main".into(),
-                destination: path("call-a"),
-                destination_port: Some("main".into()),
+                destination: node_id("respond-z"),
+                destination_port: None,
                 fan_out_ordinal: 0,
             },
             ExecutionPlanEdge {
-                source: path("entry"),
+                source: node_id("request"),
                 source_port: "main".into(),
-                destination: path("call-b"),
-                destination_port: Some("main".into()),
+                destination: node_id("respond-a"),
+                destination_port: None,
                 fan_out_ordinal: 1,
             },
         ];
-        let continuation = ReturnContinuation {
-            destination: path("entry"),
-            destination_port: "main".into(),
-        };
-        let mut synthetic_instructions = vec![
-            SyntheticInstruction::CallEnter {
-                call_path: path("call-a"),
-                callee_entry: path("call-a/entry"),
-                input_guard: path("call-a/entry"),
-            },
-            SyntheticInstruction::CallReturn {
-                call_path: path("call-a"),
-                callee_respond: path("call-a/respond"),
-                continuation: continuation.clone(),
-            },
-            SyntheticInstruction::CallEnter {
-                call_path: path("call-b"),
-                callee_entry: path("call-b/entry"),
-                input_guard: path("call-b/entry"),
-            },
-            SyntheticInstruction::CallReturn {
-                call_path: path("call-b"),
-                callee_respond: path("call-b/respond"),
-                continuation: continuation.clone(),
-            },
-        ];
-        let mut input_schema_guards = vec![
-            RuntimeInputSchemaGuard {
-                path: path("call-a/entry"),
-                schema: serde_json::json!({"type": "object"}),
-            },
-            RuntimeInputSchemaGuard {
-                path: path("call-b/entry"),
-                schema: serde_json::json!({"type": "string"}),
-            },
-        ];
-        let mut call_frames = vec![
-            CallFrameMetadata {
-                call_path: path("call-a"),
-                callee_artifact_hash: DIGEST_B.into(),
-                return_continuation: continuation.clone(),
-            },
-            CallFrameMetadata {
-                call_path: path("call-b"),
-                callee_artifact_hash: DIGEST_B.into(),
-                return_continuation: continuation,
-            },
-        ];
-        let mut source_map = nodes
-            .iter()
-            .map(|node| ExecutionSourceMapEntry {
-                path: node.path.clone(),
-                source_artifact_hash: node.source_artifact_hash.clone(),
-                source_node_id: node.source_node_id.clone(),
-            })
-            .collect::<Vec<_>>();
-        if reverse_unordered_members {
-            nodes.reverse();
-            edges.reverse();
-            synthetic_instructions.reverse();
-            input_schema_guards.reverse();
-            call_frames.reverse();
-            source_map.reverse();
-        }
+        let entry_input_schema_guard = nodes[0].config["input-schema"].clone();
+        let callable_contract = Some(CallableContract {
+            version: CALLABLE_CONTRACT_VERSION.into(),
+            input_schema_hash: entry_input_schema_hash(&entry_input_schema_guard),
+            return_contract: CallableReturnContract::UntypedJsonBody,
+            effect_ceiling: CallableEffectCeiling::Effectful,
+        });
         ExecutionPlanV2::new(
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: DIGEST_B.into(),
-                effect_provider_revision: DIGEST_A.into(),
-                host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.into(),
-            },
+            runtime_revision(),
             DIGEST_A,
             ExecutionPlanBody {
-                entry_instruction: path("entry"),
+                entry_instruction: node_id("request"),
+                source_map: source_map(&nodes),
                 nodes,
                 edges,
-                root_terminal_behavior: RootTerminalBehavior::FrontierExhaustion,
-                synthetic_instructions,
-                input_schema_guards,
-                call_frames,
-                source_map,
+                root_terminal_behavior: RootTerminalBehavior::Respond {
+                    responders: vec![node_id("respond-z"), node_id("respond-a")],
+                },
+                entry_input_schema_guard,
+                callable_contract,
             },
         )
         .unwrap()
     }
 
-    fn minimal_plan() -> ExecutionPlanV2 {
-        ExecutionPlanV2::new(
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: DIGEST_B.into(),
-                effect_provider_revision: DIGEST_A.into(),
-                host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.into(),
-            },
-            DIGEST_A,
-            ExecutionPlanBody {
-                entry_instruction: path("entry"),
-                nodes: vec![ExecutionPlanNode {
-                    path: path("entry"),
-                    source_artifact_hash: DIGEST_A.into(),
-                    source_node_id: "entry".into(),
-                    node_type: "event".into(),
-                    config: serde_json::json!({}),
-                    effect_policy: ExecutionEffectPolicy::Pure,
-                    source_connection_requirement: None,
-                }],
-                edges: Vec::new(),
-                root_terminal_behavior: RootTerminalBehavior::FrontierExhaustion,
-                synthetic_instructions: Vec::new(),
-                input_schema_guards: Vec::new(),
-                call_frames: Vec::new(),
-                source_map: vec![ExecutionSourceMapEntry {
-                    path: path("entry"),
-                    source_artifact_hash: DIGEST_A.into(),
-                    source_node_id: "entry".into(),
-                }],
-            },
-        )
-        .unwrap()
+    fn exact_bytes(plan: &ExecutionPlanV2) -> Vec<u8> {
+        serde_json::to_vec(plan).unwrap()
     }
 
     #[test]
-    fn rfc8785_bytes_match_utf16_key_and_ecmascript_number_vector() {
-        let input: Value = serde_json::from_str(
-            r#"{"ordering":{"€":"Euro Sign","\r":"Carriage Return","דּ":"Hebrew Letter Dalet With Dagesh","1":"One","😀":"Emoji: Grinning Face","":"Control","ö":"Latin Small Letter O With Diaeresis"},"numbers":[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001]}"#,
-        )
-        .unwrap();
+    fn own_flow_wire_has_exact_required_members_and_no_removed_shape() {
+        let encoded = serde_json::to_value(event_plan()).unwrap();
+        let header = encoded["header"].as_object().unwrap();
         assert_eq!(
-            input["numbers"][0].as_f64().unwrap().to_bits(),
-            333_333_333.333_333_3_f64.to_bits(),
-            "RFC 8785 input must parse to the same IEEE-754 value as ECMAScript",
+            header.keys().cloned().collect::<BTreeSet<_>>(),
+            [
+                "format-version",
+                "plan-compiler-revision",
+                "root-artifact-hash",
+                "runtime-revision",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
         );
-        let expected = r#"{"numbers":[333333333.3333333,1e+30,4.5,0.002,1e-27],"ordering":{"\r":"Carriage Return","1":"One","":"Control","ö":"Latin Small Letter O With Diaeresis","€":"Euro Sign","😀":"Emoji: Grinning Face","דּ":"Hebrew Letter Dalet With Dagesh"}}"#;
-        assert_eq!(canonical_serialized(&input), expected.as_bytes());
-    }
-
-    #[test]
-    fn minimal_plan_has_frozen_exact_bytes_and_hash() {
-        let expected = br#"{"body":{"call-frames":[],"edges":[],"entry-instruction":["entry"],"input-schema-guards":[],"nodes":[{"config":{},"effect-policy":"pure","path":["entry"],"source-artifact-hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source-node-id":"entry","type":"event"}],"root-terminal-behavior":{"kind":"frontier-exhaustion"},"source-map":[{"path":["entry"],"source-artifact-hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","source-node-id":"entry"}],"synthetic-instructions":[]},"header":{"format-version":"0.1","root-artifact-hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runtime-revision":{"effect-provider-revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","flowrunner-component-digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","host-effect-contract-version":"0.1"}}}"#;
-        let plan = minimal_plan();
-        assert_eq!(plan.canonical_bytes().unwrap(), expected);
+        assert_eq!(header["format-version"], "0.1");
+        assert_eq!(header["plan-compiler-revision"], "0.1");
         assert_eq!(
-            plan.execution_bundle_hash().unwrap(),
-            "sha256:3724f5785c83c68640e1727695e54cc93f04a6d1eddf4c8e061c85025e985c49"
+            header["runtime-revision"]["host-effect-contract-version"],
+            "0.1"
         );
-    }
-
-    #[test]
-    fn request_root_responders_are_complete_sorted_unique_and_nonempty() {
-        let mut source = minimal_plan();
-        source.body.nodes[0].node_type = "request".into();
-        for responder in ["respond-z", "respond-a"] {
-            source.body.nodes.push(ExecutionPlanNode {
-                path: path(responder),
-                source_artifact_hash: DIGEST_A.into(),
-                source_node_id: responder.into(),
-                node_type: "respond".into(),
-                config: serde_json::json!({}),
-                effect_policy: ExecutionEffectPolicy::Pure,
-                source_connection_requirement: None,
-            });
-            source.body.source_map.push(ExecutionSourceMapEntry {
-                path: path(responder),
-                source_artifact_hash: DIGEST_A.into(),
-                source_node_id: responder.into(),
-            });
-        }
-        source.body.root_terminal_behavior = RootTerminalBehavior::Respond {
-            paths: vec![path("respond-z"), path("respond-a")],
-        };
-
-        let canonical = source.into_canonical().unwrap();
-        let RootTerminalBehavior::Respond { paths } = &canonical.body.root_terminal_behavior else {
-            panic!("request plan must retain responder terminals");
-        };
-        assert_eq!(paths, &vec![path("respond-a"), path("respond-z")]);
-
-        let mut duplicate = canonical.clone();
-        duplicate.body.root_terminal_behavior = RootTerminalBehavior::Respond {
-            paths: vec![path("respond-a"), path("respond-a")],
-        };
-        assert!(duplicate.canonical_bytes().is_err());
-
-        let mut omitted = canonical.clone();
-        omitted.body.root_terminal_behavior = RootTerminalBehavior::Respond {
-            paths: vec![path("respond-a")],
-        };
-        assert!(omitted.canonical_bytes().is_err());
-        let omitted_bytes = canonical_serialized(&omitted);
-        assert!(ExecutionPlanV2::from_canonical_bytes(&omitted_bytes).is_err());
-
-        let mut empty = canonical;
-        empty.body.root_terminal_behavior = RootTerminalBehavior::Respond { paths: Vec::new() };
-        assert!(empty.canonical_bytes().is_err());
-    }
-
-    #[test]
-    fn exact_canonical_bytes_round_trip_and_normalize_named_collections() {
-        let canonical = plan(false);
-        let reversed = plan(true);
+        let body = encoded["body"].as_object().unwrap();
         assert_eq!(
-            canonical.canonical_bytes().unwrap(),
-            reversed.canonical_bytes().unwrap()
+            body.keys().cloned().collect::<BTreeSet<_>>(),
+            [
+                "callable-contract",
+                "edges",
+                "entry-input-schema-guard",
+                "entry-instruction",
+                "nodes",
+                "root-terminal-behavior",
+                "source-map",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
         );
-        assert_eq!(
-            canonical.execution_bundle_hash().unwrap(),
-            reversed.execution_bundle_hash().unwrap()
-        );
-        assert_eq!(
-            ExecutionPlanV2::from_canonical_bytes(&canonical.canonical_bytes().unwrap()).unwrap(),
-            canonical
-        );
-    }
+        assert!(encoded["body"]["entry-instruction"].is_string());
+        assert!(encoded["body"]["callable-contract"].is_null());
+        let node = encoded["body"]["nodes"][0].as_object().unwrap();
+        assert!(node.contains_key("local-node-id"));
+        assert!(!node.contains_key("path"));
+        assert!(!node.contains_key("source-artifact-hash"));
 
-    #[test]
-    fn edge_and_return_continuation_mutations_change_the_bundle_hash() {
-        let original = plan(false);
-        let mut destination_mutation = original.clone();
-        destination_mutation.body.edges[0].destination = path("call-b");
-        let mut ordinal_mutation = original.clone();
-        ordinal_mutation.body.edges[0].fan_out_ordinal = 2;
-        let mut return_mutation = original.clone();
-        let call_path = return_mutation
-            .body
-            .synthetic_instructions
-            .iter_mut()
-            .find_map(|instruction| match instruction {
-                SyntheticInstruction::CallReturn {
-                    call_path,
-                    continuation,
-                    ..
-                } => {
-                    continuation.destination_port = "error".into();
-                    Some(call_path.clone())
-                }
-                SyntheticInstruction::CallEnter { .. } => None,
+        let request = serde_json::to_value(request_plan()).unwrap();
+        assert_eq!(
+            request["body"]["root-terminal-behavior"],
+            serde_json::json!({
+                "kind": "respond",
+                "responders": ["respond-z", "respond-a"]
             })
-            .expect("fixture contains a call return");
-        return_mutation
-            .body
-            .call_frames
-            .iter_mut()
-            .find(|frame| frame.call_path == call_path)
-            .expect("fixture return has a call frame")
-            .return_continuation
-            .destination_port = "error".into();
-        assert_ne!(
-            original.execution_bundle_hash().unwrap(),
-            destination_mutation.execution_bundle_hash().unwrap()
         );
-        assert_ne!(
-            original.execution_bundle_hash().unwrap(),
-            ordinal_mutation.execution_bundle_hash().unwrap()
-        );
-        assert_ne!(
-            original.execution_bundle_hash().unwrap(),
-            return_mutation.execution_bundle_hash().unwrap()
-        );
-    }
-
-    #[test]
-    fn every_embedded_path_and_source_mapping_is_cross_checked() {
-        let original = plan(false);
-
-        let mut missing_terminal = original.clone();
-        missing_terminal.body.root_terminal_behavior = RootTerminalBehavior::Respond {
-            paths: vec![path("missing")],
-        };
-        assert!(missing_terminal.validate().is_err());
-
-        let mut missing_synthetic_target = original.clone();
-        let continuation = missing_synthetic_target
-            .body
-            .synthetic_instructions
-            .iter_mut()
-            .find_map(|instruction| match instruction {
-                SyntheticInstruction::CallReturn { continuation, .. } => Some(continuation),
-                SyntheticInstruction::CallEnter { .. } => None,
+        assert_eq!(
+            request["body"]["callable-contract"],
+            serde_json::json!({
+                "version": "0.1",
+                "input-schema-hash": entry_input_schema_hash(
+                    &request_plan().body.entry_input_schema_guard
+                ),
+                "return-contract": "untyped-json-body",
+                "effect-ceiling": "effectful"
             })
-            .expect("fixture contains a call return");
-        continuation.destination = path("missing");
-        assert!(missing_synthetic_target.validate().is_err());
-
-        let mut incomplete_source_map = original.clone();
-        incomplete_source_map.body.source_map.pop();
-        assert!(incomplete_source_map.validate().is_err());
-
-        let mut mismatched_source_map = original;
-        mismatched_source_map.body.source_map[0].source_node_id = "other".into();
-        assert!(mismatched_source_map.validate().is_err());
+        );
     }
 
     #[test]
-    fn semantic_array_order_is_retained_in_plan_identity() {
-        let original = plan(false);
-        let mut reordered = original.clone();
-        reordered.body.nodes[0].config = serde_json::json!({"steps": ["first", "second"]});
-        let first = reordered.execution_bundle_hash().unwrap();
-        reordered.body.nodes[0].config = serde_json::json!({"steps": ["second", "first"]});
-        assert_ne!(first, reordered.execution_bundle_hash().unwrap());
+    fn call_flow_node_has_exact_site_flow_id_contract() {
+        let mut plan = event_plan();
+        plan.body.nodes.push(ExecutionPlanNode {
+            local_node_id: node_id("call-site"),
+            source_node_id: "call-site".into(),
+            node_type: "call-flow".into(),
+            config: serde_json::json!({"site": "call-site", "flow-id": "callee-flow"}),
+            effect_policy: ExecutionEffectPolicy::Effectful,
+            source_connection_requirement: None,
+        });
+        plan.body.edges.push(ExecutionPlanEdge {
+            source: node_id("entry"),
+            source_port: "main".into(),
+            destination: node_id("call-site"),
+            destination_port: None,
+            fan_out_ordinal: 0,
+        });
+        plan.body.source_map.push(ExecutionSourceMapEntry {
+            local_node_id: node_id("call-site"),
+            source_node_id: "call-site".into(),
+        });
+        assert!(plan.validate().is_ok());
+
+        let mut wrong_site = plan.clone();
+        wrong_site.body.nodes[1].config["site"] = Value::String("entry".into());
+        assert!(wrong_site.validate().is_err());
+
+        let mut pure = plan.clone();
+        pure.body.nodes[1].effect_policy = ExecutionEffectPolicy::Pure;
+        assert!(pure.validate().is_err());
+
+        let mut extra = plan;
+        extra.body.nodes[1].config["callee-hash"] = Value::String(DIGEST_B.into());
+        assert!(extra.validate().is_err());
     }
 
     #[test]
-    fn wrong_host_contract_version_cannot_acquire_a_bundle_hash() {
-        let mut invalid = plan(false);
-        invalid.header.runtime_revision.host_effect_contract_version = "0.2".into();
-        assert!(invalid.canonical_bytes().is_err());
-        assert!(invalid.execution_bundle_hash().is_err());
+    fn entry_guard_and_callable_contract_are_consistent() {
+        let plan = request_plan();
+        assert_eq!(
+            plan.body
+                .callable_contract
+                .as_ref()
+                .unwrap()
+                .input_schema_hash,
+            entry_input_schema_hash(&plan.body.entry_input_schema_guard)
+        );
+
+        let mut wrong_hash = plan.clone();
+        wrong_hash
+            .body
+            .callable_contract
+            .as_mut()
+            .unwrap()
+            .input_schema_hash = DIGEST_B.into();
+        assert!(wrong_hash.validate().is_err());
+
+        let mut missing = plan.clone();
+        missing.body.callable_contract = None;
+        assert!(missing.validate().is_err());
+
+        let mut noncallable = plan;
+        noncallable.body.edges.push(ExecutionPlanEdge {
+            source: node_id("respond-a"),
+            source_port: "main".into(),
+            destination: node_id("respond-z"),
+            destination_port: None,
+            fan_out_ordinal: 0,
+        });
+        noncallable.body.callable_contract = None;
+        assert!(noncallable.validate().is_ok());
+    }
+
+    #[test]
+    fn callable_contract_allows_failure_paths_and_answerable_cycles() {
+        let mut failure_path = request_plan();
+        failure_path
+            .body
+            .nodes
+            .push(node("fail", "fail", serde_json::json!({})));
+        failure_path.body.edges.push(ExecutionPlanEdge {
+            source: node_id("request"),
+            source_port: "main".into(),
+            destination: node_id("fail"),
+            destination_port: None,
+            fan_out_ordinal: 2,
+        });
+        failure_path.body.source_map = source_map(&failure_path.body.nodes);
+        assert!(failure_path.validate().is_ok());
+
+        let mut answerable_cycle = request_plan();
+        answerable_cycle.body.nodes.extend([
+            node("cycle-a", "map", serde_json::json!({})),
+            node("cycle-b", "map", serde_json::json!({})),
+        ]);
+        answerable_cycle.body.edges.extend([
+            ExecutionPlanEdge {
+                source: node_id("request"),
+                source_port: "main".into(),
+                destination: node_id("cycle-a"),
+                destination_port: None,
+                fan_out_ordinal: 2,
+            },
+            ExecutionPlanEdge {
+                source: node_id("cycle-a"),
+                source_port: "main".into(),
+                destination: node_id("cycle-b"),
+                destination_port: None,
+                fan_out_ordinal: 0,
+            },
+            ExecutionPlanEdge {
+                source: node_id("cycle-b"),
+                source_port: "main".into(),
+                destination: node_id("cycle-a"),
+                destination_port: None,
+                fan_out_ordinal: 0,
+            },
+            ExecutionPlanEdge {
+                source: node_id("cycle-b"),
+                source_port: "main".into(),
+                destination: node_id("respond-z"),
+                destination_port: None,
+                fan_out_ordinal: 1,
+            },
+        ]);
+        answerable_cycle.body.source_map = source_map(&answerable_cycle.body.nodes);
+        assert!(answerable_cycle.validate().is_ok());
+
+        answerable_cycle.body.edges.pop();
+        answerable_cycle.body.callable_contract = None;
+        assert!(answerable_cycle.validate().is_ok());
+    }
+
+    #[test]
+    fn source_map_bijectively_covers_local_nodes() {
+        let mut missing = request_plan();
+        missing.body.source_map.pop();
+        assert!(missing.validate().is_err());
+
+        let mut duplicate = request_plan();
+        duplicate.body.source_map[1].local_node_id = node_id("request");
+        assert!(duplicate.validate().is_err());
+
+        let mut mismatch = request_plan();
+        mismatch.body.source_map[0].source_node_id = "other".into();
+        assert!(mismatch.validate().is_err());
+    }
+
+    #[test]
+    fn exact_byte_reader_hashes_before_parse() {
+        let malformed = b"this is not JSON";
+        let mismatched = DIGEST_A;
+        assert_eq!(
+            read_execution_plan(mismatched, malformed),
+            Err(CatalogIdentityError::ExecutionBundleHashMismatch)
+        );
+
+        let matching = execution_bundle_hash(malformed);
+        assert!(matches!(
+            read_execution_plan(&matching, malformed),
+            Err(CatalogIdentityError::InvalidDefinition { .. })
+        ));
+    }
+
+    #[test]
+    fn exact_byte_reader_accepts_matching_hash_noncanonical_json() {
+        let plan = request_plan();
+        let bytes = serde_json::to_vec_pretty(&plan).unwrap();
+        let hash = execution_bundle_hash(&bytes);
+        assert_eq!(read_execution_plan(&hash, &bytes).unwrap(), plan);
+    }
+
+    #[test]
+    fn exact_byte_reader_rejects_semantic_invalid_after_hash_success() {
+        let mut value = serde_json::to_value(event_plan()).unwrap();
+        value["header"]["format-version"] = Value::String("0.2".into());
+        let bytes = serde_json::to_vec(&value).unwrap();
+        let hash = execution_bundle_hash(&bytes);
+        assert!(matches!(
+            read_execution_plan(&hash, &bytes),
+            Err(CatalogIdentityError::InvalidDefinition { .. })
+        ));
+    }
+
+    #[test]
+    fn exact_byte_reader_requires_nullable_contract_field_and_rejects_removed_shape() {
+        let mut missing = serde_json::to_value(event_plan()).unwrap();
+        missing["body"]
+            .as_object_mut()
+            .unwrap()
+            .remove("callable-contract");
+        let bytes = serde_json::to_vec(&missing).unwrap();
+        assert!(read_execution_plan(&execution_bundle_hash(&bytes), &bytes).is_err());
+
+        let mut obsolete = serde_json::to_value(event_plan()).unwrap();
+        obsolete["body"]["synthetic-instructions"] = Value::Array(Vec::new());
+        let bytes = serde_json::to_vec(&obsolete).unwrap();
+        assert!(read_execution_plan(&execution_bundle_hash(&bytes), &bytes).is_err());
+    }
+
+    #[test]
+    fn exact_byte_hash_changes_with_semantic_array_order() {
+        let plan = request_plan();
+        let original = exact_bytes(&plan);
+        let mut reordered = plan;
+        let RootTerminalBehavior::Respond { responders } =
+            &mut reordered.body.root_terminal_behavior
+        else {
+            panic!("request fixture has responders");
+        };
+        responders.reverse();
+        let changed = exact_bytes(&reordered);
+        assert_ne!(
+            execution_bundle_hash(&original),
+            execution_bundle_hash(&changed)
+        );
+        assert!(read_execution_plan(&execution_bundle_hash(&changed), &changed).is_ok());
+    }
+
+    #[test]
+    fn remote_entry_schema_references_are_refused() {
+        let mut plan = request_plan();
+        plan.body.entry_input_schema_guard =
+            serde_json::json!({"$ref": "https://example.test/schema"});
+        plan.body.nodes[0].config["input-schema"] = plan.body.entry_input_schema_guard.clone();
+        plan.body
+            .callable_contract
+            .as_mut()
+            .unwrap()
+            .input_schema_hash = entry_input_schema_hash(&plan.body.entry_input_schema_guard);
+        assert!(plan.validate().is_err());
     }
 }

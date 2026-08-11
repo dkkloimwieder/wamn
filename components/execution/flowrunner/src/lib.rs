@@ -315,7 +315,7 @@ fn classify_pinned_artifact_lineage(
 /// one-sided marker returns only the invalid-source row, so it cannot fall
 /// through to another lineage. The draft branch rebinds every persisted run
 /// claim to one immutable `validated_flow_drafts` row, joins its exact bytes
-/// from `execution_bundles`, and verifies the canonical plan, bundle hash, and
+/// from `execution_bundles`, and verifies the plan, bundle hash, and
 /// root artifact. The release branch returns no executable bytes and the loader
 /// refuses it until release and run plan pinning land. Neither branch reads the
 /// mutable `flows` or `flow_drafts` heads.
@@ -415,15 +415,8 @@ fn load_execution_plan(run_id: &str) -> Result<wamn_catalog::ExecutionPlanV2, St
         .ok_or("validated draft omits execution bundle hash")?;
     let artifact_hash = optional_string(4, "validated_flow_drafts.draft_artifact_hash")?
         .ok_or("validated draft omits artifact hash")?;
-    let plan = wamn_catalog::ExecutionPlanV2::from_canonical_bytes(exact_bytes)
+    let plan = wamn_catalog::read_execution_plan(bundle_hash, exact_bytes)
         .map_err(|error| format!("execution plan verification: {error}"))?;
-    if plan
-        .execution_bundle_hash()
-        .map_err(|error| error.to_string())?
-        != bundle_hash
-    {
-        return Err("execution bundle hash differs from its exact bytes".to_string());
-    }
     if plan.header.root_artifact_hash != artifact_hash {
         return Err("execution plan root artifact differs from the validated draft".to_string());
     }

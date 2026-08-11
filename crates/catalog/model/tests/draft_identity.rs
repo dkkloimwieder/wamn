@@ -2,7 +2,7 @@ use wamn_catalog::{
     Artifact, DraftArtifact, ExecutionEffectPolicy, ExecutionPlanBody, ExecutionPlanEdge,
     ExecutionPlanNode, ExecutionPlanV2, ExecutionRuntimeRevision, PinnedDraftArtifact,
     RootTerminalBehavior, StoredValidatedDraftContext, ValidatedDraftIdentity,
-    ValidatedDraftIdentityInput,
+    ValidatedDraftIdentityInput, execution_bundle_hash,
 };
 use wamn_flow::Flow;
 use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
@@ -47,8 +47,7 @@ fn plan(root_artifact_hash: &str) -> ExecutionPlanV2 {
             nodes: [("entry", "event"), ("step", "custom")]
                 .into_iter()
                 .map(|(node_id, node_type)| ExecutionPlanNode {
-                    path: node_id.parse().unwrap(),
-                    source_artifact_hash: root_artifact_hash.into(),
+                    local_node_id: node_id.parse().unwrap(),
                     source_node_id: node_id.into(),
                     node_type: node_type.into(),
                     config: serde_json::json!({}),
@@ -64,14 +63,12 @@ fn plan(root_artifact_hash: &str) -> ExecutionPlanV2 {
                 fan_out_ordinal: 0,
             }],
             root_terminal_behavior: RootTerminalBehavior::FrontierExhaustion,
-            synthetic_instructions: Vec::new(),
-            input_schema_guards: Vec::new(),
-            call_frames: Vec::new(),
+            entry_input_schema_guard: serde_json::Value::Bool(true),
+            callable_contract: None,
             source_map: ["entry", "step"]
                 .into_iter()
                 .map(|node_id| wamn_catalog::ExecutionSourceMapEntry {
-                    path: node_id.parse().unwrap(),
-                    source_artifact_hash: root_artifact_hash.into(),
+                    local_node_id: node_id.parse().unwrap(),
                     source_node_id: node_id.into(),
                 })
                 .collect(),
@@ -108,7 +105,8 @@ fn draft_binds_the_slim_artifact_to_the_only_execution_plan() {
 fn persisted_draft_reverifies_exact_plan_bytes_hash_and_composite_identity() {
     let draft = draft();
     let graph = flow(7);
-    let bundle_hash = draft.execution_plan().execution_bundle_hash().unwrap();
+    let bundle_bytes = serde_json::to_vec(draft.execution_plan()).unwrap();
+    let bundle_hash = execution_bundle_hash(&bundle_bytes);
     let identity_input = ValidatedDraftIdentityInput {
         tenant_id: "tenant-a",
         draft_id: "draft-a",
@@ -143,14 +141,14 @@ fn persisted_draft_reverifies_exact_plan_bytes_hash_and_composite_identity() {
         &graph.to_json(),
         draft.artifact().graph_hash(),
         draft.artifact().identity().artifact_hash().as_str(),
-        &draft.execution_plan().canonical_bytes().unwrap(),
+        &bundle_bytes,
         &bundle_hash,
         context,
     )
     .unwrap();
     assert_eq!(pinned.execution_plan(), draft.execution_plan());
 
-    let mut bytes = draft.execution_plan().canonical_bytes().unwrap();
+    let mut bytes = bundle_bytes;
     bytes.push(b' ');
     assert!(
         PinnedDraftArtifact::from_storage(
