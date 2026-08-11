@@ -23,7 +23,8 @@ use wamn_node_manifest::{
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
-const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
+const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";
+const HISTORICAL_IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v1";
 const MODEL_OWNED_NODES: [&str; 0] = [];
 const HISTORICAL_MODEL_OWNED_NODES: [&str; 5] = ["cron", "event", "fail", "request", "respond"];
 const HISTORICAL_RESOLVED_CONTRACT_VERSION: &str = "1";
@@ -1748,7 +1749,12 @@ impl PinnedArtifact {
             .iter()
             .map(|(tag, bytes)| (*tag, bytes.as_slice()))
             .collect::<Vec<_>>();
-        if digest(&frames("artifact", borrowed)) != artifact_hash {
+        if digest(&frames_with_format(
+            HISTORICAL_IDENTITY_FORMAT,
+            "artifact",
+            borrowed,
+        )) != artifact_hash
+        {
             return Err(CatalogIdentityError::ArtifactHashMismatch);
         }
         let occurrence_recovery = conservative_occurrence_recovery_with_model_owned(
@@ -1853,7 +1859,12 @@ impl PinnedArtifact {
             .iter()
             .map(|(tag, bytes)| (*tag, bytes.as_slice()))
             .collect::<Vec<_>>();
-        if digest(&frames("artifact", borrowed)) != artifact_hash {
+        if digest(&frames_with_format(
+            HISTORICAL_IDENTITY_FORMAT,
+            "artifact",
+            borrowed,
+        )) != artifact_hash
+        {
             return Err(CatalogIdentityError::ArtifactHashMismatch);
         }
         interface_bundle.contracts = implementations
@@ -3264,8 +3275,16 @@ impl CatalogHead {
 }
 
 fn frames<'a>(domain: &str, values: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Vec<u8> {
+    frames_with_format(IDENTITY_FORMAT, domain, values)
+}
+
+fn frames_with_format<'a>(
+    format: &[u8],
+    domain: &str,
+    values: impl IntoIterator<Item = (&'a str, &'a [u8])>,
+) -> Vec<u8> {
     let mut output = Vec::new();
-    write_frame(&mut output, IDENTITY_FORMAT);
+    write_frame(&mut output, format);
     write_frame(&mut output, domain.as_bytes());
     for (tag, value) in values {
         write_frame(&mut output, tag.as_bytes());

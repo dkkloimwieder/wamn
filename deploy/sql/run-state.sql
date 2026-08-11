@@ -195,8 +195,8 @@ CREATE TABLE wamn_run.runs (
     result_json     jsonb,
     state_json      jsonb,
     invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb,
-    admission_context_version int NOT NULL DEFAULT 1
-        CHECK (admission_context_version > 0),
+    admission_context_version text NOT NULL DEFAULT '0.1'
+        CHECK (admission_context_version = '0.1'),
     platform_revision text NOT NULL DEFAULT 'legacy',
     idempotency_key text,
     replay_of       text,

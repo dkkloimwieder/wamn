@@ -149,8 +149,8 @@ WITH admitted_artifact AS MATERIALIZED ( \
      WHERE source_run.run_id = $1 \
        AND source_run.trigger_source = 'scenario-draft' \
        AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
-       AND source_run.admission_context_version = 1 \
-       AND source_run.invocation_context ->> 'version' = '1' \
+       AND source_run.admission_context_version = '0.1' \
+       AND source_run.invocation_context ->> 'version' = '0.1' \
        AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
        AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
        AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
@@ -274,8 +274,8 @@ WITH admitted_artifact AS MATERIALIZED ( \
      WHERE source_run.run_id = $1 \
        AND source_run.trigger_source = 'scenario-draft' \
        AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
-       AND source_run.admission_context_version = 1 \
-       AND source_run.invocation_context ->> 'version' = '1' \
+       AND source_run.admission_context_version = '0.1' \
+       AND source_run.invocation_context ->> 'version' = '0.1' \
        AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
        AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
        AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
@@ -1348,8 +1348,8 @@ mod tests {
             assert!(sql.contains("UNION ALL"));
             assert!(sql.contains("source_run.trigger_source = 'scenario-draft'"));
             assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
-            assert!(sql.contains("source_run.admission_context_version = 1"));
-            assert!(sql.contains("source_run.invocation_context ->> 'version' = '1'"));
+            assert!(sql.contains("source_run.admission_context_version = '0.1'"));
+            assert!(sql.contains("source_run.invocation_context ->> 'version' = '0.1'"));
             assert!(sql.contains("trigger_source IS DISTINCT FROM 'scenario-draft'"));
             assert!(sql.contains("#>> '{source,producer}' IS DISTINCT FROM 'draft-scenario'"));
             for pin in [

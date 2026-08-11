@@ -271,7 +271,7 @@ fn artifact_identity_pins_every_graph_interface_and_component_input() {
 
     // Golden bytes kill removal or reordering of any domain-separated frame.
     assert_eq!(
-        baseline_hash, "sha256:90dcaf17e287c670192ca3a7e9257ced5722e69a68ea49b60497221405fe1ac8",
+        baseline_hash, "sha256:3e5774da2b0291db5b82fe248f02aab07b354b8676f3b07c46048d55fc24c429",
         "artifact frame sequence changed"
     );
 }
@@ -390,7 +390,7 @@ fn execution_bundle_identity_pins_every_composition_input() {
     );
     let baseline_hash = baseline.hash();
     assert_eq!(
-        baseline_hash, "sha256:e5516331382be01a7db05682b8aa6ab2076877a47454925308d8d8137b1e0e29",
+        baseline_hash, "sha256:3bda3943650b1833ba7f2efb453264b1ffe779eda519a0e53c2d856cf250e2a5",
         "execution-bundle frame sequence changed"
     );
 
@@ -965,7 +965,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:19fae6e4a1f27b15b9c02f0194944c4c3a7f0f35d51558060ada87df062fa9e1",
+        baseline_hash, "sha256:c88f823a28e1f53ee8217a1a14645ae9aec80e28ab9612c27afeabafdc8565ab",
         "definition frame sequence changed"
     );
 }

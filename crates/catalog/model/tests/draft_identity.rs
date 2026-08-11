@@ -86,7 +86,7 @@ fn execution_bundle_exposes_the_exact_runner_digest_for_instantiate_guarding() {
 fn draft_content_hash_is_pinned_and_stays_version_independent() {
     assert_eq!(
         DraftContentHash::for_flow(&flow(7, 200)).as_str(),
-        "sha256:6f7302483aa0817abc35e2e177e03811b5990236c535d49613cb490cb4dbc7a0",
+        "sha256:032eb39a085cc67cd33cbace3cad2d9147ab7852d77120b5491d1a098dcd5372",
     );
     assert_eq!(
         DraftContentHash::for_flow(&flow(7, 200)),

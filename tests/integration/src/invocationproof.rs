@@ -295,7 +295,7 @@ async fn seed_claimed(
         .await?
         .get(0);
     let invocation_context = json!({
-        "version": 1,
+        "version": "0.1",
         "principal": {
             "tenant-id": TENANT,
             "environment": "proof",

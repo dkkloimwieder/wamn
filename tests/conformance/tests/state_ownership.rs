@@ -18,7 +18,7 @@ const EXTERNAL_AUTHORITIES: [&str; 6] = [
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
-    schema_version: u32,
+    schema_version: String,
     scope: Scope,
     principals: BTreeMap<String, Principal>,
     canonical_sources: Vec<CanonicalSource>,
@@ -197,7 +197,7 @@ fn read_manifest(repository: &Path) -> Manifest {
 }
 
 fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), String> {
-    if manifest.schema_version != 1 {
+    if manifest.schema_version != "0.1" {
         return Err(format!(
             "unsupported state ownership schema version {}",
             manifest.schema_version

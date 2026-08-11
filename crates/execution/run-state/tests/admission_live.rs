@@ -242,7 +242,7 @@ fn admission_live() {
                ASSERT (SELECT invocation_context->'source'->>'registration-hash' FROM wamn_run.runs \
                         WHERE run_id='event-1') = '{}'; \
                ASSERT (SELECT invocation_context->>'version' FROM wamn_run.runs \
-                        WHERE run_id='event-1') = '1'; \
+                        WHERE run_id='event-1') = '0.1'; \
                ASSERT (SELECT invocation_context->'principal'->>'artifact-digest' \
                         FROM wamn_run.runs WHERE run_id='event-1') = 'ah-event'; \
                ASSERT (SELECT invocation_context->'principal'->>'run-id' \

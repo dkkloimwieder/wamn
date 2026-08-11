@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "campaign": "durable-invocation-recovery",
   "bead": "wamn-2jdm.5.1",
   "source": {

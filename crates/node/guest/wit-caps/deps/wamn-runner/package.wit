@@ -3,7 +3,7 @@ package wamn:runner@0.1.0;
 /// Trusted one-frame HTTP effect surface, linked only into flowrunner.
 interface http-effect {
   record invocation-context {
-    version: u32,
+    version: string,
     tenant-id: string,
     environment: string,
     catalog-id: string,

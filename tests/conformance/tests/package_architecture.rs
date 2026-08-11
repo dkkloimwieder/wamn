@@ -111,7 +111,7 @@ struct GraphDelta {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ArchitectureManifest {
-    schema_version: u32,
+    schema_version: String,
     graph_delta: GraphDelta,
     packages: Vec<PackagePolicy>,
     non_cargo_inputs: Vec<NonCargoInput>,
@@ -296,7 +296,7 @@ fn nonempty(value: &str) -> bool {
 
 fn validate_manifest_shape(root: &Path, manifest: &ArchitectureManifest) -> Vec<String> {
     let mut errors = Vec::new();
-    if manifest.schema_version != 1 {
+    if manifest.schema_version != "0.1" {
         errors.push(format!(
             "unsupported package architecture schema version {}",
             manifest.schema_version

@@ -174,8 +174,8 @@ pub fn begin_attempt_sql() -> String {
                                 #>> '{{principal,suite-flow-version}}' \
                             AND r.trigger_source = 'scenario-draft' \
                             AND r.invocation_context #>> '{{source,producer}}' = 'draft-scenario' \
-                            AND r.admission_context_version = 1 \
-                            AND r.invocation_context ->> 'version' = '1' \
+                            AND r.admission_context_version = '0.1' \
+                            AND r.invocation_context ->> 'version' = '0.1' \
                             AND r.invocation_context #>> '{{principal,tenant-id}}' = r.tenant_id \
                             AND r.invocation_context #>> '{{principal,environment}}' = r.environment \
                             AND r.invocation_context #>> '{{principal,catalog-id}}' = r.catalog_id \
@@ -1065,8 +1065,8 @@ mod tests {
         assert!(sql.contains("FROM catalog.validated_flow_drafts AS draft"));
         assert!(sql.contains("r.trigger_source = 'scenario-draft'"));
         assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
-        assert!(sql.contains("r.admission_context_version = 1"));
-        assert!(sql.contains("r.invocation_context ->> 'version' = '1'"));
+        assert!(sql.contains("r.admission_context_version = '0.1'"));
+        assert!(sql.contains("r.invocation_context ->> 'version' = '0.1'"));
         for pin in [
             "draft-id",
             "draft-revision",

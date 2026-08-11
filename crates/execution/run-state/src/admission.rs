@@ -488,7 +488,7 @@ created_run AS ( \
            CASE WHEN c.producer = 'event' THEN c.event_root_run_id END, \
            CASE WHEN c.producer = 'event' THEN c.event_depth END, \
            jsonb_build_object( \
-             'version', 1, \
+             'version', '0.1', \
              'principal', jsonb_build_object( \
                'tenant-id', c.tenant_id, 'environment', c.environment, \
                'catalog-id', c.catalog_id, 'catalog-version', c.expected_catalog_version, \
@@ -499,7 +499,7 @@ created_run AS ( \
                THEN jsonb_set(c.invocation_context, '{registration-hash}', \
                               to_jsonb(c.registration_hash), true) \
                ELSE c.invocation_context END), \
-           1, c.platform_revision, \
+           '0.1', c.platform_revision, \
            CASE WHEN c.producer = 'event' \
              THEN 'evt:' || c.registration_id || ':' || c.event_seq::text END, \
            c.response_deadline_at, c.run_deadline_at \
@@ -663,7 +663,7 @@ mod tests {
         assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
         assert!(sql.contains("a.artifact_hash"));
         for field in [
-            "'version', 1",
+            "'version', '0.1'",
             "'principal'",
             "'tenant-id', c.tenant_id",
             "'environment', c.environment",

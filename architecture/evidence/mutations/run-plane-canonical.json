@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "campaign": "run-plane-canonical",
   "bead": "wamn-l5i9.73",
   "source": {

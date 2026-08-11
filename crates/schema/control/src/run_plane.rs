@@ -107,7 +107,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "runs",
         name: "runs_admission_context_version_check",
-        definition: "CHECK (admission_context_version > 0)",
+        definition: "CHECK (admission_context_version = '0.1'::text)",
         origin: CheckOrigin::Inline("admission_context_version"),
     },
     CheckSpec {

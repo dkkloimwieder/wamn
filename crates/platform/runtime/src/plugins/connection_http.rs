@@ -249,7 +249,7 @@ fn validate_claims(
     requirement_name: &str,
     request: &RelativeRequest,
 ) -> Result<(), EffectError> {
-    if context.version != 1
+    if context.version != "0.1"
         || context.tenant_id != tenant
         || context.run_id.is_empty()
         || context.node_id.is_empty()
@@ -533,7 +533,7 @@ mod tests {
 
     fn context() -> InvocationContext {
         InvocationContext {
-            version: 1,
+            version: "0.1".to_string(),
             tenant_id: "tenant-a".into(),
             environment: "prod".into(),
             catalog_id: "catalog-a".into(),
@@ -782,7 +782,7 @@ mod tests {
             allowed_hosts,
         );
         let context = InvocationContext {
-            version: 1,
+            version: "0.1".to_string(),
             tenant_id: "t1".into(),
             environment: "dev".into(),
             catalog_id: "c-http".into(),

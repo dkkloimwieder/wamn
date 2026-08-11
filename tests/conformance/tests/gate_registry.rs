@@ -20,7 +20,7 @@ const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Registry {
-    schema_version: u32,
+    schema_version: String,
     authority: String,
     registry_owner: String,
     machine_evidence_policy: String,
@@ -312,7 +312,7 @@ fn validate_registry(
     plan: &str,
     root: &Path,
 ) -> Result<(), String> {
-    if registry.schema_version != 1 {
+    if registry.schema_version != "0.1" {
         return Err(format!(
             "unsupported registry schema version {}",
             registry.schema_version
@@ -326,7 +326,7 @@ fn validate_registry(
             .contains("tools/kubernetes-gate-run")
         || !registry
             .machine_evidence_policy
-            .contains("wamn-kubernetes-gate-verdict/v1")
+            .contains("wamn-kubernetes-gate-verdict/v0.1")
         || !registry.machine_evidence_policy.contains("wamn-2jdm.8")
         || !registry.machine_evidence_policy.contains("wamn-2jkm.98")
         || !registry.machine_evidence_policy.contains("wamn-4tob.6.25")

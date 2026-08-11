@@ -285,7 +285,10 @@ fn fresh_positive_job_records_temporal_exit_and_image_evidence() {
         "stderr={}",
         String::from_utf8_lossy(&result.output.stderr)
     );
-    assert_eq!(result.record["protocol"], "wamn-kubernetes-gate-verdict/v1");
+    assert_eq!(
+        result.record["protocol"],
+        "wamn-kubernetes-gate-verdict/v0.1"
+    );
     assert_eq!(result.record["verdict"], "pass");
     assert_eq!(
         result.record["jobs"][0]["observed"]["previous_uid"],

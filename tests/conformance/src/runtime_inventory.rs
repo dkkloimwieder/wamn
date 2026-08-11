@@ -54,7 +54,7 @@ struct WorkloadManifest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Inventory {
-    schema_version: u32,
+    schema_version: String,
     wash_runtime: RuntimePin,
     live_store_paths: BTreeSet<String>,
     consumers: Vec<Consumer>,
@@ -442,7 +442,7 @@ fn validate_workload_policy(path: &str, source: &str, abi: &WorkloadAbi) -> Resu
 fn resolved_feature_and_deployed_workload_inventory_is_current() {
     let root = repository_root();
     let inventory = inventory();
-    assert_eq!(inventory.schema_version, 1);
+    assert_eq!(inventory.schema_version, "0.1");
     let declaration = workspace_wash_runtime_declaration(&root);
     assert!(
         declaration.contains("default-features=false"),

@@ -30,7 +30,7 @@ const CAUSATION_SOURCE_COMMIT: &str = "21c3836fe0536c347355ef21f7d811eb92cc678a"
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidenceRecord {
-    schema_version: u32,
+    schema_version: String,
     campaign: String,
     bead: String,
     source: SourceIdentity,
@@ -97,7 +97,7 @@ fn validate_command(command: &[String], field: &str) -> Result<(), String> {
 }
 
 fn validate_evidence(evidence: &EvidenceRecord) -> Result<(), String> {
-    if evidence.schema_version != 1 {
+    if evidence.schema_version != "0.1" {
         return Err(format!(
             "unsupported mutation evidence schema {}",
             evidence.schema_version
@@ -170,7 +170,7 @@ fn validate_evidence(evidence: &EvidenceRecord) -> Result<(), String> {
 fn evidence_json() -> String {
     format!(
         r#"{{
-          "schema_version": 1,
+          "schema_version": "0.1",
           "campaign": "{DURABLE_CAMPAIGN}",
           "bead": "{DURABLE_BEAD}",
           "source": {{

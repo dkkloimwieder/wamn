@@ -377,12 +377,12 @@ fi
 failure_json=$(printf '%s\n' "${failures[@]}" | jq -Rsc 'split("\n") | map(select(length > 0))')
 jobs_json=$(printf '%s\n' "${job_verdict_records[@]}" | jq -sc '.')
 mkdir -p -- "$(dirname -- "$verdict_record")"
-jq -n --arg protocol "wamn-kubernetes-gate-verdict/v1" \
+jq -n --arg schema_version "0.1" --arg protocol "wamn-kubernetes-gate-verdict/v0.1" \
   --arg manifest "$manifest" --arg namespace "$namespace" --arg run_started_at "$run_started_at" \
   --argjson timeout_seconds "$timeout_secs" --arg verdict "$overall" \
   --argjson failure_classes "$failure_json" --argjson jobs "$jobs_json" \
   --argjson snapshot_probe "$snapshot_verdict_record" \
-  '{schema_version:1,protocol:$protocol,manifest:$manifest,namespace:$namespace,
+  '{schema_version:$schema_version,protocol:$protocol,manifest:$manifest,namespace:$namespace,
     run_started_at:$run_started_at,timeout_seconds:$timeout_seconds,verdict:$verdict,
     failure_classes:$failure_classes,jobs:$jobs,snapshot_probe:$snapshot_probe}' >"$verdict_record"
 

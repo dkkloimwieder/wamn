@@ -25,3 +25,6 @@ mod runtime_inventory;
 
 #[cfg(test)]
 mod schema_drift;
+
+#[cfg(test)]
+mod version_identity;

@@ -432,8 +432,8 @@ WITH classified_run AS MATERIALIZED ( \
        AND d.suite_flow_version::text = \
              r.invocation_context #>> '{principal,suite-flow-version}' \
      WHERE r.artifact_lineage = 'draft' \
-       AND r.admission_context_version = 1 \
-       AND r.invocation_context ->> 'version' = '1' \
+       AND r.admission_context_version = '0.1' \
+       AND r.invocation_context ->> 'version' = '0.1' \
        AND r.invocation_context #>> '{principal,tenant-id}' = r.tenant_id \
        AND r.invocation_context #>> '{principal,environment}' = r.environment \
        AND r.invocation_context #>> '{principal,catalog-id}' = r.catalog_id \
@@ -1447,7 +1447,7 @@ fn dispatch_node_unvalidated(
                 http_effect: match (effect_run, d.connection.as_deref()) {
                     (Some(run), Some(requirement_name)) => {
                         Some(wamn_node_guest::caps::HttpEffectContext {
-                            version: 1,
+                            version: "0.1".to_string(),
                             tenant_id: run.tenant_id.clone(),
                             environment: run.environment.clone(),
                             catalog_id: run.catalog_id.clone(),
@@ -4494,8 +4494,8 @@ mod tests {
             "'{principal,binding-base-artifact-hash}'",
             "d.suite_flow_version::text =",
             "'{principal,suite-flow-version}'",
-            "r.admission_context_version = 1",
-            "r.invocation_context ->> 'version' = '1'",
+            "r.admission_context_version = '0.1'",
+            "r.invocation_context ->> 'version' = '0.1'",
             "'{principal,tenant-id}' = r.tenant_id",
             "'{principal,environment}' = r.environment",
             "'{principal,catalog-id}' = r.catalog_id",

@@ -521,17 +521,17 @@ fn run_state_live() {
            ('t1','dev','manager-dev',1,'run-state live exact-generation control'); \
          INSERT INTO wamn_run.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment,status, \
-            trigger_source,invocation_context,admission_context_version) VALUES \
+           trigger_source,invocation_context,admission_context_version) VALUES \
            ('t1','http-intent','http-flow',1,'c-http',1,'dev','running', \
-            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}',1), \
+            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}','0.1'), \
            ('t1','http-wrong-node','http-flow',1,'c-http',1,'dev','running', \
-            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}',1), \
+            NULL,'{\"principal\":{\"artifact-digest\":\"artifact-http\"}}','0.1'), \
            ('t1','draft-http-granted','http-flow',2,'c-http',1,'dev','running', \
             'scenario-draft', \
-            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-granted\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-granted\"}}',1), \
+            '{\"version\":\"0.1\",\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-granted\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-granted\"}}','0.1'), \
            ('t1','draft-http-mismatch','http-flow',2,'c-http',1,'dev','running', \
             'scenario-draft', \
-            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-mismatch\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-mutant\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-mismatch\"}}',1); \
+            '{\"version\":\"0.1\",\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-mismatch\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-mutant\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-mismatch\"}}','0.1'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','http-intent','worker-http',now()+interval '1 minute',1), \
@@ -636,7 +636,7 @@ fn run_state_live() {
             trigger_source,invocation_context,admission_context_version) VALUES \
            ('t1','draft-http-revoked','http-flow',2,'c-http',1,'dev','running', \
             'scenario-draft', \
-            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-revoked\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-revoked\"}}',1); \
+            '{\"version\":\"0.1\",\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-revoked\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-revoked\"}}','0.1'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','draft-http-revoked','worker-http',now()+interval '1 minute',1);",
@@ -674,7 +674,7 @@ fn run_state_live() {
             trigger_source,invocation_context,admission_context_version) VALUES \
            ('t1','draft-http-successor','http-flow',2,'c-http',1,'dev','running', \
             'scenario-draft', \
-            '{\"version\":1,\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-successor\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-successor\"}}',1); \
+            '{\"version\":\"0.1\",\"principal\":{\"tenant-id\":\"t1\",\"environment\":\"dev\",\"catalog-id\":\"c-http\",\"catalog-version\":1,\"run-id\":\"draft-http-successor\",\"flow-id\":\"http-flow\",\"flow-version\":2,\"artifact-digest\":\"artifact-http-draft\",\"draft-id\":\"draft-http\",\"draft-revision\":1,\"validated-draft-hash\":\"validated-http-draft\",\"execution-bundle-hash\":\"bundle-http-draft\",\"binding-base-artifact-hash\":\"artifact-http\",\"suite-flow-version\":1},\"source\":{\"producer\":\"draft-scenario\",\"suite-id\":\"suite-http\",\"case-id\":\"case-successor\"}}','0.1'); \
          INSERT INTO wamn_run.run_queue \
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) VALUES \
            ('t1','draft-http-successor','worker-http',now()+interval '1 minute',1);",

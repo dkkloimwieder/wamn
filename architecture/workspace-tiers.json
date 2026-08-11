@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,

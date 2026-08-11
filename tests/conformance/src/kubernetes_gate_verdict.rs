@@ -1,15 +1,32 @@
 //! Typed consumer contract for Kubernetes gate verdict records.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 
 /// Stable protocol identifier emitted by `tools/kubernetes-gate-run`.
-pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v1";
+pub const PROTOCOL: &str = "wamn-kubernetes-gate-verdict/v0.1";
+
+fn deserialize_schema_version<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    // Integer syntax is decoded only so preserved rejection fixtures reach the
+    // invariant check; the producer emits text and only textual `0.1` passes.
+    match Value::deserialize(deserializer)? {
+        Value::String(version) => Ok(version),
+        Value::Number(version) if version.is_i64() || version.is_u64() => Ok(version.to_string()),
+        _ => Err(serde::de::Error::custom(
+            "schema_version must be a textual version",
+        )),
+    }
+}
 
 /// A complete aggregate verdict for one freshly applied manifest.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GateVerdictRecord {
-    pub schema_version: u32,
+    #[serde(deserialize_with = "deserialize_schema_version")]
+    pub schema_version: String,
     pub protocol: String,
     pub manifest: String,
     pub namespace: String,
@@ -97,7 +114,7 @@ pub struct SnapshotProbe {
 pub fn parse_verdict_record(bytes: &[u8]) -> Result<GateVerdictRecord, String> {
     let record: GateVerdictRecord =
         serde_json::from_slice(bytes).map_err(|error| format!("invalid record JSON: {error}"))?;
-    if record.schema_version != 1 || record.protocol != PROTOCOL {
+    if record.schema_version != "0.1" || record.protocol != PROTOCOL {
         return Err(format!(
             "unsupported Kubernetes gate record {}/{}",
             record.protocol, record.schema_version
@@ -109,6 +126,21 @@ pub fn parse_verdict_record(bytes: &[u8]) -> Result<GateVerdictRecord, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_version_identity_is_rejected() {
+        let error = parse_verdict_record(
+            br#"{"schema_version":1,"protocol":"wamn-kubernetes-gate-verdict/v1",
+                "manifest":"gate.yaml","namespace":"ns","run_started_at":"now",
+                "timeout_seconds":1,"verdict":"pass","failure_classes":[],"jobs":[],
+                "snapshot_probe":null}"#,
+        )
+        .expect_err("legacy schema and protocol versions must fail closed");
+        assert_eq!(
+            error,
+            "unsupported Kubernetes gate record wamn-kubernetes-gate-verdict/v1/1"
+        );
+    }
 
     #[test]
     fn unknown_record_fields_are_rejected() {

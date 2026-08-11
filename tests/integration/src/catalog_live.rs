@@ -115,7 +115,7 @@ pub(crate) mod tests {
                     &tenant,
                     &"flow",
                     &1_i32,
-                    &"1",
+                    &"0.1",
                     &r#"{"flow-id":"flow"}"#,
                     &"graph-a",
                     &"artifact-a",
@@ -137,8 +137,8 @@ pub(crate) mod tests {
             .execute(
                 "INSERT INTO catalog.catalogs \
                    (tenant_id, catalog_id, version, environment, schema_version, state, document) \
-                 VALUES ($1, 'catalog', 1, 'dev', '1', 'applied', \
-                   '{\"schema-version\":\"1\",\"catalog-id\":\"catalog\",\"version\":1,\"entities\":[]}'::jsonb) \
+                 VALUES ($1, 'catalog', 1, 'dev', '0.1', 'applied', \
+                   '{\"schema-version\":\"0.1\",\"catalog-id\":\"catalog\",\"version\":1,\"entities\":[]}'::jsonb) \
                  ON CONFLICT (tenant_id, catalog_id, version) DO NOTHING",
                 &[&tenant],
             )

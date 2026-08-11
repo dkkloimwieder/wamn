@@ -578,7 +578,7 @@ pub fn admit_pinned_triggered_run_sql() -> String {
            SELECT member.tenant_id, $1, $2, $3, $4, $5::int, $6, '{dispatched}', 'scenario', \
                   $7::text::jsonb, \
                   jsonb_build_object( \
-                    'version', 1, \
+                    'version', '0.1', \
                     'principal', jsonb_build_object( \
                       'tenant-id', member.tenant_id, 'environment', $6::text, \
                       'catalog-id', $4::text, 'catalog-version', $5::int, \
@@ -586,7 +586,7 @@ pub fn admit_pinned_triggered_run_sql() -> String {
                       'flow-version', $3::int, 'artifact-digest', member.artifact_hash), \
                     'source', jsonb_build_object( \
                       'producer', 'scenario', 'suite-id', $8::text, 'case-id', $9::text)), \
-                  1, $11 \
+                  '0.1', $11 \
              FROM release_member AS member \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
            RETURNING tenant_id, run_id \
@@ -696,7 +696,7 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                   d.catalog_version, d.environment, '{dispatched}', 'scenario-draft', \
                   $7::text::jsonb, \
                   jsonb_build_object( \
-                    'version', 1, \
+                    'version', '0.1', \
                     'principal', jsonb_build_object( \
                       'tenant-id', d.tenant_id, 'environment', d.environment, \
                       'catalog-id', d.catalog_id, 'catalog-version', d.catalog_version, \
@@ -711,7 +711,7 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                     'source', jsonb_build_object( \
                       'producer', 'draft-scenario', 'suite-id', $8::text, \
                       'case-id', $9::text)), \
-                  1, $18 \
+                  '0.1', $18 \
              FROM authorized_draft AS d \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
            RETURNING tenant_id, run_id \

@@ -55,7 +55,7 @@ interface causation {
 /// flowrunner; ordinary custom nodes import wamn:connection/http instead.
 interface http-effect {
   record invocation-context {
-    version: u32,
+    version: string,
     tenant-id: string,
     environment: string,
     catalog-id: string,

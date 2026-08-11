@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "campaign": "portable-http-connection-floor",
   "bead": "wamn-ko5r.8",
   "source": {

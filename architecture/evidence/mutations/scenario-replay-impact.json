@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "campaign": "scenario-replay-impact",
   "bead": "wamn-2jdm.5.3",
   "source": {

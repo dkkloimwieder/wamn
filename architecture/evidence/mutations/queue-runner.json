@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": "0.1",
   "campaign": "queue-runner",
   "bead": "wamn-2jdm.5.2",
   "source": {

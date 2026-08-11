@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// The only invocation-context document version currently accepted.
-pub const INVOCATION_CONTEXT_VERSION: u32 = 1;
+pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";
 
 /// Release and artifact identity decided by admission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,7 +148,7 @@ impl HttpEffectPrincipal {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TrustedInvocationContext {
-    version: u32,
+    version: String,
     principal: AdmittedPrincipal,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     http_effect: Option<HttpEffectPrincipal>,
@@ -165,7 +165,7 @@ impl TrustedInvocationContext {
             return Err(InvocationContextError::InvalidSource);
         }
         Ok(Self {
-            version: INVOCATION_CONTEXT_VERSION,
+            version: INVOCATION_CONTEXT_VERSION.to_string(),
             principal,
             http_effect: None,
             source,
@@ -291,12 +291,17 @@ mod tests {
         for invalid in [
             json!({}),
             json!({
-                "version": 2,
+                "version": 1,
                 "principal": serde_json::to_value(principal()).unwrap(),
                 "source": {}
             }),
             json!({
-                "version": 1,
+                "version": "0.2",
+                "principal": serde_json::to_value(principal()).unwrap(),
+                "source": {}
+            }),
+            json!({
+                "version": "0.1",
                 "principal": serde_json::to_value(principal()).unwrap(),
                 "source": {},
                 "permission": "all-http"

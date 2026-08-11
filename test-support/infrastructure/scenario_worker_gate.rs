@@ -645,7 +645,7 @@ async fn assert_scenario_run_pins(
                               AND ($5::text IS NULL OR r.catalog_id = $5) \
                               AND ($6::text IS NULL OR r.environment = $6) \
                               AND ($7::bigint IS NULL OR r.catalog_version = $7) \
-                              AND r.admission_context_version = 1 \
+                              AND r.admission_context_version = '0.1' \
                               AND r.platform_revision <> '' \
                               AND r.invocation_context #>> '{{principal,tenant-id}}' = r.tenant_id \
                               AND r.invocation_context #>> '{{principal,environment}}' = r.environment \

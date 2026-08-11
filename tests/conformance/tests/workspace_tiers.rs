@@ -52,7 +52,7 @@ const SPECIALIZATION_FIXTURES: [(&str, &str); 8] = [
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceTierManifest {
-    schema_version: u32,
+    schema_version: String,
     selection: Selection,
     source_inventory: SourceInventory,
     tiers: Tiers,
@@ -749,7 +749,7 @@ fn workspace_tier_inventory_matches_live_cargo_metadata() {
     let root_names = workspace_names(&root_metadata);
     let component_names = workspace_names(&component_metadata);
 
-    assert_eq!(manifest.schema_version, 1);
+    assert_eq!(manifest.schema_version, "0.1");
     assert_eq!(
         manifest.source_inventory.root_workspace.manifest,
         ROOT_MANIFEST

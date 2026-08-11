@@ -1247,7 +1247,7 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert!(sql.contains("invocation_context"));
     assert!(sql.contains("admission_context_version"));
     for context_field in [
-        "'version', 1",
+        "'version', '0.1'",
         "'principal'",
         "'tenant-id', member.tenant_id",
         "'environment', $6::text",

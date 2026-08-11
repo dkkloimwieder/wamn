@@ -31,7 +31,7 @@ use bindings::wamn::runner::http_effect;
 /// Identity claims passed with one trusted HTTP effect call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpEffectContext {
-    pub version: u32,
+    pub version: String,
     pub tenant_id: String,
     pub environment: String,
     pub catalog_id: String,
@@ -166,7 +166,7 @@ fn trusted_http_effect(
         ));
     }
     let context = http_effect::InvocationContext {
-        version: context.version,
+        version: context.version.clone(),
         tenant_id: context.tenant_id.clone(),
         environment: context.environment.clone(),
         catalog_id: context.catalog_id.clone(),
