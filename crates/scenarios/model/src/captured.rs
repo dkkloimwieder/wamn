@@ -14,6 +14,7 @@ pub struct Captured {
     pub terminal_respond: Option<TerminalRespond>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub typed_flow_failure: Option<FlowFailureKind>,
+    /// Multiplicity-preserving observations projected from frame-keyed node facts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub named_node_terminals: Vec<NamedNodeTerminal>,
 }

@@ -21,6 +21,8 @@ pub enum FlowFailureKind {
     InvalidInput,
     RunawayBudget,
     EffectUncertain,
+    DepthBudget,
+    DispatchBudget,
 }
 
 /// A terminal node status accepted by `named-node-terminal`.
@@ -75,6 +77,8 @@ mod tests {
             (FlowFailureKind::InvalidInput, "invalid-input"),
             (FlowFailureKind::RunawayBudget, "runaway-budget"),
             (FlowFailureKind::EffectUncertain, "effect-uncertain"),
+            (FlowFailureKind::DepthBudget, "depth-budget"),
+            (FlowFailureKind::DispatchBudget, "dispatch-budget"),
         ] {
             assert_wire(value, literal);
         }
@@ -98,5 +102,15 @@ mod tests {
             assert!(serde_json::from_value::<FlowFailureKind>(json!(removed)).is_err());
             assert!(serde_json::from_value::<NodeFailureKind>(json!(removed)).is_err());
         }
+    }
+
+    #[test]
+    fn depth_budget_literal_is_frozen() {
+        assert_wire(FlowFailureKind::DepthBudget, "depth-budget");
+    }
+
+    #[test]
+    fn dispatch_budget_literal_is_frozen() {
+        assert_wire(FlowFailureKind::DispatchBudget, "dispatch-budget");
     }
 }

@@ -332,9 +332,14 @@ mod tests {
             json!({"unknown": {}}),
             json!({"typed-flow-failure": {"kind": "cancelled"}}),
             json!({"named-node-terminal": {
-                "path": ["write"],
+                "flow-id": "orders",
+                "node-id": "write",
                 "status": "error",
                 "failure-kind": "cancelled"
+            }}),
+            json!({"named-node-terminal": {
+                "path": ["write"],
+                "status": "success"
             }}),
         ];
         for assertion in refused {
@@ -353,11 +358,14 @@ mod tests {
             json!({"terminal-respond": {"status": 99, "body": null}}),
             json!({"terminal-respond": {"status": 600, "body": null}}),
             json!({"named-node-terminal": {
-                "path": ["write"],
+                "flow-id": "orders",
+                "node-id": "write",
                 "status": "success",
                 "failure-kind": "terminal"
             }}),
-            json!({"named-node-terminal": {"path": ["write"], "status": "error"}}),
+            json!({"named-node-terminal": {
+                "flow-id": "orders", "node-id": "write", "status": "error"
+            }}),
         ] {
             refusal(
                 &definition(vec![json!({
@@ -376,7 +384,8 @@ mod tests {
             "case-id": "success",
             "input": {},
             "expect": [{"named-node-terminal": {
-                "path": ["write"],
+                "flow-id": "orders",
+                "node-id": "write",
                 "status": "success"
             }}]
         })]);
@@ -387,7 +396,8 @@ mod tests {
             "case-id": "success",
             "input": {},
             "expect": [{"named-node-terminal": {
-                "path": ["write"],
+                "flow-id": "orders",
+                "node-id": "write",
                 "status": "success",
                 "failure-kind": null
             }}]

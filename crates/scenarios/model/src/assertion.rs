@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use wamn_catalog::ExecutionNodePath;
 
 use crate::{FlowFailureKind, NodeFailureKind, NodeTerminalStatus, RunTerminalStatus};
 
@@ -38,11 +37,12 @@ pub struct TypedFlowFailure {
     pub kind: FlowFailureKind,
 }
 
-/// The required terminal result for every observed occurrence of one node path.
+/// The required terminal result for every observed occurrence of one flow/node pair.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct NamedNodeTerminal {
-    pub path: ExecutionNodePath,
+    pub flow_id: String,
+    pub node_id: String,
     pub status: NodeTerminalStatus,
     #[serde(
         default,
@@ -156,24 +156,28 @@ mod tests {
         );
         round_trip(
             Assertion::NamedNodeTerminal(NamedNodeTerminal {
-                path: serde_json::from_value(json!(["normalize", "write"])).unwrap(),
+                flow_id: "orders".into(),
+                node_id: "write".into(),
                 status: NodeTerminalStatus::Error,
                 failure_kind: Some(NodeFailureKind::Terminal),
             }),
             json!({"named-node-terminal": {
-                "path": ["normalize", "write"],
+                "flow-id": "orders",
+                "node-id": "write",
                 "status": "error",
                 "failure-kind": "terminal"
             }}),
         );
         round_trip(
             Assertion::NamedNodeTerminal(NamedNodeTerminal {
-                path: serde_json::from_value(json!(["respond"])).unwrap(),
+                flow_id: "orders".into(),
+                node_id: "respond".into(),
                 status: NodeTerminalStatus::Success,
                 failure_kind: None,
             }),
             json!({"named-node-terminal": {
-                "path": ["respond"],
+                "flow-id": "orders",
+                "node-id": "respond",
                 "status": "success"
             }}),
         );
@@ -185,7 +189,26 @@ mod tests {
             json!({"run-terminal-outcome": {"status": "completed", "extra": true}}),
             json!({"terminal-respond": {"status": 200, "body": null, "headers": {}}}),
             json!({"typed-flow-failure": {"kind": "terminal", "message": "no"}}),
-            json!({"named-node-terminal": {"path": ["write"], "status": "success", "output": {}}}),
+            json!({"named-node-terminal": {
+                "flow-id": "orders", "node-id": "write", "status": "success", "output": {}
+            }}),
+            json!({"named-node-terminal": {
+                "path": ["write"], "flow-id": "orders", "node-id": "write", "status": "success"
+            }}),
+        ] {
+            assert!(serde_json::from_value::<Assertion>(wire).is_err());
+        }
+    }
+
+    #[test]
+    fn named_node_terminal_requires_both_selector_fields() {
+        for wire in [
+            json!({"named-node-terminal": {
+                "node-id": "write", "status": "success"
+            }}),
+            json!({"named-node-terminal": {
+                "flow-id": "orders", "status": "success"
+            }}),
         ] {
             assert!(serde_json::from_value::<Assertion>(wire).is_err());
         }
@@ -204,12 +227,14 @@ mod tests {
         }
         for assertion in [
             Assertion::NamedNodeTerminal(NamedNodeTerminal {
-                path: serde_json::from_value(json!(["write"])).unwrap(),
+                flow_id: "orders".into(),
+                node_id: "write".into(),
                 status: NodeTerminalStatus::Success,
                 failure_kind: Some(NodeFailureKind::Terminal),
             }),
             Assertion::NamedNodeTerminal(NamedNodeTerminal {
-                path: serde_json::from_value(json!(["write"])).unwrap(),
+                flow_id: "orders".into(),
+                node_id: "write".into(),
                 status: NodeTerminalStatus::Error,
                 failure_kind: None,
             }),

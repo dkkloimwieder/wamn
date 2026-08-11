@@ -224,6 +224,9 @@ fn failure_kind(case: &AuthoringCaseReport) -> FailureKind {
         Some(FlowFailureKind::InvalidInput) => FailureKind::InvalidInput,
         Some(FlowFailureKind::RunawayBudget) => FailureKind::RunawayBudget,
         Some(FlowFailureKind::EffectUncertain) => FailureKind::InfrastructureFault,
+        Some(FlowFailureKind::DepthBudget | FlowFailureKind::DispatchBudget) => {
+            FailureKind::RunawayBudget
+        }
         // A failed assertion with no captured kind is an ordinary terminal
         // product failure.
         None => FailureKind::Terminal,
@@ -487,6 +490,16 @@ mod tests {
                 RunTerminalStatus::Failed,
                 Some(FlowFailureKind::EffectUncertain),
                 FailureKind::InfrastructureFault,
+            ),
+            (
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::DepthBudget),
+                FailureKind::RunawayBudget,
+            ),
+            (
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::DispatchBudget),
+                FailureKind::RunawayBudget,
             ),
             (RunTerminalStatus::Failed, None, FailureKind::Terminal),
             (

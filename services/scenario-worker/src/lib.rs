@@ -657,9 +657,9 @@ fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind
                 StoredFailKind::InvalidInput => Ok(FlowFailureKind::InvalidInput),
                 StoredFailKind::RunawayBudget => Ok(FlowFailureKind::RunawayBudget),
                 StoredFailKind::EffectUncertain => Ok(FlowFailureKind::EffectUncertain),
-                StoredFailKind::DepthBudget
-                | StoredFailKind::DispatchBudget
-                | StoredFailKind::UnresolvableName
+                StoredFailKind::DepthBudget => Ok(FlowFailureKind::DepthBudget),
+                StoredFailKind::DispatchBudget => Ok(FlowFailureKind::DispatchBudget),
+                StoredFailKind::UnresolvableName
                 | StoredFailKind::HashInvalidBytes
                 | StoredFailKind::ForeignRevision
                 | StoredFailKind::IncompatibleContract
@@ -1724,10 +1724,20 @@ mod tests {
     }
 
     #[test]
-    fn report_fail_kind_parser_refuses_storage_only_vocabulary() {
+    fn report_fail_kind_parser_accepts_runtime_budget_vocabulary() {
+        assert_eq!(
+            parse_fail_kind(Some("depth-budget")).unwrap(),
+            Some(FlowFailureKind::DepthBudget)
+        );
+        assert_eq!(
+            parse_fail_kind(Some("dispatch-budget")).unwrap(),
+            Some(FlowFailureKind::DispatchBudget)
+        );
+    }
+
+    #[test]
+    fn report_fail_kind_parser_refuses_claim_only_vocabulary() {
         for literal in [
-            "depth-budget",
-            "dispatch-budget",
             "unresolvable-name",
             "hash-invalid-bytes",
             "foreign-revision",

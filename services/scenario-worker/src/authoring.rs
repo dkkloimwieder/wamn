@@ -1256,6 +1256,8 @@ fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind
             "invalid-input" => Ok(FlowFailureKind::InvalidInput),
             "runaway-budget" => Ok(FlowFailureKind::RunawayBudget),
             "effect-uncertain" => Ok(FlowFailureKind::EffectUncertain),
+            "depth-budget" => Ok(FlowFailureKind::DepthBudget),
+            "dispatch-budget" => Ok(FlowFailureKind::DispatchBudget),
             other => bail!("unknown report fail kind {other:?}"),
         })
         .transpose()
@@ -1277,6 +1279,8 @@ fn fail_kind_sql(value: FlowFailureKind) -> &'static str {
         FlowFailureKind::InvalidInput => "invalid-input",
         FlowFailureKind::RunawayBudget => "runaway-budget",
         FlowFailureKind::EffectUncertain => "effect-uncertain",
+        FlowFailureKind::DepthBudget => "depth-budget",
+        FlowFailureKind::DispatchBudget => "dispatch-budget",
     }
 }
 
@@ -1778,6 +1782,17 @@ mod tests {
             "effect-uncertain"
         );
         assert!(parse_run_status("effect-unknown").is_err());
+    }
+
+    #[test]
+    fn authoring_budget_fail_kinds_round_trip_exact_literals() {
+        for (kind, literal) in [
+            (FlowFailureKind::DepthBudget, "depth-budget"),
+            (FlowFailureKind::DispatchBudget, "dispatch-budget"),
+        ] {
+            assert_eq!(parse_fail_kind(Some(literal)).unwrap(), Some(kind));
+            assert_eq!(fail_kind_sql(kind), literal);
+        }
     }
 
     #[test]
