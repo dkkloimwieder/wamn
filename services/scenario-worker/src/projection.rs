@@ -26,8 +26,8 @@ use wamn_authoring_model::{
     SuiteRef, ValidatedDraftIdentity, ValidatedDraftRef,
 };
 use wamn_scenario_model::{
-    AuthoringCaseReport, AuthoringReport, AuthoringReportState, ExecutionLineage, FailKind,
-    PendingAuthoringReport, PendingAuthoringReportReason, RunStatus, ScenarioRefusal,
+    AuthoringCaseReport, AuthoringReport, AuthoringReportState, ExecutionLineage, FlowFailureKind,
+    PendingAuthoringReport, PendingAuthoringReportReason, RunTerminalStatus, ScenarioRefusal,
 };
 
 /// The exact mutable draft revision one durable report was produced from.
@@ -208,21 +208,22 @@ fn case(case: &AuthoringCaseReport) -> CaseResultProjection {
 
 /// Classify one failed case from its lifecycle status first, then its kind.
 ///
-/// Infrastructure failure has no `FailKind`, and `EffectUncertain` is an
+/// Infrastructure failure has no flow failure kind, and `EffectUncertain` is an
 /// unresolved effect rather than a product verdict, so both land on the
 /// non-product classification.
 fn failure_kind(case: &AuthoringCaseReport) -> FailureKind {
     match case.status {
-        RunStatus::InfrastructureFailure => return FailureKind::InfrastructureFault,
-        RunStatus::EffectUncertain => return FailureKind::InfrastructureFault,
-        RunStatus::Dispatched | RunStatus::Running | RunStatus::Completed | RunStatus::Failed => {}
+        RunTerminalStatus::InfrastructureFailure | RunTerminalStatus::EffectUncertain => {
+            return FailureKind::InfrastructureFault;
+        }
+        RunTerminalStatus::Completed | RunTerminalStatus::Failed => {}
     }
     match case.fail_kind {
-        Some(FailKind::Terminal) => FailureKind::Terminal,
-        Some(FailKind::RetryExhausted) => FailureKind::RetryExhausted,
-        Some(FailKind::InvalidInput) => FailureKind::InvalidInput,
-        Some(FailKind::RunawayBudget) => FailureKind::RunawayBudget,
-        Some(FailKind::EffectUncertain) => FailureKind::InfrastructureFault,
+        Some(FlowFailureKind::Terminal) => FailureKind::Terminal,
+        Some(FlowFailureKind::RetryExhausted) => FailureKind::RetryExhausted,
+        Some(FlowFailureKind::InvalidInput) => FailureKind::InvalidInput,
+        Some(FlowFailureKind::RunawayBudget) => FailureKind::RunawayBudget,
+        Some(FlowFailureKind::EffectUncertain) => FailureKind::InfrastructureFault,
         // A failed assertion with no captured kind is an ordinary terminal
         // product failure.
         None => FailureKind::Terminal,
@@ -342,9 +343,11 @@ mod tests {
 
     fn outcome_of(passed: bool) -> Outcome {
         Outcome {
-            name: "case-a".into(),
+            case_id: "case-a".into(),
             results: vec![AssertionResult {
-                assertion: Assertion::Equals(serde_json::json!({"ok": true})),
+                assertion: Assertion::RunTerminalOutcome(wamn_scenario_model::RunTerminalOutcome {
+                    status: RunTerminalStatus::Completed,
+                }),
                 passed,
                 detail: (!passed).then(|| "mismatch".into()),
             }],
@@ -391,7 +394,7 @@ mod tests {
             vec![AuthoringCaseReport::new(
                 "case-a",
                 "run-a",
-                RunStatus::Completed,
+                RunTerminalStatus::Completed,
                 None,
                 None,
                 outcome_of(true),
@@ -461,38 +464,38 @@ mod tests {
     fn every_failed_case_carries_one_classified_failure() {
         for (status, kind, expected) in [
             (
-                RunStatus::Failed,
-                Some(FailKind::Terminal),
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::Terminal),
                 FailureKind::Terminal,
             ),
             (
-                RunStatus::Failed,
-                Some(FailKind::RetryExhausted),
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::RetryExhausted),
                 FailureKind::RetryExhausted,
             ),
             (
-                RunStatus::Failed,
-                Some(FailKind::InvalidInput),
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::InvalidInput),
                 FailureKind::InvalidInput,
             ),
             (
-                RunStatus::Failed,
-                Some(FailKind::RunawayBudget),
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::RunawayBudget),
                 FailureKind::RunawayBudget,
             ),
             (
-                RunStatus::Failed,
-                Some(FailKind::EffectUncertain),
+                RunTerminalStatus::Failed,
+                Some(FlowFailureKind::EffectUncertain),
                 FailureKind::InfrastructureFault,
             ),
-            (RunStatus::Failed, None, FailureKind::Terminal),
+            (RunTerminalStatus::Failed, None, FailureKind::Terminal),
             (
-                RunStatus::InfrastructureFailure,
-                Some(FailKind::Terminal),
+                RunTerminalStatus::InfrastructureFailure,
+                Some(FlowFailureKind::Terminal),
                 FailureKind::InfrastructureFault,
             ),
             (
-                RunStatus::EffectUncertain,
+                RunTerminalStatus::EffectUncertain,
                 None,
                 FailureKind::InfrastructureFault,
             ),
@@ -532,7 +535,7 @@ mod tests {
             vec![AuthoringCaseReport::new(
                 "case-a",
                 "run-a",
-                RunStatus::EffectUncertain,
+                RunTerminalStatus::EffectUncertain,
                 None,
                 Some("node-a".into()),
                 outcome_of(true),
@@ -589,7 +592,7 @@ mod tests {
                 captured_cases: vec![AuthoringCaseReport::new(
                     "case-a",
                     "run-a",
-                    RunStatus::Completed,
+                    RunTerminalStatus::Completed,
                     None,
                     None,
                     outcome_of(true),

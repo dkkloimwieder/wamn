@@ -151,8 +151,7 @@ pub struct RunnerBenchArgs {
 /// `deploy/sql/run-queue.sql` by the drift guard in this module's tests, and
 /// with the `runs` columns run-next projects out of `deploy/sql/run-state.sql`
 /// by the derived guard beside it (wamn-thvs).
-// `pub(crate)` so the wamn-t92 testhostbench `runworker` mode drives the SAME
-// drift-guarded union schema when it exercises the scenario composition.
+// `pub(crate)` so the other integration gates reuse this drift-guarded union schema.
 pub(crate) fn runner_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -990,8 +989,8 @@ mod tests {
     /// which the wamn-9mg8 `run-queue.sql` guard above cannot see — so the
     /// wamn-2jdm.11 lineage sweep left this SHARED stand-in a generation behind
     /// and every gate that reaches run-next through it died `42703`
-    /// (runnerbench itself, logbench runpath, testhostbench runworker; the
-    /// older composition proofs patched a subset by hand). Derive the
+    /// (runnerbench itself and logbench runpath; older composition proofs
+    /// patched a subset by hand). Derive the
     /// required set from the run-next statements themselves (the wamn-jflp
     /// pattern), so the next run-state sweep cannot repeat it.
     #[test]

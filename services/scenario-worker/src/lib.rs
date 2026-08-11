@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use serde::Deserialize;
 use tokio_postgres::{IsolationLevel, NoTls};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
@@ -22,22 +23,22 @@ use wamn_run_state::queue::{
     admit_pinned_draft_scenario_run_sql, admit_pinned_triggered_run_sql,
     lock_pinned_trigger_catalog_head_sql,
 };
-use wamn_run_state::sql::select_completed_node_runs_sql;
 use wamn_run_state::{FailKind as StoredFailKind, RunStatus as StoredRunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
 use wamn_runtime::plugins::wamn_logging::WamnLogging;
 use wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig;
 use wamn_scenario_model::{
-    AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState, Captured,
-    CaseReport, ExecutionLineage, FailKind, PendingAuthoringReportReason, RunFacts, RunStatus,
-    ScenarioRefusal, ScenarioReport, TestCase, evaluate,
+    Assertion, AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport,
+    AuthoringReportState, Captured, CaseReport, ExecutionLineage, FlowFailureKind,
+    PendingAuthoringReportReason, RunTerminalStatus, ScenarioRefusal, ScenarioReport,
+    TEST_SET_SCHEMA_VERSION, TestSetCase, TestSetDocument, evaluate,
 };
 use wamn_scenario_runtime::{
-    DatabaseClockBoundary, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, RecordingEgress,
-    ScenarioCapabilities, ScenarioClock, ScenarioCredentials, ScenarioScheduler,
-    ScenarioSchemaName, SchedulerBackend, capture_db_assertions, case_pool,
-    load_scenario_credentials, scenario_credentials_from_bytes, validate_queue_due_nudge,
+    DatabaseClockBoundary, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, ScenarioCapabilities,
+    ScenarioClock, ScenarioCredentials, ScenarioEgress, ScenarioScheduler, ScenarioSchemaName,
+    SchedulerBackend, case_pool, load_scenario_credentials, scenario_credentials_from_bytes,
+    validate_queue_due_nudge,
 };
 
 const DEFAULT_EPOCH_SECS: u64 = 1_700_000_000;
@@ -261,6 +262,73 @@ struct AuthoringReportSink<'a> {
     client: &'a mut tokio_postgres::Client,
     database_identity: &'a authoring::AuthoringDatabaseIdentity,
     report_id: &'a str,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct LegacyStoredTestCase {
+    #[serde(default = "test_schema_version")]
+    schema_version: String,
+    name: String,
+    #[serde(default)]
+    flow_ref: Option<LegacyStoredTestFlowRef>,
+    #[serde(default)]
+    node_ref: Option<serde_json::Value>,
+    input: serde_json::Value,
+    #[serde(default, rename = "config")]
+    _config: Option<serde::de::IgnoredAny>,
+    #[serde(default, rename = "ctx")]
+    _ctx: Option<serde::de::IgnoredAny>,
+    expect: Vec<Assertion>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct LegacyStoredTestFlowRef {
+    flow_id: String,
+    version: u32,
+}
+
+fn test_schema_version() -> String {
+    TEST_SET_SCHEMA_VERSION.to_string()
+}
+
+impl LegacyStoredTestCase {
+    fn into_test_case(self) -> anyhow::Result<(LegacyStoredTestFlowRef, TestSetCase)> {
+        if self.schema_version != TEST_SET_SCHEMA_VERSION {
+            bail!(
+                "unsupported stored test schema-version {:?}; supported version is {:?}",
+                self.schema_version,
+                TEST_SET_SCHEMA_VERSION
+            );
+        }
+        if self.name.is_empty() {
+            bail!("stored test name must not be empty");
+        }
+        let flow_ref = match (self.flow_ref, self.node_ref) {
+            (Some(flow_ref), None) => flow_ref,
+            (flow_ref, node_ref) => bail!(
+                "stored test must have exactly one flow target (flow-ref present: {}, node-ref present: {})",
+                flow_ref.is_some(),
+                node_ref.is_some()
+            ),
+        };
+        if flow_ref.flow_id.is_empty() {
+            bail!("stored test flow-id must not be empty");
+        }
+        let case = TestSetCase {
+            case_id: self.name,
+            input: self.input,
+            expect: self.expect,
+        };
+        TestSetDocument {
+            schema_version: TEST_SET_SCHEMA_VERSION.to_string(),
+            cases: vec![case.clone()],
+        }
+        .validate()
+        .context("validate stored test assertions")?;
+        Ok((flow_ref, case))
+    }
 }
 
 /// Scenario-worker configuration.
@@ -578,43 +646,34 @@ fn verify_locked_catalog_version(expected: i32, locked: Option<i32>) -> anyhow::
     Ok(())
 }
 
-async fn capture_terminal_node(
-    client: &tokio_postgres::Client,
-    run_id: &str,
-) -> anyhow::Result<(Option<serde_json::Value>, Option<String>)> {
-    let rows = client
-        .query(&select_completed_node_runs_sql(), &[&run_id])
-        .await
-        .context("read terminal scenario node")?;
-    let Some(row) = rows.last() else {
-        return Ok((None, None));
-    };
-    let output_text: Option<String> = row.get(4);
-    let output = output_text
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()
-        .context("parse terminal scenario node output")?;
-    let port = row
-        .get::<usize, Option<String>>(3)
-        .or_else(|| output.as_ref().map(|_| "main".to_string()));
-    Ok((output, port))
-}
-
-fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FailKind>> {
+fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind>> {
     value
         .map(|value| {
-            StoredFailKind::from_sql(value)
-                .map(wamn_scenario_catalog::compat::fail_kind_from_store)
-                .with_context(|| format!("unknown persisted fail_kind {value:?}"))
+            let stored = StoredFailKind::from_sql(value)
+                .with_context(|| format!("unknown persisted fail_kind {value:?}"))?;
+            Ok(match stored {
+                StoredFailKind::Terminal => FlowFailureKind::Terminal,
+                StoredFailKind::RetryExhausted => FlowFailureKind::RetryExhausted,
+                StoredFailKind::InvalidInput => FlowFailureKind::InvalidInput,
+                StoredFailKind::RunawayBudget => FlowFailureKind::RunawayBudget,
+                StoredFailKind::EffectUncertain => FlowFailureKind::EffectUncertain,
+            })
         })
         .transpose()
 }
 
-fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
-    StoredRunStatus::from_sql(value)
-        .map(wamn_scenario_catalog::compat::run_status_from_store)
-        .with_context(|| format!("unknown persisted run status {value:?}"))
+fn parse_run_status(value: &str) -> anyhow::Result<RunTerminalStatus> {
+    let stored = StoredRunStatus::from_sql(value)
+        .with_context(|| format!("unknown persisted run status {value:?}"))?;
+    match stored {
+        StoredRunStatus::Completed => Ok(RunTerminalStatus::Completed),
+        StoredRunStatus::Failed => Ok(RunTerminalStatus::Failed),
+        StoredRunStatus::InfrastructureFailure => Ok(RunTerminalStatus::InfrastructureFailure),
+        StoredRunStatus::EffectUncertain => Ok(RunTerminalStatus::EffectUncertain),
+        StoredRunStatus::Dispatched | StoredRunStatus::Running => {
+            bail!("stored test run {value:?} is not terminal")
+        }
+    }
 }
 
 fn unix_nanos(instant: SystemTime) -> anyhow::Result<u64> {
@@ -890,15 +949,14 @@ async fn execute_target(
         .into_iter()
         .zip(execution_schemas)
         .map(|((case_id, ordinal, case_body), execution_schema)| {
-            let case: TestCase = serde_json::from_str(&case_body)
+            let legacy: LegacyStoredTestCase = serde_json::from_str(&case_body)
                 .with_context(|| format!("parse stored case {}/{}", args.suite_id, case_id))?;
-            case.validate()
+            let (flow_ref, case) = legacy
+                .into_test_case()
                 .with_context(|| format!("validate stored case {}/{}", args.suite_id, case_id))?;
-            let flow_ref = case
-                .flow_ref
-                .as_ref()
-                .with_context(|| format!("stored case {case_id:?} is not a flow scenario"))?;
-            if flow_ref.flow_id != args.flow_id || flow_ref.version as i32 != args.flow_version {
+            let flow_version =
+                i32::try_from(flow_ref.version).context("stored test flow version exceeds i32")?;
+            if flow_ref.flow_id != args.flow_id || flow_version != args.flow_version {
                 bail!(
                     "stored case {:?} targets {}@{}, expected {}@{}",
                     case_id,
@@ -1028,9 +1086,9 @@ async fn execute_target(
             break;
         }
         let egress_policy = Arc::new(RunnerEgressPolicy::default());
-        let recorder = Arc::new(RecordingEgress::spying(egress_policy.clone()));
+        let egress = Arc::new(ScenarioEgress::enforcing(egress_policy.clone()));
         let (scenario, clock) =
-            ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, recorder.clone());
+            ScenarioCapabilities::virtualized(args.epoch_secs, args.random_seed, egress);
         // The plugin owns its connection pools. Constructing it inside this
         // loop keeps prepared statements bound to exactly this root run's
         // schema for the complete host lifetime.
@@ -1265,17 +1323,9 @@ async fn execute_target(
         let fail_kind_text: Option<String> = result_row.get(1);
         let fail_kind = parse_fail_kind(fail_kind_text.as_deref())?;
         let fail_node: Option<String> = result_row.get(2);
-        let (node_output, node_port) = capture_terminal_node(&client, &run_id).await?;
         let captured = Captured {
-            node_output,
-            node_port,
-            run: Some(RunFacts {
-                status,
-                fail_kind,
-                fail_node: fail_node.clone(),
-            }),
-            egress: recorder.records(),
-            db: capture_db_assertions(&mut client, case).await?,
+            run_terminal_outcome: Some(status),
+            typed_flow_failure: fail_kind,
             ..Default::default()
         };
         let outcome = evaluate(case, &captured);
@@ -1484,6 +1534,52 @@ mod tests {
         assert!(helper.contains("authoring::sha256(&bytes)"));
         assert!(helper.contains("scenario_credentials_from_bytes(&bytes)"));
         assert!(!helper.contains("read_to_string"));
+    }
+
+    #[test]
+    fn legacy_stored_test_bridge_accepts_only_new_assertions() {
+        let definition = serde_json::json!({
+            "schema-version": "0.1",
+            "name": "completes",
+            "flow-ref": {"flow-id": "flow-a", "version": 3},
+            "input": {"value": 1},
+            "expect": [{"run-terminal-outcome": {"status": "completed"}}]
+        })
+        .to_string();
+
+        let legacy: LegacyStoredTestCase = serde_json::from_str(&definition).unwrap();
+        let (flow_ref, case) = legacy.into_test_case().unwrap();
+        assert_eq!(flow_ref.flow_id, "flow-a");
+        assert_eq!(flow_ref.version, 3);
+        assert_eq!(case.case_id, "completes");
+        assert_eq!(case.expect.len(), 1);
+        assert!(
+            TestSetDocument::from_definition(&definition).is_err(),
+            "the transitional stored-test envelope must not become a TestSetDocument"
+        );
+
+        for removed in [
+            serde_json::json!({
+                "schema-version": "0.1",
+                "name": "normalized",
+                "flow-ref": {"flow-id": "flow-a", "version": 3},
+                "input": {},
+                "expect": [{"run-terminal-outcome": {"status": "completed"}}],
+                "normalize": {"canonicalize": true}
+            }),
+            serde_json::json!({
+                "schema-version": "0.1",
+                "name": "db-state",
+                "flow-ref": {"flow-id": "flow-a", "version": 3},
+                "input": {},
+                "expect": [{"db-state": {"query": "select 1", "expect": "empty"}}]
+            }),
+        ] {
+            assert!(
+                serde_json::from_value::<LegacyStoredTestCase>(removed).is_err(),
+                "legacy normalization and assertion families must refuse during decoding"
+            );
+        }
     }
 
     #[test]

@@ -165,7 +165,7 @@ pub async fn seed_test_case(
     ordinal: i32,
     case_json: &str,
 ) -> anyhow::Result<()> {
-    wamn_scenario_model::TestCase::from_json(case_json)?;
+    serde_json::from_str::<Value>(case_json)?;
     client
         .execute(
             &wamn_scenario_catalog::sql::upsert_case_sql(),

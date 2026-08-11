@@ -1,8 +1,7 @@
 //! SQL READ builders for the stored test-suite tables (11.2 execution, wamn-0lfu).
 //!
-//! The suite envelope ([`wamn_scenario_model::TestSuite`]) is pure serde; this
-//! module adds the `$n` SELECT builders the scenario worker reads with. Pure
-//! string builders — the
+//! This module adds the `$n` SELECT builders the scenario worker reads with.
+//! Pure string builders — the
 //! effect shell holds the connection — so the table-owning crate owns its SQL
 //! (mirrors `wamn_run_state::sql` / `wamn_schema_control::sql`).
 //!
@@ -27,8 +26,8 @@ pub fn select_suites_for_flow_sql() -> String {
 }
 
 /// One suite's cases, in `ordinal` order. `case_body` is emitted as text so the
-/// worker re-parses each body against the scenario-model vocabulary on READ
-/// (the same validate pass `TestSuite::validate` runs on WRITE).
+/// worker re-parses each body through its private transitional stored-test
+/// decoder on read.
 pub fn select_cases_for_suite_sql() -> String {
     "SELECT case_id, ordinal, case_body::text FROM test_cases \
      WHERE tenant_id = $1 AND flow_id = $2 AND flow_version = $3 AND suite_id = $4 \

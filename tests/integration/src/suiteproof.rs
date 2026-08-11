@@ -19,13 +19,12 @@
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
-use wamn_scenario_model::TestSuite;
-
 use crate::ctl_process;
+use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_case, seed_test_suite};
 
 const FLOW_ID: &str = "escalate-holds";
 
@@ -56,10 +55,28 @@ pub struct SuiteProofArgs {
     pub keep: bool,
 }
 
-/// The suite envelope the gate seeds from — the canonical `wamn-scenario-catalog`
-/// shape, flow-version-bound to the flow it tests.
-fn suite_envelope() -> TestSuite {
-    let json = json!({
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct StoredTestEnvelope {
+    schema_version: String,
+    flow_id: String,
+    flow_version: u32,
+    suite_id: String,
+    name: String,
+    cases: Vec<StoredTestEntry>,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct StoredTestEntry {
+    case_id: String,
+    ordinal: u32,
+    case: serde_json::Value,
+}
+
+/// The persisted test envelope the compatibility gate seeds.
+fn stored_test_envelope() -> StoredTestEnvelope {
+    serde_json::from_value(json!({
         "schema-version": "0.1",
         "flow-id": FLOW_ID,
         "flow-version": 1,
@@ -72,7 +89,7 @@ fn suite_envelope() -> TestSuite {
                   "name": "escalates-stale",
                   "flow-ref": { "flow-id": FLOW_ID, "version": 1 },
                   "input": { "age-hours": 72 },
-                  "expect": [ { "run-outcome": { "status": "completed" } } ]
+                  "expect": [ { "run-terminal-outcome": { "status": "completed" } } ]
               } },
             { "case-id": "keeps-fresh", "ordinal": 1,
               "case": {
@@ -80,12 +97,11 @@ fn suite_envelope() -> TestSuite {
                   "name": "keeps-fresh",
                   "flow-ref": { "flow-id": FLOW_ID, "version": 1 },
                   "input": { "age-hours": 1 },
-                  "expect": [ { "run-outcome": { "status": "completed" } } ]
+                  "expect": [ { "run-terminal-outcome": { "status": "completed" } } ]
               } },
         ],
-    })
-    .to_string();
-    TestSuite::from_json(&json).expect("the gate's suite envelope is valid")
+    }))
+    .expect("the gate's persisted test envelope is valid")
 }
 
 async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<()>)> {
@@ -127,39 +143,51 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
 
     // --- envelope round-trip (pure) ---
     let mut ok = true;
-    let suite = suite_envelope();
-    let round_trips = TestSuite::from_json(&suite.to_json()).is_ok_and(|s| s == suite);
+    let stored_test = stored_test_envelope();
+    let encoded =
+        serde_json::to_string(&stored_test).context("serialize persisted test envelope")?;
+    let round_trips = serde_json::from_str::<StoredTestEnvelope>(&encoded)
+        .is_ok_and(|decoded| decoded == stored_test);
     check(
         &mut ok,
-        "ENVELOPE: TestSuite round-trips to_json/from_json",
+        "ENVELOPE: persisted test data round-trips through JSON",
         round_trips,
     );
 
     // --- seed a flow v1 + the suite/cases FROM the envelope (app role) ---
     let (app, app_task) = connect(&app_url).await?;
     scope_session(&app, &args.tenant, &args.schema).await?;
-    seed_flow_version(&app, &args.tenant, &suite.flow_id, 1, true, "{}", true)
-        .await
-        .context("register flow v1")?;
+    seed_flow_version(
+        &app,
+        &args.tenant,
+        &stored_test.flow_id,
+        1,
+        true,
+        "{}",
+        true,
+    )
+    .await
+    .context("register flow v1")?;
     seed_test_suite(
         &app,
         &args.tenant,
-        &suite.flow_id,
-        suite.flow_version as i32,
-        &suite.suite_id,
-        &suite.name,
+        &stored_test.flow_id,
+        i32::try_from(stored_test.flow_version).context("stored test flow version exceeds i32")?,
+        &stored_test.suite_id,
+        &stored_test.name,
     )
     .await
     .context("seed suite")?;
-    for case in &suite.cases {
+    for case in &stored_test.cases {
         seed_test_case(
             &app,
             &args.tenant,
-            &suite.flow_id,
-            suite.flow_version as i32,
-            &suite.suite_id,
+            &stored_test.flow_id,
+            i32::try_from(stored_test.flow_version)
+                .context("stored test flow version exceeds i32")?,
+            &stored_test.suite_id,
             &case.case_id,
-            case.ordinal as i32,
+            i32::try_from(case.ordinal).context("stored test ordinal exceeds i32")?,
             &case.case.to_string(),
         )
         .await
@@ -167,12 +195,12 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
     }
 
     // --- counts + VERSION BINDING (app role, owning tenant) ---
-    let suites: i64 = scalar(&app, "SELECT count(*) FROM test_suites").await?;
+    let stored_test_count: i64 = scalar(&app, "SELECT count(*) FROM test_suites").await?;
     let cases: i64 = scalar(&app, "SELECT count(*) FROM test_cases").await?;
     check(
         &mut ok,
-        &format!("STORE: one suite seeded (got {suites})"),
-        suites == 1,
+        &format!("STORE: one persisted test set seeded (got {stored_test_count})"),
+        stored_test_count == 1,
     );
     check(
         &mut ok,
@@ -190,7 +218,7 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
         bound == 2,
     );
     // The opaque case body reached jsonb intact (round-trips to the seeded body)
-    // AND parses as a canonical wamn-scenario-model TestCase (11.4 validate-on-write).
+    // The opaque case body reaches jsonb intact.
     let stored: serde_json::Value = app
         .query_one(
             "SELECT case_body FROM test_cases WHERE case_id = 'escalates-stale'",
@@ -199,16 +227,11 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
         .await
         .context("read stored case body")?
         .get(0);
-    let seeded = &suite.cases[0].case;
+    let seeded = &stored_test.cases[0].case;
     check(
         &mut ok,
         "STORE: opaque case body round-trips through jsonb intact",
         &stored == seeded,
-    );
-    check(
-        &mut ok,
-        "STORE: stored case body parses as a wamn-scenario-model TestCase",
-        serde_json::from_value::<wamn_scenario_model::TestCase>(stored.clone()).is_ok(),
     );
 
     // --- RLS: a second tenant's claim sees ZERO suites ---
@@ -226,7 +249,7 @@ pub async fn run(args: SuiteProofArgs) -> anyhow::Result<()> {
     // --- FK cascade (version binding is structural): drop flow v1 → suite gone ---
     app.execute(
         "DELETE FROM flows WHERE tenant_id = $1 AND flow_id = $2 AND version = 1",
-        &[&args.tenant, &suite.flow_id],
+        &[&args.tenant, &stored_test.flow_id],
     )
     .await
     .context("delete flow v1")?;
@@ -305,13 +328,17 @@ mod tests {
     /// The gate's seeded suite is a valid, version-bound envelope — a broken
     /// fixture fails here, not only against a live Postgres.
     #[test]
-    fn gate_suite_envelope_is_valid_and_bound() {
-        let suite = suite_envelope();
-        assert_eq!(suite.flow_id, FLOW_ID);
-        assert_eq!(suite.flow_version, 1);
-        assert_eq!(suite.cases.len(), 2);
+    fn gate_stored_test_envelope_is_valid_and_bound() {
+        let stored_test = stored_test_envelope();
+        assert_eq!(stored_test.flow_id, FLOW_ID);
+        assert_eq!(stored_test.flow_version, 1);
+        assert_eq!(stored_test.cases.len(), 2);
         // Round-trips.
-        assert_eq!(TestSuite::from_json(&suite.to_json()).unwrap(), suite);
+        let encoded = serde_json::to_string(&stored_test).unwrap();
+        assert_eq!(
+            serde_json::from_str::<StoredTestEnvelope>(&encoded).unwrap(),
+            stored_test
+        );
     }
 
     #[test]
@@ -322,7 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_suite_ddl_enforces_tenant_and_version_lifetime() {
+    fn canonical_stored_test_ddl_enforces_tenant_and_version_lifetime() {
         let ddl = include_str!("../../../deploy/sql/flow-tests.sql");
         for table in ["test_suites", "test_cases"] {
             assert!(

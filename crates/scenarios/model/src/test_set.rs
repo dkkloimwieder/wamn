@@ -6,6 +6,8 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::Assertion;
+
 /// Test-set document schema version shipped for MVP.
 pub const TEST_SET_SCHEMA_VERSION: &str = "0.1";
 
@@ -32,7 +34,7 @@ pub struct TestSetDocument {
 pub struct TestSetCase {
     pub case_id: String,
     pub input: Value,
-    pub expect: Vec<Value>,
+    pub expect: Vec<Assertion>,
 }
 
 /// Stable classification for a refused inline test-set definition.
@@ -47,6 +49,7 @@ pub enum TestSetDocumentErrorKind {
     DuplicateCaseId,
     EmptyExpect,
     ExpectationCountOverflow,
+    InvalidAssertion,
 }
 
 /// Why an inline test-set definition is refused.
@@ -173,6 +176,17 @@ impl TestSetDocument {
                     ),
                 ));
             }
+            for (index, assertion) in case.expect.iter().enumerate() {
+                if let Err(error) = assertion.validate() {
+                    return Err(TestSetDocumentError::local(
+                        TestSetDocumentErrorKind::InvalidAssertion,
+                        format!(
+                            "test-set case {:?} assertion {index} is invalid: {error}",
+                            case.case_id
+                        ),
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -191,7 +205,7 @@ mod tests {
         json!({
             "case-id": case_id.into(),
             "input": {"value": 1},
-            "expect": vec![json!({"run-terminal-outcome": "completed"}); expectation_count],
+            "expect": vec![json!({"run-terminal-outcome": {"status": "completed"}}); expectation_count],
         })
     }
 
@@ -301,6 +315,113 @@ mod tests {
                 std::error::Error::source(&error).is_some(),
                 "selector {selector:?} parse source must be retained"
             );
+        }
+    }
+
+    #[test]
+    fn refuses_unknown_removed_and_semantically_invalid_assertions() {
+        let refused = [
+            json!({"equals": {"value": 1}}),
+            json!({"subset": {"value": 1}}),
+            json!({"path-equals": {"pointer": "/x", "value": 1}}),
+            json!({"port": "main"}),
+            json!({"db-state": {"query": "select 1", "expect": "empty"}}),
+            json!({"egress": {"flow": "flow", "calls": "none-denied"}}),
+            json!({"error-class": {"node-error": "terminal"}}),
+            json!({"run-outcome": {"status": "completed"}}),
+            json!({"unknown": {}}),
+            json!({"typed-flow-failure": {"kind": "cancelled"}}),
+            json!({"named-node-terminal": {
+                "path": ["write"],
+                "status": "error",
+                "failure-kind": "cancelled"
+            }}),
+        ];
+        for assertion in refused {
+            let error = refusal(
+                &definition(vec![json!({
+                    "case-id": "refused",
+                    "input": {},
+                    "expect": [assertion]
+                })]),
+                TestSetDocumentErrorKind::Parse,
+            );
+            assert!(std::error::Error::source(&error).is_some());
+        }
+
+        for assertion in [
+            json!({"terminal-respond": {"status": 99, "body": null}}),
+            json!({"terminal-respond": {"status": 600, "body": null}}),
+            json!({"named-node-terminal": {
+                "path": ["write"],
+                "status": "success",
+                "failure-kind": "terminal"
+            }}),
+            json!({"named-node-terminal": {"path": ["write"], "status": "error"}}),
+        ] {
+            refusal(
+                &definition(vec![json!({
+                    "case-id": "invalid",
+                    "input": {},
+                    "expect": [assertion]
+                })]),
+                TestSetDocumentErrorKind::InvalidAssertion,
+            );
+        }
+    }
+
+    #[test]
+    fn named_node_success_refuses_present_null_failure_kind() {
+        let omitted = definition(vec![json!({
+            "case-id": "success",
+            "input": {},
+            "expect": [{"named-node-terminal": {
+                "path": ["write"],
+                "status": "success"
+            }}]
+        })]);
+        TestSetDocument::from_definition(&omitted)
+            .expect("success accepts an omitted failure-kind field");
+
+        let present_null = definition(vec![json!({
+            "case-id": "success",
+            "input": {},
+            "expect": [{"named-node-terminal": {
+                "path": ["write"],
+                "status": "success",
+                "failure-kind": null
+            }}]
+        })]);
+        let error = refusal(&present_null, TestSetDocumentErrorKind::Parse);
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn assertion_payloads_and_cases_are_closed() {
+        for value in [
+            json!({
+                "schema-version": "0.1",
+                "cases": [{
+                    "case-id": "case",
+                    "input": {},
+                    "expect": [{"terminal-respond": {
+                        "status": 200,
+                        "body": {},
+                        "headers": {}
+                    }}]
+                }]
+            }),
+            json!({
+                "schema-version": "0.1",
+                "cases": [{
+                    "case-id": "case",
+                    "input": {},
+                    "expect": [{"run-terminal-outcome": {"status": "completed"}}],
+                    "normalize": {}
+                }]
+            }),
+        ] {
+            refusal(&value.to_string(), TestSetDocumentErrorKind::Parse);
         }
     }
 }

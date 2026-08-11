@@ -153,7 +153,7 @@ pub struct FailoverBenchArgs {
 /// repair both missed — so `--mode claim` died `42703: column r.event_root_run_id
 /// does not exist` while every gate on the shared stand-in was green. The two
 /// copies differed only in dead weight: a `flow_runs` table nothing reads (the s3
-/// fixture retains it unused, see testhostbench's `template_ddl`) and the shared
+/// fixture retains it unused) and the shared
 /// `sink`'s extra `dispatch_seq` witness column, which is inert for a gate that
 /// never reads it. One DDL of record now carries both gates, and the drift guards
 /// below run against the DDL failoverbench actually provisions.

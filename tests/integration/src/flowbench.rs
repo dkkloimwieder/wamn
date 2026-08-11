@@ -120,42 +120,6 @@ pub fn flow_json(version: u32) -> String {
     )
 }
 
-/// The S6 fixture flow: `request -> respond -> http-call(url) -> pg-write`
-/// (used by testhostbench through this module).
-///
-/// `poc-s6` is a fire-and-forget request flow: it releases the caller first and
-/// does its egress and write past the release. The tail stays together so the
-/// run's reported HTTP status remains the
-/// http-call's OBSERVED status instead of being overwritten by the `respond`
-/// node's declared one. The egress gate reads that status to prove a denied
-/// call reached the guest as "no response". The `respond` carries an explicit
-/// `status`, which its config demands.
-pub fn flow_json_s6(http_url: &str) -> String {
-    // http_url is a controlled harness value (a loopback URL); escape the two
-    // JSON-significant characters defensively anyway.
-    let url = http_url.replace('\\', "\\\\").replace('"', "\\\"");
-    let authority = http_url
-        .parse::<hyper::Uri>()
-        .expect("S6 fixture URL must be an absolute HTTP URI")
-        .authority()
-        .expect("S6 fixture URL must include an authority")
-        .as_str()
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"");
-    format!(
-        r#"{{"schema-version":"0.1","flow-id":"poc-s6","version":1,
-            "allowed-hosts":["{authority}"],
-            "nodes":[
-              {{"id":"in","type":"request","config":{{"input-schema":true}}}},
-              {{"id":"out","type":"respond","config":{{"status":200}}}},
-              {{"id":"h","type":"http-call","config":{{"url":"{url}"}}}},
-              {{"id":"w","type":"pg-write"}}
-            ],
-            "edges":[{{"from":"in","to":"out"}},{{"from":"out","to":"h"}},
-                     {{"from":"h","to":"w"}}]}}"#
-    )
-}
-
 /// Open a fixture-scoped app connection (tenant claim + s3 search_path) and
 /// seed the two S3 flow versions with v1 active — the host-side replacement
 /// for the guest's retired `seed`/`set-active` exports.
@@ -648,7 +612,7 @@ async fn resume_phase(
 
 #[cfg(test)]
 mod fixture_tests {
-    use super::{FIXTURE_FLOW_ID, flow_json, flow_json_s6};
+    use super::{FIXTURE_FLOW_ID, flow_json};
 
     fn assert_no_legacy_entry_fields(definition: &serde_json::Value) {
         assert!(definition.get("trigger").is_none());
@@ -710,46 +674,10 @@ mod fixture_tests {
         }
     }
 
-    #[test]
-    fn s6_flow_declares_its_controlled_http_authority() {
-        let fixture = flow_json_s6("http://127.0.0.1:18080/echo");
-        let flow = wamn_flow::Flow::from_json(&fixture).expect("S6 fixture parses");
-        let definition: serde_json::Value =
-            serde_json::from_str(&fixture).expect("S6 fixture is JSON");
-
-        assert_eq!(flow.allowed_hosts, ["127.0.0.1:18080"]);
-        assert_eq!(
-            flow.entry_node().map(|node| node.node_type.as_str()),
-            Some("request")
-        );
-        assert_no_legacy_entry_fields(&definition);
-        assert_eq!(
-            flow.nodes
-                .iter()
-                .map(|node| node.node_type.as_str())
-                .collect::<Vec<_>>(),
-            ["request", "respond", "http-call", "pg-write"]
-        );
-        assert_eq!(flow.nodes[1].config["status"], 200);
-        // The whole egress/write tail sits past the caller release,
-        // so the http-call is the LAST node to set the run's HTTP status.
-        assert_eq!(
-            flow.edges
-                .iter()
-                .map(|edge| (edge.from.as_str(), edge.to.as_str()))
-                .collect::<Vec<_>>(),
-            [("in", "out"), ("out", "h"), ("h", "w")]
-        );
-    }
-
     /// All retained fixtures validate against the interface map used by the
     /// guest's direct fixture path.
     #[test]
     fn retained_fixtures_validate_against_the_fixture_interface_map() {
-        assert_eq!(
-            issue_codes(&flow_json_s6("http://127.0.0.1:18080/echo")),
-            Vec::<&str>::new()
-        );
         assert_eq!(issue_codes(&flow_json(1)), Vec::<&str>::new());
         assert_eq!(issue_codes(&flow_json(2)), Vec::<&str>::new());
     }

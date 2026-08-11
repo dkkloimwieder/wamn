@@ -113,7 +113,7 @@ mod tests {
             definition: concat!(
                 "{\"schema-version\":\"0.1\",\"cases\":[",
                 "{\"case-id\":\"one\",\"input\":{},",
-                "\"expect\":[{\"run-terminal-outcome\":\"completed\"}]}",
+                "\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}",
                 "]}"
             )
             .into(),
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(prepared.schema_version, "0.1");
         assert_eq!(
             prepared.identity.hash,
-            "sha256:fd3c5263408868625bd558460f836bc70fc29e6a8ebfcb632ec340c231371760"
+            "sha256:5a9dc9fa707c2bde275b9d41dede742a166fe22d3db845f00028a054e7e79c0a"
         );
 
         let mut spaced = input.clone();

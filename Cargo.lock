@@ -4209,11 +4209,8 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wamn-component-policy",
- "wamn-node-invoke",
  "wamn-node-manifest",
- "wamn-node-runtime",
  "wamn-runtime",
- "wamn-scenario-model",
  "wasm-encoder 0.251.0",
 ]
 
@@ -4296,7 +4293,6 @@ dependencies = [
  "wamn-platform-identity",
  "wamn-run-state",
  "wamn-scenario-catalog",
- "wamn-scenario-model",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
@@ -4414,7 +4410,6 @@ dependencies = [
  "serde_json",
  "tokio-postgres",
  "wamn-scenario-catalog",
- "wamn-scenario-model",
 ]
 
 [[package]]
@@ -4581,12 +4576,9 @@ dependencies = [
  "wamn-flow",
  "wamn-flow-invocation",
  "wamn-gate-harness",
- "wamn-node-invoke",
  "wamn-node-manifest",
- "wamn-node-runtime",
  "wamn-run-state",
  "wamn-runtime",
- "wamn-scenario-model",
  "wash-runtime",
  "wasm-encoder 0.251.0",
  "wasmtime-wasi",
@@ -4628,9 +4620,6 @@ dependencies = [
  "wamn-run-state",
  "wamn-runner",
  "wamn-runtime",
- "wamn-scenario-catalog",
- "wamn-scenario-model",
- "wamn-scenario-runtime",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
@@ -4728,12 +4717,6 @@ dependencies = [
 [[package]]
 name = "wamn-scenario-catalog"
 version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-node-invoke",
- "wamn-run-state",
- "wamn-scenario-model",
-]
 
 [[package]]
 name = "wamn-scenario-model"
@@ -4741,6 +4724,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wamn-catalog",
 ]
 
 [[package]]
@@ -4749,15 +4733,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "futures-util",
  "hyper",
  "rand_core 0.10.1",
- "serde_json",
  "tokio",
  "tokio-postgres",
  "wamn-pg-core",
  "wamn-runtime",
- "wamn-scenario-model",
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",

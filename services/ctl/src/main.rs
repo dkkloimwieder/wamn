@@ -53,7 +53,7 @@ enum Command {
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
     /// Prune a project-env's TERMINAL run history older than --retention-days (9.6): app-role, tenant-scoped DELETE; node_runs cascade (wamn-srb)
     PruneRunHistory(prune_run_history::PruneRunHistoryArgs),
-    /// Pin a recorded run as a versioned test case (11.3): secret-scrubbed + volatile-field-normalized, written to test_suites/test_cases; refuses an off/preview (non-replayable) run (wamn-htn)
+    /// Deprecated compatibility route that refuses under the MVP inline test-set contract.
     PinRun(pin_run::PinRunArgs),
     /// Report the schema-change impact of a --target catalog: affected entities (additive/destructive) → flows via event registration + node config → their suites → generated-API resources. Read-only, mutates nothing (11.8, wamn-wvb)
     ImpactReport(impact_report::ImpactReportArgs),

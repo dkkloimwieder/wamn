@@ -20,8 +20,8 @@ use wamn_catalog::{
 };
 use wamn_scenario_model::{
     AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
-    ExecutionLineage, FailKind, Outcome, PendingAuthoringReport, PendingAuthoringReportReason,
-    RunStatus, ScenarioRefusal,
+    ExecutionLineage, FlowFailureKind, Outcome, PendingAuthoringReport,
+    PendingAuthoringReportReason, RunTerminalStatus, ScenarioRefusal,
 };
 use wamn_scenario_runtime::ScenarioSchemaName;
 
@@ -1237,49 +1237,46 @@ pub(crate) async fn load_validated_draft(
     }))
 }
 
-fn parse_run_status(value: &str) -> anyhow::Result<RunStatus> {
+fn parse_run_status(value: &str) -> anyhow::Result<RunTerminalStatus> {
     match value {
-        "dispatched" => Ok(RunStatus::Dispatched),
-        "running" => Ok(RunStatus::Running),
-        "completed" => Ok(RunStatus::Completed),
-        "failed" => Ok(RunStatus::Failed),
-        "infrastructure-failure" => Ok(RunStatus::InfrastructureFailure),
-        "effect-uncertain" => Ok(RunStatus::EffectUncertain),
+        "completed" => Ok(RunTerminalStatus::Completed),
+        "failed" => Ok(RunTerminalStatus::Failed),
+        "infrastructure-failure" => Ok(RunTerminalStatus::InfrastructureFailure),
+        "effect-uncertain" => Ok(RunTerminalStatus::EffectUncertain),
+        "dispatched" | "running" => bail!("report run status {value:?} is not terminal"),
         other => bail!("unknown report run status {other:?}"),
     }
 }
 
-fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FailKind>> {
+fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind>> {
     value
         .map(|value| match value {
-            "terminal" => Ok(FailKind::Terminal),
-            "retry-exhausted" => Ok(FailKind::RetryExhausted),
-            "invalid-input" => Ok(FailKind::InvalidInput),
-            "runaway-budget" => Ok(FailKind::RunawayBudget),
-            "effect-uncertain" => Ok(FailKind::EffectUncertain),
+            "terminal" => Ok(FlowFailureKind::Terminal),
+            "retry-exhausted" => Ok(FlowFailureKind::RetryExhausted),
+            "invalid-input" => Ok(FlowFailureKind::InvalidInput),
+            "runaway-budget" => Ok(FlowFailureKind::RunawayBudget),
+            "effect-uncertain" => Ok(FlowFailureKind::EffectUncertain),
             other => bail!("unknown report fail kind {other:?}"),
         })
         .transpose()
 }
 
-fn run_status_sql(value: RunStatus) -> &'static str {
+fn run_status_sql(value: RunTerminalStatus) -> &'static str {
     match value {
-        RunStatus::Dispatched => "dispatched",
-        RunStatus::Running => "running",
-        RunStatus::Completed => "completed",
-        RunStatus::Failed => "failed",
-        RunStatus::InfrastructureFailure => "infrastructure-failure",
-        RunStatus::EffectUncertain => "effect-uncertain",
+        RunTerminalStatus::Completed => "completed",
+        RunTerminalStatus::Failed => "failed",
+        RunTerminalStatus::InfrastructureFailure => "infrastructure-failure",
+        RunTerminalStatus::EffectUncertain => "effect-uncertain",
     }
 }
 
-fn fail_kind_sql(value: FailKind) -> &'static str {
+fn fail_kind_sql(value: FlowFailureKind) -> &'static str {
     match value {
-        FailKind::Terminal => "terminal",
-        FailKind::RetryExhausted => "retry-exhausted",
-        FailKind::InvalidInput => "invalid-input",
-        FailKind::RunawayBudget => "runaway-budget",
-        FailKind::EffectUncertain => "effect-uncertain",
+        FlowFailureKind::Terminal => "terminal",
+        FlowFailureKind::RetryExhausted => "retry-exhausted",
+        FlowFailureKind::InvalidInput => "invalid-input",
+        FlowFailureKind::RunawayBudget => "runaway-budget",
+        FlowFailureKind::EffectUncertain => "effect-uncertain",
     }
 }
 
@@ -1774,10 +1771,10 @@ mod tests {
     fn authoring_case_status_round_trips_effect_uncertain_and_rejects_unknown_values() {
         assert_eq!(
             parse_run_status("effect-uncertain").unwrap(),
-            RunStatus::EffectUncertain
+            RunTerminalStatus::EffectUncertain
         );
         assert_eq!(
-            run_status_sql(RunStatus::EffectUncertain),
+            run_status_sql(RunTerminalStatus::EffectUncertain),
             "effect-uncertain"
         );
         assert!(parse_run_status("effect-unknown").is_err());

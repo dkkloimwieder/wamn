@@ -12,4 +12,3 @@ anyhow = { workspace = true }
 # the connection, the harness holds the one copy of the fixture SQL.
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 wamn-scenario-catalog = { workspace = true }
-wamn-scenario-model = { workspace = true }

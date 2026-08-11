@@ -34,7 +34,7 @@ fn input() -> TestSetInput {
         definition: concat!(
             "{\"schema-version\":\"0.1\",\"cases\":[",
             "{\"case-id\":\"one\",\"input\":{},",
-            "\"expect\":[{\"run-terminal-outcome\":\"completed\"}]}",
+            "\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}",
             "]}"
         )
         .into(),

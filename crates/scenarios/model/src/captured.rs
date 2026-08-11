@@ -1,124 +1,19 @@
-//! The fact bundle a harness fills, then hands to [`evaluate`](crate::evaluate).
-//!
-//! [`Captured`] is the seam between the effect shell (the gate: a warm
-//! node invocation, an execution-host drain, or scenario DB reads) and the
-//! pure decision ([`evaluate`](crate::evaluate)). The harness runs the effects
-//! and records their observable facts here; the evaluator never touches a wasm
-//! instance, a clock, or a database — it only reads this struct.
+//! Captured facts consumed by the pure MVP test-set evaluator.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::{FailKind, NodeErrorKind, RunStatus};
+use crate::{FlowFailureKind, NamedNodeTerminal, RunTerminalStatus, TerminalRespond};
 
-/// One recorded outbound request.
-///
-/// LIFTED here from the runtime egress doubles (11.4) so a captured fact bundle
-/// is serde-serializable and the pure evaluator can assert over egress WITHOUT a
-/// runtime dependency. `wamn_scenario_runtime::RecordingEgress` records THIS type, so the
-/// recorder API (`records()` / `denied()`) is unchanged for its callers — the
-/// recorder produces the identical struct it always did, now with serde derives.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct EgressObservation {
-    /// The declaring flow/component (the store's workload id) — the egress
-    /// assertion's `flow` key filters on this.
-    pub workload_id: String,
-    /// The request method (`GET`, `POST`, …).
-    pub method: String,
-    /// The target authority (`host[:port]`) — the allow/deny key.
-    pub authority: String,
-    /// The request path.
-    pub path: String,
-    /// Whether trusted authorization allowed the recorder to forward it
-    /// (`true`) or denied it (`false`).
-    pub allowed: bool,
-}
-
-/// The captured result of ONE query a harness ran (via the admin pool, after
-/// `scope_session`) so a [`DbState`](crate::Assertion::DbState) assertion can be
-/// evaluated PURELY. The evaluator correlates an assertion to its capture by
-/// `(query, params)`, then checks the [`DbExpect`](crate::DbExpect) against
-/// `rows`. Each row is the query's single JSON column — the harness selects
-/// `to_jsonb(t)` so a row is a plain object the matcher can read.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct DbCapture {
-    pub query: String,
-    #[serde(default)]
-    pub params: Vec<Value>,
-    /// One JSON object per row (the query's `to_jsonb(t)` column).
-    #[serde(default)]
-    pub rows: Vec<Value>,
-}
-
-/// The run-level facts a flow-level harness captures from the runner: the run's
-/// terminal status plus the failure classification (mirrors the persisted
-/// `runs` columns). A [`RunOutcome`](crate::Assertion::RunOutcome) assertion
-/// reads these.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct RunFacts {
-    pub status: RunStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fail_kind: Option<FailKind>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fail_node: Option<String>,
-}
-
-/// The pure fact bundle a harness fills. A node-level case fills
-/// `node_output`/`node_port` or `node_error`; a flow-level case fills `run`,
-/// `egress`, and `db`. Absent facts make the assertions that read them fail with
-/// a "nothing captured" detail — never a false pass.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+/// The bounded facts available to the four MVP assertion families.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Captured {
-    /// A node's success emission payload (parsed), if it emitted one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_output: Option<Value>,
-    /// The node's emission port — the harness maps the absent (default) port to
-    /// the literal `main`, so a `port` assertion is a plain equality.
+    pub run_terminal_outcome: Option<RunTerminalStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_port: Option<String>,
-    /// A node's classified error, if it returned one instead of an emission.
+    pub terminal_respond: Option<TerminalRespond>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub node_error: Option<NodeErrorKind>,
-    /// The run-level facts (flow-level cases).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run: Option<RunFacts>,
-    /// Every outbound request the flow attempted (the recorder's audit log).
-    #[serde(default)]
-    pub egress: Vec<EgressObservation>,
-    /// The captured DB query results a `DbState` assertion reads.
-    #[serde(default)]
-    pub db: Vec<DbCapture>,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn egress_observation_preserves_every_wire_field() {
-        let observation = EgressObservation {
-            workload_id: "flow".into(),
-            method: "POST".into(),
-            authority: "example.test:443".into(),
-            path: "/notify".into(),
-            allowed: false,
-        };
-        let wire = json!({
-            "workload-id": "flow",
-            "method": "POST",
-            "authority": "example.test:443",
-            "path": "/notify",
-            "allowed": false
-        });
-        assert_eq!(serde_json::to_value(&observation).unwrap(), wire);
-        assert_eq!(
-            serde_json::from_value::<EgressObservation>(wire).unwrap(),
-            observation
-        );
-    }
+    pub typed_flow_failure: Option<FlowFailureKind>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub named_node_terminals: Vec<NamedNodeTerminal>,
 }

@@ -26,7 +26,7 @@ services/               native deployable Rust services
   dispatcher            shared trigger dispatcher service (SR9 split)
   executor              production flow-runner service; emits the stable
                         wamn-run-worker binary
-  scenario-worker       stored deterministic scenario/replay executor
+  scenario-worker       management service + transitional stored-test executor
   cdc-reader            CDC event-reader service (SR9 split)
   waker                 scale-to-zero wake actuator
   builder               sandboxed custom-node build service
@@ -69,8 +69,8 @@ crates/                 shared Rust workspace packages
   identity/
     project-state       wamn-project-state: per-project app_system model
   scenarios/
-    model               wamn-scenario-model: case/suite/assertion vocabulary
-    catalog             wamn-scenario-catalog: persistence and pin-from-run
+    model               wamn-scenario-model: test-set/assertion vocabulary
+    catalog             wamn-scenario-catalog: transitional stored-test persistence
     runtime             deterministic clocks/random/egress/credentials
 
 components/             wasm32-wasip2 guests

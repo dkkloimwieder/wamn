@@ -90,7 +90,7 @@ case "$command" in
     name=${resource#job/}
     if [[ "$FAKE_SCENARIO" == missing-logs ]]; then exit 1; fi
     if [[ "$name" == *refusal* ]]; then
-      printf 'custom-node test gate (11.5): 1 case(s) FAILED against the built artifact\n'
+      printf 'expected negative gate refused the fixture\n'
     else
       printf 'overall PASS: true\n'
       if [[ "$FAKE_SCENARIO" == identity-match ]]; then
@@ -186,12 +186,12 @@ fn image_bound_job(name: &str, image_id: &str) -> String {
 
 fn negative_job() -> String {
     json!({
-        "name": "f2-testgate-refusal",
-        "container": "f2-testgate-refusal",
+        "name": "expected-refusal",
+        "container": "expected-refusal",
         "expectation": "expected-negative",
         "exit_code": 1,
         "image": EXPECTED_IMAGE,
-        "log_contains": "custom-node test gate (11.5): 1 case(s) FAILED"
+        "log_contains": "expected negative gate refused the fixture"
     })
     .to_string()
 }

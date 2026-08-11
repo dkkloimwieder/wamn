@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{FailKind, Outcome, RunStatus, ScenarioRefusal};
+use crate::{FlowFailureKind, Outcome, RunTerminalStatus, ScenarioRefusal};
 
 /// Immutable execution lineage exposed by the author-facing report query.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,9 +37,9 @@ pub struct AuthoringCaseReport {
     pub case_id: String,
     pub run_id: String,
     pub passed: bool,
-    pub status: RunStatus,
+    pub status: RunTerminalStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub fail_kind: Option<FailKind>,
+    pub fail_kind: Option<FlowFailureKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fail_node: Option<String>,
     pub outcome: Outcome,
@@ -53,12 +53,12 @@ impl AuthoringCaseReport {
     pub fn new(
         case_id: impl Into<String>,
         run_id: impl Into<String>,
-        status: RunStatus,
-        fail_kind: Option<FailKind>,
+        status: RunTerminalStatus,
+        fail_kind: Option<FlowFailureKind>,
         fail_node: Option<String>,
         outcome: Outcome,
     ) -> Self {
-        let passed = status != RunStatus::EffectUncertain && outcome.passed();
+        let passed = status != RunTerminalStatus::EffectUncertain && outcome.passed();
         Self {
             case_id: case_id.into(),
             run_id: run_id.into(),
@@ -180,15 +180,15 @@ impl AuthoringReport {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     fn outcome(passed: bool) -> Outcome {
         Outcome {
-            name: "case-a".into(),
+            case_id: "case-a".into(),
             results: vec![crate::AssertionResult {
-                assertion: crate::Assertion::Equals(json!({"ok": true})),
+                assertion: crate::Assertion::RunTerminalOutcome(crate::RunTerminalOutcome {
+                    status: RunTerminalStatus::Completed,
+                }),
                 passed,
                 detail: (!passed).then(|| "mismatch".into()),
             }],
@@ -233,8 +233,8 @@ mod tests {
         let failed = AuthoringCaseReport::new(
             "case-a",
             "run-a",
-            RunStatus::Failed,
-            Some(FailKind::Terminal),
+            RunTerminalStatus::Failed,
+            Some(FlowFailureKind::Terminal),
             Some("write".into()),
             outcome(false),
         );
@@ -269,7 +269,7 @@ mod tests {
         let case = AuthoringCaseReport::new(
             "case-a",
             "run-a",
-            RunStatus::EffectUncertain,
+            RunTerminalStatus::EffectUncertain,
             None,
             None,
             outcome(true),

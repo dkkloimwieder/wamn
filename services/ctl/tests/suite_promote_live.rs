@@ -213,15 +213,15 @@ async fn provision_src(url: &str) {
     )
     .await
     .expect("seed suite");
-    // Case bodies are valid scenario-model TestCases (11.4 vocabulary) so they
-    // satisfy the 828 validate-on-write reconcile; still opaque jsonb to the copy.
+    // Case bodies use only the retained assertion vocabulary; they remain
+    // opaque jsonb to the copy operation.
     c.execute(
         "INSERT INTO wamn_run.test_cases \
            (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) VALUES \
            ($1, $2, 1, 'smoke', 'c1', 0, \
-             '{\"schema-version\":\"0.1\",\"name\":\"c1\",\"node-ref\":{},\"input\":{},\"expect\":[{\"error-class\":{\"node-error\":\"invalid-input\"}}]}'::jsonb), \
+             '{\"schema-version\":\"0.1\",\"name\":\"c1\",\"flow-ref\":{\"flow-id\":\"escalate-holds\",\"version\":1},\"input\":{},\"expect\":[{\"run-terminal-outcome\":{\"status\":\"failed\"}}]}'::jsonb), \
            ($1, $2, 1, 'smoke', 'c2', 1, \
-             '{\"schema-version\":\"0.1\",\"name\":\"c2\",\"flow-ref\":{\"flow-id\":\"escalate-holds\",\"version\":1},\"input\":{},\"expect\":[{\"run-outcome\":{\"status\":\"completed\"}}]}'::jsonb)",
+             '{\"schema-version\":\"0.1\",\"name\":\"c2\",\"flow-ref\":{\"flow-id\":\"escalate-holds\",\"version\":1},\"input\":{},\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}'::jsonb)",
         &[&TENANT, &FLOW_ID],
     )
     .await

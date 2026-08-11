@@ -43,11 +43,7 @@ wamn-platform-identity = { workspace = true }
 # policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
-# 11.3 pin-run also reuses its run/node-run read builders + `capture::scrub`.
 wamn-run-state = { workspace = true }
-# 11.3 pin-run: the scenario-catalog transform (RunRecord + node_runs ->
-# TestCase) and the canonical scenario-model vocabulary it serializes.
-wamn-scenario-model = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
 # 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
 # impact analysis (entities → flows via registration + node config → suites →

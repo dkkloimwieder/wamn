@@ -1,7 +1,7 @@
 //! Deterministic capability adapters for product scenario execution.
 //!
 //! These product adapters run the same flowrunner component as serving, with
-//! virtual time, seeded randomness, recorded egress, and isolated schemas:
+//! virtual time, seeded randomness, policy-enforced egress, and isolated schemas:
 //!
 //! - [`ScenarioClock`] / [`VirtualWallClock`] — one absolute virtual instant for
 //!   every scenario scheduling comparison.
@@ -9,8 +9,8 @@
 //!   decision to a claimable PostgreSQL release marker.
 //! - [`ScenarioScheduler`] — advance the virtual clock to the next deterministic
 //!   retry deadline and re-drive (delta 2).
-//! - [`RecordingEgress`] — record every outbound request after enforcing the
-//!   trusted host/flow authorization intersection (delta 3).
+//! - [`ScenarioEgress`] — enforce the trusted host/flow authorization
+//!   intersection (delta 3).
 //! - [`EphemeralSchemaProvisioner`] / [`case_pool`] — an isolated schema and app
 //!   pool per root scenario run.
 //! - [`SeededRng`] / [`build_virtual_wasi`] — a deterministic `wasi:random`
@@ -24,7 +24,6 @@
 
 mod clock;
 mod credentials;
-mod db;
 mod egress;
 mod random;
 mod scheduler;
@@ -39,11 +38,7 @@ pub use clock::{DatabaseClockBoundary, ScenarioClock, VirtualWallClock};
 pub use credentials::{
     ScenarioCredentials, load_scenario_credentials, scenario_credentials_from_bytes,
 };
-pub use db::{
-    DbStateCaptureFailure, DbStateCaptureFailureKind, DbStateCaptureLimits, capture_db_assertions,
-    capture_db_assertions_with_limits,
-};
-pub use egress::{EgressObservation, RecordingEgress};
+pub use egress::ScenarioEgress;
 pub use random::{SeededRng, build_virtual_wasi};
 pub use scheduler::{
     QueueScheduleShiftError, RUN_QUEUE_DUE_NUDGE_SQL, RUN_QUEUE_NEXT_WAKE_SQL, ScenarioScheduler,
@@ -55,12 +50,12 @@ pub use schema::{
 
 /// Deterministic capabilities consumed by one scenario execution store.
 ///
-/// The caller retains handles to [`ScenarioClock`] and [`RecordingEgress`] before
-/// moving this value into the shared execution host.
+/// The caller retains a handle to [`ScenarioClock`] before moving this value
+/// into the shared execution host.
 pub struct ScenarioCapabilities {
     /// The custom `WasiCtx` the store gets (virtual clock + seeded random).
     pub wasi: WasiCtx,
-    /// The store's outbound-HTTP handler (the egress recorder).
+    /// The store's outbound-HTTP policy handler.
     pub egress: Arc<dyn HostHandler>,
 }
 
@@ -76,8 +71,7 @@ impl ScenarioCapabilities {
     /// Assemble virtual scenario capabilities: a wall clock based at
     /// `epoch_secs`, `wasi:random` seeded with `seed`, and `egress` as the
     /// store's HTTP handler. Returns the set plus the shared [`ScenarioClock`]
-    /// the caller drives (via a [`ScenarioScheduler`]). `egress` is typically
-    /// an `Arc<RecordingEgress>` the caller also holds for audit.
+    /// the caller drives (via a [`ScenarioScheduler`]).
     pub fn virtualized(
         epoch_secs: u64,
         seed: u64,

@@ -7,7 +7,7 @@
 
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
-use wamn_proof_conformance::{credprobe, socketguard, testgate};
+use wamn_proof_conformance::{credprobe, socketguard};
 use wamn_proof_integration::{
     causation_e2e, credproof, impactproof, invocationproof, nodebench, nodeinvoke, readerbench,
     runnerbench, suiteproof, testkitbench, wakeproof,
@@ -46,12 +46,10 @@ enum Command {
     Nodeinvoke(nodeinvoke::NodeInvokeArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
-    /// Run the 11.4 assertion-library gate (cases-as-data → node-level ServeNode invokes + flow-level doubles harness, folded through wamn_scenario_model::evaluate) AND the 11.2-exec stored-suite executor (--suite/--impact-report: load test_suites/test_cases from a schema, drive each case through the t92 doubles)
+    /// Route the temporarily retained persisted selector protocol to the product stored-test worker.
     Testkitbench(testkitbench::TestKitBenchArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
-    /// Run the 11.5 custom-node test-gate proof.
-    Testgate(testgate::TestGateArgs),
     /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
@@ -89,7 +87,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testkitbench(args) => testkitbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
-        Command::Testgate(args) => testgate::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::Suiteproof(args) => suiteproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,

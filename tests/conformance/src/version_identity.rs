@@ -85,11 +85,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/scenarios/model/src/lib.rs",
-        exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/scenarios/model/src/test_set.rs",
         exact: r#"pub const TEST_SET_SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,

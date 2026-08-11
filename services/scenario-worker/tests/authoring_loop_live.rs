@@ -13,7 +13,7 @@ use tokio_postgres::{Client, NoTls};
 use wamn_catalog::Artifact;
 use wamn_scenario_model::{
     AuthoringExecutionResult, AuthoringReport, AuthoringReportState, ExecutionLineage,
-    PendingAuthoringReportReason, RunStatus, ScenarioRefusal,
+    PendingAuthoringReportReason, RunTerminalStatus, ScenarioRefusal,
 };
 use wamn_scenario_worker::ScenarioWorkerArgs;
 use wamn_scenario_worker::authoring::{
@@ -150,10 +150,7 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
         "name": CASE_ID,
         "flow-ref": {"flow-id": FLOW_ID, "version": 1},
         "input": {},
-        "expect": [
-            {"path-equals": {"pointer": "/marker", "value": "validated-draft-v2"}},
-            {"run-outcome": {"status": "completed"}},
-        ],
+        "expect": [{"run-terminal-outcome": {"status": "completed"}}],
     });
     let transaction = admin.transaction().await?;
     transaction
@@ -369,7 +366,7 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
     assert_eq!(report.cases.len(), 1);
     assert_eq!(report.cases[0].case_id, CASE_ID);
     assert_eq!(report.cases[0].run_id, "scenario-success-0");
-    assert_eq!(report.cases[0].status, RunStatus::Completed);
+    assert_eq!(report.cases[0].status, RunTerminalStatus::Completed);
     assert!(report.cases[0].passed);
     let (draft_trigger, draft_context) = run_admission(&admin, "scenario-success-0").await?;
     assert_eq!(draft_trigger, "scenario-draft");
@@ -439,7 +436,7 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
     );
     assert_eq!(release_report.refusal, None);
     assert_eq!(release_report.cases.len(), 1);
-    assert_eq!(release_report.cases[0].status, RunStatus::Completed);
+    assert_eq!(release_report.cases[0].status, RunTerminalStatus::Completed);
     assert!(!release_report.cases[0].passed);
     assert_eq!(release_report.edit_to_run_ms, None);
     assert_eq!(

@@ -19,19 +19,10 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 wamn-component-policy = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-node-runtime = { workspace = true }
 # 5.5e: the canonical wamn.node.manifest model (ANNOTATION_KEY, NodeManifest,
 # from_json/to_json, is_valid) — the builder writes the annotation, never a
 # second copy of the schema.
 wamn-node-manifest = { workspace = true }
-# 11.5: the pure invocation wire types (NodeInvokeRequest / NodeInvokeResponse /
-# WireNodeError) the test gate builds + asserts against — the SAME wire model the
-# node runtime and node-host use; kept direct so the builder's wire use is explicit.
-wamn-node-invoke = { workspace = true }
-# The test gate parses cases.json into wamn_scenario_model::NodeCaseFile,
-# lowers each NodeCase to a TestCase, and evaluates the canonical scenario
-# vocabulary without local case types.
-wamn-scenario-model = { workspace = true }
 # 5.5e: the hand-rolled OCI registry-v2 writer (the repo's first Rust OCI push)
 # rides the hyper 1 stack already in the graph — a plain-HTTP client for the
 # in-cluster registry:2, full control of the manifest media types + annotations.

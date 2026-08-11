@@ -856,7 +856,7 @@ async fn seed_demo(
                 "name": "assertion-failure",
                 "flow-ref": {"flow-id": publication.demo_flow_id.as_str(), "version": 1},
                 "input": {},
-                "expect": [{"run-outcome": {"status": "failed"}}]
+                "expect": [{"run-terminal-outcome": {"status": "failed"}}]
             })
             .to_string(),
         )],
@@ -932,13 +932,13 @@ fn success_cases(demo_flow_id: &str) -> Vec<(&'static str, i32, String)> {
         (
             "success",
             0,
-            isolated_db_case("success", demo_flow_id, serde_json::json!({})),
+            completion_test_case("success", demo_flow_id, serde_json::json!({})),
         ),
         (
-            "db-state",
+            "writes-receipt",
             1,
-            isolated_db_case(
-                "db-state",
+            completion_test_case(
+                "writes-receipt",
                 demo_flow_id,
                 serde_json::json!({"receipt": "demo"}),
             ),
@@ -946,20 +946,13 @@ fn success_cases(demo_flow_id: &str) -> Vec<(&'static str, i32, String)> {
     ]
 }
 
-fn isolated_db_case(name: &str, flow_id: &str, input: serde_json::Value) -> String {
+fn completion_test_case(name: &str, flow_id: &str, input: serde_json::Value) -> String {
     serde_json::json!({
         "schema-version": "0.1",
         "name": name,
         "flow-ref": {"flow-id": flow_id, "version": 1},
         "input": input,
-        "expect": [
-            {"run-outcome": {"status": "completed"}},
-            {"db-state": {
-                "query": "SELECT to_jsonb(sink) FROM sink",
-                "params": [],
-                "expect": {"row-count": 1}
-            }}
-        ]
+        "expect": [{"run-terminal-outcome": {"status": "completed"}}]
     })
     .to_string()
 }
@@ -970,7 +963,7 @@ fn completion_case(name: &str, flow_id: &str) -> String {
         "name": name,
         "flow-ref": {"flow-id": flow_id, "version": 1},
         "input": {},
-        "expect": [{"run-outcome": {"status": "completed"}}]
+        "expect": [{"run-terminal-outcome": {"status": "completed"}}]
     })
     .to_string()
 }
@@ -1119,17 +1112,16 @@ mod tests {
     }
 
     #[test]
-    fn success_suite_observes_each_root_runs_private_database_state() {
+    fn success_cases_use_only_terminal_run_assertions() {
         let cases = success_cases("demo");
 
         assert_eq!(cases.len(), 2);
         for (_, _, body) in cases {
-            let case: wamn_scenario_model::TestCase = serde_json::from_str(&body).unwrap();
-            assert!(case.expect.iter().any(|assertion| matches!(
-                assertion,
-                wamn_scenario_model::Assertion::DbState { expect, .. }
-                    if *expect == wamn_scenario_model::DbExpect::RowCount(1)
-            )));
+            let case: serde_json::Value = serde_json::from_str(&body).unwrap();
+            assert_eq!(
+                case["expect"],
+                serde_json::json!([{"run-terminal-outcome": {"status": "completed"}}])
+            );
         }
     }
 

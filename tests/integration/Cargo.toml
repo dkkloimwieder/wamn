@@ -31,7 +31,6 @@ wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-flow-invocation = { workspace = true }
-wamn-scenario-catalog = { workspace = true }
 wamn-gate-harness = { workspace = true }
 wamn-test-fixtures = { workspace = true }
 wamn-test-infrastructure = { workspace = true }
@@ -44,8 +43,6 @@ wamn-runtime = { workspace = true }
 wamn-schema-compiler = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-schema-model = { workspace = true }
-wamn-scenario-model = { workspace = true }
-wamn-scenario-runtime = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }

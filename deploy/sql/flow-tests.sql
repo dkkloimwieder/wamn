@@ -6,10 +6,10 @@
 -- its suite promote together through the copy-project-env definition path
 -- (services/ctl copy_project_env: flows in block 2, suites in block 5).
 --
--- The case BODY is opaque jsonb in v0 (`case_body`): the canonical
--- case/assertion vocabulary is a sibling crate (wamn-scenario-model); at integration
--- the suite envelope (crates/scenarios/catalog) gains a validate-on-write pass
--- against those serde types. `flow_version` is DENORMALIZED onto `test_cases`
+-- The case BODY is opaque jsonb in v0 (`case_body`). The product worker decodes
+-- that persisted envelope through its private `LegacyStoredTestCase` bridge and
+-- validates only the MVP assertion vocabulary; the public inline test-set parser
+-- never accepts this envelope. `flow_version` is DENORMALIZED onto `test_cases`
 -- (not reachable only through `test_suites`) — the event_registrations
 -- precedent (deploy/sql/catalog-schema.sql): it is part of the composite FK to
 -- the suite and lets the promote-copy scope cases by version without a join.

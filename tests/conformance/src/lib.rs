@@ -9,7 +9,6 @@ pub mod invocation;
 pub mod kubernetes_gate_verdict;
 pub mod raw_sql;
 pub mod socketguard;
-pub mod testgate;
 
 #[cfg(test)]
 mod docker_component_provenance;

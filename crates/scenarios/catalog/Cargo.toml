@@ -1,12 +1,6 @@
 [package]
 name = "wamn-scenario-catalog"
-description = "Persistence queries and run-to-scenario transforms for the product scenario catalog."
+description = "Transitional persistence queries for stored product tests."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[dependencies]
-serde_json = { workspace = true }
-wamn-node-invoke = { workspace = true }
-wamn-run-state = { workspace = true }
-wamn-scenario-model = { workspace = true }

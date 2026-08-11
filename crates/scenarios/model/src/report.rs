@@ -111,7 +111,7 @@ mod tests {
             case_id: "case-1".into(),
             run_id: "run-1".into(),
             outcome: Outcome {
-                name: "case-1".into(),
+                case_id: "case-1".into(),
                 results: Vec::new(),
             },
         });

@@ -206,8 +206,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON s3.sink TO wamn_app;
 -- Production run state (5.7): the runner now checkpoints per NODE into node_runs
 -- and resumes branch-aware by reconstructing the frontier from these rows (the
 -- pure logic is crates/execution/run-state; the canonical production schema is
--- deploy/sql/run-state.sql). This s3-schema copy lets the flowbench/testhostbench
--- gates exercise the rewired runner. `s3.flow_runs` above is retained but unused
+-- deploy/sql/run-state.sql). This s3-schema copy lets flowbench exercise the
+-- rewired runner. `s3.flow_runs` above is retained but unused
 -- (the single step_seq checkpoint it held is superseded by node_runs).
 CREATE TABLE s3.runs (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),

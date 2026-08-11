@@ -1,10 +1,10 @@
 # 11.2-exec in-cluster gate of record (wamn-0lfu): suiteexec drives the STORED
-# test-suite EXECUTOR — load test_suites/test_cases rows from a schema, re-validate
-# each case against the wamn-scenario-model vocabulary, and execute each as its OWN run
+# test-suite EXECUTOR — load test_suites/test_cases rows from a schema, decode
+# each persisted body through the private stored-test bridge, and execute each as its OWN run
 # through the t92 doubles seam (fresh ephemeral schema per case, exactly one
 # applied catalog release member resolved and cryptographically verified before
-# ExecutionHost, ScenarioCapabilities::virtualized + RecordingEgress + drain,
-# then wamn_scenario_model::evaluate). Each admitted root run atomically persists
+# ExecutionHost, deterministic capabilities + policy-enforced egress + drain,
+# then evaluate the available terminal run facts). Each admitted root run atomically persists
 # its exact catalog/version/artifact principal with the queue row.
 #
 # HERMETIC: `--seed-demo` invokes the real `wamn-ctl publish-catalog --provision
@@ -20,8 +20,7 @@
 #
 # The per-case EXECUTION schemas (tk_suiteexec_<n>) are provisioned through the
 # superuser (WAMN_PG_ADMIN_URL) — wamn_app is NOSUPERUSER/NOCREATEDB and cannot
-# create schemas, exactly as in production — and dropped at case teardown. The
-# db-state asserts read through that same superuser session (RLS-bypassing).
+# create schemas, exactly as in production — and dropped at case teardown.
 #
 # Co-located with postgres (the cases make real DB round trips), backoffLimit 0,
 # restartPolicy Never. The gates image carries the product scenario-worker
@@ -75,7 +74,7 @@ spec:
             - name: WAMN_PG_URL
               value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
             # Admin: superuser — provisions/drops the source + per-case exec
-            # schemas AND runs the db-state assertion queries.
+            # schemas.
             - name: PGUSER
               valueFrom: { secretKeyRef: { name: postgres-fixture-superuser, key: username } }
             - name: PGPASSWORD

@@ -1,6 +1,6 @@
 //! The `queuebench` subcommand: the 5.14 durable-run-queue gates (docs/archive/execution/run-queue.md).
 //!
-//! Unlike flowbench/testhostbench, this is **pure host-side** — the queue is a
+//! Unlike flowbench, this is **pure host-side** — the queue is a
 //! Postgres mechanism (`FOR UPDATE SKIP LOCKED`) plus a NATS-core doorbell, so the
 //! gate drives raw `tokio_postgres` claimers (no wasm guest) using the pure SQL
 //! builders from [`wamn_run_state`]. It provisions a fresh ephemeral schema
@@ -151,8 +151,7 @@ pub struct QueueBenchArgs {
 /// The ephemeral-schema clone: the 5.7 `runs` (the write-ahead target + the FK)
 /// and the 5.14 `run_queue`, schema-qualified, with the house tenant floor. A
 /// faithful, self-contained stand-in for `deploy/sql/run-state.sql` + `run-queue.sql`
-/// so the gate never touches the shared production schema (the same pattern as
-/// testhostbench's `template_ddl`).
+/// so the gate never touches the shared production schema.
 fn queue_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.runs (\
