@@ -4,7 +4,7 @@
 
 use boon::{Compiler, Schemas};
 use wamn_node_manifest::{
-    ANNOTATION_KEY, NodeManifest, NodeWorld, OrderingPolicy, Purity, RecoveryClass, ResolvedPurity,
+    ANNOTATION_KEY, ExecutableIdentity, NodeManifest, NodeWorld, OrderingPolicy, Purity,
 };
 
 const FIXTURE: &str = include_str!("fixtures/sample-echo.manifest.json");
@@ -51,7 +51,7 @@ fn minimal_manifest_gets_the_defaults() {
 }
 
 #[test]
-fn t_nr_absent_purity_resolves_to_effectful_never_replay() {
+fn resolution_carries_only_interface_and_executable_identity() {
     let mut m = fixture();
     m.purity = None;
     let resolved = m
@@ -61,14 +61,10 @@ fn t_nr_absent_purity_resolves_to_effectful_never_replay() {
         resolved.contract.interface.interface_contract,
         "wamn:node/node@0.1.0"
     );
-    assert_eq!(
-        resolved.contract.executable_recovery.purity,
-        ResolvedPurity::Effectful
-    );
-    assert_eq!(
-        resolved.contract.executable_recovery.conservative_class,
-        RecoveryClass::NeverReplay
-    );
+    assert!(matches!(
+        resolved.contract.executable,
+        ExecutableIdentity::Component { .. }
+    ));
 }
 
 #[test]
@@ -278,7 +274,8 @@ fn fixture_conforms_to_the_published_schema() {
 
 #[test]
 fn schema_drift() {
-    let committed = include_str!("../../../../docs/archive/contracts/wamn-node-manifest.schema.json");
+    let committed =
+        include_str!("../../../../docs/archive/contracts/wamn-node-manifest.schema.json");
     assert_eq!(
         committed,
         wamn_node_manifest::json_schema_string(),

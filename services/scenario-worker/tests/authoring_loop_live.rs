@@ -10,10 +10,7 @@ use std::time::SystemTime;
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_catalog::{
-    Artifact, ExecutionBundleInput, ExecutionBundlePackaging, ExecutionPlugManifest,
-    NodeImplementation,
-};
+use wamn_catalog::Artifact;
 use wamn_scenario_model::{
     AuthoringExecutionResult, AuthoringReport, AuthoringReportState, ExecutionLineage,
     PendingAuthoringReportReason, RunStatus, ScenarioRefusal,
@@ -91,7 +88,7 @@ fn release_artifact() -> anyhow::Result<(wamn_flow::Flow, Artifact)> {
             let descriptor = wamn_standard_nodes::describe(node_type)
                 .with_context(|| format!("resolve standard node {node_type}"))?;
             let contract = wamn_standard_nodes::resolve_descriptor(descriptor)?;
-            NodeImplementation::from_resolved_platform_contract(contract).map_err(Into::into)
+            Ok(contract.interface)
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let artifact = Artifact::new(TENANT, &flow, implementations)?;
@@ -138,15 +135,6 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
 
     let (release_flow, release_artifact) = release_artifact()?;
     let graph_json = release_flow.to_json();
-    let interface_bundle_json = String::from_utf8(
-        release_artifact
-            .interface_bundle()
-            .canonical_bytes()
-            .to_vec(),
-    )?;
-    let component_digests = serde_json::to_value(release_artifact.supplied_components())?;
-    let occurrence_recovery_json =
-        String::from_utf8(release_artifact.occurrence_recovery_bytes().to_vec())?;
     let artifact_hash = release_artifact
         .identity()
         .artifact_hash()
@@ -179,21 +167,14 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
     transaction
         .execute(
             "INSERT INTO catalog.flow_artifacts \
-               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
-                occurrence_recovery_json,occurrence_recovery_hash) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
+               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5)",
             &[
                 &TENANT,
                 &FLOW_ID,
                 &graph_json,
                 &release_artifact.graph_hash(),
                 &artifact_hash,
-                &interface_bundle_json,
-                &release_artifact.interface_bundle().hash(),
-                &component_digests,
-                &occurrence_recovery_json,
-                &release_artifact.occurrence_recovery_hash(),
             ],
         )
         .await?;
@@ -255,19 +236,8 @@ fn digest(digit: char) -> String {
 
 fn bundle() -> anyhow::Result<DraftBundleInputs> {
     Ok(DraftBundleInputs {
-        packaging: ExecutionBundlePackaging::CapabilityClass,
-        runner_identity: "flowrunner@authoring-loop-live".to_string(),
-        composition_tool: ExecutionBundleInput::new("wac@authoring-loop-live", digest('4'))?,
-        plugs: vec![ExecutionPlugManifest::new(
-            "standard-nodes@authoring-loop-live",
-            vec![
-                "request".to_string(),
-                "respond".to_string(),
-                "transform".to_string(),
-            ],
-            digest('5'),
-        )?],
-        adapters: Vec::new(),
+        effect_provider_revision: digest('4'),
+        host_effect_contract_version: "0.1".to_string(),
     })
 }
 

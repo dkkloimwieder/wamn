@@ -251,8 +251,8 @@ async fn setup_catalog(admin: &mut Client) -> anyhow::Result<()> {
         .execute(
             "INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-             VALUES ($1,$2,$3,'0.1',$4::text::jsonb,$5,$6,'[]','fixture-interfaces','[]') \
+                artifact_hash) \
+             VALUES ($1,$2,$3,'0.1',$4::text::jsonb,$5,$6) \
              ON CONFLICT (tenant_id,flow_id,flow_version) DO NOTHING",
             &[
                 &TENANT,

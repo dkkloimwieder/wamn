@@ -13,9 +13,10 @@ use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 
 use wamn_catalog::{
-    DraftArtifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
-    ExecutionPlugManifest, NodeImplementation, PinnedDraftArtifact, StoredValidatedDraftContext,
-    ValidatedDraftIdentity, ValidatedDraftIdentityInput,
+    DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy, ExecutionNodePath,
+    ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode, ExecutionPlanV2,
+    ExecutionRuntimeRevision, ExecutionSourceMapEntry, PinnedDraftArtifact, RootTerminalBehavior,
+    StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
 };
 use wamn_scenario_model::{
     AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
@@ -35,6 +36,7 @@ WITH session_role AS ( \
     VALUES ('catalog', 'flow_drafts', 'INSERT'), \
            ('catalog', 'flow_drafts', 'UPDATE'), \
            ('catalog', 'validated_flow_drafts', 'INSERT'), \
+           ('catalog', 'execution_bundles', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
            ('catalog', 'authoring_command_audit', 'INSERT'), \
@@ -72,6 +74,10 @@ SELECT current_user = session_user, \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'UPDATE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'INSERT'), \
+       pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'SELECT') \
+         AND pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'INSERT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'UPDATE'), \
@@ -354,15 +360,11 @@ pub enum SaveFlowDraftResult {
     RevisionConflict,
 }
 
-/// Immutable inputs that identify the executable used for a draft run.
+/// Immutable runtime revision inputs used for a draft plan.
 #[derive(Clone, Debug)]
 pub struct DraftBundleInputs {
-    pub packaging: ExecutionBundlePackaging,
-    pub runner_identity: String,
-    pub composition_tool: ExecutionBundleInput,
-    /// Trusted composition output; it is never accepted from the draft graph.
-    pub plugs: Vec<ExecutionPlugManifest>,
-    pub adapters: Vec<ExecutionBundleInput>,
+    pub effect_provider_revision: String,
+    pub host_effect_contract_version: String,
 }
 
 /// Command to validate one exact saved draft revision for a stored suite.
@@ -679,7 +681,7 @@ pub(crate) async fn save_flow_draft(
 
 fn resolve_standard_implementations(
     flow: &wamn_flow::Flow,
-) -> Result<Vec<NodeImplementation>, DraftRunRefusal> {
+) -> Result<Vec<wamn_node_manifest::ResolvedNodeInterface>, DraftRunRefusal> {
     let node_types: BTreeSet<_> = flow
         .nodes
         .iter()
@@ -697,13 +699,7 @@ fn resolve_standard_implementations(
                 detail: error.to_string(),
             }
         })?;
-        implementations.push(
-            NodeImplementation::from_resolved_platform_contract(contract).map_err(|error| {
-                DraftRunRefusal::InvalidDraft {
-                    detail: error.to_string(),
-                }
-            })?,
-        );
+        implementations.push(contract.interface);
     }
     if unresolved.is_empty() {
         Ok(implementations)
@@ -727,6 +723,110 @@ fn validate_workspace_flow_identity(
 }
 
 /// Validate and persist one exact draft revision without creating a release.
+fn build_root_execution_plan(
+    flow: &wamn_flow::Flow,
+    root_artifact_hash: &str,
+    runtime_revision: ExecutionRuntimeRevision,
+) -> anyhow::Result<ExecutionPlanV2> {
+    let path = |node_id: &str| ExecutionNodePath::new(vec![node_id.to_string()]);
+    let entry_instruction = flow
+        .nodes
+        .iter()
+        .find(|node| node.entry_kind().is_some())
+        .context("validated flow has no entry node")
+        .and_then(|node| path(&node.id).map_err(anyhow::Error::new))?;
+    let nodes = flow
+        .nodes
+        .iter()
+        .map(|node| {
+            let interface =
+                wamn_standard_nodes::describe_interface(&node.node_type).with_context(|| {
+                    format!("validated node type {:?} is not standard", node.node_type)
+                })?;
+            let source_connection_requirement = node
+                .connection
+                .as_ref()
+                .map(|name| {
+                    let requirement = flow
+                        .connection_requirements
+                        .iter()
+                        .find(|candidate| candidate.name == *name)
+                        .with_context(|| {
+                            format!("node {:?} has unresolved connection {name:?}", node.id)
+                        })?;
+                    Ok::<_, anyhow::Error>(ExecutionConnectionRequirement {
+                        name: name.clone(),
+                        descriptor: requirement.requirement.clone(),
+                    })
+                })
+                .transpose()?;
+            Ok(ExecutionPlanNode {
+                path: path(&node.id)?,
+                source_artifact_hash: root_artifact_hash.to_string(),
+                source_node_id: node.id.clone(),
+                node_type: node.node_type.clone(),
+                config: node.config.clone(),
+                effect_policy: match interface.effect_policy {
+                    wamn_flow::node_contract::EffectPolicy::Pure => ExecutionEffectPolicy::Pure,
+                    wamn_flow::node_contract::EffectPolicy::Effectful => {
+                        ExecutionEffectPolicy::Effectful
+                    }
+                },
+                source_connection_requirement,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let edges = flow
+        .edges
+        .iter()
+        .map(|edge| {
+            Ok(ExecutionPlanEdge {
+                source: path(&edge.from)?,
+                source_port: edge.from_port.clone(),
+                destination: path(&edge.to)?,
+                destination_port: edge.to_port.clone(),
+                fan_out_ordinal: edge.ordinal.unwrap_or(0),
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let responder_paths = flow
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "respond")
+        .map(|node| path(&node.id).map_err(anyhow::Error::new))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let root_terminal_behavior = if responder_paths.is_empty() {
+        RootTerminalBehavior::FrontierExhaustion
+    } else {
+        RootTerminalBehavior::Respond {
+            paths: responder_paths,
+        }
+    };
+    let source_map = nodes
+        .iter()
+        .map(|node| ExecutionSourceMapEntry {
+            path: node.path.clone(),
+            source_artifact_hash: node.source_artifact_hash.clone(),
+            source_node_id: node.source_node_id.clone(),
+        })
+        .collect();
+    ExecutionPlanV2::new(
+        runtime_revision,
+        root_artifact_hash,
+        ExecutionPlanBody {
+            entry_instruction,
+            nodes,
+            edges,
+            root_terminal_behavior,
+            synthetic_instructions: Vec::new(),
+            input_schema_guards: Vec::new(),
+            call_frames: Vec::new(),
+            source_map,
+        },
+    )
+    .map_err(anyhow::Error::new)
+}
+
 pub(crate) async fn validate_flow_draft(
     _authority: &InternalDevAdmin,
     client: &mut Client,
@@ -767,30 +867,33 @@ pub(crate) async fn validate_flow_draft(
         Ok(implementations) => implementations,
         Err(refusal) => return Ok(Err(refusal)),
     };
-    let runner = ExecutionBundleInput::new(
-        request.bundle.runner_identity.clone(),
-        sha256(flowrunner_bytes),
-    )
-    .map_err(anyhow::Error::new)?;
-    let execution_bundle = ExecutionBundleIdentity::builder(
-        request.bundle.packaging,
-        runner,
-        request.bundle.composition_tool.clone(),
-    )
-    .implementations(implementations.clone())
-    .plugs(request.bundle.plugs.clone())
-    .adapters(request.bundle.adapters.clone())
-    .build()
-    .map_err(anyhow::Error::new)?;
-    let draft =
-        match DraftArtifact::new(&request.tenant_id, &flow, implementations, execution_bundle) {
-            Ok(draft) => draft,
+    let artifact =
+        match wamn_catalog::Artifact::new(&request.tenant_id, &flow, implementations.clone()) {
+            Ok(artifact) => artifact,
             Err(error) => {
                 return Ok(Err(DraftRunRefusal::InvalidDraft {
                     detail: error.to_string(),
                 }));
             }
         };
+    let execution_plan = build_root_execution_plan(
+        &flow,
+        artifact.identity().artifact_hash().as_str(),
+        ExecutionRuntimeRevision {
+            flowrunner_component_digest: sha256(flowrunner_bytes),
+            effect_provider_revision: request.bundle.effect_provider_revision.clone(),
+            host_effect_contract_version: request.bundle.host_effect_contract_version.clone(),
+        },
+    )?;
+    let draft = match DraftArtifact::new(&request.tenant_id, &flow, implementations, execution_plan)
+    {
+        Ok(draft) => draft,
+        Err(error) => {
+            return Ok(Err(DraftRunRefusal::InvalidDraft {
+                detail: error.to_string(),
+            }));
+        }
+    };
 
     let transaction = client
         .transaction()
@@ -838,12 +941,6 @@ pub(crate) async fn validate_flow_draft(
     }
 
     let artifact = draft.artifact();
-    let interface_bundle_json =
-        String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
-            .context("interface bundle is not UTF-8 JSON")?;
-    let component_digests_json = serde_json::to_string(artifact.supplied_components())?;
-    let occurrence_recovery_json = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-        .context("occurrence recovery is not UTF-8 JSON")?;
     let runtime_flow_version = i32::try_from(flow.version).context("flow version exceeds i32")?;
     let catalog_version =
         u32::try_from(request.catalog_version).context("catalog version must be a positive u32")?;
@@ -851,6 +948,7 @@ pub(crate) async fn validate_flow_draft(
         .context("suite flow version must be a positive u32")?;
     let draft_revision =
         u64::try_from(request.draft_revision).context("draft revision must be a positive u64")?;
+    let execution_bundle_hash = draft.execution_plan().execution_bundle_hash()?;
     let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
         tenant_id: &request.tenant_id,
         draft_id: &request.draft_id,
@@ -859,7 +957,7 @@ pub(crate) async fn validate_flow_draft(
         runtime_flow_version: flow.version,
         draft_content_hash: draft.content_hash().as_str(),
         draft_artifact_hash: artifact.identity().artifact_hash().as_str(),
-        execution_bundle_hash: draft.execution_bundle().hash(),
+        execution_bundle_hash: &execution_bundle_hash,
         catalog_id: &request.catalog_id,
         catalog_version,
         environment: &request.environment,
@@ -867,7 +965,18 @@ pub(crate) async fn validate_flow_draft(
         binding_base_artifact_hash: &binding_base_artifact_hash,
     })?;
     let graph_json = flow.to_json();
-    let execution_bundle_bytes = draft.execution_bundle().canonical_bytes().to_vec();
+    let execution_bundle_bytes = draft.execution_plan().canonical_bytes()?;
+    transaction
+        .execute(
+            wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+            &[
+                &request.tenant_id,
+                &execution_bundle_hash,
+                &execution_bundle_bytes,
+            ],
+        )
+        .await
+        .context("persist canonical execution bundle")?;
     let inserted = transaction
         .query_opt(
             wamn_scenario_catalog::authoring::insert_validated_flow_draft_sql(),
@@ -884,13 +993,7 @@ pub(crate) async fn validate_flow_draft(
                 &graph_json,
                 &artifact.graph_hash(),
                 &artifact.identity().artifact_hash().as_str(),
-                &interface_bundle_json,
-                &artifact.interface_bundle().hash(),
-                &component_digests_json,
-                &occurrence_recovery_json,
-                &artifact.occurrence_recovery_hash(),
-                &execution_bundle_bytes,
-                &draft.execution_bundle().hash(),
+                &execution_bundle_hash,
                 &binding_base_artifact_hash,
                 &validated_identity.as_str(),
                 &definition,
@@ -915,7 +1018,7 @@ pub(crate) async fn validate_flow_draft(
                     &request.suite_flow_version,
                     &runtime_flow_version,
                     &artifact.identity().artifact_hash().as_str(),
-                    &draft.execution_bundle().hash(),
+                    &execution_bundle_hash,
                     &binding_base_artifact_hash,
                     &validated_identity.as_str(),
                 ],
@@ -949,7 +1052,7 @@ pub(crate) async fn validate_flow_draft(
         catalog_id: request.catalog_id.clone(),
         catalog_version: request.catalog_version,
         environment: request.environment.clone(),
-        execution_bundle_hash: draft.execution_bundle().hash().to_string(),
+        execution_bundle_hash: draft.execution_plan().execution_bundle_hash()?,
         validated_draft_hash: validated_identity.as_str().to_string(),
         binding_base_artifact_hash,
     }))
@@ -1081,13 +1184,8 @@ pub(crate) async fn load_validated_draft(
     let graph_json: String = row.get(6);
     let graph_hash: String = row.get(7);
     let draft_artifact_hash: String = row.get(8);
-    let interface_bundle_json: String = row.get(9);
-    let interface_bundle_hash: String = row.get(10);
-    let component_digests_json: String = row.get(11);
-    let occurrence_recovery_json: Option<String> = row.get(12);
-    let occurrence_recovery_hash: Option<String> = row.get(13);
-    let execution_bundle_bytes: Vec<u8> = row.get(14);
-    let stored_binding_base: String = row.get(15);
+    let execution_bundle_bytes: Vec<u8> = row.get(9);
+    let stored_binding_base: String = row.get(10);
     let artifact = match PinnedDraftArtifact::from_storage(
         &pin.tenant_id,
         &pin.flow_id,
@@ -1096,12 +1194,7 @@ pub(crate) async fn load_validated_draft(
         &graph_json,
         &graph_hash,
         &draft_artifact_hash,
-        &interface_bundle_json,
-        &interface_bundle_hash,
-        &component_digests_json,
-        occurrence_recovery_json.as_deref(),
-        occurrence_recovery_hash.as_deref(),
-        execution_bundle_bytes,
+        &execution_bundle_bytes,
         &pin.execution_bundle_hash,
         StoredValidatedDraftContext {
             expected_identity_hash: &pin.validated_draft_hash,
@@ -1120,16 +1213,23 @@ pub(crate) async fn load_validated_draft(
         Err(_) => return Ok(Err(DraftRunRefusal::CatalogDrift)),
     };
     if artifact.validated_identity().as_str() != pin.validated_draft_hash
-        || artifact.execution_bundle().hash() != pin.execution_bundle_hash
+        || artifact
+            .execution_plan()
+            .execution_bundle_hash()
+            .ok()
+            .as_deref()
+            != Some(pin.execution_bundle_hash.as_str())
         || draft_artifact_hash != pin.draft_artifact_hash
         || stored_binding_base != pin.binding_base_artifact_hash
     {
         return Ok(Err(DraftRunRefusal::CatalogDrift));
     }
-    let runner_digest = match artifact.execution_bundle().runner_input() {
-        Ok(runner) => runner.digest().to_string(),
-        Err(_) => return Ok(Err(DraftRunRefusal::CatalogDrift)),
-    };
+    let runner_digest = artifact
+        .execution_plan()
+        .header
+        .runtime_revision
+        .flowrunner_component_digest
+        .clone();
     Ok(Ok(LoadedValidatedDraft {
         graph_json: artifact.artifact().flow().to_json(),
         draft_edited_at,
@@ -1756,5 +1856,46 @@ mod tests {
         assert!(validate_workspace_flow_identity(&proposed_v8, "flow-a").is_ok());
         let source_suite_version = 7;
         assert_ne!(proposed_v8.version, source_suite_version);
+    }
+
+    #[test]
+    fn root_plan_retains_every_responder_in_canonical_order() {
+        let flow = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"multi-respond","version":1,
+              "nodes":[
+                {"id":"request","type":"request","config":{"input-schema":true}},
+                {"id":"respond-z","type":"respond","config":{"status":200}},
+                {"id":"respond-a","type":"respond","config":{"status":201}}
+              ],
+              "edges":[
+                {"from":"request","to":"respond-z"},
+                {"from":"request","to":"respond-a"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let plan = build_root_execution_plan(
+            &flow,
+            digest_a,
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: digest_b.into(),
+                effect_provider_revision: digest_a.into(),
+                host_effect_contract_version: "0.1".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.body.root_terminal_behavior,
+            RootTerminalBehavior::Respond {
+                paths: vec![
+                    ExecutionNodePath::new(vec!["respond-a".into()]).unwrap(),
+                    ExecutionNodePath::new(vec!["respond-z".into()]).unwrap(),
+                ],
+            }
+        );
     }
 }

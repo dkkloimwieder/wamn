@@ -1,359 +1,170 @@
 use wamn_catalog::{
-    Artifact, DraftArtifact, DraftContentHash, ExecutionBundleIdentity, ExecutionBundleInput,
-    ExecutionBundlePackaging, ExecutionPlugManifest, NodeImplementation, PinnedDraftArtifact,
-    StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
+    Artifact, DraftArtifact, ExecutionEffectPolicy, ExecutionPlanBody, ExecutionPlanEdge,
+    ExecutionPlanNode, ExecutionPlanV2, ExecutionRuntimeRevision, PinnedDraftArtifact,
+    RootTerminalBehavior, StoredValidatedDraftContext, ValidatedDraftIdentity,
+    ValidatedDraftIdentityInput,
 };
 use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 
-fn digest(digit: char) -> String {
-    format!("sha256:{}", digit.to_string().repeat(64))
-}
+const RUNNER: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const PROVIDER: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const BINDING_BASE: &str =
+    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
-fn flow(version: u32, status: u16) -> Flow {
+fn flow(version: u32) -> Flow {
     Flow::from_json(&format!(
-        r#"{{
-          "schema-version":"0.1","flow-id":"draft-flow","version":{version},
-          "nodes":[
-            {{"id":"request","type":"request","config":{{"input-schema":true}}}},
-            {{"id":"respond","type":"respond","config":{{"status":{status}}}}}
-          ],
-          "edges":[{{"from":"request","to":"respond"}}]
-        }}"#
+        r#"{{"schema-version":"0.1","flow-id":"draft-flow","version":{version},"nodes":[{{"id":"entry","type":"event"}},{{"id":"step","type":"custom"}}],"edges":[{{"from":"entry","to":"step"}}]}}"#
     ))
-    .expect("draft flow parses")
+    .unwrap()
 }
 
-fn implementation(node_type: &str) -> NodeImplementation {
-    NodeImplementation::platform(
-        ResolvedNodeInterface::new(
-            node_type,
-            "wamn:node/node@0.1.0",
-            vec!["main".to_string()],
-            vec![CapabilityClass::Pure],
-            Vec::new(),
-        ),
-        ExecutableRecoveryContract::pure(),
+fn implementations() -> Vec<ResolvedNodeInterface> {
+    ["custom", "event"]
+        .into_iter()
+        .map(|node_type| {
+            ResolvedNodeInterface::new(
+                node_type,
+                "wamn:node/node@0.1.0",
+                vec!["main".into()],
+                vec![CapabilityClass::Pure],
+                Vec::new(),
+            )
+        })
+        .collect()
+}
+
+fn plan(root_artifact_hash: &str) -> ExecutionPlanV2 {
+    ExecutionPlanV2::new(
+        ExecutionRuntimeRevision {
+            flowrunner_component_digest: RUNNER.into(),
+            effect_provider_revision: PROVIDER.into(),
+            host_effect_contract_version: "0.1".into(),
+        },
+        root_artifact_hash,
+        ExecutionPlanBody {
+            entry_instruction: "entry".parse().unwrap(),
+            nodes: [("entry", "event"), ("step", "custom")]
+                .into_iter()
+                .map(|(node_id, node_type)| ExecutionPlanNode {
+                    path: node_id.parse().unwrap(),
+                    source_artifact_hash: root_artifact_hash.into(),
+                    source_node_id: node_id.into(),
+                    node_type: node_type.into(),
+                    config: serde_json::json!({}),
+                    effect_policy: ExecutionEffectPolicy::Pure,
+                    source_connection_requirement: None,
+                })
+                .collect(),
+            edges: vec![ExecutionPlanEdge {
+                source: "entry".parse().unwrap(),
+                source_port: "main".into(),
+                destination: "step".parse().unwrap(),
+                destination_port: None,
+                fan_out_ordinal: 0,
+            }],
+            root_terminal_behavior: RootTerminalBehavior::FrontierExhaustion,
+            synthetic_instructions: Vec::new(),
+            input_schema_guards: Vec::new(),
+            call_frames: Vec::new(),
+            source_map: ["entry", "step"]
+                .into_iter()
+                .map(|node_id| wamn_catalog::ExecutionSourceMapEntry {
+                    path: node_id.parse().unwrap(),
+                    source_artifact_hash: root_artifact_hash.into(),
+                    source_node_id: node_id.into(),
+                })
+                .collect(),
+        },
     )
+    .unwrap()
 }
 
-fn implementations() -> Vec<NodeImplementation> {
-    vec![implementation("request"), implementation("respond")]
-}
-
-fn bundle(implementations: Vec<NodeImplementation>) -> ExecutionBundleIdentity {
-    bundle_with_plug(implementations, 'c')
-}
-
-fn bundle_with_plug(
-    implementations: Vec<NodeImplementation>,
-    plug_digest: char,
-) -> ExecutionBundleIdentity {
-    ExecutionBundleIdentity::builder(
-        ExecutionBundlePackaging::CapabilityClass,
-        ExecutionBundleInput::new("flowrunner@fixture", digest('a')).unwrap(),
-        ExecutionBundleInput::new("wac@fixture", digest('b')).unwrap(),
+fn draft() -> DraftArtifact {
+    let flow = flow(7);
+    let artifact = Artifact::new("tenant-a", &flow, implementations()).unwrap();
+    DraftArtifact::new(
+        "tenant-a",
+        &flow,
+        implementations(),
+        plan(artifact.identity().artifact_hash().as_str()),
     )
-    .implementations(implementations)
-    .plugs(vec![
-        ExecutionPlugManifest::new(
-            "pure-standard-nodes",
-            vec!["request".to_string(), "respond".to_string()],
-            digest(plug_digest),
-        )
-        .expect("fixture plug manifest is valid"),
-    ])
-    .build()
-    .expect("bundle identity is valid")
+    .unwrap()
 }
 
 #[test]
-fn execution_bundle_exposes_the_exact_runner_digest_for_instantiate_guarding() {
-    let bundle = bundle(implementations());
-    let runner = bundle.runner_input().expect("runner frame verifies");
-
-    assert_eq!(runner.identity(), "flowrunner@fixture");
-    assert_eq!(runner.digest(), digest('a'));
-}
-
-/// Drift guard for the version-independent draft preimage. `DraftContentHash`
-/// builds on the same `FlowPreimage` view as `Flow::canonical_bytes`, so this
-/// pinned digest is what proves a change to that shared view cannot move
-/// `draft_content_hash` except where a W2 bead deliberately moves it: it was
-/// captured before the view was introduced and was unchanged by that refactor,
-/// and it moves here only because `Edge::ordinal` joined the preimage.
-#[test]
-fn draft_content_hash_is_pinned_and_stays_version_independent() {
+fn draft_binds_the_slim_artifact_to_the_only_execution_plan() {
+    let draft = draft();
     assert_eq!(
-        DraftContentHash::for_flow(&flow(7, 200)).as_str(),
-        "sha256:032eb39a085cc67cd33cbace3cad2d9147ab7852d77120b5491d1a098dcd5372",
+        draft.execution_plan().header.root_artifact_hash,
+        draft.artifact().identity().artifact_hash().as_str()
     );
-    assert_eq!(
-        DraftContentHash::for_flow(&flow(7, 200)),
-        DraftContentHash::for_flow(&flow(9, 200)),
-        "the draft preimage omits `version`"
-    );
-    assert_ne!(
-        DraftContentHash::for_flow(&flow(7, 200)),
-        DraftContentHash::for_flow(&flow(7, 201)),
-        "the draft preimage still covers behavior"
-    );
+    let mut wrong = draft.execution_plan().clone();
+    wrong.header.root_artifact_hash = BINDING_BASE.into();
+    assert!(DraftArtifact::new("tenant-a", &flow(7), implementations(), wrong).is_err());
 }
 
 #[test]
-fn draft_content_identity_excludes_release_version_but_not_behavior() {
-    let v7 = DraftArtifact::new(
-        "tenant-a",
-        &flow(7, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let v8 = DraftArtifact::new(
-        "tenant-a",
-        &flow(8, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let changed = DraftArtifact::new(
-        "tenant-a",
-        &flow(8, 201),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-
-    assert_eq!(v7.content_hash(), v8.content_hash());
-    assert_ne!(v8.content_hash(), changed.content_hash());
-    assert_ne!(
-        v7.artifact().identity().artifact_hash(),
-        v8.artifact().identity().artifact_hash(),
-        "the published artifact identity remains versioned"
-    );
-}
-
-#[test]
-fn publication_must_reuse_the_tested_ordinary_artifact_version() {
-    let draft = DraftArtifact::new(
-        "tenant-a",
-        &flow(8, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let publishable = Artifact::new("tenant-a", &flow(8, 200), implementations()).unwrap();
-    let silently_reversioned = Artifact::new("tenant-a", &flow(9, 200), implementations()).unwrap();
-
-    assert_eq!(
-        draft.artifact().identity().artifact_hash(),
-        publishable.identity().artifact_hash()
-    );
-    assert_ne!(
-        draft.artifact().identity().artifact_hash(),
-        silently_reversioned.identity().artifact_hash(),
-        "publication must add release membership around the exact tested artifact"
-    );
-}
-
-#[test]
-fn validated_identity_rejects_version_and_document_provenance_aliases() {
-    let v7 = DraftArtifact::new(
-        "tenant-a",
-        &flow(7, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let v8 = DraftArtifact::new(
-        "tenant-a",
-        &flow(8, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let base_artifact_hash = digest('d');
-    let input = ValidatedDraftIdentityInput {
+fn persisted_draft_reverifies_exact_plan_bytes_hash_and_composite_identity() {
+    let draft = draft();
+    let graph = flow(7);
+    let bundle_hash = draft.execution_plan().execution_bundle_hash().unwrap();
+    let identity_input = ValidatedDraftIdentityInput {
         tenant_id: "tenant-a",
-        draft_id: "workspace-a",
-        draft_revision: 3,
-        flow_id: "draft-flow",
-        runtime_flow_version: 7,
-        draft_content_hash: v7.content_hash().as_str(),
-        draft_artifact_hash: v7.artifact().identity().artifact_hash().as_str(),
-        execution_bundle_hash: v7.execution_bundle().hash(),
-        catalog_id: "catalog-a",
-        catalog_version: 4,
-        environment: "dev",
-        suite_flow_version: 6,
-        binding_base_artifact_hash: &base_artifact_hash,
-    };
-    let exact = ValidatedDraftIdentity::new(input).unwrap();
-    let sibling = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
-        draft_id: "workspace-b",
-        ..input
-    })
-    .unwrap();
-    let later_revision = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
-        draft_revision: 4,
-        ..input
-    })
-    .unwrap();
-    let silently_reversioned = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
-        runtime_flow_version: 8,
-        draft_content_hash: v8.content_hash().as_str(),
-        draft_artifact_hash: v8.artifact().identity().artifact_hash().as_str(),
-        execution_bundle_hash: v8.execution_bundle().hash(),
-        ..input
-    })
-    .unwrap();
-
-    assert_ne!(exact, sibling);
-    assert_ne!(exact, later_revision);
-    assert_ne!(exact, silently_reversioned);
-}
-
-#[test]
-fn persisted_draft_reverifies_content_resolution_and_bundle() {
-    let draft = DraftArtifact::new(
-        "tenant-a",
-        &flow(7, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let artifact = draft.artifact();
-    let bundle_bytes = draft.execution_bundle().canonical_bytes().to_vec();
-    let base_artifact_hash = digest('d');
-    let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
-        tenant_id: "tenant-a",
-        draft_id: "workspace-a",
+        draft_id: "draft-a",
         draft_revision: 3,
         flow_id: "draft-flow",
         runtime_flow_version: 7,
         draft_content_hash: draft.content_hash().as_str(),
-        draft_artifact_hash: artifact.identity().artifact_hash().as_str(),
-        execution_bundle_hash: draft.execution_bundle().hash(),
+        draft_artifact_hash: draft.artifact().identity().artifact_hash().as_str(),
+        execution_bundle_hash: &bundle_hash,
         catalog_id: "catalog-a",
         catalog_version: 4,
         environment: "dev",
-        suite_flow_version: 6,
-        binding_base_artifact_hash: &base_artifact_hash,
-    })
-    .unwrap();
+        suite_flow_version: 2,
+        binding_base_artifact_hash: BINDING_BASE,
+    };
+    let identity = ValidatedDraftIdentity::new(identity_input).unwrap();
     let context = StoredValidatedDraftContext {
-        expected_identity_hash: validated_identity.as_str(),
-        draft_id: "workspace-a",
+        expected_identity_hash: identity.as_str(),
+        draft_id: "draft-a",
         draft_revision: 3,
         catalog_id: "catalog-a",
         catalog_version: 4,
         environment: "dev",
-        suite_flow_version: 6,
-        binding_base_artifact_hash: &base_artifact_hash,
+        suite_flow_version: 2,
+        binding_base_artifact_hash: BINDING_BASE,
     };
     let pinned = PinnedDraftArtifact::from_storage(
         "tenant-a",
         "draft-flow",
         7,
         draft.content_hash().as_str(),
-        &flow(7, 200).to_json(),
-        artifact.graph_hash(),
-        artifact.identity().artifact_hash().as_str(),
-        str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap(),
-        artifact.interface_bundle().hash(),
-        &serde_json::to_string(artifact.supplied_components()).unwrap(),
-        Some(str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap()),
-        Some(artifact.occurrence_recovery_hash()),
-        bundle_bytes.clone(),
-        draft.execution_bundle().hash(),
+        &graph.to_json(),
+        draft.artifact().graph_hash(),
+        draft.artifact().identity().artifact_hash().as_str(),
+        &draft.execution_plan().canonical_bytes().unwrap(),
+        &bundle_hash,
         context,
     )
     .unwrap();
+    assert_eq!(pinned.execution_plan(), draft.execution_plan());
 
-    assert_eq!(pinned.content_hash(), draft.content_hash());
-    assert_eq!(
-        pinned.execution_bundle().hash(),
-        draft.execution_bundle().hash()
+    let mut bytes = draft.execution_plan().canonical_bytes().unwrap();
+    bytes.push(b' ');
+    assert!(
+        PinnedDraftArtifact::from_storage(
+            "tenant-a",
+            "draft-flow",
+            7,
+            draft.content_hash().as_str(),
+            &graph.to_json(),
+            draft.artifact().graph_hash(),
+            draft.artifact().identity().artifact_hash().as_str(),
+            &bytes,
+            &bundle_hash,
+            context,
+        )
+        .is_err()
     );
-
-    let wrong_draft = PinnedDraftArtifact::from_storage(
-        "tenant-a",
-        "draft-flow",
-        7,
-        &digest('f'),
-        &flow(7, 200).to_json(),
-        artifact.graph_hash(),
-        artifact.identity().artifact_hash().as_str(),
-        str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap(),
-        artifact.interface_bundle().hash(),
-        &serde_json::to_string(artifact.supplied_components()).unwrap(),
-        Some(str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap()),
-        Some(artifact.occurrence_recovery_hash()),
-        bundle_bytes,
-        draft.execution_bundle().hash(),
-        context,
-    );
-    assert!(wrong_draft.is_err());
-}
-
-#[test]
-fn a_valid_bundle_from_another_draft_cannot_be_transplanted() {
-    let draft = DraftArtifact::new(
-        "tenant-a",
-        &flow(7, 200),
-        implementations(),
-        bundle(implementations()),
-    )
-    .unwrap();
-    let other_bundle = bundle_with_plug(implementations(), 'e');
-    let artifact = draft.artifact();
-    let base_artifact_hash = digest('d');
-    let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
-        tenant_id: "tenant-a",
-        draft_id: "workspace-a",
-        draft_revision: 3,
-        flow_id: "draft-flow",
-        runtime_flow_version: 7,
-        draft_content_hash: draft.content_hash().as_str(),
-        draft_artifact_hash: artifact.identity().artifact_hash().as_str(),
-        execution_bundle_hash: draft.execution_bundle().hash(),
-        catalog_id: "catalog-a",
-        catalog_version: 4,
-        environment: "dev",
-        suite_flow_version: 6,
-        binding_base_artifact_hash: &base_artifact_hash,
-    })
-    .unwrap();
-
-    let transplanted = PinnedDraftArtifact::from_storage(
-        "tenant-a",
-        "draft-flow",
-        7,
-        draft.content_hash().as_str(),
-        &flow(7, 200).to_json(),
-        artifact.graph_hash(),
-        artifact.identity().artifact_hash().as_str(),
-        str::from_utf8(artifact.interface_bundle().canonical_bytes()).unwrap(),
-        artifact.interface_bundle().hash(),
-        &serde_json::to_string(artifact.supplied_components()).unwrap(),
-        Some(str::from_utf8(artifact.occurrence_recovery_bytes()).unwrap()),
-        Some(artifact.occurrence_recovery_hash()),
-        other_bundle.canonical_bytes().to_vec(),
-        other_bundle.hash(),
-        StoredValidatedDraftContext {
-            expected_identity_hash: validated_identity.as_str(),
-            draft_id: "workspace-a",
-            draft_revision: 3,
-            catalog_id: "catalog-a",
-            catalog_version: 4,
-            environment: "dev",
-            suite_flow_version: 6,
-            binding_base_artifact_hash: &base_artifact_hash,
-        },
-    );
-
-    assert!(matches!(
-        transplanted,
-        Err(wamn_catalog::CatalogIdentityError::ValidatedDraftIdentityMismatch)
-    ));
 }

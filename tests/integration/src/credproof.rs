@@ -9,10 +9,11 @@ use anyhow::{Context as _, bail, ensure};
 use clap::Args;
 use serde_json::json;
 use tokio_postgres::{Client, Config, NoTls};
-use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_catalog::Artifact;
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_flow::Flow;
 use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult};
+use wamn_node_manifest::ResolvedNodeInterface;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::flow_invocation::{
     InlineRunClaim, InlineRunDriver, InvocationService, InvocationServiceConfig,
@@ -149,7 +150,7 @@ fn parse_flow(source: &str) -> anyhow::Result<Flow> {
     Flow::from_json(source).map_err(|error| anyhow::anyhow!("parse credproof flow: {error}"))
 }
 
-fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeImplementation>> {
+fn implementations(flow: &Flow) -> anyhow::Result<Vec<ResolvedNodeInterface>> {
     let node_types: BTreeSet<&str> = flow
         .nodes
         .iter()
@@ -162,8 +163,7 @@ fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeImplementation>> {
                 .with_context(|| format!("missing standard-node descriptor for {node_type}"))?;
             let contract =
                 wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
-            NodeImplementation::from_resolved_platform_contract(contract)
-                .map_err(anyhow::Error::new)
+            Ok(contract.interface)
         })
         .collect()
 }
@@ -171,30 +171,19 @@ fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeImplementation>> {
 async fn insert_artifact(client: &Client, flow: &Flow) -> anyhow::Result<Artifact> {
     let artifact = Artifact::new(TENANT, flow, implementations(flow)?)?;
     let graph = String::from_utf8(flow.canonical_bytes()).expect("canonical graph is UTF-8");
-    let interfaces = String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
-        .expect("canonical interfaces are UTF-8");
-    let components = serde_json::to_value(artifact.supplied_components())?;
-    let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-        .expect("canonical occurrence recovery is UTF-8");
     let artifact_hash = artifact.identity().artifact_hash().as_str();
     client
         .execute(
             "INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
-                occurrence_recovery_json,occurrence_recovery_hash) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
+                artifact_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5)",
             &[
                 &TENANT,
                 &flow.flow_id,
                 &graph,
                 &artifact.graph_hash(),
                 &artifact_hash,
-                &interfaces,
-                &artifact.interface_bundle().hash(),
-                &components,
-                &occurrence_recovery,
-                &artifact.occurrence_recovery_hash(),
             ],
         )
         .await?;

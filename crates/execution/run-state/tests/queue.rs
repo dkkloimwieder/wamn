@@ -1238,8 +1238,6 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert!(sql.contains("JOIN catalog.release_manifests AS rm"));
     assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
     assert!(sql.contains("a.artifact_hash = $10"));
-    assert!(sql.contains("a.occurrence_recovery_json IS NOT NULL"));
-    assert!(sql.contains("a.occurrence_recovery_hash IS NOT NULL"));
     assert_eq!(sql.matches("inserted_run AS").count(), 1);
     assert_eq!(sql.matches("inserted_queue AS").count(), 1);
     assert!(sql.contains("catalog_id, catalog_version"));
@@ -1271,21 +1269,6 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert!(sql.contains("THEN 'duplicate'"));
     assert!(sql.contains("ELSE 'membership-drift'"));
     assert!(!sql.contains("FROM flows"));
-}
-
-#[test]
-fn null_occurrence_recovery_cannot_reach_either_admission_write() {
-    let sql = admit_pinned_triggered_run_sql();
-    let recovery_guard = sql
-        .find("a.occurrence_recovery_json IS NOT NULL")
-        .expect("recovery guard");
-    let run_write = sql.find("INSERT INTO runs").expect("run write");
-    let queue_write = sql.find("INSERT INTO run_queue").expect("queue write");
-
-    assert!(recovery_guard < run_write);
-    assert!(run_write < queue_write);
-    assert!(sql.contains("FROM release_member"));
-    assert!(sql.contains("FROM inserted_run"));
 }
 
 // [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —

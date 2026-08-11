@@ -372,8 +372,18 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
         _ => return None,
     };
     let flow = Flow::from_json(graph).ok()?;
-    let interfaces = wamn_catalog::InterfaceBundle::from_canonical_json(interfaces).ok()?;
-    flow.validate(&interfaces.resolved_ports()).ok()?;
+    let interfaces: Vec<wamn_node_manifest::ResolvedNodeContract> =
+        serde_json::from_str(interfaces).ok()?;
+    let resolved = interfaces
+        .into_iter()
+        .map(|contract| {
+            (
+                contract.interface.node_type,
+                contract.interface.output_ports,
+            )
+        })
+        .collect();
+    flow.validate(&resolved).ok()?;
     if flow.flow_id != flow_id {
         // The flows-table column and the graph's embedded id must agree (the
         // dispatcher's charset-extension rule); a mismatch holds.

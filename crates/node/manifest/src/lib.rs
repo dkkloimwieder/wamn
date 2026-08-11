@@ -73,17 +73,8 @@ impl NodeWorld {
     }
 }
 
-/// Shape version for executable recovery semantics.
-pub const EXECUTABLE_RECOVERY_CONTRACT_VERSION: &str = "1";
-
-/// Shape version for one graph-occurrence recovery selection.
-pub const OCCURRENCE_RECOVERY_SELECTION_VERSION: &str = "1";
-
 /// Shape version for portable connection-type descriptors.
 pub const CONNECTION_DESCRIPTOR_VERSION: &str = "1";
-
-/// Shape version for portable connection requirements.
-pub const PORTABLE_CONNECTION_REQUIREMENT_VERSION: &str = "1";
 
 /// An ordering policy a node declares support for (design-note 2). The
 /// runner's dispatch honors the flow's per-node choice among the node's
@@ -108,71 +99,6 @@ pub enum OrderingPolicy {
 pub enum Purity {
     /// The node has no externally observable effects and may be replayed.
     Pure,
-}
-
-/// The semantic purity pinned in a resolved interface bundle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ResolvedPurity {
-    Pure,
-    Effectful,
-}
-
-/// The recovery class authorized by the resolved manifest semantics.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum RecoveryClass {
-    Replay,
-    IdempotentWithKey,
-    NeverReplay,
-}
-
-/// Environment-independent recovery semantics implemented by executable bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ExecutableRecoveryContract {
-    pub contract_version: String,
-    pub purity: ResolvedPurity,
-    pub conservative_class: RecoveryClass,
-    pub supported_classes: Vec<RecoveryClass>,
-}
-
-impl ExecutableRecoveryContract {
-    /// Pure execution has one safe, deterministic recovery behavior.
-    pub fn pure() -> Self {
-        Self {
-            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
-            purity: ResolvedPurity::Pure,
-            conservative_class: RecoveryClass::Replay,
-            supported_classes: vec![RecoveryClass::Replay],
-        }
-    }
-
-    /// Effectful execution defaults closed and may additionally support keyed recovery.
-    pub fn effectful(supports_idempotent_with_key: bool) -> Self {
-        let mut supported_classes = vec![RecoveryClass::NeverReplay];
-        if supports_idempotent_with_key {
-            supported_classes.insert(0, RecoveryClass::IdempotentWithKey);
-        }
-        Self {
-            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
-            purity: ResolvedPurity::Effectful,
-            conservative_class: RecoveryClass::NeverReplay,
-            supported_classes,
-        }
-    }
-
-    /// Project a historical v1 single-class declaration without strengthening it.
-    pub fn historical_v1_projection(purity: ResolvedPurity, recovery_class: RecoveryClass) -> Self {
-        Self {
-            contract_version: EXECUTABLE_RECOVERY_CONTRACT_VERSION.to_string(),
-            purity,
-            conservative_class: recovery_class,
-            supported_classes: vec![recovery_class],
-        }
-    }
 }
 
 /// Structural capability class used to specialize execution bundles.
@@ -258,39 +184,6 @@ pub enum IdempotencyKeyInjection {
     HttpIdempotencyKeyHeader,
 }
 
-/// A field in the canonical operation fingerprint.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum OperationFingerprintField {
-    Method,
-    RelativeTarget,
-    SemanticHeaders,
-    BodyDigest,
-}
-
-/// A typed parameter accepted by a recovery claim.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum RecoveryClaimParameterSchema {
-    MinimumRetentionMs,
-}
-
-/// A named recovery claim and its portable parameter schema.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
-pub enum RecoveryClaimSchema {
-    StableKeyDedupV1 {
-        parameters: Vec<RecoveryClaimParameterSchema>,
-        operation_fingerprint: Vec<OperationFingerprintField>,
-    },
-}
-
 /// Versioned portable semantics for one connection type.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
@@ -304,8 +197,6 @@ pub struct ConnectionTypeDescriptor {
     pub field_ownership: Vec<ConnectionFieldOwnership>,
     pub credential_injection: CredentialInjection,
     pub idempotency_key_injection: IdempotencyKeyInjection,
-    pub conservative_recovery: RecoveryClass,
-    pub recovery_claims: Vec<RecoveryClaimSchema>,
 }
 
 impl ConnectionTypeDescriptor {
@@ -360,16 +251,6 @@ impl ConnectionTypeDescriptor {
             ],
             credential_injection: CredentialInjection::EnvironmentSelectedHttpHeader,
             idempotency_key_injection: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
-            conservative_recovery: RecoveryClass::NeverReplay,
-            recovery_claims: vec![RecoveryClaimSchema::StableKeyDedupV1 {
-                parameters: vec![RecoveryClaimParameterSchema::MinimumRetentionMs],
-                operation_fingerprint: vec![
-                    OperationFingerprintField::Method,
-                    OperationFingerprintField::RelativeTarget,
-                    OperationFingerprintField::SemanticHeaders,
-                    OperationFingerprintField::BodyDigest,
-                ],
-            }],
         }
     }
 
@@ -377,88 +258,6 @@ impl ConnectionTypeDescriptor {
     pub fn identity_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("connection descriptor identity serializes")
     }
-}
-
-/// A portable recovery guarantee selected from a descriptor.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case", tag = "claim", deny_unknown_fields)]
-pub enum PortableRecoveryClaim {
-    NeverReplay,
-    StableKeyDedupV1 { minimum_retention_ms: u64 },
-}
-
-/// A portable descriptor and recovery-claim selection.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct PortableConnectionRequirement {
-    pub requirement_version: String,
-    pub descriptor: ConnectionTypeDescriptor,
-    pub recovery: PortableRecoveryClaim,
-}
-
-impl PortableConnectionRequirement {
-    /// Select the descriptor's conservative recovery behavior.
-    pub fn never_replay(descriptor: ConnectionTypeDescriptor) -> Self {
-        Self {
-            requirement_version: PORTABLE_CONNECTION_REQUIREMENT_VERSION.to_string(),
-            descriptor,
-            recovery: PortableRecoveryClaim::NeverReplay,
-        }
-    }
-
-    /// Require stable-key deduplication for at least `minimum_retention_ms`.
-    pub fn stable_key_dedup_v1(
-        descriptor: ConnectionTypeDescriptor,
-        minimum_retention_ms: u64,
-    ) -> Self {
-        Self {
-            requirement_version: PORTABLE_CONNECTION_REQUIREMENT_VERSION.to_string(),
-            descriptor,
-            recovery: PortableRecoveryClaim::StableKeyDedupV1 {
-                minimum_retention_ms,
-            },
-        }
-    }
-
-    /// Stable bytes embedded in resolved-node, artifact, and bundle identities.
-    pub fn identity_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).expect("portable connection requirement identity serializes")
-    }
-}
-
-/// A portable recovery claim implemented by an executable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum ExecutableRecoveryClaim {
-    StableKeyDedupV1,
-}
-
-/// One connection recovery mode implemented by an executable.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    tag = "recovery-class",
-    deny_unknown_fields
-)]
-pub enum ExecutableConnectionRecoveryMode {
-    NeverReplay,
-    IdempotentWithKey {
-        claim: ExecutableRecoveryClaim,
-        key_propagation: IdempotencyKeyInjection,
-    },
-}
-
-/// Environment-independent recovery support for one exact connection contract.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ConnectionRecoverySupport {
-    pub descriptor: ConnectionTypeDescriptor,
-    pub supported_modes: Vec<ExecutableConnectionRecoveryMode>,
 }
 
 /// A publish-time node interface pin.
@@ -513,32 +312,16 @@ pub enum ExecutableIdentity {
     Component { digest: String },
 }
 
-/// The one canonical resolution consumed by artifacts, replay and bundles.
+/// Transitional custom-publish resolution retained until the custom plane is removed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ResolvedNodeContract {
     pub interface: ResolvedNodeInterface,
     pub executable: ExecutableIdentity,
-    /// The sole authoritative recovery semantics for current resolutions.
-    pub executable_recovery: ExecutableRecoveryContract,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub portable_connections: Vec<PortableConnectionRequirement>,
 }
 
 impl ResolvedNodeContract {
-    /// The conservative recovery class pinned by this resolution.
-    pub fn recovery_class(&self) -> RecoveryClass {
-        self.executable_recovery.conservative_class
-    }
-
-    /// The authoritative executable recovery declaration.
-    pub const fn recovery_contract(&self) -> &ExecutableRecoveryContract {
-        &self.executable_recovery
-    }
-
-    /// Stable identity bytes for artifact and execution-bundle keys.
+    /// Stable bytes used only by the transitional custom-publish plane.
     pub fn identity_bytes(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("resolved node contract identity serializes")
     }
@@ -548,36 +331,7 @@ impl ResolvedNodeContract {
     }
 }
 
-/// Recovery policy selected for one exact occurrence in a flow graph.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct OccurrenceRecoverySelection {
-    pub selection_version: String,
-    pub node_id: String,
-    pub node_type: String,
-    pub recovery_class: RecoveryClass,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub portable_connection: Option<PortableConnectionRequirement>,
-}
-
-impl OccurrenceRecoverySelection {
-    /// Select an executable's conservative class for one graph occurrence.
-    pub fn conservative(
-        node_id: impl Into<String>,
-        node_type: impl Into<String>,
-        contract: &ResolvedNodeContract,
-    ) -> Self {
-        Self {
-            selection_version: OCCURRENCE_RECOVERY_SELECTION_VERSION.to_string(),
-            node_id: node_id.into(),
-            node_type: node_type.into(),
-            recovery_class: contract.recovery_class(),
-            portable_connection: None,
-        }
-    }
-}
-
-/// The supplied-component input to immutable flow-artifact identity.
+/// Transitional supplied-component resolution for the custom-publish plane.
 ///
 /// Construction always requires both the resolved interface and the digest of
 /// the supplied component bytes, so neither pin can be omitted accidentally.
@@ -895,15 +649,11 @@ impl NodeManifest {
         self.validate()?;
         let mut output_ports = self.output_ports.clone();
         output_ports.sort();
-        let purity = match self.purity {
-            Some(Purity::Pure) => ResolvedPurity::Pure,
-            None => ResolvedPurity::Effectful,
-        };
         Ok(ResolvedNodeInterface::new(
             self.node_type.clone(),
             world.interface_contract(),
             output_ports,
-            if purity == ResolvedPurity::Pure {
+            if self.purity == Some(Purity::Pure) {
                 vec![CapabilityClass::Pure]
             } else {
                 Vec::new()
@@ -941,7 +691,7 @@ impl NodeManifest {
         }
     }
 
-    /// Resolve a supplied component for inclusion in flow-artifact identity.
+    /// Resolve a supplied component for the transitional custom-publish plane.
     pub fn resolved_component(
         &self,
         component_digest: impl Into<String>,
@@ -971,13 +721,6 @@ impl NodeManifest {
                 executable: ExecutableIdentity::Component {
                     digest: component_digest,
                 },
-                executable_recovery: if self.purity == Some(Purity::Pure) {
-                    ExecutableRecoveryContract::pure()
-                } else {
-                    ExecutableRecoveryContract::effectful(false)
-                },
-                connection_recovery_support: Vec::new(),
-                portable_connections: Vec::new(),
             },
         })
     }
@@ -1015,7 +758,6 @@ pub fn json_schema_string() -> String {
 )]
 enum ConnectionContractDocument {
     Descriptor(ConnectionTypeDescriptor),
-    Requirement(PortableConnectionRequirement),
 }
 
 /// The language-neutral JSON Schema for portable connection descriptors and

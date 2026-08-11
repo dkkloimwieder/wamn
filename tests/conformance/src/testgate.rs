@@ -230,7 +230,7 @@ pub async fn run(args: TestGateArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wamn_node_manifest::{NodeManifest, RecoveryClass};
+    use wamn_node_manifest::NodeManifest;
 
     /// The compiled disposition node, built from the components workspace. Absent
     /// = these wasm-driven checks SKIP (the pure test_gate units in wamn-builder
@@ -256,18 +256,6 @@ mod tests {
             r#"{{"schema-version":"0.1","node-type":"custom","name":"Custom","version":"0.1.0","contract":"0.1.0"{extra}}}"#
         ))
         .expect("custom manifest parses")
-    }
-
-    /// T-NR control: absence is the dangerous custom-node default, never replay.
-    #[test]
-    fn t_nr_custom_manifest_without_purity_is_never_replay() {
-        let component = custom_manifest("")
-            .resolved_component(format!("sha256:{}", "1".repeat(64)))
-            .expect("valid manifest resolves");
-        assert_eq!(
-            component.contract.executable_recovery.conservative_class,
-            RecoveryClass::NeverReplay
-        );
     }
 
     /// Identity gate: both the resolved interface and component digest are pins.

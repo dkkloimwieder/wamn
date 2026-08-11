@@ -99,25 +99,12 @@ CREATE TABLE catalog.flow_artifacts (
     graph_json            jsonb NOT NULL,
     graph_hash            text NOT NULL,
     artifact_hash         text NOT NULL,
-    interface_bundle_json text NOT NULL
-        CHECK (jsonb_typeof(interface_bundle_json::jsonb) = 'array'),
-    interface_bundle_hash text NOT NULL,
-    component_digests     jsonb NOT NULL
-        CHECK (jsonb_typeof(component_digests) = 'array'),
-    occurrence_recovery_json text,
-    occurrence_recovery_hash text,
     -- Nullable by design: only an authenticated application handler may
     -- supply human-principal provenance. Operator/service publication leaves
     -- this absent rather than attributing SESSION_USER to a human author.
     verified_author_principal text
         CHECK (verified_author_principal IS NULL OR verified_author_principal <> ''),
     created_at             timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT flow_artifacts_occurrence_recovery_pair CHECK (
-        (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
-        OR (occurrence_recovery_json IS NOT NULL
-            AND occurrence_recovery_hash IS NOT NULL
-            AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
-    ),
     PRIMARY KEY (tenant_id, flow_id, flow_version)
 );
 ALTER TABLE catalog.flow_artifacts ENABLE ROW LEVEL SECURITY;
@@ -146,33 +133,6 @@ CREATE TRIGGER flow_artifacts_delete_immutable
 BEFORE DELETE ON catalog.flow_artifacts
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
--- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION (wamn-4u7p.30)
--- ensure_catalog_storage also applies this block to pre-selection schemas.
-ALTER TABLE catalog.flow_artifacts
-    ADD COLUMN IF NOT EXISTS occurrence_recovery_json text;
-ALTER TABLE catalog.flow_artifacts
-    ADD COLUMN IF NOT EXISTS occurrence_recovery_hash text;
-DO $migration$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_constraint
-        WHERE conrelid = 'catalog.flow_artifacts'::regclass
-          AND conname = 'flow_artifacts_occurrence_recovery_pair'
-    ) THEN
-        ALTER TABLE catalog.flow_artifacts
-            ADD CONSTRAINT flow_artifacts_occurrence_recovery_pair CHECK (
-                (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
-                OR (occurrence_recovery_json IS NOT NULL
-                    AND occurrence_recovery_hash IS NOT NULL
-                    AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
-            );
-    END IF;
-END
-$migration$;
-DROP FUNCTION IF EXISTS catalog.register_flow_artifact(
-    text, text, int, text, jsonb, text, text, text, text, jsonb
-);
-
 CREATE OR REPLACE FUNCTION catalog.register_flow_artifact(
     p_tenant_id text,
     p_flow_id text,
@@ -180,12 +140,7 @@ CREATE OR REPLACE FUNCTION catalog.register_flow_artifact(
     p_schema_version text,
     p_graph_json jsonb,
     p_graph_hash text,
-    p_artifact_hash text,
-    p_interface_bundle_json text,
-    p_interface_bundle_hash text,
-    p_component_digests jsonb,
-    p_occurrence_recovery_json text,
-    p_occurrence_recovery_hash text
+    p_artifact_hash text
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -193,17 +148,11 @@ AS $$
 BEGIN
     INSERT INTO catalog.flow_artifacts (
         tenant_id, flow_id, flow_version, schema_version, graph_json,
-        graph_hash, artifact_hash, interface_bundle_json,
-        interface_bundle_hash, component_digests,
-        occurrence_recovery_json, occurrence_recovery_hash
+        graph_hash, artifact_hash
     )
     VALUES (
         p_tenant_id, p_flow_id, p_flow_version, p_schema_version, p_graph_json,
-        p_graph_hash, p_artifact_hash, p_interface_bundle_json,
-        p_interface_bundle_hash,
-        p_component_digests,
-        p_occurrence_recovery_json,
-        p_occurrence_recovery_hash
+        p_graph_hash, p_artifact_hash
     )
     ON CONFLICT (tenant_id, flow_id, flow_version) DO NOTHING;
 
@@ -217,11 +166,6 @@ BEGIN
           AND graph_json = p_graph_json
           AND graph_hash = p_graph_hash
           AND artifact_hash = p_artifact_hash
-          AND interface_bundle_json = p_interface_bundle_json
-          AND interface_bundle_hash = p_interface_bundle_hash
-          AND component_digests = p_component_digests
-          AND occurrence_recovery_json IS NOT DISTINCT FROM p_occurrence_recovery_json
-          AND occurrence_recovery_hash IS NOT DISTINCT FROM p_occurrence_recovery_hash
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '23505',
@@ -230,9 +174,33 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_flow_artifact(
-    text, text, int, text, jsonb, text, text, text, text, jsonb, text, text
+    text, text, int, text, jsonb, text, text
 ) FROM PUBLIC;
--- END OCCURRENCE RECOVERY STORAGE MIGRATION (wamn-4u7p.30)
+
+CREATE TABLE catalog.execution_bundles (
+    tenant_id              text NOT NULL CHECK (tenant_id <> ''),
+    execution_bundle_hash  text NOT NULL
+        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
+    format_version         text NOT NULL CHECK (format_version = '0.1'),
+    exact_bytes            bytea NOT NULL,
+    byte_length            int NOT NULL
+        CHECK (byte_length = octet_length(exact_bytes)),
+    created_at             timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, execution_bundle_hash),
+    CONSTRAINT execution_bundles_exact_hash CHECK (
+        execution_bundle_hash = 'sha256:' || encode(sha256(exact_bytes), 'hex')
+    )
+);
+ALTER TABLE catalog.execution_bundles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.execution_bundles FORCE ROW LEVEL SECURITY;
+CREATE POLICY execution_bundles_tenant ON catalog.execution_bundles
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.execution_bundles TO wamn_app;
+GRANT SELECT, INSERT ON catalog.execution_bundles TO wamn_scenario_author;
+CREATE TRIGGER execution_bundles_immutable
+BEFORE UPDATE OR DELETE ON catalog.execution_bundles
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 -- The sealed canonical member set. Registering the same set converges;
 -- attempting to add/remove/change a member of an existing release conflicts.
@@ -515,24 +483,11 @@ CREATE TABLE catalog.validated_flow_drafts (
     graph_json                jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
     graph_hash                text NOT NULL CHECK (graph_hash <> ''),
     draft_artifact_hash       text NOT NULL CHECK (draft_artifact_hash <> ''),
-    interface_bundle_json     text NOT NULL
-        CHECK (jsonb_typeof(interface_bundle_json::jsonb) = 'array'),
-    interface_bundle_hash     text NOT NULL CHECK (interface_bundle_hash <> ''),
-    component_digests         jsonb NOT NULL
-        CHECK (jsonb_typeof(component_digests) = 'array'),
-    occurrence_recovery_json  text,
-    occurrence_recovery_hash  text,
-    execution_bundle_bytes    bytea NOT NULL CHECK (octet_length(execution_bundle_bytes) > 0),
-    execution_bundle_hash     text NOT NULL CHECK (execution_bundle_hash <> ''),
+    execution_bundle_hash     text NOT NULL
+        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
     binding_base_artifact_hash text NOT NULL CHECK (binding_base_artifact_hash <> ''),
     validated_draft_hash      text NOT NULL CHECK (validated_draft_hash <> ''),
     validated_at              timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT validated_flow_drafts_occurrence_recovery_pair CHECK (
-        (occurrence_recovery_json IS NULL AND occurrence_recovery_hash IS NULL)
-        OR (occurrence_recovery_json IS NOT NULL
-            AND occurrence_recovery_hash IS NOT NULL
-            AND jsonb_typeof(occurrence_recovery_json::jsonb) = 'array')
-    ),
     PRIMARY KEY (tenant_id, validated_draft_hash),
     CONSTRAINT validated_flow_drafts_exact_pin UNIQUE (
         tenant_id, draft_id, draft_revision, draft_content_hash,
@@ -541,7 +496,9 @@ CREATE TABLE catalog.validated_flow_drafts (
         binding_base_artifact_hash
     ),
     FOREIGN KEY (tenant_id, catalog_id, catalog_version)
-        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version),
+    FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
 );
 ALTER TABLE catalog.validated_flow_drafts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.validated_flow_drafts FORCE ROW LEVEL SECURITY;

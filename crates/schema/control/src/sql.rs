@@ -140,7 +140,7 @@ pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
 /// the identity tuple already names different content.
 pub fn register_flow_artifact_sql() -> &'static str {
     "SELECT catalog.register_flow_artifact(\
-       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9, $10::text::jsonb, $11, $12)"
+       $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
 }
 
 /// Seal the exact canonical member set for one release.
@@ -265,9 +265,7 @@ pub fn record_release_publication_sql() -> &'static str {
 /// Read the immutable artifacts and memberships copied by `copy-project-env`.
 pub fn select_release_artifacts_sql() -> &'static str {
     "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash, a.interface_bundle_json, \
-            a.interface_bundle_hash, a.component_digests::text, \
-            a.occurrence_recovery_json, a.occurrence_recovery_hash \
+            a.graph_hash, a.artifact_hash \
      FROM catalog.release_flows r \
      JOIN catalog.flow_artifacts a \
        ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
@@ -531,25 +529,8 @@ mod tests {
 
     #[test]
     fn immutable_release_sql_tracks_catalog_schema() {
-        for field in [
-            "occurrence_recovery_json",
-            "occurrence_recovery_hash",
-            "flow_artifacts_occurrence_recovery_pair",
-        ] {
-            assert!(CATALOG_SCHEMA.contains(field), "missing {field}");
-        }
-        assert!(
-            CATALOG_SCHEMA.contains(
-                "occurrence_recovery_json IS NOT DISTINCT FROM p_occurrence_recovery_json"
-            )
-        );
-        assert!(
-            CATALOG_SCHEMA.contains(
-                "occurrence_recovery_hash IS NOT DISTINCT FROM p_occurrence_recovery_hash"
-            )
-        );
-        assert!(CATALOG_SCHEMA.contains("BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION"));
-        assert!(CATALOG_SCHEMA.contains("ADD COLUMN IF NOT EXISTS occurrence_recovery_json text"));
+        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
+        assert!(CATALOG_SCHEMA.contains("execution_bundles_exact_hash"));
         for table in [
             "flow_artifacts",
             "release_manifests",
@@ -570,14 +551,12 @@ mod tests {
         assert_eq!(
             super::register_flow_artifact_sql(),
             "SELECT catalog.register_flow_artifact(\
-       $1, $2, $3, $4, $5::text::jsonb, $6, $7, $8, $9, $10::text::jsonb, $11, $12)"
+       $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
         );
         assert_eq!(
             super::select_release_artifacts_sql(),
             "SELECT a.flow_id, a.flow_version, a.schema_version, a.graph_json::text, \
-            a.graph_hash, a.artifact_hash, a.interface_bundle_json, \
-            a.interface_bundle_hash, a.component_digests::text, \
-            a.occurrence_recovery_json, a.occurrence_recovery_hash \
+            a.graph_hash, a.artifact_hash \
      FROM catalog.release_flows r \
      JOIN catalog.flow_artifacts a \
        ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \

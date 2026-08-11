@@ -119,11 +119,6 @@ pub(crate) mod tests {
                     &r#"{"flow-id":"flow"}"#,
                     &"graph-a",
                     &"artifact-a",
-                    &"[]",
-                    &"interfaces-a",
-                    &"[]",
-                    &Option::<&str>::None,
-                    &Option::<&str>::None,
                 ],
             )
             .await?;
@@ -309,7 +304,7 @@ pub(crate) mod tests {
 
         client.batch_execute("BEGIN").await.unwrap();
         let register = wamn_schema_control::sql::register_flow_artifact_sql();
-        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 12] = [
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 7] = [
             &"immutable-tenant",
             &"flow",
             &1_i32,
@@ -317,11 +312,6 @@ pub(crate) mod tests {
             &r#"{"flow-id":"flow"}"#,
             &"graph-a",
             &"artifact-a",
-            &"[]",
-            &"interfaces-a",
-            &"[]",
-            &Option::<&str>::None,
-            &Option::<&str>::None,
         ];
         client.execute(register, &params).await.unwrap();
         client.execute(register, &params).await.unwrap();
@@ -355,11 +345,6 @@ pub(crate) mod tests {
                     &r#"{"flow-id":"different"}"#,
                     &"graph-b",
                     &"artifact-b",
-                    &"[]",
-                    &"interfaces-a",
-                    &"[]",
-                    &Option::<&str>::None,
-                    &Option::<&str>::None,
                 ],
             )
             .await

@@ -668,11 +668,11 @@ name = "materializer"
 version = "0.1.0"
 dependencies = [
  "serde_json",
- "wamn-catalog",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-flow",
  "wamn-materializer",
+ "wamn-node-manifest",
  "wamn-run-state",
  "wit-bindgen 0.44.0",
 ]
@@ -824,6 +824,12 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "ryu-js"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
 
 [[package]]
 name = "sample-node"
@@ -1050,6 +1056,8 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "wamn-catalog"
 version = "0.1.0"
 dependencies = [
+ "ryu-js",
+ "schemars",
  "serde",
  "serde_json",
  "sha2",

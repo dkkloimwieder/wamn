@@ -5,10 +5,10 @@ mod tests {
     use serde_json::json;
     use wamn_catalog::{
         Artifact, Attachment, AttachmentDraft, AttachmentId, AttachmentKind, CanonicalJson,
-        CatalogHead, NodeImplementation, Release, ReleaseId, Source, SourceId, SourceKind,
+        CatalogHead, Release, ReleaseId, Source, SourceId, SourceKind,
     };
     use wamn_flow::Flow;
-    use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
+    use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 
     fn flow() -> Flow {
         Flow::from_json(
@@ -42,31 +42,20 @@ mod tests {
             "tenant-a",
             &flow(),
             vec![
-                NodeImplementation::supplied(
-                    interface,
-                    format!("sha256:{}", "1".repeat(64)),
-                    ExecutableRecoveryContract::effectful(false),
-                )
-                .expect("supplied component pin is complete"),
-                NodeImplementation::platform(
-                    ResolvedNodeInterface::new(
-                        "request",
-                        "wamn:node/node@0.1.0",
-                        vec!["main".to_string()],
-                        vec![CapabilityClass::Pure],
-                        Vec::new(),
-                    ),
-                    ExecutableRecoveryContract::pure(),
+                interface,
+                ResolvedNodeInterface::new(
+                    "request",
+                    "wamn:node/node@0.1.0",
+                    vec!["main".to_string()],
+                    vec![CapabilityClass::Pure],
+                    Vec::new(),
                 ),
-                NodeImplementation::platform(
-                    ResolvedNodeInterface::new(
-                        "respond",
-                        "wamn:node/node@0.1.0",
-                        vec!["main".to_string()],
-                        vec![CapabilityClass::Pure],
-                        Vec::new(),
-                    ),
-                    ExecutableRecoveryContract::pure(),
+                ResolvedNodeInterface::new(
+                    "respond",
+                    "wamn:node/node@0.1.0",
+                    vec!["main".to_string()],
+                    vec![CapabilityClass::Pure],
+                    Vec::new(),
                 ),
             ],
         )

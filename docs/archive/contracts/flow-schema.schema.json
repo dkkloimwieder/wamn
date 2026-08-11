@@ -114,9 +114,6 @@
         "authority-model": {
           "$ref": "#/definitions/ConnectionAuthorityModel"
         },
-        "conservative-recovery": {
-          "$ref": "#/definitions/RecoveryClass"
-        },
         "contract": {
           "type": "string"
         },
@@ -135,25 +132,17 @@
         "idempotency-key-injection": {
           "$ref": "#/definitions/IdempotencyKeyInjection"
         },
-        "recovery-claims": {
-          "items": {
-            "$ref": "#/definitions/RecoveryClaimSchema"
-          },
-          "type": "array"
-        },
         "requirement-type": {
           "type": "string"
         }
       },
       "required": [
         "authority-model",
-        "conservative-recovery",
         "contract",
         "credential-injection",
         "descriptor-version",
         "field-ownership",
         "idempotency-key-injection",
-        "recovery-claims",
         "requirement-type"
       ],
       "type": "object"
@@ -243,10 +232,10 @@
         "requirement": {
           "allOf": [
             {
-              "$ref": "#/definitions/PortableConnectionRequirement"
+              "$ref": "#/definitions/ConnectionTypeDescriptor"
             }
           ],
-          "description": "Portable type, contract, field ownership, and recovery requirement."
+          "description": "Portable type, contract, and field-ownership requirement."
         }
       },
       "required": [
@@ -295,7 +284,7 @@
           ]
         },
         "type": {
-          "description": "The node type. Engine-reserved types are checked here; ordinary open strings are resolved through the pinned node-interface bundle.",
+          "description": "The node type. Engine-reserved types are checked here; ordinary open strings are resolved through the pinned public node interfaces.",
           "type": "string"
         }
       },
@@ -304,16 +293,6 @@
         "type"
       ],
       "type": "object"
-    },
-    "OperationFingerprintField": {
-      "description": "A field in the canonical operation fingerprint.",
-      "enum": [
-        "method",
-        "relative-target",
-        "semantic-headers",
-        "body-digest"
-      ],
-      "type": "string"
     },
     "Ordering": {
       "description": "The flow's record-stream **ordering** (5.11): which ordered stream a run joins. This is the run's `run_queue.partition_key` seam — the dispatcher evaluates the declaration at fire() and stamps the key; a NULL key is the order-agnostic global claim. Orthogonal to [`PartitionPolicy`], which ranks runs *within* one stream (D20). Absent = [`Ordering::Unordered`].\n\nPer-node ordering (the 5.11 plan wording) is deferred: the queue's dispatch unit is the **run** (records map 1:1 to runs, D9), so ordering is declared on the flow, not per node — a later refinement if per-node streams are ever needed. See `docs/archive/execution/run-queue.md` §Flow-level ordering declaration.",
@@ -388,118 +367,6 @@
           "type": "string"
         }
       ]
-    },
-    "PortableConnectionRequirement": {
-      "additionalProperties": false,
-      "description": "A portable descriptor and recovery-claim selection.",
-      "properties": {
-        "descriptor": {
-          "$ref": "#/definitions/ConnectionTypeDescriptor"
-        },
-        "recovery": {
-          "$ref": "#/definitions/PortableRecoveryClaim"
-        },
-        "requirement-version": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "descriptor",
-        "recovery",
-        "requirement-version"
-      ],
-      "type": "object"
-    },
-    "PortableRecoveryClaim": {
-      "description": "A portable recovery guarantee selected from a descriptor.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "claim": {
-              "enum": [
-                "never-replay"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "claim"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "claim": {
-              "enum": [
-                "stable-key-dedup-v1"
-              ],
-              "type": "string"
-            },
-            "minimum_retention_ms": {
-              "format": "uint64",
-              "minimum": 0.0,
-              "type": "integer"
-            }
-          },
-          "required": [
-            "claim",
-            "minimum_retention_ms"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "RecoveryClaimParameterSchema": {
-      "description": "A typed parameter accepted by a recovery claim.",
-      "enum": [
-        "minimum-retention-ms"
-      ],
-      "type": "string"
-    },
-    "RecoveryClaimSchema": {
-      "description": "A named recovery claim and its portable parameter schema.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "claim": {
-              "enum": [
-                "stable-key-dedup-v1"
-              ],
-              "type": "string"
-            },
-            "operation_fingerprint": {
-              "items": {
-                "$ref": "#/definitions/OperationFingerprintField"
-              },
-              "type": "array"
-            },
-            "parameters": {
-              "items": {
-                "$ref": "#/definitions/RecoveryClaimParameterSchema"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "claim",
-            "operation_fingerprint",
-            "parameters"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "RecoveryClass": {
-      "description": "The recovery class authorized by the resolved manifest semantics.",
-      "enum": [
-        "replay",
-        "idempotent-with-key",
-        "never-replay"
-      ],
-      "type": "string"
     }
   },
   "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",

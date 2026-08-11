@@ -43,9 +43,9 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
 use tokio::time::Instant;
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_catalog::Artifact;
 use wamn_flow::Flow;
-use wamn_node_manifest::{RecoveryClass, ResolvedNodeInterface, ResolvedPurity};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
@@ -311,46 +311,21 @@ struct FixtureArtifact {
     graph_json: String,
     graph_hash: String,
     artifact_hash: String,
-    interface_bundle_json: String,
-    interface_bundle_hash: String,
-    component_digests: Value,
-    occurrence_recovery_json: String,
-    occurrence_recovery_hash: String,
 }
 
-fn interface(
-    node_type: &str,
-    purity: ResolvedPurity,
-    recovery_class: RecoveryClass,
-) -> NodeImplementation {
-    let recovery = match (purity, recovery_class) {
-        (ResolvedPurity::Pure, RecoveryClass::Replay) => {
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        }
-        (ResolvedPurity::Effectful, RecoveryClass::NeverReplay) => {
-            wamn_node_manifest::ExecutableRecoveryContract::effectful(false)
-        }
-        _ => panic!("fixture recovery semantics must be canonical"),
-    };
-    NodeImplementation::platform(
-        ResolvedNodeInterface::new(
-            node_type,
-            "wamn:node/node@0.1.0",
-            vec!["main".to_string()],
-            vec![if purity == ResolvedPurity::Pure {
-                wamn_node_manifest::CapabilityClass::Pure
-            } else {
-                wamn_node_manifest::CapabilityClass::Http
-            }],
-            Vec::new(),
-        ),
-        recovery,
+fn interface(node_type: &str, capability: CapabilityClass) -> ResolvedNodeInterface {
+    ResolvedNodeInterface::new(
+        node_type,
+        "wamn:node/node@0.1.0",
+        vec!["main".to_string()],
+        vec![capability],
+        Vec::new(),
     )
 }
 
 fn fixture_artifact(
     graph_json: &str,
-    implementations: Vec<NodeImplementation>,
+    implementations: Vec<ResolvedNodeInterface>,
 ) -> anyhow::Result<FixtureArtifact> {
     let flow =
         Flow::from_json(graph_json).map_err(|error| anyhow::anyhow!("flow parse: {error}"))?;
@@ -362,15 +337,6 @@ fn fixture_artifact(
             .expect("canonical flow graph is UTF-8"),
         graph_hash: artifact.graph_hash().to_string(),
         artifact_hash: artifact.identity().artifact_hash().as_str().to_string(),
-        interface_bundle_json: String::from_utf8(
-            artifact.interface_bundle().canonical_bytes().to_vec(),
-        )
-        .expect("canonical interface bundle is UTF-8"),
-        interface_bundle_hash: artifact.interface_bundle().hash().to_string(),
-        component_digests: serde_json::to_value(artifact.supplied_components())?,
-        occurrence_recovery_json: String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-            .expect("canonical occurrence recovery selections are UTF-8"),
-        occurrence_recovery_hash: artifact.occurrence_recovery_hash().to_string(),
     })
 }
 
@@ -384,27 +350,19 @@ fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
         fixture_artifact(
             &crate::flowbench::flow_json(1),
             vec![
-                interface("conditional", ResolvedPurity::Pure, RecoveryClass::Replay),
-                interface(
-                    "pg-write",
-                    ResolvedPurity::Effectful,
-                    RecoveryClass::NeverReplay,
-                ),
-                interface("request", ResolvedPurity::Pure, RecoveryClass::Replay),
-                interface("respond", ResolvedPurity::Pure, RecoveryClass::Replay),
-                interface("transform", ResolvedPurity::Pure, RecoveryClass::Replay),
+                interface("conditional", CapabilityClass::Pure),
+                interface("pg-write", CapabilityClass::Postgres),
+                interface("request", CapabilityClass::Pure),
+                interface("respond", CapabilityClass::Pure),
+                interface("transform", CapabilityClass::Pure),
             ],
         )?,
         fixture_artifact(
             &fail_flow_json(),
             vec![
-                interface(
-                    "postgres-query",
-                    ResolvedPurity::Effectful,
-                    RecoveryClass::NeverReplay,
-                ),
-                interface("request", ResolvedPurity::Pure, RecoveryClass::Replay),
-                interface("respond", ResolvedPurity::Pure, RecoveryClass::Replay),
+                interface("postgres-query", CapabilityClass::Postgres),
+                interface("request", CapabilityClass::Pure),
+                interface("respond", CapabilityClass::Pure),
             ],
         )?,
     ];
@@ -516,20 +474,14 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
                 .execute(
                     "INSERT INTO catalog.flow_artifacts \
                        (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                        artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
-                        occurrence_recovery_json,occurrence_recovery_hash) \
-                     VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
+                        artifact_hash) \
+                     VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5)",
                     &[
                         &TENANT,
                         &artifact.flow_id,
                         &artifact.graph_json,
                         &artifact.graph_hash,
                         &artifact.artifact_hash,
-                        &artifact.interface_bundle_json,
-                        &artifact.interface_bundle_hash,
-                        &artifact.component_digests,
-                        &artifact.occurrence_recovery_json,
-                        &artifact.occurrence_recovery_hash,
                     ],
                 )
                 .await?;
@@ -548,12 +500,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
                     "INSERT INTO catalog.release_flows \
                        (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
                      VALUES ($1,$2,$3,$4,1)",
-                    &[
-                        &TENANT,
-                        &CATALOG_ID,
-                        &CATALOG_VERSION,
-                        &artifact.flow_id,
-                    ],
+                    &[&TENANT, &CATALOG_ID, &CATALOG_VERSION, &artifact.flow_id],
                 )
                 .await?;
         }
@@ -1166,11 +1113,6 @@ mod tests {
                 &artifact.graph_json,
                 &artifact.graph_hash,
                 &artifact.artifact_hash,
-                &artifact.interface_bundle_json,
-                &artifact.interface_bundle_hash,
-                &artifact.component_digests.to_string(),
-                Some(&artifact.occurrence_recovery_json),
-                Some(&artifact.occurrence_recovery_hash),
             )
             .unwrap();
         }

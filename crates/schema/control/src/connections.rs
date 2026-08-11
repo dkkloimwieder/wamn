@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use wamn_node_manifest::PortableConnectionRequirement;
+use wamn_node_manifest::ConnectionTypeDescriptor;
 
 /// Controlled lifecycle states for an environment-owned connection instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ impl ConnectionInstanceStatus {
 pub struct ArtifactConnectionRequirement {
     artifact_hash: String,
     requirement_name: String,
-    requirement: PortableConnectionRequirement,
+    requirement: ConnectionTypeDescriptor,
 }
 
 impl ArtifactConnectionRequirement {
@@ -36,7 +36,7 @@ impl ArtifactConnectionRequirement {
     pub fn new(
         artifact_hash: impl Into<String>,
         requirement_name: impl Into<String>,
-        requirement: PortableConnectionRequirement,
+        requirement: ConnectionTypeDescriptor,
     ) -> Self {
         Self {
             artifact_hash: artifact_hash.into(),
@@ -53,7 +53,7 @@ impl ArtifactConnectionRequirement {
         &self.requirement_name
     }
 
-    pub fn requirement(&self) -> &PortableConnectionRequirement {
+    pub fn requirement(&self) -> &ConnectionTypeDescriptor {
         &self.requirement
     }
 

@@ -176,7 +176,7 @@ fn diff_detects_connection_reference_and_requirement_changes() {
     let mut changed_requirement = old.clone();
     changed_requirement.connection_requirements[0]
         .requirement
-        .requirement_version = "mutant".into();
+        .descriptor_version = "mutant".into();
     let requirement_diff = wamn_flow::diff(&old, &changed_requirement);
     assert_eq!(requirement_diff.connection_requirements_added.len(), 1);
     assert_eq!(requirement_diff.connection_requirements_removed.len(), 1);

@@ -34,14 +34,14 @@ use serde_json::json;
 use sha2::{Digest as _, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_catalog::Artifact;
 use wamn_flow::Flow;
 use wamn_node_invoke::{
     NodeInvokeRequest, SIGNATURE_HEADER, SIGNING_KEY_CREDENTIAL, SIGNING_KEY_CREDENTIAL_PREVIOUS,
     SignatureError, WirePayload, WireRunContext, granted_credentials, sign_envelope,
     sign_envelope_with_timestamp,
 };
-use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
@@ -141,27 +141,20 @@ fn admitted_artifact(node_wasm: &[u8]) -> anyhow::Result<(Flow, Artifact, String
         .context("missing standard-node descriptor for request")?;
     let request = wamn_standard_nodes::resolve_descriptor(request).map_err(anyhow::Error::new)?;
     let mut implementations = vec![
-        NodeImplementation::from_resolved_platform_contract(request).map_err(anyhow::Error::new)?,
-        NodeImplementation::supplied(
-            ResolvedNodeInterface::new(
-                "custom",
-                "wamn:node/node@0.1.0",
-                vec!["main".to_string()],
-                vec![CapabilityClass::Pure],
-                Vec::new(),
-            ),
-            implementation_digest.clone(),
-            ExecutableRecoveryContract::pure(),
-        )?,
+        request.interface,
+        ResolvedNodeInterface::new(
+            "custom",
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![CapabilityClass::Pure],
+            Vec::new(),
+        ),
     ];
     let respond = wamn_standard_nodes::describe("respond")
         .context("missing standard-node descriptor for respond")?;
     let respond = wamn_standard_nodes::resolve_descriptor(respond).map_err(anyhow::Error::new)?;
-    implementations.push(
-        NodeImplementation::from_resolved_platform_contract(respond).map_err(anyhow::Error::new)?,
-    );
-    implementations
-        .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+    implementations.push(respond.interface);
+    implementations.sort_by(|left, right| left.node_type.cmp(&right.node_type));
     let artifact = Artifact::new(TENANT, &flow, implementations)
         .map_err(|error| anyhow::anyhow!("build nodeinvoke release artifact: {error}"))?;
     Ok((flow, artifact, implementation_digest))
@@ -342,12 +335,6 @@ async fn provision(
         let (flow, artifact, implementation_digest) = admitted_artifact(node_wasm)?;
         let graph_json = String::from_utf8(flow.canonical_bytes())
             .context("canonical nodeinvoke graph is not UTF-8")?;
-        let interface_bundle =
-            String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
-                .context("canonical nodeinvoke interface bundle is not UTF-8")?;
-        let component_digests = serde_json::to_value(artifact.supplied_components())?;
-        let occurrence_recovery = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-            .context("canonical nodeinvoke recovery selections are not UTF-8")?;
         let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
         let members = json!([{
             "flow-id": FLOW_ID,
@@ -368,7 +355,7 @@ async fn provision(
         transaction
             .execute(
                 "SELECT catalog.register_flow_artifact( \
-                   $1,$2,$3,$4,$5::text::jsonb,$6,$7,$8,$9,$10,$11,$12)",
+                   $1,$2,$3,$4,$5::text::jsonb,$6,$7)",
                 &[
                     &TENANT,
                     &FLOW_ID,
@@ -377,11 +364,6 @@ async fn provision(
                     &graph_json,
                     &artifact.graph_hash(),
                     &artifact_hash,
-                    &interface_bundle,
-                    &artifact.interface_bundle().hash(),
-                    &component_digests,
-                    &occurrence_recovery,
-                    &artifact.occurrence_recovery_hash(),
                 ],
             )
             .await?;

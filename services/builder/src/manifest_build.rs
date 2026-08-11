@@ -180,16 +180,7 @@ mod tests {
         assert_eq!(m.version, "2.3.4");
         assert_eq!(m.contract, DEFAULT_CONTRACT);
         assert_eq!(m.purity, None);
-        let recovery = resolved_component(&m, b"bytes").unwrap().contract;
-        assert_eq!(
-            recovery.recovery_class(),
-            wamn_node_manifest::RecoveryClass::NeverReplay
-        );
-        assert_eq!(
-            recovery.recovery_contract().supported_classes,
-            [wamn_node_manifest::RecoveryClass::NeverReplay],
-            "an undeclared purity claims exactly the one conservative class"
-        );
+        assert!(resolved_component(&m, b"bytes").is_ok());
         assert!(m.is_valid());
     }
 
@@ -205,16 +196,7 @@ mod tests {
         let m = minimal_manifest("node-ts", "Node TS", "0.1.0", "0.1.0").unwrap();
         assert!(m.is_valid());
         assert_eq!(m.node_type, "node-ts");
-        let recovery = resolved_component(&m, b"bytes").unwrap().contract;
-        assert_eq!(
-            recovery.recovery_class(),
-            wamn_node_manifest::RecoveryClass::NeverReplay
-        );
-        assert_eq!(
-            recovery.recovery_contract().supported_classes,
-            [wamn_node_manifest::RecoveryClass::NeverReplay],
-            "the jco path declares no purity, so it claims only never-replay"
-        );
+        assert!(resolved_component(&m, b"bytes").is_ok());
     }
 
     #[test]

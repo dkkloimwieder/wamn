@@ -1,4 +1,4 @@
-use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
+use wamn_node_manifest::ConnectionTypeDescriptor;
 use wamn_schema_control::connections::{
     ArtifactConnectionRequirement, ConnectionGenerationDefinition, ConnectionInstanceStatus,
     GenerationRetentionKind, insert_connection_binding_sql, insert_connection_generation_sql,
@@ -8,20 +8,13 @@ use wamn_schema_control::connections::{
 
 const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
-fn portable_requirement() -> ArtifactConnectionRequirement {
-    ArtifactConnectionRequirement::new(
-        "artifact-a",
-        "erp",
-        PortableConnectionRequirement::stable_key_dedup_v1(
-            ConnectionTypeDescriptor::http_v1(),
-            86_400_000,
-        ),
-    )
+fn artifact_requirement() -> ArtifactConnectionRequirement {
+    ArtifactConnectionRequirement::new("artifact-a", "erp", ConnectionTypeDescriptor::http_v1())
 }
 
 #[test]
 fn portable_requirement_identity_excludes_environment_definition_fields() {
-    let requirement = portable_requirement();
+    let requirement = artifact_requirement();
     let bytes = requirement.canonical_bytes();
     assert_eq!(requirement.artifact_hash(), "artifact-a");
     assert_eq!(requirement.requirement_name(), "erp");
@@ -48,7 +41,7 @@ fn portable_requirement_identity_excludes_environment_definition_fields() {
 
 #[test]
 fn identical_artifact_requirement_binds_differently_without_identity_drift() {
-    let requirement = portable_requirement();
+    let requirement = artifact_requirement();
     let artifact_bytes = requirement.canonical_bytes();
     let dev_binding = ("dev", "erp-dev");
     let prod_binding = ("prod", "erp-prod");

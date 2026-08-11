@@ -17,6 +17,7 @@ wamn-scenario-model = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
 wamn-run-state = { workspace = true }
 wamn-flow = { workspace = true }
+wamn-node-manifest = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }

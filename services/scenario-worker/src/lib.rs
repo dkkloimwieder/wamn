@@ -107,9 +107,7 @@ SELECT pg_catalog.current_database(), session_user, pg_catalog.inet_server_addr(
 const RELEASE_CANDIDATES_SQL: &str = "\
 SELECT h.tenant_id, h.catalog_id, h.applied_catalog_version, h.environment, \
        rf.flow_id, rf.flow_version, a.graph_json::text, a.graph_hash, \
-       a.artifact_hash, a.interface_bundle_json, a.interface_bundle_hash, \
-       a.component_digests::text, a.occurrence_recovery_json, \
-       a.occurrence_recovery_hash, \
+       a.artifact_hash, \
        (SELECT count(*) FROM jsonb_array_elements(rm.members_json) AS member \
          WHERE member ->> 'flow-id' = rf.flow_id \
            AND (member ->> 'flow-version')::int = rf.flow_version \
@@ -138,11 +136,6 @@ struct ReleaseCandidate {
     graph_json: String,
     graph_hash: String,
     artifact_hash: String,
-    interface_bundle_json: String,
-    interface_bundle_hash: String,
-    component_digests_json: String,
-    occurrence_recovery_json: Option<String>,
-    occurrence_recovery_hash: Option<String>,
     manifest_matches: i64,
 }
 
@@ -510,12 +503,7 @@ async fn release_candidates(
                 graph_json: row.try_get(6)?,
                 graph_hash: row.try_get(7)?,
                 artifact_hash: row.try_get(8)?,
-                interface_bundle_json: row.try_get(9)?,
-                interface_bundle_hash: row.try_get(10)?,
-                component_digests_json: row.try_get(11)?,
-                occurrence_recovery_json: row.try_get(12)?,
-                occurrence_recovery_hash: row.try_get(13)?,
-                manifest_matches: row.try_get(14)?,
+                manifest_matches: row.try_get(9)?,
             })
         })
         .collect()
@@ -547,12 +535,6 @@ fn resolve_release_member(
     {
         bail!("scenario flow {flow_id}@{flow_version} has mismatched release membership");
     }
-    if candidate.occurrence_recovery_json.is_none() || candidate.occurrence_recovery_hash.is_none()
-    {
-        bail!(
-            "scenario flow {flow_id}@{flow_version} has an unverifiable immutable release artifact: canonical occurrence recovery is absent"
-        );
-    }
     let verified_flow_version = u32::try_from(flow_version)
         .context("scenario release flow version is not a positive u32")?;
     let artifact = wamn_catalog::PinnedArtifact::from_storage(
@@ -562,11 +544,6 @@ fn resolve_release_member(
         &candidate.graph_json,
         &candidate.graph_hash,
         &candidate.artifact_hash,
-        &candidate.interface_bundle_json,
-        &candidate.interface_bundle_hash,
-        &candidate.component_digests_json,
-        candidate.occurrence_recovery_json.as_deref(),
-        candidate.occurrence_recovery_hash.as_deref(),
     )
     .with_context(|| {
         format!(
@@ -1600,11 +1577,10 @@ mod tests {
             .map(|node_type| {
                 let descriptor = wamn_standard_nodes::describe(node_type).unwrap();
                 let contract = wamn_standard_nodes::resolve_descriptor(descriptor).unwrap();
-                wamn_catalog::NodeImplementation::from_resolved_platform_contract(contract).unwrap()
+                contract.interface
             })
             .collect::<Vec<_>>();
-        implementations
-            .sort_by(|left, right| left.interface().node_type.cmp(&right.interface().node_type));
+        implementations.sort_by(|left, right| left.node_type.cmp(&right.node_type));
         let artifact = wamn_catalog::Artifact::new("tenant-a", &flow, implementations).unwrap();
 
         ReleaseCandidate {
@@ -1617,16 +1593,6 @@ mod tests {
             graph_json: graph_json.into(),
             graph_hash: artifact.graph_hash().into(),
             artifact_hash: artifact.identity().artifact_hash().as_str().into(),
-            interface_bundle_json: String::from_utf8(
-                artifact.interface_bundle().canonical_bytes().to_vec(),
-            )
-            .unwrap(),
-            interface_bundle_hash: artifact.interface_bundle().hash().into(),
-            component_digests_json: serde_json::to_string(artifact.supplied_components()).unwrap(),
-            occurrence_recovery_json: Some(
-                String::from_utf8(artifact.occurrence_recovery_bytes().to_vec()).unwrap(),
-            ),
-            occurrence_recovery_hash: Some(artifact.occurrence_recovery_hash().into()),
             manifest_matches: 1,
         }
     }
@@ -1685,23 +1651,6 @@ mod tests {
         let unverifiable =
             resolve_release_member("tenant-a", "scenario-flow", 1, vec![tampered]).unwrap_err();
         assert!(format!("{unverifiable:#}").contains("unverifiable immutable release artifact"));
-    }
-
-    #[test]
-    fn absent_occurrence_recovery_refuses_before_any_admission() {
-        let mut missing_json = release_candidate();
-        missing_json.occurrence_recovery_json = None;
-        let error = resolve_release_member("tenant-a", "scenario-flow", 1, vec![missing_json])
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("canonical occurrence recovery is absent"));
-
-        let mut missing_hash = release_candidate();
-        missing_hash.occurrence_recovery_hash = None;
-        let error = resolve_release_member("tenant-a", "scenario-flow", 1, vec![missing_hash])
-            .unwrap_err()
-            .to_string();
-        assert!(error.contains("canonical occurrence recovery is absent"));
     }
 
     #[test]

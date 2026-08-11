@@ -614,10 +614,10 @@ async fn authoring_command(
 /// `wamn-ftfc.22` re-checked each remaining kind against this tree instead of
 /// inheriting the reasons recorded when the route landed:
 ///
-/// - `validate` has a backend, but three of its trusted inputs have no producer
-///   here. [`crate::authoring::DraftBundleInputs`] needs execution-bundle and
-///   plug identities nothing outside test fixtures constructs; the runner pin is
-///   the digest of a compiled flowrunner this surface does not carry; and the
+/// - `validate` has a backend, but its trusted runtime inputs have no producer
+///   here. [`crate::authoring::DraftBundleInputs`] needs the effect-provider
+///   revision and supported host-effect contract; validation also pins the
+///   digest of compiled flowrunner bytes this surface does not carry, and the
 ///   applied catalog identity is absent from the contract request. Supplying any
 ///   of them from a transport would persist a content-addressed pin that names
 ///   no real executable.

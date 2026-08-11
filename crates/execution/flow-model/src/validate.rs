@@ -5,10 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use boon::{Compiler, Draft, Schemas};
 use serde::Deserialize;
 use serde_json::Value;
-use wamn_node_manifest::{
-    ConnectionTypeDescriptor, PORTABLE_CONNECTION_REQUIREMENT_VERSION,
-    normalize_portable_http_target,
-};
+use wamn_node_manifest::{ConnectionTypeDescriptor, normalize_portable_http_target};
 
 use crate::types::{
     ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node, Ordering,
@@ -302,9 +299,7 @@ fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
                 format!("connection requirement {:?} is not unique", named.name),
             ));
         }
-        if named.requirement.requirement_version != PORTABLE_CONNECTION_REQUIREMENT_VERSION
-            || named.requirement.descriptor != ConnectionTypeDescriptor::http_v1()
-        {
+        if named.requirement != ConnectionTypeDescriptor::http_v1() {
             issues.push(Issue::error(
                 "unsupported-connection-requirement",
                 format!("connection-requirements[{index}].requirement"),
@@ -408,7 +403,7 @@ fn validate_http_request_connection(
         flow.connection_requirements
             .iter()
             .find(|named| named.name == connection)
-    }) && named.requirement.descriptor != ConnectionTypeDescriptor::http_v1()
+    }) && named.requirement != ConnectionTypeDescriptor::http_v1()
     {
         issues.push(Issue::error(
             "http-request-wrong-connection-type",
@@ -1026,7 +1021,7 @@ fn is_slug(id: &str) -> bool {
 }
 
 impl Flow {
-    /// All validation issues against the pinned interface bundle.
+    /// All validation issues against the resolved public interfaces.
     pub fn issues(&self, resolved_interfaces: &ResolvedInterfaces) -> Vec<Issue> {
         validate(self, resolved_interfaces)
     }
@@ -1058,7 +1053,7 @@ mod tests {
 
     use serde_json::json;
 
-    use wamn_node_manifest::{ConnectionTypeDescriptor, PortableConnectionRequirement};
+    use wamn_node_manifest::ConnectionTypeDescriptor;
 
     use crate::types::{
         Capture, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
@@ -1131,9 +1126,7 @@ mod tests {
     fn http_requirement(name: &str) -> FlowConnectionRequirement {
         FlowConnectionRequirement {
             name: name.into(),
-            requirement: PortableConnectionRequirement::never_replay(
-                ConnectionTypeDescriptor::http_v1(),
-            ),
+            requirement: ConnectionTypeDescriptor::http_v1(),
         }
     }
 
@@ -1249,31 +1242,27 @@ mod tests {
     }
 
     #[test]
-    fn portable_http_requirement_version_and_descriptor_are_exact() {
+    fn http_requirement_descriptor_version_and_contract_are_exact() {
         let mut bad_version = connection_http_flow();
         bad_version.connection_requirements[0]
             .requirement
-            .requirement_version = "2".into();
+            .descriptor_version = "2".into();
         assert!(codes(&bad_version).contains(&"unsupported-connection-requirement"));
 
         let mut bad_contract = connection_http_flow();
-        bad_contract.connection_requirements[0]
-            .requirement
-            .descriptor
-            .contract = "wamn:connection/http@0.2.0".into();
+        bad_contract.connection_requirements[0].requirement.contract =
+            "wamn:connection/http@0.2.0".into();
         assert!(codes(&bad_contract).contains(&"unsupported-connection-requirement"));
         assert!(codes(&bad_contract).contains(&"http-request-wrong-connection-type"));
     }
 
     #[test]
-    fn artifact_identity_covers_portable_requirement_and_refuses_environment_fields() {
+    fn artifact_identity_covers_connection_requirement_and_refuses_environment_fields() {
         let baseline = connection_http_flow();
         let mut changed = baseline.clone();
-        changed.connection_requirements[0].requirement =
-            PortableConnectionRequirement::stable_key_dedup_v1(
-                ConnectionTypeDescriptor::http_v1(),
-                1,
-            );
+        changed.connection_requirements[0]
+            .requirement
+            .descriptor_version = "changed".into();
         assert_ne!(baseline.graph_hash(), changed.graph_hash());
 
         let baseline_value = serde_json::to_value(&baseline).unwrap();

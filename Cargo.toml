@@ -46,6 +46,7 @@ rand_core = "0.10"
 reqwest = { version = "0.13", default-features = false }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false }
+ryu-js = "1.0.3"
 schemars = "0.8"
 serde = "1"
 serde_json = "1"

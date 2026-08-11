@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
-use wamn_node_manifest::PortableConnectionRequirement;
+use wamn_node_manifest::ConnectionTypeDescriptor;
 
 use crate::canonical;
 use crate::preimage::FlowPreimage;
@@ -309,7 +309,7 @@ pub struct Node {
     /// Unique within the flow.
     pub id: NodeId,
     /// The node type. Engine-reserved types are checked here; ordinary open
-    /// strings are resolved through the pinned node-interface bundle.
+    /// strings are resolved through the pinned public node interfaces.
     #[serde(rename = "type")]
     pub node_type: String,
     /// Human-readable label (editor).
@@ -336,8 +336,8 @@ pub struct Node {
 pub struct FlowConnectionRequirement {
     /// Artifact-local logical name referenced by [`Node::connection`].
     pub name: String,
-    /// Portable type, contract, field ownership, and recovery requirement.
-    pub requirement: PortableConnectionRequirement,
+    /// Portable type, contract, and field-ownership requirement.
+    pub requirement: ConnectionTypeDescriptor,
 }
 
 impl Node {

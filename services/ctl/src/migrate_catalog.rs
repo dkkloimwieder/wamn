@@ -757,11 +757,6 @@ mod tests {
                     &r#"{"flow-id":"flow"}"#,
                     &"graph",
                     &"artifact",
-                    &"[]",
-                    &"interfaces",
-                    &"[]",
-                    &Option::<&str>::None,
-                    &Option::<&str>::None,
                 ],
             )
             .await

@@ -32,9 +32,9 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_catalog::Artifact;
 use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 
 /// The canonical catalog storage DDL — the same standalone deploy artifact
 /// metricbench and testkitbench lay down, so no gate fixture can drift from the
@@ -60,11 +60,6 @@ struct Member {
     artifact_hash: String,
     graph_json: String,
     graph_hash: String,
-    interface_bundle_json: String,
-    interface_bundle_hash: String,
-    component_digests: Value,
-    occurrence_recovery_json: String,
-    occurrence_recovery_hash: String,
 }
 
 /// The capability class each gate-fixture node type is published with.
@@ -91,7 +86,7 @@ fn node_capability(node_type: &str) -> anyhow::Result<CapabilityClass> {
 /// The implementations a graph requires: exactly one per DISTINCT node type,
 /// ordered by node type (artifact identity demands both). Derived from the graph,
 /// so editing a fixture cannot leave a stale interface set behind.
-fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeImplementation>> {
+fn implementations(flow: &Flow) -> anyhow::Result<Vec<ResolvedNodeInterface>> {
     let mut node_types: Vec<&str> = flow
         .nodes
         .iter()
@@ -104,20 +99,12 @@ fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeImplementation>> {
         .into_iter()
         .map(|node_type| {
             let capability = node_capability(node_type)?;
-            let recovery = if capability == CapabilityClass::Pure {
-                ExecutableRecoveryContract::pure()
-            } else {
-                ExecutableRecoveryContract::effectful(false)
-            };
-            Ok(NodeImplementation::platform(
-                ResolvedNodeInterface::new(
-                    node_type,
-                    "wamn:node/node@0.1.0",
-                    vec!["main".to_string()],
-                    vec![capability],
-                    Vec::new(),
-                ),
-                recovery,
+            Ok(ResolvedNodeInterface::new(
+                node_type,
+                "wamn:node/node@0.1.0",
+                vec!["main".to_string()],
+                vec![capability],
+                Vec::new(),
             ))
         })
         .collect()
@@ -138,15 +125,6 @@ fn member(tenant: &str, flow_json: &str) -> anyhow::Result<Member> {
         graph_json: String::from_utf8(flow.canonical_bytes())
             .expect("canonical flow graph is UTF-8"),
         graph_hash: artifact.graph_hash().to_string(),
-        interface_bundle_json: String::from_utf8(
-            artifact.interface_bundle().canonical_bytes().to_vec(),
-        )
-        .expect("canonical interface bundle is UTF-8"),
-        interface_bundle_hash: artifact.interface_bundle().hash().to_string(),
-        component_digests: serde_json::to_value(artifact.supplied_components())?,
-        occurrence_recovery_json: String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-            .expect("canonical occurrence recovery selections are UTF-8"),
-        occurrence_recovery_hash: artifact.occurrence_recovery_hash().to_string(),
     })
 }
 
@@ -240,9 +218,8 @@ pub(crate) async fn publish_release(
                     .execute(
                         "INSERT INTO catalog.flow_artifacts \
                            (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                            artifact_hash,interface_bundle_json,interface_bundle_hash, \
-                            component_digests,occurrence_recovery_json,occurrence_recovery_hash) \
-                         VALUES ($1,$2,$3,'0.1',$4::text::jsonb,$5,$6,$7,$8,$9,$10,$11)",
+                            artifact_hash) \
+                         VALUES ($1,$2,$3,'0.1',$4::text::jsonb,$5,$6)",
                         &[
                             &tenant,
                             &member.flow_id,
@@ -250,11 +227,6 @@ pub(crate) async fn publish_release(
                             &member.graph_json,
                             &member.graph_hash,
                             &member.artifact_hash,
-                            &member.interface_bundle_json,
-                            &member.interface_bundle_hash,
-                            &member.component_digests,
-                            &member.occurrence_recovery_json,
-                            &member.occurrence_recovery_hash,
                         ],
                     )
                     .await

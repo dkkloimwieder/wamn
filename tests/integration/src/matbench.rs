@@ -343,15 +343,14 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             .execute(
                 "INSERT INTO catalog.flow_artifacts \
                  (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                  artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
-                 VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,'[]',$6,'[]')",
+                  artifact_hash) \
+                 VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5)",
                 &[
                     &TENANT,
                     &flow_id,
                     &graph,
                     &format!("graph-{flow_id}"),
                     &artifact_hash,
-                    &format!("interfaces-{flow_id}"),
                 ],
             )
             .await

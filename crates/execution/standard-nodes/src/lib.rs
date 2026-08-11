@@ -52,11 +52,8 @@ use wamn_flow::node_contract::{
     NodeError, NodeInterface, RunContext,
 };
 use wamn_node_manifest::{
-    CapabilityClass, ConnectionRecoverySupport,
-    ConnectionRequirement as LegacyConnectionRequirement, ConnectionTypeDescriptor,
-    ExecutableConnectionRecoveryMode, ExecutableIdentity, ExecutableRecoveryClaim,
-    ExecutableRecoveryContract, IdempotencyKeyInjection, NODE_WORLD_INTERFACE,
-    PortableConnectionRequirement, ResolvedNodeContract, ResolvedNodeInterface,
+    CapabilityClass, ConnectionRequirement as LegacyConnectionRequirement, ExecutableIdentity,
+    NODE_WORLD_INTERFACE, ResolvedNodeContract, ResolvedNodeInterface,
 };
 
 /// Temporary shape version for the E3-owned legacy standard-node descriptor.
@@ -129,9 +126,7 @@ pub struct NodeDescriptor {
     pub capability_classes: Vec<CapabilityClass>,
     pub connection_requirements: Vec<LegacyConnectionRequirement>,
     pub platform_revision: String,
-    pub executable_recovery: ExecutableRecoveryContract,
-    pub connection_recovery_support: Vec<ConnectionRecoverySupport>,
-    pub portable_connections: Vec<PortableConnectionRequirement>,
+    pub effect_policy: EffectPolicy,
     pub dispatch_capabilities: &'static [Capability],
 }
 
@@ -153,11 +148,6 @@ static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> =
     LazyLock::new(|| std::array::from_fn(|index| legacy_descriptor(&INTERFACES[index])));
 
 fn legacy_descriptor(interface: &'static NodeInterface) -> NodeDescriptor {
-    let is_http = interface.capabilities.contains(&Capability::HttpEgress);
-    let executable_recovery = match interface.effect_policy {
-        EffectPolicy::Pure => ExecutableRecoveryContract::pure(),
-        EffectPolicy::Effectful => ExecutableRecoveryContract::effectful(is_http),
-    };
     let capability_classes = match interface.effect_policy {
         EffectPolicy::Pure => vec![CapabilityClass::Pure],
         EffectPolicy::Effectful => capability_classes(&interface.capabilities),
@@ -170,28 +160,6 @@ fn legacy_descriptor(interface: &'static NodeInterface) -> NodeDescriptor {
             contract: requirement.contract.clone(),
         })
         .collect();
-    let (connection_recovery_support, portable_connections) = if is_http {
-        let connection = ConnectionTypeDescriptor::http_v1();
-        (
-            vec![ConnectionRecoverySupport {
-                descriptor: connection.clone(),
-                supported_modes: vec![
-                    ExecutableConnectionRecoveryMode::NeverReplay,
-                    ExecutableConnectionRecoveryMode::IdempotentWithKey {
-                        claim: ExecutableRecoveryClaim::StableKeyDedupV1,
-                        key_propagation: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
-                    },
-                ],
-            }],
-            vec![
-                PortableConnectionRequirement::never_replay(connection.clone()),
-                PortableConnectionRequirement::stable_key_dedup_v1(connection, 86_400_000),
-            ],
-        )
-    } else {
-        (Vec::new(), Vec::new())
-    };
-
     NodeDescriptor {
         descriptor_version: STANDARD_NODE_DESCRIPTOR_VERSION.to_string(),
         node_type: interface.node_type.clone(),
@@ -200,9 +168,7 @@ fn legacy_descriptor(interface: &'static NodeInterface) -> NodeDescriptor {
         capability_classes,
         connection_requirements,
         platform_revision: STANDARD_NODE_PLATFORM_REVISION.to_string(),
-        executable_recovery,
-        connection_recovery_support,
-        portable_connections,
+        effect_policy: interface.effect_policy,
         dispatch_capabilities: interface.capabilities.as_slice(),
     }
 }
@@ -239,9 +205,7 @@ pub fn resolve_descriptor(
             ),
         });
     }
-    let expected_classes = if descriptor.dispatch_capabilities.is_empty()
-        && descriptor.executable_recovery.purity == wamn_node_manifest::ResolvedPurity::Pure
-    {
+    let expected_classes = if descriptor.effect_policy == EffectPolicy::Pure {
         vec![CapabilityClass::Pure]
     } else {
         capability_classes(descriptor.dispatch_capabilities)
@@ -263,9 +227,6 @@ pub fn resolve_descriptor(
         executable: ExecutableIdentity::Platform {
             revision: descriptor.platform_revision.clone(),
         },
-        executable_recovery: descriptor.executable_recovery.clone(),
-        connection_recovery_support: descriptor.connection_recovery_support.clone(),
-        portable_connections: descriptor.portable_connections.clone(),
     })
 }
 

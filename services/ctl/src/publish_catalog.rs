@@ -470,18 +470,6 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'flow_artifacts' \
-                               AND column_name = 'interface_bundle_json'), \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'flow_artifacts' \
-                               AND column_name = 'occurrence_recovery_json'), \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'flow_artifacts' \
-                               AND column_name = 'occurrence_recovery_hash'), \
-                    EXISTS (SELECT 1 FROM information_schema.columns \
-                             WHERE table_schema = 'catalog' \
-                               AND table_name = 'flow_artifacts' \
                                AND column_name = 'verified_author_principal'), \
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
@@ -535,34 +523,13 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         release_row.get::<_, bool>(7),
         release_row.get::<_, bool>(8),
         release_row.get::<_, bool>(9),
-        release_row.get::<_, bool>(10),
     ];
     if release_objects.iter().all(|present| *present) {
-        let selection_columns = [
+        let provenance_storage = [
+            release_row.get::<_, bool>(10),
             release_row.get::<_, bool>(11),
             release_row.get::<_, bool>(12),
-        ];
-        if !selection_columns.iter().all(|present| *present) {
-            anyhow::ensure!(
-                selection_columns.iter().all(|present| !*present),
-                "catalog occurrence recovery storage is partially installed; reconcile it before publication"
-            );
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN OCCURRENCE RECOVERY STORAGE MIGRATION")
-                .expect("occurrence recovery migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END OCCURRENCE RECOVERY STORAGE MIGRATION")
-                .expect("occurrence recovery migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install occurrence recovery artifact storage")?;
-        }
-        let provenance_storage = [
             release_row.get::<_, bool>(13),
-            release_row.get::<_, bool>(14),
-            release_row.get::<_, bool>(15),
-            release_row.get::<_, bool>(16),
         ];
         if !provenance_storage.iter().all(|present| *present) {
             let start = CATALOG_SCHEMA_SQL
@@ -577,11 +544,11 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install verified publication provenance storage")?;
         }
         let connection_objects = [
+            release_row.get::<_, bool>(14),
+            release_row.get::<_, bool>(15),
+            release_row.get::<_, bool>(16),
             release_row.get::<_, bool>(17),
             release_row.get::<_, bool>(18),
-            release_row.get::<_, bool>(19),
-            release_row.get::<_, bool>(20),
-            release_row.get::<_, bool>(21),
         ];
         if !connection_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -601,8 +568,8 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         }
 
         let authoring_draft_objects = [
-            release_row.get::<_, bool>(22),
-            release_row.get::<_, bool>(23),
+            release_row.get::<_, bool>(19),
+            release_row.get::<_, bool>(20),
         ];
         if !authoring_draft_objects.iter().all(|present| *present) {
             anyhow::ensure!(
@@ -621,7 +588,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install authoring draft storage")?;
         }
 
-        if !release_row.get::<_, bool>(24) {
+        if !release_row.get::<_, bool>(21) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION")
                 .expect("authoring connection authority migration start");
@@ -637,7 +604,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         // The adapter's startup authority probe hard-requires the ledger, so an
         // existing catalog that predates wamn-ctc8.8 must gain it here or the
         // management surface refuses to start against that project.
-        if !release_row.get::<_, bool>(25) {
+        if !release_row.get::<_, bool>(22) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN AUTHORING COMMAND AUDIT MIGRATION")
                 .expect("authoring command audit migration start");
@@ -658,7 +625,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         // exact submitted text no longer exists anywhere. The backfill recovers
         // the document, not the bytes; that is the most an upgrade can honestly
         // do, and every revision saved afterwards is byte-exact.
-        if !release_row.get::<_, bool>(26) {
+        if !release_row.get::<_, bool>(23) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN AUTHORING DRAFT DEFINITION MIGRATION")
                 .expect("authoring draft definition migration start");
@@ -671,7 +638,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install exact-text authoring draft storage")?;
         }
 
-        if !release_row.get::<_, bool>(27) {
+        if !release_row.get::<_, bool>(24) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN AUTHORING COMMAND PROVENANCE MIGRATION")
                 .expect("authoring command provenance migration start");
@@ -688,7 +655,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
         // verdict, so a catalog provisioned before this ledger existed must gain
         // it here or every gated promotion into that project would fail on a
         // missing table rather than on its actual evidence.
-        if !release_row.get::<_, bool>(28) {
+        if !release_row.get::<_, bool>(25) {
             let start = CATALOG_SCHEMA_SQL
                 .find("-- BEGIN PUBLISH GATE AUDIT MIGRATION")
                 .expect("publish gate audit migration start");
@@ -937,13 +904,6 @@ async fn publish_release(
             let artifact = &prepared.artifact;
             let id = artifact.identity().id();
             let flow_version = i32::try_from(id.flow_version()).context("flow version")?;
-            let interfaces = std::str::from_utf8(artifact.interface_bundle().canonical_bytes())
-                .context("canonical interface bundle is UTF-8")?;
-            let interface_bundle_hash = artifact.interface_bundle().hash();
-            let component_digests = serde_json::to_string(artifact.supplied_components())
-                .context("serialize digests")?;
-            let occurrence_recovery = std::str::from_utf8(artifact.occurrence_recovery_bytes())
-                .context("canonical occurrence recovery selections are UTF-8")?;
             client
                 .execute(
                     wamn_schema_control::sql::register_flow_artifact_sql(),
@@ -955,11 +915,6 @@ async fn publish_release(
                         &prepared.graph_json.as_str(),
                         &artifact.graph_hash(),
                         &artifact.identity().artifact_hash().as_str(),
-                        &interfaces,
-                        &interface_bundle_hash,
-                        &component_digests.as_str(),
-                        &occurrence_recovery,
-                        &artifact.occurrence_recovery_hash(),
                     ],
                 )
                 .await
@@ -1614,7 +1569,7 @@ fn component_digest(bytes: &[u8]) -> String {
 /// database connection or publication mutation.
 fn load_supplied_components(
     descriptors: &[PathBuf],
-) -> anyhow::Result<BTreeMap<String, wamn_catalog::NodeImplementation>> {
+) -> anyhow::Result<BTreeMap<String, wamn_node_manifest::ResolvedNodeInterface>> {
     let mut supplied = BTreeMap::new();
     for descriptor_pathname in descriptors {
         let source = std::fs::read_to_string(descriptor_pathname).with_context(|| {
@@ -1655,8 +1610,7 @@ fn load_supplied_components(
         let resolved = manifest
             .resolved_component(actual_digest)
             .map_err(|issues| anyhow::anyhow!("resolve custom-node manifest: {issues:?}"))?;
-        let implementation = wamn_catalog::NodeImplementation::from_resolved_component(resolved)
-            .map_err(|error| anyhow::anyhow!("resolve custom-node implementation: {error}"))?;
+        let implementation = resolved.contract.interface;
         anyhow::ensure!(
             supplied
                 .insert(descriptor.node_type.clone(), implementation)
@@ -1670,7 +1624,7 @@ fn load_supplied_components(
 
 fn prepare_publication_flows(
     args: &PublishCatalogArgs,
-    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+    supplied: &BTreeMap<String, wamn_node_manifest::ResolvedNodeInterface>,
 ) -> anyhow::Result<PreparedPublicationFlows> {
     let mut artifacts = Vec::new();
     let mut used_supplied = BTreeSet::new();
@@ -1718,7 +1672,7 @@ fn prepare_publication_flows(
 }
 
 fn ensure_all_supplied_used(
-    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+    supplied: &BTreeMap<String, wamn_node_manifest::ResolvedNodeInterface>,
     used_supplied: &BTreeSet<String>,
 ) -> anyhow::Result<()> {
     if let Some(node_type) = supplied
@@ -1732,11 +1686,10 @@ fn ensure_all_supplied_used(
 
 fn standard_implementation(
     descriptor: &wamn_standard_nodes::NodeDescriptor,
-) -> anyhow::Result<wamn_catalog::NodeImplementation> {
+) -> anyhow::Result<wamn_node_manifest::ResolvedNodeInterface> {
     let contract =
         wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
-    wamn_catalog::NodeImplementation::from_resolved_platform_contract(contract)
-        .map_err(anyhow::Error::new)
+    Ok(contract.interface)
 }
 
 /// Resolve standard and verified supplied-node interfaces, then build the
@@ -1744,11 +1697,12 @@ fn standard_implementation(
 fn prepare_flow_artifact(
     tenant: &str,
     graph_json: &str,
-    supplied: &BTreeMap<String, wamn_catalog::NodeImplementation>,
+    supplied: &BTreeMap<String, wamn_node_manifest::ResolvedNodeInterface>,
 ) -> anyhow::Result<PreparedFlowArtifact> {
     let flow =
         wamn_flow::Flow::from_json(graph_json).map_err(|e| anyhow::anyhow!("flow parse: {e}"))?;
-    let mut implementations = Vec::new();
+    let mut interfaces = Vec::new();
+    let mut supplied_node_types = BTreeSet::new();
     let node_types: BTreeSet<_> = flow
         .nodes
         .iter()
@@ -1757,18 +1711,14 @@ fn prepare_flow_artifact(
     for node_type in node_types {
         let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
             if let Some(implementation) = supplied.get(node_type) {
-                implementations.push(implementation.clone());
+                interfaces.push(implementation.clone());
+                supplied_node_types.insert(node_type.to_string());
             }
             continue;
         };
-        implementations.push(standard_implementation(descriptor)?);
+        interfaces.push(standard_implementation(descriptor)?);
     }
-    let supplied_node_types = implementations
-        .iter()
-        .filter(|implementation| implementation.component_digest().is_some())
-        .map(|implementation| implementation.interface().node_type.clone())
-        .collect();
-    let artifact = wamn_catalog::Artifact::new(tenant, &flow, implementations)
+    let artifact = wamn_catalog::Artifact::new(tenant, &flow, interfaces)
         .map_err(|error| anyhow::anyhow!("immutable artifact: {error}"))?;
     Ok(PreparedFlowArtifact {
         graph_json: graph_json.to_string(),
@@ -2254,579 +2204,6 @@ mod tests {
         ] {
             assert!(parse_raw_sql_config(source).is_err(), "{source}");
         }
-    }
-
-    #[test]
-    fn standard_request_transform_and_respond_resolve_into_a_canonical_artifact() {
-        let graph = r#"{
-          "schema-version":"0.1","flow-id":"standard-flow","version":1,
-          "nodes":[
-            {"id":"request","type":"request","config":{"input-schema":{
-              "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
-            }}},
-            {"id":"shape","type":"transform","config":{"expression":"@"}},
-            {"id":"respond","type":"respond","config":{"status":200}}
-          ],
-          "edges":[
-            {"from":"request","to":"shape"},
-            {"from":"shape","to":"respond"}
-          ]
-        }"#;
-        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
-            .expect("standard node resolves");
-        assert_eq!(prepared.artifact.interfaces().len(), 3);
-        assert_eq!(prepared.artifact.interfaces()[0].node_type, "request");
-        assert_eq!(prepared.artifact.interfaces()[1].node_type, "respond");
-        assert_eq!(prepared.artifact.interfaces()[2].node_type, "transform");
-        assert!(
-            prepared
-                .artifact
-                .interfaces()
-                .iter()
-                .all(|interface| interface.output_ports == ["main"])
-        );
-        let contract = prepared
-            .artifact
-            .interface_bundle()
-            .contract("request")
-            .expect("request contract is pinned");
-        assert_eq!(
-            contract.interface.interface_contract,
-            "wamn:node/node@0.1.0"
-        );
-        assert!(matches!(
-            &contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform { revision }
-                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
-        ));
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
-        assert!(
-            prepared
-                .artifact
-                .occurrence_recovery()
-                .iter()
-                .all(|selection| {
-                    selection.recovery_class == wamn_node_manifest::RecoveryClass::Replay
-                })
-        );
-    }
-
-    #[test]
-    fn standard_cron_resolves_into_a_pinned_canonical_artifact() {
-        let graph = r#"{
-          "schema-version":"0.1","flow-id":"scheduled-flow","version":1,
-          "nodes":[{"id":"tick","type":"cron"}],
-          "edges":[]
-        }"#;
-        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
-            .expect("cron standard node resolves");
-        assert_eq!(prepared.artifact.interfaces().len(), 1);
-        let contract = prepared
-            .artifact
-            .interface_bundle()
-            .contract("cron")
-            .expect("cron contract is pinned");
-        assert!(matches!(
-            &contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform { revision }
-                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
-        ));
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
-    }
-
-    #[test]
-    fn standard_event_resolves_into_a_pinned_canonical_artifact() {
-        let graph = r#"{
-          "schema-version":"0.1","flow-id":"event-flow","version":1,
-          "nodes":[{"id":"in","type":"event"}],
-          "edges":[]
-        }"#;
-        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
-            .expect("event standard node resolves");
-        assert_eq!(prepared.artifact.interfaces().len(), 1);
-        let contract = prepared
-            .artifact
-            .interface_bundle()
-            .contract("event")
-            .expect("event contract is pinned");
-        assert!(matches!(
-            &contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform { revision }
-                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
-        ));
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
-    }
-
-    #[test]
-    fn standard_fail_resolves_into_a_pinned_canonical_artifact() {
-        let graph = r#"{
-          "schema-version":"0.1","flow-id":"fail-flow","version":1,
-          "nodes":[{"id":"in","type":"cron"},
-                   {"id":"bad","type":"fail","config":{"code":"stop"}}],
-          "edges":[{"from":"in","to":"bad"}]
-        }"#;
-        let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
-            .expect("fail standard node resolves");
-        assert_eq!(prepared.artifact.interfaces().len(), 2);
-        let contract = prepared
-            .artifact
-            .interface_bundle()
-            .contract("fail")
-            .expect("fail contract is pinned");
-        assert!(matches!(
-            &contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform { revision }
-                if revision == wamn_standard_nodes::STANDARD_NODE_PLATFORM_REVISION
-        ));
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
-        assert!(
-            prepared
-                .artifact
-                .occurrence_recovery()
-                .iter()
-                .any(|selection| { selection.node_id == "bad" && selection.node_type == "fail" })
-        );
-    }
-
-    #[test]
-    fn built_in_only_artifacts_round_trip_every_lifecycle_contract() {
-        let graphs = [
-            r#"{
-              "schema-version":"0.1","flow-id":"http-lifecycle","version":1,
-              "nodes":[
-                {"id":"request","type":"request","config":{"input-schema":true}},
-                {"id":"respond","type":"respond","config":{"status":200}}
-              ],
-              "edges":[{"from":"request","to":"respond"}]
-            }"#,
-            r#"{
-              "schema-version":"0.1","flow-id":"cron-lifecycle","version":1,
-              "nodes":[
-                {"id":"cron","type":"cron"},
-                {"id":"fail","type":"fail","config":{"code":"stop"}}
-              ],
-              "edges":[{"from":"cron","to":"fail"}]
-            }"#,
-            r#"{
-              "schema-version":"0.1","flow-id":"event-lifecycle","version":1,
-              "nodes":[{"id":"event","type":"event"}],
-              "edges":[]
-            }"#,
-        ];
-        let mut pinned_node_types = BTreeSet::new();
-
-        for graph in graphs {
-            let prepared = prepare_flow_artifact("tenant", graph, &BTreeMap::new())
-                .expect("built-in-only artifact resolves");
-            assert!(prepared.supplied_node_types.is_empty());
-            assert!(!prepared.artifact.interface_bundle().contracts().is_empty());
-            let interface_bundle =
-                std::str::from_utf8(prepared.artifact.interface_bundle().canonical_bytes())
-                    .unwrap();
-            let occurrence_recovery =
-                std::str::from_utf8(prepared.artifact.occurrence_recovery_bytes()).unwrap();
-            let components =
-                serde_json::to_string(prepared.artifact.supplied_components()).unwrap();
-            let pinned = wamn_catalog::PinnedArtifact::from_storage(
-                "tenant",
-                prepared.artifact.identity().id().flow_id(),
-                prepared.artifact.identity().id().flow_version(),
-                &prepared.graph_json,
-                prepared.artifact.graph_hash(),
-                prepared.artifact.identity().artifact_hash().as_str(),
-                interface_bundle,
-                prepared.artifact.interface_bundle().hash(),
-                &components,
-                Some(occurrence_recovery),
-                Some(prepared.artifact.occurrence_recovery_hash()),
-            )
-            .expect("runtime accepts the exact publication-pinned artifact");
-            assert_eq!(
-                pinned.interface_bundle().contracts(),
-                prepared.artifact.interface_bundle().contracts()
-            );
-            for contract in pinned.interface_bundle().contracts() {
-                assert_eq!(
-                    contract.interface.contract_version,
-                    wamn_node_manifest::RESOLVED_CONTRACT_VERSION
-                );
-                assert!(matches!(
-                    contract.executable,
-                    wamn_node_manifest::ExecutableIdentity::Platform { .. }
-                ));
-                pinned_node_types.insert(contract.interface.node_type.clone());
-            }
-        }
-
-        assert_eq!(
-            pinned_node_types,
-            BTreeSet::from([
-                "cron".to_string(),
-                "event".to_string(),
-                "fail".to_string(),
-                "request".to_string(),
-                "respond".to_string(),
-            ])
-        );
-    }
-
-    #[test]
-    fn every_descriptor_field_changes_both_identities_or_fails_validation() {
-        use wamn_catalog::{
-            Artifact, ExecutionBundleIdentity, ExecutionBundleInput, ExecutionBundlePackaging,
-            ExecutionPlugManifest,
-        };
-        use wamn_node_manifest::{
-            CapabilityClass, ConnectionRecoverySupport, ConnectionRequirement,
-            ConnectionTypeDescriptor, ExecutableConnectionRecoveryMode, ExecutableRecoveryContract,
-            PortableConnectionRequirement,
-        };
-
-        fn digest(digit: char) -> String {
-            format!("sha256:{}", digit.to_string().repeat(64))
-        }
-
-        fn identities(
-            descriptor: &wamn_standard_nodes::NodeDescriptor,
-        ) -> anyhow::Result<(String, String)> {
-            let implementation = standard_implementation(descriptor)?;
-            let request = standard_implementation(
-                wamn_standard_nodes::describe("request").expect("request descriptor"),
-            )?;
-            let respond = standard_implementation(
-                wamn_standard_nodes::describe("respond").expect("respond descriptor"),
-            )?;
-            let flow = wamn_flow::Flow::from_json(
-                r#"{
-                  "schema-version":"0.1","flow-id":"descriptor-identity","version":1,
-                  "nodes":[
-                    {"id":"request","type":"request","config":{"input-schema":true}},
-                    {"id":"shape","type":"transform","config":{"expression":"@"}},
-                    {"id":"respond","type":"respond","config":{"status":200}}
-                  ],
-                  "edges":[
-                    {"from":"request","to":"shape"},
-                    {"from":"shape","to":"respond"}
-                  ]
-                }"#,
-            )?;
-            let artifact = Artifact::new(
-                "tenant",
-                &flow,
-                vec![request, respond, implementation.clone()],
-            )?;
-            let bundle = ExecutionBundleIdentity::builder(
-                ExecutionBundlePackaging::ExactNode,
-                ExecutionBundleInput::new("runner@1", digest('a'))?,
-                ExecutionBundleInput::new("wac@1", digest('b'))?,
-            )
-            .implementations(vec![implementation])
-            .plugs(vec![ExecutionPlugManifest::new(
-                "transform",
-                vec!["transform".to_string()],
-                digest('c'),
-            )?])
-            .build()?;
-            Ok((
-                artifact.identity().artifact_hash().as_str().to_string(),
-                bundle.hash().to_string(),
-            ))
-        }
-
-        let baseline_descriptor = wamn_standard_nodes::describe("transform").unwrap();
-        let baseline = identities(baseline_descriptor).unwrap();
-        let mut identity_mutants = Vec::new();
-
-        let mut interface = baseline_descriptor.clone();
-        interface.interface_contract = "wamn:node@0.2.0".to_string();
-        identity_mutants.push(("interface-contract", interface));
-
-        let mut revision = baseline_descriptor.clone();
-        revision.platform_revision = "wamn-standard-nodes@0.1.1".to_string();
-        identity_mutants.push(("platform-revision", revision));
-
-        let mut recovery = baseline_descriptor.clone();
-        recovery.capability_classes.clear();
-        recovery.executable_recovery = ExecutableRecoveryContract::effectful(false);
-        identity_mutants.push(("executable-recovery", recovery));
-
-        let http = ConnectionTypeDescriptor::http_v1();
-        let mut requirement = baseline_descriptor.clone();
-        requirement.connection_requirements = vec![ConnectionRequirement {
-            requirement_type: http.requirement_type.clone(),
-            contract: http.contract.clone(),
-        }];
-        identity_mutants.push(("connection-requirements", requirement));
-
-        for (name, mutant) in identity_mutants {
-            let identities = identities(&mutant).unwrap();
-            assert_ne!(
-                baseline.0, identities.0,
-                "{name} survived artifact identity"
-            );
-            assert_ne!(baseline.1, identities.1, "{name} survived bundle identity");
-        }
-
-        let mut invalid_mutants = Vec::new();
-        let mut version = baseline_descriptor.clone();
-        version.descriptor_version = "99".to_string();
-        invalid_mutants.push(("descriptor-version", version));
-
-        let mut node_type = baseline_descriptor.clone();
-        node_type.node_type = "renamed-transform".to_string();
-        invalid_mutants.push(("node-type", node_type));
-
-        let mut ports = baseline_descriptor.clone();
-        ports.output_ports.push("secondary".to_string());
-        invalid_mutants.push(("output-ports", ports));
-
-        let mut capabilities = baseline_descriptor.clone();
-        capabilities.capability_classes = vec![CapabilityClass::Http];
-        invalid_mutants.push(("capability-classes", capabilities));
-
-        let mut dispatch = baseline_descriptor.clone();
-        dispatch.dispatch_capabilities = &[wamn_flow::node_contract::Capability::HttpEgress];
-        invalid_mutants.push(("dispatch-capabilities", dispatch));
-
-        let mut support = baseline_descriptor.clone();
-        support.connection_recovery_support = vec![ConnectionRecoverySupport {
-            descriptor: http.clone(),
-            supported_modes: vec![ExecutableConnectionRecoveryMode::NeverReplay],
-        }];
-        invalid_mutants.push(("connection-recovery-support", support));
-
-        let mut portable = baseline_descriptor.clone();
-        portable.portable_connections = vec![PortableConnectionRequirement::never_replay(http)];
-        invalid_mutants.push(("portable-connections", portable));
-
-        for (name, mutant) in invalid_mutants {
-            assert!(
-                identities(&mutant).is_err(),
-                "{name} mutation must fail publication validation"
-            );
-        }
-    }
-
-    #[test]
-    fn standard_http_descriptor_resolves_without_method_or_config_reclassification() {
-        let graph = r#"{
-          "schema-version":"0.1","flow-id":"standard-http","version":1,
-          "nodes":[
-            {"id":"request","type":"request","config":{"input-schema":true}},
-            {"id":"get","type":"http-request","connection":"erp","config":{
-              "method":"GET","path-and-query":"/items"
-            }},
-            {"id":"respond","type":"respond","config":{"status":200}}
-          ],
-          "edges":[
-            {"from":"request","to":"get"},
-            {"from":"get","to":"respond"}
-          ]
-        }"#;
-        let mut flow = wamn_flow::Flow::from_json(graph).unwrap();
-        flow.connection_requirements = vec![wamn_flow::FlowConnectionRequirement {
-            name: "erp".to_string(),
-            requirement: wamn_node_manifest::PortableConnectionRequirement::never_replay(
-                wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
-            ),
-        }];
-        let prepared = prepare_flow_artifact("tenant", &flow.to_json(), &BTreeMap::new()).unwrap();
-        let contract = &prepared.artifact.interface_bundle().contracts()[0];
-        let recovery = &contract.executable_recovery;
-        assert_eq!(
-            recovery.conservative_class,
-            wamn_node_manifest::RecoveryClass::NeverReplay
-        );
-        assert_eq!(
-            recovery.supported_classes,
-            [
-                wamn_node_manifest::RecoveryClass::IdempotentWithKey,
-                wamn_node_manifest::RecoveryClass::NeverReplay
-            ],
-            "the executable declares the modes its bytes implement, not the mode this flow selects"
-        );
-        assert_eq!(contract.connection_recovery_support.len(), 1);
-        assert_eq!(contract.portable_connections.len(), 2);
-        assert_eq!(
-            prepared.artifact.occurrence_recovery()[0].recovery_class,
-            wamn_node_manifest::RecoveryClass::NeverReplay,
-            "GET config is not a publication recovery authority"
-        );
-        assert_eq!(
-            prepared.artifact.occurrence_recovery()[0].portable_connection,
-            Some(
-                wamn_node_manifest::PortableConnectionRequirement::never_replay(
-                    wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
-                )
-            ),
-            "the declared never-replay claim is pinned even though the executable offers stable-key-dedup-v1"
-        );
-    }
-
-    #[test]
-    fn unresolved_custom_node_is_refused_before_storage() {
-        let graph = custom_graph("tenant-custom");
-        let error = prepare_flow_artifact("tenant", &graph, &BTreeMap::new())
-            .expect_err("unresolved custom node must fail closed");
-        assert!(format!("{error:#}").contains("has no resolved interface"));
-    }
-
-    #[test]
-    fn verified_custom_component_pins_exact_bytes_and_pure_manifest() {
-        let (descriptor, _, _) = custom_input_fixture(
-            "pure",
-            "custom-example",
-            "custom-example",
-            Some("pure"),
-            b"component",
-        );
-        let supplied = load_supplied_components(&[descriptor]).unwrap();
-        let graph = custom_graph("custom-example");
-        let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
-
-        assert_eq!(
-            prepared.supplied_node_types,
-            BTreeSet::from(["custom-example".to_string()])
-        );
-        assert_eq!(
-            match &prepared.artifact.supplied_components()[0]
-                .contract
-                .executable
-            {
-                wamn_node_manifest::ExecutableIdentity::Component { digest } => digest.clone(),
-                wamn_node_manifest::ExecutableIdentity::Platform { .. } => {
-                    panic!("custom node resolved to a platform executable")
-                }
-            },
-            component_digest(b"component")
-        );
-        let contract = &prepared.artifact.supplied_components()[0].contract;
-        let interface = &contract.interface;
-        assert_eq!(
-            &prepared.artifact.supplied_components()[0].contract,
-            &prepared.artifact.interface_bundle().contracts()[0],
-            "custom resolution must use the persisted canonical contract"
-        );
-        assert_eq!(interface.node_type, "custom-example");
-        assert_eq!(interface.output_ports, ["main"]);
-        assert_eq!(
-            contract.executable_recovery.purity,
-            wamn_node_manifest::ResolvedPurity::Pure
-        );
-        assert_eq!(
-            contract.executable_recovery.conservative_class,
-            wamn_node_manifest::RecoveryClass::Replay
-        );
-    }
-
-    #[test]
-    fn absent_custom_purity_resolves_effectful_never_replay() {
-        let (descriptor, _, _) = custom_input_fixture(
-            "absent-purity",
-            "legacy-node",
-            "legacy-node",
-            None,
-            b"component",
-        );
-        let supplied = load_supplied_components(&[descriptor]).unwrap();
-        let graph = custom_graph("legacy-node");
-        let prepared = prepare_flow_artifact("tenant", &graph, &supplied).unwrap();
-        let contract = &prepared.artifact.supplied_components()[0].contract;
-        assert_eq!(
-            contract.executable_recovery.purity,
-            wamn_node_manifest::ResolvedPurity::Effectful
-        );
-        assert_eq!(
-            contract.executable_recovery.conservative_class,
-            wamn_node_manifest::RecoveryClass::NeverReplay
-        );
-    }
-
-    #[test]
-    fn custom_inputs_refuse_missing_mismatched_mutated_and_duplicate_material() {
-        let (descriptor, component, manifest) =
-            custom_input_fixture("negative", "node-a", "node-a", Some("pure"), b"component");
-
-        let original_descriptor = std::fs::read_to_string(&descriptor).unwrap();
-        let mut missing_digest: serde_json::Value =
-            serde_json::from_str(&original_descriptor).unwrap();
-        missing_digest
-            .as_object_mut()
-            .unwrap()
-            .remove("component-digest");
-        std::fs::write(&descriptor, missing_digest.to_string()).unwrap();
-        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
-        assert!(format!("{error:#}").contains("component-digest"));
-        std::fs::write(&descriptor, &original_descriptor).unwrap();
-
-        std::fs::write(&component, b"altered").unwrap();
-        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
-        assert!(format!("{error:#}").contains("component digest mismatch"));
-        std::fs::write(&component, b"component").unwrap();
-
-        let mut value: serde_json::Value = serde_json::from_str(&original_descriptor).unwrap();
-        value["component-digest"] = serde_json::Value::String(format!("sha256:{}", "0".repeat(64)));
-        std::fs::write(&descriptor, value.to_string()).unwrap();
-        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
-        assert!(format!("{error:#}").contains("component digest mismatch"));
-        std::fs::write(&descriptor, &original_descriptor).unwrap();
-
-        std::fs::write(&manifest, manifest_json("node-b", Some("pure"))).unwrap();
-        let error = load_supplied_components(std::slice::from_ref(&descriptor)).unwrap_err();
-        assert!(format!("{error:#}").contains("manifest node-type mismatch"));
-        std::fs::write(&manifest, manifest_json("node-a", Some("pure"))).unwrap();
-
-        let error =
-            load_supplied_components(&[descriptor.clone(), descriptor.clone()]).unwrap_err();
-        assert!(format!("{error:#}").contains("duplicate custom-node implementation"));
-
-        std::fs::remove_file(&manifest).unwrap();
-        let error = load_supplied_components(&[descriptor]).unwrap_err();
-        assert!(format!("{error:#}").contains("read custom-node manifest"));
-    }
-
-    #[test]
-    fn supplied_node_must_be_declared_directly_by_a_graph() {
-        let (descriptor, _, _) = custom_input_fixture(
-            "graph-shape",
-            "custom-example",
-            "custom-example",
-            Some("pure"),
-            b"component",
-        );
-        let supplied = load_supplied_components(&[descriptor]).unwrap();
-        let legacy_indirection = r#"{
-          "schema-version":"0.1","flow-id":"custom-flow","version":1,
-          "nodes":[
-            {"id":"request","type":"request","config":{"input-schema":{
-              "$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"
-            }}},
-            {"id":"custom","type":"custom","config":{"manifest":"custom-example"}},
-            {"id":"respond","type":"respond","config":{"status":200}}
-          ],
-          "edges":[
-            {"from":"request","to":"custom"},
-            {"from":"custom","to":"respond"}
-          ]
-        }"#;
-        let error = prepare_flow_artifact("tenant", legacy_indirection, &supplied)
-            .expect_err("indirect custom declaration must not bypass graph/interface coherence");
-        assert!(format!("{error:#}").contains("has no resolved interface"));
-
-        let error = ensure_all_supplied_used(&supplied, &BTreeSet::new()).unwrap_err();
-        assert!(format!("{error:#}").contains("unknown supplied custom node"));
     }
 
     #[test]

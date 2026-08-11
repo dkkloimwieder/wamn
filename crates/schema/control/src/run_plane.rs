@@ -1771,6 +1771,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
+        table: "execution_bundles",
+        app: &["SELECT"],
+        author: &["SELECT", "INSERT"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::Catalog,
         table: "release_manifests",
         app: &["SELECT"],
         author: &["SELECT"],
@@ -2943,7 +2949,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
        FROM information_schema.table_privileges \
       WHERE grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author') \
         AND ((table_schema = 'catalog' AND table_name IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
@@ -2974,7 +2980,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
@@ -3004,7 +3010,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
          ON namespace.oid = relation.relnamespace \
       WHERE actor.rolname IN ('wamn_app', 'wamn_scenario_author') \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
@@ -3031,7 +3037,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
        JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
       WHERE relation.relkind = 'r' \
         AND ((namespace.nspname = 'catalog' AND relation.relname IN \
-              ('catalogs', 'flow_artifacts', 'release_manifests', \
+              ('catalogs', 'flow_artifacts', 'execution_bundles', 'release_manifests', \
                'release_flows', 'catalog_heads', \
                'flow_drafts', 'validated_flow_drafts', \
                'connection_requirements', 'connection_instances', \
@@ -3665,6 +3671,7 @@ CREATE INDEX event_registrations_by_entity
         }
         for authoring_table in [
             "flow_drafts",
+            "execution_bundles",
             "validated_flow_drafts",
             "authoring_command_audit",
         ] {
@@ -3672,7 +3679,7 @@ CREATE INDEX event_registrations_by_entity
         }
         assert_eq!(
             catalog.len(),
-            29,
+            30,
             "catalog-schema.sql table count: {catalog:?}"
         );
     }

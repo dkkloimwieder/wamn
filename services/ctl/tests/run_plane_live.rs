@@ -317,12 +317,12 @@ async fn legacy_effect_attempt_backfill_leg(su: &Client) {
              VALUES ('t1','legacy-cat',1,'dev','1','applied'); \
          INSERT INTO catalog.flow_artifacts \
              (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-              artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests) \
+              artifact_hash) \
              VALUES ('t1','legacy-flow',1,'1', \
                      '{{\"nodes\":[{{\"id\":\"http\",\"type\":\"http-request\", \
                                       \"connection\":\"erp\"}}, \
                                     {{\"id\":\"pure\",\"type\":\"map\"}}]}}', \
-                     'graph','artifact-legacy','[]','interfaces','[]'); \
+                     'graph','artifact-legacy'); \
          INSERT INTO {SCHEMA}.runs \
              (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
               environment,status,state_json,invocation_context) VALUES \

@@ -69,10 +69,9 @@ use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
 // amortization: one statement where the split path spent two or three.
 use wamn_run_state::queue::{
-    acquire_partitions_sql, begin_claimed_run_sql, claim_dispatch_sql, claim_partition_head_sql,
-    dead_letter_dequeue_sql, mark_running_sql, park_sql as queue_park_sql,
-    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_partition_sql,
+    acquire_partitions_sql, claim_dispatch_sql, claim_partition_head_sql, dead_letter_dequeue_sql,
+    mark_running_sql, park_sql as queue_park_sql, record_error_and_renew_sql,
+    record_success_and_renew_sql, release_partition_sql, renew_partition_sql,
 };
 use wamn_runner::{
     CallerState, Dispatch, ExecutionFailureKind, ExecutionState, ExecutionStatus, NodeOutcome,
@@ -80,15 +79,12 @@ use wamn_runner::{
     validate_event_outcome, validate_fail_outcome, validate_request_outcome,
 };
 
-use wamn_node_invoke::{
-    NodeInvokeRequest, NodeInvokeResponse, WireErrorDetail, WireNodeError, WirePayload,
-    WireRunContext, granted_credentials,
-};
-use wamn_node_manifest::ExecutableIdentity;
+#[cfg(test)]
+use wamn_node_invoke::WirePayload;
+use wamn_node_invoke::{NodeInvokeResponse, WireErrorDetail, WireNodeError};
 
 use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
-use wamn::runner::node_invocation::{self, InvocationContext};
 
 use wasi::http::outgoing_handler;
 use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
@@ -316,21 +312,22 @@ fn classify_pinned_artifact_lineage(
     }
 }
 
-/// Read and verify the exact immutable artifact selected at admission.
+/// Read and verify the exact immutable execution plan selected at admission.
 ///
 /// `scenario-draft` + `draft-scenario` is one closed lineage branch. A
 /// one-sided marker returns only the invalid-source row, so it cannot fall
-/// through to release membership. The draft branch rebinds every persisted run
-/// claim to one immutable `validated_flow_drafts` row and reconstructs
-/// [`wamn_catalog::PinnedDraftArtifact`], which verifies the graph, resolved
-/// interfaces, occurrence recovery, execution-bundle bytes, and validated
-/// identity together. The release branch remains the existing exact immutable
-/// release-member lookup. Neither branch reads the mutable `flows` or
-/// `flow_drafts` heads.
+/// through to another lineage. The draft branch rebinds every persisted run
+/// claim to one immutable `validated_flow_drafts` row, joins its exact bytes
+/// from `execution_bundles`, and verifies the canonical plan, bundle hash, and
+/// root artifact. The release branch returns no executable bytes and the loader
+/// refuses it until release and run plan pinning land. Neither branch reads the
+/// mutable `flows` or `flow_drafts` heads.
 const PINNED_ARTIFACT_SQL: &str = "\
 WITH classified_run AS MATERIALIZED ( \
-    SELECT r.*, \
+    SELECT r.trigger_source, \
            r.invocation_context #>> '{source,producer}' AS source_producer, \
+           r.invocation_context #>> '{principal,artifact-digest}' AS artifact_digest, \
+           r.invocation_context #>> '{principal,execution-bundle-hash}' AS bundle_hash, \
            CASE \
              WHEN r.trigger_source = 'scenario-draft' \
               AND r.invocation_context #>> '{source,producer}' = 'draft-scenario' \
@@ -340,76 +337,18 @@ WITH classified_run AS MATERIALIZED ( \
                     IS DISTINCT FROM 'draft-scenario' \
                THEN 'release' \
              ELSE 'invalid' \
-           END AS artifact_lineage \
+           END AS artifact_lineage, \
+           r.* \
       FROM runs AS r \
      WHERE r.run_id = $1 \
-), invalid_source AS ( \
-    SELECT r.trigger_source, r.source_producer, \
-           NULL::text AS tenant_id, NULL::text AS flow_id, \
-           NULL::int AS flow_version, NULL::text AS graph_json, \
-           NULL::text AS graph_hash, NULL::text AS artifact_hash, \
-           NULL::text AS interface_bundle_json, \
-           NULL::text AS interface_bundle_hash, \
-           NULL::text AS component_digests, \
-           NULL::text AS occurrence_recovery_json, \
-           NULL::text AS occurrence_recovery_hash, \
-           NULL::text AS draft_content_hash, \
-           NULL::bytea AS execution_bundle_bytes, \
-           NULL::text AS execution_bundle_hash, \
-           NULL::text AS validated_draft_hash, NULL::text AS draft_id, \
-           NULL::bigint AS draft_revision, NULL::text AS catalog_id, \
-           NULL::int AS catalog_version, NULL::text AS environment, \
-           NULL::int AS suite_flow_version, \
-           NULL::text AS binding_base_artifact_hash \
+), blocked_lineage AS ( \
+    SELECT r.trigger_source, r.source_producer, NULL::bytea AS exact_bytes, \
+           NULL::text AS execution_bundle_hash, NULL::text AS artifact_digest \
       FROM classified_run AS r \
-     WHERE r.artifact_lineage = 'invalid' \
-), release_artifact AS ( \
-    SELECT r.trigger_source, r.source_producer, r.tenant_id, r.flow_id, \
-           r.flow_version, a.graph_json::text, a.graph_hash, a.artifact_hash, \
-           a.interface_bundle_json::text, a.interface_bundle_hash, \
-           a.component_digests::text, a.occurrence_recovery_json::text, \
-           a.occurrence_recovery_hash, NULL::text AS draft_content_hash, \
-           NULL::bytea AS execution_bundle_bytes, \
-           NULL::text AS execution_bundle_hash, \
-           NULL::text AS validated_draft_hash, NULL::text AS draft_id, \
-           NULL::bigint AS draft_revision, NULL::text AS draft_catalog_id, \
-           NULL::int AS draft_catalog_version, NULL::text AS draft_environment, \
-           NULL::int AS suite_flow_version, \
-           NULL::text AS binding_base_artifact_hash \
-      FROM classified_run AS r \
-      JOIN catalog.release_flows AS rf \
-        ON rf.tenant_id = r.tenant_id \
-       AND rf.catalog_id = r.catalog_id \
-       AND rf.catalog_version = r.catalog_version \
-       AND rf.flow_id = r.flow_id \
-       AND rf.flow_version = r.flow_version \
-      JOIN catalog.release_manifests AS rm \
-        ON rm.tenant_id = rf.tenant_id \
-       AND rm.catalog_id = rf.catalog_id \
-       AND rm.catalog_version = rf.catalog_version \
-      JOIN catalog.flow_artifacts AS a \
-        ON a.tenant_id = rf.tenant_id \
-       AND a.flow_id = rf.flow_id \
-       AND a.flow_version = rf.flow_version \
-     WHERE r.artifact_lineage = 'release' \
-       AND EXISTS ( \
-           SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
-            WHERE member ->> 'flow-id' = rf.flow_id \
-              AND (member ->> 'flow-version')::int = rf.flow_version \
-              AND member ->> 'artifact-hash' = a.artifact_hash \
-       ) \
-       AND r.catalog_id IS NOT NULL \
-       AND r.catalog_version IS NOT NULL \
-), draft_artifact AS ( \
-    SELECT r.trigger_source, r.source_producer, d.tenant_id, d.flow_id, \
-           d.runtime_flow_version, d.graph_json::text, d.graph_hash, \
-           d.draft_artifact_hash, d.interface_bundle_json::text, \
-           d.interface_bundle_hash, d.component_digests::text, \
-           d.occurrence_recovery_json::text, d.occurrence_recovery_hash, \
-           d.draft_content_hash, d.execution_bundle_bytes, \
-           d.execution_bundle_hash, d.validated_draft_hash, d.draft_id, \
-           d.draft_revision, d.catalog_id, d.catalog_version, d.environment, \
-           d.suite_flow_version, d.binding_base_artifact_hash \
+     WHERE r.artifact_lineage <> 'draft' \
+), draft_plan AS ( \
+    SELECT r.trigger_source, r.source_producer, bundle.exact_bytes, \
+           d.execution_bundle_hash, d.draft_artifact_hash \
       FROM classified_run AS r \
       JOIN catalog.validated_flow_drafts AS d \
         ON d.tenant_id = r.tenant_id \
@@ -418,19 +357,20 @@ WITH classified_run AS MATERIALIZED ( \
        AND d.catalog_id = r.catalog_id \
        AND d.catalog_version = r.catalog_version \
        AND d.environment = r.environment \
-       AND d.draft_artifact_hash = \
-             r.invocation_context #>> '{principal,artifact-digest}' \
+       AND d.draft_artifact_hash = r.artifact_digest \
        AND d.draft_id = r.invocation_context #>> '{principal,draft-id}' \
        AND d.draft_revision::text = \
              r.invocation_context #>> '{principal,draft-revision}' \
        AND d.validated_draft_hash = \
              r.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND d.execution_bundle_hash = \
-             r.invocation_context #>> '{principal,execution-bundle-hash}' \
+       AND d.execution_bundle_hash = r.bundle_hash \
        AND d.binding_base_artifact_hash = \
              r.invocation_context #>> '{principal,binding-base-artifact-hash}' \
        AND d.suite_flow_version::text = \
              r.invocation_context #>> '{principal,suite-flow-version}' \
+      JOIN catalog.execution_bundles AS bundle \
+        ON bundle.tenant_id = d.tenant_id \
+       AND bundle.execution_bundle_hash = d.execution_bundle_hash \
      WHERE r.artifact_lineage = 'draft' \
        AND r.admission_context_version = '0.1' \
        AND r.invocation_context ->> 'version' = '0.1' \
@@ -444,126 +384,54 @@ WITH classified_run AS MATERIALIZED ( \
        AND r.invocation_context #>> '{principal,flow-version}' = \
              r.flow_version::text \
 ) \
-SELECT * FROM invalid_source \
-UNION ALL SELECT * FROM release_artifact \
-UNION ALL SELECT * FROM draft_artifact";
+SELECT * FROM blocked_lineage \
+UNION ALL SELECT * FROM draft_plan";
 
-fn load_pinned_artifact(run_id: &str) -> Result<wamn_catalog::PinnedArtifact, String> {
+fn load_execution_plan(run_id: &str) -> Result<wamn_catalog::ExecutionPlanV2, String> {
     let rs = client::query(PINNED_ARTIFACT_SQL, &[text(run_id)]).map_err(|e| err_name(&e))?;
     if rs.rows.len() != 1 {
-        return Err("run does not resolve to exactly one immutable pinned flow artifact".into());
+        return Err("run does not resolve to exactly one immutable execution plan".into());
     }
     let row = &rs.rows[0];
-    let string = |index: usize, name: &str| match row.get(index) {
-        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(value.as_str()),
-        other => Err(format!("{name} shape: {other:?}")),
-    };
     let optional_string = |index: usize, name: &str| match row.get(index) {
         Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => Ok(Some(value.as_str())),
         Some(SqlValue::Null) => Ok(None),
         other => Err(format!("{name} shape: {other:?}")),
     };
-    let lineage = classify_pinned_artifact_lineage(
+    match classify_pinned_artifact_lineage(
         optional_string(0, "runs.trigger_source")?,
         optional_string(1, "invocation_context.source.producer")?,
-    )?;
-    let tenant_id = string(2, "runs.tenant_id")?;
-    let flow_id = string(3, "runs.flow_id")?;
-    let flow_version =
-        match row.get(4) {
-            Some(SqlValue::Int32(value)) => u32::try_from(*value)
-                .map_err(|_| "runs.flow_version is not positive".to_string())?,
-            Some(SqlValue::Int64(value)) => u32::try_from(*value)
-                .map_err(|_| "runs.flow_version is not positive".to_string())?,
-            other => return Err(format!("runs.flow_version shape: {other:?}")),
-        };
-    let occurrence_recovery_json = optional_string(11, "artifact.occurrence_recovery_json")?
-        .ok_or("pinned artifact omits occurrence recovery selections")?;
-    let occurrence_recovery_hash = optional_string(12, "artifact.occurrence_recovery_hash")?
-        .ok_or("pinned artifact omits occurrence recovery selection hash")?;
-    match lineage {
-        PinnedArtifactLineage::Release => wamn_catalog::PinnedArtifact::from_storage(
-            tenant_id,
-            flow_id,
-            flow_version,
-            string(5, "flow_artifacts.graph_json")?,
-            string(6, "flow_artifacts.graph_hash")?,
-            string(7, "flow_artifacts.artifact_hash")?,
-            string(8, "flow_artifacts.interface_bundle_json")?,
-            string(9, "flow_artifacts.interface_bundle_hash")?,
-            string(10, "flow_artifacts.component_digests")?,
-            Some(occurrence_recovery_json),
-            Some(occurrence_recovery_hash),
-        )
-        .map_err(|error| format!("pinned release artifact verification: {error}")),
-        PinnedArtifactLineage::Draft => {
-            let execution_bundle_bytes = match row.get(14) {
-                Some(SqlValue::Bytes(value)) => value.clone(),
-                other => {
-                    return Err(format!(
-                        "validated_flow_drafts.execution_bundle_bytes shape: {other:?}"
-                    ));
-                }
-            };
-            let draft_revision = match row.get(18) {
-                Some(SqlValue::Int64(value)) => u64::try_from(*value)
-                    .map_err(|_| "draft revision is not positive".to_string())?,
-                Some(SqlValue::Int32(value)) => u64::try_from(*value)
-                    .map_err(|_| "draft revision is not positive".to_string())?,
-                other => return Err(format!("draft revision shape: {other:?}")),
-            };
-            let catalog_version = match row.get(20) {
-                Some(SqlValue::Int32(value)) => u32::try_from(*value)
-                    .map_err(|_| "draft catalog version is not positive".to_string())?,
-                Some(SqlValue::Int64(value)) => u32::try_from(*value)
-                    .map_err(|_| "draft catalog version is not positive".to_string())?,
-                other => return Err(format!("draft catalog version shape: {other:?}")),
-            };
-            let suite_flow_version = match row.get(22) {
-                Some(SqlValue::Int32(value)) => u32::try_from(*value)
-                    .map_err(|_| "suite flow version is not positive".to_string())?,
-                Some(SqlValue::Int64(value)) => u32::try_from(*value)
-                    .map_err(|_| "suite flow version is not positive".to_string())?,
-                other => return Err(format!("suite flow version shape: {other:?}")),
-            };
-            let draft = wamn_catalog::PinnedDraftArtifact::from_storage(
-                tenant_id,
-                flow_id,
-                flow_version,
-                string(13, "validated_flow_drafts.draft_content_hash")?,
-                string(5, "validated_flow_drafts.graph_json")?,
-                string(6, "validated_flow_drafts.graph_hash")?,
-                string(7, "validated_flow_drafts.draft_artifact_hash")?,
-                string(8, "validated_flow_drafts.interface_bundle_json")?,
-                string(9, "validated_flow_drafts.interface_bundle_hash")?,
-                string(10, "validated_flow_drafts.component_digests")?,
-                Some(occurrence_recovery_json),
-                Some(occurrence_recovery_hash),
-                execution_bundle_bytes,
-                string(15, "validated_flow_drafts.execution_bundle_hash")?,
-                wamn_catalog::StoredValidatedDraftContext {
-                    expected_identity_hash: string(
-                        16,
-                        "validated_flow_drafts.validated_draft_hash",
-                    )?,
-                    draft_id: string(17, "validated_flow_drafts.draft_id")?,
-                    draft_revision,
-                    catalog_id: string(19, "validated_flow_drafts.catalog_id")?,
-                    catalog_version,
-                    environment: string(21, "validated_flow_drafts.environment")?,
-                    suite_flow_version,
-                    binding_base_artifact_hash: string(
-                        23,
-                        "validated_flow_drafts.binding_base_artifact_hash",
-                    )?,
-                },
-            )
-            .map_err(|error| format!("pinned draft artifact verification: {error}"))?;
-            Ok(draft.artifact().clone())
+    )? {
+        PinnedArtifactLineage::Release => {
+            return Err(
+                "published execution refuses until release and run plan pinning is installed"
+                    .to_string(),
+            );
         }
+        PinnedArtifactLineage::Draft => {}
     }
+    let exact_bytes = match row.get(2) {
+        Some(SqlValue::Bytes(value)) => value,
+        other => return Err(format!("execution_bundles.exact_bytes shape: {other:?}")),
+    };
+    let bundle_hash = optional_string(3, "validated_flow_drafts.execution_bundle_hash")?
+        .ok_or("validated draft omits execution bundle hash")?;
+    let artifact_hash = optional_string(4, "validated_flow_drafts.draft_artifact_hash")?
+        .ok_or("validated draft omits artifact hash")?;
+    let plan = wamn_catalog::ExecutionPlanV2::from_canonical_bytes(exact_bytes)
+        .map_err(|error| format!("execution plan verification: {error}"))?;
+    if plan
+        .execution_bundle_hash()
+        .map_err(|error| error.to_string())?
+        != bundle_hash
+    {
+        return Err("execution bundle hash differs from its exact bytes".to_string());
+    }
+    if plan.header.root_artifact_hash != artifact_hash {
+        return Err("execution plan root artifact differs from the validated draft".to_string());
+    }
+    Ok(plan)
 }
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EffectRunClaims {
     tenant_id: String,
@@ -920,72 +788,13 @@ fn http_get(url: &str) -> u32 {
 /// transport are environment-owned host concerns. A host refusal is an outer
 /// execution error, never a node-authored [`NodeError`].
 fn custom_node_dispatch(
-    d: &Dispatch,
-    run_id: &str,
-    flow: &Flow,
-    artifact: Option<&wamn_catalog::PinnedArtifact>,
-    effect_run: Option<&EffectRunClaims>,
+    _d: &Dispatch,
+    _run_id: &str,
+    _flow: &Flow,
+    _artifact: Option<&wamn_catalog::PinnedArtifact>,
+    _effect_run: Option<&EffectRunClaims>,
 ) -> Result<NodeOutcome, String> {
-    let artifact = artifact.ok_or_else(|| {
-        "custom node invocation requires an immutable admitted artifact".to_string()
-    })?;
-    let effect_run = effect_run
-        .ok_or_else(|| "custom node invocation requires admitted run effect claims".to_string())?;
-    let contract = artifact
-        .interface_bundle()
-        .contract(&d.node_type)
-        .ok_or_else(|| format!("custom node type {:?} is not admitted", d.node_type))?;
-    let implementation_digest = match &contract.executable {
-        ExecutableIdentity::Component { digest } => digest,
-        ExecutableIdentity::Platform { .. } => {
-            return Err(format!(
-                "custom node type {:?} is not a supplied component",
-                d.node_type
-            ));
-        }
-    };
-    let req = NodeInvokeRequest {
-        ctx: WireRunContext {
-            run_id: run_id.to_string(),
-            flow_id: flow.flow_id.clone(),
-            flow_version: flow.version,
-            node_id: d.node.clone(),
-            attempt: d.attempt,
-            idempotency_key: d.idempotency_key.clone(),
-            deadline_ms: d.deadline_ms,
-            // 9.2: a host-invoked runner has no inbound request to read a
-            // traceparent from; outbound calls are host-stamped. Stays None
-            // until the queue/dispatch path carries a per-run trace context.
-            traceparent: None,
-            tracestate: None,
-            config: d.config.to_string(),
-            context: d.context.to_string(),
-        },
-        input: WirePayload::Inline(d.payload.to_string()),
-        // cjv.3: EXACTLY this node step's declared credential(s) — the shared
-        // pure helper, so the grant cannot silently widen to the whole project.
-        grant: granted_credentials(d.credential.as_deref()),
-    };
-    let body = req.to_json();
-    let context = InvocationContext {
-        version: 1,
-        tenant_id: effect_run.tenant_id.clone(),
-        environment: effect_run.environment.clone(),
-        catalog_id: effect_run.catalog_id.clone(),
-        catalog_version: effect_run.catalog_version,
-        run_id: run_id.to_string(),
-        flow_id: flow.flow_id.clone(),
-        flow_version: flow.version,
-        artifact_digest: effect_run.artifact_digest.clone(),
-        node_id: d.node.clone(),
-        occurrence: d.occurrence,
-        attempt: d.attempt,
-        implementation_digest: implementation_digest.clone(),
-    };
-    let response = node_invocation::invoke(&context, body.as_bytes())
-        .map_err(|error| format!("custom node infrastructure refusal: {error:?}"))?;
-    let outcome = node_response_to_outcome(&response, &contract.interface)?;
-    Ok(outcome)
+    Err("custom node dispatch refuses without an authoritative execution-plan adapter".to_string())
 }
 
 fn node_response_to_outcome(
@@ -1214,44 +1023,20 @@ struct RecoveryAdmission {
 }
 
 fn recovery_admission(
-    artifact: &wamn_catalog::PinnedArtifact,
+    plan: &wamn_catalog::ExecutionPlanV2,
     dispatch: &Dispatch,
 ) -> Result<RecoveryAdmission, String> {
-    admit_occurrence_recovery(
-        artifact.occurrence_recovery(),
-        &dispatch.node,
-        &dispatch.node_type,
-    )
-}
-
-fn admit_occurrence_recovery(
-    selections: &[wamn_node_manifest::OccurrenceRecoverySelection],
-    node_id: &str,
-    node_type: &str,
-) -> Result<RecoveryAdmission, String> {
-    let mut matching = selections
+    let node = plan
+        .body
+        .nodes
         .iter()
-        .filter(|selection| selection.node_id == node_id);
-    let selection = matching
-        .next()
-        .ok_or_else(|| format!("pinned artifact omits recovery selection for node {node_id}"))?;
-    if matching.next().is_some() {
-        return Err(format!(
-            "pinned artifact has duplicate recovery selections for node {node_id}"
-        ));
-    }
-    if selection.node_type != node_type {
-        return Err(format!(
-            "pinned recovery selection type mismatch for node {node_id}: expected {node_type}, got {}",
-            selection.node_type
-        ));
-    }
-    let connection_required = selection.portable_connection.is_some();
-    let selected_class = match selection.recovery_class {
-        wamn_node_manifest::RecoveryClass::Replay => RecoveryClass::Replay,
-        wamn_node_manifest::RecoveryClass::IdempotentWithKey => RecoveryClass::IdempotentWithKey,
-        wamn_node_manifest::RecoveryClass::NeverReplay => RecoveryClass::NeverReplay,
+        .find(|node| node.path.to_string() == dispatch.node)
+        .ok_or_else(|| format!("execution plan omits dispatched node {:?}", dispatch.node))?;
+    let selected_class = match node.effect_policy {
+        wamn_catalog::ExecutionEffectPolicy::Pure => RecoveryClass::Replay,
+        wamn_catalog::ExecutionEffectPolicy::Effectful => RecoveryClass::NeverReplay,
     };
+    let connection_required = node.source_connection_requirement.is_some();
     Ok(RecoveryAdmission {
         selected_class,
         effective_class: selected_class,
@@ -1286,7 +1071,7 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
 /// Production execution resolves interfaces from the release's pinned artifact
 /// bundle ([`execute_claimed`]); this map is the fixture stand-in for the direct
 /// `run`/`run-s6`/`dispatch-bench` paths, whose flow documents carry no pinned
-/// interface bundle. Every one of these legacy node types emits exactly one
+/// resolved public interfaces. Every one of these legacy node types emits exactly one
 /// completion on `main` — the shape a real resolution supplies for them — so a
 /// missing entry is not a narrower graph but an unvalidatable one
 /// (`unresolved-output-ports`, and the request-region checks silently skip the
@@ -2167,16 +1952,14 @@ fn begin_attempt(
         || admission.effective_class == RecoveryClass::IdempotentWithKey)
         .then_some(dispatch.idempotency_key.as_str())
         .filter(|key| !key.is_empty());
-    let connection = if admission.connection_required {
-        Some(dispatch.connection.as_deref().ok_or_else(|| {
-            format!(
-                "pinned recovery selection for node {} has no connection",
-                dispatch.node
-            )
-        })?)
-    } else {
-        None
-    };
+    let connection =
+        if admission.connection_required {
+            Some(dispatch.connection.as_deref().ok_or_else(|| {
+                format!("effectful plan node {} has no connection", dispatch.node)
+            })?)
+        } else {
+            None
+        };
     let response = client::query(
         &begin_attempt_sql(),
         &[
@@ -3264,14 +3047,11 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
         return Ok(None);
     };
     mark_running(&head.run_id)?;
-    let (flow_id, flow_version, input) = read_dispatch(&head.run_id)?;
-    let artifact = load_pinned_artifact(&head.run_id)?;
-    if artifact.flow().flow_id != flow_id || Some(artifact.flow().version) != flow_version {
-        return Err("claimed run and pinned artifact identity disagree".to_string());
-    }
+    let (_flow_id, _flow_version, input) = read_dispatch(&head.run_id)?;
+    let plan = load_execution_plan(&head.run_id)?;
     let claim = execute_claimed(
         &head.run_id,
-        &artifact,
+        &plan,
         input,
         owner,
         ttl_ms,
@@ -3289,448 +3069,28 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
 /// already wrote the `runs` row and the claim flipped it `running`, so this does
 /// NOT re-open the run — it reconstructs from `node_runs` and continues.
 fn execute_claimed(
-    run_id: &str,
-    artifact: &wamn_catalog::PinnedArtifact,
-    input: Value,
-    owner: &str,
-    ttl_ms: i64,
-    partition: Option<&str>,
-    lease_generation: i64,
+    _run_id: &str,
+    _plan: &wamn_catalog::ExecutionPlanV2,
+    _input: Value,
+    _owner: &str,
+    _ttl_ms: i64,
+    _partition: Option<&str>,
+    _lease_generation: i64,
 ) -> Result<ClaimOutcome, String> {
-    let flow = artifact.flow();
-    let effect_run = load_effect_run_claims(run_id)?;
-    // l5i9.12.2: the production dispatch path (run-next) — declare this run's
-    // causation BEFORE any write so the wamn:postgres plugin stamps
-    // {run, root, depth} onto every run-owned txn (checkpoints included; the CDC
-    // reader drops the platform-schema ones and stitches the app-table writes).
-    // l5i9.17: an evt run's input carries the materializer-minted chain
-    // position (root, depth) — declared here so the chain budget accumulates.
-    // The guard clears it on return so the next claim starts clean.
-    declare_run_context_from(run_id, &input);
-    let _run_ctx = RunContextGuard;
+    execution_refusal()
+}
 
-    declare_run_grant(flow);
-    declare_run_egress(flow);
-    let resolved_interfaces = artifact.interface_bundle().resolved_ports();
-    let plan = Plan::compile(flow, &resolved_interfaces).map_err(|e| e.to_string())?;
-    let version = plan.version();
-    // wamn-yf3: the run's trace identity, shared by every log record it emits.
-    let tp = run_traceparent(run_id);
-    let completed = load_completed(run_id)?;
-    let mut next_seq = completed.len() as i32;
-    let run_rec = RunRecord::new(run_id, &flow.flow_id, version, input);
-    let mut st = wamn_run_state::reconstruct_with_context(
-        &plan,
-        &run_rec,
-        &completed,
-        load_context(run_id)?,
-    )
-    .map_err(|e| e.to_string())?;
-    // R32: restore an in-flight retry queue-waiting from a prior claim — the outstanding
-    // node re-enters carrying its persisted attempt (the queue served the
-    // backoff) so the retry budget advances instead of resetting to 0.
-    if let Some((node, attempt, throttle)) = load_retry(run_id)? {
-        plan.restore_retry(&mut st, &node, attempt, throttle);
-    }
-    let mut http_status: u32 = 0;
+const EXECUTION_INTERPRETER_REFUSAL: &str =
+    "execution refuses until authoritative execution-plan interpretation is installed";
 
-    loop {
-        match plan.next(&mut st, 0) {
-            Step::Done(ExecutionStatus::Completed) => {
-                terminalize_claimed(run_id, st.result(), owner, lease_generation)?;
-                emit_run_end(&flow.flow_id, run_id, next_seq, &tp, "completed");
-                return Ok(ClaimOutcome {
-                    outcome: 0,
-                    park_ms: 0,
-                    fail_reason: None,
-                    already_settled: false,
-                });
-            }
-            Step::Done(status) => {
-                // The verdict lands on `runs` (structured) AND travels to settle
-                // as the dead-letter marker's display string (wamn-v8cv).
-                let fail_reason = match st.failure() {
-                    Some(f) => {
-                        let _ =
-                            mark_failed(run_id, fail_kind_sql(&f.kind), &f.node, &f.detail.message);
-                        format!(
-                            "{}: {}: {}",
-                            fail_kind_sql(&f.kind),
-                            f.node,
-                            f.detail.message
-                        )
-                    }
-                    None => format!("run ended in {status:?}"),
-                };
-                // Run-scope failure record carries the fail CLASS only (never the
-                // detail message, which could echo node output).
-                let fail_class = st
-                    .failure()
-                    .map(|f| fail_kind_sql(&f.kind))
-                    .unwrap_or("failed");
-                emit_run_end(
-                    &flow.flow_id,
-                    run_id,
-                    next_seq,
-                    &tp,
-                    &format!("failed:{fail_class}"),
-                );
-                return Ok(ClaimOutcome {
-                    outcome: 2,
-                    park_ms: 0,
-                    fail_reason: Some(fail_reason),
-                    already_settled: false,
-                });
-            }
-            // R32: a scheduled retry not yet due — persist the attempt and queue-park
-            // the row for the backoff (release the lease), the
-            // cross-invocation retry the `execute` note deferred to the queue
-            // layer. `now_ms` is 0, so `until_ms` IS the backoff to wait; the next
-            // claim reconstructs, restores the attempt (DUE now, the queue wait served
-            // the wait), and re-dispatches — the budget advances until success,
-            // error-route, or RetryExhausted.
-            Step::Wait {
-                node,
-                until_ms,
-                attempt,
-                throttle,
-            } => {
-                save_retry(run_id, &node, attempt, until_ms, throttle.as_ref())?;
-                return Ok(ClaimOutcome {
-                    outcome: 1,
-                    park_ms: until_ms,
-                    fail_reason: None,
-                    already_settled: false,
-                });
-            }
-            Step::Reserved(step) => {
-                let caller = st.caller_state();
-                commit_reserved_and_renew(
-                    run_id,
-                    &flow.flow_id,
-                    flow.version,
-                    &step,
-                    caller,
-                    next_seq,
-                    &flow.capture,
-                    ttl_ms,
-                    owner,
-                    lease_generation,
-                )?;
-                next_seq += 1;
-                emit_node_complete(
-                    &flow.flow_id,
-                    run_id,
-                    step.node(),
-                    next_seq - 1,
-                    &tp,
-                    MAIN_PORT,
-                );
-                plan.apply_reserved(&mut st, &step)
-                    .map_err(|error| error.to_string())?;
-                if st.status().is_terminal() {
-                    let failed = st.status() == ExecutionStatus::Failed;
-                    return Ok(ClaimOutcome {
-                        outcome: if failed { 2 } else { 0 },
-                        park_ms: 0,
-                        fail_reason: failed.then(|| {
-                            st.failure()
-                                .map(|failure| {
-                                    format!(
-                                        "{}: {}",
-                                        failure.detail.code.as_deref().unwrap_or("failed"),
-                                        failure.detail.message
-                                    )
-                                })
-                                .unwrap_or_else(|| "failed".to_string())
-                        }),
-                        already_settled: false,
-                    });
-                }
-            }
-            Step::Dispatch(d) => {
-                if d.node_type == "invoke-flow" {
-                    match invoke_child(run_id, &d, owner, lease_generation)? {
-                        ChildInvocation::Parked => {
-                            return Ok(ClaimOutcome {
-                                outcome: 1,
-                                park_ms: 0,
-                                fail_reason: None,
-                                already_settled: true,
-                            });
-                        }
-                        ChildInvocation::Released(outcome) => {
-                            let should_checkpoint = matches!(outcome, NodeOutcome::Success { .. })
-                                || !plan.successors(&d.node, ERROR_PORT).is_empty();
-                            if should_checkpoint {
-                                checkpoint_child_outcome(
-                                    run_id,
-                                    &d,
-                                    next_seq,
-                                    &outcome,
-                                    &flow.capture,
-                                    ttl_ms,
-                                    owner,
-                                )?;
-                                next_seq += 1;
-                            }
-                            match &outcome {
-                                NodeOutcome::Success { port, .. } => emit_node_complete(
-                                    &flow.flow_id,
-                                    run_id,
-                                    &d.node,
-                                    next_seq.saturating_sub(1),
-                                    &tp,
-                                    port,
-                                ),
-                                NodeOutcome::Error(error) if should_checkpoint => emit_node_error(
-                                    &flow.flow_id,
-                                    run_id,
-                                    &d.node,
-                                    next_seq.saturating_sub(1),
-                                    &tp,
-                                    error_row_values(error).0,
-                                ),
-                                NodeOutcome::Error(_) => {}
-                            }
-                            if let Some(partition_key) = partition {
-                                renew_partition(partition_key, ttl_ms, owner)?;
-                            }
-                            plan.apply(&mut st, &d, outcome, 0)
-                                .map_err(|error| error.to_string())?;
-                            continue;
-                        }
-                    }
-                }
-                // The lease heartbeat rides each node's checkpoint statement
-                // (fqg.18): the claim's fresh lease covers the first node, each
-                // record's renew covers the next — the same coverage the split
-                // renew-before-dispatch gave, one round trip cheaper.
-                let admission = recovery_admission(artifact, &d)?;
-                match begin_attempt(
-                    run_id,
-                    &d,
-                    next_seq,
-                    admission,
-                    owner,
-                    lease_generation,
-                    ttl_ms,
-                )? {
-                    AttemptStartResult::Started | AttemptStartResult::Redispatch => {
-                        mark_attempt_dispatched(run_id, &d, owner, lease_generation, ttl_ms)?;
-                    }
-                    AttemptStartResult::EffectUncertain | AttemptStartResult::MissingAttemptKey => {
-                        terminalize_effect_uncertain(run_id, &d.node, owner, lease_generation)?;
-                        return Ok(ClaimOutcome {
-                            outcome: 2,
-                            park_ms: 0,
-                            fail_reason: Some(format!(
-                                "effect-uncertain: {}: incomplete attempt",
-                                d.node
-                            )),
-                            already_settled: false,
-                        });
-                    }
-                    refusal @ (AttemptStartResult::UndeclaredRequirement
-                    | AttemptStartResult::NodeNotPermitted
-                    | AttemptStartResult::Unbound
-                    | AttemptStartResult::InactiveGeneration
-                    | AttemptStartResult::AuthorityDenied
-                    | AttemptStartResult::Incompatible) => {
-                        let refusal = match refusal {
-                            AttemptStartResult::UndeclaredRequirement => "undeclared-requirement",
-                            AttemptStartResult::NodeNotPermitted => "node-not-permitted",
-                            AttemptStartResult::Unbound => "unbound",
-                            AttemptStartResult::InactiveGeneration => "inactive-generation",
-                            AttemptStartResult::AuthorityDenied => "authority-denied",
-                            AttemptStartResult::Incompatible => "incompatible",
-                            _ => unreachable!("the pattern above contains every typed refusal"),
-                        };
-                        terminalize_connection_refusal(
-                            run_id,
-                            &flow.flow_id,
-                            flow.version,
-                            &d.node,
-                            st.caller_state(),
-                            refusal,
-                            owner,
-                            lease_generation,
-                        )?;
-                        return Ok(ClaimOutcome {
-                            outcome: 2,
-                            park_ms: 0,
-                            fail_reason: Some(format!("{refusal}: {}", d.node)),
-                            already_settled: true,
-                        });
-                    }
-                    AttemptStartResult::FenceLost => {
-                        return Err("attempt intent refused: fence-lost".to_string());
-                    }
-                    other => return Err(format!("attempt intent refused: {other:?}")),
-                }
-                let outcome = dispatch_node(
-                    &d,
-                    run_id,
-                    flow,
-                    Some(artifact),
-                    Some(&effect_run),
-                    false,
-                    &mut http_status,
-                )?;
-                if d.node_type == "fail" {
-                    let NodeOutcome::Error(error) = &outcome else {
-                        unreachable!("validated fail outcome is terminal")
-                    };
-                    complete_fail_and_renew(
-                        run_id,
-                        &flow.flow_id,
-                        flow.version,
-                        &d,
-                        error,
-                        st.caller_state(),
-                        &flow.capture,
-                        ttl_ms,
-                        owner,
-                        lease_generation,
-                    )?;
-                    next_seq += 1;
-                    emit_node_error(
-                        &flow.flow_id,
-                        run_id,
-                        &d.node,
-                        next_seq - 1,
-                        &tp,
-                        error_row_values(error).0,
-                    );
-                    plan.apply(&mut st, &d, outcome, 0)
-                        .map_err(|error| error.to_string())?;
-                    let failure = st.failure().expect("fail transition is terminal");
-                    return Ok(ClaimOutcome {
-                        outcome: 2,
-                        park_ms: 0,
-                        fail_reason: Some(format!(
-                            "{}: {}",
-                            failure.detail.code.as_deref().unwrap_or("failed"),
-                            failure.detail.message
-                        )),
-                        already_settled: false,
-                    });
-                }
-                match &outcome {
-                    NodeOutcome::Success {
-                        payload,
-                        port,
-                        context,
-                    } => {
-                        let checkpoint_context = context.as_ref().unwrap_or(&d.context);
-                        if d.node_type == "respond" {
-                            http_status = u32::from(
-                                wamn_nodes::respond::status_for(&d.config)
-                                    .expect("validated respond config has an HTTP status"),
-                            );
-                            complete_respond_and_renew(
-                                run_id,
-                                &d,
-                                port,
-                                payload,
-                                &flow.capture,
-                                checkpoint_context,
-                                plan.successors(&d.node, port).is_empty(),
-                                ttl_ms,
-                                owner,
-                                lease_generation,
-                            )?
-                        } else {
-                            complete_attempt_success(
-                                run_id,
-                                &d,
-                                port,
-                                payload,
-                                &flow.capture,
-                                checkpoint_context,
-                                ttl_ms,
-                                owner,
-                                lease_generation,
-                            )?
-                        }
-                        next_seq += 1;
-                        emit_node_complete(&flow.flow_id, run_id, &d.node, next_seq - 1, &tp, port);
-                    }
-                    NodeOutcome::Error(err)
-                        if will_error_route(err, &d)
-                            && !plan.successors(&d.node, ERROR_PORT).is_empty() =>
-                    {
-                        record_error_and_renew(
-                            run_id,
-                            &d.node,
-                            d.occurrence,
-                            next_seq,
-                            err,
-                            &d.payload,
-                            &flow.capture,
-                            ttl_ms,
-                            owner,
-                            lease_generation,
-                        )?;
-                        next_seq += 1;
-                        emit_node_error(
-                            &flow.flow_id,
-                            run_id,
-                            &d.node,
-                            next_seq - 1,
-                            &tp,
-                            error_row_values(err).0,
-                        );
-                    }
-                    NodeOutcome::Error(_) => {}
-                }
-                // fqg.9: when driving a partition HEAD, renew the partition
-                // lease alongside the run lease so this replica stays the
-                // key's stable owner across a long head walk (no needless
-                // mid-run partition steal). Owner-guarded, so a lease this
-                // replica already lost is a no-op. Inert (never called) for
-                // the unpartitioned path.
-                if let Some(pk) = partition {
-                    renew_partition(pk, ttl_ms, owner)?;
-                }
-                plan.apply(&mut st, &d, outcome, 0)
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-    }
+fn execution_refusal<T>() -> Result<T, String> {
+    Err(EXECUTION_INTERPRETER_REFUSAL.to_string())
 }
 
 /// One turn of the production dispatch loop: claim the next run, drive it with a
 /// per-node heartbeat, and dequeue or queue-wait settlement. See the WIT doc.
-fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
-    let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
-    let owner = runner_owner()?;
-    // Unpartitioned first: the global `FOR UPDATE SKIP LOCKED` claim drains
-    // unordered NULL-key runs concurrently across replicas (the fqg.4 path).
-    if let Some(claimed) = claim_dispatch(&owner, ttl)? {
-        let artifact = load_pinned_artifact(&claimed.run_id)?;
-        if artifact.flow().flow_id != claimed.flow_id
-            || Some(artifact.flow().version) != claimed.flow_version
-        {
-            return Err("claimed run and pinned artifact identity disagree".to_string());
-        }
-        let claim = execute_claimed(
-            &claimed.run_id,
-            &artifact,
-            claimed.input,
-            &owner,
-            ttl,
-            None,
-            claimed.lease_generation,
-        )?;
-        settle(&claimed.run_id, &claim)?;
-        return Ok((true, Some(claimed.run_id), claim.outcome));
-    }
-    // Then partitioned: lease a partition and drive its head in order (fqg.9).
-    if let Some((run_id, outcome)) = claim_partition_run(&owner, ttl)? {
-        return Ok((true, Some(run_id), outcome));
-    }
-    Ok((false, None, 0)) // queue drained (unpartitioned + owned partitions)
+fn run_next(_lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
+    execution_refusal()
 }
 
 /// Drive the exact HTTP run/fence claimed by final admission.
@@ -3740,67 +3100,12 @@ fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
 /// particular, `fence-lost` is absolute. Generic `run-next` remains the only
 /// path that scans available work.
 fn execute_admitted_claimed(
-    run_id: &str,
-    lease_owner: &str,
-    lease_generation: i64,
-    lease_ttl_ms: u64,
+    _run_id: &str,
+    _lease_owner: &str,
+    _lease_generation: i64,
+    _lease_ttl_ms: u64,
 ) -> Result<u32, String> {
-    let ttl = i64::try_from(lease_ttl_ms).map_err(|_| "lease-ttl-ms too large".to_string())?;
-    let injected_owner = runner_owner()?;
-    if lease_owner != injected_owner {
-        return Err("execute-claimed refused: fence-lost".to_string());
-    }
-
-    let response = client::query(
-        &begin_claimed_run_sql(),
-        &[
-            text(run_id),
-            text(lease_owner),
-            int64(lease_generation),
-            int64(ttl),
-        ],
-    )
-    .map_err(|error| err_name(&error))?;
-    let row = response
-        .rows
-        .first()
-        .ok_or("execute-claimed arbitration returned no result row")?;
-    let result_code = match row.first() {
-        Some(SqlValue::Text(code)) => code.as_str(),
-        other => return Err(format!("execute-claimed result shape: {other:?}")),
-    };
-    if result_code != "claimed" {
-        return Err(format!("execute-claimed refused: {result_code}"));
-    }
-    let flow_id = match row.get(1) {
-        Some(SqlValue::Text(value)) => value.clone(),
-        other => return Err(format!("execute-claimed flow_id shape: {other:?}")),
-    };
-    let input = match row.get(2) {
-        Some(SqlValue::Text(value)) | Some(SqlValue::Json(value)) => serde_json::from_str(value)
-            .map_err(|error| format!("execute-claimed input parse: {error}"))?,
-        other => return Err(format!("execute-claimed input shape: {other:?}")),
-    };
-    let flow_version = match row.get(3) {
-        Some(SqlValue::Int32(value)) => u32::try_from(*value).ok(),
-        Some(SqlValue::Int64(value)) => u32::try_from(*value).ok(),
-        _ => None,
-    };
-    let artifact = load_pinned_artifact(run_id)?;
-    if artifact.flow().flow_id != flow_id || Some(artifact.flow().version) != flow_version {
-        return Err("claimed run and pinned artifact identity disagree".to_string());
-    }
-    let claim = execute_claimed(
-        run_id,
-        &artifact,
-        input,
-        lease_owner,
-        ttl,
-        None,
-        lease_generation,
-    )?;
-    settle(run_id, &claim)?;
-    Ok(claim.outcome)
+    execution_refusal()
 }
 
 // ---------------------------------------------------------------------------
@@ -3908,8 +3213,8 @@ impl Guest for Component {
         }
     }
 
-    fn run(run_id: String, payload: String) -> Result<u32, String> {
-        execute(&run_id, &payload, false, FLOW_ID).map(|r| r.version)
+    fn run(_run_id: String, _payload: String) -> Result<u32, String> {
+        execution_refusal()
     }
 
     fn run_next(lease_ttl_ms: u64) -> Result<(bool, Option<String>, u32), String> {
@@ -3925,8 +3230,8 @@ impl Guest for Component {
         execute_admitted_claimed(&run_id, &lease_owner, lease_generation, lease_ttl_ms)
     }
 
-    fn run_until_kill(run_id: String, payload: String) -> Result<u32, String> {
-        execute(&run_id, &payload, true, FLOW_ID).map(|r| r.version)
+    fn run_until_kill(_run_id: String, _payload: String) -> Result<u32, String> {
+        execution_refusal()
     }
 
     fn sink_count(run_id: String) -> Result<u64, String> {
@@ -3951,8 +3256,8 @@ impl Guest for Component {
         Ok(a + b)
     }
 
-    fn run_s6(run_id: String, payload: String) -> Result<(u32, u32), String> {
-        execute(&run_id, &payload, false, FLOW_ID_S6).map(|r| (r.outcome, r.http_status))
+    fn run_s6(_run_id: String, _payload: String) -> Result<(u32, u32), String> {
+        execution_refusal()
     }
 }
 
@@ -4044,7 +3349,7 @@ mod tests {
     /// wamn-gm5d: `run-s6` compiles its graph against this map, so an S6 node
     /// type missing from it is unresolvable — the flow document cannot declare
     /// its own ports and there is no fallback on this path. Each of these
-    /// completes on `main`, matching what a pinned interface bundle resolves
+    /// completes on `main`, matching what resolved public interfaces declare
     /// them to on the production `execute_claimed` path.
     #[test]
     fn s3_fixture_interfaces_resolve_every_s6_node_type_on_main() {
@@ -4124,10 +3429,6 @@ mod tests {
         .expect("request descriptor resolves");
         assert_eq!(contract.interface.node_type, "request");
         assert_eq!(contract.interface.output_ports, ["main"]);
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
     }
 
     #[test]
@@ -4142,10 +3443,6 @@ mod tests {
         .expect("event descriptor resolves");
         assert_eq!(contract.interface.node_type, "event");
         assert_eq!(contract.interface.output_ports, ["main"]);
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
     }
 
     #[test]
@@ -4163,10 +3460,6 @@ mod tests {
         .expect("fail descriptor resolves");
         assert_eq!(contract.interface.node_type, "fail");
         assert_eq!(contract.interface.output_ports, ["main"]);
-        assert_eq!(
-            contract.executable_recovery,
-            wamn_node_manifest::ExecutableRecoveryContract::pure()
-        );
     }
 
     #[test]
@@ -4432,199 +3725,45 @@ mod tests {
     }
 
     #[test]
-    fn release_lookup_remains_an_exact_immutable_member_branch() {
-        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_flows AS rf"));
-        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.release_manifests AS rm"));
-        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.flow_artifacts AS a"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.graph_json::text"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_json::text"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.interface_bundle_hash"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_json::text"));
-        assert!(PINNED_ARTIFACT_SQL.contains("a.occurrence_recovery_hash"));
-        for join in [
-            "rf.tenant_id = r.tenant_id",
-            "rf.catalog_id = r.catalog_id",
-            "rf.catalog_version = r.catalog_version",
-            "rf.flow_id = r.flow_id",
-            "rf.flow_version = r.flow_version",
-            "rm.tenant_id = rf.tenant_id",
-            "rm.catalog_id = rf.catalog_id",
-            "rm.catalog_version = rf.catalog_version",
-            "a.tenant_id = rf.tenant_id",
-            "a.flow_id = rf.flow_id",
-            "a.flow_version = rf.flow_version",
-            "member ->> 'artifact-hash' = a.artifact_hash",
-        ] {
-            assert!(
-                PINNED_ARTIFACT_SQL.contains(join),
-                "pinned identity join missing {join}"
-            );
-        }
-        assert!(PINNED_ARTIFACT_SQL.contains("r.artifact_lineage = 'release'"));
-        assert!(!PINNED_ARTIFACT_SQL.contains("LEFT JOIN"));
-        assert!(!PINNED_ARTIFACT_SQL.contains(" OR "));
-        assert!(!PINNED_ARTIFACT_SQL.contains("FROM flows "));
-        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_drafts AS"));
-        assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
-    }
-
-    #[test]
-    fn draft_lookup_rebinds_every_admitted_claim_to_one_validated_artifact() {
-        for predicate in [
-            "r.trigger_source = 'scenario-draft'",
-            "r.invocation_context #>> '{source,producer}' = 'draft-scenario'",
-            "r.artifact_lineage = 'draft'",
-            "JOIN catalog.validated_flow_drafts AS d",
-            "d.tenant_id = r.tenant_id",
-            "d.flow_id = r.flow_id",
-            "d.runtime_flow_version = r.flow_version",
-            "d.catalog_id = r.catalog_id",
-            "d.catalog_version = r.catalog_version",
-            "d.environment = r.environment",
-            "d.draft_artifact_hash =",
-            "'{principal,artifact-digest}'",
-            "d.draft_id = r.invocation_context #>> '{principal,draft-id}'",
-            "d.draft_revision::text =",
-            "'{principal,draft-revision}'",
-            "d.validated_draft_hash =",
-            "'{principal,validated-draft-hash}'",
-            "d.execution_bundle_hash =",
-            "'{principal,execution-bundle-hash}'",
-            "d.binding_base_artifact_hash =",
-            "'{principal,binding-base-artifact-hash}'",
-            "d.suite_flow_version::text =",
-            "'{principal,suite-flow-version}'",
-            "r.admission_context_version = '0.1'",
-            "r.invocation_context ->> 'version' = '0.1'",
-            "'{principal,tenant-id}' = r.tenant_id",
-            "'{principal,environment}' = r.environment",
-            "'{principal,catalog-id}' = r.catalog_id",
-            "'{principal,catalog-version}' =",
-            "'{principal,run-id}' = r.run_id",
-            "'{principal,flow-id}' = r.flow_id",
-            "'{principal,flow-version}' =",
-            "d.execution_bundle_bytes",
-            "d.draft_content_hash",
-            "d.interface_bundle_json::text",
-            "d.occurrence_recovery_json::text",
-        ] {
-            assert!(
-                PINNED_ARTIFACT_SQL.contains(predicate),
-                "validated draft lookup omits {predicate}"
-            );
-        }
-        assert!(PINNED_ARTIFACT_SQL.contains("r.artifact_lineage = 'invalid'"));
-        assert!(PINNED_ARTIFACT_SQL.contains("NULL::text AS interface_bundle_json"));
-        assert!(PINNED_ARTIFACT_SQL.contains("NULL::text AS occurrence_recovery_json"));
-        assert!(PINNED_ARTIFACT_SQL.contains("UNION ALL SELECT * FROM release_artifact"));
-        assert!(PINNED_ARTIFACT_SQL.contains("UNION ALL SELECT * FROM draft_artifact"));
-        assert!(!PINNED_ARTIFACT_SQL.contains("LEFT JOIN"));
-        assert!(!PINNED_ARTIFACT_SQL.contains(" OR "));
-        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_drafts AS"));
-        assert!(!PINNED_ARTIFACT_SQL.contains("catalog_heads"));
-    }
-
-    fn selection(
-        node_id: &str,
-        node_type: &str,
-        recovery_class: wamn_node_manifest::RecoveryClass,
-    ) -> wamn_node_manifest::OccurrenceRecoverySelection {
-        wamn_node_manifest::OccurrenceRecoverySelection {
-            selection_version: wamn_node_manifest::OCCURRENCE_RECOVERY_SELECTION_VERSION
-                .to_string(),
-            node_id: node_id.to_string(),
-            node_type: node_type.to_string(),
-            recovery_class,
-            portable_connection: None,
-        }
-    }
-
-    #[test]
-    fn pinned_occurrence_selection_is_the_only_recovery_authority() {
-        let selections = [
-            selection(
-                "get-call",
-                "http-request",
-                wamn_node_manifest::RecoveryClass::NeverReplay,
-            ),
-            selection(
-                "post-call",
-                "http-request",
-                wamn_node_manifest::RecoveryClass::Replay,
-            ),
-        ];
-        assert_eq!(
-            admit_occurrence_recovery(&selections, "get-call", "http-request").unwrap(),
-            RecoveryAdmission {
-                selected_class: RecoveryClass::NeverReplay,
-                effective_class: RecoveryClass::NeverReplay,
-                generation_fact_kind: GenerationFactKind::NotRequired,
-                connection_required: false,
-            }
-        );
-        assert_eq!(
-            admit_occurrence_recovery(&selections, "post-call", "http-request").unwrap(),
-            RecoveryAdmission {
-                selected_class: RecoveryClass::Replay,
-                effective_class: RecoveryClass::Replay,
-                generation_fact_kind: GenerationFactKind::NotRequired,
-                connection_required: false,
-            }
-        );
-    }
-
-    #[test]
-    fn absent_duplicate_and_retargeted_occurrence_selections_fail_closed() {
-        let selected = selection(
-            "call",
-            "http-request",
-            wamn_node_manifest::RecoveryClass::NeverReplay,
-        );
-        assert!(admit_occurrence_recovery(&[], "call", "http-request").is_err());
+    fn release_lineage_has_no_executable_reader_and_draft_joins_exact_plan_bytes() {
+        assert!(PINNED_ARTIFACT_SQL.contains("blocked_lineage"));
+        assert!(PINNED_ARTIFACT_SQL.contains("r.artifact_lineage <> 'draft'"));
+        assert!(PINNED_ARTIFACT_SQL.contains("JOIN catalog.execution_bundles AS bundle"));
+        assert!(PINNED_ARTIFACT_SQL.contains("bundle.exact_bytes"));
         assert!(
-            admit_occurrence_recovery(
-                &[selection(
-                    "other",
-                    "http-request",
-                    wamn_node_manifest::RecoveryClass::Replay,
-                )],
-                "call",
-                "http-request",
-            )
-            .is_err()
+            PINNED_ARTIFACT_SQL.contains("bundle.execution_bundle_hash = d.execution_bundle_hash")
+        );
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.release_flows"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("catalog.flow_artifacts"));
+        assert!(!PINNED_ARTIFACT_SQL.contains("graph_json"));
+    }
+
+    #[test]
+    fn every_execution_entry_refuses_before_database_mutation() {
+        assert!(
+            <Component as Guest>::run_next(1)
+                .unwrap_err()
+                .contains("execution refuses")
         );
         assert!(
-            admit_occurrence_recovery(
-                &[selected.clone(), selected.clone()],
-                "call",
-                "http-request"
-            )
-            .is_err()
+            <Component as Guest>::run("run".into(), "{}".into())
+                .unwrap_err()
+                .contains("execution refuses")
         );
-        assert!(admit_occurrence_recovery(&[selected], "call", "postgres-query").is_err());
-    }
-
-    #[test]
-    fn portable_occurrence_requires_host_derived_attested_generations() {
-        let mut selected = selection(
-            "call",
-            "http-request",
-            wamn_node_manifest::RecoveryClass::IdempotentWithKey,
+        assert!(
+            <Component as Guest>::execute_claimed("run".into(), "owner".into(), 1, 1)
+                .unwrap_err()
+                .contains("execution refuses")
         );
-        selected.portable_connection = Some(
-            wamn_node_manifest::PortableConnectionRequirement::stable_key_dedup_v1(
-                wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
-                86_400_000,
-            ),
+        assert!(
+            <Component as Guest>::run_until_kill("run".into(), "{}".into())
+                .unwrap_err()
+                .contains("execution refuses")
         );
-        assert_eq!(
-            admit_occurrence_recovery(&[selected], "call", "http-request").unwrap(),
-            RecoveryAdmission {
-                selected_class: RecoveryClass::IdempotentWithKey,
-                effective_class: RecoveryClass::IdempotentWithKey,
-                generation_fact_kind: GenerationFactKind::Attested,
-                connection_required: true,
-            }
+        assert!(
+            <Component as Guest>::run_s6("run".into(), "{}".into())
+                .unwrap_err()
+                .contains("execution refuses")
         );
     }
 }

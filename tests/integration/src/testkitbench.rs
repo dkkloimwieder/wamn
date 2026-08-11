@@ -38,14 +38,14 @@ use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::HostHandler;
 
 use crate::node_host_support::{self as serve_node, ServeNode, ServeNodeAuthn};
-use wamn_catalog::{Artifact, NodeImplementation};
+use wamn_catalog::Artifact;
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, injected_capabilities};
 use wamn_flow::Flow;
 use wamn_gate_harness::{check, scope_session};
 use wamn_node_invoke::{
     NodeInvokeRequest, NodeInvokeResponse, WireNodeError, WirePayload, WireRunContext,
 };
-use wamn_node_manifest::{CapabilityClass, ExecutableRecoveryContract, ResolvedNodeInterface};
+use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
@@ -484,7 +484,7 @@ fn poc_s6_flow_json(authority: &str) -> String {
 /// artifact requires. Every fixture node type emits on `main` only; the http call
 /// and the pg write are effectful, so they default closed to never-replay and the
 /// run's effect path demands the trusted principal [`pin_run_to_release`] stamps.
-fn s6_implementations() -> Vec<NodeImplementation> {
+fn s6_implementations() -> Vec<ResolvedNodeInterface> {
     [
         ("http-call", CapabilityClass::Http),
         ("pg-write", CapabilityClass::Postgres),
@@ -493,20 +493,12 @@ fn s6_implementations() -> Vec<NodeImplementation> {
     ]
     .into_iter()
     .map(|(node_type, capability)| {
-        let recovery = if capability == CapabilityClass::Pure {
-            ExecutableRecoveryContract::pure()
-        } else {
-            ExecutableRecoveryContract::effectful(false)
-        };
-        NodeImplementation::platform(
-            ResolvedNodeInterface::new(
-                node_type,
-                "wamn:node/node@0.1.0",
-                vec!["main".to_string()],
-                vec![capability],
-                Vec::new(),
-            ),
-            recovery,
+        ResolvedNodeInterface::new(
+            node_type,
+            "wamn:node/node@0.1.0",
+            vec!["main".to_string()],
+            vec![capability],
+            Vec::new(),
         )
     })
     .collect()
@@ -572,12 +564,6 @@ async fn seed_release(admin_url: &str, flow_json: &str) -> anyhow::Result<()> {
     let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
     let graph_json =
         String::from_utf8(flow.canonical_bytes()).expect("canonical flow graph is UTF-8");
-    let interface_bundle_json =
-        String::from_utf8(artifact.interface_bundle().canonical_bytes().to_vec())
-            .expect("canonical interface bundle is UTF-8");
-    let occurrence_recovery_json = String::from_utf8(artifact.occurrence_recovery_bytes().to_vec())
-        .expect("canonical occurrence recovery selections are UTF-8");
-    let component_digests = serde_json::to_value(artifact.supplied_components())?;
     let members = json!([{
         "flow-id": flow.flow_id,
         "flow-version": 1,
@@ -612,20 +598,14 @@ async fn seed_release(admin_url: &str, flow_json: &str) -> anyhow::Result<()> {
         tx.execute(
             "INSERT INTO catalog.flow_artifacts \
                (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash, \
-                artifact_hash,interface_bundle_json,interface_bundle_hash,component_digests, \
-                occurrence_recovery_json,occurrence_recovery_hash) \
-             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5,$6,$7,$8,$9,$10)",
+                artifact_hash) \
+             VALUES ($1,$2,1,'0.1',$3::text::jsonb,$4,$5)",
             &[
                 &RW_TENANT,
                 &flow.flow_id,
                 &graph_json,
                 &artifact.graph_hash(),
                 &artifact_hash,
-                &interface_bundle_json,
-                &artifact.interface_bundle().hash(),
-                &component_digests,
-                &occurrence_recovery_json,
-                &artifact.occurrence_recovery_hash(),
             ],
         )
         .await

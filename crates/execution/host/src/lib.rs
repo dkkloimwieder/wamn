@@ -5,15 +5,7 @@
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
 //! and production capability selection remains in the service leaves.
 
-mod bundle_cache;
 mod pool;
-
-pub use bundle_cache::{
-    BundleCacheError, BundleCacheErrorKind, BundleCacheLimits, BundleCacheMetrics,
-    BundleCacheResource, BundleDeliveryRequest, BundleInputScope, BundleRetentionError,
-    BundleRetentionErrorKind, BundleRetirement, ComposedBundle, ExecutionBundleCache,
-    FirstPartyBundleKey, FirstPartyBundleKeyError, InvalidBundleCacheLimits,
-};
 
 pub use pool::{
     ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,

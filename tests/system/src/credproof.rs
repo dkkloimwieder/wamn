@@ -18,9 +18,7 @@ mod tests {
     fn expected_connection_requirement() -> wamn_flow::FlowConnectionRequirement {
         wamn_flow::FlowConnectionRequirement {
             name: CONNECTION_NAME.to_string(),
-            requirement: wamn_node_manifest::PortableConnectionRequirement::never_replay(
-                wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
-            ),
+            requirement: wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
         }
     }
 

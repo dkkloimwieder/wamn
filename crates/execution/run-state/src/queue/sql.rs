@@ -563,8 +563,6 @@ pub fn admit_pinned_triggered_run_sql() -> String {
               AND h.environment = $6 AND rf.flow_id = $2 AND rf.flow_version = $3 \
               AND a.artifact_hash = $10 \
               AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $11 <> '' \
-              AND a.occurrence_recovery_json IS NOT NULL \
-              AND a.occurrence_recovery_hash IS NOT NULL \
               AND (SELECT count(*) \
                      FROM jsonb_array_elements(rm.members_json) AS member \
                     WHERE member ->> 'flow-id' = rf.flow_id \

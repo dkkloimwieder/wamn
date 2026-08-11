@@ -7,41 +7,24 @@
     {
       "name": "notify-endpoint",
       "requirement": {
-        "requirement-version": "1",
-        "descriptor": {
-          "descriptor-version": "1",
-          "requirement-type": "http",
-          "contract": "wamn:connection/http@0.1.0",
-          "authority-model": "http-origin",
-          "field-ownership": [
-            { "field": "method", "owner": "author" },
-            { "field": "relative-target", "owner": "author" },
-            { "field": "headers", "owner": "author" },
-            { "field": "body", "owner": "author" },
-            { "field": "authority", "owner": "environment" },
-            { "field": "tls", "owner": "environment" },
-            { "field": "redirect", "owner": "environment" },
-            { "field": "proxy", "owner": "environment" },
-            { "field": "credential", "owner": "environment" },
-            { "field": "idempotency-key", "owner": "system" }
-          ],
-          "credential-injection": "environment-selected-http-header",
-          "idempotency-key-injection": "http-idempotency-key-header",
-          "conservative-recovery": "never-replay",
-          "recovery-claims": [
-            {
-              "claim": "stable-key-dedup-v1",
-              "parameters": ["minimum-retention-ms"],
-              "operation_fingerprint": [
-                "method",
-                "relative-target",
-                "semantic-headers",
-                "body-digest"
-              ]
-            }
-          ]
-        },
-        "recovery": { "claim": "never-replay" }
+        "descriptor-version": "1",
+        "requirement-type": "http",
+        "contract": "wamn:connection/http@0.1.0",
+        "authority-model": "http-origin",
+        "field-ownership": [
+          { "field": "method", "owner": "author" },
+          { "field": "relative-target", "owner": "author" },
+          { "field": "headers", "owner": "author" },
+          { "field": "body", "owner": "author" },
+          { "field": "authority", "owner": "environment" },
+          { "field": "tls", "owner": "environment" },
+          { "field": "redirect", "owner": "environment" },
+          { "field": "proxy", "owner": "environment" },
+          { "field": "credential", "owner": "environment" },
+          { "field": "idempotency-key", "owner": "system" }
+        ],
+        "credential-injection": "environment-selected-http-header",
+        "idempotency-key-injection": "http-idempotency-key-header"
       }
     }
   ],

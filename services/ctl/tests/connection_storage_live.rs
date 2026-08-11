@@ -82,16 +82,16 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
         .batch_execute(
             "INSERT INTO catalog.flow_artifacts ( \
                tenant_id, flow_id, flow_version, schema_version, graph_json, graph_hash, \
-               artifact_hash, interface_bundle_json, interface_bundle_hash, component_digests \
+               artifact_hash \
              ) VALUES ( \
                'tenant-a', 'flow-a', 1, '0.1', '{}'::jsonb, 'graph-a', \
-               'artifact-a', '[]', 'interfaces-a', '[]'::jsonb \
+               'artifact-a' \
              ); \
              INSERT INTO catalog.connection_requirements ( \
                tenant_id, artifact_hash, requirement_name, requirement_json, requirement_hash \
              ) VALUES ( \
                'tenant-a', 'artifact-a', 'erp', \
-               '{\"requirement-version\":\"1\",\"descriptor\":{},\"recovery\":{}}'::jsonb, \
+               '{}'::jsonb, \
                'requirement-a' \
              ); \
              INSERT INTO catalog.connection_instances ( \
