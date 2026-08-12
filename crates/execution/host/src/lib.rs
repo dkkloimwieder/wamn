@@ -13,10 +13,13 @@ pub use pool::{
     PoolCleanupError, RetirementReason, ReusableExecutionInstance,
 };
 
+include!(concat!(env!("OUT_DIR"), "/effect_provider_revision.rs"));
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use sha2::{Digest as _, Sha256};
 use wash_runtime::engine::Engine;
 use wash_runtime::engine::ctx::{Ctx, SharedCtx, WamnStoreLimiter};
 use wash_runtime::engine::workload::ResolvedWorkload;
@@ -32,6 +35,7 @@ use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
+use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
@@ -45,6 +49,62 @@ use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres};
 
 /// Stable in-image location of the compiled flowrunner component.
 pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
+
+/// Host-derived identity of the exact executable runtime loaded for execution.
+///
+/// The values cannot be supplied independently: construction hashes the exact
+/// flowrunner bytes and binds them to this build's native effect providers and
+/// supported host-effect contract.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedExecutionRuntimeRevision {
+    flowrunner_component_digest: Box<str>,
+    effect_provider_revision: &'static str,
+    host_effect_contract_version: &'static str,
+}
+
+impl TrustedExecutionRuntimeRevision {
+    /// Derive the trusted runtime revision from exact loaded flowrunner bytes.
+    pub fn from_flowrunner_bytes(flowrunner_bytes: &[u8]) -> Self {
+        let digest = Sha256::digest(flowrunner_bytes);
+        let mut flowrunner_component_digest = String::with_capacity(71);
+        flowrunner_component_digest.push_str("sha256:");
+        for byte in digest {
+            use std::fmt::Write as _;
+            write!(flowrunner_component_digest, "{byte:02x}")
+                .expect("writing to String cannot fail");
+        }
+
+        Self {
+            flowrunner_component_digest: flowrunner_component_digest.into_boxed_str(),
+            effect_provider_revision: EFFECT_PROVIDER_REVISION,
+            host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION,
+        }
+    }
+
+    /// Return the digest of the exact flowrunner bytes loaded by the host.
+    pub fn flowrunner_component_digest(&self) -> &str {
+        self.flowrunner_component_digest.as_ref()
+    }
+
+    /// Return the immutable native effect-provider revision compiled into the host.
+    pub fn effect_provider_revision(&self) -> &str {
+        self.effect_provider_revision
+    }
+
+    /// Return the catalog host-effect contract supported by this host.
+    pub fn host_effect_contract_version(&self) -> &str {
+        self.host_effect_contract_version
+    }
+
+    /// Project the trusted host identity into the persisted catalog model.
+    pub fn execution_runtime_revision(&self) -> ExecutionRuntimeRevision {
+        ExecutionRuntimeRevision {
+            flowrunner_component_digest: self.flowrunner_component_digest.to_string(),
+            effect_provider_revision: self.effect_provider_revision.to_string(),
+            host_effect_contract_version: self.host_effect_contract_version.to_string(),
+        }
+    }
+}
 
 /// Capability composition for a single execution store.
 pub struct ExecutionCapabilities {
@@ -321,6 +381,7 @@ struct LiveExecution {
 
 pub struct ExecutionHost {
     live: Option<LiveExecution>,
+    runtime_revision: TrustedExecutionRuntimeRevision,
     ttl_ms: u64,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
@@ -331,6 +392,7 @@ impl std::fmt::Debug for ExecutionHost {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("ExecutionHost")
+            .field("runtime_revision", &self.runtime_revision)
             .field("ttl_ms", &self.ttl_ms)
             .field("disposed", &self.live.is_none())
             .finish_non_exhaustive()
@@ -357,6 +419,7 @@ impl ExecutionHost {
         capabilities: ExecutionCapabilities,
         ttl_ms: u64,
     ) -> anyhow::Result<Self> {
+        let runtime_revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(guest);
         let ExecutionIdentity {
             owner,
             tenant,
@@ -496,9 +559,15 @@ impl ExecutionHost {
                 run_next,
                 execute_claimed,
             }),
+            runtime_revision,
             ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
         })
+    }
+
+    /// Return the trusted identity retained for this loaded runtime instance.
+    pub fn runtime_revision(&self) -> &TrustedExecutionRuntimeRevision {
+        &self.runtime_revision
     }
 
     /// Whether a Wasmtime interruption or trap disposed this instance.
@@ -780,7 +849,7 @@ mod tests {
         let raw = engine.inner();
         let bytes = wat::parse_str(COMPONENT).expect("encode deadline gate component");
         let component =
-            WasmtimeComponent::new(raw, bytes).expect("compile deadline gate component");
+            WasmtimeComponent::new(raw, &bytes).expect("compile deadline gate component");
         let calls = Arc::new(AtomicUsize::new(0));
         let mut linker: Linker<SharedCtx> = Linker::new(raw);
         linker
@@ -823,6 +892,7 @@ mod tests {
                     run_next,
                     execute_claimed,
                 }),
+                runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
                 ttl_ms: 40,
                 mem: None,
             },
@@ -864,6 +934,38 @@ mod tests {
             calls.load(Ordering::SeqCst),
             1,
             "the later call never enters the trapped guest"
+        );
+    }
+
+    #[test]
+    fn trusted_runtime_revision_is_derived_from_exact_flowrunner_bytes() {
+        let revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(b"flowrunner-a");
+
+        assert_eq!(
+            revision.flowrunner_component_digest(),
+            "sha256:e7153eea8dd20d7a44885a5656f8a83a2b2892ca5dd3d0a4f4684f97458cee63"
+        );
+        assert_eq!(
+            revision.effect_provider_revision(),
+            EFFECT_PROVIDER_REVISION
+        );
+        assert_eq!(
+            revision.host_effect_contract_version(),
+            HOST_EFFECT_CONTRACT_VERSION
+        );
+    }
+
+    #[test]
+    fn trusted_runtime_revision_projects_all_catalog_fields_exactly() {
+        let trusted = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(b"flowrunner-a");
+
+        assert_eq!(
+            trusted.execution_runtime_revision(),
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: trusted.flowrunner_component_digest().to_string(),
+                effect_provider_revision: EFFECT_PROVIDER_REVISION.to_string(),
+                host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.to_string(),
+            }
         );
     }
 

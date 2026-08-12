@@ -16,6 +16,12 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+sha2 = { workspace = true }
+
+[build-dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

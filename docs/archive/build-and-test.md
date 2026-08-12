@@ -1261,6 +1261,34 @@ cargo fmt -p wamn-catalog -p wamn-schema-control -p wamn-scenario-worker --check
 cargo fmt --manifest-path components/Cargo.toml -p flowrunner --check
 ```
 
+### [SR-MVP / wamn-0h0g.2.2] native effect-provider revision
+
+This gate is local, offline, and debug-only. The conformance proof regenerates
+the normal dependency closure with Cargo 1.97.0 from package-scoped
+`wamn-executor` resolution (`--locked --offline --target all`), projects the
+`wamn-execution-host` subgraph, and verifies the checked manifest byte for byte.
+It also proves exact framing, canonical rejection, every governed local and
+external mutant, out-of-scope stability, and the shared executor/management
+revision. The claim-time foreign-revision refusal and zero-guest sentinel belong
+to `wamn-0h0g.2.3`, not this gate.
+
+```bash
+cargo --version # must report cargo 1.97.0
+# Nine named tests in tests/conformance/tests/effect_provider_revision.rs own
+# exact framing, closure drift, mutation polarity, and shared embedding.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-2 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision -- --test-threads=1
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-2 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-execution-host \
+  trusted_runtime_revision_
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-2 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-execution-host -p wamn-executor \
+  -p wamn-scenario-worker -p wamn-proof-conformance --all-targets -- -D warnings
+cargo fmt -p wamn-execution-host -p wamn-executor \
+  -p wamn-scenario-worker -p wamn-proof-conformance --check
+```
+
 ### [SR-MVP / wamn-0h0g.2.4] admission-owned execution-bundle pin
 
 This gate is debug-only. It proves that release and validated-draft admission

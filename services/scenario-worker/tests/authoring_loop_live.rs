@@ -17,8 +17,8 @@ use wamn_scenario_model::{
 };
 use wamn_scenario_worker::ScenarioWorkerArgs;
 use wamn_scenario_worker::authoring::{
-    AuthoringReportQuery, DraftBundleInputs, InternalAuthoringBackend, SaveFlowDraft,
-    SaveFlowDraftResult, ValidateFlowDraft,
+    AuthoringReportQuery, InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
+    ValidateFlowDraft,
 };
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
@@ -237,17 +237,6 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
     Ok(artifact_hash)
 }
 
-fn digest(digit: char) -> String {
-    format!("sha256:{}", digit.to_string().repeat(64))
-}
-
-fn bundle() -> anyhow::Result<DraftBundleInputs> {
-    Ok(DraftBundleInputs {
-        effect_provider_revision: digest('4'),
-        host_effect_contract_version: "0.1".to_string(),
-    })
-}
-
 fn args(app_url: &str, flowrunner: &Path, execution_id: &str) -> ScenarioWorkerArgs {
     ScenarioWorkerArgs {
         flowrunner: flowrunner.to_path_buf(),
@@ -358,7 +347,6 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
                 catalog_version: 1,
                 environment: "dev".to_string(),
                 suite_flow_version: 1,
-                bundle: bundle()?,
             },
             &flowrunner_bytes,
         )

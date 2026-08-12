@@ -20,6 +20,7 @@ use wamn_catalog::{
     StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
     entry_input_schema_hash, execution_bundle_hash,
 };
+use wamn_execution_host::TrustedExecutionRuntimeRevision;
 use wamn_scenario_model::{
     AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
     ExecutionLineage, FlowFailureKind, Outcome, PendingAuthoringReport,
@@ -363,13 +364,6 @@ pub enum SaveFlowDraftResult {
     RevisionConflict,
 }
 
-/// Immutable runtime revision inputs used for a draft plan.
-#[derive(Clone, Debug)]
-pub struct DraftBundleInputs {
-    pub effect_provider_revision: String,
-    pub host_effect_contract_version: String,
-}
-
 /// Command to validate one exact saved draft revision for a stored suite.
 #[derive(Clone, Debug)]
 pub struct ValidateFlowDraft {
@@ -380,7 +374,6 @@ pub struct ValidateFlowDraft {
     pub catalog_version: i32,
     pub environment: String,
     pub suite_flow_version: i32,
-    pub bundle: DraftBundleInputs,
 }
 
 /// Exact immutable pins produced by draft validation.
@@ -905,11 +898,8 @@ pub(crate) async fn validate_flow_draft(
     let execution_plan = build_root_execution_plan(
         &flow,
         artifact.identity().artifact_hash().as_str(),
-        ExecutionRuntimeRevision {
-            flowrunner_component_digest: sha256(flowrunner_bytes),
-            effect_provider_revision: request.bundle.effect_provider_revision.clone(),
-            host_effect_contract_version: request.bundle.host_effect_contract_version.clone(),
-        },
+        TrustedExecutionRuntimeRevision::from_flowrunner_bytes(flowrunner_bytes)
+            .execution_runtime_revision(),
     )?;
     let draft = match DraftArtifact::new(&request.tenant_id, &flow, implementations, execution_plan)
     {
@@ -1822,6 +1812,20 @@ mod tests {
         let second = sha256(b"flowrunner-b");
         assert_ne!(first, second);
         assert!(first.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn draft_validation_runtime_revision_uses_trusted_host_derivation() {
+        let trusted = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(b"flowrunner-a");
+
+        assert_eq!(
+            trusted.execution_runtime_revision(),
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: sha256(b"flowrunner-a"),
+                effect_provider_revision: trusted.effect_provider_revision().to_string(),
+                host_effect_contract_version: trusted.host_effect_contract_version().to_string(),
+            }
+        );
     }
 
     #[test]
