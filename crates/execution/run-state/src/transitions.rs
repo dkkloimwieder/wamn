@@ -888,6 +888,7 @@ mod tests {
             "legacy_imported",
             "selected_recovery_class",
             "recovery_class",
+            "attempt_key",
         ] {
             assert!(
                 !attempts.contains(residue),
@@ -903,6 +904,23 @@ mod tests {
         ] {
             assert!(!nodes.contains(residue), "node table retains {residue}");
         }
+        let dispatches = ddl
+            .split_once("CREATE TABLE wamn_run.effect_attempt_dispatches (")
+            .and_then(|(_, tail)| tail.split_once("\n);"))
+            .map(|(table, _)| table)
+            .expect("effect_attempt_dispatches table");
+        for coordinate in ["run_id", "frame_id", "local_node_id", "occurrence"] {
+            assert!(
+                dispatches.contains(coordinate),
+                "dispatch table lacks coordinate {coordinate}"
+            );
+        }
+        assert!(
+            dispatches.contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
+        );
+        assert!(dispatches.contains(
+            "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at,\n                     run_id, frame_id, local_node_id, occurrence)"
+        ));
     }
 
     #[test]

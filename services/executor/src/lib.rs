@@ -70,6 +70,18 @@ pub struct ExecutorArgs {
     #[arg(long, env = "WAMN_PROJECT", default_value = wamn_postgres::DEFAULT_PROJECT)]
     pub project: String,
 
+    /// Project-environment org for private host-held credential scope.
+    #[arg(long, env = "WAMN_ORG")]
+    pub org: Option<String>,
+
+    /// Project-environment name for private host-held credential scope.
+    #[arg(long, env = "WAMN_ENVIRONMENT")]
+    pub environment: Option<String>,
+
+    /// Exact project database for private host-held credential scope.
+    #[arg(long, env = "WAMN_DATABASE")]
+    pub database: Option<String>,
+
     /// Production outbound HTTP allowlist. Empty denies all egress.
     #[arg(
         long = "allowed-hosts",
@@ -320,6 +332,9 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
             tenant: &args.tenant,
             schema: args.schema.as_deref(),
             project: &args.project,
+            org: args.org.as_deref(),
+            environment: args.environment.as_deref(),
+            database: args.database.as_deref(),
         },
         production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default()))
             .with_node_placements(node_placements),

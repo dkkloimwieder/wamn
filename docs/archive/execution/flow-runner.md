@@ -85,9 +85,10 @@ Per-node, read from a reserved `"retry"` object in the node's opaque `config`
 (`max-attempts` / `base-ms` / `factor` / `cap-ms`), defaulting to 3 attempts,
 100 ms base, ×2, capped at 30 s. Backoff is **deterministic** exponential
 (`min(cap, base·factorⁿ)`) — no jitter — so the engine stays pure; a driver may
-jitter around the returned delay. `attempt` (0-based) and a stable
-`idempotency-key` (`{run_id}:{node}`) are threaded to each dispatch, matching the
-`wamn:node` `run-context`.
+jitter around the returned delay. The `attempt` retry counter (0-based) is
+threaded to each dispatch. The frozen `wamn:node` `run-context`
+retains its ABI-only `idempotency-key` field, but the host supplies it empty and
+does not generate outbound stable-key authority.
 
 ### Shared throttle + concurrency (cross-run)
 

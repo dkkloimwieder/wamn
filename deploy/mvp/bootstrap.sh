@@ -7,12 +7,15 @@ umask 077
 # Test doubles may override these with paths to deterministic local executables.
 ctl_bin=${WAMN_CTL_BIN:-wamn-ctl}
 kubectl_bin=${KUBECTL_BIN:-kubectl}
+psql_bin=${PSQL_BIN:-psql}
 
 org=
 project=
 env_name=
 namespace=${WAMN_NAMESPACE:-wamn-system}
 system_database_url=
+target_admin_database_url=
+rotate_effect_writer_generation=
 args=("$@")
 
 require_value() {
@@ -25,7 +28,8 @@ require_value() {
 for ((index = 0; index < ${#args[@]}; index++)); do
     argument=${args[index]}
     case "$argument" in
-        --org | --project | --env | --namespace | --system-database-url)
+        --org | --project | --env | --namespace | --system-database-url | \
+        --target-admin-database-url | --rotate-effect-writer-generation)
             require_value "$argument" "$((index + 1))"
             value=${args[index + 1]}
             case "$argument" in
@@ -34,6 +38,8 @@ for ((index = 0; index < ${#args[@]}; index++)); do
                 --env) env_name=$value ;;
                 --namespace) namespace=$value ;;
                 --system-database-url) system_database_url=$value ;;
+                --target-admin-database-url) target_admin_database_url=$value ;;
+                --rotate-effect-writer-generation) rotate_effect_writer_generation=$value ;;
             esac
             ((index += 1))
             ;;
@@ -42,10 +48,16 @@ for ((index = 0; index < ${#args[@]}; index++)); do
         --env=*) env_name=${argument#*=} ;;
         --namespace=*) namespace=${argument#*=} ;;
         --system-database-url=*) system_database_url=${argument#*=} ;;
+        --target-admin-database-url=*) target_admin_database_url=${argument#*=} ;;
+        --rotate-effect-writer-generation=*) rotate_effect_writer_generation=${argument#*=} ;;
         --emit-role-sql|--emit-role-sql=*|\
         --emit-management-author-pat-secret|--emit-management-author-pat-secret=*|\
         --emit-route-caller-pat-secret|--emit-route-caller-pat-secret=*|\
-        --revoke-pat-prefix|--revoke-pat-prefix=*)
+        --revoke-pat-prefix|--revoke-pat-prefix=*|\
+        --prepare-effect-writer-generation|--prepare-effect-writer-generation=*|\
+        --retire-effect-writer-generation|--retire-effect-writer-generation=*|\
+        --abort-effect-writer-generation|--abort-effect-writer-generation=*|\
+        --emit-effect-writer-secret|--emit-effect-writer-secret=*)
             echo "bootstrap: $argument is wrapper-owned and must not be supplied" >&2
             exit 2
             ;;
@@ -55,6 +67,19 @@ done
 [[ -n $org ]] || { echo "bootstrap: --org is required" >&2; exit 2; }
 [[ -n $project ]] || { echo "bootstrap: --project is required" >&2; exit 2; }
 [[ -n $env_name ]] || { echo "bootstrap: --env is required" >&2; exit 2; }
+if [[ -n $rotate_effect_writer_generation ]]; then
+    [[ $rotate_effect_writer_generation == a || $rotate_effect_writer_generation == b ]] || {
+        echo "bootstrap: --rotate-effect-writer-generation must be a or b" >&2
+        exit 2
+    }
+    [[ -n $target_admin_database_url ]] || {
+        echo "bootstrap: rotation requires --target-admin-database-url" >&2
+        exit 2
+    }
+elif [[ -n $target_admin_database_url ]]; then
+    echo "bootstrap: --target-admin-database-url is valid only with writer rotation" >&2
+    exit 2
+fi
 
 work_dir=$(mktemp -d)
 role_sql_path=$work_dir/role.sql
@@ -62,6 +87,258 @@ management_path=$work_dir/management-author.json
 route_path=$work_dir/route-caller.json
 management_new_prefix=
 route_new_prefix=
+effect_writer_prepared_generation=
+
+effect_writer_secret_name=wamn-effect-writer-$org--$project--$env_name
+effect_writer_secret_path=$work_dir/effect-writer.json
+
+effect_writer_template='{{.metadata.name}}|{{.metadata.namespace}}|'
+effect_writer_template+='{{with .metadata.labels}}{{index . "app.kubernetes.io/managed-by"}}{{end}}|'
+effect_writer_template+='{{with .metadata.labels}}{{index . "app.kubernetes.io/component"}}{{end}}|'
+effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.org"}}{{end}}|'
+effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.project"}}{{end}}|'
+effect_writer_template+='{{with .metadata.labels}}{{index . "wamn.env"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/credential-id"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/credential-generation"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/database-role"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/issued-at"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/not-before"}}{{end}}|'
+effect_writer_template+='{{with .metadata.annotations}}{{index . "wamn.io/expires-at"}}{{end}}|'
+effect_writer_template+='{{range $key, $value := .metadata.annotations}}{{if eq $key "wamn.io/revoked-at"}}present={{$value}}{{end}}{{end}}'
+
+effect_writer_manifest_metadata() {
+    "$kubectl_bin" create --dry-run=client --validate=false -f "$1" \
+        -o "go-template=$effect_writer_template"
+}
+
+installed_effect_writer_metadata() {
+    "$kubectl_bin" get secret "$effect_writer_secret_name" --namespace "$namespace" \
+        --ignore-not-found \
+        -o "go-template=$effect_writer_template"
+}
+
+effect_writer_role_login() {
+    "$psql_bin" "$target_admin_database_url" -X -A -t -v "role=$1" \
+        -c "SELECT rolcanlogin FROM pg_roles WHERE rolname = :'role'"
+}
+
+effect_writer_role_sessions() {
+    "$psql_bin" "$target_admin_database_url" -X -A -t -v "role=$1" \
+        -c "SELECT count(*) FROM pg_stat_activity WHERE usename = :'role'"
+}
+
+canonical_utc() {
+    local value=$1 parsed
+    [[ $value =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
+    parsed=$(date -u --date="$value" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || return 1
+    [[ $parsed == "$value" ]]
+}
+
+validate_effect_writer_metadata_structure() {
+    local record=$1 revoked_timestamp
+    local actual_name actual_namespace managed_by component actual_org actual_project actual_env
+    local credential_id generation role issued_at not_before expires_at revoked_at
+    IFS='|' read -r actual_name actual_namespace managed_by component actual_org actual_project \
+        actual_env credential_id generation role issued_at not_before expires_at revoked_at <<<"$record"
+    [[ $actual_name == "$effect_writer_secret_name" && $actual_namespace == "$namespace" &&
+        $managed_by == wamn && $component == effect-writer-credentials &&
+        $actual_org == "$org" && $actual_project == "$project" &&
+        $actual_env == "$env_name" && $credential_id =~ ^[0-9a-f]{32}$ &&
+        ( $generation == a || $generation == b ) &&
+        $role =~ ^wamn_effect_writer_[0-9a-f]{40}_$generation$ ]] || return 1
+    canonical_utc "$issued_at" && canonical_utc "$not_before" && \
+        canonical_utc "$expires_at" || return 1
+    if [[ -n $revoked_at ]]; then
+        [[ $revoked_at == present=* ]] || return 1
+        revoked_timestamp=${revoked_at#present=}
+        canonical_utc "$revoked_timestamp" || return 1
+    fi
+    [[ ! $issued_at > $not_before && $not_before < $expires_at ]]
+}
+
+effect_writer_metadata_is_current() {
+    local record=$1 now
+    local _name _namespace _managed _component _org _project _env _credential_id
+    local _generation _role _issued_at not_before expires_at revoked_at
+    IFS='|' read -r _name _namespace _managed _component _org _project _env _credential_id \
+        _generation _role _issued_at not_before expires_at revoked_at <<<"$record"
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    [[ -z $revoked_at && ! $now < $not_before && $now < $expires_at ]]
+}
+
+abort_prepared_effect_writer() {
+    local generation=$1
+    "$ctl_bin" provision-project-env \
+        --org "$org" --project "$project" --env "$env_name" \
+        --namespace "$namespace" \
+        --target-admin-database-url "$target_admin_database_url" \
+        --abort-effect-writer-generation "$generation"
+}
+
+abort_prepared_effect_writer_then_fail() {
+    local generation=$1 message=$2
+    effect_writer_prepared_generation=$generation
+    if ! abort_prepared_effect_writer "$generation"; then
+        echo "bootstrap: $message; abort of the unpublished generation also failed" >&2
+        exit 1
+    fi
+    effect_writer_prepared_generation=
+    echo "bootstrap: $message; aborted the unpublished generation" >&2
+    exit 1
+}
+
+rotate_effect_writer() {
+    local desired=$rotate_effect_writer_generation current prior current_role= current_generation=
+    local new new_role new_generation old_role= old_generation= old_login sessions login installed
+    if ! current=$(installed_effect_writer_metadata); then
+        echo "bootstrap: failed to inspect the installed effect-writer Secret" >&2
+        exit 1
+    fi
+    if [[ -n $current ]]; then
+        if ! validate_effect_writer_metadata_structure "$current"; then
+            echo "bootstrap: installed effect-writer Secret metadata is invalid" >&2
+            exit 1
+        fi
+        IFS='|' read -r _ _ _ _ _ _ _ _ current_generation current_role _ <<<"$current"
+    fi
+
+    if [[ -z $current_role && $desired != a ]]; then
+        echo "bootstrap: initial effect-writer credential generation must be a" >&2
+        exit 1
+    fi
+
+    if [[ $current_generation == "$desired" ]]; then
+        if ! effect_writer_metadata_is_current "$current"; then
+            echo "bootstrap: requested installed effect-writer generation is outside its valid unrevoked window" >&2
+            exit 1
+        fi
+        new=$current
+        new_role=$current_role
+        new_generation=$current_generation
+        old_generation=$([[ $desired == a ]] && printf b || printf a)
+        old_role=${new_role%_?}_$old_generation
+    else
+        prior=$current
+        if [[ -n $current_role ]]; then
+            old_role=$current_role
+            old_generation=$current_generation
+        fi
+        "$ctl_bin" provision-project-env \
+            --org "$org" --project "$project" --env "$env_name" \
+            --namespace "$namespace" \
+            --target-admin-database-url "$target_admin_database_url" \
+            --prepare-effect-writer-generation "$desired" \
+            --emit-effect-writer-secret "$effect_writer_secret_path"
+        effect_writer_prepared_generation=$desired
+        if ! new=$(effect_writer_manifest_metadata "$effect_writer_secret_path"); then
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "could not inspect ctl's prepared effect-writer Secret"
+        fi
+        if ! validate_effect_writer_metadata_structure "$new" ||
+            ! effect_writer_metadata_is_current "$new"; then
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "ctl emitted invalid effect-writer Secret metadata"
+        fi
+        IFS='|' read -r _ _ _ _ _ _ _ _ new_generation new_role _ <<<"$new"
+        [[ $new_generation == "$desired" ]] || {
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "ctl emitted the wrong effect-writer generation"
+        }
+        if [[ -n $old_role && ${new_role%_?} != "${old_role%_?}" ]]; then
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "ctl emitted a role outside the installed credential scope"
+        fi
+        if [[ -z $old_role ]]; then
+            old_generation=$([[ $new_generation == a ]] && printf b || printf a)
+            old_role=${new_role%_?}_$old_generation
+        fi
+        if ! login=$(effect_writer_role_login "$new_role"); then
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "failed to verify the prepared effect-writer generation"
+        fi
+        [[ $login == t ]] || {
+            abort_prepared_effect_writer_then_fail "$desired" \
+                "prepared effect-writer generation is not LOGIN-capable"
+        }
+        # From this point publication may succeed even when the client observes
+        # failure. EXIT cleanup must no longer guess; the exact reread below
+        # classifies whether an explicit abort remains safe.
+        effect_writer_prepared_generation=
+        if ! "$kubectl_bin" apply -f "$effect_writer_secret_path"; then
+            if ! installed=$(installed_effect_writer_metadata); then
+                echo "bootstrap: effect-writer Secret apply failed and its installed state is unreadable; manual reconciliation is required" >&2
+                exit 1
+            fi
+            if [[ $installed == "$new" ]]; then
+                : # Ambiguous apply succeeded before the client observed failure.
+            elif [[ $installed == "$prior" ]]; then
+                abort_prepared_effect_writer_then_fail "$desired" \
+                    "effect-writer Secret apply did not publish the prepared generation"
+            else
+                echo "bootstrap: effect-writer Secret apply failed into a third metadata state; manual reconciliation is required" >&2
+                exit 1
+            fi
+        else
+            if ! installed=$(installed_effect_writer_metadata); then
+                echo "bootstrap: could not verify the effect-writer Secret after apply; manual reconciliation is required" >&2
+                exit 1
+            fi
+            if [[ $installed != "$new" ]]; then
+                if [[ $installed == "$prior" ]]; then
+                    abort_prepared_effect_writer_then_fail "$desired" \
+                        "effect-writer Secret apply did not publish the prepared generation"
+                fi
+                echo "bootstrap: effect-writer Secret apply produced mismatched metadata; manual reconciliation is required" >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    "$kubectl_bin" rollout restart deployment/runner --namespace "$namespace"
+    "$kubectl_bin" rollout status deployment/runner --namespace "$namespace" --timeout=120s
+    sessions=$(effect_writer_role_sessions "$new_role")
+    [[ $sessions =~ ^[0-9]+$ && $sessions -gt 0 ]] || {
+        echo "bootstrap: replacement effect-writer generation has no live private-pool session" >&2
+        exit 1
+    }
+
+    if [[ -n $old_role ]]; then
+        if ! old_login=$(effect_writer_role_login "$old_role"); then
+            echo "bootstrap: failed to verify old effect-writer generation" >&2
+            exit 1
+        fi
+        [[ -z $old_login || $old_login == t || $old_login == f ]] || {
+            echo "bootstrap: old effect-writer generation returned an invalid LOGIN state" >&2
+            exit 1
+        }
+        if [[ $old_login == t ]]; then
+            "$ctl_bin" provision-project-env \
+                --org "$org" --project "$project" --env "$env_name" \
+                --namespace "$namespace" \
+                --target-admin-database-url "$target_admin_database_url" \
+                --retire-effect-writer-generation "$old_generation"
+        fi
+    fi
+    login=$(effect_writer_role_login "$new_role")
+    [[ $login == t ]] || {
+        echo "bootstrap: replacement effect-writer generation was not retained" >&2
+        exit 1
+    }
+    if [[ -n $old_role ]]; then
+        if ! old_login=$(effect_writer_role_login "$old_role"); then
+            echo "bootstrap: failed to verify retired effect-writer generation" >&2
+            exit 1
+        fi
+        [[ -z $old_login || $old_login == t || $old_login == f ]] || {
+            echo "bootstrap: retired effect-writer generation returned an invalid LOGIN state" >&2
+            exit 1
+        }
+        if [[ $old_login == t ]]; then
+            echo "bootstrap: old effect-writer generation remains LOGIN-capable" >&2
+            exit 1
+        fi
+    fi
+}
 
 revoke_pat() {
     local prefix=$1
@@ -76,6 +353,13 @@ cleanup() {
     local status=$? cleanup_failed=false prefix
     trap - EXIT
     set +e
+    if [[ -n $effect_writer_prepared_generation ]]; then
+        if ! abort_prepared_effect_writer "$effect_writer_prepared_generation"; then
+            echo "bootstrap: failed to abort an unpublished prepared effect-writer generation" >&2
+            cleanup_failed=true
+        fi
+        effect_writer_prepared_generation=
+    fi
     for prefix in "$management_new_prefix" "$route_new_prefix"; do
         [[ -z $prefix ]] && continue
         if ! revoke_pat "$prefix"; then
@@ -90,6 +374,11 @@ cleanup() {
     exit "$status"
 }
 trap cleanup EXIT
+
+if [[ -n $rotate_effect_writer_generation ]]; then
+    rotate_effect_writer
+    exit 0
+fi
 
 secret_template='{{.metadata.name}}|{{.metadata.namespace}}|'
 secret_template+='{{with .metadata.labels}}{{with index . "app.kubernetes.io/managed-by"}}{{.}}{{end}}{{end}}|'

@@ -251,7 +251,8 @@ fn mk_ctx(config: &str) -> RunContext {
         flow_version: 1,
         node_id: "n0".to_string(),
         attempt: 0,
-        idempotency_key: "s4-key".to_string(),
+        // Frozen 0.1 ABI field: retained but never generated.
+        idempotency_key: String::new(),
         traceparent: None,
         tracestate: None,
         deadline_ms: None,

@@ -5,8 +5,9 @@
 //! decisions, reconstruction, and parameterized SQL; Postgres, clocks, and
 //! doorbells remain adapter effects.
 //!
-//! Like [`wamn_runner`], this crate is **pure**: no DB, no wasm, no
-//! clock. It maps the engine's execution taxonomy to storage literals
+//! Like [`wamn_runner`], this crate's default guest-safe graph is **pure**: no DB,
+//! no wasm, no clock. The non-default `native` feature contains the private
+//! effect-writer adapter. The crate maps the engine's execution taxonomy to storage literals
 //! ([`RunStatus`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
 //! [`seed_at`](wamn_runner::Plan::seed_at) primitives; the driver
 //! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects against the
@@ -71,6 +72,13 @@ pub mod capture;
 /// Occurrence-keyed child creation, parent parking, and atomic child release.
 pub mod child;
 pub mod context;
+/// Shared strict credential document for the private native effect writer.
+#[cfg(feature = "effect-writer-credential")]
+pub mod effect_writer_credential;
+// Host-only effect-ledger statements stay out of the default guest-safe graph.
+// The first production caller/invocation is intentionally deferred to .5.4.
+#[cfg(feature = "native")]
+mod effect_writer;
 /// Durable lookup and bounded-wait queries for flow invocation.
 pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
@@ -92,6 +100,23 @@ mod status;
 pub mod transitions;
 
 pub use capture::{Captured, derive as derive_capture};
+#[cfg(feature = "native")]
+pub use effect_writer::{
+    BeginEffectAttempt, EffectAttempt, EffectAttemptId, EffectDispatchPermit, EffectOutcome,
+    RecordEffectOutcome,
+};
+#[cfg(feature = "native")]
+pub use effect_writer::{
+    EffectWriterClient, EffectWriterError, EffectWriterErrorKind, EffectWriterScope,
+};
+#[cfg(feature = "effect-writer-credential")]
+pub use effect_writer_credential::{
+    CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
+    EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION, EFFECT_WRITER_ROLE, EffectWriterCredential,
+    EffectWriterCredentialError, EffectWriterCredentialErrorKind, EffectWriterCredentialScope,
+    EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
+    effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
+};
 pub use model::{NodeRunRecord, RunRecord};
 pub use reconstruct::{ReconstructError, reconstruct, reconstruct_with_context};
 pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};

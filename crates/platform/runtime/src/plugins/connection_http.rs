@@ -5,10 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use wamn_node_manifest::{
-    HttpBodyDigest, HttpOperation, HttpSemanticHeader, fingerprint_http_operation,
-    normalize_portable_http_target,
-};
+use wamn_node_manifest::normalize_portable_http_target;
 use wamn_run_state::invocation_context::HttpEffectPrincipal;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
@@ -95,12 +92,6 @@ impl ConnectionHttp {
             );
             EffectError::AuthorityDenied
         })?;
-        let _operation_fingerprint = operation_fingerprint(request, target.clone())
-            .map_err(|error| log_effect_authority_denied("operation-fingerprint", error))?;
-        let stable_key = format!(
-            "{}:{}:{}:{}",
-            context.run_id, context.frame_id, context.local_node_id, context.occurrence
-        );
         let frame_id = i64::try_from(context.frame_id).map_err(|_| EffectError::InvalidContext)?;
         let occurrence =
             i32::try_from(context.occurrence).map_err(|_| EffectError::InvalidContext)?;
@@ -167,7 +158,7 @@ impl ConnectionHttp {
             .lookup(&self.project, handle)
             .ok_or(EffectError::CredentialUnavailable)?;
         let credential_headers = credential_headers(&secret)?;
-        execute(decision, request, credential_headers, &stable_key).await
+        execute(decision, request, credential_headers).await
     }
 }
 
@@ -186,39 +177,6 @@ fn log_effect_authority_denied(phase: &'static str, error: EffectError) -> Effec
         tracing::warn!(phase, "trusted HTTP connection authority denied");
     }
     error
-}
-
-fn operation_fingerprint(
-    request: &RelativeRequest,
-    target: wamn_node_manifest::CanonicalHttpTarget,
-) -> Result<String, EffectError> {
-    let semantic_headers = request
-        .headers
-        .iter()
-        .filter(|header| wamn_node_manifest::is_http_operation_semantic_header(&header.name))
-        .map(|header| {
-            let value =
-                std::str::from_utf8(&header.value).map_err(|_| EffectError::AuthorityDenied)?;
-            Ok(HttpSemanticHeader {
-                name: &header.name,
-                value,
-            })
-        })
-        .collect::<Result<Vec<_>, EffectError>>()?;
-    let fingerprint = fingerprint_http_operation(&HttpOperation {
-        method: &request.method,
-        target,
-        semantic_headers: &semantic_headers,
-        body_digest: HttpBodyDigest::sha256(request.body.as_deref().unwrap_or_default()),
-    })
-    .map_err(|_| EffectError::AuthorityDenied)?;
-    let mut encoded = String::with_capacity(71);
-    encoded.push_str("sha256:");
-    for byte in fingerprint.digest() {
-        use std::fmt::Write as _;
-        write!(&mut encoded, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    Ok(encoded)
 }
 
 fn require_direct_transport(
@@ -371,7 +329,6 @@ fn reserved_header(name: &reqwest::header::HeaderName) -> bool {
 fn outbound_headers(
     request: &RelativeRequest,
     credentials: HashMap<String, String>,
-    idempotency_key: &str,
 ) -> Result<reqwest::header::HeaderMap, EffectError> {
     let mut headers = reqwest::header::HeaderMap::new();
     for header in &request.headers {
@@ -391,12 +348,6 @@ fn outbound_headers(
             .map_err(|_| EffectError::CredentialUnavailable)?;
         headers.insert(name, value);
     }
-    let idempotency_key = reqwest::header::HeaderValue::from_str(idempotency_key)
-        .map_err(|_| EffectError::InvalidContext)?;
-    headers.insert(
-        reqwest::header::HeaderName::from_static("idempotency-key"),
-        idempotency_key,
-    );
     Ok(headers)
 }
 
@@ -404,11 +355,10 @@ async fn execute(
     decision: crate::connection_authority::AuthorityDecision,
     request: &RelativeRequest,
     credentials: HashMap<String, String>,
-    idempotency_key: &str,
 ) -> Result<Response, EffectError> {
     let method = reqwest::Method::from_bytes(request.method.as_bytes())
         .map_err(|_| EffectError::Transport("invalid HTTP method".into()))?;
-    let headers = outbound_headers(request, credentials, idempotency_key)
+    let headers = outbound_headers(request, credentials)
         .map_err(|error| log_effect_authority_denied("outbound-headers", error))?;
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -786,34 +736,31 @@ mod tests {
         let headers = outbound_headers(
             &request,
             HashMap::from([("authorization".into(), "Bearer host-value".into())]),
-            "run-a:notify:0",
         )
         .expect("headers");
         assert_eq!(headers["authorization"], "Bearer host-value");
-        assert_eq!(headers["idempotency-key"], "run-a:notify:0");
+        assert!(!headers.contains_key("idempotency-key"));
 
         request.headers = vec![Header {
             name: "host".into(),
             value: b"other.example".to_vec(),
         }];
         assert!(matches!(
-            outbound_headers(&request, HashMap::new(), "run-a:notify:0"),
+            outbound_headers(&request, HashMap::new()),
             Err(EffectError::AuthorityDenied)
         ));
     }
 
     #[test]
-    fn idempotency_key_is_system_owned_and_injected_exactly_once() {
+    fn idempotency_key_is_reserved_but_never_injected() {
         let request = RelativeRequest {
             method: "POST".into(),
             path_and_query: "/holds".into(),
             headers: Vec::new(),
             body: None,
         };
-        let key = "run-a:notify:0";
-        let headers = outbound_headers(&request, HashMap::new(), key).expect("headers");
-        assert_eq!(headers.get_all("idempotency-key").iter().count(), 1);
-        assert_eq!(headers["idempotency-key"], key);
+        let headers = outbound_headers(&request, HashMap::new()).expect("headers");
+        assert!(!headers.contains_key("idempotency-key"));
 
         let authored = RelativeRequest {
             headers: vec![Header {
@@ -823,33 +770,13 @@ mod tests {
             ..request
         };
         assert!(matches!(
-            outbound_headers(&authored, HashMap::new(), key),
+            outbound_headers(&authored, HashMap::new()),
             Err(EffectError::AuthorityDenied)
         ));
         assert!(matches!(
             credential_headers(r#"{"headers":{"idempotency-key":"credential-controlled"}}"#),
             Err(EffectError::CredentialUnavailable)
         ));
-    }
-
-    #[test]
-    fn trace_propagation_does_not_change_the_operation_fingerprint() {
-        let target = normalize_portable_http_target("/holds").unwrap();
-        let mut request = RelativeRequest {
-            method: "POST".into(),
-            path_and_query: "/holds".into(),
-            headers: vec![Header {
-                name: "content-type".into(),
-                value: b"application/json".to_vec(),
-            }],
-            body: Some(br#"{"hold":7}"#.to_vec()),
-        };
-        let before = operation_fingerprint(&request, target.clone()).unwrap();
-        request.headers.push(Header {
-            name: "traceparent".into(),
-            value: b"00-0123456789abcdef0123456789abcdef-0123456789abcdef-01".to_vec(),
-        });
-        assert_eq!(operation_fingerprint(&request, target).unwrap(), before);
     }
 
     #[test]

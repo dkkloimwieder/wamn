@@ -55,7 +55,7 @@ The node stays a pure function under all three; only the runner's dispatch chang
 Control-plane API: `cancel(run-id, reason, [node-scope])` — invoked identically by the user (editor stop), platform policy (quota breach, misbehavior), scheduler (maintenance window, run TTL), or the runner itself (sibling branch failed). Reason propagates end-to-end: API → run state → `control.cancelled()` → run history → audit log.
 - **Hard layer (always available):** Wasmtime epoch interruption kills any instance with zero cooperation. This is the platform's guarantee against poorly-behaved nodes — no contract linkage required.
 - **Cooperative layer (optional import):** nodes poll `control.cancelled()` at checkpoints to abort in-flight external calls cleanly and return `node-error::cancelled`. SDKs make this invisible (TS: `ctx.signal` as an `AbortSignal` wired to the poll; Rust: checked inside the SDK HTTP client and stream iterators).
-- **Semantics documented honestly:** `cancelled` is a distinct terminal run status, not a failure; error branches don't fire. Cancellation does NOT roll back external side effects — redelivery safety is already the job of `attempt` + `idempotency-key`.
+- **Semantics documented honestly:** `cancelled` is a distinct terminal run status, not a failure; error branches don't fire. Cancellation does NOT roll back external side effects. The retained MVP effect boundary permits at most one dispatch per immutable attempt; it does not generate an outbound idempotency key.
 
 **4. Config is a JSON document.**
 `config: json`, validated against the node's config JSON Schema (from the OCI manifest) *before* dispatch — nodes can assume shape-valid config. Secret-typed fields are replaced with credential handles by the runner.

@@ -26,7 +26,8 @@ impl Guest for Component {
                 flow_version: 1,
                 node_id: format!("n{h}"),
                 attempt: 0,
-                idempotency_key: format!("composed-{h}"),
+                // Frozen 0.1 ABI field: retained but never generated.
+                idempotency_key: String::new(),
                 traceparent: None,
                 tracestate: None,
                 deadline_ms: None,

@@ -710,7 +710,6 @@ mod tests {
             node_id: "recommend",
             connection: None,
             attempt: 0,
-            idempotency_key: "r:recommend",
             deadline_ms: None,
             traceparent: None,
             tracestate: None,

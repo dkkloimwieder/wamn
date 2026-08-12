@@ -14,9 +14,11 @@
 
 use serde_json::{Value, json};
 use wamn_control_registry::Triple;
+use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
 use crate::name::{
-    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_secret_name, secret_name,
+    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_effect_writer_secret_name,
+    project_env_secret_name, secret_name,
 };
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -90,6 +92,81 @@ pub fn render_project_env_secret_manifest(triple: &Triple, namespace: &str, url:
     })
 }
 
+/// Render the fixed-mount effect-writer Secret for one credential generation.
+///
+/// The Secret carries exactly one key, `credential.json`. Kubernetes mounts the
+/// whole Secret directory read-only, without `subPath`, so an atomic Secret
+/// projection update can be observed after the wrapper drains/reloads pools.
+pub fn render_effect_writer_secret_manifest(
+    triple: &Triple,
+    namespace: &str,
+    credential: &EffectWriterCredential,
+) -> Value {
+    let document = serde_json::to_value(credential).expect("effect-writer credential serializes");
+    let field = |name: &str| {
+        document[name]
+            .as_str()
+            .unwrap_or_else(|| panic!("effect-writer credential {name} is a string"))
+    };
+    let mut annotations = serde_json::Map::from_iter([
+        (
+            "wamn.io/credential-id".to_string(),
+            Value::String(credential.credential_id().to_string()),
+        ),
+        (
+            "wamn.io/credential-generation".to_string(),
+            Value::String(credential.generation().as_str().to_string()),
+        ),
+        (
+            "wamn.io/database-role".to_string(),
+            Value::String(credential.role().to_string()),
+        ),
+        (
+            "wamn.io/issued-at".to_string(),
+            Value::String(field("issued-at").to_string()),
+        ),
+        (
+            "wamn.io/not-before".to_string(),
+            Value::String(field("not-before").to_string()),
+        ),
+        (
+            "wamn.io/expires-at".to_string(),
+            Value::String(field("expires-at").to_string()),
+        ),
+    ]);
+    if let Some(revoked_at) = document["revoked-at"].as_str() {
+        annotations.insert(
+            "wamn.io/revoked-at".to_string(),
+            Value::String(revoked_at.to_string()),
+        );
+    }
+    json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "name": project_env_effect_writer_secret_name(
+                &triple.org,
+                &triple.project,
+                triple.env.as_str(),
+            ),
+            "namespace": namespace,
+            "labels": {
+                "app.kubernetes.io/managed-by": "wamn",
+                "app.kubernetes.io/component": "effect-writer-credentials",
+                "wamn.org": triple.org,
+                "wamn.project": triple.project,
+                "wamn.env": triple.env.as_str(),
+            },
+            "annotations": annotations,
+        },
+        "type": "Opaque",
+        "stringData": {
+            (EFFECT_WRITER_CREDENTIAL_KEY): serde_json::to_string(credential)
+                .expect("effect-writer credential serializes"),
+        },
+    })
+}
+
 /// Render the per-project-env **CDC** credential `Secret` (wamn-l5i9.9). Name
 /// `wamn-cdc-<org>--<project>--<env>` — the reference the reader registration
 /// records as `replication_secret_name`, DISTINCT from the `wamn-db-…` query
@@ -130,8 +207,57 @@ pub fn render_project_env_cdc_secret_manifest(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::SystemTime;
+
+    use chrono::{DateTime, Utc};
+    use wamn_run_state::{
+        CredentialGeneration, EFFECT_WRITER_CREDENTIAL_PATH, EffectWriterCredentialScope,
+        EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
+        parse_effect_writer_credential, validate_effect_writer_credential,
+    };
 
     const URL: &str = "postgres://wamn_app:wamn_app@wamn-pg-rw:5432/wamn-db-acme";
+
+    fn writer_fixture() -> (Triple, EffectWriterCredentialScope, EffectWriterCredential) {
+        let triple = Triple::new("acme", "billing", "dev");
+        let scope = EffectWriterCredentialScope {
+            org: "acme".to_string(),
+            project: "billing".to_string(),
+            environment: "dev".to_string(),
+            database: "wamn-db-acme--billing--dev".to_string(),
+        };
+        let role = effect_writer_generation_role(
+            &scope.org,
+            &scope.project,
+            &scope.environment,
+            &scope.database,
+            CredentialGeneration::A,
+        );
+        let credential = effect_writer_credential(
+            &scope,
+            "0123456789abcdef0123456789abcdef",
+            CredentialGeneration::A,
+            &EffectWriterCredentialValidity {
+                issued_at: "2026-01-01T00:00:00Z".to_string(),
+                not_before: "2026-01-01T00:00:00Z".to_string(),
+                expires_at: "2026-02-01T00:00:00Z".to_string(),
+                revoked_at: None,
+            },
+            &format!(
+                "postgres://{role}:{}@wamn-pg-rw:5432/{}",
+                "a".repeat(64),
+                scope.database
+            ),
+        );
+        (triple, scope, credential)
+    }
+
+    fn instant(value: &str) -> SystemTime {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+            .into()
+    }
 
     #[test]
     fn projects_file_matches_the_plugin_parse_shape() {
@@ -196,5 +322,68 @@ mod tests {
         assert_eq!(s["stringData"]["url"], url);
         // The role recorded is the underscored replication role, not wamn_app.
         assert_eq!(s["stringData"]["role"], "wamn_cdc_acme__billing__dev");
+    }
+
+    #[test]
+    fn effect_writer_secret_and_document_are_fixed_mount_exact() {
+        let (triple, scope, credential) = writer_fixture();
+        validate_effect_writer_credential(&credential, &scope, instant("2026-01-15T00:00:00Z"))
+            .unwrap();
+        let secret = render_effect_writer_secret_manifest(&triple, "wamn-system", &credential);
+        assert_eq!(
+            secret["metadata"]["name"],
+            "wamn-effect-writer-acme--billing--dev"
+        );
+        assert_eq!(
+            secret["metadata"]["labels"]["app.kubernetes.io/component"],
+            "effect-writer-credentials"
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"].as_object().unwrap().len(),
+            6
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"]["wamn.io/credential-id"],
+            "0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"]["wamn.io/issued-at"],
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"]["wamn.io/not-before"],
+            "2026-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            secret["metadata"]["annotations"]["wamn.io/expires-at"],
+            "2026-02-01T00:00:00Z"
+        );
+        assert!(
+            secret["metadata"]["annotations"]
+                .get("wamn.io/revoked-at")
+                .is_none()
+        );
+        let data = secret["stringData"].as_object().unwrap();
+        assert_eq!(data.len(), 1);
+        let parsed = parse_effect_writer_credential(
+            data[EFFECT_WRITER_CREDENTIAL_KEY]
+                .as_str()
+                .unwrap()
+                .as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(parsed, credential);
+        let document: Value = serde_json::from_str(
+            data[EFFECT_WRITER_CREDENTIAL_KEY]
+                .as_str()
+                .expect("credential.json stringData"),
+        )
+        .unwrap();
+        assert!(document.get("schema").is_none());
+        assert_eq!(
+            EFFECT_WRITER_CREDENTIAL_PATH,
+            "/etc/wamn/effect-writer/credential.json"
+        );
+        assert!(!format!("{credential:?}").contains(&"a".repeat(64)));
     }
 }

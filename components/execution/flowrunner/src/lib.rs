@@ -3229,7 +3229,6 @@ mod tests {
             context: serde_json::json!({}),
             attempt: 0,
             occurrence: 0,
-            idempotency_key: "run:bad:0".to_string(),
             deadline_ms: None,
         };
         for outcome in [
@@ -3262,7 +3261,6 @@ mod tests {
             context: serde_json::json!({}),
             attempt: 0,
             occurrence: 0,
-            idempotency_key: "run:in:0".to_string(),
             deadline_ms: None,
         };
         for outcome in [
@@ -3296,7 +3294,6 @@ mod tests {
             context: serde_json::json!({}),
             attempt: 0,
             occurrence: 0,
-            idempotency_key: "run:in:0".to_string(),
             deadline_ms: None,
         };
         for outcome in [
@@ -3330,7 +3327,6 @@ mod tests {
             context: serde_json::json!({}),
             attempt: 0,
             occurrence: 0,
-            idempotency_key: "run:in:0".to_string(),
             deadline_ms: None,
         };
         for outcome in [

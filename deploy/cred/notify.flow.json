@@ -20,11 +20,9 @@
           { "field": "tls", "owner": "environment" },
           { "field": "redirect", "owner": "environment" },
           { "field": "proxy", "owner": "environment" },
-          { "field": "credential", "owner": "environment" },
-          { "field": "idempotency-key", "owner": "system" }
+          { "field": "credential", "owner": "environment" }
         ],
-        "credential-injection": "environment-selected-http-header",
-        "idempotency-key-injection": "http-idempotency-key-header"
+        "credential-injection": "environment-selected-http-header"
       }
     }
   ],

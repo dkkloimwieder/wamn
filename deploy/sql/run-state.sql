@@ -11,8 +11,10 @@
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
 -- fixtures carry their own `runs`/`node_runs` copies (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
--- target of the crate's live-apply gate. Assumes a pre-existing `wamn_app` role
--- (LOGIN, NOSUPERUSER, NOBYPASSRLS), exactly as catalog-schema.sql does.
+-- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
+-- `wamn_scenario_author`, and stable `wamn_effect_writer` ACL roles. Role and
+-- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
+-- artifact grants the stable role only its ledger authority.
 --
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
 -- separation purely via the `app.tenant` claim the wamn:postgres plugin injects
@@ -31,8 +33,10 @@
 -- + the `preview_head`/`payload_size`/`payload_hash` preview.
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
+REVOKE ALL PRIVILEGES ON SCHEMA wamn_run FROM PUBLIC, wamn_effect_writer;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
+GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
 
 -- Final admission must share-lock the stable catalog head, but the application
 -- role must never gain UPDATE privilege on that control-plane row. This narrow
@@ -82,33 +86,6 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;
-
--- This rollout child exposes no runtime writer for immutable effect facts.
--- Only migration sessions that bypass forced RLS may append; the next runtime
--- child must replace this refusal with a distinct host-only adapter rather
--- than granting the guest-visible application role direct table authority.
-CREATE FUNCTION wamn_run.guard_effect_fact_append()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-    current_can_migrate boolean := COALESCE(
-        (SELECT candidate.rolsuper OR candidate.rolbypassrls
-         FROM pg_catalog.pg_roles AS candidate
-         WHERE candidate.rolname = CURRENT_USER),
-        false
-    );
-BEGIN
-    IF NOT current_can_migrate THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'effect-fact-append-requires-migration-authority';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.guard_effect_fact_append() FROM PUBLIC;
 
 -- Direct app-role inserts can never manufacture disposition audit. Any future
 -- host or project adapter must cross this guard through separately authenticated,
@@ -552,7 +529,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 
 -- ---------------------------------------------------------------------------
 -- node_runs: one row per framed node execution, the branch-aware reconstruction source.
--- The idempotency key is (tenant_id, run_id, frame_id, local_node_id, occurrence):
+-- The occurrence identity is (tenant_id, run_id, frame_id, local_node_id, occurrence):
 -- `occurrence` disambiguates a node the frame LOOPS through (0 = first visit).
 -- Frameless/call-free executions use the root frame (frame_id 0, no parent or
 -- call site) with current_plan_hash = runs.execution_bundle_hash.
@@ -618,8 +595,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt ledger. `node_runs` remains the current occurrence
 -- projection; every effectful occurrence has one server-minted identity here.
--- The replacement writer is activated by wamn-0h0g.4.9; until then execution
--- remains hard-refused.
+-- wamn-0h0g.4.9 installs the inaccessible writer primitive. wamn-0h0g.5.4
+-- first wires and activates it; until then execution remains hard-refused.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.effect_attempts (
     tenant_id       text NOT NULL,
@@ -641,10 +618,9 @@ CREATE TABLE wamn_run.effect_attempts (
     credential_generation text,
     verified_author_principal text,
     verified_publisher_principal text,
-    attempt_started_at timestamptz NOT NULL,
+    attempt_started_at timestamptz NOT NULL DEFAULT now(),
     attempt_deadline_at timestamptz NOT NULL,
     attempt_input_ref text NOT NULL,
-    attempt_key text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
     CONSTRAINT effect_attempts_root_plan_hash_check
@@ -688,7 +664,9 @@ CREATE TABLE wamn_run.effect_attempts (
     PRIMARY KEY (tenant_id, attempt_id),
     CONSTRAINT effect_attempts_occurrence_key
         UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
-    UNIQUE (tenant_id, attempt_id, attempt_started_at)
+    CONSTRAINT effect_attempts_dispatch_identity_key
+        UNIQUE (tenant_id, attempt_id, attempt_started_at,
+                run_id, frame_id, local_node_id, occurrence)
 );
 -- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an
 -- audit ledger with an independent retention lifetime. Pruning terminal run
@@ -702,11 +680,10 @@ ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempts_tenant ON wamn_run.effect_attempts
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempts TO wamn_app;
-REVOKE INSERT ON wamn_run.effect_attempts FROM wamn_app;
-CREATE TRIGGER effect_attempts_insert_guard
-BEFORE INSERT ON wamn_run.effect_attempts
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer;
 CREATE TRIGGER effect_attempts_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempts
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
@@ -718,27 +695,38 @@ CREATE TABLE wamn_run.effect_attempt_dispatches (
     tenant_id       text NOT NULL,
     attempt_id      uuid NOT NULL,
     attempt_started_at timestamptz NOT NULL,
+    run_id          text NOT NULL,
+    frame_id        bigint NOT NULL,
+    local_node_id   text NOT NULL,
+    occurrence      int NOT NULL,
     dispatched_at   timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effect_attempt_dispatches_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempt_dispatches_frame_check CHECK (frame_id >= 0),
+    CONSTRAINT effect_attempt_dispatches_local_node_check
+        CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    CONSTRAINT effect_attempt_dispatches_occurrence_check CHECK (occurrence >= 0),
     CONSTRAINT effect_attempt_dispatches_time_check
         CHECK (attempt_started_at <= dispatched_at),
     PRIMARY KEY (tenant_id, attempt_id),
     UNIQUE (tenant_id, attempt_id, dispatched_at),
+    CONSTRAINT effect_attempt_dispatches_occurrence_key
+        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
     CONSTRAINT effect_attempt_dispatches_attempt_fk
-        FOREIGN KEY (tenant_id, attempt_id, attempt_started_at)
+        FOREIGN KEY (tenant_id, attempt_id, attempt_started_at,
+                     run_id, frame_id, local_node_id, occurrence)
         REFERENCES wamn_run.effect_attempts
-            (tenant_id, attempt_id, attempt_started_at)
+            (tenant_id, attempt_id, attempt_started_at,
+             run_id, frame_id, local_node_id, occurrence)
 );
 ALTER TABLE wamn_run.effect_attempt_dispatches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.effect_attempt_dispatches FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_dispatches_tenant ON wamn_run.effect_attempt_dispatches
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_dispatches
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_dispatches TO wamn_app;
-REVOKE INSERT ON wamn_run.effect_attempt_dispatches FROM wamn_app;
-CREATE TRIGGER effect_attempt_dispatches_insert_guard
-BEFORE INSERT ON wamn_run.effect_attempt_dispatches
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+GRANT SELECT, INSERT ON wamn_run.effect_attempt_dispatches TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_dispatches_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_dispatches
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
@@ -768,11 +756,10 @@ ALTER TABLE wamn_run.effect_attempt_outcomes FORCE ROW LEVEL SECURITY;
 CREATE POLICY effect_attempt_outcomes_tenant ON wamn_run.effect_attempt_outcomes
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempt_outcomes
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
 GRANT SELECT ON wamn_run.effect_attempt_outcomes TO wamn_app;
-REVOKE INSERT ON wamn_run.effect_attempt_outcomes FROM wamn_app;
-CREATE TRIGGER effect_attempt_outcomes_insert_guard
-BEFORE INSERT ON wamn_run.effect_attempt_outcomes
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();
+GRANT SELECT, INSERT ON wamn_run.effect_attempt_outcomes TO wamn_effect_writer;
 CREATE TRIGGER effect_attempt_outcomes_update_immutable
 BEFORE UPDATE ON wamn_run.effect_attempt_outcomes
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();

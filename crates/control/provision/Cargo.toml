@@ -18,6 +18,7 @@ serde_json = { workspace = true }
 # A lean pure→pure edge (wamn-control-registry deps serde + serde_json only).
 wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
+wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
 
 # NO DB / K8s / tokio / clock dependency: the builders are pure text and the
 # renderers are pure JSON. The `provision-project` driver (wamn-ctl) holds the
@@ -27,3 +28,4 @@ wamn-pg-core = { workspace = true }
 # from the guest-safe wamn-pg-core leaf.
 
 [dev-dependencies]
+chrono = { workspace = true, features = ["std"] }

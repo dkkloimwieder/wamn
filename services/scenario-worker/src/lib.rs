@@ -1127,6 +1127,9 @@ async fn execute_target(
                 tenant: &args.tenant,
                 schema: Some(execution_schema.as_str()),
                 project: &args.project,
+                org: None,
+                environment: None,
+                database: None,
             },
             injected_capabilities(
                 scenario.wasi,

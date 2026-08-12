@@ -30,10 +30,13 @@ use sha2::Sha256;
 // Wire envelope: runner -> serve-node (request) and back (response)
 // ---------------------------------------------------------------------------
 
-/// The `run-context` the runner hands a node, mirroring `wamn:node/types`'s
-/// `run-context` (docs/archive/contracts/wamn-node.wit) field-for-field. Deliberately carries NO
-/// secrets — the node pulls its granted credential lazily through the
-/// `wamn:node/credentials` import the serve-node host links.
+/// The internal run context the runner sends to a node host.
+///
+/// The frozen `wamn:node/types.run-context` retains an ABI-only
+/// `idempotency-key`; this envelope deliberately omits it, and the node host
+/// supplies an empty value only when constructing that frozen ABI record.
+/// Secrets are also absent: the node pulls its granted credential lazily
+/// through the `wamn:node/credentials` import the serve-node host links.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct WireRunContext {
@@ -42,7 +45,6 @@ pub struct WireRunContext {
     pub flow_version: u32,
     pub node_id: String,
     pub attempt: u32,
-    pub idempotency_key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deadline_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -241,8 +243,8 @@ type HmacSha256 = Hmac<Sha256>;
 /// closes the NAMED threat: a FORGED envelope with attacker-chosen input/grant,
 /// which requires the key an in-cluster attacker does not hold. A replay only
 /// re-invokes the node with the SAME bytes the legitimate runner already sent;
-/// `ctx.run_id` / `ctx.idempotency_key` ride the envelope but the serve-node is
-/// stateless and does NOT dedupe on them, so a freshness check would require
+/// `ctx.run_id` rides the envelope but the serve-node is stateless and does NOT
+/// dedupe on it, so a freshness check would require
 /// serve-node nonce state or a synchronized absolute clock — neither is cheap
 /// here, so none is added (no speculative machinery).
 pub fn sign_envelope(key: &[u8], body: &[u8]) -> String {
@@ -395,7 +397,6 @@ mod tests {
             flow_version: 3,
             node_id: "n0".into(),
             attempt: 1,
-            idempotency_key: "run-1:n0".into(),
             deadline_ms: Some(30_000),
             traceparent: None,
             tracestate: None,
@@ -419,6 +420,10 @@ mod tests {
         // No secret material — only the credential NAME.
         assert!(!wire.contains("s3cr3t"));
         assert!(wire.contains(r#""context":"{\"hold\":{\"id\":7}}""#));
+        assert!(
+            !wire.contains("idempotency-key"),
+            "the internal invocation envelope must not carry a generated key"
+        );
     }
 
     #[test]

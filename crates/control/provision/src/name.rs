@@ -15,6 +15,9 @@ use crate::error::ProvisionError;
 /// the crate docs).
 pub const APP_ROLE: &str = "wamn_app";
 
+/// Prefix for the fixed-mount effect-writer credential Secret.
+pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
+
 /// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
 /// platform mints it, and project ids in that space are rejected.
@@ -140,6 +143,11 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_name(org, project, env)
 }
 
+/// The fixed-mount effect-writer credential Secret name.
+pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String {
+    format!("{EFFECT_WRITER_SECRET_PREFIX}{org}--{project}--{env}")
+}
+
 /// Validate that a `(org, project, env)` yields a safe provisioned database /
 /// Secret name: **all three** identity components are slugs and the assembled
 /// name fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal
@@ -263,6 +271,9 @@ fn pct(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_run_state::{
+        CredentialGeneration, effect_writer_generation_role, effect_writer_scope_hash,
+    };
 
     #[test]
     fn valid_project_ids_pass() {
@@ -634,5 +645,63 @@ mod tests {
         assert_eq!(u, "postgres://wamn_app:p%40ss%3Aw%2Frd@h:5432/wamn-db-x");
         // The hyphenated database name is URL-unreserved (no encoding).
         assert!(u.ends_with("/wamn-db-x"));
+    }
+
+    #[test]
+    fn effect_writer_scope_identity_and_names_are_frozen() {
+        let database = project_env_database_name("acme", "billing", "dev");
+        assert_eq!(
+            effect_writer_scope_hash("acme", "billing", "dev", &database),
+            "1bf626624be49afafc549ec9c5561e146d0f6c33"
+        );
+        let a = effect_writer_generation_role(
+            "acme",
+            "billing",
+            "dev",
+            &database,
+            CredentialGeneration::A,
+        );
+        let b = effect_writer_generation_role(
+            "acme",
+            "billing",
+            "dev",
+            &database,
+            CredentialGeneration::B,
+        );
+        assert_eq!(
+            a,
+            "wamn_effect_writer_1bf626624be49afafc549ec9c5561e146d0f6c33_a"
+        );
+        assert_eq!(
+            b,
+            "wamn_effect_writer_1bf626624be49afafc549ec9c5561e146d0f6c33_b"
+        );
+        assert_eq!(a.len(), 61);
+        assert_eq!(b.len(), 61);
+        assert_eq!(CredentialGeneration::A.other(), CredentialGeneration::B);
+        assert_eq!(CredentialGeneration::B.other(), CredentialGeneration::A);
+        assert_eq!(
+            project_env_effect_writer_secret_name("acme", "billing", "dev"),
+            "wamn-effect-writer-acme--billing--dev"
+        );
+    }
+
+    #[test]
+    fn effect_writer_scope_hash_frames_every_identity_component() {
+        let base = effect_writer_scope_hash("acme", "billing", "dev", "db");
+        for changed in [
+            effect_writer_scope_hash("acme-x", "billing", "dev", "db"),
+            effect_writer_scope_hash("acme", "billing-x", "dev", "db"),
+            effect_writer_scope_hash("acme", "billing", "prod", "db"),
+            effect_writer_scope_hash("acme", "billing", "dev", "db-x"),
+        ] {
+            assert_ne!(base, changed);
+            assert_eq!(changed.len(), 40);
+            assert!(
+                changed
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+            );
+        }
     }
 }

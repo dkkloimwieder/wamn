@@ -170,7 +170,6 @@ pub fn run_node<N: Node>(
         node_id: &ctx.node_id,
         connection: None,
         attempt: ctx.attempt,
-        idempotency_key: &ctx.idempotency_key,
         deadline_ms: ctx.deadline_ms,
         traceparent: ctx.traceparent.as_deref(),
         tracestate: ctx.tracestate.as_deref(),
@@ -235,7 +234,8 @@ mod tests {
             flow_version: 1,
             node_id: "n".into(),
             attempt: 0,
-            idempotency_key: "r:n".into(),
+            // Frozen 0.1 ABI field: retained for canonical layout but unused.
+            idempotency_key: String::new(),
             traceparent: None,
             tracestate: None,
             deadline_ms: None,

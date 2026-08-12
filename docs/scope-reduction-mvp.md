@@ -93,7 +93,7 @@ cluster jobs + 2 repo-local jobs**):
 
 | Job | Named checks |
 |---|---|
-| M0-gate | 1 author authorization · 2 binding + evidence row · 3 HTTP connection confinement · 4 never-replay uncertainty + single-shot reclaim (the four crash cases below) · 5 operator terminalize · 6 tenant isolation (client surface) · 7 flow-call integration (caller → expanded callee → one real Postgres effect → result on the caller's `main`, all facts under one root run) · 8 trace propagation + export (incoming traceparent → flow-http → run → flowrunner context → standard http-request → downstream sees the same trace id; one correlated `wamn:logging` record at a narrow test OTLP sink) |
+| M0-gate | 1 author authorization · 2 binding + evidence row · 3 HTTP connection confinement · 4 one-dispatch uncertainty + single-shot reclaim (the four crash cases below) · 5 operator terminalize · 6 tenant isolation (client surface) · 7 flow-call integration (caller → expanded callee → one real Postgres effect → result on the caller's `main`, all facts under one root run) · 8 trace propagation + export (incoming traceparent → flow-http → run → flowrunner context → standard http-request → downstream sees the same trace id; one correlated `wamn:logging` record at a narrow test OTLP sink) |
 | M1-gate | 9 event causation + dedup · 10 tenant isolation (event path) |
 | M2-gate | 11 wake permission + queue behavior |
 | bootstrap-journey | 12 fresh provisioning · 13 p0 role probes · 14 additive migration (dry-run + apply + drift green) |
@@ -117,19 +117,20 @@ names an outcome.
 
 ### 4 · Execution: crash floor, single path, flow calls
 
-**Floor.** Write-ahead effect intent · never-replay · **uncertainty ⇒
-`effect-uncertain` and non-claimable** · exact-generation refusal ·
-attempt recording · run-status read. No automatic successor. Runs are
+**Floor.** One immutable write-ahead attempt per effectful occurrence ·
+at most one dispatch · **uncertainty ⇒ `effect-uncertain` and
+non-claimable** · exact-generation refusal · run-status read. No
+automatic successor or effect redispatch. Runs are
 single-shot: the flowrunner's checkpoint/replay entry
 (`flowrunner:29-42`), node-level `Parked`, and park-deadline state
 delete.
 
-**Facts, three tiers (exact):** `node_runs` is the **authoritative
-execution projection** — pre-effect rows may be replaced after lease
-loss; the effect attempt/dispatch/outcome records are the **immutable
-effect ledger** (enforced by the landed immutability trigger,
-`run-state.sql:75-87`); finalized test reports are **immutable copied
-evidence**.
+**Facts, three tiers (exact):** `node_runs` is the mutable execution
+projection — pre-effect rows may be replaced after lease loss; the effect
+attempt/dispatch/outcome records are the **immutable effect ledger** and the
+sole authority for reclaim classification (enforced by the landed immutability
+trigger, `run-state.sql`); finalized test reports are **immutable copied
+evidence**. Projection and ledger writes are intentionally non-atomic.
 
 **Effect-uncertain: one durable literal.**
 `runs.status = 'effect-uncertain'` **with the `run_queue` row
@@ -149,8 +150,7 @@ caller_outcome_kind    responded | failed
 delete                 cancel_requested_kind · cancel_requested_at ·
                        cancel_kind · the runs_cancel_requested index ·
                        every 'cancelled' status/outcome/error literal ·
-                       the recovery-class triple
-                       (replay | idempotent-with-key | never-replay) ·
+                       recovery-class and outbound retry-key fields ·
                        predecessor_attempt_id + legacy_imported
                        exceptions · cross-claim successor identity
 
@@ -160,10 +160,16 @@ effect-attempt model   pure → no effect attempt
                        terminal outcome when known
 ```
 
-**An effectful occurrence dispatches at most once.** A transient
-external failure fails the run; the caller's re-invocation under the
-required idempotency key is the retry path. The historical recovery
-state machine does not survive under renamed fields.
+**Delivery split:** `wamn-0h0g.4.9` lands the inaccessible run-state
+primitive and its database proofs; it claims no production dispatch
+activation. `wamn-0h0g.5.4` wires the private adapter and owns the integrated
+attempt-before-send, one-dispatch, outcome, and pure-no-row proof.
+
+**An effectful occurrence dispatches at most once.** A known external
+failure fails the run. A sent attempt without a recorded outcome is
+`effect-uncertain`; neither reclaim nor an admission retry sends it
+again. The historical effect-retry state machine does not survive
+under renamed fields.
 
 **Reclaim classifier — one run-state transaction, before any guest
 invocation.** Expired lease + **no effectful write-ahead intent** →
@@ -175,12 +181,11 @@ caller-facing typed failure outcome** `{ code: effect-uncertain,
 run_id }` whose envelope is explicitly non-committal about whether the
 external effect occurred; never invoke the flowrunner. Ordinary
 waiting row → execute normally. `runs.input_json` remains
-authoritative until terminalization. **An idempotency key never
-licenses effect redispatch; an effectful occurrence dispatches at most
-once.**
+authoritative until terminalization. **Inbound admission idempotency
+selects the existing run; it never licenses effect redispatch.**
 
 **M0 crash cases (four):** death before any effectful intent → fresh
-re-execution · death after a never-replay intent →
+re-execution · death after an effectful write-ahead attempt →
 **effect-uncertain, and the synchronous caller receives the stored
 typed failure** · run-worker Deployment scaled to zero distinguishable
 from expired-lease reclaim · a reclaimed row never reaches the
@@ -645,11 +650,14 @@ disposable; dump/restore/copy are ops verbs.
 ## Raw SQL floor
 `wamn_app` (LOGIN, NOSUPERUSER, NOBYPASSRLS) executes author SQL —
 the raw-SQL node **is** `postgres-query` (D8 flag, default OFF).
-Platform bookkeeping is granted only to host-only NOLOGIN roles; an
-effective-role audit constraint and forced RLS hold the floor; the
-one-database-per-(org, project, env) split confines cross-project
-access, and the role confines in-project bookkeeping. Author SQL is
-never-replay only; no `idempotent-with-key` upgrade exists in MVP.
+Platform bookkeeping authority is held by stable host-only NOLOGIN ACL roles.
+Where PostgreSQL authentication requires LOGIN, per-environment A/B credential
+generations inherit exactly one ACL role and connect only to their project
+database; at steady state at most one generation is LOGIN-capable. Effective
+grants and forced RLS hold the floor; the one-database-per-(org, project, env)
+split confines cross-project access, and the ACL role confines in-project
+bookkeeping. Author SQL has no outbound retry key or effect-redispatch
+upgrade in MVP.
 **p0 probe set (self-contained):** the landed role/containment
 battery — effective-role identity; superuser/createdb/createrole/
 replication/bypassrls flag denial; protected-relation denial
@@ -912,9 +920,9 @@ dispatcher deadline sweep · disconnect-cancel · the 0.1 wire leg
 `cancel_requested_at` · `cancel_kind` · the `runs_cancel_requested`
 index · every `'cancelled'` status/outcome/error literal
 (`run-state.sql:192,213,221-223,252,282-283`).
-**Recovery/lineage residue:** the recovery-class triple
-`replay | idempotent-with-key | never-replay` (`:402-404`, collapsed
-into the plan's effect policy) · `predecessor_attempt_id` +
+**Effect-retry/lineage residue:** recovery-class and outbound retry-key
+fields (`:402-404`; the plan retains only `pure | effectful`) ·
+`predecessor_attempt_id` +
 `legacy_imported` exceptions · cross-claim successor identity
 (`:478-504`).
 **Durable child-run machinery (the call survives as `call-flow`):**
@@ -940,9 +948,8 @@ slims to authored graph + public contract.
 `flow_artifacts.interface_bundle_json/hash` · `component_digests` ·
 `occurrence_recovery_json/hash` + their registration parameters and
 checks (`catalog-schema:102-107`).
-**Stable-key live retry:** the `live-retry` policy arm ·
-multi-dispatch records · key-support attestation ·
-connection-mode recovery validation.
+**Outbound effect retry:** the `live-retry` policy arm · repeated-dispatch
+records · receiver-behavior assurances · connection-mode retry validation.
 **Retention kinds:** `replay-seed` · `audit-seed`;
 `release-evidence` added;
 `active-attempt` stays (`catalog-schema:1262-1273`).
@@ -1010,13 +1017,13 @@ serve-echo/-node · logspewer · memhog · pgprobe · f1 flow fixtures.
 
 ### F.3 Owner resolutions (record)
 Single-shot runs + cancel deleted · capture full|off (the literal
-secretless guarantee is outside MVP) · effect retry cut — one dispatch
-per effectful occurrence; no stable-key retry alternative ·
+secretless guarantee is outside MVP) · effect retry cut — one immutable
+attempt and at most one dispatch per effectful occurrence ·
 `audit-seed` deleted; no execution consumer found ·
 observability named as an outcome, no local Grafana/Loki · fixture
 keep-set {sockprobe, connection-http-standard, busyloop} · custom
 plane deleted wholesale · call-flow restored and finalized (mandatory
 expansion, exact pinning, retained plan bytes, complete
 `ExecutionPlanV2`, one effect-uncertain literal, caller-completion
-semantics, idempotency-key requirement) · `check-flow` deleted
+semantics, effectful-node connection requirement) · `check-flow` deleted
 (validation via the native plan compiler).

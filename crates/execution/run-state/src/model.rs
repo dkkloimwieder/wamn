@@ -84,10 +84,11 @@ impl RunRecord {
     }
 }
 
-/// One row of `node_runs`: a single framed node execution — the branch-aware
-/// reconstruction source. A node the frame LOOPS through has one row per visit,
-/// disambiguated by `occurrence`; retries of one occurrence share the row and
-/// bump `attempt`.
+/// Logical reconstruction record for one framed node execution.
+///
+/// A node the frame loops through has one record per visit, disambiguated by
+/// `occurrence`. `attempt` is the in-memory node-invocation retry counter; it is
+/// not a persisted `node_runs` column or effect-ledger authority.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct NodeRunRecord {
@@ -105,14 +106,14 @@ pub struct NodeRunRecord {
     pub current_plan_hash: String,
     /// The node id local to `current_plan_hash`.
     pub local_node_id: String,
-    /// Which visit of this node (0 = the first); the loop-safe part of the
-    /// idempotency key `(run_id, frame_id, local_node_id, occurrence)`.
+    /// Which visit of this node (0 = the first); completes the loop-safe
+    /// occurrence identity `(run_id, frame_id, local_node_id, occurrence)`.
     #[serde(default)]
     pub occurrence: u32,
     /// Dispatch order within the run — reconstruction replays completed rows by
     /// this.
     pub seq: u32,
-    /// Retry count of this occurrence (retries share the row).
+    /// In-memory node-invocation retry count for this occurrence.
     #[serde(default)]
     pub attempt: u32,
     pub status: NodeRunStatus,

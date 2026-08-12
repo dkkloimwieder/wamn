@@ -76,8 +76,7 @@
         "tls",
         "redirect",
         "proxy",
-        "credential",
-        "idempotency-key"
+        "credential"
       ],
       "type": "string"
     },
@@ -129,9 +128,6 @@
           },
           "type": "array"
         },
-        "idempotency-key-injection": {
-          "$ref": "#/definitions/IdempotencyKeyInjection"
-        },
         "requirement-type": {
           "type": "string"
         }
@@ -142,7 +138,6 @@
         "credential-injection",
         "descriptor-version",
         "field-ownership",
-        "idempotency-key-injection",
         "requirement-type"
       ],
       "type": "object"
@@ -243,13 +238,6 @@
         "requirement"
       ],
       "type": "object"
-    },
-    "IdempotencyKeyInjection": {
-      "description": "How the engine-owned stable key enters a request.",
-      "enum": [
-        "http-idempotency-key-header"
-      ],
-      "type": "string"
     },
     "Node": {
       "additionalProperties": false,

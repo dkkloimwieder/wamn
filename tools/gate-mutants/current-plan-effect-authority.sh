@@ -32,7 +32,7 @@ load_mutation() {
   case "$id" in
     connection-node-permission-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2c6c10bcd7b3f0087427ceb0f3da26550df90586578efaa42e7d19a6b956948a"
+      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
       NEEDLE='if !snapshot.node_permitted {'
       REPLACEMENT='if false {'
       GATE="plugins::connection_http::tests::refusal_precedence_is_explicit_and_typed"
@@ -40,7 +40,7 @@ load_mutation() {
       ;;
     connection-attempt-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2c6c10bcd7b3f0087427ceb0f3da26550df90586578efaa42e7d19a6b956948a"
+      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
       NEEDLE='|| !snapshot.attempt_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -48,7 +48,7 @@ load_mutation() {
       ;;
     connection-root-plan-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2c6c10bcd7b3f0087427ceb0f3da26550df90586578efaa42e7d19a6b956948a"
+      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
       NEEDLE='|| !snapshot.root_plan_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -56,7 +56,7 @@ load_mutation() {
       ;;
     connection-resolution-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="2c6c10bcd7b3f0087427ceb0f3da26550df90586578efaa42e7d19a6b956948a"
+      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
       NEEDLE='|| !snapshot.resolution_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::mismatched_source_or_revoked_draft_generation_is_denied_before_network_data"
@@ -64,7 +64,7 @@ load_mutation() {
       ;;
     claims-root-bundle-for-current-plan)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="d6f9c91c17023e85e2ab1610826fcb4dc51cd231d65be67c43b9a7aabfd419cd"
+      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
       NEEDLE='WHERE bundle.execution_bundle_hash = $3 \'
       REPLACEMENT='WHERE bundle.execution_bundle_hash = $2 \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -72,7 +72,7 @@ load_mutation() {
       ;;
     claims-drop-source-resolution-match)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="d6f9c91c17023e85e2ab1610826fcb4dc51cd231d65be67c43b9a7aabfd419cd"
+      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
       NEEDLE='AND resolution.source_artifact_hash = $7 \'
       REPLACEMENT='AND true \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -80,7 +80,7 @@ load_mutation() {
       ;;
     claims-drop-attempt-occurrence-match)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="d6f9c91c17023e85e2ab1610826fcb4dc51cd231d65be67c43b9a7aabfd419cd"
+      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
       NEEDLE='AND attempt.occurrence = $6 \'
       REPLACEMENT='AND true \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -88,7 +88,7 @@ load_mutation() {
       ;;
     claims-invert-plan-node-permission)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="d6f9c91c17023e85e2ab1610826fcb4dc51cd231d65be67c43b9a7aabfd419cd"
+      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
       NEEDLE='COALESCE(plan_node.match_count = 1 AND plan_node.permitted, false)'
       REPLACEMENT='COALESCE(plan_node.match_count = 1 AND NOT plan_node.permitted, false)'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"

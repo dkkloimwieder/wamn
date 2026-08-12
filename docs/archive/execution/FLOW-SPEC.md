@@ -49,7 +49,7 @@ windows, sweep cadence.
 |---|---|---|---|
 | **Entry node** | how the flow starts; its input contract | flow graph | flow artifact |
 | **Response node** | what the caller receives; when released | flow graph | flow artifact |
-| **Flow artifact** | immutable graph + pinned executable contracts + ordered occurrence recovery selections | `flow_artifacts` | `(tenant, flow_id, flow_version)` — flow IDs are tenant-scoped; `catalog_id` scopes *release* identity |
+| **Flow artifact** | immutable graph + pinned executable contracts, including `pure | effectful` policy | `flow_artifacts` | `(tenant, flow_id, flow_version)` — flow IDs are tenant-scoped; `catalog_id` scopes *release* identity |
 | **Source / attachment** | which schedule / credential policy / caller policy drives which flow | catalog release | release |
 | **Activation** | is this attachment's confirmed definition live here, now | operational overlay | confirmed hash |
 | **Release** | the complete, validated project definition | `CatalogRelease` | `(catalog_id, catalog_version)` |
@@ -72,16 +72,12 @@ fencing stages with the H9 runtime work.
 wait tokens for parent wakes; generation seizure for child cancellation and
 the deadline sweep.
 
-Recovery authority has three immutable-to-admission layers. Publication pins
-each implementation's `ResolvedNodeContract.executable_recovery`; standard and
-custom nodes use this same executable-contract model. The artifact then pins one
-ordered recovery selection per exact graph occurrence in
-`occurrence_recovery_json`, authenticated by `occurrence_recovery_hash`.
-Finally, dispatch admits that selected class against current environment facts
-and records the decision on the attempt. Environment attestations may satisfy a
-pinned portable requirement or cause a refusal; they never strengthen, weaken,
-or retarget the selected class. HTTP method, mutable node configuration, and
-capture mode are not recovery authorities.
+Publication pins each implementation's `pure | effectful` policy in the same
+resolved-node contract used by standard and custom nodes. Pure occurrences write
+no effect-ledger row. An effectful occurrence records one immutable write-ahead
+attempt, at most one dispatch, and an outcome when known. HTTP method, mutable
+node configuration, capture mode, and endpoint behavior cannot authorize another
+dispatch.
 
 ---
 
@@ -751,49 +747,29 @@ Inline (`request` runs execute in the invoking service's turn) or queued
 Checkpoints at recovery boundaries — before/after effects, park, release,
 terminal. The checkpoint is the `state_json` + frontier write; reconstruction
 reads attempts + the checkpoint through the transitions module. A checkpoint
-records progress; it does not classify or authorize replay. Recovery authority
-comes from the pinned executable contract and occurrence selection described in
-§10.3.
+records progress; it never authorizes another effect send. The immutable effect
+ledger is the sole reclaim-classification authority described in §10.3.
 
 ### 10.3 Node-attempt protocol
 
-Recovery classification is resolved once, then consumed in three layers:
+Publication resolves every standard or custom implementation to one
+`ResolvedNodeContract` whose effect policy is exactly `pure | effectful`.
+Neither a node type/configuration table nor an environment assertion may replace
+that policy.
 
-1. **Executable contract.** Publication resolves every standard or custom
-   implementation to the same `ResolvedNodeContract` shape. Its sole current
-   implementation-level authority is `executable_recovery`; neither a node
-   type/configuration table nor a second custom-node override may replace it.
-2. **Occurrence selection.** Artifact construction selects one class for each
-   exact `(node_id, node_type)` occurrence. The ordered canonical bytes and
-   hash are persisted as `flow_artifacts.occurrence_recovery_json` and
-   `flow_artifacts.occurrence_recovery_hash`. The runtime's
-   `load_pinned_artifact` passes both to `PinnedArtifact::from_storage`, which
-   verifies the immutable artifact before exposing the selections. A current
-   artifact with an absent, duplicated, retargeted, unsupported, or
-   hash-mismatched selection refuses; historical formats are interpreted only
-   by their explicit historical reader/projection.
-3. **Per-attempt admission.** `admit_occurrence_recovery` matches the exact
-   occurrence and admits its selected class. A pinned portable requirement
-   must be satisfied by attested immutable connection and credential
-   generations; absence or mismatch refuses. Environment facts never
-   strengthen, weaken, or retarget the selected class. Admission persists
-   `selected_recovery_class`, the effective `recovery_class`,
-   `generation_fact_kind`, `connection_generation`, and
-   `credential_generation` with attempt intent.
+For each effectful occurrence: (1) persist one immutable write-ahead attempt with
+the trusted root-run, frame, local-node, occurrence, current-plan, source-artifact,
+connection, and credential facts; (2) acquire the wire-I/O permit by the first
+successful dispatch insert for that exact occurrence; (3) send; (4) append the
+terminal outcome when known. Pure occurrences skip all four protocol operations.
 
-Per admitted effectful occurrence: (1) persist attempt intent — run, node,
-occurrence, input ref, selected and effective recovery classes, generation
-facts, attempt key, `attempt_deadline_at`, `status = started` — atomically with
-a lease renewal; (2) invoke, with the pre-dispatch check (§10.7); (3) persist
-output, `status = success`. Recovery by `(status, recovery_class)` remains:
-`replay` → dispatch again; `idempotent-with-key` → same key;
-`never-replay` → run fails **`effect-uncertain`**.
-
-HTTP verbs do not imply any class: GET and HEAD do not authorize replay, and
-PUT or DELETE do not authorize idempotent replay. Mutable configuration cannot
-strengthen a pinned selection. Capture is independently optional and has no
-role in classification or admission. Attempt state is protocol state —
-capture-exempt, retained until recovery is impossible.
+Attempt and outcome retries are exact-idempotent: the same complete immutable
+facts return the existing row and any difference refuses. A sent attempt without
+a recorded outcome is **`effect-uncertain`** and never sends again. More
+conservatively, reclaim seeing any abandoned effectful attempt marks the run
+uncertain without invoking the flowrunner. HTTP verbs do not change this rule.
+Capture is independently optional and has no role in effect authority. Attempt,
+dispatch, and outcome rows are capture-exempt immutable protocol facts.
 `node_runs.status` is `started | parked | success | error`.
 
 ### 10.4 Inline lease ownership
@@ -836,7 +812,9 @@ effect dispatch). **A deferred cancellation is never forgotten:**
 after the attempt deadline; the attempt-completion transition checks it and
 terminalizes. Costs stated: cancellation latency inside a live attempt is
 bounded by the max host-call deadline. Capability-context fencing stages with
-H9; when it lands, seizure becomes immediate and this rule retires.
+H9; when it lands, seizure becomes immediate and this rule retires. Passing the
+pre-dispatch checks is necessary but not sufficient: the first successful
+dispatch insert for the occurrence is the sole wire-I/O permit.
 
 ---
 
@@ -935,7 +913,7 @@ trusted context for audit**; runtime authorization always;
 the trusted context is persisted (versioned, size-capped, capture-exempt,
 never author-controlled). **12.7 Sagas**: no construct; the primitives
 (exactly-once child creation, wake-at-release, envelope error edges,
-pre-release cancellation, lineage, `idempotent-with-key`, run status) must
+pre-release cancellation, lineage, one-dispatch effect facts, run status) must
 suffice for author-built compensation — Appendix B is the acceptance,
 scheduled **after** the HTTP vertical slice (§19); failing it fixes
 primitives, not adds a DSL.
@@ -972,15 +950,18 @@ release node), `response_deadline_at` / `run_deadline_at` (ordering CHECK),
 gains `http`, `internal`, `studio`. `result_json` is diagnostic; the caller's
 answer is `caller_outcome_json`.
 
-**15.2 `node_runs`** — `selected_recovery_class`, effective
-`recovery_class`, `generation_fact_kind`, `connection_generation`,
-`credential_generation`, `attempt_started_at`, `attempt_deadline_at`,
-`attempt_input_ref`, `attempt_key`; status CHECK `started | parked | success |
-error`. A started attempt requires both classes and its generation fact; the
-effective class equals the selected class.
+**15.2 Execution projection and effect ledger** — `node_runs` is a mutable
+execution projection; it is not effect authority. The separate immutable
+`effect_attempts`, `effect_attempt_dispatches`, and `effect_attempt_outcomes`
+relations are
+run-state-owned. An attempt is unique for
+`(tenant, run, frame_id, local_node_id, occurrence)`. A dispatch repeats those
+coordinates, has a composite FK to the attempt, and has the same exact UNIQUE
+key, so first-insert-wins. An outcome belongs to the exact attempt. The landed
+immutability trigger covers all three relations; pure occurrences create no row.
 
-**15.3 Definition plane** — `flow_artifacts` (DB-immutable, including paired
-`occurrence_recovery_json` + `occurrence_recovery_hash`);
+**15.3 Definition plane** — `flow_artifacts` (DB-immutable, including each
+resolved node's `pure | effectful` policy);
 `release_flows`; `attachments` + `sources`; `catalog_heads`;
 `attachment_activation` + `_events`; `invocation_admissions` (§6.2 shape);
 `run_queue.lease_generation`; `cron_anchor` generation columns. RLS/seed
@@ -1015,8 +996,8 @@ reprovisioned from `deploy/sql`; `register_flow`/copy-env rewritten against
 
 Metrics: commits, SQL statements, rows, WAL bytes, latency percentiles,
 throughput, recovery latency. Scenarios: pure request (both respond shapes);
-one Postgres effect; one HTTP effect; a `never-replay` effect; an idempotent
-child; burst; post-release continuation; a cancellation race; the Appendix B
+one Postgres effect; one HTTP effect; a sent-without-outcome effect; a child;
+burst; post-release continuation; a cancellation race; the Appendix B
 saga; the row-fence micro-bench. Sequence: baseline → boundary checkpointing
 → inline-with-claimed-row → sweep variant only on a miss. Budgets
 `DEFERRED(owner)`. Exit: R6 remains the sole execution model if the budgets
@@ -1087,7 +1068,7 @@ promotion rule; dispatcher and materializer converted to `admit()`.
 
 | Positive | Negative |
 |---|---|
-| entry-reserved semantics; release-and-continue; boundary recovery dispatches only an artifact-pinned occurrence selection admitted for that attempt; **frontier exhaustion terminalizes a cron run `completed` through §9.9, including across an unwired completion port** | `never-replay` **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the completion write, recovery yields `effect-uncertain` and the sink count stays at one — the crash-*before*-send variant (zero effects) is the cheap sibling; **this is a Phase 3 gate, not POC Wave 2** |
+| entry-reserved semantics; release-and-continue; pure occurrences write no effect facts; each effectful occurrence writes one attempt before send and acquires at most one dispatch; **frontier exhaustion terminalizes a cron run `completed` through §9.9, including across an unwired completion port** | **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the outcome write, reclaim yields `effect-uncertain` and the sink count stays at one — the crash-before-send variant observes zero effects and still never redispatches; **this is a Phase 3 gate, not POC Wave 2** |
 | **run context**: a `ctx` write replaces the document (a later write without `merge()` provably drops prior keys); context reconstructs identically on boundary recovery; an effectful node's context-resolved params land in `attempt_input_ref` | a child run starts with **empty** context regardless of the parent's; error-port emissions never mutate context |
 | attempt intent atomic with lease renewal; `attempt_deadline_at` enforced pre-dispatch | the paused-original pair: (a) deadline lapsed → resume performs no effect; (b) cancellation during a live attempt → seizure deferred, `cancel_requested` persisted and applied at attempt end |
 | deadline cancels an executing guest within the bound; sweep cancels all five orphan scenarios within the stated bound | interrupted instance disposed, never reused; a `started` attempt never reclaimed early |
@@ -1115,9 +1096,9 @@ under the standing rule.
 
 | Positive | Negative |
 |---|---|
-| parent replay yields exactly one child; wake at release in one transaction | post-release child failure alters nothing in the parent; stale `wait_generation` rejected |
+| parent recovery finds exactly one child; wake at release in one transaction | post-release child failure alters nothing in the parent; stale `wait_generation` rejected |
 | pinned-release resolution; parent cancellation seizes the child's generation pre-release | a child is never cancelled after its own release |
-| Appendix B: all cases | no effect from the stale original; no duplicate `never-replay` effect from the reclaimer |
+| Appendix B: all cases | no effect from the stale original; no duplicate effect from the reclaimer |
 
 ### Phase 6 — measurement gate
 
@@ -1163,7 +1144,7 @@ emission becomes `{output, ctx?}` — universal context reads via the
 `context()` expression function, any node writes via its `ctx`
 expression/envelope field, a write replaces the document, merge is authored
 via the `merge()` builtin, error emissions never write; durability rides
-`state_json` with pure-replay reconstruction and effectful attempts
+`state_json` with pure-node reconstruction and effectful attempts
 recording context-resolved params; the invocation handshake split into
 `begin → admitted{run-id} | rejected` then `wait`/`cancel`, with
 `invoke-request` carrying the preflight expectations and fingerprint; the
@@ -1172,7 +1153,7 @@ queue state per variant; events record the live registration hash and start
 unclaimed); child revocation narrowed to creation (recovery of an existing
 child never re-authorizes); the custom-node `purity: pure` manifest
 assertion defined; `delay`-in-S narrowed to request entries;
-`runs.registration_id` added; the `never-replay` sent-but-lost proof named
+`runs.registration_id` added; the sent-but-lost proof named
 a Phase 3 gate.** **Rev 16: `failed`/`cancelled` results carry the stored
 `caller_http_status` (`failure = {status, error}` — an authored `fail 400`
 now reaches the wire as a 400); `wait` made bounded
@@ -1187,13 +1168,12 @@ envelope `message` made optional to match `fail.message`; §6.1's A/B stages
 restated producer-shaped (event resolution is registration-based; full
 auth/body/mapping B is HTTP's).** **Rev 18: stage C's residual "recheck activation/revocation"
 made producer-specific (events check-and-record the registration hash — no
-attachment exists to activate).** **Rev 19: recovery authority reconciled to
-the shipped three-layer model: `ResolvedNodeContract.executable_recovery`,
-artifact-persisted ordered occurrence selections verified by
-`PinnedArtifact::from_storage`, and `admit_occurrence_recovery` recording the
-selected/effective class plus generation facts. Standard and custom nodes now
-share one model; HTTP method, mutable configuration, environment facts, and
-capture cannot strengthen or retarget the pinned selection.**
+attachment exists to activate).** **Rev 19, amended by `wamn-0h0g.4.9`:
+standard and custom nodes share one `pure | effectful` policy. Pure occurrences
+write no effect facts; each effectful occurrence writes one immutable attempt,
+at most one dispatch, and an outcome when known. A sent attempt without an
+outcome becomes `effect-uncertain` and never sends again. HTTP method, mutable
+configuration, endpoint behavior, and capture cannot strengthen dispatch.**
 
 ---
 
@@ -1211,8 +1191,8 @@ nightly variant is a second flow (`cron` entry → `invoke-flow` →
 ## Appendix B — saga acceptance (after the slice)
 
 `order-saga`: `reserve-stock` → `charge-payment` → `schedule-shipment`, each
-an `invoke-flow` to a `request`-entry child behind an `internal` attachment,
-child effects `idempotent-with-key`; compensation via error edges into
+an `invoke-flow` to a `request`-entry child behind an `internal` attachment;
+child effects each dispatch at most once; compensation via error edges into
 `saga-failed` (`fail`); success releases `200`, post-release `record-audit`.
 Cases: (1) mid-saga crash — occurrence-keyed recovery, no duplicate child;
 (2) **promotion-while-parked under the coarse rule** — publication is

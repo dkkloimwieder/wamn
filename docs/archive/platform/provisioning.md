@@ -370,6 +370,35 @@ the database's creation):
 3. `psql` the **privilege SQL** to the target cluster — `REVOKE`/`GRANT CONNECT`;
 4. `kubectl apply -f` the **credential Secret**.
 
+After the operator creates the database, initialize the private effect writer
+through the bootstrap wrapper's generation-A action. The same wrapper-owned
+path rotates A/B later: ctl prepares and authenticates the scoped LOGIN and
+renders the fixed-mount Secret; the wrapper publishes it, restarts/drains
+`deployment/runner`, verifies the new pool session, and retires the inactive
+generation. Initial prepare also converges the cluster-wide `PUBLIC CONNECT`
+floor across every non-template database; `PUBLIC TEMPORARY` is revoked and
+verified only on the exact project database. The wrapper's database probes are
+verification-only: ctl owns these privilege mutations.
+
+The fixed Secret annotations repeat the exact credential id, A/B generation,
+database role, issued-at, not-before, and expires-at (plus revoked-at only when
+present). The wrapper validates that complete scoped identity and canonical UTC
+window before publication and compares the full emitted/installed metadata
+after apply. A definitively unpublished prepared generation is removed through
+ctl's dedicated abort action; an ambiguous third publication state refuses for
+manual reconciliation. Retirement remains stricter: the replacement must be
+active and have a proven live private-pool session.
+
+```bash
+deploy/mvp/bootstrap.sh --org <org> --project <project> --env <env> \
+  --target-admin-database-url <project-db-admin-url> \
+  --rotate-effect-writer-generation a
+```
+
+The first action must be generation `a`. The target admin URL is accepted only
+for this wrapper-owned credential lifecycle; it is never an executor or guest
+override.
+
 **Scope (wamn-q3n.7): the per-project-env DB + role + privilege step + the
 registry rows + the Secret.** It does **not** extend `provisionbench` to the org
 pair / T3 path (wamn-q3n.8), register the pool as the trials tier (wamn-q3n.9 —
@@ -543,12 +572,10 @@ migration plan, executed in order:
 - **immutable effect authority storage** created as five append-only ledgers
   (`effect_attempts`, dispatches, outcomes, disposition requests, and
   dispositions), with catalog publication-provenance columns/CHECKs reconciled
-  first. If legacy `node_runs` attempt projections exist, one transactional
-  action takes a `SHARE ROW EXCLUSIVE` lock on `node_runs`, validates every
-  authority fact and attested connection against the pinned catalog graph,
-  appends explicitly marked legacy attempt/dispatch/outcome facts, advances
-  `current_effect_attempt_id`, proves no candidate was lost, and only then
-  activates the composite current-pointer FK;
+  first. The writer-boundary upgrade takes `ACCESS EXCLUSIVE` locks, refuses
+  populated incompatible immutable attempt/dispatch/outcome ledgers before any
+  DDL, and physically removes named retired stable-key/recovery projection
+  columns. It never backfills or fabricates attempt authority;
 - **index drift**: a record index absent live is created; a present one whose
   live definition lost a record column (the pre-E4 `run_queue_claimable`
   without `stream_seq`) or violates a pinned disposition uniqueness/predicate
@@ -568,14 +595,12 @@ migration plan, executed in order:
 | `--schema` | the project-env schema (e.g. `wamn_runner_demo`, `poc_f1`) |
 | `--dry-run` | print the plan without applying — STRICTLY read-only (no role ensure, no writes) |
 
-**Data preserving, not insert-only:** no live column or non-legacy table is
-dropped, and no row in a retained table is deleted; unknown live columns are
-printed (`[extra]`) and left alone.
-The deliberate row mutations are limited to column-default fills, legacy
-registration-state removal, and the locked effect-attempt cutover above
-(append immutable facts, then set the nullable current pointer). Incomplete,
-NULL-shaped, temporally inconsistent, or join-lost legacy authority aborts with
-a typed refusal and rolls the backfill action back; incompatible canonical
+**Data preserving, not insert-only:** no retained table or row is rewritten or
+deleted; unknown live columns are printed (`[extra]`) and left alone. Named
+retired identity/recovery columns are the deliberate exception: the locked
+frame/effect-writer cutovers remove them after their safety preflights.
+Populated incompatible immutable ledgers abort with the typed empty-only
+refusal; no backfill chooses or fabricates history. Incompatible canonical
 CHECK/FK validation also fails loudly. The tenant floor
 (`publish-catalog --provision` / `migrate-catalog`) and flow/seed content
 (`publish-catalog --flow` / `--seed-dataset`) remain out of scope. This child

@@ -7,6 +7,11 @@ authority: docs/archive/PLAN/PLAN.md
 delete-when: PLAN item 1 closes after durable decisions are folded into PLAN.md
 ---
 
+> **Superseded for effect retry authority by `wamn-0h0g.4.9`.** Any recovery
+> classifier, stable attempt key, or redispatch description below is historical
+> provenance only. Active authority is the single immutable attempt and at-most
+> one dispatch contract in PLAN.md.
+
 # Payload durability and the blob boundary
 
 This document fixes the implementation shape for PLAN item 1. The plan remains

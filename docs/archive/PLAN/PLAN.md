@@ -119,29 +119,27 @@ is built, and the plan should not pretend otherwise.
   composition is guest-side. Only 2C's bulk connectors need payload handles.
 
 **But they share one canonical resolved-node contract.** Parallel work meets at node
-identity — item 1 pins a resolved recovery model into artifact identity, 2A keys execution
+identity — item 1 consumes a node's `pure | effectful` policy, while 2A keys execution
 bundles on interface versions, digests, and capability classes. If each defines its own
-canonical descriptor, recovery semantics could change artifact identity without invalidating
-a composition, or the reverse.
+canonical descriptor, effect policy could change without invalidating a composition, or the
+reverse.
 
 > One resolved-node contract carries the strict interface identity, declared ports,
-> capability classes, executable recovery contract, executable/component identity, and a
-> contract version. A graph-occurrence binding selects one recovery class and portable claim
-> from that contract. **Artifact validation, artifact identity, replay classification, and
+> capability classes, `pure | effectful` policy, executable/component identity, and a
+> contract version. **Artifact validation, artifact identity, effect planning, and
 > execution-bundle identity all consume that same resolution; runtime node-type tables do
 > not supply missing semantics.**
 
-It holds **environment-independent** facts only: an environment-specific attestation (such
-as a destination honouring idempotency keys) belongs to the connection instance, never to
-this contract or to bundle identity — see 2B. No struct, format, or package is prescribed;
+It holds **environment-independent** facts only: endpoint, credential, and policy facts
+belong to the connection instance, never to this contract or to bundle identity — see 2B.
+No struct, format, or package is prescribed;
 this names the owner-level source of truth before parallel work starts. (The contract version exists for the same reason
 `admission_context_version` does: artifacts pin a *resolved* contract, so the shape they
 resolved under must remain recoverable.)
 
 **Joint milestone:** one standard node and one custom node resolve through the same
-canonical contract. Changing any executable recovery-, interface-, capability-, or
-executable-relevant field invalidates every artifact and bundle identity that depends on it;
-changing an occurrence's selected recovery class or claim invalidates the artifact.
+canonical contract. Changing any effect-policy-, interface-, capability-, or
+executable-relevant field invalidates every artifact and bundle identity that depends on it.
 
 **2A and 2B share a capability-bearing integration gate.** 2A's decisive experiment includes
 a capability-bearing node, but 2B owns the connection ABI it must use. A plug built against
@@ -157,7 +155,7 @@ composition topologies.
 This does not serialize the two items; it stops 2A declaring success against an ABI 2B then
 replaces. Consequently the canonical resolved-node contract carries the **portable connection
 requirement type and contract identity**, and excludes environment instance data and
-attestations.
+policy facts.
 
 **Preference, not necessity:** where item 4 sits in a linear list (it is parallel
 throughout, gated only by exposure), when 2B lands relative to the first loop, whether 9A
@@ -337,20 +335,13 @@ effect-attempt facts grow with execution history — so **item 3 measures the th
 separately**, or a healthy checkpoint benchmark will conceal seed and capture growth behind
 a claim that "durable storage is bounded by concurrency."
 
-**Durability is the minimum authoritative state needed to recover according to the node's
-declared recovery contract** — reproducing the uncrashed outcome where the contract permits,
-and producing an **explicit indeterminate outcome** where it does not. Not a record of what
-happened.
-
-The earlier phrasing — "reach the same outcome the uncrashed run would have" — contradicted
-`never-replay → effect-uncertain` in the very first sentence: when an effect may have
-completed but its result was not checkpointed, the system *deliberately declines* to
-reproduce that outcome. Read literally, the old definition pushed toward unsafe retries to
-satisfy an impossible guarantee. This version is the honest one supported by `replay`,
-`idempotent-with-key`, and `never-replay` alike. The checkpoint is
-a resume point: frontier, the payloads in flight *on* that frontier, occurrence counters,
-context. An effectful node's output is durable because it is the payload on the next
-token; history is discarded because nothing downstream can observe it.
+**Durability is the minimum authoritative state needed either to resume before an effectful
+intent or to classify the run conservatively after one.** When a send may have completed but
+its outcome was not recorded, the system deliberately declines to reproduce that outcome:
+the run becomes `effect-uncertain` and no second dispatch is possible. The checkpoint is a
+resume point — frontier, the payloads in flight *on* that frontier, occurrence counters, and
+context. An effectful node's output is durable because it is the payload on the next token;
+history is discarded because nothing downstream can observe it.
 
 **What is live today:** `reconstruct()` rebuilds a run by replaying every completed node's
 captured emission, and carries `ReconstructError::CaptureOff` to prove it — capture is
@@ -450,8 +441,9 @@ shared primitive gets this split**; blob is its newest instance, and the next on
 
 ### Rules this establishes
 
-- **Capture is never load-bearing.** Recovery reads the checkpoint and `node_runs`' attempt
-  columns, never a payload column.
+- **Capture is never load-bearing.** Recovery reads the authoritative boundary checkpoint and,
+  for external effects, the immutable effect ledger. `node_runs` is a reconstruction projection;
+  it carries no attempt authority, and recovery never depends on a payload column.
 - **The completion write and the boundary checkpoint commit together.** No observable state
   where an attempt is `success` and the checkpoint predates it — the output would exist
   only in a column that may be absent.
@@ -519,107 +511,54 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   different results. Scrubbing is a capture convenience and **not a security boundary**;
   secrets travel by credential reference and must not ride in payloads.
 
-### v1 recovery posture — ship the floor, park the tail
+### v1 effect posture — one attempt, one dispatch
 
-Settled 2026-08-04. The platform ships the conservative recovery floor and
-defers the strengthened tail until demand or measurement forces it.
+Settled 2026-08-04 and narrowed by `wamn-0h0g.4.9`. The platform ships one
+conservative effect protocol; no strengthened effect-retry tail exists.
 
-**In force:** `never-replay` as the only recovery class; effect-attempt
-recording with pinned generations, claims, fingerprints, and stable keys;
-exact-generation refusal; explicit `effect-uncertain` as a first-class
-state; the trusted one-frame HTTP effect adapter with write-ahead intent.
+**In force:** a pure occurrence writes no effect-ledger row. An effectful
+occurrence has one immutable write-ahead attempt, at most one immutable
+dispatch fact, and a terminal outcome when one is known. The attempt records
+the occurrence identity plus the exact plan, connection, and credential facts
+authorized before the send. No engine-generated outbound retry token or
+endpoint-behavior assertion participates in the protocol.
 
-**Automatic behaviour is unchanged in v1.** A terminally failed effect
-attempt fails its node run and the run resolves through existing run-state
-transitions; an attempt classified `effect-uncertain` — the `never-replay`
-default for a lost outcome — **parks the run** on the parked condition that
-already exists in the transition layer, pending disposition. Park/release
-therefore binds to existing machinery rather than minting a new state. The
-declarative per-binding failure-policy surface (retry shape, park-after,
-`on_terminal_failure` actions such as fail-run, compensate-with, or notify)
-is parked with the tail below.
+The run-state API is the sole ledger write path. Retrying an attempt or outcome
+builder is exact-idempotent: the same complete facts return the existing row;
+different facts refuse. The dispatch relation's occurrence key makes the first
+successful insert the sole wire-I/O permit. The database cannot observe wire
+I/O, so attempt-before-send remains a run-state chokepoint invariant and the
+integrated crash proof owns it.
 
-**The v1 operator surface is disposition, not re-execution.** Two verbs.
-**Park/release**, and **resolve** — a role-gated assertion that an attempt
-succeeded or failed, carrying a typed basis (external evidence, counterparty
-confirmation, operator judgment) and an audit record, available in bulk
-filtered by connection, generation, flow, and window. An attempt is never
-mutated: resolution dispositions it, and any later authorized re-execution
-is a successor attempt with typed lineage — never a substitution of
-authority on the original.
+**Delivery split:** `wamn-0h0g.4.9` lands the inaccessible ledger primitive,
+private run-state API, and database proofs without a production caller.
+`wamn-0h0g.5.4` activates the private adapter and owns the integrated
+attempt-before-send, one-dispatch, outcome, and pure-no-row proof.
 
-**Disposition authority is settled (wamn-ctc8.2).** Resolution is stronger
-than park/release because it asserts an external outcome and may let the
-workflow continue from that assertion; operational access to a parked run
-does not imply that authority.
+**Automatic behavior is single-shot.** A known external failure fails the run.
+A sent attempt without a recorded outcome is `effect-uncertain`; it never
+sends again. More conservatively, reclaim seeing any abandoned effectful
+write-ahead intent removes queue eligibility and marks the root run
+`effect-uncertain` without invoking the flowrunner. A later genuinely new
+admission may repeat the external effect, but it is a new caller decision and
+a new run.
 
-| Principal | Manual park/release | Resolve |
-|---|---|---|
-| **System** | Automatic park only, under the execution protocol | No operator assertion |
-| **Project deployer** | Its project | No |
-| **Project admin** | Its project | Its project |
-| **Platform admin** | Audited break-glass and cross-project | Audited break-glass and cross-project |
-| **Author/publisher by authorship alone** | No implicit grant | No self-resolution; only a separately audited platform break-glass action may override separation of duties |
+**The v1 operator surface terminalizes; it never supplies an effect outcome.**
+`get-run` exposes the uncertain state and immutable ledger facts. The one
+repair transaction locks the affected facts, verifies `effect-uncertain`,
+appends an immutable `operator_run_actions` row with basis, evidence reference,
+correlation, principal, and prior state, and marks the node and run terminally
+failed. There is no success assertion, continuation, bulk selection, successor
+attempt, or silent re-execution.
 
-**Authentication boundary.** This matrix authorizes only an already-authenticated caller;
-it never permits principal, role, project, or tenant to arrive through request or CLI fields,
-`SESSION_USER`, a custom GUC, or the guest-shared database session. Until `wamn-ctc8.5`
-consumes item 5's real verified session/API-key identity, project-deployer and project-admin
-park/release/resolve verbs remain unavailable. The only pre-AuthN adapters are host-owned
-system automatic park and separately audited platform-superuser break-glass, each outside
-guest authority.
+### Exit gate — one effect policy across standard and custom nodes
 
-Single-attempt operations name the immutable attempt id. Bulk park/release is
-project-scoped. Bulk resolve is admin-only and must select a connection **and**
-generation plus a bounded time window; a flow selector may narrow that set but
-never replace those required bounds. Before applying any disposition, the
-bulk request materializes the exact immutable attempt ids and authorization
-covers that set, so concurrent query drift cannot change what the operator
-approved. Every resolution records the
-principal and effective role, typed basis, evidence reference, exact attempt
-set, and correlation id. Resolution appends a disposition; it never rewrites
-the attempt, grants compensation or Replay, or silently re-executes anything.
-
-**Parked, not abandoned:** the semantic-strengthening machinery
-(`stable-key-dedup-v1` attestation, evidence, revalidation cadence and
-maximum validity), the payload-store buildout and the sustained
-threshold/ceiling campaign, re-attempt and compensation verbs, the
-declarative per-binding failure-policy surface, and the controlled-Replay
-protocol. On reactivation, the strengthening specification must
-additionally pin whether the named idempotency domain is
-instance-independent across create-instance migration.
-
-**Reactivation condition:** a named client integration whose economics
-require deduplicated recovery or historical Replay, or item 3 measurement
-showing parked scope on the critical path. Until then the parked scope is a
-recorded decision, not an open question.
-
-### Exit gates — two that were previously filed as decision points
-
-**Decided (wamn-4u7p.2): one resolved recovery model across standard and custom nodes.**
-Recovery has three deliberately separate layers:
-
-| Layer | Durable authority | Rule |
-|---|---|---|
-| **Executable recovery contract** | Versioned canonical `ResolvedNodeContract`, produced from either a standard descriptor or a custom manifest | Declares purity, conservative default, supported recovery classes and portable claim requirements; contains no environment attestation |
-| **Occurrence selection** | Artifact binding keyed by graph node id | Selects one class and claim allowed by the executable contract; publication validates it and includes it in artifact identity |
-| **Effect attempt** | Append-only attempt fact | Records the effective admitted class plus the connection and credential generations that satisfied the selection; the environment may satisfy or refuse, never strengthen, weaken, or substitute |
-
-The standard-node library owns one complete public, versioned descriptor per type. It carries
-the exact interface/WIT identity, ports, capability classes, portable connection
-requirements, platform executable revision, purity, conservative recovery default, and
-supported selections. Publication converts that descriptor losslessly into the same
-canonical contract used for a supplied custom manifest. The descriptor is not hashed as a
-second identity format: artifact and bundle keys frame the complete canonical contract, and
-the artifact additionally frames the ordered occurrence selections. Custom declarations
-remain conservative by default (`effectful + never-replay`) and enter the same path.
-
-Runtime recovery reads only the pinned occurrence selection. The current binary
-`is_replay_safe` function and the runner's node-type/config fallbacks — including deriving
-HTTP safety from a method name or an `idempotent-with-key` flag — are migration inputs, not
-authorities. A standard descriptor or resolver change mints a new contract/platform
-revision; historical contract versions remain interpretable, unknown versions fail closed,
-and already-published artifacts are never silently reclassified.
+The canonical `ResolvedNodeContract` carries only `pure | effectful` for this
+purpose. Standard descriptors and custom manifests resolve through the same
+field; publication includes it in artifact and bundle identity. The runtime
+may not infer safety from an HTTP method, mutable node configuration, or
+environment assertion. A descriptor change mints a new artifact/platform
+identity; an already-published artifact is never silently reclassified.
 
 **Checkpoint recovery must not foreclose fan-out.** *Not* an exit gate — the engine cannot
 fan out: `Emission` carries one port and P1 allows one edge per port, so a completion yields
@@ -630,11 +569,11 @@ data. Design the recovery model so fan-out remains addable; do not block item 1 
 
 ### Done when — v1 floor
 
-A run recovers correctly with capture `off`; attempt completion and the successor
-checkpoint commit atomically; a lost `never-replay` outcome becomes `effect-uncertain` and
-parks for disposition; recovery refuses rather than retargeting an existing attempt across
-a connection-generation change; audit reconstruction does not execute; and the role-gated
-park/release and resolve surface records typed, immutable dispositions.
+A run recovers correctly with capture `off`; pure occurrences create no effect
+facts; each effectful occurrence creates one immutable attempt and at most one
+dispatch; a sent attempt without a recorded outcome becomes `effect-uncertain`
+and is never resent; audit reconstruction does not execute; and operator
+terminalization records one typed, immutable action without asserting success.
 
 **Parked tail exit, on reactivation:** over-threshold payloads ride as references with the
 bytes in the blob store; a crash between blob write and checkpoint leaves an orphan and a
@@ -701,8 +640,8 @@ ceiling instead.
 
 **Correctness**
 - capture `off` → a crashed run recovers identically to capture `full`
-- kill between the effect's commit and the completion write → recovery redispatches per
-  recovery class; no state where `success` precedes the checkpoint
+- kill after the send and before the outcome write → the sink sees one effect,
+  reclaim yields `effect-uncertain`, and no second dispatch is possible
 - kill between the blob write and the checkpoint commit → orphan exists, run resumes from
   the previous boundary, GC reclaims it
 - payload above the ceiling → typed rejection, no partial write, no run
@@ -1023,7 +962,7 @@ must establish.
 **HTTP `0.1` floor decisions (`wamn-ko5r.8`).** The artifact spelling is a leading-slash
 connection-relative target such as `/holds`; bare `holds`, raw `//`, absolute authorities,
 and base-path escapes are invalid. Exactly one normalizer strips that one leading slash and
-constructs the canonical target accepted by both the resolver and operation fingerprint.
+constructs the canonical target accepted by the resolver and the private adapter.
 The v1 transport is direct-only. A generation declaring proxy transport is typed
 `incompatible` both during staged-generation validation and again at dispatch; it never
 falls back to direct. CONNECT/TLS proxy transport is demand-gated separately by
@@ -1044,32 +983,17 @@ capability question owned by this item, not a UI question owned by item 6.
 
 **Durable effects record the connection-instance generation they used.** Connection
 instances are deliberately operationally mutable — endpoint failover and credential rotation
-must not mint a flow artifact or a release. That creates a durable-execution case the plan
-must not leave open:
+must not mint a flow artifact or a release. Every external effect attempt therefore records
+the connection requirement, immutable instance generation or definition hash, and credential
+generation authorized for that occurrence — never secret material.
 
-```
-run begins against connection instance generation C1
-run parks or crashes
-the environment fails the endpoint over to C2
-run resumes and retries its effect
-```
-
-Silently re-resolving to C2 can change destination, TLS posture, proxy, credential identity,
-and the external **idempotency domain** mid-run — and leaves the replay seed unable to say
-where an effect was actually sent.
-
-> **Every external effect attempt resolves an auditable connection-instance generation.
-> Recovery never silently retargets an existing attempt after the connection changes.**
-
-At minimum, effect history identifies the connection requirement, the instance, its
-generation or definition hash, and the credential generation used — never secret material.
-
-The floor adapter uses write-ahead intent ordering: one durable insert records
-`(tenant, run, node, occurrence)` with the pinned generation, admitted claim, canonical
-operation fingerprint, and stable key; only then may the request reach the wire, after
-which the outcome is recorded. A crash between intent and outcome leaves a pending
-effect-uncertain attempt that parks. Caller claims carry identity only; release, binding,
-generation, and authorization facts are derived from the admitted run and catalog state.
+The floor adapter uses write-ahead ordering: one immutable attempt records the trusted
+`(tenant, run, frame, node, occurrence)` coordinates, current plan, source artifact,
+requirement, and selected connection and credential facts before any send. The first dispatch
+insert for that occurrence is the sole wire-I/O permit; a terminal outcome is appended when
+known. A sent attempt without an outcome is `effect-uncertain` and is never sent again. Caller
+claims carry identity only; release, binding, generation, and authorization facts are derived
+from the admitted run and catalog state.
 
 **Plane boundary (settled 2026-08-05).** Node placement and execution
 transport are platform-plane: a flow references pinned implementation
@@ -1080,35 +1004,12 @@ connection resolved through an environment binding; invoking a custom node
 is internal execution transport through the trusted host runtime, with
 placement and signing host-owned.
 
-**Decision (wamn-ko5r.1): an uncertain attempt stays on its recorded generation.** A retry
-or recovery dispatch for an existing effect attempt may use only the exact immutable
-connection-instance generation, definition hash, credential generation, admitted claim and
-attestation, operation fingerprint, and stable key recorded before its first send. It may
-dispatch again only when the pinned recovery class permits it and that exact non-secret
-definition, credential generation, and still-valid authority are reacquirable. Otherwise it
-refuses explicitly; `never-replay` with a lost outcome remains `effect-uncertain`. Recovery
-does not re-resolve the binding's current active generation and does not silently downgrade
-the recorded recovery class.
-
-Even an attestation that C1 and C2 share an idempotency domain does **not** authorize C2 for
-the uncertain attempt. C2 can also change destination, TLS/proxy posture, credential
-identity, and audit meaning; substituting it would turn recovery into a new authority
-decision while retaining the old attempt identity. Shared-domain evidence is relevant to
-generation activation and later occurrences, not substitution. A later distinct occurrence
-may resolve C2 under the normal compatibility and admission checks. Version 1 therefore has
-no retarget protocol for an existing attempt.
-
-**Pinning granularity — per attempt.** A long-lived run raises the question directly:
-occurrence 1 uses C1, the run parks, C2 activates, occurrence 2 reaches the same node.
-
-> A connection generation is **pinned for one effect attempt**. Retrying or recovering that
-> attempt cannot silently change generation. A **later, distinct node occurrence** resolves
-> the currently active compatible generation and records it independently.
-
-That permits controlled failover without altering the meaning of an uncertain attempt, and
-it matches occurrence-keyed recovery and the per-attempt effective recovery class. *(The
-alternative — pinning for a whole run's lifetime — is coherent but imposes stronger retention
-and credential-reacquisition obligations; recorded, not chosen.)*
+**Decision (wamn-ko5r.1, narrowed by `wamn-0h0g.4.9`): generation
+pinning is per attempt, and an attempt never redispatches.** Exact-generation
+availability and authority are verified before the first send. A later distinct
+occurrence resolves the currently active compatible generation and records it
+independently. An uncertain attempt needs its recorded non-secret generation
+facts for audit, not retained credential material for another send.
 
 **It composes with the activation gate**: occurrence 2's generation is guaranteed compatible
 because an incompatible one never activates, and a failed activation leaves the previous
@@ -1116,28 +1017,19 @@ generation in place rather than disabling the binding. Occurrence 2 finds **no**
 generation only after a deliberate operator disable — and that is an explicit failure, never
 a fallback to a weaker one.
 
-**A recorded generation is useless if what it points at has been overwritten.**
-
-> **A connection-instance generation's non-secret definition is immutable and retained while
-> any active attempt or retained replay/audit seed refers to it. Credential material has an
-> independent revocation lifecycle: inability to reacquire an old credential generation
-> causes an explicit recovery refusal, never silent substitution.**
-
-The two must not share retention semantics — otherwise replay retention would quietly defeat
-credential revocation. This lets audit explain where an effect was sent, lets recovery
-evaluate the applicable contract, and keeps a generation hash from pointing at configuration
-that no longer exists.
+**A recorded generation remains audit-resolvable.** Its non-secret definition is immutable
+and retained while an active attempt or retained audit seed refers to it. Credential material
+has an independent revocation lifecycle; ledger retention never extends credential validity.
 
 **Decision (wamn-ko5r.3): activation is a serialized all-bindings compatibility commit.**
 Failover and rotation are operational rather than release changes — but a generation can
-also alter the idempotency domain, TLS or proxy requirements, authentication behaviour,
-authority scope, redirect policy, and the destination guarantees recovery classification
-depends on. A proposed generation is therefore immutable and staged; it is never made
-current by an unchecked configuration write.
+also alter TLS or proxy requirements, authentication behaviour, authority scope, and redirect
+policy. A proposed generation is therefore immutable and staged; it is never made current by
+an unchecked configuration write.
 
 Activation serializes per instance and takes one validation snapshot containing the
 expected active-generation pointer, every active binding and its portable requirement, and
-the referenced connection-contract, credential-kind, attestation, platform-host-policy, and
+the referenced connection-contract, credential-kind, platform-host-policy, and
 cluster-network-policy revisions. The candidate must pass, in order:
 
 1. **Intrinsic definition validation:** exact supported connection type and contract;
@@ -1151,98 +1043,42 @@ cluster-network-policy revisions. The candidate must pass, in order:
    proves that the definition cannot widen policy; it does not replace dispatch-time DNS,
    redirect, proxy-target, or current-policy enforcement.
 3. **Every-active-binding validation:** type and exact contract match; required fields and
-   portable authority constraints are satisfied; the credential kind matches; and each
-   selected recovery claim has a live, attributable attestation whose scope covers every
-   admitted authority and whose measured parameters meet the requirement. The separate
-   `wamn-ko5r.4` decision owns evidence freshness and invalidation; activation consumes its
-   typed live/invalid verdict rather than inventing a second policy.
+   portable authority constraints are satisfied; and the credential kind matches.
 
 An instance with no active bindings may activate after the intrinsic and outer-ceiling
 checks pass; a later binding still has to pass ordinary publication or promotion validation.
 
 The active pointer changes by compare-and-swap only if **all** checks pass and every
 snapshotted input is still current. A changed pointer, binding set, requirement, policy,
-credential-kind record, or attestation makes the proposal stale and refuses activation; the
+or credential-kind record makes the proposal stale and refuses activation; the
 operator may retry against a fresh snapshot. The commit records the candidate definition
 hash and the identities of the validated inputs so the decision is auditable.
 
-> **Any intrinsic, policy, binding, attestation, or stale-snapshot failure preserves the
+> **Any intrinsic, policy, binding, or stale-snapshot failure preserves the
 > status quo:** the candidate does not replace the current generation, the existing
 > compatible generation stays active, and no binding is disabled or forked automatically.
 > Disabling an affected binding or creating a differently scoped instance requires an
 > explicit operator action, followed by a new activation attempt where applicable.
 
 Automatically disabling working bindings because someone proposed a bad endpoint, TLS
-configuration, proxy, or attestation would turn validation into an outage mechanism.
+configuration, proxy, or credential would turn validation into an outage mechanism.
 Activation is also not a perpetual certificate: dispatch still enforces current authority
-and outer policy, and attestation expiry or revocation fails the affected operation
-explicitly rather than silently weakening its recovery class.
+and outer policy.
 
 This sharpens promotion's role: promotion validates that the target binding is compatible
 *initially*; generation activation preserves that compatibility after environment changes.
 
-**The validation snapshot covers two different things, and only one is mechanical:**
+**Decision (wamn-ko5r.4, superseded by `wamn-0h0g.4.9`): endpoint
+behavior never strengthens effect dispatch.** HTTP `0.1` has no outbound
+deduplication claim, evidence policy, or engine-generated retry token. The
+platform validates only durable facts it can own: connection contract,
+canonical authority, TLS/proxy posture, credential kind, outer policy, and
+the active immutable generation. Remote endpoint behavior may inform an
+operator, but it is neither artifact identity nor dispatch authority.
 
-| | Examples | Nature |
-|---|---|---|
-| **Compatibility validation** | connection type, required fields, authority shape, TLS and proxy configuration, credential kind, host-policy compatibility | machine-checkable |
-| **Semantic attestation** | the receiver actually deduplicates; the idempotency domain survives failover; a proxy preserves the idempotency header; a `DELETE` is truly idempotent | an attributable privileged assertion, possibly backed by a smoke test or certification evidence |
-
-> **Only a principal authorized to administer an environment connection may make or approve
-> a semantic attestation that strengthens recovery behaviour. The activated generation
-> records that principal and the attestation version or evidence reference.**
-
-Symmetric with the flow-author rule above: an ordinary author may **require** idempotency;
-they cannot **certify** that the production ERP provides it. The attestation layer is also
-what makes the requirement checkable — the author declares a requirement, the environment
-administrator attests, and the platform matches them. Without it the requirement has nothing
-to match against.
-
-**An attestation is accountable evidence, not an eternal guarantee.** External behaviour
-changes without any wamn connection definition changing: a remote upgrade stops
-deduplicating, a proxy strips the idempotency header, failover moves traffic into a different
-idempotency domain, a vendor alters retention, DNS resolves to a different service behind the
-same authority. An immutable generation and recorded evidence explain what the platform
-*believed*; they do not keep the belief true.
-
-**Decision (wamn-ko5r.4): every strengthening semantic-attestation type owns a fail-closed
-freshness contract; external claims are never indefinite operator responsibility.** The
-versioned connection contract names the evidence kind and issuer, maximum validity window,
-revalidation procedure, semantic scope, and complete set of material invalidation inputs.
-An attestation instance records that contract version, its immutable connection generation,
-claim and measured parameters, scope, evidence reference, issuer, issue time, hard expiry,
-and the revisions or identities of those invalidation inputs. A new connection type may not
-offer a stronger recovery claim until this policy exists; absence of a policy means only the
-conservative recovery default is available.
-
-The policy by connection type starts deliberately narrow:
-
-| Connection contract | Freshness and evidence | Material invalidation |
-|---|---|---|
-| **HTTP `0.1` / `stable-key-dedup-v1`** | **Time-bounded, periodically revalidated end-to-end evidence** through the configured proxy and every admitted primary/failover route. Revalidation must finish and mint a new attestation before the old hard expiry; operator approval alone does not extend it. The type's maximum window bounds unobservable receiver or vendor drift, including remote upgrades and dedup-retention changes. | Any change to the immutable generation, admitted authority/failover set, proxy route or header policy, TLS-authenticated service identity, credential principal or tenant scope, named idempotency domain, claim parameters, or evidence/revalidator revision. DNS answers are neither semantic proof nor an automatic invalidation: dispatch still enforces current DNS and outer policy, but a resolution outside the attested TLS service identity and idempotency scope is an explicit refusal. |
-| **A connection type with no strengthening claim** | No semantic attestation is required or accepted. | It remains at the contract's conservative recovery default (`never-replay` for HTTP `0.1`). |
-| **A future strengthening type** | Must choose and gate its own bounded evidence, revalidation, and maximum window before publication or activation can consume the claim; it does not inherit HTTP evidence by analogy. | Must enumerate every input capable of changing the claimed semantics. An unenumerated or unavailable dependency makes the attestation invalid, not indefinite. |
-
-Revocation, a material-input mismatch, failed revalidation, or reaching the hard expiry makes
-the typed live verdict invalid immediately. Activation then preserves the prior compatible
-generation as `wamn-ko5r.3` requires; dispatch or recovery of an operation that requires the
-claim **fails explicitly**. It never silently downgrades to `never-replay`, substitutes a
-newer attestation, or continues under operator responsibility. A later distinct occurrence
-may proceed only after ordinary resolution admits a currently valid attestation.
-
-**This is an existing pattern, not new machinery.** Inbound authority is already pinned by
-`confirmed_definition_hash` on attachments and `generation` on cron anchors, and the attempt
-protocol already records `attempt_input_ref` so recovery reasons about what the attempt saw.
-Connection instance is the outbound member of that same set.
-
-**v1 scope (settled 2026-08-04).** The floor above — the trusted one-frame
-effect, write-ahead intent, typed refusals — is shipped and in force.
-Connection recovery ships at the contract default only: `never-replay` for
-HTTP `0.1`. The strengthening path — attestation, evidence, revalidation,
-cadence and maximum validity — remains fully specified and parked behind
-item 1's reactivation condition. Generations, staged CAS activation, and
-exact-generation refusal remain in force: they are the rotation-safety
-floor, not the strengthened path.
+**v1 scope.** The trusted adapter, write-ahead attempt, one-dispatch fact,
+typed refusals, staged CAS activation, and exact-generation refusal are the
+complete floor. There is no parked strengthening path.
 
 **It also sharpens H1.** The tested-bundle invariant proves **executable identity**, not
 environmental behaviour — dev and prod deliberately bind different connection instances, so
@@ -1285,31 +1121,12 @@ A deliberately privileged **raw-egress** component may be introduced later, but 
 *named* as an escape hatch with its own authorization, not emerge accidentally from generic
 custom-node config.
 
-**Recovery semantics are portable; their satisfaction is environmental.** The canonical
-resolved-node contract participates in artifact and bundle identity, and identical artifacts
-must promote unchanged — so an environment-specific fact like *this ERP instance honours
-`Idempotency-Key`* **cannot** live in that contract or in bundle identity. Four distinct
-things, previously collapsed:
-
-| Layer | Holds | Environment-specific? |
-|---|---|---|
-| **Resolved-node contract** | recovery modes the executable *can* support, required key propagation, the conservative default | no |
-| **Flow / connection requirement** | the guarantee the application *requires* — e.g. the destination must honour stable idempotency keys | no — portable |
-| **Connection-instance generation** | the environment's *attestation* that this instance satisfies that requirement | **yes** |
-| **Effect attempt** | the effective recovery class actually admitted, plus the connection and credential generations that justified it | recorded per attempt |
-
-> **The artifact declares its required recovery semantics. An environment connection may
-> satisfy or reject them; it may never silently change them. Each effect attempt records
-> the effective recovery class and the connection generation that justified it.**
-
-Without that rule, a dev connection that dedupes lets an effect retry while the same
-artifact in production silently degrades to `never-replay`. The target environment may
-**reject** the artifact at promotion, or the author may **deliberately** publish a more
-conservative policy — but the difference must never arise implicitly.
-
-The same four layers hold for in-project effects, where the connection layer is trivial: a
-`postgres` node *can* support `idempotent-with-key`, the flow declares its SQL is keyed, and
-the attestation is the author's privileged assertion rather than an environment's.
+**Effect policy is portable; connection authority is environmental.** The canonical
+resolved-node contract carries `pure | effectful` and participates in artifact and bundle
+identity. The portable connection requirement names the protocol and authority constraints;
+the environment binding selects an immutable instance generation and credential. The effect
+attempt records those exact facts. Remote endpoint behavior cannot strengthen the effect
+policy or authorize another dispatch.
 
 **Decision (wamn-ko5r.14): do not adopt a host-component provider for connections.** The
 trusted in-process adapter already owns the typed HTTP contract, canonical authority
@@ -1319,38 +1136,24 @@ the call path without adding production capability, increasing caller-isolation,
 and policy-proof obligations for no production benefit. Keep `host-component-plugins`
 disabled. This applies D17's in-process-host boundary; it does not amend D17.
 
-**Decision (wamn-ko5r.2): a connection type defines claim semantics; an instance attests
-facts.** A connection type contract is portable and versioned. It fixes the protocol
-operations and ABI, the authority and field-ownership model, credential injection rules, the
-conservative recovery default, and the vocabulary and exact meaning of stronger recovery
-claims. It does **not** assert that a particular endpoint satisfies one of those claims.
+**Decision (wamn-ko5r.2, narrowed by `wamn-0h0g.4.9`): a connection
+type defines transport semantics; an instance supplies environment facts.** A connection
+type contract is portable and versioned. It fixes the protocol operations and ABI, authority
+and field ownership, credential injection, and target normalization. It does not assert that
+a particular endpoint is safe for repetition.
 
 The requirement / instance boundary is exact:
 
-| Layer | Recovery responsibility |
+| Layer | Responsibility |
 |---|---|
-| **Resolved-node contract** | Says which connection contract the executable consumes and which recovery modes/key propagation it implements. |
-| **Portable connection requirement** | Selects a claim defined by that connection contract and any minimum parameters; it asks, but cannot certify, that an environment satisfies them. |
-| **Instance-generation attestation** | An authorized connection administrator asserts that this immutable generation satisfies the selected claim, naming its scope, measured values and evidence. |
-| **Binding validation / effect attempt** | Validation matches requirement to attestation; the attempt records the exact admitted claim, instance generation and credential generation. |
+| **Resolved-node contract** | Says which connection contract the executable consumes and whether the occurrence is pure or effectful. |
+| **Portable connection requirement** | Names the required type and portable authority constraints. |
+| **Instance generation** | Supplies canonical endpoint, TLS/proxy posture, credential handle, and environment policy facts. |
+| **Binding validation / effect attempt** | Validation matches requirement to generation; the attempt records the exact instance and credential generations authorized for the occurrence. |
 
-For HTTP `0.1`, the conservative default is `never-replay`. The first strengthening claim is
-`stable-key-dedup-v1`. It means that the adapter delivers the engine-generated key through
-the contract-owned `Idempotency-Key` mechanism; the receiver deduplicates concurrent and
-later requests in one named idempotency domain for at least the requirement's minimum
-retention; repeating the same key and canonical operation fingerprint cannot repeat the
-externally visible effect and must yield the same terminal outcome (or a contract-defined
-duplicate result the adapter normalizes to it); and the same key with a different fingerprint
-is rejected. The contract-owned fingerprint covers the canonical method,
-connection-relative target, semantic headers and body digest. Every authority or failover
-target admitted by the generation must share the attested domain. Merely forwarding a
-header, HTTP method idempotence, or an operator saying "safe" satisfies none of this.
-
-HTTP `0.1` does not elevate an external call to `replay`: GET/HEAD method names establish
-neither response stability nor absence of receiver-specific effects. A future connection
-contract may define a stronger read/replay claim, but it must have equally precise semantics
-and evidence. Evidence freshness and invalidation remain the separate 2B decision; this
-decision fixes what the evidence would have to prove.
+For HTTP `0.1`, method names establish neither response stability nor absence of
+receiver-specific effects. The adapter emits no platform-generated outbound retry header;
+GET, HEAD, PUT, and DELETE all follow the same one-dispatch effect protocol.
 
 **A release declares its connection requirements; the environment satisfies them.**
 Publish-time validation becomes: every referenced connection exists in the target env, is
@@ -1565,8 +1368,8 @@ that *assumes* the envelope waits; anything a single pilot exercises does not.
   replication connection cannot sit behind a transaction-mode pooler.
 
 **Done when** the spec's enumerated scenarios are measured against owner-set budgets —
-both respond shapes, the effectful and idempotent-child paths, burst concurrency, and
-recovery latency after worker kill.
+both respond shapes, the single-dispatch effect path, burst concurrency, and reclaim latency
+after worker kill.
 
 **Failed if** the budgets are missed after the tuning matrix is exhausted, *or* if the
 measurement cannot be made deterministic enough to compare runs. **A miss opens a Postgres
@@ -2064,22 +1867,18 @@ Capture policy and deadline tuning are author-controlled within environment and 
 limits — defaulted, advanced-only, exactly as above. The other two are not settings at all:
 
 - **Occurrence keys are engine-generated protocol identity.** They derive from the
-  completed-visits map and carry child-run identity, idempotency, and history correlation. An
-  author never edits one; they may be visible as read-only diagnostics.
-- **Recovery class is a contract property, never a free setting.** In v1 every external or
-  author-supplied effect remains at the conservative `never-replay` class; no user assertion
-  strengthens it. A method, header, SQL claim, or checkbox cannot authorize repetition of a
-  possibly completed effect. The fully specified strengthening path is parked under item 1's
-  reactivation condition and, when resumed, still requires privileged attributable evidence.
+  completed-visits map and identify node facts and effect-ledger rows. An author never edits
+  one; it may be visible as a read-only diagnostic.
+- **Effect policy is a contract property, never a free setting.** The only values are
+  `pure | effectful`. A method, header, SQL claim, or checkbox cannot authorize repetition of
+  a possibly completed effect. Each effectful occurrence has one immutable attempt and at
+  most one dispatch.
 
-  **The open role question is disposition, not recovery strengthening.** Items 1 and 5 must
-  decide which project or platform roles may **park/release** and **resolve** an effect
-  attempt; whether resolve requires a stronger role; the single-attempt and bulk granularity;
-  the permitted bulk filters by connection, generation, flow, and time window; and the
-  separation-of-duties and audit requirements. Resolution asserts succeeded or failed with a
-  typed basis and dispositions an immutable attempt — it never rewrites the attempt, grants
-  compensation, or silently re-executes it. An ordinary flow author receives no implicit
-  self-approval.
+  **Operator authority terminalizes uncertainty; it does not resolve the external outcome.**
+  The run-state-owned transaction verifies `effect-uncertain`, records one immutable action,
+  and fails the node and run. It never rewrites the attempt, asserts success, grants
+  compensation, or silently re-executes anything. An ordinary flow author receives no
+  implicit operator authority.
 
 **Requirement this places on descriptors**, without prescribing the taxonomy: node and
 connection descriptors must distinguish **who owns each field** — author-editable,
@@ -2797,15 +2596,15 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | ~~How does the tenant key relate to `(org, project, env)`?~~ | **Settled (item 5):** registry-minted `<org-abbrev>_<project-abbrev>_<8 random>`, ≤34 chars, never changes; abbreviations are the machine-facing id, names are labels. D6's one-database-per-`(org, project, env)` confirmed on isolation and operational merits — *not*, as previously recorded, because logical replication forecloses sharing | — |
 | ~~Abbreviation charset, length, and who picks it~~ | **Answered in item 5's body:** `[a-z0-9]`, bounded, org globally unique and project unique within org, slugified default at creation with client override. It also collapses the registry/provisioning validator divergence | — |
 | **Revocation scope** | "Prevents further execution" is ambiguous across new admissions, resumed parked runs, in-flight attempts, and tested-but-unpublished drafts | 2D |
-| ~~Retry policy across a connection-instance change~~ | **Settled (wamn-ko5r.1):** retry or recovery of an uncertain effect attempt may use only its recorded immutable connection and credential generations, admitted claim/attestation, fingerprint, and stable key. A missing pinned definition or credential, an expired/revoked attestation, or policy-prohibited pinned authority refuses explicitly; `never-replay` remains `effect-uncertain`. A newer generation is never substituted for that attempt, even under an asserted shared idempotency domain; only a later distinct occurrence may resolve it. | — |
-| ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2):** the portable type contract defines ABI, authority/field ownership, credential injection, conservative recovery default, and the exact semantics of named recovery claims. A portable requirement selects a claim; an authorized environment administrator attests that one immutable instance generation satisfies it. HTTP `0.1` defaults to `never-replay`; `stable-key-dedup-v1` requires scoped, retained, fingerprint-bound deduplication and terminal-outcome recovery, not merely an `Idempotency-Key` header. | — |
-| ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement plus live semantic-attestation verdict in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
-| ~~What evidence, freshness, and invalidation rules apply per semantic-attestation type~~ | **Settled (wamn-ko5r.4):** each strengthening connection claim declares bounded evidence, a maximum validity window, periodic revalidation, semantic scope, and material invalidation inputs; missing policy means the conservative default only. HTTP `0.1` `stable-key-dedup-v1` requires time-bounded end-to-end evidence over every admitted proxy and route, with scope changes or expiry failing explicitly. DNS rotation is not proof; resolution outside the attested service identity/domain refuses. No expiry, revocation, or invalidation may silently downgrade to `never-replay`. | — |
-| ~~Who holds the v1 effect-disposition verbs, and at what granularity?~~ | **Settled (wamn-ctc8.2):** automatic park is system-owned; project deployers/admins may manually park/release, project admins may resolve, and platform admins hold audited break-glass/cross-project authority. Bulk park/release is project-scoped; bulk resolve is admin-only, materializes immutable attempt ids, and requires connection + generation + bounded window (flow only narrows). Every resolution records principal, effective role, typed basis, evidence reference, exact attempt set, and correlation id; authors/publishers cannot self-resolve except through separately audited platform break-glass. | — |
+| ~~Effect retry across a connection-instance change~~ | **Settled (wamn-ko5r.1, narrowed by wamn-0h0g.4.9):** an effect attempt never dispatches twice, so it never retargets. The attempt retains its immutable connection and credential generation facts for audit; a later distinct occurrence resolves the then-active compatible generation. | — |
+| ~~What a connection type's contract asserts~~ | **Settled (wamn-ko5r.2, narrowed by wamn-0h0g.4.9):** the portable type contract defines ABI, authority and field ownership, credential injection, and target normalization. It carries no endpoint-behavior claim that can strengthen dispatch. HTTP `0.1` emits no platform-generated outbound retry header. | — |
+| ~~Generation activation compatibility~~ | **Settled (wamn-ko5r.3):** stage an immutable candidate and validate its exact type/contract, required fields, canonical authorities, TLS/redirect/proxy posture, credential kind, both outer policy ceilings, and every active binding's portable requirement in one per-instance serialized snapshot. An instance with no active bindings may activate after intrinsic and outer-ceiling checks. Compare-and-swap activates only while the active pointer and every validated input remain current. Any incompatibility or stale snapshot refuses the candidate, preserves the existing active generation and bindings, and requires explicit operator action to disable a binding or create another instance. Dispatch still rechecks current policy. | — |
+| ~~Can endpoint-behavior evidence strengthen effect dispatch?~~ | **Settled (wamn-ko5r.4, superseded by wamn-0h0g.4.9):** no. Remote behavior is not durable platform authority; it cannot add a send or alter the one-dispatch protocol. | — |
+| ~~Who resolves an uncertain effect?~~ | **Settled by the MVP cut:** nobody asserts the external outcome. A run-state-owned operator transaction verifies `effect-uncertain`, appends one immutable action with basis/evidence/correlation/principal, and terminally fails the node and run. There is no success assertion or bulk surface. | — |
 | ~~What "Replay" means to an author~~ | **Settled (wamn-4u7p.1):** audit reconstruction is read-only and creates no run; Replay is exact-definition execution in a fail-closed scenario sandbox; Run again/Reprocess is fresh production admission under current definitions and authority. Retained bytes never grant execution permission, and typed lineage distinguishes the two executing operations | — |
 | **Field-ownership metadata in node and connection descriptors** | The simple surface can only be a constrained view if descriptors say who owns each field — author, environment, or system. Tiers are 6A's design | 6A, 2B |
 | **Do composition economics hold?** | 2A's exit; if not, least privilege stays intra-runner (code-enforced) rather than structural, and 6A builds against the linked runner | 2A |
-| ~~Replay classification for standard nodes~~ | **Settled (wamn-4u7p.2):** standard descriptors and custom manifests resolve to one versioned executable recovery contract; an artifact pins each occurrence's selected class/claim; an attempt records what the environment admitted. Complete standard descriptors enter identity through the canonical contract, and runtime tables may not reclassify it | — |
+| ~~Effect policy for standard nodes~~ | **Settled (wamn-4u7p.2, narrowed by wamn-0h0g.4.9):** standard descriptors and custom manifests resolve through one versioned contract whose only effect-policy values are `pure | effectful`; complete descriptors enter artifact identity and runtime tables may not reclassify them. | — |
 | ~~Fanout after a nondeterministic producer~~ | **Not a gate:** the engine cannot fan out (one port per emission, one edge per port), so the hazard needs a feature that does not exist. Recovery must stay fan-out-addable | — |
 | ~~Node ABI: implement 0.1's existing P2 streaming contract, or introduce a P3-native 0.2?~~ | **Settled (wamn-4u7p.3):** activate `wamn:node@0.1.x`'s existing P2 `streamed(payload-ref)` + `payloads` contract. The opaque reference already moves storage identity without bytes; the pinned fork's P3 cross-store bridge is a backpressured element pump, not zero-copy object-handle relocation. Defer the breaking 0.2/WASI 0.3 migration to `wamn-72i` | — |
 | ~~The canonical command model beneath git and the management API~~ | **Settled (wamn-ftfc.1):** typed transport-neutral application handlers own validation, authorization, optimistic lifecycle transition, and audit attribution; Git/CI, management API, and CLI are adapters, while privileged `wamn-ctl` operator/recovery effects remain outside the authoring model | — |
@@ -2866,7 +2665,7 @@ Assumed to exist by work already in flight, owned by no document and no item abo
 - **The idempotency-key namespace** — one flat unique index per tenant, no reserved
   prefixes. Cron, event, and HTTP identities share it by convention.
 - **Platform revision** — the column exists and admission rejects an empty value, but every
-  row reads `legacy`: no producer gives it meaning, and it pins replay behavior.
+  row reads `legacy`: no producer gives it meaning, and it pins execution behavior.
 - **Outbound endpoints live in the flow artifact.** `http-request` takes `url` in node
   config; artifacts are env-independent by key, so a per-env endpoint forces different
   bytes and therefore a different flow version — dev tests what prod does not run.

@@ -78,7 +78,10 @@
       "name": "wamn-run-state",
       "version": "0.1.0",
       "root": "crates/execution/run-state",
-      "features": []
+      "features": [
+        "effect-writer-credential",
+        "native"
+      ]
     },
     {
       "name": "wamn-runner",
@@ -5858,6 +5861,38 @@
       "value": "^0.1.0"
     },
     {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/features",
+      "value": "native"
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/optional",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/package",
+      "value": "wamn-run-state"
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/source",
+      "value": "path:crates/execution/run-state"
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-execution-host/all-targets/wamn-run-state/version",
+      "value": "^0.1.0"
+    },
+    {
       "tag": "dependency/wamn-execution-host/all-targets/wamn-runtime/default-features",
       "value": "true"
     },
@@ -6506,6 +6541,70 @@
       "value": "^1"
     },
     {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/default-features",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/features",
+      "value": "std"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/optional",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/package",
+      "value": "chrono"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/chrono/version",
+      "value": "^0.4"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/optional",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/package",
+      "value": "hex"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/hex/version",
+      "value": "^0.4"
+    },
+    {
       "tag": "dependency/wamn-run-state/all-targets/serde/default-features",
       "value": "true"
     },
@@ -6568,6 +6667,102 @@
     {
       "tag": "dependency/wamn-run-state/all-targets/serde_json/version",
       "value": "^1"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/optional",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/package",
+      "value": "sha2"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/sha2/version",
+      "value": "^0.11"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/optional",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/package",
+      "value": "tokio-postgres"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/tokio-postgres/version",
+      "value": "^0.7"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/optional",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/package",
+      "value": "url"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/source",
+      "value": "registry+https://github.com/rust-lang/crates.io-index"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/url/version",
+      "value": "^2"
     },
     {
       "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/default-features",

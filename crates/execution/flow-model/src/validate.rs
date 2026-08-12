@@ -455,9 +455,9 @@ fn validate_http_request_connection(
                 format!("HTTP header {header:?} is owned by the environment connection"),
             )),
             "idempotency-key" => issues.push(Issue::error(
-                "http-request-system-header",
+                "http-request-reserved-header",
                 format!("nodes[{index}].config.headers[{header:?}]"),
-                "HTTP Idempotency-Key is injected by the platform from the durable attempt",
+                "HTTP Idempotency-Key is reserved and cannot be authored",
             )),
             _ => {}
         }
@@ -1236,9 +1236,9 @@ mod tests {
             );
         }
 
-        let mut system = connection_http_flow();
-        system.nodes[1].config["headers"] = json!({"Idempotency-Key": "author-value"});
-        assert!(codes(&system).contains(&"http-request-system-header"));
+        let mut reserved = connection_http_flow();
+        reserved.nodes[1].config["headers"] = json!({"Idempotency-Key": "author-value"});
+        assert!(codes(&reserved).contains(&"http-request-reserved-header"));
     }
 
     #[test]

@@ -86,6 +86,9 @@ impl InlineRunDriver for InlineExecutionDriver {
                         tenant: &claim.tenant,
                         schema: claim.schema.as_deref(),
                         project: &claim.project,
+                        org: None,
+                        environment: None,
+                        database: None,
                     },
                     production_capabilities(allowed_hosts, Arc::new(RunnerEgressPolicy::default()))
                         .with_node_placements(node_placements),

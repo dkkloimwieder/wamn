@@ -5,6 +5,12 @@ bead: wamn-ko5r.5
 date: 2026-08-01
 ---
 
+> **Superseded for outbound retry authority by `wamn-0h0g.4.9`.** Stable-key
+> generation, operation fingerprints, injected `Idempotency-Key`, and automatic
+> effect redispatch below are historical design provenance only. Active
+> authority is the single immutable attempt plus first-insert-only dispatch
+> contract in [PLAN](../PLAN/PLAN.md) and [FLOW-SPEC](FLOW-SPEC.md).
+
 # Connections: portable requirements, environment bindings
 
 This document fixes the minimum design for [PLAN item 2B](../PLAN/PLAN.md#2b--connections--the-env-boundary-for-anything-external). It is subordinate to

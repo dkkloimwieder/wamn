@@ -45,14 +45,12 @@
 //!    or replaced and non-record checks are removed. The run-state helper
 //!    functions and lineage trigger are likewise repaired from record.
 //!
-//! **Data preserving:** the plan never drops a live column or table. It drops
-//! only named legacy outbox-era indexes, stale-definition record indexes, and
-//! the retired attempt-authority indexes; live columns not in the record are
-//! SURFACED (`extra_columns`) and preserved. The named retired attempt columns
-//! additionally lose obsolete defaults and NOT NULL authority. CHECK/trigger
-//! definitions may be replaced to converge with record, but rows are never
-//! rewritten or deleted: PostgreSQL validates new CHECKs against existing rows
-//! and aborts on incompatible legacy data.
+//! **Data preserving:** the plan never rewrites or deletes a retained row or
+//! drops a retained table. Unknown live columns are SURFACED (`extra_columns`)
+//! and preserved. The explicit frame/effect-writer cutovers physically remove
+//! only the named retired identity/recovery columns after their locked safety
+//! preflights. PostgreSQL validates new CHECKs against existing rows and aborts
+//! on incompatible legacy data rather than fabricating history.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -391,6 +389,24 @@ const CHECK_SPECS: &[CheckSpec] = &[
         table: "effect_attempt_dispatches",
         name: "effect_attempt_dispatches_tenant_check",
         definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_dispatches",
+        name: "effect_attempt_dispatches_frame_check",
+        definition: "CHECK (frame_id >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_dispatches",
+        name: "effect_attempt_dispatches_local_node_check",
+        definition: "CHECK (local_node_id ~ '^[a-z0-9-]+$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempt_dispatches",
+        name: "effect_attempt_dispatches_occurrence_check",
+        definition: "CHECK (occurrence >= 0)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -967,29 +983,6 @@ END
 $function$
 "#;
 
-const GUARD_EFFECT_FACT_APPEND_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_fact_append()
- RETURNS trigger
- LANGUAGE plpgsql
- SET search_path TO 'pg_catalog', 'pg_temp'
-AS $function$
-DECLARE
-    current_can_migrate boolean := COALESCE(
-        (SELECT candidate.rolsuper OR candidate.rolbypassrls
-         FROM pg_catalog.pg_roles AS candidate
-         WHERE candidate.rolname = CURRENT_USER),
-        false
-    );
-BEGIN
-    IF NOT current_can_migrate THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'effect-fact-append-requires-migration-authority';
-    END IF;
-    RETURN NEW;
-END
-$function$
-"#;
-
 const GUARD_EFFECT_DISPOSITION_APPEND_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -1290,29 +1283,6 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.guard_authoring_report_write() FROM PUBLIC;"#;
 
-const GUARD_EFFECT_FACT_APPEND_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_fact_append()
-RETURNS trigger
-LANGUAGE plpgsql
-SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-    current_can_migrate boolean := COALESCE(
-        (SELECT candidate.rolsuper OR candidate.rolbypassrls
-         FROM pg_catalog.pg_roles AS candidate
-         WHERE candidate.rolname = CURRENT_USER),
-        false
-    );
-BEGIN
-    IF NOT current_can_migrate THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'effect-fact-append-requires-migration-authority';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.guard_effect_fact_append() FROM PUBLIC;"#;
-
 const GUARD_EFFECT_DISPOSITION_APPEND_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1477,11 +1447,6 @@ fn helper_specs() -> Vec<HelperSpec> {
             GUARD_AUTHORING_REPORT_WRITE_SQL,
         ),
         borrowed_helper_spec(
-            "guard_effect_fact_append",
-            GUARD_EFFECT_FACT_APPEND_DEF,
-            GUARD_EFFECT_FACT_APPEND_SQL,
-        ),
-        borrowed_helper_spec(
             "guard_effect_disposition_append",
             GUARD_EFFECT_DISPOSITION_APPEND_DEF,
             GUARD_EFFECT_DISPOSITION_APPEND_SQL,
@@ -1547,23 +1512,6 @@ fn trigger_specs() -> Vec<TriggerSpec> {
                 ),
             });
         }
-    }
-    for table in [
-        "effect_attempts",
-        "effect_attempt_dispatches",
-        "effect_attempt_outcomes",
-    ] {
-        let name = format!("{table}_insert_guard");
-        specs.push(TriggerSpec {
-            table: table.to_string(),
-            name: name.clone(),
-            definition: format!(
-                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append()"
-            ),
-            sql: format!(
-                "CREATE TRIGGER {name} BEFORE INSERT ON wamn_run.{table} FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_fact_append();"
-            ),
-        });
     }
     for (table, name) in [
         (
@@ -1668,12 +1616,14 @@ fn trigger_specs() -> Vec<TriggerSpec> {
 }
 
 const EFFECT_DISPATCH_ATTEMPT_FK_NAME: &str = "effect_attempt_dispatches_attempt_fk";
-const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, attempt_started_at)";
+const EFFECT_DISPATCH_ATTEMPT_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
 const EFFECT_DISPATCH_ATTEMPT_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_dispatches \
      ADD CONSTRAINT effect_attempt_dispatches_attempt_fk \
-     FOREIGN KEY (tenant_id, attempt_id, attempt_started_at) \
+     FOREIGN KEY (tenant_id, attempt_id, attempt_started_at, \
+                  run_id, frame_id, local_node_id, occurrence) \
      REFERENCES wamn_run.effect_attempts \
-         (tenant_id, attempt_id, attempt_started_at)";
+         (tenant_id, attempt_id, attempt_started_at, \
+          run_id, frame_id, local_node_id, occurrence)";
 const EFFECT_OUTCOME_DISPATCH_FK_NAME: &str = "effect_attempt_outcomes_dispatch_fk";
 const EFFECT_OUTCOME_DISPATCH_FK_DEF: &str = "FOREIGN KEY (tenant_id, attempt_id, dispatched_at) REFERENCES wamn_run.effect_attempt_dispatches(tenant_id, attempt_id, dispatched_at)";
 const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attempt_outcomes \
@@ -1705,6 +1655,7 @@ const RETIRED_NODE_ATTEMPT_COLUMNS: &[&str] = &[
 ];
 
 const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
+    "attempt_key",
     "attempt_index",
     "predecessor_attempt_id",
     "legacy_imported",
@@ -1734,6 +1685,12 @@ const EFFECT_FRAME_COLUMNS: &[&str] = &[
 const EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree \
 (tenant_id, run_id, frame_id, local_node_id, occurrence)";
+const EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF: &str = "CREATE UNIQUE INDEX \
+effect_attempts_dispatch_identity_key ON wamn_run.effect_attempts USING btree \
+(tenant_id, attempt_id, attempt_started_at, run_id, frame_id, local_node_id, occurrence)";
+const EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
+effect_attempt_dispatches_occurrence_key ON wamn_run.effect_attempt_dispatches USING btree \
+(tenant_id, run_id, frame_id, local_node_id, occurrence)";
 const NODE_RUNS_PKEY_DEF: &str = "CREATE UNIQUE INDEX node_runs_pkey ON \
 wamn_run.node_runs USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)";
 
@@ -1754,32 +1711,22 @@ const EFFECT_FRAME_CHECKS: &[&str] = &[
     "effect_attempts_requirement_check",
 ];
 
-const RETIRED_EFFECT_ATTEMPT_INDEXES: &[&str] = &[
-    "effect_attempts_occurrence",
-    "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
-    "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
-];
-
-fn retirement_owned_check(table: &str, name: &str) -> bool {
-    matches!(
-        (table, name),
-        (
-            "node_runs",
-            "node_runs_selected_recovery_class_check"
-                | "node_runs_recovery_class_check"
-                | "node_runs_generation_fact_kind_check"
-                | "node_runs_check"
-                | "node_runs_check1"
-                | "node_runs_check2"
-                | "node_runs_check3"
-        ) | (
-            "effect_attempts",
+fn effect_writer_cutover_owned_check(table: &str, name: &str) -> bool {
+    table == "effect_attempts"
+        && matches!(
+            name,
             "effect_attempts_attempt_index_check"
                 | "effect_attempts_lineage_check"
                 | "effect_attempts_recovery_class_check"
                 | "effect_attempts_key_check"
         )
-    )
+}
+
+fn retired_node_attempt_check(definition: &str) -> bool {
+    let tokens = ident_tokens(definition);
+    RETIRED_NODE_ATTEMPT_COLUMNS
+        .iter()
+        .any(|column| tokens.contains(*column))
 }
 
 fn frame_identity_column(table: &str, column: &str) -> bool {
@@ -1910,6 +1857,8 @@ fn postgres_visible_identifier(name: &str) -> &str {
 struct FrameIdentityCutoverTargets {
     node: bool,
     effect: bool,
+    dispatch: bool,
+    restore_dispatch_fk: bool,
 }
 
 impl FrameIdentityCutoverTargets {
@@ -1929,9 +1878,13 @@ fn frame_identity_cutover_targets(
     obs: &RunPlaneObservation,
     schema: &BareSchemaName,
 ) -> FrameIdentityCutoverTargets {
+    let effect = !effect_frame_contract_complete(obs, schema);
+    let dispatch = effect && obs.tables.contains_key("effect_attempt_dispatches");
     FrameIdentityCutoverTargets {
         node: !node_frame_contract_complete(obs, schema),
-        effect: !effect_frame_contract_complete(obs, schema),
+        effect,
+        dispatch,
+        restore_dispatch_fk: dispatch && !effect_writer_ledger_cutover_needed(schema, obs),
     }
 }
 
@@ -1940,7 +1893,8 @@ fn frame_identity_cutover_sql(
     targets: FrameIdentityCutoverTargets,
 ) -> String {
     debug_assert!(targets.needed());
-    let schema = schema.quoted();
+    let target = schema;
+    let schema = target.quoted();
     let mut sql = String::new();
     let mut populated = Vec::new();
     if targets.node {
@@ -1954,6 +1908,14 @@ fn frame_identity_cutover_sql(
             "LOCK TABLE {schema}.effect_attempts IN ACCESS EXCLUSIVE MODE;\n"
         ));
         populated.push(format!("EXISTS (SELECT 1 FROM {schema}.effect_attempts)"));
+    }
+    if targets.dispatch {
+        sql.push_str(&format!(
+            "LOCK TABLE {schema}.effect_attempt_dispatches IN ACCESS EXCLUSIVE MODE;\n"
+        ));
+        populated.push(format!(
+            "EXISTS (SELECT 1 FROM {schema}.effect_attempt_dispatches)"
+        ));
     }
     sql.push_str(&format!(
         r#"DO $frame_identity_cutover$
@@ -2003,9 +1965,16 @@ ALTER TABLE {schema}.node_runs
         ));
     }
     if targets.effect {
+        if targets.dispatch {
+            sql.push_str(&format!(
+                "ALTER TABLE {schema}.effect_attempt_dispatches \
+                 DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;\n"
+            ));
+        }
         sql.push_str(&format!(
             r#"ALTER TABLE {schema}.effect_attempts
     DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_dispatch_identity_key,
     DROP CONSTRAINT IF EXISTS effect_attempts_root_plan_hash_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_current_plan_hash_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_frame_check,
@@ -2016,6 +1985,7 @@ ALTER TABLE {schema}.node_runs
     DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key,
     DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_dispatch_identity_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
@@ -2051,54 +2021,89 @@ ALTER TABLE {schema}.effect_attempts
     ADD CONSTRAINT effect_attempts_source_artifact_check CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{{64}}$'),
     ADD CONSTRAINT effect_attempts_requirement_check CHECK (requirement_name <> ''),
     ADD CONSTRAINT effect_attempts_occurrence_key
-    UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence);
+        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
+    ADD CONSTRAINT effect_attempts_dispatch_identity_key
+        UNIQUE (tenant_id, attempt_id, attempt_started_at,
+                run_id, frame_id, local_node_id, occurrence);
 "#
         ));
+        if targets.restore_dispatch_fk {
+            sql.push_str(&rewrite_schema(EFFECT_DISPATCH_ATTEMPT_FK_SQL, target));
+            sql.push_str(";\n");
+        }
     }
     sql
 }
 
-fn retire_attempt_recovery_lineage_sql(
-    schema: &BareSchemaName,
-    node_columns: &BTreeSet<String>,
-    attempt_columns: &BTreeSet<String>,
-    occurrence_key_present: bool,
-) -> String {
-    let schema = schema.quoted();
-    let mut sql = format!(
-        r#"LOCK TABLE {schema}.effect_attempts IN SHARE ROW EXCLUSIVE MODE;
-LOCK TABLE {schema}.node_runs IN SHARE ROW EXCLUSIVE MODE;
+fn effect_writer_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+    let target = schema;
+    let schema = target.quoted();
+    let ledger_cutover_needed = effect_writer_ledger_cutover_needed(target, obs);
+    let retired_node_columns: Vec<&str> = obs
+        .tables
+        .get("node_runs")
+        .into_iter()
+        .flat_map(|columns| {
+            RETIRED_NODE_ATTEMPT_COLUMNS
+                .iter()
+                .copied()
+                .filter(|column| columns.contains(*column))
+        })
+        .collect();
+    let present_ledgers: Vec<&str> = if ledger_cutover_needed {
+        [
+            "effect_attempts",
+            "effect_attempt_dispatches",
+            "effect_attempt_outcomes",
+        ]
+        .into_iter()
+        .filter(|table| obs.tables.contains_key(*table))
+        .collect()
+    } else {
+        Vec::new()
+    };
+    let mut locked_tables = Vec::new();
+    if !retired_node_columns.is_empty() {
+        locked_tables.push("node_runs");
+    }
+    locked_tables.extend(present_ledgers.iter().copied());
+    let mut sql = locked_tables
+        .iter()
+        .map(|table| {
+            format!(
+                "LOCK TABLE {schema}.{} IN ACCESS EXCLUSIVE MODE;",
+                quote_ident(table)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let populated = present_ledgers
+        .iter()
+        .map(|table| format!("EXISTS (SELECT 1 FROM {schema}.{})", quote_ident(table)))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let populated = if populated.is_empty() {
+        "false".to_string()
+    } else {
+        populated
+    };
+    sql.push_str(&format!(
+        r#"
 DO $retire$
 BEGIN
-    IF EXISTS (
-        SELECT 1 FROM {schema}.effect_attempts
-         GROUP BY tenant_id,run_id,frame_id,local_node_id,occurrence
-        HAVING count(*) > 1
-    ) THEN
+    IF {populated} THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
-            MESSAGE = 'legacy-effect-attempt-successors-present';
-    END IF;
-
-    IF EXISTS (
-        SELECT 1 FROM {schema}.node_runs AS n
-         WHERE n.status = 'started'
-           AND NOT EXISTS (
-               SELECT 1 FROM {schema}.effect_attempts AS a
-                WHERE a.tenant_id = n.tenant_id
-                  AND a.run_id = n.run_id
-                  AND a.frame_id = n.frame_id
-                  AND a.local_node_id = n.local_node_id
-                  AND a.occurrence = n.occurrence
-           )
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'legacy-active-attempt-without-immutable-intent';
+            MESSAGE = 'effect-writer-cutover-requires-empty-ledger';
     END IF;
 END
 $retire$;
-ALTER TABLE {schema}.node_runs
+"#,
+    ));
+
+    if !retired_node_columns.is_empty() {
+        sql.push_str(&format!(
+            r#"ALTER TABLE {schema}.node_runs
     DROP CONSTRAINT IF EXISTS node_runs_current_effect_attempt_fk,
     DROP CONSTRAINT IF EXISTS node_runs_selected_recovery_class_check,
     DROP CONSTRAINT IF EXISTS node_runs_recovery_class_check,
@@ -2107,45 +2112,192 @@ ALTER TABLE {schema}.node_runs
     DROP CONSTRAINT IF EXISTS node_runs_check1,
     DROP CONSTRAINT IF EXISTS node_runs_check2,
     DROP CONSTRAINT IF EXISTS node_runs_check3;
-ALTER TABLE {schema}.effect_attempts
+"#,
+        ));
+        let drops = retired_node_columns
+            .iter()
+            .map(|column| format!("DROP COLUMN {}", quote_ident(column)))
+            .collect::<Vec<_>>()
+            .join(",\n    ");
+        sql.push_str(&format!("ALTER TABLE {schema}.node_runs\n    {drops};\n"));
+    }
+
+    if !ledger_cutover_needed {
+        return sql;
+    }
+
+    for table in &present_ledgers {
+        sql.push_str(&format!(
+            "DROP TRIGGER IF EXISTS {} ON {schema}.{};\n",
+            quote_ident(&format!("{table}_insert_guard")),
+            quote_ident(table),
+        ));
+    }
+    sql.push_str(&format!(
+        "DROP FUNCTION IF EXISTS {schema}.guard_effect_fact_append();\n"
+    ));
+
+    if obs.tables.contains_key("effect_attempt_dispatches") {
+        sql.push_str(&format!(
+            "ALTER TABLE {schema}.effect_attempt_dispatches \
+             DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk;\n"
+        ));
+    }
+
+    if let Some(attempt_columns) = obs.tables.get("effect_attempts") {
+        sql.push_str(&format!(
+            r#"ALTER TABLE {schema}.effect_attempts
     DROP CONSTRAINT IF EXISTS effect_attempts_predecessor_fk,
     DROP CONSTRAINT IF EXISTS effect_attempts_attempt_index_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_lineage_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_recovery_class_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_key_check,
     DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key,
-    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_attempt_id_attempt_started_at_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_dispatch_identity_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key;
 DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_dispatch_identity_key;
 "#,
-    );
-    for column in RETIRED_NODE_ATTEMPT_COLUMNS {
-        if node_columns.contains(*column) {
-            sql.push_str(&format!(
-                "ALTER TABLE {schema}.node_runs ALTER COLUMN {} DROP NOT NULL, ALTER COLUMN {} DROP DEFAULT;\n",
-                quote_ident(column),
-                quote_ident(column),
-            ));
+        ));
+        for column in RETIRED_EFFECT_ATTEMPT_COLUMNS {
+            if attempt_columns.contains(*column) {
+                sql.push_str(&format!(
+                    "ALTER TABLE {schema}.effect_attempts DROP COLUMN {};\n",
+                    quote_ident(column),
+                ));
+            }
         }
-    }
-    for column in RETIRED_EFFECT_ATTEMPT_COLUMNS {
-        if attempt_columns.contains(*column) {
-            sql.push_str(&format!(
-                "ALTER TABLE {schema}.effect_attempts ALTER COLUMN {} DROP NOT NULL, ALTER COLUMN {} DROP DEFAULT;\n",
-                quote_ident(column),
-                quote_ident(column),
-            ));
-        }
-    }
-    if !occurrence_key_present {
         sql.push_str(&format!(
-            "ALTER TABLE {schema}.effect_attempts DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key;\n\
-             DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence_key;\n\
-             ALTER TABLE {schema}.effect_attempts ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);\n",
+            "ALTER TABLE {schema}.effect_attempts \
+             ALTER COLUMN attempt_started_at SET DEFAULT now(), \
+             ADD CONSTRAINT effect_attempts_dispatch_identity_key \
+             UNIQUE (tenant_id,attempt_id,attempt_started_at,run_id,frame_id,local_node_id,occurrence);\n"
         ));
     }
+
+    if obs.tables.contains_key("effect_attempt_dispatches") {
+        sql.push_str(&format!(
+            r#"ALTER TABLE {schema}.effect_attempt_dispatches
+    DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk,
+    DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_occurrence_key,
+    DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_frame_check,
+    DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_local_node_check,
+    DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_occurrence_check,
+    DROP COLUMN IF EXISTS run_id,
+    DROP COLUMN IF EXISTS frame_id,
+    DROP COLUMN IF EXISTS local_node_id,
+    DROP COLUMN IF EXISTS occurrence;
+DROP INDEX IF EXISTS {schema}.effect_attempt_dispatches_occurrence_key;
+ALTER TABLE {schema}.effect_attempt_dispatches
+    ADD COLUMN run_id text NOT NULL,
+    ADD COLUMN frame_id bigint NOT NULL,
+    ADD COLUMN local_node_id text NOT NULL,
+    ADD COLUMN occurrence int NOT NULL,
+    ADD CONSTRAINT effect_attempt_dispatches_frame_check CHECK (frame_id >= 0),
+    ADD CONSTRAINT effect_attempt_dispatches_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    ADD CONSTRAINT effect_attempt_dispatches_occurrence_check CHECK (occurrence >= 0),
+    ADD CONSTRAINT effect_attempt_dispatches_occurrence_key
+        UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);
+"#,
+        ));
+        if obs.tables.contains_key("effect_attempts") {
+            sql.push_str(&rewrite_schema(EFFECT_DISPATCH_ATTEMPT_FK_SQL, target));
+            sql.push_str(";\n");
+        }
+    }
     sql
+}
+
+fn effect_writer_ledger_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+    let attempts_need_cutover = obs.tables.get("effect_attempts").is_some_and(|columns| {
+        RETIRED_EFFECT_ATTEMPT_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+            || !obs.defaulted_columns.contains(&(
+                "effect_attempts".to_string(),
+                "attempt_started_at".to_string(),
+            ))
+            || obs
+                .indexes
+                .get("effect_attempts_dispatch_identity_key")
+                .is_none_or(|definition| {
+                    normalize_observed_schema(definition, schema)
+                        != EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF
+                })
+    });
+    let dispatches_need_cutover = obs
+        .tables
+        .get("effect_attempt_dispatches")
+        .is_some_and(|_| {
+            !column_contract_complete(obs, "effect_attempt_dispatches", "run_id", "text", true)
+                || !column_contract_complete(
+                    obs,
+                    "effect_attempt_dispatches",
+                    "frame_id",
+                    "bigint",
+                    true,
+                )
+                || !column_contract_complete(
+                    obs,
+                    "effect_attempt_dispatches",
+                    "local_node_id",
+                    "text",
+                    true,
+                )
+                || !column_contract_complete(
+                    obs,
+                    "effect_attempt_dispatches",
+                    "occurrence",
+                    "integer",
+                    true,
+                )
+                || obs
+                    .indexes
+                    .get("effect_attempt_dispatches_occurrence_key")
+                    .is_none_or(|definition| {
+                        normalize_observed_schema(definition, schema)
+                            != EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF
+                    })
+                || (obs.tables.contains_key("effect_attempts")
+                    && obs
+                        .foreign_keys
+                        .get(&(
+                            "effect_attempt_dispatches".to_string(),
+                            EFFECT_DISPATCH_ATTEMPT_FK_NAME.to_string(),
+                        ))
+                        .is_none_or(|definition| {
+                            normalize_observed_schema(definition, schema)
+                                != EFFECT_DISPATCH_ATTEMPT_FK_DEF
+                        }))
+        });
+    let retired_insert_guard_present = [
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+    ]
+    .into_iter()
+    .any(|table| {
+        obs.triggers
+            .contains_key(&(table.to_string(), format!("{table}_insert_guard")))
+    }) || obs
+        .helper_functions
+        .contains_key("guard_effect_fact_append");
+    attempts_need_cutover || dispatches_need_cutover || retired_insert_guard_present
+}
+
+fn retired_node_attempt_columns_present(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("node_runs").is_some_and(|columns| {
+        RETIRED_NODE_ATTEMPT_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+    })
+}
+
+fn effect_writer_cutover_needed(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+    effect_writer_ledger_cutover_needed(schema, obs) || retired_node_attempt_columns_present(obs)
 }
 
 fn disposition_provenance_migration_sql() -> &'static str {
@@ -2337,6 +2489,8 @@ pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 /// The non-login database authority held only by trusted scenario-host
 /// credentials. The guest-visible `wamn_app` role is never a member.
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
+/// Stable NOLOGIN ACL role inherited only by scoped writer generations.
+pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
 
 /// Security attributes observed for the host-only scenario author role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2348,6 +2502,36 @@ pub struct ScenarioAuthorRoleObservation {
     pub inherits_roles: bool,
     pub can_replicate: bool,
     pub bypasses_rls: bool,
+}
+
+/// Provisioning-owned stable effect-writer role boundary observed read-only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EffectWriterRoleObservation {
+    pub can_login: bool,
+    pub is_superuser: bool,
+    pub can_create_database: bool,
+    pub can_create_role: bool,
+    pub inherits_roles: bool,
+    pub can_replicate: bool,
+    pub bypasses_rls: bool,
+    pub can_connect: bool,
+    pub owns_objects: bool,
+    pub membership_out_of_bounds: bool,
+}
+
+impl EffectWriterRoleObservation {
+    fn is_acl_only(self) -> bool {
+        !self.can_login
+            && !self.is_superuser
+            && !self.can_create_database
+            && !self.can_create_role
+            && !self.inherits_roles
+            && !self.can_replicate
+            && !self.bypasses_rls
+            && !self.can_connect
+            && !self.owns_objects
+            && !self.membership_out_of_bounds
+    }
 }
 
 impl ScenarioAuthorRoleObservation {
@@ -2458,9 +2642,24 @@ pub struct RunPlaneObservation {
     /// Exact row counts for the two execution-pin cutover targets.
     pub run_rows: i64,
     pub release_flow_rows: i64,
+    /// Total immutable rows across the three effect-writer ledgers that exist.
+    /// Any nonzero value makes an incompatible structural cutover refuse.
+    pub effect_ledger_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
+    /// Stable writer role attributes, ownership, membership, and CONNECT.
+    pub effect_writer_role: Option<EffectWriterRoleObservation>,
+    /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` schema boundary.
+    pub effect_writer_schema_privileges: (bool, bool),
+    /// Direct ledger grants keyed by `(table, grantee)`.
+    pub effect_ledger_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Effective ledger grants keyed by `(table, grantee)`.
+    pub effect_ledger_effective_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Effective column grants keyed by `(table, grantee)`.
+    pub effect_ledger_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
+    /// Ledger owners keyed by table.
+    pub effect_ledger_owners: BTreeMap<String, String>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
     /// Direct table grants for the authoring-state security surface, keyed by
@@ -2548,9 +2747,12 @@ pub enum RunPlaneActionKind {
     AddColumn,
     /// Strict empty-only conversion from legacy node/effect identity to frames.
     FrameIdentityCutover,
-    /// Refuse unsafe history, then retire legacy recovery/successor schema
-    /// without rewriting immutable attempt facts.
-    RetireAttemptRecoveryLineage,
+    /// Strict empty-only installation of the coordinate-bound writer ledgers.
+    EffectWriterCutover,
+    /// Refuse a provisioning-owned stable writer role outside its frozen shape.
+    VerifyEffectWriterRole,
+    /// Converge exact stable-writer schema/table ACLs and deny other writers.
+    RepairEffectWriterPrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
     RepairConstraint,
     /// Drop/re-add a missing or drifted named record foreign key.
@@ -2601,15 +2803,16 @@ pub struct RunPlaneAction {
 }
 
 /// The reconcile plan: ordered actions, plus the record tables already fully at
-/// target (reported, never executed) and live columns the record does not know
-/// (SURFACED — the plan never drops them). Idempotent: planning against the
-/// post-apply state yields no actions.
+/// target (reported, never executed) and unknown live columns the record does
+/// not know (SURFACED and preserved). Named retired columns owned by an
+/// explicit cutover are not reported as extras. Idempotent: planning against
+/// the post-apply state yields no actions.
 #[derive(Debug, Clone, Default)]
 pub struct RunPlanePlan {
     pub actions: Vec<RunPlaneAction>,
     /// Run-plane record tables present live with full column + index parity.
     pub at_target: Vec<String>,
-    /// `(table, column)` live columns not in the record — extra, untouched.
+    /// `(table, column)` unknown live columns not in the record — untouched.
     pub extra_columns: Vec<(String, String)>,
 }
 
@@ -2858,12 +3061,67 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         return plan;
     }
 
+    let effect_writer_ledger_cutover_needed = effect_writer_ledger_cutover_needed(schema, obs);
+    let effect_writer_cutover_needed = effect_writer_cutover_needed(schema, obs);
+    if effect_writer_ledger_cutover_needed && obs.effect_ledger_rows != 0 {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::EffectWriterCutover,
+            target: "effect-ledgers.coordinate-writer-boundary".to_string(),
+            sql: effect_writer_cutover_sql(schema, obs),
+        });
+        return plan;
+    }
+
+    if obs
+        .effect_writer_role
+        .is_none_or(|role| !role.is_acl_only())
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::VerifyEffectWriterRole,
+            target: EFFECT_WRITER_ROLE.to_string(),
+            sql: "DO $effect_writer_role$ \
+                  DECLARE role_oid oid; \
+                  BEGIN \
+                    SELECT oid INTO role_oid FROM pg_catalog.pg_roles \
+                     WHERE rolname = 'wamn_effect_writer' AND NOT rolcanlogin \
+                       AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
+                       AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls; \
+                    IF role_oid IS NULL \
+                       OR pg_catalog.has_database_privilege(role_oid, current_database(), 'CONNECT') \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role_oid) \
+                       OR EXISTS ( \
+                            SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
+                            JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
+                            WHERE membership.roleid = role_oid \
+                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                                   OR NOT member.rolcanlogin OR member.rolsuper \
+                                   OR member.rolcreatedb OR member.rolcreaterole \
+                                   OR NOT member.rolinherit OR member.rolreplication \
+                                   OR member.rolbypassrls)) \
+                    THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                         MESSAGE = 'effect-writer-role-out-of-bounds'; \
+                    END IF; \
+                  END $effect_writer_role$"
+                .to_string(),
+        });
+    }
     let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
     if frame_cutover_targets.needed() {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::FrameIdentityCutover,
             target: "node_runs.effect_attempts.frame-identity".to_string(),
             sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
+        });
+    }
+    if effect_writer_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::EffectWriterCutover,
+            target: "effect-ledgers.coordinate-writer-boundary".to_string(),
+            sql: effect_writer_cutover_sql(schema, obs),
         });
     }
 
@@ -3002,6 +3260,146 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     // `runs` now has immediate catalog FKs, so catalog creation must precede
     // every missing run-table section.
     plan.actions.extend(creates);
+
+    if obs.effect_writer_schema_privileges != (true, false) {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+            target: format!("{}.usage", schema.as_str()),
+            sql: format!(
+                "REVOKE ALL PRIVILEGES ON SCHEMA {} FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
+                 GRANT USAGE ON SCHEMA {} TO {EFFECT_WRITER_ROLE}; \
+                 DO $effect_writer_schema_acl$ BEGIN \
+                   IF NOT pg_catalog.has_schema_privilege('{EFFECT_WRITER_ROLE}', '{}', 'USAGE') \
+                      OR pg_catalog.has_schema_privilege('{EFFECT_WRITER_ROLE}', '{}', 'CREATE') \
+                   THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                        MESSAGE = 'effect-writer-schema-privilege-out-of-bounds'; \
+                   END IF; \
+                 END $effect_writer_schema_acl$",
+                schema.quoted(),
+                schema.quoted(),
+                schema.as_str(),
+                schema.as_str(),
+            ),
+        });
+    }
+    for table in [
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+    ] {
+        if !obs.tables.contains_key(table) {
+            continue;
+        }
+        let expected = |grantee: &str| -> BTreeSet<String> {
+            match grantee {
+                "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
+                EFFECT_WRITER_ROLE => ["SELECT", "INSERT"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                "PUBLIC" | SCENARIO_AUTHOR_ROLE => BTreeSet::new(),
+                _ => unreachable!("closed effect-ledger grantee set"),
+            }
+        };
+        let direct_drifted = [
+            "PUBLIC",
+            "wamn_app",
+            SCENARIO_AUTHOR_ROLE,
+            EFFECT_WRITER_ROLE,
+        ]
+        .into_iter()
+        .any(|grantee| {
+            obs.effect_ledger_table_privileges
+                .get(&(table.to_string(), grantee.to_string()))
+                .cloned()
+                .unwrap_or_default()
+                != expected(grantee)
+        });
+        let effective_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
+            .into_iter()
+            .any(|grantee| {
+                obs.effect_ledger_effective_privileges
+                    .get(&(table.to_string(), grantee.to_string()))
+                    .cloned()
+                    .unwrap_or_default()
+                    != expected(grantee)
+            });
+        let effective_column_drifted = ["wamn_app", SCENARIO_AUTHOR_ROLE, EFFECT_WRITER_ROLE]
+            .into_iter()
+            .any(|grantee| {
+                let expected_columns: BTreeSet<String> = expected(grantee)
+                    .into_iter()
+                    .filter(|privilege| {
+                        ["SELECT", "INSERT", "UPDATE", "REFERENCES"].contains(&privilege.as_str())
+                    })
+                    .collect();
+                obs.effect_ledger_effective_column_privileges
+                    .get(&(table.to_string(), grantee.to_string()))
+                    .cloned()
+                    .unwrap_or_default()
+                    != expected_columns
+            });
+        let boundary_owned = obs.effect_ledger_owners.get(table).is_some_and(|owner| {
+            matches!(
+                owner.as_str(),
+                "wamn_app" | SCENARIO_AUTHOR_ROLE | EFFECT_WRITER_ROLE
+            )
+        });
+        if !direct_drifted && !effective_drifted && !effective_column_drifted && !boundary_owned {
+            continue;
+        }
+        let qualified = format!("{}.{}", schema.quoted(), quote_ident(table));
+        let columns = obs
+            .tables
+            .get(table)
+            .expect("present effect ledger")
+            .iter()
+            .filter(|column| {
+                if table != "effect_attempts" {
+                    return true;
+                }
+                let frame_owned = frame_cutover_targets.effect
+                    && (column.as_str() == "node_id"
+                        || EFFECT_FRAME_COLUMNS.contains(&column.as_str()));
+                let writer_owned = effect_writer_ledger_cutover_needed
+                    && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&column.as_str());
+                !frame_owned && !writer_owned
+            })
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+                target: format!("{}.{}", schema.as_str(), table),
+                sql: format!(
+                    "REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
+                            REFERENCES ({columns}) ON TABLE {qualified} \
+                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
+                     REVOKE ALL PRIVILEGES ON TABLE {qualified} \
+                       FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}, {EFFECT_WRITER_ROLE}; \
+                     GRANT SELECT ON TABLE {qualified} TO wamn_app; \
+                     GRANT SELECT, INSERT ON TABLE {qualified} TO {EFFECT_WRITER_ROLE}; \
+                     DO $effect_ledger_acl$ BEGIN \
+                       IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
+                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
+                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
+                          OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', 'UPDATE,REFERENCES') \
+                          OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
+                              JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
+                             WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
+                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', '{EFFECT_WRITER_ROLE}') \
+                       THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                            MESSAGE = 'effect-ledger-effective-privilege-out-of-bounds:{table}'; \
+                       END IF; \
+                     END $effect_ledger_acl$"
+                ),
+            });
+    }
 
     if execution_pin_cutover_needed {
         plan.actions.push(RunPlaneAction {
@@ -3181,7 +3579,8 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
 
     // 2. Column drift on PRESENT record tables: add what the record has and the
-    //    live table lacks (record order); surface live extras, never drop them.
+    //    live table lacks (record order); surface unknown extras, never drop
+    //    them. Explicit cutover-owned retired columns are handled above.
     for file in RUN_PLANE_FILES {
         for table in record_tables(file, "wamn_run") {
             let Some(live_cols) = obs.tables.get(&table) else {
@@ -3193,6 +3592,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                     continue;
                 }
                 if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
+                    continue;
+                }
+                if effect_writer_ledger_cutover_needed
+                    && table == "effect_attempt_dispatches"
+                    && matches!(
+                        col.as_str(),
+                        "run_id" | "frame_id" | "local_node_id" | "occurrence"
+                    )
+                {
                     continue;
                 }
                 if !live_cols.contains(col) {
@@ -3211,6 +3619,18 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             for col in live_cols {
                 if frame_cutover_targets.includes_table(&table)
                     && frame_identity_column(&table, col)
+                {
+                    continue;
+                }
+                if effect_writer_ledger_cutover_needed
+                    && table == "effect_attempts"
+                    && RETIRED_EFFECT_ATTEMPT_COLUMNS.contains(&col.as_str())
+                {
+                    continue;
+                }
+                if retired_node_attempt_columns_present(obs)
+                    && table == "node_runs"
+                    && RETIRED_NODE_ATTEMPT_COLUMNS.contains(&col.as_str())
                 {
                     continue;
                 }
@@ -3237,6 +3657,17 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
         if frame_cutover_targets.includes_table(spec.table)
             && frame_identity_check(spec.table, spec.name)
+        {
+            continue;
+        }
+        if effect_writer_ledger_cutover_needed
+            && spec.table == "effect_attempt_dispatches"
+            && matches!(
+                spec.name,
+                "effect_attempt_dispatches_frame_check"
+                    | "effect_attempt_dispatches_local_node_check"
+                    | "effect_attempt_dispatches_occurrence_check"
+            )
         {
             continue;
         }
@@ -3271,11 +3702,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             ),
         });
     }
-    for (table, name) in obs.checks.keys() {
+    for ((table, name), definition) in &obs.checks {
         if obs.tables.contains_key(table)
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
-            && !retirement_owned_check(table, name)
+            && !(retired_node_attempt_columns_present(obs)
+                && table == "node_runs"
+                && retired_node_attempt_check(definition))
+            && !(effect_writer_ledger_cutover_needed
+                && effect_writer_cutover_owned_check(table, name))
             && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
             && !(table == "runs" && name == "runs_environment_check")
         {
@@ -3287,69 +3722,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                     schema.quoted(),
                     quote_ident(table),
                     quote_ident(name),
-                ),
-            });
-        }
-    }
-
-    // 2c. Existing recovery/successor shape is retired in place. The action
-    // locks both projections, refuses histories that cannot represent the
-    // single-shot boundary, removes only obsolete schema objects, and leaves
-    // every row and retired column value untouched.
-    if let Some(node_columns) = obs.tables.get("node_runs") {
-        let record_attempt_columns: BTreeSet<String> =
-            record_columns(RUN_STATE_SQL, "wamn_run", "effect_attempts")
-                .into_iter()
-                .map(|(column, _)| column)
-                .collect();
-        let attempt_columns = obs
-            .tables
-            .get("effect_attempts")
-            .unwrap_or(&record_attempt_columns);
-        let occurrence_key_present = frame_cutover_targets.effect
-            || !obs.tables.contains_key("effect_attempts")
-            || obs
-                .indexes
-                .get("effect_attempts_occurrence_key")
-                .is_some_and(|definition| {
-                    normalize_observed_schema(definition, schema)
-                        == EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF
-                });
-        let retired_authority_present = RETIRED_NODE_ATTEMPT_COLUMNS.iter().any(|column| {
-            let key = ("node_runs".to_string(), (*column).to_string());
-            node_columns.contains(*column)
-                && (obs.non_nullable_columns.contains(&key) || obs.defaulted_columns.contains(&key))
-        }) || RETIRED_EFFECT_ATTEMPT_COLUMNS.iter().any(|column| {
-            let key = ("effect_attempts".to_string(), (*column).to_string());
-            attempt_columns.contains(*column)
-                && (obs.non_nullable_columns.contains(&key) || obs.defaulted_columns.contains(&key))
-        });
-        let retired_shape_present = retired_authority_present
-            || obs
-                .checks
-                .keys()
-                .any(|(table, name)| retirement_owned_check(table, name))
-            || obs.foreign_keys.contains_key(&(
-                "node_runs".to_string(),
-                "node_runs_current_effect_attempt_fk".to_string(),
-            ))
-            || obs.foreign_keys.contains_key(&(
-                "effect_attempts".to_string(),
-                "effect_attempts_predecessor_fk".to_string(),
-            ))
-            || (!frame_cutover_targets.effect
-                && RETIRED_EFFECT_ATTEMPT_INDEXES
-                    .iter()
-                    .any(|name| observed_index(obs, name).is_some()));
-        if retired_shape_present || !occurrence_key_present {
-            plan.actions.push(RunPlaneAction {
-                kind: RunPlaneActionKind::RetireAttemptRecoveryLineage,
-                target: "effect_attempts.single-shot-boundary".to_string(),
-                sql: retire_attempt_recovery_lineage_sql(
-                    schema,
-                    node_columns,
-                    attempt_columns,
-                    occurrence_key_present,
                 ),
             });
         }
@@ -3371,6 +3743,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             EFFECT_OUTCOME_DISPATCH_FK_SQL,
         ),
     ] {
+        if effect_writer_ledger_cutover_needed
+            && table == "effect_attempt_dispatches"
+            && obs.tables.contains_key("effect_attempts")
+        {
+            continue;
+        }
         if !obs.tables.contains_key(table) {
             continue;
         }
@@ -3438,6 +3816,19 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
             && !(table == "runs" && name == "runs_admission_pins_immutable")
+            && !(effect_writer_ledger_cutover_needed
+                && matches!(
+                    (table.as_str(), name.as_str()),
+                    ("effect_attempts", "effect_attempts_insert_guard")
+                        | (
+                            "effect_attempt_dispatches",
+                            "effect_attempt_dispatches_insert_guard"
+                        )
+                        | (
+                            "effect_attempt_outcomes",
+                            "effect_attempt_outcomes_insert_guard"
+                        )
+                ))
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::DropExtraTrigger,
@@ -3461,6 +3852,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 continue;
             }
             if matches!(name.as_str(), "runs_release" | "runs_execution_bundle") {
+                continue;
+            }
+            if effect_writer_ledger_cutover_needed
+                && matches!(
+                    name.as_str(),
+                    "effect_attempts_dispatch_identity_key"
+                        | "effect_attempt_dispatches_occurrence_key"
+                )
+            {
                 continue;
             }
             match obs.indexes.get(&name) {
@@ -3661,6 +4061,92 @@ pub fn select_scenario_author_role_sql() -> &'static str {
     "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolinherit, \
             rolreplication, rolbypassrls \
        FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author'"
+}
+
+/// Provisioning-owned writer role attributes plus ownership/membership/CONNECT.
+pub fn select_effect_writer_role_sql() -> &'static str {
+    "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
+            role.rolinherit, role.rolreplication, role.rolbypassrls, \
+            pg_catalog.has_database_privilege(role.oid, current_database(), 'CONNECT'), \
+            EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role.oid), \
+            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role.oid) \
+              OR EXISTS ( \
+                   SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
+                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
+                   WHERE membership.roleid = role.oid \
+                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                          OR NOT member.rolcanlogin OR member.rolsuper \
+                          OR member.rolcreatedb OR member.rolcreaterole \
+                          OR NOT member.rolinherit OR member.rolreplication \
+                          OR member.rolbypassrls)) \
+       FROM pg_catalog.pg_roles AS role \
+      WHERE role.rolname = 'wamn_effect_writer'"
+}
+
+/// Exact direct writer USAGE/no-PUBLIC boundary plus effective CREATE.
+pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
+    "SELECT COALESCE( \
+              EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
+                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
+                       WHERE acl.grantee = role.oid AND acl.privilege_type = 'USAGE') \
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
+                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
+                       WHERE acl.grantee = 0 \
+                         AND acl.privilege_type IN ('USAGE', 'CREATE')), false), \
+            COALESCE(pg_catalog.has_schema_privilege(role.oid, namespace.oid, 'CREATE'), false) \
+       FROM (SELECT 1) AS singleton \
+       LEFT JOIN pg_catalog.pg_roles AS role \
+         ON role.rolname = 'wamn_effect_writer' \
+       LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
+}
+
+/// Direct grants on the three immutable effect-writer ledgers.
+pub fn select_effect_ledger_table_privileges_sql() -> &'static str {
+    "SELECT table_name, grantee, privilege_type \
+       FROM information_schema.table_privileges \
+      WHERE table_schema = $1 \
+        AND table_name IN ('effect_attempts', 'effect_attempt_dispatches', \
+                           'effect_attempt_outcomes') \
+        AND grantee IN ('PUBLIC', 'wamn_app', 'wamn_scenario_author', \
+                        'wamn_effect_writer') \
+      ORDER BY table_name, grantee, privilege_type"
+}
+
+/// Effective grants and owners on the effect-writer ledger boundary.
+pub fn select_effect_ledger_effective_privileges_sql() -> &'static str {
+    "SELECT relation.relname, actor.rolname, privilege.name, owner.rolname \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
+       CROSS JOIN pg_catalog.pg_roles AS actor \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('DELETE'::text), ('TRUNCATE'::text), \
+                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
+                                 'effect_attempt_outcomes') \
+        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_effect_writer') \
+        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
+      ORDER BY relation.relname, actor.rolname, privilege.name"
+}
+
+/// Effective column grants on the effect-writer ledger boundary.
+pub fn select_effect_ledger_effective_column_privileges_sql() -> &'static str {
+    "SELECT relation.relname, actor.rolname, privilege.name \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       CROSS JOIN pg_catalog.pg_roles AS actor \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('REFERENCES'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname IN ('effect_attempts', 'effect_attempt_dispatches', \
+                                 'effect_attempt_outcomes') \
+        AND actor.rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_effect_writer') \
+        AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
+      ORDER BY relation.relname, actor.rolname, privilege.name"
 }
 
 /// Whether guest-visible `wamn_app` inherits the host-only author role.
@@ -3882,7 +4368,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
                          'reject_immutable_authoring_test_set_change', \
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
-                         'guard_effect_fact_append', \
                          'guard_effect_disposition_append', \
                          'guard_run_admission_pins_immutable') \
      ORDER BY p.proname"
@@ -4238,6 +4723,19 @@ CREATE INDEX event_registrations_by_entity
                 can_replicate: false,
                 bypasses_rls: false,
             }),
+            effect_writer_role: Some(EffectWriterRoleObservation {
+                can_login: false,
+                is_superuser: false,
+                can_create_database: false,
+                can_create_role: false,
+                inherits_roles: false,
+                can_replicate: false,
+                bypasses_rls: false,
+                can_connect: false,
+                owns_objects: false,
+                membership_out_of_bounds: false,
+            }),
+            effect_writer_schema_privileges: (true, false),
             ..Default::default()
         };
         obs.scenario_author_schema_usage
@@ -4300,6 +4798,30 @@ CREATE INDEX event_registrations_by_entity
                             .insert(key, expected_columns);
                     }
                 }
+            }
+        }
+        for table in [
+            "effect_attempts",
+            "effect_attempt_dispatches",
+            "effect_attempt_outcomes",
+        ] {
+            obs.effect_ledger_owners
+                .insert(table.to_string(), "platform_admin".to_string());
+            for (grantee, privileges) in [
+                ("wamn_app", &["SELECT"][..]),
+                (EFFECT_WRITER_ROLE, &["SELECT", "INSERT"][..]),
+            ] {
+                let key = (table.to_string(), grantee.to_string());
+                let privileges: BTreeSet<String> = privileges
+                    .iter()
+                    .map(|privilege| (*privilege).to_string())
+                    .collect();
+                obs.effect_ledger_table_privileges
+                    .insert(key.clone(), privileges.clone());
+                obs.effect_ledger_effective_privileges
+                    .insert(key.clone(), privileges.clone());
+                obs.effect_ledger_effective_column_privileges
+                    .insert(key, privileges);
             }
         }
         obs.catalog_checks.insert(
@@ -4365,6 +4887,18 @@ CREATE INDEX event_registrations_by_entity
             "effect_attempts_occurrence_key".to_string(),
             "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
         );
+        obs.indexes.insert(
+            "effect_attempts_dispatch_identity_key".to_string(),
+            EFFECT_ATTEMPTS_DISPATCH_IDENTITY_KEY_DEF.to_string(),
+        );
+        obs.indexes.insert(
+            "effect_attempt_dispatches_occurrence_key".to_string(),
+            EFFECT_DISPATCHES_OCCURRENCE_KEY_DEF.to_string(),
+        );
+        obs.defaulted_columns.insert((
+            "effect_attempts".to_string(),
+            "attempt_started_at".to_string(),
+        ));
         for (table, column, ty, not_null) in [
             ("node_runs", "frame_id", "bigint", true),
             ("node_runs", "parent_frame_id", "bigint", false),
@@ -4379,6 +4913,10 @@ CREATE INDEX event_registrations_by_entity
             ("effect_attempts", "local_node_id", "text", true),
             ("effect_attempts", "source_artifact_hash", "text", true),
             ("effect_attempts", "requirement_name", "text", true),
+            ("effect_attempt_dispatches", "run_id", "text", true),
+            ("effect_attempt_dispatches", "frame_id", "bigint", true),
+            ("effect_attempt_dispatches", "local_node_id", "text", true),
+            ("effect_attempt_dispatches", "occurrence", "integer", true),
         ] {
             let key = (table.to_string(), column.to_string());
             obs.column_types.insert(key.clone(), ty.to_string());
@@ -5383,12 +5921,20 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn upgraded_attempt_rows_are_preserved_but_retired() {
+    fn empty_incompatible_effect_writer_shape_is_physically_retired() {
         let mut obs = observation_at_record();
         let node_columns = obs.tables.get_mut("node_runs").expect("node table");
         for column in RETIRED_NODE_ATTEMPT_COLUMNS {
             node_columns.insert((*column).to_string());
         }
+        obs.checks.insert(
+            (
+                "node_runs".to_string(),
+                "node_runs_selected_recovery_class_check".to_string(),
+            ),
+            "CHECK (selected_recovery_class IS NULL OR selected_recovery_class <> ''::text)"
+                .to_string(),
+        );
         let attempt_columns = obs
             .tables
             .get_mut("effect_attempts")
@@ -5441,6 +5987,18 @@ CREATE INDEX event_registrations_by_entity
         );
 
         let plan = plan_run_plane(&schema("demo"), &obs);
+        for column in RETIRED_NODE_ATTEMPT_COLUMNS {
+            assert!(
+                !plan
+                    .extra_columns
+                    .contains(&("node_runs".to_string(), (*column).to_string())),
+                "cutover-owned projection column {column} must not be reported as preserved"
+            );
+        }
+        assert!(!plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::DropExtraConstraint
+                && action.target == "node_runs.node_runs_selected_recovery_class_check"
+        }));
         assert!(
             !plan
                 .actions
@@ -5451,36 +6009,141 @@ CREATE INDEX event_registrations_by_entity
         let action = plan
             .actions
             .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-            .expect("attempt retirement");
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("effect writer cutover");
         assert!(
             action
                 .sql
-                .contains("legacy-effect-attempt-successors-present")
+                .contains("effect-writer-cutover-requires-empty-ledger")
+        );
+        assert!(action.sql.contains("LOCK TABLE \"demo\".\"node_runs\""));
+        assert!(
+            action
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS node_runs_current_effect_attempt_fk")
         );
         assert!(
             action
                 .sql
-                .contains("legacy-active-attempt-without-immutable-intent")
-        );
-        assert!(
-            action
-                .sql
-                .contains("DROP CONSTRAINT IF EXISTS node_runs_check3")
+                .contains("DROP CONSTRAINT IF EXISTS node_runs_selected_recovery_class_check")
         );
         assert!(
             action
                 .sql
                 .contains("DROP CONSTRAINT IF EXISTS effect_attempts_key_check")
         );
-        assert!(
-            action
-                .sql
-                .contains(r#"ALTER COLUMN "attempt_index" DROP NOT NULL"#)
-        );
+        assert!(action.sql.contains(r#"DROP COLUMN "attempt_index""#));
+        for column in RETIRED_NODE_ATTEMPT_COLUMNS {
+            assert!(
+                action
+                    .sql
+                    .contains(&format!("DROP COLUMN {}", quote_ident(column))),
+                "retired node projection column {column} survives: {}",
+                action.sql
+            );
+        }
         assert!(!action.sql.contains("UPDATE "));
         assert!(!action.sql.contains("DELETE "));
         assert!(!action.sql.contains("INSERT INTO "));
+    }
+
+    #[test]
+    fn populated_current_ledgers_do_not_block_projection_only_cleanup() {
+        let mut obs = observation_at_record();
+        obs.tables
+            .get_mut("node_runs")
+            .expect("node table")
+            .insert("attempt_key".to_string());
+        obs.effect_ledger_rows = 3;
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let action = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("projection cleanup action");
+        assert!(action.sql.contains("LOCK TABLE \"demo\".\"node_runs\""));
+        assert!(
+            !action
+                .sql
+                .contains("LOCK TABLE \"demo\".\"effect_attempts\"")
+        );
+        assert!(action.sql.contains("IF false THEN"));
+        assert!(action.sql.contains(r#"DROP COLUMN "attempt_key""#));
+        assert!(!action.sql.contains("ALTER TABLE \"demo\".effect_attempts"));
+    }
+
+    #[test]
+    fn dispatch_type_and_index_drift_is_replaced_by_empty_cutover() {
+        let mut obs = observation_at_record();
+        obs.column_types.insert(
+            (
+                "effect_attempt_dispatches".to_string(),
+                "frame_id".to_string(),
+            ),
+            "text".to_string(),
+        );
+        obs.indexes.insert(
+            "effect_attempt_dispatches_occurrence_key".to_string(),
+            "CREATE INDEX effect_attempt_dispatches_occurrence_key ON demo.effect_attempt_dispatches USING btree (tenant_id, attempt_id)".to_string(),
+        );
+        obs.indexes.insert(
+            "effect_attempts_dispatch_identity_key".to_string(),
+            "CREATE INDEX effect_attempts_dispatch_identity_key ON demo.effect_attempts USING btree (tenant_id, attempt_id)".to_string(),
+        );
+
+        let action = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("dispatch drift cutover");
+        assert!(action.sql.contains("DROP COLUMN IF EXISTS frame_id"));
+        assert!(action.sql.contains("ADD COLUMN frame_id bigint NOT NULL"));
+        assert!(
+            action
+                .sql
+                .contains("DROP INDEX IF EXISTS \"demo\".effect_attempt_dispatches_occurrence_key")
+        );
+        assert!(
+            action
+                .sql
+                .contains("DROP INDEX IF EXISTS \"demo\".effect_attempts_dispatch_identity_key")
+        );
+    }
+
+    #[test]
+    fn partial_dispatch_cutover_repairs_attempt_fk_after_creating_peer() {
+        let mut obs = observation_at_record();
+        obs.tables.remove("effect_attempts");
+        obs.indexes.remove("effect_attempts_occurrence_key");
+        obs.indexes.remove("effect_attempts_dispatch_identity_key");
+        obs.defaulted_columns.remove(&(
+            "effect_attempts".to_string(),
+            "attempt_started_at".to_string(),
+        ));
+        obs.foreign_keys.remove(&(
+            "effect_attempt_dispatches".to_string(),
+            EFFECT_DISPATCH_ATTEMPT_FK_NAME.to_string(),
+        ));
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let create_position = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::CreateTable && action.target == "effect_attempts"
+            })
+            .expect("missing attempt peer is created");
+        let fk_position = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::RepairForeignKey
+                    && action.target
+                        == "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk"
+            })
+            .expect("dispatch FK is repaired in the same plan");
+        assert!(create_position < fk_position);
     }
 
     #[test]
@@ -5494,9 +6157,9 @@ CREATE INDEX event_registrations_by_entity
         let action = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-            .expect("residual retired check plans retirement");
-        assert!(action.sql.contains("node_runs_check3"));
+            .find(|action| action.kind == RunPlaneActionKind::DropExtraConstraint)
+            .expect("residual retired node check is dropped independently");
+        assert_eq!(action.target, "node_runs.node_runs_check3");
     }
 
     #[test]
@@ -5518,7 +6181,7 @@ CREATE INDEX event_registrations_by_entity
                 .contains("DROP INDEX IF EXISTS \"demo\".effect_attempts_occurrence_key")
         );
         assert!(action.sql.contains(
-            "ADD CONSTRAINT effect_attempts_occurrence_key\n    UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)"
+            "ADD CONSTRAINT effect_attempts_occurrence_key\n        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)"
         ));
     }
 
@@ -5565,6 +6228,11 @@ CREATE INDEX event_registrations_by_entity
                 .sql
                 .contains("LOCK TABLE \"demo\".effect_attempts IN ACCESS EXCLUSIVE MODE")
         );
+        assert!(
+            action
+                .sql
+                .contains("LOCK TABLE \"demo\".effect_attempt_dispatches IN ACCESS EXCLUSIVE MODE")
+        );
         assert!(action.sql.contains("ERRCODE = '55000'"));
         assert!(
             action.sql.contains(
@@ -5587,6 +6255,21 @@ CREATE INDEX event_registrations_by_entity
                 .sql
                 .contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
         );
+        assert!(
+            action
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk")
+        );
+        assert!(
+            action
+                .sql
+                .contains("ADD CONSTRAINT effect_attempts_dispatch_identity_key")
+        );
+        assert!(
+            action
+                .sql
+                .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk")
+        );
         for verb in ["UPDATE ", "DELETE ", "INSERT INTO "] {
             assert!(
                 !action.sql.contains(verb),
@@ -5603,6 +6286,57 @@ CREATE INDEX event_registrations_by_entity
                 "frame column {frame_column} must be owned by the atomic cutover"
             );
         }
+    }
+
+    #[test]
+    fn frame_cutover_defers_dispatch_fk_to_concurrent_writer_cutover() {
+        let mut obs = observation_at_record();
+        obs.checks.insert(
+            (
+                "effect_attempts".to_string(),
+                "effect_attempts_current_plan_hash_check".to_string(),
+            ),
+            "CHECK (current_plan_hash <> '')".to_string(),
+        );
+        obs.column_types.insert(
+            (
+                "effect_attempt_dispatches".to_string(),
+                "frame_id".to_string(),
+            ),
+            "text".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let frame_position = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+            .expect("effect frame cutover");
+        let writer_position = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("dispatch coordinate cutover");
+        assert!(frame_position < writer_position);
+
+        let frame = &plan.actions[frame_position];
+        assert!(
+            frame
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS effect_attempt_dispatches_attempt_fk")
+        );
+        assert!(
+            !frame
+                .sql
+                .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk"),
+            "frame cutover must not restore an FK against incompatible dispatch coordinates"
+        );
+        assert!(
+            plan.actions[writer_position]
+                .sql
+                .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk"),
+            "the following writer cutover owns dispatch-coordinate and FK reconstruction"
+        );
     }
 
     #[test]
@@ -5827,24 +6561,74 @@ CREATE INDEX event_registrations_by_entity
         let action = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-            .expect("attempt retirement");
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("effect writer cutover");
         assert!(
             action
                 .sql
-                .contains("GROUP BY tenant_id,run_id,frame_id,local_node_id,occurrence")
+                .contains("effect-writer-cutover-requires-empty-ledger")
         );
-        assert!(action.sql.contains("HAVING count(*) > 1"));
         assert!(
             action
                 .sql
-                .contains("legacy-effect-attempt-successors-present")
+                .contains("EXISTS (SELECT 1 FROM \"demo\".\"effect_attempts\")")
         );
-        assert!(action.sql.contains("n.status = 'started'"));
+    }
+
+    #[test]
+    fn writer_role_verification_precedes_empty_structural_cutover() {
+        let mut obs = observation_at_record();
+        obs.effect_writer_role = None;
+        obs.tables
+            .get_mut("effect_attempts")
+            .expect("attempt table")
+            .insert("attempt_key".to_string());
+        obs.checks.insert(
+            (
+                "effect_attempts".to_string(),
+                "effect_attempts_key_check".to_string(),
+            ),
+            "CHECK (true)".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let verify = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::VerifyEffectWriterRole)
+            .expect("writer role verification");
+        let cutover = plan
+            .actions
+            .iter()
+            .position(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("writer structural cutover");
+        assert!(verify < cutover);
+        assert!(!plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::DropExtraConstraint
+                && action.target == "effect_attempts.effect_attempts_key_check"
+        }));
+    }
+
+    #[test]
+    fn populated_writer_cutover_refusal_precedes_role_verification() {
+        let mut obs = observation_at_record();
+        obs.effect_writer_role = None;
+        obs.effect_ledger_rows = 1;
+        obs.tables
+            .get_mut("effect_attempts")
+            .expect("attempt table")
+            .insert("attempt_key".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert_eq!(plan.actions.len(), 1);
+        assert_eq!(
+            plan.actions[0].kind,
+            RunPlaneActionKind::EffectWriterCutover
+        );
         assert!(
-            action
+            plan.actions[0]
                 .sql
-                .contains("legacy-active-attempt-without-immutable-intent")
+                .contains("effect-writer-cutover-requires-empty-ledger")
         );
     }
 
@@ -5860,8 +6644,8 @@ CREATE INDEX event_registrations_by_entity
         let action = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-            .expect("attempt retirement");
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("effect writer cutover");
         for lineage in ["event_source_run_id", "event_root_run_id", "event_depth"] {
             assert!(!action.sql.contains(lineage));
         }
@@ -5879,21 +6663,25 @@ CREATE INDEX event_registrations_by_entity
                 .remove(&(table.to_string(), name.to_string()));
         }
 
-        let targets: BTreeSet<String> = plan_run_plane(&schema("demo"), &obs)
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::EffectWriterCutover)
+            .expect("dispatch identity drift uses the empty-only writer cutover");
+        assert!(cutover.sql.contains(EFFECT_DISPATCH_ATTEMPT_FK_NAME));
+
+        let targets: BTreeSet<String> = plan
             .actions
             .into_iter()
             .filter(|action| action.kind == RunPlaneActionKind::RepairForeignKey)
             .map(|action| action.target)
             .collect();
-        for target in [
-            "effect_attempt_dispatches.effect_attempt_dispatches_attempt_fk",
-            "effect_attempt_outcomes.effect_attempt_outcomes_dispatch_fk",
-        ] {
-            assert!(
-                targets.contains(target),
-                "missing repair for {target}: {targets:#?}"
-            );
-        }
+        let outcome_target = "effect_attempt_outcomes.effect_attempt_outcomes_dispatch_fk";
+        assert!(
+            targets.contains(outcome_target),
+            "missing repair for {outcome_target}: {targets:#?}"
+        );
     }
 
     #[test]
@@ -5962,8 +6750,9 @@ CREATE INDEX event_registrations_by_entity
         let obs = RunPlaneObservation::default();
         let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
         let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
-        assert_eq!(kinds[0], RunPlaneActionKind::EnsureScenarioAuthorRole);
-        assert_eq!(kinds[1], RunPlaneActionKind::EnsureSchema);
+        assert_eq!(kinds[0], RunPlaneActionKind::VerifyEffectWriterRole);
+        assert_eq!(kinds[1], RunPlaneActionKind::EnsureScenarioAuthorRole);
+        assert_eq!(kinds[2], RunPlaneActionKind::EnsureSchema);
         let creates: Vec<&str> = plan
             .actions
             .iter()
@@ -6072,7 +6861,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(!rq.sql.contains("wamn_run."));
     }
 
-    /// A live column the record does not know is SURFACED, never dropped.
+    /// An unknown live column is SURFACED, never dropped.
     #[test]
     fn extra_live_columns_are_surfaced_not_dropped() {
         let mut obs = observation_at_record();
@@ -6185,7 +6974,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            11
+            10
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairHelperFunction
@@ -6211,10 +7000,6 @@ CREATE INDEX event_registrations_by_entity
         }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
-                && action.target == "effect_attempts.effect_attempts_insert_guard"
-        }));
-        assert!(plan.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target
                     == "effect_disposition_requests.effect_disposition_requests_insert_guard"
         }));
@@ -6223,7 +7008,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            29
+            26
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -6293,18 +7078,6 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn effect_fact_append_guard_is_migration_only_and_temp_safe() {
-        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("SET search_path = pg_catalog, pg_temp"));
-        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("candidate.rolsuper"));
-        assert!(GUARD_EFFECT_FACT_APPEND_SQL.contains("candidate.rolbypassrls"));
-        assert!(
-            GUARD_EFFECT_FACT_APPEND_SQL
-                .contains("effect-fact-append-requires-migration-authority")
-        );
-        assert!(!GUARD_EFFECT_FACT_APPEND_SQL.contains("wamn_app"));
-    }
-
-    #[test]
     fn disposition_append_guard_is_catalog_qualified_and_temp_safe() {
         assert!(
             GUARD_EFFECT_DISPOSITION_APPEND_SQL.contains("SET search_path = pg_catalog, pg_temp")
@@ -6317,6 +7090,120 @@ CREATE INDEX event_registrations_by_entity
             GUARD_EFFECT_DISPOSITION_APPEND_SQL
                 .contains("CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER")
         );
+    }
+
+    #[test]
+    fn effect_writer_surface_uses_acl_not_insert_authorization_triggers() {
+        assert!(!RUN_STATE_SQL.contains("CREATE ROLE wamn_effect_writer"));
+        assert!(!RUN_STATE_SQL.contains("guard_effect_writer_append"));
+        assert!(!RUN_STATE_SQL.contains("writer_insert_guard"));
+        assert!(RUN_STATE_SQL.contains(
+            "REVOKE ALL PRIVILEGES ON TABLE wamn_run.effect_attempts\n    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer"
+        ));
+        assert!(
+            RUN_STATE_SQL
+                .contains("GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer")
+        );
+        assert!(
+            RUN_STATE_SQL.contains("ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY")
+        );
+    }
+
+    #[test]
+    fn effect_writer_acl_repair_removes_schema_table_and_column_drift() {
+        let mut obs = observation_at_record();
+        obs.effect_writer_schema_privileges = (true, true);
+        obs.effect_ledger_effective_privileges.insert(
+            (
+                "effect_attempts".to_string(),
+                SCENARIO_AUTHOR_ROLE.to_string(),
+            ),
+            ["SELECT".to_string()].into_iter().collect(),
+        );
+        obs.effect_ledger_effective_column_privileges
+            .entry(("effect_attempts".to_string(), "wamn_app".to_string()))
+            .or_default()
+            .insert("UPDATE".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let schema_action = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                    && action.target == "demo.usage"
+            })
+            .expect("writer schema ACL repair");
+        assert!(
+            schema_action
+                .sql
+                .contains("FROM PUBLIC, wamn_effect_writer")
+        );
+        assert!(
+            schema_action
+                .sql
+                .contains("effect-writer-schema-privilege-out-of-bounds")
+        );
+        let table_action = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                    && action.target == "demo.effect_attempts"
+            })
+            .expect("writer table ACL repair");
+        assert!(table_action.sql.contains("REVOKE SELECT ("));
+        assert!(table_action.sql.contains("has_any_column_privilege"));
+        assert!(table_action.sql.contains("GRANT SELECT, INSERT"));
+    }
+
+    #[test]
+    fn cutover_owned_columns_are_not_named_by_later_acl_repair() {
+        let mut obs = observation_at_record();
+        let columns = obs
+            .tables
+            .get_mut("effect_attempts")
+            .expect("attempt table");
+        columns.insert("node_id".to_string());
+        columns.insert("attempt_key".to_string());
+        for column in EFFECT_FRAME_COLUMNS {
+            columns.remove(*column);
+        }
+        obs.effect_ledger_effective_column_privileges
+            .entry(("effect_attempts".to_string(), "wamn_app".to_string()))
+            .or_default()
+            .insert("UPDATE".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| { action.kind == RunPlaneActionKind::FrameIdentityCutover })
+        );
+        assert!(
+            plan.actions
+                .iter()
+                .any(|action| { action.kind == RunPlaneActionKind::EffectWriterCutover })
+        );
+        let repair = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                    && action.target == "demo.effect_attempts"
+            })
+            .expect("writer table ACL repair");
+        assert!(repair.sql.contains(&quote_ident("attempt_id")));
+        for dropped in ["node_id", "attempt_key"]
+            .into_iter()
+            .chain(EFFECT_FRAME_COLUMNS.iter().copied())
+        {
+            assert!(
+                !repair.sql.contains(&quote_ident(dropped)),
+                "later ACL repair names cutover-owned column {dropped}: {}",
+                repair.sql
+            );
+        }
     }
 
     #[test]

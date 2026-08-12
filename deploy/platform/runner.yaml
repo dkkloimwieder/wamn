@@ -119,6 +119,11 @@ spec:
           configMap:
             name: wamn-node-placements
             defaultMode: 420
+        # Private writer credential: whole-directory projection, never subPath.
+        - name: effect-writer
+          secret:
+            secretName: wamn-effect-writer-demo--demo--dev
+            defaultMode: 256 # 0400
       containers:
         - name: runner
           image: wamn-run-worker:dev
@@ -137,6 +142,12 @@ spec:
                 secretKeyRef:
                   name: wamn-runner-db
                   key: url
+            # Ordinary host-held project-environment identity. The private
+            # credential path and URL have no CLI or environment override.
+            - { name: WAMN_ORG, value: "demo" }
+            - { name: WAMN_PROJECT, value: "demo" }
+            - { name: WAMN_ENVIRONMENT, value: "dev" }
+            - { name: WAMN_DATABASE, value: "wamn-db-demo--demo--dev" }
             # [5.9] The vault reads the mounted credentials file; missing file
             # (optional Secret absent) = empty vault, warned at startup.
             - name: WAMN_CREDENTIALS_FILE
@@ -174,6 +185,9 @@ spec:
               readOnly: true
             - name: node-placements
               mountPath: /etc/wamn/node-placements
+              readOnly: true
+            - name: effect-writer
+              mountPath: /etc/wamn/effect-writer
               readOnly: true
           args:
             - "--log-level"

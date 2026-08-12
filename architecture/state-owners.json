@@ -1482,13 +1482,14 @@
       "plane": "project",
       "semantic_owner": "run-state",
       "migration_owners": [
-        "run-state"
+        "schema-control"
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "schema-control"
+        "run-state"
       ],
       "readers": [
+        "run-state",
         "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
@@ -1499,13 +1500,14 @@
       "plane": "project",
       "semantic_owner": "run-state",
       "migration_owners": [
-        "run-state"
+        "schema-control"
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "schema-control"
+        "run-state"
       ],
       "readers": [
+        "run-state",
         "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
@@ -1516,13 +1518,14 @@
       "plane": "project",
       "semantic_owner": "run-state",
       "migration_owners": [
-        "run-state"
+        "schema-control"
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "schema-control"
+        "run-state"
       ],
       "readers": [
+        "run-state",
         "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",

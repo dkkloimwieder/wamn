@@ -257,7 +257,7 @@ const MAXIMAL_GRAPH: &str = r#"{
      "connection": "erp-callback", "credential": "api-key"}
   ],
   "edges": [{"from": "entry", "from-port": "alt", "to": "call", "to-port": "in"}],
-  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"},{"field":"idempotency-key","owner":"system"}],"credential-injection":"environment-selected-http-header","idempotency-key-injection":"http-idempotency-key-header"}}],
+  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}],
   "credentials": [{"name": "api-key", "kind": "api-key", "description": "The key"}],
   "allowed-hosts": ["a.example.com"],
   "partition-policy": "leapfrog",

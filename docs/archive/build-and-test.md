@@ -1559,17 +1559,9 @@ cargo test -p wamn-run-state   # pure text pins + queue.rs live
 # delay-merge; a structurally-different v2 (linear in->r) is registered+activated
 # MID-RUN; the pinned resume keeps driving v1 (completed, 7 node_runs rows, m/r
 # visits (2,0,1)). See [5.14] production runner (run-worker, fqg.8) for the run cmd.
-# The checked-in PLAN-0.2 campaign replaces the historical scratchpad mutants.
-# `check` proves every exact mutation anchor and baseline hash is current;
-# `green-all` proves every named gate on the clean source; `run-all` applies
-# each fixed mutant, requires the named debug gate to turn red, and restores the
-# target byte-for-byte under a trap.
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
-  tools/gate-mutants/durable-invocation-recovery.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
-  tools/gate-mutants/durable-invocation-recovery.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-1 \
-  tools/gate-mutants/durable-invocation-recovery.sh run-all
+# Historical evidence only after `wamn-0h0g.4.9`: the runner and JSON stay
+# byte-exact for provenance, but their removed stable-key/recovery anchors are
+# not a current mutation command. Validate the immutable evidence record only.
 cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # Immutable green/red evidence:
 # architecture/evidence/mutations/durable-invocation-recovery.json
@@ -2352,7 +2344,8 @@ proof gates:
   the portable `erp-callback` connection, nothing else (an extra call fails the
   set) — plus `none-denied` + `RunOutcome`. The host-owned node hop is not flow
   egress. The graph has no endpoint, URL, `allowed-hosts`, or idempotency toggle;
-  the HTTP effect stamps the system-owned stable key. The 429/Retry-After park,
+  the immutable attempt and first-insert dispatch permit authorize one send.
+  The 429/Retry-After park,
   no-reclaim-during-backoff,
   one-effective-delivery, and no-stampede mechanics are NOT expressible in the
   stored vocabulary (the ERP ledger is an in-memory audit, not a DB table) and stay
@@ -3957,15 +3950,12 @@ curl -sS -o /dev/stdout -w ' %{http_code}\n' -X POST "http://$NODE_IP:31088/auth
 kubectl -n wamn-system delete svc ctc810-verify-nodeport
 ```
 
-⚠️ `reconcile-run-plane` against the deployed `wamn_run` fixture stops at
-`BackfillEffectAttempts` with `legacy-effect-attempt-incomplete`
-(`crates/schema/control/src/run_plane.rs:1554`): the deployed `node_runs` rows
-predate the wamn-4u7p effect-attempt era and carry no complete attempt fact set,
-so the guard refuses to synthesize provenance rather than fabricate it. That is
-the correct refusal, and it lands AFTER every authoring table and privilege in
-the plan — so the management surface's storage requirement is fully satisfied
-even though the run exits non-zero. Converging the effect-attempt lineage on
-that legacy fixture needs its own bead.
+⚠️ Current `reconcile-run-plane` never backfills effect authority from a mutable
+`node_runs` projection. The `.4.9` writer-boundary cutover physically removes
+named retired projection columns, but any populated incompatible immutable
+attempt/dispatch/outcome ledger refuses before DDL with
+`effect-writer-cutover-requires-empty-ledger`. Reset or explicitly archive that
+pre-MVP fixture; never synthesize provenance or choose a legacy successor.
 
 📌 RESOLVED — the `serve` CLI defect this rollout found (wamn-kisz, fixed at
 `927db6f`). Recorded because it is the reason an in-cluster rollout gate exists,
@@ -4649,10 +4639,10 @@ ERP callback — from a single real WAL insert, over a throwaway
 Authority is deliberately split. The graph declares exactly ONE portable HTTP
 connection, `erp-callback`, and its callback node names only the relative
 `/dispositions` path. The connection HTTP effect resolves the environment-owned
-binding and stamps the dispatch's stable key
-(`{run_id}:{node}:{occurrence}`, stable across retries) as the system-owned
-`Idempotency-Key` header. The flow cannot supply or override that header and has
-no flow-level `allowed-hosts`.
+binding. Outbound stable-key generation and injected `Idempotency-Key` were
+retired by `wamn-0h0g.4.9`; the immutable attempt and first successful dispatch
+insert are the one-send authority. The flow cannot supply the reserved header
+and has no flow-level `allowed-hosts`.
 
 The custom-node hop is platform transport, not a portable connection. The guest
 passes an admitted implementation digest and one-frame invocation context through
@@ -4666,17 +4656,16 @@ node execution or grant installation. Transport failure is an infrastructure
 fault, while a response from the node carrying a node fault is a node failure.
 Custom-node config containing `endpoint` or any absolute URL is invalid.
 
-Three mechanics rest on the live gate: (1) the **idempotency-key** is injected by
-the connection HTTP effect from the system stable key; it is dispatch mechanics,
-not input-templated or flow-configured. (2) **THROTTLE v0 = the queue-park property**:
+Three mechanics rest on the live gate: (1) **dispatch authority** is the
+immutable attempt plus first-insert-only dispatch permit; no runtime-generated
+retry key or automatic effect redispatch remains. (2) **THROTTLE v0 = the queue-park property**:
 a 429 → `rate-limited` → the run PARKS (`available_at` pushed by `Retry-After`,
 lease released) and is NOT re-claimed before the wake; N concurrent 429'd runs
 each park with ONE claim, no thundering re-claim. The inert cross-run
 `ThrottleTable` is deferred (wamn-lxk.throttle). No park-side jitter: the gate
-shows synchronized wake produces NO duplicate ERP posts (idempotency + one-run
-completion per key). (3) the **ERP simulator** — a separate `erp-sim` subcommand
-(429 + `Retry-After` for the first `--fail-first-n` requests per idempotency
-key, then 202; the exactly-once witness; `GET /audit`), distinct from serve-echo
+shows synchronized wake produces NO second dispatch permit. (3) the **ERP
+simulator** — a separate `erp-sim` subcommand (429 + `Retry-After` for the first
+`--fail-first-n` requests, then 202; `GET /audit`), distinct from serve-echo
 so no always-200 consumer regresses.
 
 Insert-only registration ⇒ NO REPLICA IDENTITY FULL (the RI reconcile is a
@@ -4898,12 +4887,12 @@ wamn-9mg8 stand-in drift guard pins) and applies the idempotent, data-preserving
 create-missing tables from record sections, `ADD COLUMN` for record columns a
 present table lacks, index create/recreate (the pre-E4 claimable index), the
 exact canonical CHECK/FK/user-trigger/helper-function apparatus, the five
-immutable effect ledgers, catalog publication provenance, the locked legacy
-attempt/dispatch/outcome backfill plus `node_runs.current_effect_attempt_id`
-advance, the pre-l5i9.19 outbox-era teardown, and catalog-schema from-zero.
-No live column or non-legacy table is dropped, and no row in a retained table
-is deleted; the named migration steps may fill defaults, strip legacy
-registration state, append immutable facts, and update the current pointer.
+immutable effect ledgers, catalog publication provenance, the locked empty-only
+writer-boundary cutover, the pre-l5i9.19 outbox-era teardown, and
+catalog-schema from-zero. No retained table or row is rewritten or deleted;
+unknown columns remain surfaced, while named retired identity/recovery columns
+are physically removed only by their locked cutovers. No effect fact is
+backfilled or fabricated.
 PostgreSQL rejects incompatible
 canonical constraints or incomplete legacy authority instead of guessing. Pure planner
 `wamn_schema_control::plan_run_plane` (crates/schema/control/src/run_plane.rs); thin
@@ -4918,7 +4907,8 @@ One-shot Job template:
 cargo test -p wamn-schema-control run_plane   # record parse pins + planner (no-op-at-record self-consistency, drift/from-zero/queue-missing plans)
 cargo clippy -p wamn-schema-control -p wamn-ctl --all-targets
 # Live-apply matrix (throwaway PG; plain postgres:18 — no wal_level needed).
-# Eleven hermetic legs: shared-runner legacy; legacy effect-attempt backfill;
+# Hermetic legs include shared-runner legacy; empty writer-boundary cutover and
+# populated-ledger refusal;
 # forced-RLS owner refusal; v1-era drift; queue-missing; from-zero; current
 # no-op; authoring additive upgrade/authority repair; catalog-head SHARE-lock
 # concurrency; effect-disposition security drift; and fail_kind CHECK drift.
@@ -5425,35 +5415,13 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-custom-publish-67 \
   real_f1_f2_components_publish_retry_and_conflict_by_exact_bytes -- --exact
 ```
 
-## CF-ATTEMPTS — durable effect protocol and replay classes (`wamn-5wd1.54`)
+## CF-ATTEMPTS — historical pre-MVP effect protocol (`wamn-5wd1.54`)
 
-Flowrunner commits an attempt intent before any external dispatch, marks that
-attempt dispatched immediately before the effect, and commits success or error
-afterward. An unmarked prepared attempt is resumable for every recovery class.
-For a marked attempt, the artifact-pinned occurrence selection and its portable
-claim are admitted against the current environment before the first send. The
-attempt records both the selected and effective recovery classes plus the exact
-connection and credential generation facts that justified admission. Recovery
-uses those durable facts: an admitted `replay` or `idempotent-with-key` attempt
-may redispatch under its exact key, while `never-replay` becomes
-`effect-uncertain` and cannot send again. Runtime node tables, HTTP methods,
-configuration, capture, or current environment state never reclassify it.
-
-```bash
-cargo test --locked -p wamn-runner -p wamn-run-state -p wamn-node-manifest
-cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-cargo build --locked --manifest-path components/Cargo.toml \
-  -p flowrunner --target wasm32-wasip2
-cargo test --locked -p wamn-proof-integration --lib never_replay::tests::
-
-docker run -d --rm --name wamn-cf-attempts-pg \
-  -p 127.0.0.1:15623:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-# Wait for PostgreSQL to complete its initialization restart.
-WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
-  cargo test --locked -p wamn-run-state --test run_state_live \
-  run_state_live -- --ignored --exact --nocapture
-```
+This gate is superseded by `wamn-0h0g.4.9`. Its recovery-class, redispatch, and
+outbound stable-key model is historical provenance only and is not runnable
+current authority. The retained contract is one immutable attempt and at most
+one first-insert-wins dispatch per effectful occurrence; the current gate of
+record is **SR-MVP — inaccessible effect-writer primitive** below.
 
 ### [PLAN-1 / wamn-4u7p.24] FLOW-SPEC recovery authority
 
@@ -5490,9 +5458,10 @@ source artifact hash, and requirement name. The host requires the exact immutabl
 attempt row, membership of the current plan in the run's resolution map, the
 effectful node and requirement in that plan's exact bytes, and the current
 binding and active generation. It never walks a root authored graph or mutable
-node projection. Until `.4.9` mints the write-ahead attempt and activates the
-dispatch seam, Flowrunner supplies no effect context and every send remains
-deny-only. All package, WIT, wire, and schema identities remain `0.1`/`0.1.0`.
+node projection. `.4.9` installs the inaccessible writer primitive without a
+caller; until `.5.4` mints the write-ahead attempt and activates dispatch,
+Flowrunner supplies no effect context and every send remains deny-only. All
+package, WIT, wire, and schema identities remain `0.1`/`0.1.0`.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
@@ -5537,6 +5506,89 @@ rustfmt --edition 2024 --check \
   crates/platform/runtime/src/plugins/wamn_postgres/claims.rs \
   crates/platform/runtime/tests/http_effect_wit_coherence.rs \
   components/execution/flowrunner/src/lib.rs
+git diff --check
+```
+
+## SR-MVP — inaccessible effect-writer primitive (`wamn-0h0g.4.9`)
+
+This gate deletes outbound stable-key retry and proves the host-only primitive:
+strict scoped A/B credentials, exact ledger ACL/RLS, empty-only legacy cutover,
+exact attempt/outcome retry, and first-insert-only dispatch permission. It does
+not activate an effect caller or wire I/O; `wamn-0h0g.5.4` owns that integration.
+The exact-hash campaign kills 23 named mutants, including the host `pg_temp`
+search-path sentinel, Secret validity metadata, definitive unpublished-generation
+abort, and the target database's PUBLIC `TEMPORARY` denial. All commands use the
+shared per-wave debug target.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline \
+    -p wamn-node-manifest -p wamn-flow -p wamn-runner \
+    -p wamn-node-sdk -p wamn-node-invoke -p wamn-node-guest \
+    -p wamn-node-runtime -p wamn-runtime -p wamn-proof-conformance
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --features native
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline \
+    -p wamn-schema-control -p wamn-control-provision -p wamn-ctl \
+    -p wamn-execution-host -p wamn-executor
+bash deploy/mvp/tests/bootstrap.sh
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline \
+    -p wamn-node-manifest -p wamn-flow -p wamn-runner \
+    -p wamn-node-sdk -p wamn-node-invoke -p wamn-node-guest \
+    -p wamn-node-runtime -p wamn-runtime -p wamn-proof-conformance \
+    --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-run-state --features native \
+    --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline \
+    -p wamn-schema-control -p wamn-control-provision -p wamn-ctl \
+    -p wamn-execution-host -p wamn-executor --all-targets -- -D warnings
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9-components CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9-components CARGO_INCREMENTAL=0 \
+  cargo check --locked --offline --manifest-path components/Cargo.toml \
+    -p flowrunner --target wasm32-wasip2
+
+docker run -d --rm --name wamn-0h0g-49-pg \
+  -p 127.0.0.1:15649:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=postgres postgres:18
+docker exec wamn-0h0g-49-pg pg_isready -U postgres -d postgres
+WAMN_EFFECT_WRITER_PG18_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl \
+    --test effect_writer_generation_live \
+    effect_writer_generation_lifecycle_is_exact_and_fail_closed \
+    -- --ignored --exact --nocapture
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    run_plane_reconcile_live -- --exact --nocapture
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --features native \
+    --test effect_writer_live native_effect_writer_live \
+    -- --ignored --exact --nocapture
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
+  tools/gate-mutants/effect-writer-primitive.sh check
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
+  tools/gate-mutants/effect-writer-primitive.sh green-all
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15649/postgres \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-9 \
+  tools/gate-mutants/effect-writer-primitive.sh run-all
+docker rm -f wamn-0h0g-49-pg
+
+cargo fmt --all -- --check
+bash -n deploy/mvp/bootstrap.sh deploy/mvp/tests/bootstrap.sh \
+  tools/gate-mutants/effect-writer-primitive.sh
 git diff --check
 ```
 
@@ -5970,7 +6022,7 @@ git diff --check
 This debug-only gate proves exact `call-flow { flow-id }` validation, candidate
 self-resolution, pinned-release lookup for every other name, intrinsic callable
 eligibility, typed contract refusals, recursion without a static depth bound,
-and the effectful-or-call-flow idempotency-key predicate. It does not exercise
+and the effectful-node source-connection-requirement predicate. It does not exercise
 the future frame interpreter or claim-time resolution map.
 
 ```bash

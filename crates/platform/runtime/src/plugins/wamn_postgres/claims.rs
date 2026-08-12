@@ -256,7 +256,7 @@ SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.e
        contract.value #>> '{executable,digest}', \
        COALESCE(node.value -> 'config', 'null'::jsonb)::text, \
        node.value ->> 'connection', node.value ->> 'credential', \
-       NULL::text, NULL::text \
+       NULL::text \
   FROM runs AS r \
   LEFT JOIN admitted_artifact AS artifact ON true \
   LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
@@ -984,7 +984,6 @@ impl WamnPostgres {
                 admitted_connection: row.try_get(13)?,
                 admitted_credential: row.try_get(14)?,
                 attempt_input_ref: row.try_get(15)?,
-                attempt_key: row.try_get(16)?,
             }))
         }
         .await;
@@ -1361,7 +1360,7 @@ mod tests {
     #[test]
     fn node_invocation_adapter_remains_deny_only_without_attempt_reader() {
         assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
-        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text, NULL::text"));
+        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text"));
         assert!(!NODE_INVOCATION_SNAPSHOT_SQL.contains("JOIN node_runs"));
         for retired in [
             "nr.attempt",
@@ -1370,7 +1369,6 @@ mod tests {
             "nr.credential_generation",
             "nr.attempt_dispatched_at",
             "nr.attempt_input_ref",
-            "nr.attempt_key",
         ] {
             assert!(
                 !NODE_INVOCATION_SNAPSHOT_SQL.contains(retired),

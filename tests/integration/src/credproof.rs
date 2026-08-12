@@ -606,6 +606,9 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
                 tenant: TENANT,
                 schema: Some("wamn_run"),
                 project: PROJECT,
+                org: None,
+                environment: None,
+                database: None,
             },
             production_capabilities(
                 Arc::from([allowed, escape_allowed]),

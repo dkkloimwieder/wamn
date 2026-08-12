@@ -29,10 +29,12 @@ pub enum Capability {
     RawSql,
 }
 
-/// Everything the runner knows that a node execution may need. Mirrors the
-/// frozen WIT `run-context` (`docs/archive/contracts/wamn-node.wit`, 0.1.0) with `config`
-/// pre-parsed to JSON. Deliberately contains NO secrets — credentials resolve
-/// lazily (5.9).
+/// Everything the runner knows that a node execution may need.
+///
+/// Mirrors the frozen WIT `run-context`
+/// (`docs/archive/contracts/wamn-node.wit`, 0.1.0) with `config` pre-parsed to
+/// JSON, except for its ABI-only `idempotency-key`. Deliberately contains NO
+/// secrets — credentials resolve lazily (5.9).
 #[derive(Debug, Clone, Copy)]
 pub struct RunContext<'a> {
     /// Unique id of this flow run (stable across retries of any node).
@@ -46,9 +48,6 @@ pub struct RunContext<'a> {
     pub connection: Option<&'a str>,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
-    /// Runner-generated, stable across retries of this node in this run.
-    /// Forward to external systems supporting idempotency headers.
-    pub idempotency_key: &'a str,
     /// Remaining execution budget in ms; lets well-behaved nodes set client
     /// timeouts and fail gracefully before the host's hard epoch deadline.
     pub deadline_ms: Option<u64>,
@@ -269,7 +268,6 @@ mod tests {
             node_id: "n1",
             connection: None,
             attempt: 0,
-            idempotency_key: "r1:n1",
             deadline_ms: None,
             traceparent: tp,
             tracestate: ts,

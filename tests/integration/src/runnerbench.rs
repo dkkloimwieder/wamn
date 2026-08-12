@@ -550,6 +550,9 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
                 tenant: TENANT,
                 schema: Some(SCHEMA),
                 project: "default",
+                org: None,
+                environment: None,
+                database: None,
             },
             production_capabilities(
                 std::sync::Arc::from([]),

@@ -24,10 +24,12 @@
 //!   legacy registration `state` keys),
 //! - the `catalog` metadata schema when absent (or its missing tables).
 //!
-//! **Data preserving:** no live column, non-legacy table, or data row is ever
-//! dropped; live columns the record does not know are printed, not touched.
-//! PostgreSQL validates each canonical CHECK against existing rows and the verb
-//! fails loudly rather than rewriting incompatible history.
+//! **Data preserving:** no retained table or row is rewritten or deleted, and
+//! unknown live columns are printed rather than touched. The explicit
+//! frame/effect-writer cutovers physically remove only their named retired
+//! identity/recovery columns after locked safety preflights. PostgreSQL
+//! validates each canonical CHECK against existing rows and fails loudly
+//! rather than fabricating incompatible history.
 //!
 //! **Ownership:** CREATE/ALTER/DROP need table ownership, and attempt-history
 //! retirement must see every tenant through forced RLS. `wamn_app` and a plain
@@ -49,16 +51,19 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
-    BareSchemaName, RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation,
-    catalog_schema_present_sql, count_release_flow_rows_sql, count_run_rows_sql,
-    count_stale_registration_state_sql, plan_run_plane, select_app_scenario_author_membership_sql,
-    select_authoring_effective_column_privileges_sql,
+    BareSchemaName, EffectWriterRoleObservation, RunPlaneObservation, RunPlanePlan,
+    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
+    count_run_rows_sql, count_stale_registration_state_sql, plan_run_plane,
+    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
-    select_authoring_table_privileges_sql, select_outbox_function_present_sql,
-    select_outbox_trigger_tables_sql, select_run_plane_helper_functions_sql,
-    select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
-    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
-    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
+    select_authoring_table_privileges_sql, select_effect_ledger_effective_column_privileges_sql,
+    select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
+    select_effect_writer_role_sql, select_effect_writer_schema_privileges_sql,
+    select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
+    select_run_plane_helper_functions_sql, select_scenario_author_catalog_lock_privilege_sql,
+    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
+    select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
+    select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
 #[derive(Debug, Args)]
@@ -121,19 +126,21 @@ pub async fn reconcile(
     let plan = plan_run_plane(schema, &obs);
     if apply {
         let mut applied = 0;
-        if plan.actions.first().is_some_and(|action| {
+        while plan.actions.get(applied).is_some_and(|action| {
             matches!(
                 action.kind,
-                wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
+                wamn_schema_control::RunPlaneActionKind::VerifyEffectWriterRole
+                    | wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
                     | wamn_schema_control::RunPlaneActionKind::FrameIdentityCutover
+                    | wamn_schema_control::RunPlaneActionKind::EffectWriterCutover
             )
         }) {
-            let action = &plan.actions[0];
+            let action = &plan.actions[applied];
             client
                 .batch_execute(&action.sql)
                 .await
                 .with_context(|| format!("apply {:?} {}", action.kind, action.target))?;
-            applied = 1;
+            applied += 1;
         }
         crate::publish_catalog::ensure_wamn_app_role(client).await?;
         for action in &plan.actions[applied..] {
@@ -165,8 +172,73 @@ async fn observe(
                 can_replicate: row.get(5),
                 bypasses_rls: row.get(6),
             }),
+        effect_writer_role: client
+            .query_opt(select_effect_writer_role_sql(), &[])
+            .await
+            .context("read effect-writer role boundary")?
+            .map(|row| EffectWriterRoleObservation {
+                can_login: row.get(0),
+                is_superuser: row.get(1),
+                can_create_database: row.get(2),
+                can_create_role: row.get(3),
+                inherits_roles: row.get(4),
+                can_replicate: row.get(5),
+                bypasses_rls: row.get(6),
+                can_connect: row.get(7),
+                owns_objects: row.get(8),
+                membership_out_of_bounds: row.get(9),
+            }),
         ..Default::default()
     };
+    let writer_schema = client
+        .query_one(
+            select_effect_writer_schema_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effect-writer schema privileges")?;
+    obs.effect_writer_schema_privileges = (writer_schema.get(0), writer_schema.get(1));
+    for row in client
+        .query(
+            select_effect_ledger_table_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read direct effect-ledger privileges")?
+    {
+        obs.effect_ledger_table_privileges
+            .entry((row.get(0), row.get(1)))
+            .or_default()
+            .insert(row.get(2));
+    }
+    for row in client
+        .query(
+            select_effect_ledger_effective_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective effect-ledger privileges")?
+    {
+        let table: String = row.get(0);
+        obs.effect_ledger_effective_privileges
+            .entry((table.clone(), row.get(1)))
+            .or_default()
+            .insert(row.get(2));
+        obs.effect_ledger_owners.insert(table, row.get(3));
+    }
+    for row in client
+        .query(
+            select_effect_ledger_effective_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective effect-ledger column privileges")?
+    {
+        obs.effect_ledger_effective_column_privileges
+            .entry((row.get(0), row.get(1)))
+            .or_default()
+            .insert(row.get(2));
+    }
 
     obs.app_is_scenario_author_member = client
         .query_one(select_app_scenario_author_membership_sql(), &[])
@@ -258,6 +330,29 @@ async fn observe(
         obs.column_types
             .insert((table.clone(), column.clone()), row.get(4));
         obs.tables.entry(table).or_default().insert(column);
+    }
+    let effect_ledgers: Vec<&str> = [
+        "effect_attempts",
+        "effect_attempt_dispatches",
+        "effect_attempt_outcomes",
+    ]
+    .into_iter()
+    .filter(|table| obs.tables.contains_key(*table))
+    .collect();
+    if !effect_ledgers.is_empty() {
+        let count_sql = effect_ledgers
+            .iter()
+            .map(|table| format!("SELECT count(*) FROM {}.{}", schema.quoted(), table))
+            .collect::<Vec<_>>()
+            .join(" UNION ALL ");
+        obs.effect_ledger_rows = client
+            .query_one(
+                &format!("SELECT COALESCE(sum(n), 0)::bigint FROM ({count_sql}) AS counts(n)"),
+                &[],
+            )
+            .await
+            .context("count effect ledger rows for writer cutover")?
+            .get(0);
     }
     if obs.tables.contains_key("runs") {
         obs.run_rows = client

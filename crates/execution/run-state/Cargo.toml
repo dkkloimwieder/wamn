@@ -1,11 +1,22 @@
 [package]
 name = "wamn-run-state"
-description = "The complete durable execution-state contract: runs, node runs, queue entries, leases, partitions, timers, replay, and their transactional SQL. Pure and guest-safe; adapters own Postgres, clocks, and messaging."
+description = "The durable execution-state contract. Its default graph is pure and guest-safe; the optional native feature owns the private effect-writer Postgres adapter."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
+effect-writer-credential = [
+    "dep:chrono",
+    "dep:hex",
+    "dep:sha2",
+    "dep:url",
+]
+native = [
+    "dep:deadpool-postgres",
+    "dep:tokio-postgres",
+    "effect-writer-credential",
+]
 test-util = []
 
 [dependencies]
@@ -26,6 +37,13 @@ wamn-pg-core = { workspace = true }
 # contract (like wamn-schema-compiler / wamn-api / wamn-runner).
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+chrono = { workspace = true, features = ["std"], optional = true }
+hex = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
+deadpool-postgres = { version = "0.14", optional = true }
+tokio-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
 wamn-node-manifest = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -1800,43 +1800,40 @@ fn interpolated_set_clause_still_inventories_the_update() {
 }
 
 #[test]
-fn run_plane_effect_backfill_writes_resolve_to_schema_control() {
+fn effect_ledger_lifecycle_is_run_state_owned() {
     let manifest = read_manifest(&repository());
-    for (line, operation, target, id) in [
-        (
-            1606,
-            "insert",
-            "{schema}.effect_attempts",
-            "wamn_run.effect_attempts",
-        ),
-        (
-            1622,
-            "insert",
-            "{schema}.effect_attempt_dispatches",
-            "wamn_run.effect_attempt_dispatches",
-        ),
-        (
-            1632,
-            "insert",
-            "{schema}.effect_attempt_outcomes",
-            "wamn_run.effect_attempt_outcomes",
-        ),
-        (1643, "update", "{schema}.node_runs", "wamn_run.node_runs"),
+    assert_eq!(manifest.principals["run-state"].role, "persistence");
+    assert_eq!(manifest.principals["schema-control"].role, "migration");
+
+    for id in [
+        "wamn_run.effect_attempts",
+        "wamn_run.effect_attempt_dispatches",
+        "wamn_run.effect_attempt_outcomes",
+    ] {
+        let ownership = &manifest
+            .objects
+            .iter()
+            .find(|object| object.id == id)
+            .unwrap_or_else(|| panic!("missing ownership record for {id}"))
+            .ownership;
+        assert_eq!(ownership.semantic_owner, "run-state", "{id}");
+        assert_eq!(ownership.migration_owners, ["schema-control"], "{id}");
+        assert_eq!(ownership.schema_source, "deploy/sql/run-state.sql", "{id}");
+        assert_eq!(ownership.writers, ["run-state"], "{id}");
+    }
+
+    for path in [
+        "crates/schema/control/src/run_plane.rs",
+        "services/rogue/src/lib.rs",
     ] {
         let discovery = Discovery {
-            path: "crates/schema/control/src/run_plane.rs".to_string(),
-            line,
-            operation: operation.to_string(),
-            target: target.to_string(),
+            path: path.to_string(),
+            line: 1,
+            operation: "insert".to_string(),
+            target: "wamn_run.effect_attempts".to_string(),
             provenance: SqlProvenance::Carrier,
         };
-        assert_eq!(
-            resolve_target(&manifest, &discovery)
-                .expect("run-plane default schema")
-                .id(),
-            id
-        );
-        validate_discovered_writers(&manifest, std::slice::from_ref(&discovery))
-            .expect("schema-control is a declared run-plane writer");
+        let error = validate_discovered_writers(&manifest, &[discovery]).unwrap_err();
+        assert!(error.contains("undeclared insert writer"), "{error}");
     }
 }

@@ -192,7 +192,6 @@ pub struct NodeInvocationSnapshot {
     pub admitted_connection: Option<String>,
     pub admitted_credential: Option<String>,
     pub attempt_input_ref: Option<String>,
-    pub attempt_key: Option<String>,
 }
 
 /// Host-owned authorization, placement, signing, and transport for custom nodes.
@@ -404,13 +403,8 @@ fn authorize_request(
         "input": input,
     });
     let attempt_input_ref = wamn_flow::canonical_json_sha256(&attempt_input);
-    let admitted_attempt_key = snapshot
-        .attempt_key
-        .as_deref()
-        .ok_or(EffectError::InvalidContext)?;
     if snapshot.admitted_config.as_ref() != Some(&config)
         || snapshot.attempt_input_ref.as_deref() != Some(attempt_input_ref.as_str())
-        || request.ctx.idempotency_key != admitted_attempt_key
     {
         return Err(EffectError::InvalidContext);
     }
@@ -530,11 +524,10 @@ mod tests {
                 "context": {},
                 "input": {},
             }))),
-            attempt_key: Some("durable-attempt-key".into()),
         }
     }
 
-    fn invocation_request(idempotency_key: &str) -> NodeInvokeRequest {
+    fn invocation_request() -> NodeInvokeRequest {
         NodeInvokeRequest {
             ctx: WireRunContext {
                 run_id: "run-a".into(),
@@ -542,7 +535,6 @@ mod tests {
                 flow_version: 1,
                 node_id: "node-a".into(),
                 attempt: 1,
-                idempotency_key: idempotency_key.into(),
                 deadline_ms: None,
                 traceparent: None,
                 tracestate: None,
@@ -589,44 +581,44 @@ mod tests {
         let context = invocation_context();
         let snapshot = invocation_snapshot(&context);
 
-        let mut identity_mismatch = invocation_request("durable-attempt-key");
+        let mut identity_mismatch = invocation_request();
         identity_mismatch.ctx.run_id = "other-run".into();
         assert!(matches!(
             validate_request_context(&context, &identity_mismatch),
             Err(EffectError::InvalidContext)
         ));
 
-        let mut config_mismatch = invocation_request("durable-attempt-key");
+        let mut config_mismatch = invocation_request();
         config_mismatch.ctx.config = r#"{"mode":"other"}"#.into();
         assert!(matches!(
             authorize_request(&context, &config_mismatch, &snapshot),
             Err(EffectError::InvalidContext)
         ));
 
-        let mut grant_mismatch = invocation_request("durable-attempt-key");
+        let mut grant_mismatch = invocation_request();
         grant_mismatch.grant = vec!["sibling-secret".into()];
         assert!(matches!(
             authorize_request(&context, &grant_mismatch, &snapshot),
             Err(EffectError::NodeNotPermitted)
         ));
 
-        let mut deadline_mismatch = invocation_request("durable-attempt-key");
+        let mut deadline_mismatch = invocation_request();
         deadline_mismatch.ctx.deadline_ms = Some(1);
         assert!(matches!(
             authorize_request(&context, &deadline_mismatch, &snapshot),
             Err(EffectError::InvalidContext)
         ));
 
-        let mut trace_mismatch = invocation_request("durable-attempt-key");
+        let mut trace_mismatch = invocation_request();
         trace_mismatch.ctx.traceparent = Some("00-forged".into());
         assert!(matches!(
             authorize_request(&context, &trace_mismatch, &snapshot),
             Err(EffectError::InvalidContext)
         ));
 
-        let mut context_mismatch = invocation_request("durable-attempt-key");
+        let mut context_mismatch = invocation_request();
         context_mismatch.ctx.context = r#"{"forged":true}"#.into();
-        let mut input_mismatch = invocation_request("durable-attempt-key");
+        let mut input_mismatch = invocation_request();
         input_mismatch.input = WirePayload::Inline(r#"{"forged":true}"#.into());
         for input_mismatch in [context_mismatch, input_mismatch] {
             assert!(matches!(
@@ -634,20 +626,5 @@ mod tests {
                 Err(EffectError::InvalidContext)
             ));
         }
-    }
-
-    #[test]
-    fn missing_immutable_attempt_key_is_refused() {
-        let context = invocation_context();
-        let mut snapshot = invocation_snapshot(&context);
-        snapshot.attempt_key = None;
-        assert!(matches!(
-            authorize_request(
-                &context,
-                &invocation_request("durable-attempt-key"),
-                &snapshot
-            ),
-            Err(EffectError::InvalidContext)
-        ));
     }
 }

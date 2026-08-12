@@ -651,6 +651,9 @@ async fn gate_body(
             tenant: TENANT,
             schema: Some(SCHEMA),
             project: PROJECT,
+            org: None,
+            environment: None,
+            database: None,
         },
         production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default()))
             .with_node_placements(placements.clone()),
@@ -1072,6 +1075,9 @@ async fn gate_body(
             tenant: TENANT,
             schema: Some(SCHEMA),
             project: PROJECT,
+            org: None,
+            environment: None,
+            database: None,
         },
         production_capabilities(allowed.clone(), Arc::new(RunnerEgressPolicy::default()))
             .with_node_placements(placements),
@@ -1147,7 +1153,6 @@ fn canonical_request() -> NodeInvokeRequest {
             flow_version: 1,
             node_id: "call".into(),
             attempt: 0,
-            idempotency_key: "authn-raw:call".into(),
             deadline_ms: Some(30_000),
             traceparent: None,
             tracestate: None,

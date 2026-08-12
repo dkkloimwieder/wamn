@@ -4260,9 +4260,11 @@ version = "0.1.0"
 name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde_json",
  "wamn-control-registry",
  "wamn-pg-core",
+ "wamn-run-state",
 ]
 
 [[package]]
@@ -4278,7 +4280,10 @@ name = "wamn-ctl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
+ "hex",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4286,6 +4291,7 @@ dependencies = [
  "tokio-postgres",
  "tracing",
  "tracing-subscriber",
+ "url",
  "wamn-catalog",
  "wamn-control-provision",
  "wamn-control-registry",
@@ -4365,6 +4371,7 @@ dependencies = [
  "tokio",
  "tracing",
  "wamn-catalog",
+ "wamn-run-state",
  "wamn-runtime",
  "wash-runtime",
  "wasmtime-wasi",
@@ -4664,8 +4671,15 @@ dependencies = [
 name = "wamn-run-state"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "deadpool-postgres",
+ "hex",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-postgres",
+ "url",
  "wamn-catalog",
  "wamn-flow",
  "wamn-node-manifest",

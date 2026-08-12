@@ -329,16 +329,9 @@ pub struct Dispatch {
     pub attempt: u32,
     /// Which VISIT of this node in this run (0 = first): a merge runs once per
     /// arriving token and a loop revisits its nodes, each visit a distinct
-    /// occurrence. Stable across retries of one visit (only a completed visit
-    /// advances it) — the loop-safe part of the `node_runs` idempotency key
-    /// `(run, node, occurrence)` the driver persists (wamn-03m / R24).
+    /// occurrence. Stable across retries of one visit; only a completed visit
+    /// advances it (wamn-03m / R24).
     pub occurrence: u32,
-    /// `run:node:occurrence` — stable across RETRIES of one visit, distinct
-    /// across VISITS (merge arrivals, loop laps), so an external system
-    /// honoring idempotency headers dedupes replays of the same execution
-    /// without swallowing a legitimate second one (R25). Forward to external
-    /// systems that support idempotency headers.
-    pub idempotency_key: String,
     /// Remaining time budget for this node, if the flow set one.
     pub deadline_ms: Option<u64>,
 }
@@ -610,9 +603,6 @@ impl<'f> Plan<'f> {
             context: state.context.clone(),
             attempt: a.attempt,
             occurrence,
-            // R25: the occurrence keeps distinct visits distinct while retries
-            // of one visit keep their key.
-            idempotency_key: format!("{}:{}:{occurrence}", state.run_id, a.node),
             deadline_ms: node.config.get("deadline-ms").and_then(Value::as_u64),
         }
     }

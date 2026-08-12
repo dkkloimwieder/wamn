@@ -18,14 +18,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 
-mod http_operation_fingerprint;
+mod portable_http_target;
 
 #[doc(inline)]
-pub use http_operation_fingerprint::{
-    CanonicalHttpTarget, HTTP_OPERATION_FINGERPRINT_VERSION, HttpBodyDigest, HttpOperation,
-    HttpOperationFingerprint, HttpOperationFingerprintError, HttpOperationFingerprintErrorKind,
-    HttpSemanticHeader, PortableHttpTargetError, fingerprint_http_operation,
-    is_http_operation_semantic_header, normalize_portable_http_target,
+pub use portable_http_target::{
+    CanonicalHttpTarget, PortableHttpTargetError, normalize_portable_http_target,
 };
 
 /// The OCI annotation key the manifest JSON is stored under.
@@ -133,7 +130,6 @@ pub enum ConnectionField {
     Redirect,
     Proxy,
     Credential,
-    IdempotencyKey,
 }
 
 /// The principal allowed to supply one connection field.
@@ -175,15 +171,6 @@ pub enum CredentialInjection {
     EnvironmentSelectedHttpHeader,
 }
 
-/// How the engine-owned stable key enters a request.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum IdempotencyKeyInjection {
-    HttpIdempotencyKeyHeader,
-}
-
 /// Versioned portable semantics for one connection type.
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
@@ -196,7 +183,6 @@ pub struct ConnectionTypeDescriptor {
     pub authority_model: ConnectionAuthorityModel,
     pub field_ownership: Vec<ConnectionFieldOwnership>,
     pub credential_injection: CredentialInjection,
-    pub idempotency_key_injection: IdempotencyKeyInjection,
 }
 
 impl ConnectionTypeDescriptor {
@@ -244,13 +230,8 @@ impl ConnectionTypeDescriptor {
                     field: ConnectionField::Credential,
                     owner: ConnectionFieldOwner::Environment,
                 },
-                ConnectionFieldOwnership {
-                    field: ConnectionField::IdempotencyKey,
-                    owner: ConnectionFieldOwner::System,
-                },
             ],
             credential_injection: CredentialInjection::EnvironmentSelectedHttpHeader,
-            idempotency_key_injection: IdempotencyKeyInjection::HttpIdempotencyKeyHeader,
         }
     }
 
@@ -462,8 +443,7 @@ fn err(
     });
 }
 
-/// The 5.1 flow-id slug rule, extended to node types (they embed in
-/// idempotency keys and registry lookups the same way).
+/// The 5.1 flow-id slug rule, extended to node types used in registry lookups.
 fn is_slug(s: &str) -> bool {
     let b = s.as_bytes();
     !b.is_empty()

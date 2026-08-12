@@ -398,7 +398,8 @@ fn sdk_mirrors_the_frozen_wit() {
         "run signature missing"
     );
 
-    // run-context (ctx.rs RunContext), field for field.
+    // Frozen run-context ABI. The native SDK deliberately omits the retained,
+    // ABI-only idempotency field and the adapters supply an empty value.
     for l in [
         "run-id: string,",
         "flow-id: string,",
@@ -414,6 +415,10 @@ fn sdk_mirrors_the_frozen_wit() {
     ] {
         assert!(has(l), "run-context field line missing: {l:?}");
     }
+    assert!(
+        !include_str!("../src/ctx.rs").contains("pub idempotency_key"),
+        "the frozen ABI-only idempotency field must not become SDK runtime authority"
+    );
 
     // error-detail (error.rs ErrorDetail).
     for l in [

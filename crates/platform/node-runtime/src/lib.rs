@@ -395,7 +395,8 @@ impl NodeRuntime {
             flow_version: request.ctx.flow_version,
             node_id: request.ctx.node_id,
             attempt: request.ctx.attempt,
-            idempotency_key: request.ctx.idempotency_key,
+            // Frozen 0.1 ABI field: retain the layout without minting authority.
+            idempotency_key: String::new(),
             traceparent: request.ctx.traceparent,
             tracestate: request.ctx.tracestate,
             deadline_ms: request.ctx.deadline_ms,

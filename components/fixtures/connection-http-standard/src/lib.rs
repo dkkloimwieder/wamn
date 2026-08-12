@@ -83,14 +83,15 @@ wit_bindgen::generate!({
 struct Component;
 
 impl exports::wamn::connection_http_standard_fixture::node::Guest for Component {
-    fn run(input: u32) -> u32 {
+    fn run(_input: u32) -> u32 {
         let request = wamn::connection::http::Request {
             requirement: "standard-erp".to_string(),
             method: "POST".to_string(),
             path_and_query: "/receipts?source=standard".to_string(),
             headers: Vec::new(),
             body: None,
-            idempotency_key: Some(input.to_string()),
+            // Frozen 0.1 ABI field: authored keys are not accepted.
+            idempotency_key: None,
         };
         match wamn::connection::http::send(&request) {
             Ok(response) => u32::from(response.status),

@@ -5,6 +5,7 @@
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
 //! and production capability selection remains in the service leaves.
 
+mod effect_writer;
 mod pool;
 
 pub use pool::{
@@ -12,6 +13,8 @@ pub use pool::{
     ExecutionPoolSnapshot, InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError,
     PoolCleanupError, RetirementReason, ReusableExecutionInstance,
 };
+
+use effect_writer::load_effect_writer;
 
 include!(concat!(env!("OUT_DIR"), "/effect_provider_revision.rs"));
 
@@ -339,6 +342,12 @@ pub struct ExecutionIdentity<'a> {
     pub tenant: &'a str,
     pub schema: Option<&'a str>,
     pub project: &'a str,
+    /// Project-environment org, required only by the private production writer.
+    pub org: Option<&'a str>,
+    /// Project-environment name, required only by the private production writer.
+    pub environment: Option<&'a str>,
+    /// Exact project database, required only by the private production writer.
+    pub database: Option<&'a str>,
 }
 
 /// Register this replica's HOST-INJECTED wasi:logging claim: the run-path log
@@ -382,6 +391,8 @@ struct LiveExecution {
 pub struct ExecutionHost {
     live: Option<LiveExecution>,
     runtime_revision: TrustedExecutionRuntimeRevision,
+    /// Constructed private native writer; intentionally unreachable until .5.4.
+    effect_writer: Option<wamn_run_state::EffectWriterClient>,
     ttl_ms: u64,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
     /// each drive then publishes the store's high-water into the meter.
@@ -393,6 +404,7 @@ impl std::fmt::Debug for ExecutionHost {
         formatter
             .debug_struct("ExecutionHost")
             .field("runtime_revision", &self.runtime_revision)
+            .field("effect_writer_loaded", &self.effect_writer.is_some())
             .field("ttl_ms", &self.ttl_ms)
             .field("disposed", &self.live.is_none())
             .finish_non_exhaustive()
@@ -420,11 +432,13 @@ impl ExecutionHost {
         ttl_ms: u64,
     ) -> anyhow::Result<Self> {
         let runtime_revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(guest);
+        let effect_writer = load_effect_writer(&identity).await?;
         let ExecutionIdentity {
             owner,
             tenant,
             schema,
             project,
+            ..
         } = identity;
         // Non-spoofable, host-injected: the guest reads these from its session,
         // never chooses them. set_runner validates the owner charset.
@@ -560,6 +574,7 @@ impl ExecutionHost {
                 execute_claimed,
             }),
             runtime_revision,
+            effect_writer,
             ttl_ms: bounded_attempt_ms(ttl_ms),
             mem,
         })
@@ -893,6 +908,7 @@ mod tests {
                     execute_claimed,
                 }),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
+                effect_writer: None,
                 ttl_ms: 40,
                 mem: None,
             },
@@ -1014,6 +1030,9 @@ mod tests {
             tenant: "acme",
             schema: Some("wamn_run"),
             project: "receiving",
+            org: None,
+            environment: None,
+            database: None,
         };
         register_logging_claim(&logging, &identity);
         // Keyed by the component id (== owner); the enrichment is the runner's.

@@ -10,6 +10,7 @@
 use crate::name::{APP_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
+use wamn_run_state::EFFECT_WRITER_ROLE;
 
 // Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
 // canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
@@ -82,8 +83,9 @@ pub fn database_exists_sql() -> &'static str {
 }
 
 /// Restrict `CONNECT` on a database — named by its full, already-derived name —
-/// to the shared app role: revoke it from `PUBLIC` (every new database grants
-/// `PUBLIC` `CONNECT` by default) and grant it to [`APP_ROLE`]. The name is
+/// to the shared app role: revoke `CONNECT` and `TEMPORARY` from `PUBLIC`
+/// (PostgreSQL grants both on new databases by default) and grant `CONNECT` to
+/// [`APP_ROLE`]. The name is
 /// double-quoted (a slug-derived name cannot contain a `"`, so it is
 /// injection-safe). Both statements are idempotent; issue as one batch.
 ///
@@ -95,7 +97,7 @@ pub fn database_exists_sql() -> &'static str {
 pub fn grant_connect_on_database_sql(database: &str) -> String {
     let db = quote_ident(database);
     format!(
-        "REVOKE CONNECT ON DATABASE {db} FROM PUBLIC; \
+        "REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
          GRANT CONNECT ON DATABASE {db} TO {role};",
         role = quote_ident(APP_ROLE),
     )
@@ -106,6 +108,237 @@ pub fn grant_connect_on_database_sql(database: &str) -> String {
 /// database name.
 pub fn grant_connect_sql(project: &str) -> String {
     grant_connect_on_database_sql(&database_name(project))
+}
+
+/// Idempotently create the stable effect-ledger ACL role as NOLOGIN.
+///
+/// Table/schema grants deliberately do not live here: schema-control owns them
+/// once the effect-ledger tables exist. This builder only establishes the
+/// cluster-global, ownership-free role identity and restrictive attributes.
+pub fn ensure_effect_writer_acl_role_sql() -> String {
+    format!(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$;",
+        role = quote_ident(EFFECT_WRITER_ROLE),
+        role_lit = quote_literal(EFFECT_WRITER_ROLE),
+    )
+}
+
+/// Prepare one inactive scoped credential generation for authenticated use.
+///
+/// `role` is the validated deterministic generation name. The caller verifies
+/// the slot is inactive before applying this batch. Password and server-side
+/// `VALID UNTIL` are replaced, membership is solely the stable ACL role, and
+/// direct database authority is solely `CONNECT` on this project database.
+pub fn prepare_effect_writer_generation_sql(
+    database: &str,
+    role: &str,
+    password: &str,
+    expires_at: &str,
+) -> String {
+    let role_ident = quote_ident(role);
+    let role_lit = quote_literal(role);
+    format!(
+        "{ensure} \
+         DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role_ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               INHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$; \
+         ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
+         GRANT {acl_role} TO {role_ident} \
+           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
+         GRANT CONNECT ON DATABASE {database} TO {role_ident};",
+        ensure = ensure_effect_writer_acl_role_sql(),
+        password = quote_literal(password),
+        expires_at = quote_literal(expires_at),
+        acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        database = quote_ident(database),
+    )
+}
+
+/// Retire one old credential generation after replacement use was verified.
+///
+/// The batch removes authority and then authentication. The caller commits it
+/// before terminating sessions with [`terminate_effect_writer_generation_sessions_sql`].
+pub fn retire_effect_writer_generation_sql(database: &str, role: &str) -> String {
+    let role_ident = quote_ident(role);
+    format!(
+        "REVOKE {acl_role} FROM {role_ident}; \
+         REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
+         ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
+        acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        database = quote_ident(database),
+    )
+}
+
+/// Terminate sessions only after credential authority removal has committed.
+pub fn terminate_effect_writer_generation_sessions_sql(role: &str) -> String {
+    let role_lit = quote_literal(role);
+    format!(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+           WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
+    )
+}
+
+/// Read-only state probe used by ctl and the bootstrap wrapper.
+///
+/// `$1` is the exact generation role. The result exposes authentication, exact
+/// direct role memberships, exact direct database CONNECT ACLs, and active
+/// session count without carrying password material.
+pub fn effect_writer_generation_state_sql() -> &'static str {
+    "SELECT r.rolcanlogin, r.rolsuper, r.rolinherit, r.rolcreaterole, r.rolcreatedb, \
+            r.rolreplication, r.rolbypassrls, \
+            r.rolpassword IS NOT NULL AS password_set, \
+            CASE WHEN r.rolvaliduntil IS NULL THEN NULL \
+                 ELSE to_char(r.rolvaliduntil AT TIME ZONE 'UTC', \
+                              'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') END AS valid_until, \
+            COALESCE(isfinite(r.rolvaliduntil), false) AS valid_until_finite, \
+            COALESCE((SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text) \
+                        FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid \
+                       WHERE m.member = r.oid), ARRAY[]::text[]) AS memberships, \
+            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND m.set_option) \
+                        FROM pg_auth_members m WHERE m.member = r.oid), true) \
+              AS membership_options_exact, \
+            COALESCE((SELECT array_agg(member.rolname::text ORDER BY member.rolname::text) \
+                        FROM pg_auth_members m JOIN pg_roles member ON member.oid = m.member \
+                       WHERE m.roleid = r.oid), ARRAY[]::text[]) AS member_roles, \
+            COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND m.set_option) \
+                        FROM pg_auth_members m WHERE m.roleid = r.oid), true) \
+              AS member_options_exact, \
+            COALESCE((SELECT array_agg(d.datname::text ORDER BY d.datname::text) \
+                        FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) acl \
+                       WHERE acl.grantee = r.oid AND acl.privilege_type = 'CONNECT'), \
+                     ARRAY[]::text[]) AS connect_databases, \
+            (SELECT count(*)::bigint FROM pg_stat_activity a WHERE a.usename = r.rolname) AS sessions, \
+            (SELECT count(*)::bigint FROM pg_shdepend d \
+              WHERE d.refclassid = 'pg_authid'::regclass AND d.refobjid = r.oid \
+                AND d.deptype = 'o') AS owned_objects \
+       FROM pg_catalog.pg_authid r WHERE r.rolname = $1"
+}
+
+/// Read-only proof that no non-template database grants `CONNECT` to PUBLIC.
+pub fn public_connect_databases_sql() -> &'static str {
+    "SELECT d.datname::text FROM pg_database d \
+      WHERE NOT d.datistemplate AND EXISTS ( \
+        SELECT FROM aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
+         WHERE acl.grantee = 0 AND acl.privilege_type = 'CONNECT') \
+      ORDER BY d.datname::text"
+}
+
+/// Revoke PUBLIC `CONNECT` from every non-template database in this cluster.
+///
+/// Database privileges are cluster catalog entries, so the DO block may target
+/// each database while connected to the exact project database. This gives ctl
+/// ownership of converging the ratified cluster-wide floor during initial
+/// generation preparation.
+pub fn revoke_public_connect_floor_sql() -> &'static str {
+    "DO $$ DECLARE database_name text; BEGIN \
+       FOR database_name IN SELECT datname FROM pg_database WHERE NOT datistemplate LOOP \
+         EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', database_name); \
+       END LOOP; \
+     END $$;"
+}
+
+/// Read-only proof of PUBLIC's effective `TEMPORARY` privilege on the target.
+///
+/// The caller connects to the already-validated exact project database. Unlike
+/// the cluster-wide `CONNECT` floor, `TEMPORARY` is deliberately confined only
+/// on that database so unrelated databases retain their own policy.
+pub fn public_temporary_on_current_database_sql() -> &'static str {
+    "SELECT EXISTS (SELECT FROM pg_database d CROSS JOIN LATERAL \
+       aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) acl \
+      WHERE d.datname = current_database() AND acl.grantee = 0 \
+        AND acl.privilege_type = 'TEMPORARY')"
+}
+
+/// All non-template databases available for exact cross-database ACL proof.
+pub fn non_template_databases_sql() -> &'static str {
+    "SELECT datname::text FROM pg_database WHERE NOT datistemplate ORDER BY datname::text"
+}
+
+/// Read-only direct ACL inventory for one role in the connected database.
+pub fn role_database_acl_inventory_sql() -> &'static str {
+    "WITH wanted AS (SELECT oid FROM pg_roles WHERE rolname = $1), acl AS ( \
+       SELECT 'database'::text AS object_kind, d.datname::text AS schema_name, \
+              d.datname::text AS object_name, x.privilege_type::text \
+         FROM pg_database d CROSS JOIN LATERAL \
+              aclexplode(COALESCE(d.datacl, acldefault('d', d.datdba))) x \
+        WHERE d.datname = current_database() AND x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'schema', n.nspname::text, n.nspname::text, x.privilege_type::text \
+         FROM pg_namespace n CROSS JOIN LATERAL \
+              aclexplode(COALESCE(n.nspacl, acldefault('n', n.nspowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'relation', n.nspname::text, c.relname::text, x.privilege_type::text \
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace \
+         CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'routine', n.nspname::text, p.proname::text, x.privilege_type::text \
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace \
+         CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f', p.proowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'column', n.nspname::text, c.relname::text || '.' || a.attname::text, \
+              x.privilege_type::text \
+         FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         CROSS JOIN LATERAL aclexplode(a.attacl) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'type', n.nspname::text, t.typname::text, x.privilege_type::text \
+         FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace \
+         CROSS JOIN LATERAL aclexplode(COALESCE(t.typacl, acldefault('T', t.typowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'language', ''::text, l.lanname::text, x.privilege_type::text \
+         FROM pg_language l CROSS JOIN LATERAL \
+              aclexplode(COALESCE(l.lanacl, acldefault('l', l.lanowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'large-object', ''::text, l.oid::text, x.privilege_type::text \
+         FROM pg_largeobject_metadata l CROSS JOIN LATERAL \
+              aclexplode(COALESCE(l.lomacl, acldefault('L', l.lomowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'foreign-data-wrapper', ''::text, f.fdwname::text, x.privilege_type::text \
+         FROM pg_foreign_data_wrapper f CROSS JOIN LATERAL \
+              aclexplode(COALESCE(f.fdwacl, acldefault('F', f.fdwowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'foreign-server', ''::text, s.srvname::text, x.privilege_type::text \
+         FROM pg_foreign_server s CROSS JOIN LATERAL \
+              aclexplode(COALESCE(s.srvacl, acldefault('S', s.srvowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'tablespace', ''::text, t.spcname::text, x.privilege_type::text \
+         FROM pg_tablespace t CROSS JOIN LATERAL \
+              aclexplode(COALESCE(t.spcacl, acldefault('t', t.spcowner))) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'parameter', ''::text, p.parname::text, x.privilege_type::text \
+         FROM pg_parameter_acl p CROSS JOIN LATERAL aclexplode(p.paracl) x \
+        WHERE x.grantee = (SELECT oid FROM wanted) \
+       UNION ALL \
+       SELECT 'default-acl', COALESCE(n.nspname::text, ''), d.defaclobjtype::text, \
+              x.privilege_type::text \
+         FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace \
+         CROSS JOIN LATERAL aclexplode(d.defaclacl) x \
+        WHERE x.grantee = (SELECT oid FROM wanted)) \
+     SELECT object_kind, schema_name, object_name, privilege_type FROM acl \
+      ORDER BY object_kind, schema_name, object_name, privilege_type"
+}
+
+/// Session-scoped serialization key for one project-environment rotation.
+pub fn effect_writer_scope_lock_sql() -> &'static str {
+    "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
 }
 
 // --- CDC capture provisioning (wamn-l5i9.9, D19 v3 §4) -----------------------
@@ -320,7 +553,7 @@ mod tests {
         // The REVOKE FROM PUBLIC must precede the GRANT (order is not load-bearing
         // for correctness, but both must be present — the isolation backstop).
         let revoke = sql
-            .find("REVOKE CONNECT ON DATABASE \"wamn-db-acme\" FROM PUBLIC")
+            .find("REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme\" FROM PUBLIC")
             .expect("revoke public");
         let grant = sql
             .find("GRANT CONNECT ON DATABASE \"wamn-db-acme\" TO \"wamn_app\"")
@@ -332,9 +565,9 @@ mod tests {
     fn grant_connect_on_database_targets_an_arbitrary_db_name() {
         // The per-project-env path (wamn-q3n.7) passes a full triple-derived name.
         let sql = grant_connect_on_database_sql("wamn-db-acme--billing--dev");
-        assert!(
-            sql.contains("REVOKE CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC")
-        );
+        assert!(sql.contains(
+            "REVOKE CONNECT, TEMPORARY ON DATABASE \"wamn-db-acme--billing--dev\" FROM PUBLIC"
+        ));
         assert!(
             sql.contains(
                 "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"wamn_app\""
@@ -344,6 +577,141 @@ mod tests {
         assert_eq!(
             grant_connect_sql("acme"),
             grant_connect_on_database_sql("wamn-db-acme")
+        );
+    }
+
+    #[test]
+    fn effect_writer_acl_role_is_stable_nologin_and_owns_no_grants_here() {
+        let sql = ensure_effect_writer_acl_role_sql();
+        assert!(sql.contains("CREATE ROLE \"wamn_effect_writer\" NOLOGIN"));
+        for attr in [
+            "NOSUPERUSER",
+            "NOCREATEDB",
+            "NOCREATEROLE",
+            "NOINHERIT",
+            "NOREPLICATION",
+            "NOBYPASSRLS",
+        ] {
+            assert!(sql.contains(attr), "missing {attr}");
+        }
+        for forbidden in ["CONNECT ON DATABASE", "ON SCHEMA", "ON TABLE"] {
+            assert!(
+                !sql.contains(forbidden),
+                "provisioning stole schema-control grant ownership"
+            );
+        }
+    }
+
+    #[test]
+    fn generation_prepare_has_only_login_membership_and_project_connect() {
+        let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
+        let sql = prepare_effect_writer_generation_sql(
+            "wamn-db-acme--billing--dev",
+            role,
+            "a'b",
+            "2026-09-01T00:00:00Z",
+        );
+        assert!(sql.contains(&format!("CREATE ROLE \"{role}\" NOLOGIN")));
+        assert!(sql.contains(&format!(
+            "ALTER ROLE \"{role}\" LOGIN PASSWORD 'a''b' VALID UNTIL '2026-09-01T00:00:00Z'"
+        )));
+        assert!(sql.contains(&format!("GRANT \"wamn_effect_writer\" TO \"{role}\"")));
+        assert!(sql.contains("WITH ADMIN FALSE, INHERIT TRUE, SET TRUE"));
+        assert!(sql.contains(&format!(
+            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"{role}\""
+        )));
+        for forbidden in [
+            "SUPERUSER",
+            "CREATEDB",
+            "CREATEROLE",
+            "REPLICATION",
+            "BYPASSRLS",
+        ] {
+            assert!(sql.contains(&format!("NO{forbidden}")));
+        }
+        assert!(!sql.contains("GRANT USAGE"));
+        assert!(!sql.contains("GRANT SELECT"));
+        assert!(!sql.contains("GRANT INSERT"));
+    }
+
+    #[test]
+    fn generation_retire_commits_authority_removal_before_session_termination() {
+        let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
+        let sql = retire_effect_writer_generation_sql("wamn-db-acme--billing--dev", role);
+        let membership = sql.find("REVOKE \"wamn_effect_writer\"").unwrap();
+        let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
+        let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
+        assert!(membership < connect && connect < no_login);
+        assert!(!sql.contains("pg_terminate_backend"));
+
+        let terminate = terminate_effect_writer_generation_sessions_sql(role);
+        assert!(terminate.contains(&format!("WHERE usename = '{role}'")));
+        assert!(terminate.contains("pid <> pg_backend_pid()"));
+        for authority_change in ["REVOKE ", "ALTER ROLE"] {
+            assert!(!terminate.contains(authority_change));
+        }
+    }
+
+    #[test]
+    fn generation_state_probe_is_read_only_and_parameterized() {
+        let sql = effect_writer_generation_state_sql();
+        assert!(sql.starts_with("SELECT"));
+        assert!(sql.contains("rolcanlogin"));
+        assert!(sql.contains("FROM pg_catalog.pg_authid r"));
+        assert!(sql.contains("r.rolpassword IS NOT NULL AS password_set"));
+        assert!(sql.contains("pg_auth_members"));
+        assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND m.set_option"));
+        assert!(sql.contains("WHERE m.roleid = r.oid"));
+        assert!(sql.contains("rolvaliduntil"));
+        assert!(sql.contains("isfinite"));
+        assert!(sql.contains("aclexplode"));
+        assert!(sql.contains("pg_stat_activity"));
+        assert!(sql.contains("r.rolname = $1"));
+        for mutation in ["ALTER ", "GRANT ", "REVOKE ", "UPDATE ", "DELETE "] {
+            assert!(!sql.contains(mutation));
+        }
+    }
+
+    #[test]
+    fn generation_acl_inventory_covers_cluster_and_database_object_classes() {
+        let sql = role_database_acl_inventory_sql();
+        for catalog in [
+            "pg_database",
+            "pg_namespace",
+            "pg_class",
+            "pg_proc",
+            "pg_attribute",
+            "pg_type",
+            "pg_language",
+            "pg_largeobject_metadata",
+            "pg_foreign_data_wrapper",
+            "pg_foreign_server",
+            "pg_tablespace",
+            "pg_parameter_acl",
+            "pg_default_acl",
+        ] {
+            assert!(sql.contains(catalog), "missing direct ACL class {catalog}");
+        }
+        assert!(sql.contains("x.grantee = (SELECT oid FROM wanted)"));
+    }
+
+    #[test]
+    fn generation_cluster_probes_are_read_only_and_scope_locked() {
+        assert!(public_connect_databases_sql().starts_with("SELECT"));
+        assert!(public_connect_databases_sql().contains("acl.grantee = 0"));
+        assert!(public_connect_databases_sql().contains("privilege_type = 'CONNECT'"));
+        assert!(!public_connect_databases_sql().contains("TEMPORARY"));
+        assert!(revoke_public_connect_floor_sql().starts_with("DO $$"));
+        assert!(revoke_public_connect_floor_sql().contains("NOT datistemplate"));
+        assert!(revoke_public_connect_floor_sql().contains("REVOKE CONNECT ON DATABASE %I"));
+        assert!(!revoke_public_connect_floor_sql().contains("TEMPORARY"));
+        assert!(public_temporary_on_current_database_sql().starts_with("SELECT EXISTS"));
+        assert!(public_temporary_on_current_database_sql().contains("current_database()"));
+        assert!(public_temporary_on_current_database_sql().contains("'TEMPORARY'"));
+        assert!(non_template_databases_sql().contains("NOT datistemplate"));
+        assert_eq!(
+            effect_writer_scope_lock_sql(),
+            "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
         );
     }
 

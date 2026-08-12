@@ -51,6 +51,14 @@ fn exact_claimed_run_live_faults_and_single_driver() {
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
                    NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
+                 CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS wamn_run CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
