@@ -428,7 +428,15 @@ fn default_fail_status() -> u16 {
     400
 }
 
-/// Configuration carried by the engine-reserved `invoke-flow` node.
+/// Configuration carried by the engine-reserved `call-flow` node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct CallFlowConfig {
+    /// Tenant-scoped flow identifier resolved in the parent's pinned release.
+    pub flow_id: String,
+}
+
+/// Configuration carried by the legacy engine-reserved `invoke-flow` node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct InvokeFlowConfig {

@@ -12,13 +12,15 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 
+#[cfg(test)]
+use wamn_catalog::entry_input_schema_hash;
 use wamn_catalog::{
-    CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling, CallableReturnContract,
-    DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy, ExecutionNodeId,
-    ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode, ExecutionPlanV2,
+    CALLABLE_CONTRACT_VERSION, CallFlowInstruction, CallableContract, CallableEffectCeiling,
+    CallableReturnContract, DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy,
+    ExecutionNodeId, ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode, ExecutionPlanV2,
     ExecutionRuntimeRevision, ExecutionSourceMapEntry, PinnedDraftArtifact, RootTerminalBehavior,
     StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
-    entry_input_schema_hash, execution_bundle_hash,
+    execution_bundle_hash, read_execution_plan,
 };
 use wamn_execution_host::TrustedExecutionRuntimeRevision;
 use wamn_scenario_model::{
@@ -408,6 +410,9 @@ pub enum DraftRunRefusal {
     InvalidDraft { detail: String },
     CatalogDrift,
     UnresolvedNodes { node_types: Vec<String> },
+    CallFlowCalleeNotFound { site: String, flow_id: String },
+    CallFlowNotCallable { site: String, flow_id: String },
+    CallFlowContractIncompatible { site: String, flow_id: String },
 }
 
 impl std::fmt::Display for DraftRunRefusal {
@@ -421,6 +426,24 @@ impl std::fmt::Display for DraftRunRefusal {
                     formatter,
                     "draft has unresolved node types: {}",
                     node_types.join(", ")
+                )
+            }
+            Self::CallFlowCalleeNotFound { site, flow_id } => {
+                write!(
+                    formatter,
+                    "call-flow site {site:?} resolves no flow {flow_id:?}"
+                )
+            }
+            Self::CallFlowNotCallable { site, flow_id } => {
+                write!(
+                    formatter,
+                    "call-flow site {site:?} target {flow_id:?} has no recorded callable contract"
+                )
+            }
+            Self::CallFlowContractIncompatible { site, flow_id } => {
+                write!(
+                    formatter,
+                    "call-flow site {site:?} target {flow_id:?} has an incompatible callable contract"
                 )
             }
         }
@@ -686,6 +709,9 @@ fn resolve_standard_implementations(
     let mut unresolved = Vec::new();
     let mut implementations = Vec::with_capacity(node_types.len());
     for node_type in node_types {
+        if node_type == "call-flow" {
+            continue;
+        }
         let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
             unresolved.push(node_type.to_string());
             continue;
@@ -744,6 +770,24 @@ fn build_root_execution_plan(
         .nodes
         .iter()
         .map(|node| {
+            if node.node_type == "call-flow" {
+                let config =
+                    serde_json::from_value::<wamn_flow::CallFlowConfig>(node.config.clone())
+                        .with_context(|| {
+                            format!("validated call-flow node {:?} has invalid config", node.id)
+                        })?;
+                return Ok(ExecutionPlanNode {
+                    local_node_id: node_id(&node.id)?,
+                    source_node_id: node.id.clone(),
+                    node_type: "call-flow".to_string(),
+                    config: serde_json::json!({
+                        "site": node.id.clone(),
+                        "flow-id": config.flow_id,
+                    }),
+                    effect_policy: ExecutionEffectPolicy::Effectful,
+                    source_connection_requirement: None,
+                });
+            }
             let interface =
                 wamn_standard_nodes::describe_interface(&node.node_type).with_context(|| {
                     format!("validated node type {:?} is not standard", node.node_type)
@@ -806,23 +850,6 @@ fn build_root_execution_plan(
             responders: responder_ids,
         }
     };
-    let callable_contract = if entry.node_type == "request"
-        && flow.nodes.iter().any(|node| node.node_type == "respond")
-        && flow
-            .nodes
-            .iter()
-            .filter(|node| node.node_type == "respond")
-            .all(|responder| flow.edges.iter().all(|edge| edge.from != responder.id))
-    {
-        Some(CallableContract {
-            version: CALLABLE_CONTRACT_VERSION.to_string(),
-            input_schema_hash: entry_input_schema_hash(&entry_input_schema_guard),
-            return_contract: CallableReturnContract::UntypedJsonBody,
-            effect_ceiling: CallableEffectCeiling::Effectful,
-        })
-    } else {
-        None
-    };
     let source_map = nodes
         .iter()
         .map(|node| ExecutionSourceMapEntry {
@@ -830,20 +857,127 @@ fn build_root_execution_plan(
             source_node_id: node.source_node_id.clone(),
         })
         .collect();
-    ExecutionPlanV2::new(
-        runtime_revision,
-        root_artifact_hash,
-        ExecutionPlanBody {
-            entry_instruction,
-            nodes,
-            edges,
-            root_terminal_behavior,
-            entry_input_schema_guard,
-            callable_contract,
-            source_map,
+    let mut body = ExecutionPlanBody {
+        entry_instruction,
+        nodes,
+        edges,
+        root_terminal_behavior,
+        entry_input_schema_guard,
+        callable_contract: None,
+        source_map,
+    };
+    let probe = ExecutionPlanV2 {
+        header: wamn_catalog::ExecutionPlanHeader {
+            format_version: wamn_catalog::EXECUTION_PLAN_FORMAT_VERSION.to_string(),
+            plan_compiler_revision: wamn_catalog::PLAN_COMPILER_REVISION.to_string(),
+            runtime_revision: runtime_revision.clone(),
+            root_artifact_hash: root_artifact_hash.to_string(),
         },
-    )
-    .map_err(anyhow::Error::new)
+        body: body.clone(),
+    };
+    body.callable_contract = probe.derived_callable_contract()?;
+    ExecutionPlanV2::new(runtime_revision, root_artifact_hash, body).map_err(anyhow::Error::new)
+}
+
+async fn validate_call_flow_callees(
+    transaction: &tokio_postgres::Transaction<'_>,
+    request: &ValidateFlowDraft,
+    own_flow_id: &str,
+    plan: &ExecutionPlanV2,
+) -> anyhow::Result<Result<(), DraftRunRefusal>> {
+    for node in &plan.body.nodes {
+        if node.node_type != "call-flow" {
+            continue;
+        }
+        let instruction = serde_json::from_value::<CallFlowInstruction>(node.config.clone())
+            .context("validated call-flow instruction failed to parse")?;
+        if let Some(result) = validate_own_call_flow_contract(
+            &instruction,
+            own_flow_id,
+            plan.body.callable_contract.as_ref(),
+        ) {
+            if let Err(refusal) = result {
+                return Ok(Err(refusal));
+            }
+            continue;
+        }
+        let row = transaction
+            .query_opt(
+                wamn_scenario_catalog::authoring::select_call_flow_callee_plan_sql(),
+                &[
+                    &request.tenant_id,
+                    &request.catalog_id,
+                    &request.catalog_version,
+                    &instruction.flow_id,
+                ],
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "resolve call-flow callee {:?} in catalog {:?} version {}",
+                    instruction.flow_id, request.catalog_id, request.catalog_version
+                )
+            })?;
+        let Some(row) = row else {
+            return Ok(Err(call_flow_callee_not_found(&instruction)));
+        };
+        let execution_bundle_hash: String = row.get(1);
+        let exact_bytes: Vec<u8> = row.get(2);
+        let callee_plan = match read_execution_plan(&execution_bundle_hash, &exact_bytes) {
+            Ok(plan) => plan,
+            Err(error) => {
+                return Ok(Err(DraftRunRefusal::InvalidDraft {
+                    detail: format!(
+                        "call-flow site {:?} target {:?} has invalid execution plan: {error}",
+                        instruction.site, instruction.flow_id
+                    ),
+                }));
+            }
+        };
+        if let Err(refusal) =
+            validate_call_flow_contract(&instruction, callee_plan.body.callable_contract.as_ref())
+        {
+            return Ok(Err(refusal));
+        }
+    }
+    Ok(Ok(()))
+}
+
+fn validate_own_call_flow_contract(
+    instruction: &CallFlowInstruction,
+    own_flow_id: &str,
+    contract: Option<&CallableContract>,
+) -> Option<Result<(), DraftRunRefusal>> {
+    (instruction.flow_id == own_flow_id).then(|| validate_call_flow_contract(instruction, contract))
+}
+
+fn call_flow_callee_not_found(instruction: &CallFlowInstruction) -> DraftRunRefusal {
+    DraftRunRefusal::CallFlowCalleeNotFound {
+        site: instruction.site.to_string(),
+        flow_id: instruction.flow_id.clone(),
+    }
+}
+
+fn validate_call_flow_contract(
+    instruction: &CallFlowInstruction,
+    contract: Option<&CallableContract>,
+) -> Result<(), DraftRunRefusal> {
+    let Some(contract) = contract else {
+        return Err(DraftRunRefusal::CallFlowNotCallable {
+            site: instruction.site.to_string(),
+            flow_id: instruction.flow_id.clone(),
+        });
+    };
+    if contract.version != CALLABLE_CONTRACT_VERSION
+        || contract.return_contract != CallableReturnContract::UntypedJsonBody
+        || contract.effect_ceiling != CallableEffectCeiling::Effectful
+    {
+        return Err(DraftRunRefusal::CallFlowContractIncompatible {
+            site: instruction.site.to_string(),
+            flow_id: instruction.flow_id.clone(),
+        });
+    }
+    Ok(())
 }
 
 pub(crate) async fn validate_flow_draft(
@@ -954,6 +1088,13 @@ pub(crate) async fn validate_flow_draft(
     if applied_catalog_version != request.catalog_version {
         transaction.rollback().await?;
         return Ok(Err(DraftRunRefusal::CatalogDrift));
+    }
+
+    if let Err(refusal) =
+        validate_call_flow_callees(&transaction, request, &flow_id, draft.execution_plan()).await?
+    {
+        transaction.rollback().await?;
+        return Ok(Err(refusal));
     }
 
     let artifact = draft.artifact();
@@ -1897,6 +2038,69 @@ mod tests {
     }
 
     #[test]
+    fn call_flow_refusals_are_typed_and_self_reference_skips_release_lookup() {
+        let instruction = CallFlowInstruction {
+            site: ExecutionNodeId::new("self-call").unwrap(),
+            flow_id: "caller".into(),
+        };
+        let contract = CallableContract {
+            version: CALLABLE_CONTRACT_VERSION.into(),
+            input_schema_hash: entry_input_schema_hash(&serde_json::json!(true)),
+            return_contract: CallableReturnContract::UntypedJsonBody,
+            effect_ceiling: CallableEffectCeiling::Effectful,
+        };
+
+        assert_eq!(
+            validate_own_call_flow_contract(&instruction, "caller", Some(&contract)),
+            Some(Ok(()))
+        );
+        assert_eq!(
+            validate_own_call_flow_contract(&instruction, "other", Some(&contract)),
+            None,
+            "non-self callees fall through to the pinned release lookup"
+        );
+        assert!(matches!(
+            call_flow_callee_not_found(&instruction),
+            DraftRunRefusal::CallFlowCalleeNotFound { .. }
+        ));
+        assert!(matches!(
+            validate_call_flow_contract(&instruction, None),
+            Err(DraftRunRefusal::CallFlowNotCallable { .. })
+        ));
+
+        let incompatible = CallableContract {
+            version: "foreign".into(),
+            ..contract
+        };
+        assert!(matches!(
+            validate_call_flow_contract(&instruction, Some(&incompatible)),
+            Err(DraftRunRefusal::CallFlowContractIncompatible { .. })
+        ));
+    }
+
+    #[test]
+    fn call_flow_resolution_is_after_exact_environment_head_lock() {
+        let source = include_str!("authoring.rs");
+        let validate = source
+            .split("pub(crate) async fn validate_flow_draft")
+            .nth(1)
+            .unwrap()
+            .split("pub(crate) async fn grant_draft_safe_generation")
+            .next()
+            .unwrap();
+        let lock = validate.find("lock_draft_catalog_head_sql").unwrap();
+        let source_member = validate
+            .find("select_draft_catalog_source_member_sql")
+            .unwrap();
+        let call_flow = validate.find("validate_call_flow_callees").unwrap();
+
+        assert!(lock < source_member);
+        assert!(source_member < call_flow);
+        assert!(validate.contains("&request.environment"));
+        assert!(validate.contains("locked_catalog_version != Some(request.catalog_version)"));
+    }
+
+    #[test]
     fn root_plan_retains_responder_order_and_derives_callable_contract() {
         let flow = wamn_flow::Flow::from_json(
             r#"{
@@ -1945,5 +2149,119 @@ mod tests {
                 effect_ceiling: CallableEffectCeiling::Effectful,
             })
         );
+    }
+
+    #[test]
+    fn root_plan_callable_derivation_uses_the_full_graph_rule() {
+        let flow = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"trapped","version":1,
+              "nodes":[
+                {"id":"request","type":"request","config":{"input-schema":true}},
+                {"id":"loop-a","type":"transform","config":{"expression":"@"}},
+                {"id":"loop-b","type":"transform","config":{"expression":"@"}},
+                {"id":"respond","type":"respond","config":{"status":200}}
+              ],
+              "edges":[
+                {"from":"request","to":"loop-a"},
+                {"from":"loop-a","to":"loop-b"},
+                {"from":"loop-b","to":"loop-a"},
+                {"from":"request","from-port":"error","to":"respond"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let plan = build_root_execution_plan(
+            &flow,
+            digest_a,
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: digest_b.into(),
+                effect_provider_revision: digest_a.into(),
+                host_effect_contract_version: "0.1".into(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(plan.body.callable_contract, None);
+    }
+
+    #[test]
+    fn root_plan_derives_callable_contract_for_answerable_cycles() {
+        let flow = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"answerable-cycle","version":1,
+              "nodes":[
+                {"id":"request","type":"request","config":{"input-schema":true}},
+                {"id":"loop-a","type":"transform","config":{"expression":"@"}},
+                {"id":"loop-b","type":"transform","config":{"expression":"@"}},
+                {"id":"respond","type":"respond","config":{"status":200}}
+              ],
+              "edges":[
+                {"from":"request","to":"loop-a"},
+                {"from":"loop-a","to":"loop-b"},
+                {"from":"loop-b","to":"loop-a"},
+                {"from":"loop-b","to":"respond"}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let plan = build_root_execution_plan(
+            &flow,
+            digest_a,
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: digest_b.into(),
+                effect_provider_revision: digest_a.into(),
+                host_effect_contract_version: "0.1".into(),
+            },
+        )
+        .unwrap();
+
+        assert!(plan.body.callable_contract.is_some());
+    }
+
+    #[test]
+    fn root_plan_lowers_call_flow_to_non_binding_instruction() {
+        let flow = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"caller","version":1,
+              "nodes":[
+                {"id":"event","type":"event"},
+                {"id":"call-child","type":"call-flow","config":{"flow-id":"callee"}}
+              ],
+              "edges":[{"from":"event","to":"call-child"}]
+            }"#,
+        )
+        .unwrap();
+        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let plan = build_root_execution_plan(
+            &flow,
+            digest_a,
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: digest_b.into(),
+                effect_provider_revision: digest_a.into(),
+                host_effect_contract_version: "0.1".into(),
+            },
+        )
+        .unwrap();
+
+        let call = plan
+            .body
+            .nodes
+            .iter()
+            .find(|node| node.local_node_id.as_str() == "call-child")
+            .unwrap();
+        assert_eq!(call.node_type, "call-flow");
+        assert_eq!(
+            call.config,
+            serde_json::json!({"site": "call-child", "flow-id": "callee"})
+        );
+        assert_eq!(call.effect_policy, ExecutionEffectPolicy::Effectful);
+        assert!(call.source_connection_requirement.is_none());
+        assert!(plan.requires_idempotency_key());
     }
 }

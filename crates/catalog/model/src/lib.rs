@@ -29,7 +29,7 @@ use wamn_node_manifest::{RESOLVED_CONTRACT_VERSION, ResolvedNodeInterface};
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
 const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";
-const MODEL_OWNED_NODES: [&str; 0] = [];
+const MODEL_OWNED_NODES: [&str; 1] = ["call-flow"];
 
 /// A catalog identity construction error.
 #[derive(Debug, Clone, PartialEq, Eq)]

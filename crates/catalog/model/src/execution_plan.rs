@@ -232,6 +232,32 @@ impl ExecutionPlanV2 {
         Ok(())
     }
 
+    /// Whether admitting this plan needs a caller-supplied idempotency key.
+    pub fn requires_idempotency_key(&self) -> bool {
+        self.body.nodes.iter().any(|node| {
+            node.effect_policy == ExecutionEffectPolicy::Effectful || node.node_type == "call-flow"
+        })
+    }
+
+    /// Derive the callable contract implied by the plan's intrinsic graph shape.
+    pub fn derived_callable_contract(
+        &self,
+    ) -> Result<Option<CallableContract>, CatalogIdentityError> {
+        let entry = self.node_for(&self.body.entry_instruction).ok_or_else(|| {
+            CatalogIdentityError::InvalidDefinition {
+                message: "execution plan entry instruction must name a plan node".to_string(),
+            }
+        })?;
+        Ok(self
+            .is_intrinsically_callable(entry)
+            .then(|| CallableContract {
+                version: CALLABLE_CONTRACT_VERSION.to_string(),
+                input_schema_hash: entry_input_schema_hash(&self.body.entry_input_schema_guard),
+                return_contract: CallableReturnContract::UntypedJsonBody,
+                effect_ceiling: CallableEffectCeiling::Effectful,
+            }))
+    }
+
     fn validate_header(&self) -> Result<(), CatalogIdentityError> {
         if self.header.format_version != EXECUTION_PLAN_FORMAT_VERSION {
             return invalid("execution plan format-version must be textual 0.1");
@@ -802,6 +828,7 @@ mod tests {
     #[test]
     fn call_flow_node_has_exact_site_flow_id_contract() {
         let mut plan = event_plan();
+        assert!(!plan.requires_idempotency_key());
         plan.body.nodes.push(ExecutionPlanNode {
             local_node_id: node_id("call-site"),
             source_node_id: "call-site".into(),
@@ -822,6 +849,7 @@ mod tests {
             source_node_id: "call-site".into(),
         });
         assert!(plan.validate().is_ok());
+        assert!(plan.requires_idempotency_key());
 
         let mut wrong_site = plan.clone();
         wrong_site.body.nodes[1].config["site"] = Value::String("entry".into());
@@ -834,6 +862,15 @@ mod tests {
         let mut extra = plan;
         extra.body.nodes[1].config["callee-hash"] = Value::String(DIGEST_B.into());
         assert!(extra.validate().is_err());
+    }
+
+    #[test]
+    fn idempotency_key_predicate_is_effectful_or_call_flow() {
+        let mut plan = event_plan();
+        assert!(!plan.requires_idempotency_key());
+
+        plan.body.nodes[0].effect_policy = ExecutionEffectPolicy::Effectful;
+        assert!(plan.requires_idempotency_key());
     }
 
     #[test]
@@ -927,10 +964,69 @@ mod tests {
         ]);
         answerable_cycle.body.source_map = source_map(&answerable_cycle.body.nodes);
         assert!(answerable_cycle.validate().is_ok());
+        assert!(
+            answerable_cycle
+                .derived_callable_contract()
+                .unwrap()
+                .is_some()
+        );
 
         answerable_cycle.body.edges.pop();
         answerable_cycle.body.callable_contract = None;
         assert!(answerable_cycle.validate().is_ok());
+    }
+
+    #[test]
+    fn frontier_success_is_not_callable_and_validation_has_no_depth_cap() {
+        assert_eq!(event_plan().body.callable_contract, None);
+        assert_eq!(event_plan().derived_callable_contract().unwrap(), None);
+
+        let mut plan = request_plan();
+        plan.body
+            .nodes
+            .retain(|node| matches!(node.node_type.as_str(), "request" | "respond"));
+        plan.body.edges.clear();
+        let chain_len = 160;
+        for index in 0..chain_len {
+            plan.body
+                .nodes
+                .push(node(&format!("step-{index}"), "map", serde_json::json!({})));
+        }
+        plan.body.edges.push(ExecutionPlanEdge {
+            source: node_id("request"),
+            source_port: "main".into(),
+            destination: node_id("step-0"),
+            destination_port: None,
+            fan_out_ordinal: 0,
+        });
+        plan.body.edges.push(ExecutionPlanEdge {
+            source: node_id("request"),
+            source_port: "main".into(),
+            destination: node_id("respond-a"),
+            destination_port: None,
+            fan_out_ordinal: 1,
+        });
+        for index in 0..chain_len - 1 {
+            plan.body.edges.push(ExecutionPlanEdge {
+                source: node_id(&format!("step-{index}")),
+                source_port: "main".into(),
+                destination: node_id(&format!("step-{}", index + 1)),
+                destination_port: None,
+                fan_out_ordinal: 0,
+            });
+        }
+        plan.body.edges.push(ExecutionPlanEdge {
+            source: node_id(&format!("step-{}", chain_len - 1)),
+            source_port: "main".into(),
+            destination: node_id("respond-z"),
+            destination_port: None,
+            fan_out_ordinal: 0,
+        });
+        plan.body.source_map = source_map(&plan.body.nodes);
+        plan.body.callable_contract = plan.derived_callable_contract().unwrap();
+
+        assert!(plan.body.callable_contract.is_some());
+        assert!(plan.validate().is_ok());
     }
 
     #[test]

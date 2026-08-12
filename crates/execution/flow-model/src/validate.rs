@@ -8,8 +8,8 @@ use serde_json::Value;
 use wamn_node_manifest::{ConnectionTypeDescriptor, normalize_portable_http_target};
 
 use crate::types::{
-    ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node, Ordering,
-    RequestConfig, RespondConfig, SCHEMA_VERSION,
+    CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node,
+    Ordering, RequestConfig, RespondConfig, SCHEMA_VERSION,
 };
 
 /// Completion ports keyed by resolved node type.
@@ -343,7 +343,7 @@ fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
             }
             if matches!(
                 node.node_type.as_str(),
-                "request" | "cron" | "event" | "respond" | "fail" | "invoke-flow"
+                "request" | "cron" | "event" | "respond" | "fail" | "call-flow" | "invoke-flow"
             ) {
                 issues.push(Issue::error(
                     "control-node-has-connection",
@@ -583,7 +583,9 @@ fn owned_completion_ports<'a>(
     resolved_interfaces: &'a ResolvedInterfaces,
 ) -> Option<Vec<&'a str>> {
     match node.node_type.as_str() {
-        "request" | "cron" | "event" | "respond" | "invoke-flow" => Some(vec![MAIN_PORT]),
+        "request" | "cron" | "event" | "respond" | "call-flow" | "invoke-flow" => {
+            Some(vec![MAIN_PORT])
+        }
         "fail" => Some(Vec::new()),
         node_type => resolved_interfaces
             .get(node_type)
@@ -637,6 +639,40 @@ fn validate_reserved_nodes(flow: &Flow, issues: &mut Vec<Issue>) {
                         "invalid-respond-successors",
                         format!("nodes[{index}]"),
                         "respond has zero or one outgoing main edge",
+                    ));
+                }
+            }
+            "call-flow" => {
+                match serde_json::from_value::<CallFlowConfig>(node.config.clone()) {
+                    Ok(config) => {
+                        if config.flow_id.trim().is_empty() {
+                            issues.push(Issue::error(
+                                "empty-call-flow-id",
+                                format!("nodes[{index}].config.flow-id"),
+                                "call-flow flow-id is required",
+                            ));
+                        } else if !is_slug(&config.flow_id) {
+                            issues.push(Issue::error(
+                                "invalid-call-flow-id",
+                                format!("nodes[{index}].config.flow-id"),
+                                format!(
+                                    "call-flow flow-id {:?} must be a lowercase slug",
+                                    config.flow_id
+                                ),
+                            ));
+                        }
+                    }
+                    Err(error) => issues.push(Issue::error(
+                        "invalid-call-flow-config",
+                        format!("nodes[{index}].config"),
+                        error.to_string(),
+                    )),
+                }
+                if node.credential.is_some() {
+                    issues.push(Issue::error(
+                        "call-flow-has-credential",
+                        format!("nodes[{index}].credential"),
+                        "call-flow is internal invocation, not credentialed egress",
                     ));
                 }
             }
@@ -1464,6 +1500,14 @@ mod tests {
         assert!(fail_codes.contains(&"empty-fail-code"));
         assert!(fail_codes.contains(&"invalid-fail-status"));
 
+        let mut call_flow = node("callee", "call-flow");
+        call_flow.config = json!({"flow-id": ""});
+        call_flow.credential = Some("secret".into());
+        flow.nodes.push(call_flow);
+        let call_codes = codes(&flow);
+        assert!(call_codes.contains(&"empty-call-flow-id"));
+        assert!(call_codes.contains(&"call-flow-has-credential"));
+
         let mut invoke = node("child", "invoke-flow");
         invoke.config = json!({
             "flow-id": "",
@@ -1472,10 +1516,10 @@ mod tests {
         });
         invoke.credential = Some("secret".into());
         flow.nodes.push(invoke);
-        let codes = codes(&flow);
-        assert!(codes.contains(&"empty-invoke-flow-id"));
-        assert!(codes.contains(&"empty-invoke-attachment-id"));
-        assert!(codes.contains(&"invoke-flow-has-credential"));
+        let invoke_codes = codes(&flow);
+        assert!(invoke_codes.contains(&"empty-invoke-flow-id"));
+        assert!(invoke_codes.contains(&"empty-invoke-attachment-id"));
+        assert!(invoke_codes.contains(&"invoke-flow-has-credential"));
     }
 
     #[test]
@@ -1497,6 +1541,15 @@ mod tests {
         });
         invoke.nodes.push(child);
         assert!(codes(&invoke).contains(&"invalid-invoke-flow-config"));
+
+        let mut call_flow = request_flow();
+        let mut child = node("child", "call-flow");
+        child.config = json!({
+            "flow-id": "callee",
+            "attachment-id": "callee-internal"
+        });
+        call_flow.nodes.push(child);
+        assert!(codes(&call_flow).contains(&"invalid-call-flow-config"));
 
         let unknown_flow_field = request_flow().to_json().replacen(
             "\"version\": 1,",

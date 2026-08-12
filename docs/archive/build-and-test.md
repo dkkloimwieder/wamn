@@ -5810,3 +5810,27 @@ rustfmt --edition 2024 --check \
   tests/integration/src/{causation_e2e.rs,materializer.rs}
 git diff --check
 ```
+
+## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
+
+This debug-only gate proves exact `call-flow { flow-id }` validation, candidate
+self-resolution, pinned-release lookup for every other name, intrinsic callable
+eligibility, typed contract refusals, recursion without a static depth bound,
+and the effectful-or-call-flow idempotency-key predicate. It does not exercise
+the future frame interpreter or claim-time resolution map.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-flow -p wamn-catalog \
+  -p wamn-scenario-catalog -p wamn-scenario-worker
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-flow -p wamn-catalog \
+  -p wamn-scenario-catalog -p wamn-scenario-worker \
+  --all-targets -- -D warnings
+rustfmt --edition 2024 --check \
+  crates/catalog/model/src/{execution_plan.rs,lib.rs} \
+  crates/execution/flow-model/src/{lib.rs,types.rs,validate.rs} \
+  crates/scenarios/catalog/src/authoring.rs \
+  services/scenario-worker/src/authoring.rs
+git diff --check
+```

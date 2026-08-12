@@ -80,6 +80,19 @@ pub fn select_draft_catalog_source_member_sql() -> &'static str {
         AND member.flow_id = $5 AND member.flow_version = $6"
 }
 
+/// Resolve one callee name in the exact catalog version pinned by draft validation.
+///
+/// Params: tenant, catalog id, catalog version, callee flow id.
+pub fn select_call_flow_callee_plan_sql() -> &'static str {
+    "SELECT member.flow_version, member.execution_bundle_hash, bundle.exact_bytes \
+       FROM catalog.release_flows AS member \
+       JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = member.tenant_id \
+        AND bundle.execution_bundle_hash = member.execution_bundle_hash \
+      WHERE member.tenant_id = $1 AND member.catalog_id = $2 \
+        AND member.catalog_version = $3 AND member.flow_id = $4"
+}
+
 /// Persist one immutable validation of a content-addressed draft.
 ///
 /// Store one immutable canonical execution plan before its draft references it.
@@ -318,6 +331,26 @@ mod tests {
                 "validated lookup omits {predicate}"
             );
         }
+    }
+
+    #[test]
+    fn call_flow_callee_resolution_reads_the_exact_pinned_release_member() {
+        let select = select_call_flow_callee_plan_sql();
+        for predicate in [
+            "member.tenant_id = $1",
+            "member.catalog_id = $2",
+            "member.catalog_version = $3",
+            "member.flow_id = $4",
+        ] {
+            assert!(
+                select.contains(predicate),
+                "callee lookup omits {predicate}"
+            );
+        }
+        assert!(select.contains("JOIN catalog.execution_bundles AS bundle"));
+        assert!(select.contains("bundle.exact_bytes"));
+        assert!(!select.contains("catalog_heads"));
+        assert!(!select.contains("environment"));
     }
 
     #[test]
