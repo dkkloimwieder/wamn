@@ -383,6 +383,7 @@ DECLARE
     current_tenant text := NULLIF(current_setting('app.tenant', true), '');
     proposed_count int;
     existing_count int;
+    inserted_count int := 0;
     root_flow text;
     differs boolean;
 BEGIN
@@ -443,7 +444,24 @@ BEGIN
     WHERE existing.tenant_id = current_tenant
       AND existing.run_id = p_run_id;
 
-    IF existing_count > 0 THEN
+    -- The inner block is a savepoint: a mismatched retry rolls back any rows
+    -- it inserted before returning the stable foreign-revision refusal.
+    BEGIN
+        -- Any pre-existing row makes this a verification-only retry. Two true
+        -- first claims can both observe zero, so ordered key conflicts choose
+        -- one complete-map winner without deadlocking on shared flow ids.
+        IF existing_count = 0 THEN
+            INSERT INTO wamn_run.run_flow_resolutions (
+                tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
+            )
+            SELECT current_tenant, p_run_id, proposed.flow_id,
+                   proposed.execution_bundle_hash, proposed.source_artifact_hash
+            FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            ORDER BY proposed.flow_id
+            ON CONFLICT (tenant_id, run_id, flow_id) DO NOTHING;
+            GET DIAGNOSTICS inserted_count = ROW_COUNT;
+        END IF;
+
         SELECT EXISTS (
             (
                 SELECT existing.flow_id, existing.execution_bundle_hash,
@@ -469,20 +487,21 @@ BEGIN
                   AND existing.run_id = p_run_id
             )
         ) INTO differs;
-        IF differs THEN
-            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
-        ELSE
-            RETURN QUERY SELECT 'resolved'::text, NULL::text;
+        IF differs
+           OR (existing_count = 0
+               AND inserted_count NOT IN (0, proposed_count)) THEN
+            -- P0004 is private to this block and means exact-map verification
+            -- failed; constraint failures retain their existing mapping below.
+            RAISE EXCEPTION USING
+                ERRCODE = 'P0004',
+                MESSAGE = 'run-flow-resolution-map-mismatch';
         END IF;
-        RETURN;
-    END IF;
+    EXCEPTION
+        WHEN SQLSTATE 'P0004' THEN
+            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+            RETURN;
+    END;
 
-    INSERT INTO wamn_run.run_flow_resolutions (
-        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
-    )
-    SELECT current_tenant, p_run_id, proposed.flow_id,
-           proposed.execution_bundle_hash, proposed.source_artifact_hash
-    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
     RETURN QUERY SELECT 'resolved'::text, NULL::text;
 EXCEPTION
     WHEN foreign_key_violation OR check_violation OR unique_violation THEN

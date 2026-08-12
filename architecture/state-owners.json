@@ -38,7 +38,7 @@
     },
     "schema-control": {
       "path": "crates/schema/control",
-      "role": "persistence"
+      "role": "migration"
     },
     "project-state": {
       "path": "crates/identity/project-state",
@@ -1426,7 +1426,7 @@
       "plane": "project",
       "semantic_owner": "run-state",
       "migration_owners": [
-        "run-state"
+        "schema-control"
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [

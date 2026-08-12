@@ -41,6 +41,28 @@ fn app_preamble() -> &'static str {
      SET LOCAL app.tenant = 't1';"
 }
 
+fn wait_for_pg_sleep(url: &str, application_name: &str) {
+    for _ in 0..100 {
+        let active = success(
+            url,
+            &format!(
+                "SELECT EXISTS ( \
+                   SELECT 1 FROM pg_stat_activity \
+                   WHERE application_name = '{application_name}' \
+                     AND wait_event = 'PgSleep' \
+                 );"
+            ),
+        );
+        if active.trim() == "t" {
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    panic!(
+        "timed out waiting for PostgreSQL session {application_name} to hold its resolution map"
+    );
+}
+
 #[test]
 #[ignore = "requires WAMN_RUN_STORE_PG_URL and a throwaway PostgreSQL database"]
 fn run_state_live() {
@@ -89,6 +111,80 @@ fn run_state_live() {
     let complete = complete_sql();
     let materialize_resolutions = wamn_run_state::sql::materialize_run_flow_resolutions_sql();
     let select_resolution_plans = wamn_run_state::sql::select_release_resolution_plans_sql();
+
+    // Resolution persistence stays behind the run-plane execution role. The
+    // scenario-author role is read-only, and the function is not PUBLIC.
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT has_table_privilege('wamn_app', \
+                    'wamn_run.run_flow_resolutions', 'SELECT'), \
+                  'execution role reads resolution evidence'; \
+           ASSERT has_table_privilege('wamn_app', \
+                    'wamn_run.run_flow_resolutions', 'INSERT'), \
+                  'execution role inserts resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_app', \
+                    'wamn_run.run_flow_resolutions', 'UPDATE'), \
+                  'execution role cannot rewrite resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_app', \
+                    'wamn_run.run_flow_resolutions', 'DELETE'), \
+                  'execution role cannot delete resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_app', \
+                    'wamn_run.run_flow_resolutions', 'TRUNCATE'), \
+                  'execution role cannot truncate resolution evidence'; \
+           ASSERT has_function_privilege('wamn_app', \
+                    'wamn_run.materialize_run_flow_resolutions(text,jsonb)', 'EXECUTE'), \
+                  'execution role invokes resolution materialization'; \
+           ASSERT ( \
+             SELECT array_agg(grantee.rolname ORDER BY grantee.rolname) \
+             FROM pg_class AS relation \
+             CROSS JOIN LATERAL aclexplode(relation.relacl) AS privilege \
+             JOIN pg_roles AS grantee ON grantee.oid = privilege.grantee \
+             WHERE relation.oid = 'wamn_run.run_flow_resolutions'::regclass \
+               AND privilege.grantee <> relation.relowner \
+               AND privilege.privilege_type = 'INSERT' \
+           ) = ARRAY['wamn_app']::name[], \
+                  'execution role is the only non-owner insert grantee'; \
+           ASSERT ( \
+             SELECT array_agg(grantee.rolname ORDER BY grantee.rolname) \
+             FROM pg_proc AS proc \
+             CROSS JOIN LATERAL aclexplode(proc.proacl) AS privilege \
+             JOIN pg_roles AS grantee ON grantee.oid = privilege.grantee \
+             WHERE proc.oid = \
+                     'wamn_run.materialize_run_flow_resolutions(text,jsonb)'::regprocedure \
+               AND privilege.grantee <> proc.proowner \
+               AND privilege.privilege_type = 'EXECUTE' \
+           ) = ARRAY['wamn_app']::name[], \
+                  'execution role is the only non-owner execute grantee'; \
+           ASSERT has_table_privilege('wamn_scenario_author', \
+                    'wamn_run.run_flow_resolutions', 'SELECT'), \
+                  'scenario author reads resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_scenario_author', \
+                    'wamn_run.run_flow_resolutions', 'INSERT'), \
+                  'scenario author cannot insert resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_scenario_author', \
+                    'wamn_run.run_flow_resolutions', 'UPDATE'), \
+                  'scenario author cannot rewrite resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_scenario_author', \
+                    'wamn_run.run_flow_resolutions', 'DELETE'), \
+                  'scenario author cannot delete resolution evidence'; \
+           ASSERT NOT has_table_privilege('wamn_scenario_author', \
+                    'wamn_run.run_flow_resolutions', 'TRUNCATE'), \
+                  'scenario author cannot truncate resolution evidence'; \
+           ASSERT NOT has_function_privilege('wamn_scenario_author', \
+                    'wamn_run.materialize_run_flow_resolutions(text,jsonb)', 'EXECUTE'), \
+                  'scenario author cannot invoke resolution materialization'; \
+           ASSERT NOT EXISTS ( \
+             SELECT 1 \
+             FROM pg_proc AS proc \
+             CROSS JOIN LATERAL aclexplode(proc.proacl) AS privilege \
+             WHERE proc.oid = \
+                     'wamn_run.materialize_run_flow_resolutions(text,jsonb)'::regprocedure \
+               AND privilege.grantee = 0 \
+               AND privilege.privilege_type = 'EXECUTE' \
+           ), 'resolution materialization is not PUBLIC'; \
+         END $$;",
+    );
 
     // The release-bound resolution map is immutable once materialized. A retry
     // with the identical complete map succeeds; incomplete or mixed proposals
@@ -205,6 +301,118 @@ fn run_state_live() {
         materialize_resolutions
     );
     success(&url, &resolution_script);
+
+    // Two callers can reach first materialization before either has committed.
+    // An identical retry resolves after the winner commits. A competing map
+    // that omits one winning flow and proposes another refuses, and its
+    // speculative non-conflicting row is rolled back instead of forming a
+    // union with the winning map.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','resolution-concurrent-identical','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'), \
+          ('t1','resolution-concurrent-different','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running');",
+    );
+    let complete_resolution_map = r#"[{"flow-id":"f","execution-bundle-hash":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","source-artifact-hash":"sha256:artifact-root"},{"flow-id":"g","execution-bundle-hash":"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b","source-artifact-hash":"sha256:artifact-g"}]"#;
+    let different_resolution_map = r#"[{"flow-id":"f","execution-bundle-hash":"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a","source-artifact-hash":"sha256:artifact-root"},{"flow-id":"h","execution-bundle-hash":"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b","source-artifact-hash":"sha256:artifact-h"}]"#;
+
+    let identical_winner_url = url.clone();
+    let identical_winner_script = format!(
+        "{} PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE winner_resolution AS \
+           EXECUTE resolution_stmt('resolution-concurrent-identical', '{}'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM winner_resolution) = 'resolved', \
+                  'concurrent identical winner resolves'; \
+         END $$; \
+         SET LOCAL application_name = 'resolution-identical-winner'; \
+         SELECT pg_sleep(2); COMMIT;",
+        app_preamble(),
+        materialize_resolutions,
+        complete_resolution_map
+    );
+    let identical_winner =
+        thread::spawn(move || success(&identical_winner_url, &identical_winner_script));
+    wait_for_pg_sleep(&url, "resolution-identical-winner");
+    let identical_retry_script = format!(
+        "{} PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE retry_resolution AS \
+           EXECUTE resolution_stmt('resolution-concurrent-identical', '{}'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM retry_resolution) = 'resolved', \
+                  'concurrent identical retry resolves'; \
+           ASSERT (SELECT count(*) FROM run_flow_resolutions \
+                    WHERE run_id = 'resolution-concurrent-identical') = 2, \
+                  'identical retry persists one complete map'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        materialize_resolutions,
+        complete_resolution_map
+    );
+    success(&url, &identical_retry_script);
+    identical_winner.join().expect("identical winner thread");
+
+    let different_winner_url = url.clone();
+    let different_winner_script = format!(
+        "{} PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE winner_resolution AS \
+           EXECUTE resolution_stmt('resolution-concurrent-different', '{}'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM winner_resolution) = 'resolved', \
+                  'concurrent complete-map winner resolves'; \
+         END $$; \
+         SET LOCAL application_name = 'resolution-different-winner'; \
+         SELECT pg_sleep(2); COMMIT;",
+        app_preamble(),
+        materialize_resolutions,
+        complete_resolution_map
+    );
+    let different_winner =
+        thread::spawn(move || success(&different_winner_url, &different_winner_script));
+    wait_for_pg_sleep(&url, "resolution-different-winner");
+    let different_retry_script = format!(
+        "{} PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE retry_resolution AS \
+           EXECUTE resolution_stmt('resolution-concurrent-different', '{}'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT fail_kind FROM retry_resolution) = 'foreign-revision', \
+                  'concurrent different retry refuses'; \
+           ASSERT (SELECT count(*) FROM run_flow_resolutions \
+                    WHERE run_id = 'resolution-concurrent-different') = 2, \
+                  'different retry leaves one complete map'; \
+           ASSERT EXISTS ( \
+             SELECT 1 FROM run_flow_resolutions \
+             WHERE run_id = 'resolution-concurrent-different' \
+               AND flow_id = 'f' \
+               AND execution_bundle_hash = \
+                   'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+               AND source_artifact_hash = 'sha256:artifact-root' \
+           ), 'winning root resolution remains exact'; \
+           ASSERT EXISTS ( \
+             SELECT 1 FROM run_flow_resolutions \
+             WHERE run_id = 'resolution-concurrent-different' \
+               AND flow_id = 'g' \
+               AND execution_bundle_hash = \
+                   'sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b' \
+               AND source_artifact_hash = 'sha256:artifact-g' \
+           ), 'winning reachable resolution remains exact'; \
+           ASSERT NOT EXISTS ( \
+             SELECT 1 FROM run_flow_resolutions \
+             WHERE run_id = 'resolution-concurrent-different' AND flow_id = 'h' \
+           ), 'different retry rolls back its non-conflicting row'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        materialize_resolutions,
+        different_resolution_map
+    );
+    success(&url, &different_retry_script);
+    different_winner.join().expect("different winner thread");
 
     let hidden_script = format!(
         "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; \

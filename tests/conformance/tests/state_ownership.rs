@@ -158,6 +158,13 @@ struct Discovery {
     line: usize,
     operation: String,
     target: String,
+    provenance: SqlProvenance,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SqlProvenance {
+    Carrier,
+    CreateFunctionBody,
 }
 
 #[derive(Clone, Debug)]
@@ -178,6 +185,20 @@ impl StateTarget<'_> {
         match self {
             Self::Object(object) => &object.ownership.writers,
             Self::Family(family) => &family.writers,
+        }
+    }
+
+    fn semantic_owner(&self) -> &str {
+        match self {
+            Self::Object(object) => &object.ownership.semantic_owner,
+            Self::Family(family) => &family.semantic_owner,
+        }
+    }
+
+    fn schema_source(&self) -> &str {
+        match self {
+            Self::Object(object) => &object.ownership.schema_source,
+            Self::Family(family) => &family.schema_source,
         }
     }
 }
@@ -909,7 +930,7 @@ fn strip_sql_comments(source: &str) -> String {
 
 fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discovery> {
     let tokens = sql_tokens(source);
-    let Some((first, _)) = tokens.first() else {
+    let Some((first, _, _)) = tokens.first() else {
         return Vec::new();
     };
     if ![
@@ -922,10 +943,11 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
         return Vec::new();
     }
     let privilege_list = privilege_list_positions(&tokens);
+    let function_bodies = create_function_body_ranges(source);
     let mut discoveries = Vec::new();
     let mut index = 0;
     while index < tokens.len() {
-        let (token, line) = &tokens[index];
+        let (token, line, offset) = &tokens[index];
         if privilege_list[index] {
             index += 1;
             continue;
@@ -959,7 +981,7 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
                 continue;
             }
         };
-        let Some((target, _)) = tokens.get(index) else {
+        let Some((target, _, _)) = tokens.get(index) else {
             continue;
         };
         if [
@@ -978,28 +1000,40 @@ fn discover_writes(path: &str, starting_line: usize, source: &str) -> Vec<Discov
             line: starting_line + line.saturating_sub(1),
             operation: operation.to_string(),
             target: target.clone(),
+            provenance: if function_bodies
+                .iter()
+                .any(|(start, end)| (*start..*end).contains(offset))
+            {
+                SqlProvenance::CreateFunctionBody
+            } else {
+                SqlProvenance::Carrier
+            },
         });
         index += 1;
     }
     discoveries
 }
 
-fn token_is(tokens: &[(String, usize)], index: usize, keyword: &str) -> bool {
+fn token_is(tokens: &[(String, usize, usize)], index: usize, keyword: &str) -> bool {
     tokens
         .get(index)
-        .is_some_and(|(token, _)| token.eq_ignore_ascii_case(keyword))
+        .is_some_and(|(token, _, _)| token.eq_ignore_ascii_case(keyword))
 }
 
 /// `CREATE TRIGGER ... BEFORE INSERT OR UPDATE ON t` names trigger events, so
 /// the `UPDATE` there is DDL vocabulary rather than a statement.
-fn names_trigger_event(tokens: &[(String, usize)], index: usize) -> bool {
-    tokens[..index].iter().rev().take(3).any(|(previous, _)| {
-        previous.eq_ignore_ascii_case("BEFORE") || previous.eq_ignore_ascii_case("AFTER")
-    })
+fn names_trigger_event(tokens: &[(String, usize, usize)], index: usize) -> bool {
+    tokens[..index]
+        .iter()
+        .rev()
+        .take(3)
+        .any(|(previous, _, _)| {
+            previous.eq_ignore_ascii_case("BEFORE") || previous.eq_ignore_ascii_case("AFTER")
+        })
 }
 
 /// `SELECT ... FOR UPDATE` takes a row lock; it never writes a row itself.
-fn locks_rows(tokens: &[(String, usize)], index: usize) -> bool {
+fn locks_rows(tokens: &[(String, usize, usize)], index: usize) -> bool {
     index > 0 && token_is(tokens, index - 1, "FOR")
 }
 
@@ -1008,22 +1042,22 @@ fn locks_rows(tokens: &[(String, usize)], index: usize) -> bool {
 /// cannot tell from SQL, never does. A `{...}` format placeholder counts: the
 /// scan cannot see through it, and builders such as the run-queue batch claim
 /// interpolate their whole `SET` clause that way.
-fn has_set_clause(tokens: &[(String, usize)], target_index: usize) -> bool {
+fn has_set_clause(tokens: &[(String, usize, usize)], target_index: usize) -> bool {
     tokens
         .iter()
         .skip(target_index + 1)
-        .any(|(token, _)| token.eq_ignore_ascii_case("SET") || token.starts_with('{'))
+        .any(|(token, _, _)| token.eq_ignore_ascii_case("SET") || token.starts_with('{'))
 }
 
 /// Marks each token that sits in a `GRANT`/`REVOKE` privilege list, where
 /// `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` name privileges rather than
 /// statements. The list runs from the `GRANT`/`REVOKE` keyword to the `ON` or
 /// `TO` that closes it.
-fn privilege_list_positions(tokens: &[(String, usize)]) -> Vec<bool> {
+fn privilege_list_positions(tokens: &[(String, usize, usize)]) -> Vec<bool> {
     let mut inside = false;
     tokens
         .iter()
-        .map(|(token, _)| {
+        .map(|(token, _, _)| {
             if token.eq_ignore_ascii_case("GRANT") || token.eq_ignore_ascii_case("REVOKE") {
                 inside = true;
             } else if token.eq_ignore_ascii_case("ON") || token.eq_ignore_ascii_case("TO") {
@@ -1034,16 +1068,18 @@ fn privilege_list_positions(tokens: &[(String, usize)]) -> Vec<bool> {
         .collect()
 }
 
-/// Splits SQL into word tokens. Single-quoted SQL string literals are opaque:
+/// Splits SQL into word tokens with their source line and byte offset.
+/// Single-quoted SQL string literals are opaque:
 /// their text is data — a `TG_OP` comparison, a hyphenated error message, a
 /// privilege name — and must never be read as a statement keyword.
-fn sql_tokens(source: &str) -> Vec<(String, usize)> {
+fn sql_tokens(source: &str) -> Vec<(String, usize, usize)> {
     let mut tokens = Vec::new();
     let mut current = String::new();
     let mut line = 1;
     let mut token_line = 1;
+    let mut token_offset = 0;
     let mut quoted = false;
-    for character in source.chars() {
+    for (offset, character) in source.char_indices() {
         if character == '\'' {
             quoted = !quoted;
         }
@@ -1054,19 +1090,70 @@ fn sql_tokens(source: &str) -> Vec<(String, usize)> {
         if allowed {
             if current.is_empty() {
                 token_line = line;
+                token_offset = offset;
             }
             current.push(character);
         } else if !current.is_empty() {
-            tokens.push((std::mem::take(&mut current), token_line));
+            tokens.push((std::mem::take(&mut current), token_line, token_offset));
         }
         if character == '\n' {
             line += 1;
         }
     }
     if !current.is_empty() {
-        tokens.push((current, token_line));
+        tokens.push((current, token_line, token_offset));
     }
     tokens
+}
+
+fn create_function_body_ranges(source: &str) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut cursor = 0;
+    while let Some(relative_open) = source[cursor..].find('$') {
+        let open = cursor + relative_open;
+        let Some(relative_delimiter_end) = source[open + 1..].find('$') else {
+            break;
+        };
+        let delimiter_end = open + 1 + relative_delimiter_end;
+        let tag = &source[open + 1..delimiter_end];
+        if !valid_dollar_quote_tag(tag) {
+            cursor = open + 1;
+            continue;
+        }
+
+        let delimiter = &source[open..=delimiter_end];
+        let body_start = delimiter_end + 1;
+        let Some(relative_close) = source[body_start..].find(delimiter) else {
+            break;
+        };
+        let body_end = body_start + relative_close;
+        let statement_start = source[..open].rfind(';').map_or(0, |index| index + 1);
+        if starts_create_function(&source[statement_start..open]) {
+            ranges.push((body_start, body_end));
+        }
+        cursor = body_end + delimiter.len();
+    }
+    ranges
+}
+
+fn valid_dollar_quote_tag(tag: &str) -> bool {
+    let mut characters = tag.chars();
+    characters.next().is_none_or(|first| {
+        (first.is_ascii_alphabetic() || first == '_')
+            && characters.all(|character| character.is_ascii_alphanumeric() || character == '_')
+    })
+}
+
+fn starts_create_function(statement_prefix: &str) -> bool {
+    let words: Vec<&str> = statement_prefix.split_ascii_whitespace().take(4).collect();
+    (words.len() >= 2
+        && words[0].eq_ignore_ascii_case("CREATE")
+        && words[1].eq_ignore_ascii_case("FUNCTION"))
+        || (words.len() >= 4
+            && words[0].eq_ignore_ascii_case("CREATE")
+            && words[1].eq_ignore_ascii_case("OR")
+            && words[2].eq_ignore_ascii_case("REPLACE")
+            && words[3].eq_ignore_ascii_case("FUNCTION"))
 }
 
 fn validate_discovered_writers(
@@ -1075,13 +1162,19 @@ fn validate_discovered_writers(
 ) -> Result<(), String> {
     for discovery in discoveries {
         let target = resolve_target(manifest, discovery)?;
-        let authorized = target.writers().iter().any(|writer| {
+        let authorized_by_path = target.writers().iter().any(|writer| {
             manifest
                 .principals
                 .get(writer)
                 .is_some_and(|principal| path_is_within(&discovery.path, &principal.path))
         });
-        if !authorized {
+        let authorized_function_body = discovery.provenance == SqlProvenance::CreateFunctionBody
+            && discovery.path == target.schema_source()
+            && target
+                .writers()
+                .iter()
+                .any(|writer| writer == target.semantic_owner());
+        if !authorized_by_path && !authorized_function_body {
             return Err(format!(
                 "{}:{}: undeclared {} writer `{}` for `{}`",
                 discovery.path,
@@ -1335,10 +1428,63 @@ fn undeclared_writer_is_rejected() {
         line: 7,
         operation: "insert".to_string(),
         target: "registry.orgs".to_string(),
+        provenance: SqlProvenance::Carrier,
     };
     let error = validate_discovered_writers(&manifest, &[rogue]).unwrap_err();
     assert!(error.contains("undeclared insert writer"), "{error}");
     assert!(error.contains("registry.orgs"), "{error}");
+}
+
+#[test]
+fn canonical_run_flow_resolution_function_body_is_run_state_owned() {
+    let manifest = read_manifest(&repository());
+    assert_eq!(manifest.principals["run-state"].role, "persistence");
+    assert_eq!(manifest.principals["schema-control"].role, "migration");
+    let ownership = &manifest
+        .objects
+        .iter()
+        .find(|object| object.id == "wamn_run.run_flow_resolutions")
+        .expect("run-flow resolution ownership")
+        .ownership;
+    assert_eq!(ownership.semantic_owner, "run-state");
+    assert_eq!(ownership.migration_owners, ["schema-control"]);
+    assert_eq!(ownership.schema_source, "deploy/sql/run-state.sql");
+    assert_eq!(
+        ownership
+            .writers
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["run-state"]
+    );
+
+    let function = "CREATE FUNCTION wamn_run.materialize_run_flow_resolutions() \
+                    RETURNS void LANGUAGE plpgsql AS $$ BEGIN \
+                    INSERT INTO wamn_run.run_flow_resolutions (run_id) VALUES ('run-1'); \
+                    END $$";
+    let canonical = discover_writes("deploy/sql/run-state.sql", 375, function);
+    assert_only_write(&canonical, "insert", "wamn_run.run_flow_resolutions");
+    assert_eq!(canonical[0].provenance, SqlProvenance::CreateFunctionBody);
+    validate_discovered_writers(&manifest, &canonical)
+        .expect("the canonical function body executes with run-state authority");
+
+    let copied = discover_writes("crates/schema/control/src/run_plane.rs", 1_023, function);
+    assert_only_write(&copied, "insert", "wamn_run.run_flow_resolutions");
+    assert_eq!(copied[0].provenance, SqlProvenance::CreateFunctionBody);
+    let error = validate_discovered_writers(&manifest, &copied).unwrap_err();
+    assert!(error.contains("undeclared insert writer"), "{error}");
+
+    for path in ["deploy/sql/run-state.sql", "services/rogue/src/lib.rs"] {
+        let carrier = discover_writes(
+            path,
+            500,
+            "INSERT INTO wamn_run.run_flow_resolutions (run_id) VALUES ('run-1')",
+        );
+        assert_only_write(&carrier, "insert", "wamn_run.run_flow_resolutions");
+        assert_eq!(carrier[0].provenance, SqlProvenance::Carrier);
+        let error = validate_discovered_writers(&manifest, &carrier).unwrap_err();
+        assert!(error.contains("undeclared insert writer"), "{error}");
+    }
 }
 
 #[test]
@@ -1390,6 +1536,7 @@ fn unqualified_writer_requires_declared_source_context() {
         line: 1,
         operation: "insert".to_string(),
         target: "runs".to_string(),
+        provenance: SqlProvenance::Carrier,
     };
     assert_eq!(
         resolve_target(&manifest, &covered)
@@ -1636,6 +1783,7 @@ fn run_plane_effect_backfill_writes_resolve_to_schema_control() {
             line,
             operation: operation.to_string(),
             target: target.to_string(),
+            provenance: SqlProvenance::Carrier,
         };
         assert_eq!(
             resolve_target(&manifest, &discovery)

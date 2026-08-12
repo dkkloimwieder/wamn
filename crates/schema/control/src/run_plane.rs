@@ -54,6 +54,7 @@
 //! rewritten or deleted: PostgreSQL validates new CHECKs against existing rows
 //! and aborts on incompatible legacy data.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -1020,122 +1021,6 @@ $function$
 
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 
-const MATERIALIZE_RUN_FLOW_RESOLUTIONS_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.materialize_run_flow_resolutions(p_run_id text, p_resolution_map jsonb)
- RETURNS TABLE(result_code text, fail_kind text)
- LANGUAGE plpgsql
-AS $function$
-DECLARE
-    current_tenant text := NULLIF(current_setting('app.tenant', true), '');
-    proposed_count int;
-    existing_count int;
-    root_flow text;
-    differs boolean;
-BEGIN
-    IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' THEN
-        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
-        RETURN;
-    END IF;
-
-    SELECT r.flow_id INTO root_flow
-    FROM wamn_run.runs AS r
-    WHERE r.tenant_id = current_tenant
-      AND r.run_id = p_run_id
-    FOR KEY SHARE OF r;
-    IF root_flow IS NULL THEN
-        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
-        RETURN;
-    END IF;
-
-    DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions;
-    CREATE TEMP TABLE proposed_run_flow_resolutions
-        ON COMMIT DROP
-    AS
-    SELECT entry.value ->> 'flow-id' AS flow_id,
-           entry.value ->> 'execution-bundle-hash' AS execution_bundle_hash,
-           entry.value ->> 'source-artifact-hash' AS source_artifact_hash
-    FROM jsonb_array_elements(p_resolution_map) AS entry(value);
-
-    SELECT count(*) INTO proposed_count FROM pg_temp.proposed_run_flow_resolutions;
-    IF proposed_count = 0
-       OR EXISTS (
-            SELECT 1 FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            WHERE proposed.flow_id IS NULL OR proposed.flow_id = ''
-               OR proposed.execution_bundle_hash IS NULL
-               OR proposed.execution_bundle_hash !~ '^sha256:[0-9a-f]{64}$'
-               OR proposed.source_artifact_hash IS NULL
-               OR proposed.source_artifact_hash = ''
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            GROUP BY proposed.flow_id
-            HAVING count(*) > 1
-       ) THEN
-        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
-        RETURN;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_temp.proposed_run_flow_resolutions
-        WHERE flow_id = root_flow
-    ) THEN
-        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
-        RETURN;
-    END IF;
-
-    SELECT count(*) INTO existing_count
-    FROM wamn_run.run_flow_resolutions AS existing
-    WHERE existing.tenant_id = current_tenant
-      AND existing.run_id = p_run_id;
-
-    IF existing_count > 0 THEN
-        SELECT EXISTS (
-            (
-                SELECT existing.flow_id, existing.execution_bundle_hash,
-                       existing.source_artifact_hash
-                FROM wamn_run.run_flow_resolutions AS existing
-                WHERE existing.tenant_id = current_tenant
-                  AND existing.run_id = p_run_id
-                EXCEPT
-                SELECT proposed.flow_id, proposed.execution_bundle_hash,
-                       proposed.source_artifact_hash
-                FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            )
-            UNION ALL
-            (
-                SELECT proposed.flow_id, proposed.execution_bundle_hash,
-                       proposed.source_artifact_hash
-                FROM pg_temp.proposed_run_flow_resolutions AS proposed
-                EXCEPT
-                SELECT existing.flow_id, existing.execution_bundle_hash,
-                       existing.source_artifact_hash
-                FROM wamn_run.run_flow_resolutions AS existing
-                WHERE existing.tenant_id = current_tenant
-                  AND existing.run_id = p_run_id
-            )
-        ) INTO differs;
-        IF differs THEN
-            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
-        ELSE
-            RETURN QUERY SELECT 'resolved'::text, NULL::text;
-        END IF;
-        RETURN;
-    END IF;
-
-    INSERT INTO wamn_run.run_flow_resolutions (
-        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
-    )
-    SELECT current_tenant, p_run_id, proposed.flow_id,
-           proposed.execution_bundle_hash, proposed.source_artifact_hash
-    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
-    RETURN QUERY SELECT 'resolved'::text, NULL::text;
-EXCEPTION
-    WHEN foreign_key_violation OR check_violation OR unique_violation THEN
-        RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
-END
-$function$
-"#;
-
 const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
     p_tenant_id text,
     p_catalog_id text,
@@ -1462,191 +1347,147 @@ const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
 
-const MATERIALIZE_RUN_FLOW_RESOLUTIONS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.materialize_run_flow_resolutions(
-    p_run_id text,
-    p_resolution_map jsonb
-)
-RETURNS TABLE (result_code text, fail_kind text)
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    current_tenant text := NULLIF(current_setting('app.tenant', true), '');
-    proposed_count int;
-    existing_count int;
-    root_flow text;
-    differs boolean;
-BEGIN
-    IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' THEN
-        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
-        RETURN;
-    END IF;
-
-    SELECT r.flow_id INTO root_flow
-    FROM wamn_run.runs AS r
-    WHERE r.tenant_id = current_tenant
-      AND r.run_id = p_run_id
-    FOR KEY SHARE OF r;
-    IF root_flow IS NULL THEN
-        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
-        RETURN;
-    END IF;
-
-    DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions;
-    CREATE TEMP TABLE proposed_run_flow_resolutions
-        ON COMMIT DROP
-    AS
-    SELECT entry.value ->> 'flow-id' AS flow_id,
-           entry.value ->> 'execution-bundle-hash' AS execution_bundle_hash,
-           entry.value ->> 'source-artifact-hash' AS source_artifact_hash
-    FROM jsonb_array_elements(p_resolution_map) AS entry(value);
-
-    SELECT count(*) INTO proposed_count FROM pg_temp.proposed_run_flow_resolutions;
-    IF proposed_count = 0
-       OR EXISTS (
-            SELECT 1 FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            WHERE proposed.flow_id IS NULL OR proposed.flow_id = ''
-               OR proposed.execution_bundle_hash IS NULL
-               OR proposed.execution_bundle_hash !~ '^sha256:[0-9a-f]{64}$'
-               OR proposed.source_artifact_hash IS NULL
-               OR proposed.source_artifact_hash = ''
-       )
-       OR EXISTS (
-            SELECT 1
-            FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            GROUP BY proposed.flow_id
-            HAVING count(*) > 1
-       ) THEN
-        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
-        RETURN;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_temp.proposed_run_flow_resolutions
-        WHERE flow_id = root_flow
-    ) THEN
-        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
-        RETURN;
-    END IF;
-
-    SELECT count(*) INTO existing_count
-    FROM wamn_run.run_flow_resolutions AS existing
-    WHERE existing.tenant_id = current_tenant
-      AND existing.run_id = p_run_id;
-
-    IF existing_count > 0 THEN
-        SELECT EXISTS (
-            (
-                SELECT existing.flow_id, existing.execution_bundle_hash,
-                       existing.source_artifact_hash
-                FROM wamn_run.run_flow_resolutions AS existing
-                WHERE existing.tenant_id = current_tenant
-                  AND existing.run_id = p_run_id
-                EXCEPT
-                SELECT proposed.flow_id, proposed.execution_bundle_hash,
-                       proposed.source_artifact_hash
-                FROM pg_temp.proposed_run_flow_resolutions AS proposed
-            )
-            UNION ALL
-            (
-                SELECT proposed.flow_id, proposed.execution_bundle_hash,
-                       proposed.source_artifact_hash
-                FROM pg_temp.proposed_run_flow_resolutions AS proposed
-                EXCEPT
-                SELECT existing.flow_id, existing.execution_bundle_hash,
-                       existing.source_artifact_hash
-                FROM wamn_run.run_flow_resolutions AS existing
-                WHERE existing.tenant_id = current_tenant
-                  AND existing.run_id = p_run_id
-            )
-        ) INTO differs;
-        IF differs THEN
-            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
-        ELSE
-            RETURN QUERY SELECT 'resolved'::text, NULL::text;
-        END IF;
-        RETURN;
-    END IF;
-
-    INSERT INTO wamn_run.run_flow_resolutions (
-        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
-    )
-    SELECT current_tenant, p_run_id, proposed.flow_id,
-           proposed.execution_bundle_hash, proposed.source_artifact_hash
-    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
-    RETURN QUERY SELECT 'resolved'::text, NULL::text;
-EXCEPTION
-    WHEN foreign_key_violation OR check_violation OR unique_violation THEN
-        RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
-    FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
-    TO wamn_app;"#;
-
 struct HelperSpec {
+    name: &'static str,
+    definition: Cow<'static, str>,
+    sql: Cow<'static, str>,
+}
+
+fn borrowed_helper_spec(
     name: &'static str,
     definition: &'static str,
     sql: &'static str,
+) -> HelperSpec {
+    HelperSpec {
+        name,
+        definition: Cow::Borrowed(definition),
+        sql: Cow::Borrowed(sql),
+    }
 }
 
-const HELPER_SPECS: &[HelperSpec] = &[
-    HelperSpec {
-        name: "lock_catalog_head",
-        definition: LOCK_CATALOG_HEAD_DEF,
-        sql: LOCK_CATALOG_HEAD_SQL,
-    },
-    HelperSpec {
-        name: "guard_event_lineage_immutable",
-        definition: GUARD_EVENT_LINEAGE_DEF,
-        sql: GUARD_EVENT_LINEAGE_SQL,
-    },
-    HelperSpec {
-        name: "guard_run_admission_pins_immutable",
-        definition: GUARD_RUN_ADMISSION_PINS_DEF,
-        sql: GUARD_RUN_ADMISSION_PINS_SQL,
-    },
-    HelperSpec {
-        name: "reject_immutable_effect_fact_change",
-        definition: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF,
-        sql: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
-    },
-    HelperSpec {
-        name: "reject_immutable_flow_resolution_change",
-        definition: REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_DEF,
-        sql: REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_SQL,
-    },
-    HelperSpec {
-        name: "materialize_run_flow_resolutions",
-        definition: MATERIALIZE_RUN_FLOW_RESOLUTIONS_DEF,
-        sql: MATERIALIZE_RUN_FLOW_RESOLUTIONS_SQL,
-    },
-    HelperSpec {
-        name: "reject_immutable_authoring_test_set_change",
-        definition: REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF,
-        sql: REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL,
-    },
-    HelperSpec {
-        name: "reject_immutable_authoring_report_change",
-        definition: REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF,
-        sql: REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL,
-    },
-    HelperSpec {
-        name: "guard_authoring_report_write",
-        definition: GUARD_AUTHORING_REPORT_WRITE_DEF,
-        sql: GUARD_AUTHORING_REPORT_WRITE_SQL,
-    },
-    HelperSpec {
-        name: "guard_effect_fact_append",
-        definition: GUARD_EFFECT_FACT_APPEND_DEF,
-        sql: GUARD_EFFECT_FACT_APPEND_SQL,
-    },
-    HelperSpec {
-        name: "guard_effect_disposition_append",
-        definition: GUARD_EFFECT_DISPOSITION_APPEND_DEF,
-        sql: GUARD_EFFECT_DISPOSITION_APPEND_SQL,
-    },
-];
+fn canonical_materialize_helper_sql() -> &'static str {
+    const HEAD: &str = "CREATE FUNCTION wamn_run.materialize_run_flow_resolutions(";
+    const FUNCTION_END: &str = "\n$$;";
+
+    let start = RUN_STATE_SQL
+        .find(HEAD)
+        .expect("run-state record must define materialize_run_flow_resolutions");
+    let tail = &RUN_STATE_SQL[start..];
+    let function_end = tail
+        .find(FUNCTION_END)
+        .map(|offset| offset + FUNCTION_END.len())
+        .expect("materialize_run_flow_resolutions must have a dollar-quoted body");
+    let privileges = &tail[function_end..];
+    let revoke_end = privileges
+        .find(';')
+        .map(|offset| offset + 1)
+        .expect("materialize_run_flow_resolutions must revoke public privileges");
+    let grant_end = privileges[revoke_end..]
+        .find(';')
+        .map(|offset| function_end + revoke_end + offset + 1)
+        .expect("materialize_run_flow_resolutions must grant execution authority");
+    &tail[..grant_end]
+}
+
+fn materialize_helper_definition() -> String {
+    let canonical = canonical_materialize_helper_sql();
+    let (header, body_and_privileges) = canonical
+        .split_once("\nAS $$\n")
+        .expect("materialize_run_flow_resolutions must use its canonical body delimiter");
+    let body = body_and_privileges
+        .split_once("\n$$;")
+        .map(|(body, _)| body)
+        .expect("materialize_run_flow_resolutions must close its canonical body");
+    let header = header
+        .strip_prefix("CREATE FUNCTION ")
+        .expect("materialize_run_flow_resolutions must use CREATE FUNCTION");
+    let (name, parameters_and_result) = header
+        .split_once("(\n")
+        .expect("materialize_run_flow_resolutions must declare parameters");
+    let (parameters, result_and_language) = parameters_and_result
+        .split_once("\n)\nRETURNS TABLE (")
+        .expect("materialize_run_flow_resolutions must return its result table");
+    let (result, language) = result_and_language
+        .split_once(")\nLANGUAGE ")
+        .expect("materialize_run_flow_resolutions must declare its language");
+    let parameters = parameters
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    format!(
+        "CREATE OR REPLACE FUNCTION {name}({parameters})\n RETURNS TABLE({result})\n LANGUAGE {language}\nAS $function$\n{body}\n$function$\n"
+    )
+}
+
+fn materialize_helper_repair_sql() -> String {
+    canonical_materialize_helper_sql().replacen(
+        "CREATE FUNCTION ",
+        "CREATE OR REPLACE FUNCTION ",
+        1,
+    )
+}
+
+fn helper_specs() -> Vec<HelperSpec> {
+    vec![
+        borrowed_helper_spec(
+            "lock_catalog_head",
+            LOCK_CATALOG_HEAD_DEF,
+            LOCK_CATALOG_HEAD_SQL,
+        ),
+        borrowed_helper_spec(
+            "guard_event_lineage_immutable",
+            GUARD_EVENT_LINEAGE_DEF,
+            GUARD_EVENT_LINEAGE_SQL,
+        ),
+        borrowed_helper_spec(
+            "guard_run_admission_pins_immutable",
+            GUARD_RUN_ADMISSION_PINS_DEF,
+            GUARD_RUN_ADMISSION_PINS_SQL,
+        ),
+        borrowed_helper_spec(
+            "reject_immutable_effect_fact_change",
+            REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF,
+            REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
+        ),
+        borrowed_helper_spec(
+            "reject_immutable_flow_resolution_change",
+            REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_DEF,
+            REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_SQL,
+        ),
+        HelperSpec {
+            name: "materialize_run_flow_resolutions",
+            definition: Cow::Owned(materialize_helper_definition()),
+            sql: Cow::Owned(materialize_helper_repair_sql()),
+        },
+        borrowed_helper_spec(
+            "reject_immutable_authoring_test_set_change",
+            REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF,
+            REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL,
+        ),
+        borrowed_helper_spec(
+            "reject_immutable_authoring_report_change",
+            REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF,
+            REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL,
+        ),
+        borrowed_helper_spec(
+            "guard_authoring_report_write",
+            GUARD_AUTHORING_REPORT_WRITE_DEF,
+            GUARD_AUTHORING_REPORT_WRITE_SQL,
+        ),
+        borrowed_helper_spec(
+            "guard_effect_fact_append",
+            GUARD_EFFECT_FACT_APPEND_DEF,
+            GUARD_EFFECT_FACT_APPEND_SQL,
+        ),
+        borrowed_helper_spec(
+            "guard_effect_disposition_append",
+            GUARD_EFFECT_DISPOSITION_APPEND_DEF,
+            GUARD_EFFECT_DISPOSITION_APPEND_SQL,
+        ),
+    ]
+}
 
 #[derive(Debug)]
 struct TriggerSpec {
@@ -3073,18 +2914,19 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
     // Helpers precede table sections: missing-table sections carry triggers,
     // and those triggers must resolve their functions at CREATE time.
-    for spec in HELPER_SPECS {
+    let helper_specs = helper_specs();
+    for spec in &helper_specs {
         if obs
             .helper_functions
             .get(spec.name)
             .is_none_or(|definition| {
-                normalize_observed_schema(definition, schema) != spec.definition
+                normalize_observed_schema(definition, schema) != spec.definition.as_ref()
             })
         {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::RepairHelperFunction,
                 target: spec.name.to_string(),
-                sql: rewrite_schema(spec.sql, schema),
+                sql: rewrite_schema(&spec.sql, schema),
             });
         }
     }
@@ -4509,9 +4351,9 @@ CREATE INDEX event_registrations_by_entity
                 spec.definition.to_string(),
             );
         }
-        for spec in HELPER_SPECS {
+        for spec in helper_specs() {
             obs.helper_functions
-                .insert(spec.name.to_string(), spec.definition.to_string());
+                .insert(spec.name.to_string(), spec.definition.into_owned());
         }
         for spec in trigger_specs() {
             obs.triggers
@@ -4866,6 +4708,38 @@ CREATE INDEX event_registrations_by_entity
                 "resolution substrate must not own {forbidden}"
             );
         }
+    }
+
+    #[test]
+    fn materialize_helper_is_derived_from_the_run_state_record() {
+        let spec = helper_specs()
+            .into_iter()
+            .find(|spec| spec.name == "materialize_run_flow_resolutions")
+            .expect("materialize helper is reconciled");
+        let canonical = canonical_materialize_helper_sql();
+        assert_eq!(
+            spec.sql.as_ref(),
+            canonical.replacen("CREATE FUNCTION ", "CREATE OR REPLACE FUNCTION ", 1,)
+        );
+
+        let canonical_body = canonical
+            .split_once("\nAS $$\n")
+            .and_then(|(_, tail)| tail.split_once("\n$$;"))
+            .map(|(body, _)| body)
+            .expect("canonical materialize body");
+        let observed_body = spec
+            .definition
+            .split_once("\nAS $function$\n")
+            .and_then(|(_, tail)| tail.strip_suffix("\n$function$\n"))
+            .expect("observed materialize body");
+        assert_eq!(observed_body, canonical_body);
+        assert!(spec.definition.starts_with(
+            "CREATE OR REPLACE FUNCTION wamn_run.materialize_run_flow_resolutions(p_run_id text, p_resolution_map jsonb)\n RETURNS TABLE(result_code text, fail_kind text)\n LANGUAGE plpgsql\nAS $function$\n"
+        ));
+        assert!(spec.sql.ends_with(
+            "GRANT EXECUTE ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)\n    TO wamn_app;"
+        ));
+        assert!(!spec.sql.contains("SECURITY DEFINER"));
     }
 
     /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
