@@ -32,17 +32,13 @@ use bindings::wamn::runner::http_effect;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpEffectContext {
     pub version: String,
-    pub tenant_id: String,
-    pub environment: String,
-    pub catalog_id: String,
-    pub catalog_version: i32,
     pub run_id: String,
-    pub flow_id: String,
-    pub flow_version: u32,
-    pub artifact_digest: String,
-    pub node_id: String,
+    pub root_plan_hash: String,
+    pub current_plan_hash: String,
+    pub frame_id: u64,
+    pub local_node_id: String,
     pub occurrence: u32,
-    pub attempt: u32,
+    pub source_artifact_hash: String,
     pub requirement_name: String,
 }
 
@@ -165,21 +161,7 @@ fn trusted_http_effect(
             "request requirement does not match the attempt context".into(),
         ));
     }
-    let context = http_effect::InvocationContext {
-        version: context.version.clone(),
-        tenant_id: context.tenant_id.clone(),
-        environment: context.environment.clone(),
-        catalog_id: context.catalog_id.clone(),
-        catalog_version: context.catalog_version,
-        run_id: context.run_id.clone(),
-        flow_id: context.flow_id.clone(),
-        flow_version: context.flow_version,
-        artifact_digest: context.artifact_digest.clone(),
-        node_id: context.node_id.clone(),
-        occurrence: context.occurrence,
-        attempt: context.attempt,
-        requirement_name: context.requirement_name.clone(),
-    };
+    let context = http_effect_context_to_wit(context);
     let request = http_effect::RelativeRequest {
         method: req.method.clone(),
         path_and_query: req.path_and_query.clone(),
@@ -193,7 +175,7 @@ fn trusted_http_effect(
             .collect(),
         body: req.body.clone(),
     };
-    http_effect::send(&context, &req.requirement, &request)
+    http_effect::send(&context, &request)
         .map(|response| sdk::HttpResponse {
             status: response.status,
             headers: response
@@ -222,6 +204,20 @@ fn trusted_http_effect(
             http_effect::EffectError::Timeout => sdk::HttpCapError::Transport("timeout".into()),
             http_effect::EffectError::Transport(detail) => sdk::HttpCapError::Transport(detail),
         })
+}
+
+fn http_effect_context_to_wit(context: &HttpEffectContext) -> http_effect::InvocationContext {
+    http_effect::InvocationContext {
+        version: context.version.clone(),
+        run_id: context.run_id.clone(),
+        root_plan_hash: context.root_plan_hash.clone(),
+        current_plan_hash: context.current_plan_hash.clone(),
+        frame_id: context.frame_id,
+        local_node_id: context.local_node_id.clone(),
+        occurrence: context.occurrence,
+        source_artifact_hash: context.source_artifact_hash.clone(),
+        requirement_name: context.requirement_name.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -269,5 +265,32 @@ mod tests {
             wit_err_to_sdk(PgError::QueryError(("22P02".into(), "m".into()))),
             sdk::PgCapError::QueryError { code, .. } if code == "22P02"
         ));
+    }
+
+    #[test]
+    fn http_effect_context_maps_attempt_principal_field_for_field() {
+        let context = HttpEffectContext {
+            version: "0.1".into(),
+            run_id: "run-a".into(),
+            root_plan_hash: "root-plan".into(),
+            current_plan_hash: "current-plan".into(),
+            frame_id: 17,
+            local_node_id: "node-a".into(),
+            occurrence: 3,
+            source_artifact_hash: "artifact-a".into(),
+            requirement_name: "orders".into(),
+        };
+
+        let mapped = http_effect_context_to_wit(&context);
+
+        assert_eq!(mapped.version, "0.1");
+        assert_eq!(mapped.run_id, "run-a");
+        assert_eq!(mapped.root_plan_hash, "root-plan");
+        assert_eq!(mapped.current_plan_hash, "current-plan");
+        assert_eq!(mapped.frame_id, 17);
+        assert_eq!(mapped.local_node_id, "node-a");
+        assert_eq!(mapped.occurrence, 3);
+        assert_eq!(mapped.source_artifact_hash, "artifact-a");
+        assert_eq!(mapped.requirement_name, "orders");
     }
 }

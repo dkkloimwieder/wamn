@@ -5482,41 +5482,62 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 tools/gate-mutants/trusted-invocation-context.sh run
 ```
 
-## PLAN-2B — portable HTTP connection floor (`wamn-ko5r.8`)
+## SR-MVP — current-plan HTTP effect authority (`wamn-0h0g.2.5`)
 
-The flowrunner writes one authorization-derived attempt intent before the send
-boundary, then calls the trusted host adapter with identity claims and a
-connection-relative request. The host re-derives the release, binding, active
-direct-only generation, credential handle, and node permission from admitted
-state. `/holds` is portable; bare `holds`, proxy fallback, base escape,
-misattribution, and reaching the wire without the exact marked intent fail.
+The trusted internal HTTP envelope carries the run id plus the exact seven-field
+attempt principal: root/current plan hashes, frame id, local node id, occurrence,
+source artifact hash, and requirement name. The host requires the exact immutable
+attempt row, membership of the current plan in the run's resolution map, the
+effectful node and requirement in that plan's exact bytes, and the current
+binding and active generation. It never walks a root authored graph or mutable
+node projection. Until `.4.9` mints the write-ahead attempt and activates the
+dispatch seam, Flowrunner supplies no effect context and every send remains
+deny-only. All package, WIT, wire, and schema identities remain `0.1`/`0.1.0`.
 
 ```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  cargo test --locked -p wamn-run-state -p wamn-standard-nodes \
-    -p wamn-node-manifest -p wamn-runtime
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  cargo clippy --locked -p wamn-run-state -p wamn-standard-nodes \
-    -p wamn-runtime -p wamn-execution-host --all-targets -- -D warnings
-cargo fmt --all -- --check
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state -p wamn-runtime
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-node-guest --features caps
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-runtime --test http_effect_wit_coherence
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-run-state -p wamn-runtime \
+    --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-node-guest --all-targets \
+    --features caps -- -D warnings
 
-WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  cargo test --locked -p wamn-run-state --test run_state_live \
-    run_state_live -- --ignored --exact --nocapture
-WAMN_CONNECTION_EFFECT_PG_URL=postgresql://wamn_app:wamn_app@127.0.0.1:15623/wamn \
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  cargo test --locked -p wamn-runtime --lib \
-    live_connection_effect_snapshot_requires_exact_marked_intent -- --nocapture
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5-components CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5-components CARGO_INCREMENTAL=0 \
+  cargo check --locked --offline --manifest-path components/Cargo.toml \
+    -p flowrunner --target wasm32-wasip2
 
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/portable-http-connection-floor.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-ko5r-8 CARGO_INCREMENTAL=0 \
-  tools/gate-mutants/portable-http-connection-floor.sh run-all
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
+docker run -d --rm --name wamn-0h0g-25-pg \
+  -p 127.0.0.1:15625:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+docker exec wamn-0h0g-25-pg pg_isready -U postgres -d wamn
+WAMN_CONNECTION_EFFECT_PG_URL=postgresql://postgres:postgres@127.0.0.1:15625/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-runtime --lib \
+    plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt \
+    -- --ignored --exact --nocapture
+docker rm -f wamn-0h0g-25-pg
 
-# Then run the existing H5-CALLABLE-WAVE1 and H5-CALLABLE-WAVE2 exact-image
-# recipes below; F3 and F4 are the deployed standard/custom connection proofs.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/current-plan-effect-authority.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-5 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/current-plan-effect-authority.sh run-all
+
+rustfmt --edition 2024 --check \
+  crates/execution/run-state/src/invocation_context.rs \
+  crates/node/guest/src/caps.rs \
+  crates/platform/runtime/src/plugins/connection_http.rs \
+  crates/platform/runtime/src/plugins/wamn_postgres/claims.rs \
+  crates/platform/runtime/tests/http_effect_wit_coherence.rs \
+  components/execution/flowrunner/src/lib.rs
+git diff --check
 ```
 
 ### Runner address-level egress boundary (`wamn-4q3c.12`)

@@ -65,37 +65,26 @@ pub struct WamnPostgres {
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
+#[derive(Debug, Clone, Copy)]
 pub struct ConnectionEffectLookup<'a> {
     pub run_id: &'a str,
-    pub node_id: &'a str,
+    pub root_plan_hash: &'a str,
+    pub current_plan_hash: &'a str,
+    pub frame_id: i64,
+    pub local_node_id: &'a str,
     pub occurrence: i32,
-    pub attempt: i32,
+    pub source_artifact_hash: &'a str,
     pub requirement_name: &'a str,
-    pub flow_id: &'a str,
-    pub flow_version: i32,
-    pub catalog_id: &'a str,
-    pub catalog_version: i32,
-    pub environment: &'a str,
-    pub artifact_digest: &'a str,
-    pub operation_fingerprint: &'a str,
-    pub stable_key: &'a str,
 }
 
 /// One transactionally consistent set of admitted HTTP effect facts.
 #[derive(Debug, Clone)]
 pub struct ConnectionEffectSnapshot {
     pub run_status: String,
-    pub flow_id: String,
-    pub flow_version: i32,
-    pub catalog_id: Option<String>,
-    pub catalog_version: Option<i64>,
-    pub environment: Option<String>,
-    pub admitted_artifact_digest: Option<String>,
-    /// The run's closed release/draft source arm resolved every exact pin.
-    pub source_admitted: bool,
+    pub root_plan_matches: bool,
+    pub resolution_matches: bool,
     pub attempt_matches: bool,
     pub requirement_json: Option<serde_json::Value>,
-    pub node_connection: Option<String>,
     pub node_permitted: bool,
     pub binding_active: bool,
     pub binding_valid: bool,
@@ -111,92 +100,74 @@ pub struct ConnectionEffectSnapshot {
     /// True for release runs; draft runs require an exact current unrevoked
     /// generation grant at this immediate pre-network snapshot.
     pub draft_generation_granted: bool,
-    pub attempt_recorded: bool,
 }
 
 const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
-WITH admitted_artifact AS MATERIALIZED ( \
-    SELECT artifact.graph_json, artifact.interface_bundle_json, \
-           artifact.artifact_hash AS execution_artifact_hash, \
-           artifact.artifact_hash AS binding_artifact_hash, false AS is_draft \
-      FROM runs AS source_run \
-      JOIN catalog.flow_artifacts AS artifact \
-        ON artifact.tenant_id = source_run.tenant_id \
-       AND artifact.flow_id = source_run.flow_id \
-       AND artifact.flow_version = source_run.flow_version \
-       AND artifact.artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
-     WHERE source_run.run_id = $1 \
-       AND source_run.trigger_source IS DISTINCT FROM 'scenario-draft' \
-       AND source_run.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
-    UNION ALL \
-    SELECT draft.graph_json, draft.interface_bundle_json::text, \
-           draft.draft_artifact_hash, draft.binding_base_artifact_hash, true \
-      FROM runs AS source_run \
-      JOIN catalog.validated_flow_drafts AS draft \
-        ON draft.tenant_id = source_run.tenant_id \
-       AND draft.flow_id = source_run.flow_id \
-       AND draft.runtime_flow_version = source_run.flow_version \
-       AND draft.catalog_id = source_run.catalog_id \
-       AND draft.catalog_version = source_run.catalog_version \
-       AND draft.environment = source_run.environment \
-       AND draft.draft_artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
-       AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
-       AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
-       AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND draft.execution_bundle_hash = source_run.execution_bundle_hash \
-       AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
-       AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
-     WHERE source_run.run_id = $1 \
-       AND source_run.trigger_source = 'scenario-draft' \
-       AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
-       AND source_run.admission_context_version = '0.1' \
-       AND source_run.invocation_context ->> 'version' = '0.1' \
-       AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
-       AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
-       AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
-       AND source_run.invocation_context #>> '{principal,catalog-version}' = source_run.catalog_version::text \
-       AND source_run.invocation_context #>> '{principal,run-id}' = source_run.run_id \
-       AND source_run.invocation_context #>> '{principal,flow-id}' = source_run.flow_id \
-       AND source_run.invocation_context #>> '{principal,flow-version}' = source_run.flow_version::text \
+WITH authorized_plan AS MATERIALIZED ( \
+    SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
+      FROM catalog.execution_bundles AS bundle \
+     WHERE bundle.execution_bundle_hash = $3 \
+       AND EXISTS ( \
+           SELECT 1 \
+             FROM run_flow_resolutions AS resolution \
+            WHERE resolution.tenant_id = bundle.tenant_id \
+              AND resolution.run_id = $1 \
+              AND resolution.execution_bundle_hash = $3 \
+              AND resolution.source_artifact_hash = $7 \
+       ) \
 ) \
-SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
-       r.invocation_context #>> '{principal,artifact-digest}', \
-       artifact.execution_artifact_hash IS NOT NULL, \
-       ($3::int IS NOT NULL AND $4::int IS NOT NULL AND false), \
-       requirement.requirement_json::text, node.value ->> 'connection', \
-       EXISTS (SELECT 1 \
-                 FROM jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS resolved(value), \
-                      jsonb_array_elements(resolved.value -> 'interface' -> 'connection-requirements') AS permitted(value) \
-                WHERE resolved.value #>> '{interface,node-type}' = node.value ->> 'type' \
-                  AND permitted.value ->> 'requirement-type' = 'http' \
-                  AND permitted.value ->> 'contract' = 'wamn:connection/http@0.1.0'), \
+SELECT r.status, r.execution_bundle_hash = $2, \
+       plan.execution_bundle_hash IS NOT NULL, attempt.attempt_id IS NOT NULL, \
+       requirement.requirement_json::text, \
+       COALESCE(plan_node.match_count = 1 AND plan_node.permitted, false), \
        binding.binding_status = 'active', binding.validation_status = 'valid', \
        instance.instance_id, instance.requirement_type, instance.contract, \
        instance.lifecycle_status = 'enabled', instance.active_generation, \
        generation.generation, generation.definition_json::text, generation.definition_hash, \
        generation.credential_set_handle, \
-       COALESCE(NOT artifact.is_draft \
-                OR (grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL), false), \
-       ($6::text IS NOT NULL AND $7::text IS NOT NULL AND false) \
+       CASE \
+           WHEN r.trigger_source = 'scenario-draft' \
+            AND r.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+           THEN grant_row.generation IS NOT NULL AND grant_row.revoked_at IS NULL \
+           WHEN r.trigger_source IS DISTINCT FROM 'scenario-draft' \
+            AND r.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
+           THEN true \
+           ELSE false \
+       END \
   FROM runs AS r \
-  LEFT JOIN admitted_artifact AS artifact ON true \
-  LEFT JOIN LATERAL jsonb_array_elements( \
-      COALESCE(artifact.graph_json -> 'connection-requirements', '[]'::jsonb) \
-  ) AS declared_requirement(value) \
-    ON declared_requirement.value ->> 'name' = $5 \
+  LEFT JOIN authorized_plan AS plan ON plan.tenant_id = r.tenant_id \
+  LEFT JOIN effect_attempts AS attempt \
+    ON attempt.tenant_id = r.tenant_id \
+   AND attempt.run_id = r.run_id \
+   AND attempt.root_plan_hash = $2 \
+   AND attempt.current_plan_hash = $3 \
+   AND attempt.frame_id = $4 \
+   AND attempt.local_node_id = $5 \
+   AND attempt.occurrence = $6 \
+   AND attempt.source_artifact_hash = $7 \
+   AND attempt.requirement_name = $8 \
   LEFT JOIN catalog.connection_requirements AS requirement \
     ON requirement.tenant_id = r.tenant_id \
-   AND requirement.artifact_hash = artifact.binding_artifact_hash \
-   AND requirement.requirement_name = $5 \
-   AND (NOT artifact.is_draft \
-        OR requirement.requirement_json = declared_requirement.value -> 'requirement') \
-  LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
-    ON node.value ->> 'id' = $2 \
+   AND requirement.artifact_hash = $7 \
+   AND requirement.requirement_name = $8 \
+  LEFT JOIN LATERAL ( \
+      SELECT count(*) AS match_count, \
+             COALESCE(bool_and( \
+                 node.value ->> 'effect-policy' = 'effectful' \
+                 AND node.value #>> '{source-connection-requirement,name}' = $8 \
+                 AND node.value -> 'source-connection-requirement' -> 'descriptor' \
+                     = requirement.requirement_json \
+             ), false) AS permitted \
+        FROM jsonb_array_elements( \
+            convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}' \
+        ) AS node(value) \
+       WHERE node.value ->> 'local-node-id' = $5 \
+  ) AS plan_node ON true \
   LEFT JOIN catalog.connection_bindings AS binding \
     ON binding.tenant_id = r.tenant_id AND binding.catalog_id = r.catalog_id \
    AND binding.catalog_version = r.catalog_version \
-   AND binding.artifact_hash = artifact.binding_artifact_hash \
-   AND binding.requirement_name = $5 \
+   AND binding.artifact_hash = $7 \
+   AND binding.requirement_name = $8 \
    AND binding.environment = r.environment \
   LEFT JOIN catalog.connection_instances AS instance \
     ON instance.tenant_id = binding.tenant_id \
@@ -884,14 +855,15 @@ impl WamnPostgres {
             return Err(anyhow::anyhow!(error.to_string()));
         }
         let result: anyhow::Result<Option<ConnectionEffectSnapshot>> = async {
-            let params: [&(dyn ToSql + Sync); 7] = [
+            let params: [&(dyn ToSql + Sync); 8] = [
                 &lookup.run_id,
-                &lookup.node_id,
+                &lookup.root_plan_hash,
+                &lookup.current_plan_hash,
+                &lookup.frame_id,
+                &lookup.local_node_id,
                 &lookup.occurrence,
-                &lookup.attempt,
+                &lookup.source_artifact_hash,
                 &lookup.requirement_name,
-                &lookup.operation_fingerprint,
-                &lookup.stable_key,
             ];
             let row = conn
                 .query_opt(CONNECTION_EFFECT_SNAPSHOT_SQL, &params)
@@ -911,30 +883,23 @@ impl WamnPostgres {
             };
             let snapshot = ConnectionEffectSnapshot {
                 run_status: row.try_get(0)?,
-                flow_id: row.try_get(1)?,
-                flow_version: row.try_get(2)?,
-                catalog_id: row.try_get(3)?,
-                catalog_version: row.try_get(4)?,
-                environment: row.try_get(5)?,
-                admitted_artifact_digest: row.try_get(6)?,
-                source_admitted: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
-                attempt_matches: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
-                requirement_json: json(9)?,
-                node_connection: row.try_get(10)?,
-                node_permitted: row.try_get(11)?,
-                binding_active: row.try_get::<_, Option<bool>>(12)?.unwrap_or(false),
-                binding_valid: row.try_get::<_, Option<bool>>(13)?.unwrap_or(false),
-                instance_id: row.try_get(14)?,
-                requirement_type: row.try_get(15)?,
-                contract: row.try_get(16)?,
-                instance_enabled: row.try_get::<_, Option<bool>>(17)?.unwrap_or(false),
-                active_generation: row.try_get(18)?,
-                generation: row.try_get(19)?,
-                definition: json(20)?,
-                definition_hash: row.try_get(21)?,
-                credential_handle: row.try_get(22)?,
-                draft_generation_granted: row.try_get::<_, Option<bool>>(23)?.unwrap_or(false),
-                attempt_recorded: row.try_get::<_, Option<bool>>(24)?.unwrap_or(false),
+                root_plan_matches: row.try_get::<_, Option<bool>>(1)?.unwrap_or(false),
+                resolution_matches: row.try_get::<_, Option<bool>>(2)?.unwrap_or(false),
+                attempt_matches: row.try_get::<_, Option<bool>>(3)?.unwrap_or(false),
+                requirement_json: json(4)?,
+                node_permitted: row.try_get::<_, Option<bool>>(5)?.unwrap_or(false),
+                binding_active: row.try_get::<_, Option<bool>>(6)?.unwrap_or(false),
+                binding_valid: row.try_get::<_, Option<bool>>(7)?.unwrap_or(false),
+                instance_id: row.try_get(8)?,
+                requirement_type: row.try_get(9)?,
+                contract: row.try_get(10)?,
+                instance_enabled: row.try_get::<_, Option<bool>>(11)?.unwrap_or(false),
+                active_generation: row.try_get(12)?,
+                generation: row.try_get(13)?,
+                definition: json(14)?,
+                definition_hash: row.try_get(15)?,
+                credential_handle: row.try_get(16)?,
+                draft_generation_granted: row.try_get::<_, Option<bool>>(17)?.unwrap_or(false),
             };
             Ok(Some(snapshot))
         }
@@ -1324,66 +1289,119 @@ mod tests {
     }
 
     #[test]
-    fn effect_runtime_adapters_are_deny_only_without_retired_attempt_readers() {
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("FROM runs AS r"));
-        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("wamn_run."));
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$7::text IS NOT NULL AND false"));
-        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
-        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text, NULL::text"));
-        for sql in [CONNECTION_EFFECT_SNAPSHOT_SQL, NODE_INVOCATION_SNAPSHOT_SQL] {
-            assert!(!sql.contains("JOIN node_runs"));
-            for retired in [
-                "nr.attempt",
-                "nr.generation_fact_kind",
-                "nr.connection_generation",
-                "nr.credential_generation",
-                "nr.attempt_dispatched_at",
-                "nr.attempt_input_ref",
-                "nr.attempt_key",
-            ] {
-                assert!(!sql.contains(retired), "runtime snapshot retains {retired}");
-            }
+    fn effect_authority_uses_the_exact_attempt_and_resolved_current_plan() {
+        for required in [
+            "FROM runs AS r",
+            "FROM run_flow_resolutions AS resolution",
+            "resolution.run_id = $1",
+            "resolution.execution_bundle_hash = $3",
+            "resolution.source_artifact_hash = $7",
+            "FROM catalog.execution_bundles AS bundle",
+            "bundle.execution_bundle_hash = $3",
+            "convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}'",
+            "node.value ->> 'local-node-id' = $5",
+            "node.value ->> 'effect-policy' = 'effectful'",
+            "node.value #>> '{source-connection-requirement,name}' = $8",
+            "node.value -> 'source-connection-requirement' -> 'descriptor'",
+            "= requirement.requirement_json",
+            "LEFT JOIN effect_attempts AS attempt",
+            "attempt.run_id = r.run_id",
+            "attempt.root_plan_hash = $2",
+            "attempt.current_plan_hash = $3",
+            "attempt.frame_id = $4",
+            "attempt.local_node_id = $5",
+            "attempt.occurrence = $6",
+            "attempt.source_artifact_hash = $7",
+            "attempt.requirement_name = $8",
+        ] {
+            assert!(
+                CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
+                "effect authority snapshot omits {required:?}"
+            );
+        }
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("SELECT count(*) AS match_count"));
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("plan_node.match_count = 1"));
+    }
+
+    #[test]
+    fn effect_authority_keeps_root_and_callee_plan_hashes_independent() {
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("r.execution_bundle_hash = $2"),
+            "the root plan must bind independently from the active frame"
+        );
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("bundle.execution_bundle_hash = $3"),
+            "the current callee plan must select its own exact bytes"
+        );
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("attempt.root_plan_hash = $2"));
+        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("attempt.current_plan_hash = $3"));
+        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$2 = $3"));
+        assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$3 = $2"));
+    }
+
+    #[test]
+    fn effect_authority_has_no_root_graph_or_mutable_run_fallback() {
+        let sql = CONNECTION_EFFECT_SNAPSHOT_SQL.to_ascii_lowercase();
+        for retired in [
+            "graph_json",
+            "flow_artifacts",
+            "validated_flow_drafts",
+            "node_runs",
+            "recursive",
+            "parent_frame_id",
+            "call_site_id",
+        ] {
+            assert!(!sql.contains(retired), "effect authority retains {retired}");
+        }
+        for write in [" insert ", " update ", " delete "] {
+            assert!(!sql.contains(write), "effect authority performs {write:?}");
         }
     }
 
     #[test]
-    fn effect_snapshots_use_closed_release_and_exact_draft_source_arms() {
-        for sql in [CONNECTION_EFFECT_SNAPSHOT_SQL, NODE_INVOCATION_SNAPSHOT_SQL] {
-            assert!(sql.contains("WITH admitted_artifact AS MATERIALIZED"));
-            assert!(sql.contains("UNION ALL"));
-            assert!(sql.contains("source_run.trigger_source = 'scenario-draft'"));
-            assert!(sql.contains("#>> '{source,producer}' = 'draft-scenario'"));
-            assert!(sql.contains("source_run.admission_context_version = '0.1'"));
-            assert!(sql.contains("source_run.invocation_context ->> 'version' = '0.1'"));
-            assert!(sql.contains("trigger_source IS DISTINCT FROM 'scenario-draft'"));
-            assert!(sql.contains("#>> '{source,producer}' IS DISTINCT FROM 'draft-scenario'"));
-            for pin in [
-                "draft-id",
-                "draft-revision",
-                "validated-draft-hash",
-                "binding-base-artifact-hash",
-                "suite-flow-version",
-            ] {
-                assert!(sql.contains(pin), "draft snapshot omits {pin}");
-            }
-            assert!(sql.contains("draft.execution_bundle_hash = source_run.execution_bundle_hash"));
-            let retired_json_pin = ["execution", "bundle", "hash"].join("-");
-            assert!(!sql.contains(&retired_json_pin));
+    fn node_invocation_adapter_remains_deny_only_without_attempt_reader() {
+        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
+        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text, NULL::text"));
+        assert!(!NODE_INVOCATION_SNAPSHOT_SQL.contains("JOIN node_runs"));
+        for retired in [
+            "nr.attempt",
+            "nr.generation_fact_kind",
+            "nr.connection_generation",
+            "nr.credential_generation",
+            "nr.attempt_dispatched_at",
+            "nr.attempt_input_ref",
+            "nr.attempt_key",
+        ] {
+            assert!(
+                !NODE_INVOCATION_SNAPSHOT_SQL.contains(retired),
+                "node invocation snapshot retains {retired}"
+            );
         }
+    }
 
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains(
-            "requirement.requirement_json = declared_requirement.value -> 'requirement'"
-        ));
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL
-                .contains("catalog.draft_safe_connection_grants AS grant_row")
-        );
-        assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("grant_row.revoked_at IS NULL"));
-        assert!(
-            CONNECTION_EFFECT_SNAPSHOT_SQL
-                .contains("binding.artifact_hash = artifact.binding_artifact_hash")
-        );
+    #[test]
+    fn effect_authority_resolves_the_current_binding_and_draft_grant() {
+        for required in [
+            "requirement.artifact_hash = $7",
+            "requirement.requirement_name = $8",
+            "binding.catalog_id = r.catalog_id",
+            "binding.catalog_version = r.catalog_version",
+            "binding.artifact_hash = $7",
+            "binding.requirement_name = $8",
+            "binding.environment = r.environment",
+            "generation.generation = instance.active_generation",
+            "catalog.draft_safe_connection_grants AS grant_row",
+            "grant_row.revoked_at IS NULL",
+            "r.trigger_source = 'scenario-draft'",
+            "#>> '{source,producer}' = 'draft-scenario'",
+            "trigger_source IS DISTINCT FROM 'scenario-draft'",
+            "#>> '{source,producer}' IS DISTINCT FROM 'draft-scenario'",
+        ] {
+            assert!(
+                CONNECTION_EFFECT_SNAPSHOT_SQL.contains(required),
+                "effect authority snapshot omits {required:?}"
+            );
+        }
     }
 
     // R16 — the validators stay as the identity-format contract (demoted from the
@@ -1488,6 +1506,15 @@ mod tests {
             let _ = conn.await;
         });
         client
+    }
+
+    fn database_url_for_role(database_url: &str, role: &str, password: &str) -> String {
+        let mut url = url::Url::parse(database_url).expect("database URL is an absolute URI");
+        url.set_username(role)
+            .expect("PostgreSQL URL accepts a username");
+        url.set_password(Some(password))
+            .expect("PostgreSQL URL accepts a password");
+        url.to_string()
     }
 
     // R2/R16 — the ACTUAL bound claim statement makes injection-shaped and
@@ -1675,160 +1702,535 @@ mod tests {
         assert_eq!(scs, "on");
     }
 
-    /// The adapter preserves source/binding observation but denies attempt
-    /// authority until .4.9 installs the immutable writer and reader together.
+    /// Full PostgreSQL proof for current-frame HTTP authority. The configured
+    /// database is disposable: this test resets the canonical catalog and run
+    /// schemas before applying both schema-of-record files.
     #[tokio::test]
-    async fn live_effect_runtime_snapshots_are_deny_only_until_writer_activation() {
-        let Some(url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
+    #[ignore = "requires WAMN_CONNECTION_EFFECT_PG_URL for a disposable PostgreSQL 18 superuser database"]
+    async fn live_effect_authority_uses_callee_plan_and_exact_attempt() {
+        use sha2::{Digest as _, Sha256};
+
+        const CATALOG_SQL: &str = include_str!("../../../../../../deploy/sql/catalog-schema.sql");
+        const RUN_STATE_SQL: &str = include_str!("../../../../../../deploy/sql/run-state.sql");
+        const TENANT: &str = "effect-live";
+        const COMPONENT: &str = "effect-live-runner";
+        const RUN_ID: &str = "effect-live-run";
+        const LOCAL_NODE_ID: &str = "send-notice";
+        const REQUIREMENT_NAME: &str = "manager";
+        const FRAME_ID: i64 = 7;
+        const OCCURRENCE: i32 = 2;
+
+        let Some(admin_url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
+            eprintln!(
+                "WAMN_CONNECTION_EFFECT_PG_URL unset — skipping the ignored PostgreSQL 18 \
+                 current-frame HTTP authority proof"
+            );
             return;
         };
-        let pg = WamnPostgres::new(WamnPostgresConfig {
-            database_url: Some(url),
+        let mut admin = connect_raw(&admin_url).await;
+        let server = admin
+            .query_one(
+                "SELECT current_setting('server_version_num')::int, \
+                        (SELECT rolsuper FROM pg_roles WHERE rolname = current_user)",
+                &[],
+            )
+            .await
+            .expect("inspect disposable PostgreSQL server");
+        let server_version: i32 = server.get(0);
+        let is_superuser: bool = server.get(1);
+        assert!(
+            (180_000..190_000).contains(&server_version),
+            "effect authority live proof requires PostgreSQL 18"
+        );
+        assert!(
+            is_superuser,
+            "WAMN_CONNECTION_EFFECT_PG_URL must name a disposable superuser database"
+        );
+
+        admin
+            .batch_execute(
+                "DO $$ BEGIN \
+                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
+                     CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' \
+                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                   END IF; \
+                   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                     CREATE ROLE wamn_scenario_author NOLOGIN \
+                       NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                   END IF; \
+                 END $$; \
+                 ALTER ROLE wamn_app WITH LOGIN PASSWORD 'wamn_app' \
+                   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                 ALTER ROLE wamn_scenario_author WITH NOLOGIN \
+                   NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+                 DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+                 DROP SCHEMA IF EXISTS catalog CASCADE;",
+            )
+            .await
+            .expect("reset disposable effect authority schemas and roles");
+        admin
+            .batch_execute(CATALOG_SQL)
+            .await
+            .expect("apply full catalog schema of record");
+        admin
+            .batch_execute(RUN_STATE_SQL)
+            .await
+            .expect("apply full run-state schema of record");
+
+        let digest = |bytes: &[u8]| format!("sha256:{}", hex::encode(Sha256::digest(bytes)));
+        let root_artifact_hash = digest(b"effect-live-root-artifact");
+        let callee_artifact_hash = digest(b"effect-live-callee-artifact");
+        let descriptor =
+            serde_json::to_value(wamn_node_manifest::ConnectionTypeDescriptor::http_v1())
+                .expect("serialize canonical HTTP descriptor");
+        let flowrunner_revision = digest(b"effect-live-flowrunner");
+        let effect_provider_revision = digest(b"effect-live-effect-provider");
+        let callable_input_hash = wamn_flow::canonical_json_sha256(&serde_json::Value::Bool(true));
+        let root_plan_bytes = serde_json::to_vec(&serde_json::json!({
+            "header": {
+                "format-version": "0.1",
+                "plan-compiler-revision": "0.1",
+                "runtime-revision": {
+                    "flowrunner-component-digest": flowrunner_revision.clone(),
+                    "effect-provider-revision": effect_provider_revision.clone(),
+                    "host-effect-contract-version": "0.1"
+                },
+                "root-artifact-hash": root_artifact_hash.clone()
+            },
+            "body": {
+                "entry-instruction": "root-entry",
+                "nodes": [{
+                    "local-node-id": "root-entry",
+                    "source-node-id": "root-entry",
+                    "type": "event",
+                    "config": {},
+                    "effect-policy": "pure"
+                }],
+                "edges": [],
+                "root-terminal-behavior": {"kind": "frontier-exhaustion"},
+                "entry-input-schema-guard": true,
+                "callable-contract": null,
+                "source-map": [{
+                    "local-node-id": "root-entry",
+                    "source-node-id": "root-entry"
+                }]
+            }
+        }))
+        .expect("encode root execution plan bytes");
+        let callee_plan_bytes = serde_json::to_vec(&serde_json::json!({
+            "header": {
+                "format-version": "0.1",
+                "plan-compiler-revision": "0.1",
+                "runtime-revision": {
+                    "flowrunner-component-digest": flowrunner_revision,
+                    "effect-provider-revision": effect_provider_revision,
+                    "host-effect-contract-version": "0.1"
+                },
+                "root-artifact-hash": callee_artifact_hash.clone()
+            },
+            "body": {
+                "entry-instruction": "callee-entry",
+                "nodes": [
+                    {
+                        "local-node-id": "callee-entry",
+                        "source-node-id": "callee-entry",
+                        "type": "request",
+                        "config": {"input-schema": true},
+                        "effect-policy": "pure"
+                    },
+                    {
+                        "local-node-id": LOCAL_NODE_ID,
+                        "source-node-id": LOCAL_NODE_ID,
+                        "type": "http-call",
+                        "config": {},
+                        "effect-policy": "effectful",
+                        "source-connection-requirement": {
+                            "name": REQUIREMENT_NAME,
+                            "descriptor": descriptor.clone()
+                        }
+                    },
+                    {
+                        "local-node-id": "callee-respond",
+                        "source-node-id": "callee-respond",
+                        "type": "respond",
+                        "config": {"status": 200},
+                        "effect-policy": "pure"
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": "callee-entry",
+                        "source-port": "main",
+                        "destination": LOCAL_NODE_ID,
+                        "fan-out-ordinal": 0
+                    },
+                    {
+                        "source": LOCAL_NODE_ID,
+                        "source-port": "main",
+                        "destination": "callee-respond",
+                        "fan-out-ordinal": 0
+                    }
+                ],
+                "root-terminal-behavior": {
+                    "kind": "respond",
+                    "responders": ["callee-respond"]
+                },
+                "entry-input-schema-guard": true,
+                "callable-contract": {
+                    "version": "0.1",
+                    "input-schema-hash": callable_input_hash,
+                    "return-contract": "untyped-json-body",
+                    "effect-ceiling": "effectful"
+                },
+                "source-map": [
+                    {
+                        "local-node-id": "callee-entry",
+                        "source-node-id": "callee-entry"
+                    },
+                    {
+                        "local-node-id": LOCAL_NODE_ID,
+                        "source-node-id": LOCAL_NODE_ID
+                    },
+                    {
+                        "local-node-id": "callee-respond",
+                        "source-node-id": "callee-respond"
+                    }
+                ]
+            }
+        }))
+        .expect("encode callee execution plan bytes");
+        let root_plan_hash = digest(&root_plan_bytes);
+        let current_plan_hash = digest(&callee_plan_bytes);
+        assert_ne!(
+            root_plan_hash, current_plan_hash,
+            "the proof must execute inside a distinct callee plan"
+        );
+        let root_plan_length =
+            i32::try_from(root_plan_bytes.len()).expect("root plan fits PostgreSQL int");
+        let callee_plan_length =
+            i32::try_from(callee_plan_bytes.len()).expect("callee plan fits PostgreSQL int");
+        let root_plan_slice = root_plan_bytes.as_slice();
+        let callee_plan_slice = callee_plan_bytes.as_slice();
+        let members_json = serde_json::to_string(&serde_json::json!([
+            {
+                "flow-id": "root-flow",
+                "flow-version": 1,
+                "artifact-hash": root_artifact_hash.clone()
+            },
+            {
+                "flow-id": "callee-flow",
+                "flow-version": 1,
+                "artifact-hash": callee_artifact_hash.clone()
+            }
+        ]))
+        .expect("encode release members");
+        let descriptor_json =
+            serde_json::to_string(&descriptor).expect("encode connection requirement");
+
+        let seed = admin
+            .transaction()
+            .await
+            .expect("begin effect authority seed transaction");
+        seed.execute(
+            "INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state) \
+             VALUES ($1,'effect-catalog',1,'prod','0.1','applied')",
+            &[&TENANT],
+        )
+        .await
+        .expect("seed release catalog");
+        seed.execute(
+            "INSERT INTO catalog.flow_artifacts \
+               (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
+             VALUES \
+               ($1,'root-flow',1,'0.1','{}'::jsonb,'root-graph',$2), \
+               ($1,'callee-flow',1,'0.1','{}'::jsonb,'callee-graph',$3)",
+            &[&TENANT, &root_artifact_hash, &callee_artifact_hash],
+        )
+        .await
+        .expect("seed distinct source artifacts");
+        seed.execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             VALUES ($1,$2,'0.1',$3,$4), ($1,$5,'0.1',$6,$7)",
+            &[
+                &TENANT,
+                &root_plan_hash,
+                &root_plan_slice,
+                &root_plan_length,
+                &current_plan_hash,
+                &callee_plan_slice,
+                &callee_plan_length,
+            ],
+        )
+        .await
+        .expect("seed distinct exact execution bundles");
+        seed.execute(
+            "INSERT INTO catalog.release_manifests \
+               (tenant_id,catalog_id,catalog_version,members_json) \
+             VALUES ($1,'effect-catalog',1,$2::text::jsonb)",
+            &[&TENANT, &members_json],
+        )
+        .await
+        .expect("seed release manifest");
+        seed.execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
+             VALUES \
+               ($1,'effect-catalog',1,'root-flow',1,$2), \
+               ($1,'effect-catalog',1,'callee-flow',1,$3)",
+            &[&TENANT, &root_plan_hash, &current_plan_hash],
+        )
+        .await
+        .expect("seed release flow membership");
+        seed.execute(
+            "INSERT INTO catalog.connection_requirements \
+               (tenant_id,artifact_hash,requirement_name,requirement_json,requirement_hash) \
+             VALUES ($1,$2,$3,$4::text::jsonb,'effect-live-requirement')",
+            &[
+                &TENANT,
+                &callee_artifact_hash,
+                &REQUIREMENT_NAME,
+                &descriptor_json,
+            ],
+        )
+        .await
+        .expect("seed callee source requirement");
+        seed.execute(
+            "INSERT INTO catalog.connection_instances \
+               (tenant_id,environment,instance_id,requirement_type,contract) \
+             VALUES ($1,'prod','manager-prod','http','wamn:connection/http@0.1.0')",
+            &[&TENANT],
+        )
+        .await
+        .expect("seed connection instance");
+        seed.execute(
+            "INSERT INTO catalog.connection_generations \
+               (tenant_id,environment,instance_id,generation,definition_json,definition_hash,credential_set_handle) \
+             VALUES ($1,'prod','manager-prod',1, \
+                     '{\"primary-authority\":\"https://manager.example\",\"tls-verification\":\"verify-authority\"}'::jsonb, \
+                     'effect-live-definition','effect-live-credential')",
+            &[&TENANT],
+        )
+        .await
+        .expect("seed active connection generation");
+        seed.execute(
+            "UPDATE catalog.connection_instances \
+                SET active_generation = 1, revision = revision + 1, \
+                    updated_at = updated_at + interval '1 second' \
+              WHERE tenant_id = $1 AND environment = 'prod' \
+                AND instance_id = 'manager-prod'",
+            &[&TENANT],
+        )
+        .await
+        .expect("activate connection generation");
+        seed.execute(
+            "INSERT INTO catalog.connection_bindings \
+               (tenant_id,catalog_id,catalog_version,artifact_hash,requirement_name, \
+                environment,instance_id,binding_status,validation_status,validation_hash) \
+             VALUES ($1,'effect-catalog',1,$2,$3,'prod','manager-prod', \
+                     'active','valid','effect-live-binding')",
+            &[&TENANT, &callee_artifact_hash, &REQUIREMENT_NAME],
+        )
+        .await
+        .expect("seed release-bound connection binding");
+        seed.execute(
+            "INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                environment,execution_bundle_hash,status,trigger_source,invocation_context) \
+             VALUES ($1,$2,'root-flow',1,'effect-catalog',1,'prod',$3, \
+                     'running','manual','{\"source\":{\"producer\":\"manual\"}}'::jsonb)",
+            &[&TENANT, &RUN_ID, &root_plan_hash],
+        )
+        .await
+        .expect("seed root-pinned running run");
+        seed.execute(
+            "INSERT INTO wamn_run.run_flow_resolutions \
+               (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
+             VALUES \
+               ($1,$2,'root-flow',$3,$4), \
+               ($1,$2,'callee-flow',$5,$6)",
+            &[
+                &TENANT,
+                &RUN_ID,
+                &root_plan_hash,
+                &root_artifact_hash,
+                &current_plan_hash,
+                &callee_artifact_hash,
+            ],
+        )
+        .await
+        .expect("seed complete root and callee resolution map");
+        seed.execute(
+            "INSERT INTO wamn_run.effect_attempts \
+               (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,parent_frame_id, \
+                call_site_id,local_node_id,source_artifact_hash,requirement_name,occurrence, \
+                seq,generation_fact_kind,connection_name,connection_generation, \
+                credential_generation,attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+             VALUES ($1,$2,$3,$4,$5,3,'call-callee',$6,$7,$8,$9,0,'attested', \
+                     'manager-prod','1','effect-live-credential', \
+                     clock_timestamp(),clock_timestamp() + interval '1 minute', \
+                     'sha256:effect-live-input')",
+            &[
+                &TENANT,
+                &RUN_ID,
+                &root_plan_hash,
+                &current_plan_hash,
+                &FRAME_ID,
+                &LOCAL_NODE_ID,
+                &callee_artifact_hash,
+                &REQUIREMENT_NAME,
+                &OCCURRENCE,
+            ],
+        )
+        .await
+        .expect("superuser seed exact immutable attempt attestation");
+        seed.commit()
+            .await
+            .expect("commit effect authority fixture");
+
+        let privileges_before = admin
+            .query_one(
+                "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
+                        has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
+                        has_function_privilege( \
+                          'wamn_app','wamn_run.guard_effect_fact_append()','EXECUTE')",
+                &[],
+            )
+            .await
+            .expect("inspect immutable attempt privileges");
+        assert!(privileges_before.get::<_, bool>(0));
+        assert!(!privileges_before.get::<_, bool>(1));
+        assert!(!privileges_before.get::<_, bool>(2));
+
+        let app_url = database_url_for_role(&admin_url, "wamn_app", "wamn_app");
+        let postgres = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(app_url),
             pool_max_size: 1,
             wait_timeout_ms: 2_000,
             statement_timeout_ms: 5_000,
             row_limit: 1_000,
         })
-        .unwrap();
-        pg.set_schema("http-runner", "wamn_run").unwrap();
-        let lookup = ConnectionEffectLookup {
-            run_id: "http-intent",
-            node_id: "notify",
-            occurrence: 0,
-            attempt: 0,
-            requirement_name: "manager",
-            flow_id: "http-flow",
-            flow_version: 1,
-            catalog_id: "c-http",
-            catalog_version: 1,
-            environment: "dev",
-            artifact_digest: "artifact-http",
-            operation_fingerprint: "sha256:operation",
-            stable_key: "http-intent:notify:0",
+        .expect("construct production PostgreSQL plugin");
+        postgres
+            .set_schema(COMPONENT, "wamn_run")
+            .expect("set production run-state search path");
+        let exact_lookup = ConnectionEffectLookup {
+            run_id: RUN_ID,
+            root_plan_hash: &root_plan_hash,
+            current_plan_hash: &current_plan_hash,
+            frame_id: FRAME_ID,
+            local_node_id: LOCAL_NODE_ID,
+            occurrence: OCCURRENCE,
+            source_artifact_hash: &callee_artifact_hash,
+            requirement_name: REQUIREMENT_NAME,
         };
-        let snapshot = pg
-            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &lookup)
+        let exact = postgres
+            .connection_effect_snapshot(COMPONENT, DEFAULT_PROJECT, TENANT, &exact_lookup)
             .await
-            .unwrap()
-            .expect("admitted run exists");
-        assert!(snapshot.source_admitted);
-        assert!(snapshot.draft_generation_granted);
-        assert!(!snapshot.attempt_matches);
-        assert!(!snapshot.attempt_recorded);
-        assert_eq!(snapshot.active_generation, Some(1));
-        assert_eq!(snapshot.generation, Some(1));
-        assert_eq!(snapshot.instance_id.as_deref(), Some("manager-dev"));
-        assert_eq!(
-            snapshot.credential_handle.as_deref(),
-            Some("manager-credential-v1")
-        );
+            .expect("load exact production authority snapshot")
+            .expect("root run is visible under tenant RLS");
+        assert_eq!(exact.run_status, "running");
+        assert!(exact.root_plan_matches);
+        assert!(exact.resolution_matches);
+        assert!(exact.attempt_matches);
+        assert!(exact.node_permitted);
+        assert_eq!(exact.requirement_json.as_ref(), Some(&descriptor));
+        assert!(exact.binding_active);
+        assert!(exact.binding_valid);
+        assert_eq!(exact.instance_id.as_deref(), Some("manager-prod"));
+        assert!(exact.instance_enabled);
+        assert_eq!(exact.active_generation, Some(1));
+        assert_eq!(exact.generation, Some(1));
+        assert!(exact.draft_generation_granted);
 
-        let wrong_attempt = ConnectionEffectLookup {
-            attempt: 1,
-            ..lookup
-        };
-        let snapshot = pg
-            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &wrong_attempt)
-            .await
-            .unwrap()
-            .expect("run still exists");
-        assert!(!snapshot.attempt_matches);
-        assert!(!snapshot.attempt_recorded);
-
-        let draft_lookup = ConnectionEffectLookup {
-            run_id: "draft-http-granted",
-            node_id: "notify",
-            occurrence: 0,
-            attempt: 0,
-            requirement_name: "manager",
-            flow_id: "http-flow",
-            flow_version: 2,
-            catalog_id: "c-http",
-            catalog_version: 1,
-            environment: "dev",
-            artifact_digest: "artifact-http-draft",
-            operation_fingerprint: "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79",
-            stable_key: "draft-http-granted:notify:0",
-        };
-        let draft_snapshot = pg
-            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &draft_lookup)
-            .await
-            .unwrap()
-            .expect("exact validated draft exists");
-        assert!(draft_snapshot.source_admitted);
-        assert!(!draft_snapshot.attempt_matches);
-        assert!(!draft_snapshot.attempt_recorded);
-        assert_eq!(draft_snapshot.active_generation, Some(1));
-        assert_eq!(draft_snapshot.generation, Some(1));
-        assert_eq!(draft_snapshot.instance_id.as_deref(), Some("manager-dev"));
-        assert_eq!(
-            draft_snapshot.credential_handle.as_deref(),
-            Some("manager-credential-v1")
-        );
-        assert!(
-            !draft_snapshot.draft_generation_granted,
-            "the immediate snapshot must observe revocation after durable intent"
-        );
-
-        let mismatched_draft = ConnectionEffectLookup {
-            run_id: "draft-http-mismatch",
-            operation_fingerprint: "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79",
-            stable_key: "draft-http-mismatch:notify:0",
-            ..draft_lookup
-        };
-        let mismatch_snapshot = pg
-            .connection_effect_snapshot("http-runner", DEFAULT_PROJECT, "t1", &mismatched_draft)
-            .await
-            .unwrap()
-            .expect("mismatched draft run still exists");
-        assert!(!mismatch_snapshot.source_admitted);
-        assert!(!mismatch_snapshot.attempt_matches);
-        assert!(!mismatch_snapshot.attempt_recorded);
-        assert!(!mismatch_snapshot.draft_generation_granted);
-
-        let exact_node = pg
-            .node_invocation_snapshot(
-                "http-runner",
+        let wrong_occurrence = postgres
+            .connection_effect_snapshot(
+                COMPONENT,
                 DEFAULT_PROJECT,
-                "t1",
-                &NodeInvocationLookup {
-                    run_id: "draft-http-granted",
-                    node_id: "notify",
-                    occurrence: 0,
-                    attempt: 0,
+                TENANT,
+                &ConnectionEffectLookup {
+                    occurrence: OCCURRENCE + 1,
+                    ..exact_lookup
                 },
             )
             .await
-            .unwrap()
-            .expect("exact validated draft node exists");
-        assert!(exact_node.admitted_artifact);
-        assert!(!exact_node.attempt_matches);
-        assert_eq!(exact_node.node_type.as_deref(), Some("http-request"));
-        assert_eq!(exact_node.executable_kind.as_deref(), Some("component"));
-        assert_eq!(
-            exact_node.admitted_implementation_digest.as_deref(),
-            Some("sha256:http-node-draft")
-        );
-        assert_eq!(exact_node.attempt_input_ref, None);
-        assert_eq!(exact_node.attempt_key, None);
+            .expect("load wrong-occurrence snapshot")
+            .expect("run remains visible for wrong occurrence");
+        assert!(wrong_occurrence.root_plan_matches);
+        assert!(wrong_occurrence.resolution_matches);
+        assert!(wrong_occurrence.node_permitted);
+        assert!(!wrong_occurrence.attempt_matches);
 
-        let mismatched_node = pg
-            .node_invocation_snapshot(
-                "http-runner",
+        let unknown_plan_hash = digest(b"effect-live-unknown-current-plan");
+        let wrong_current = postgres
+            .connection_effect_snapshot(
+                COMPONENT,
                 DEFAULT_PROJECT,
-                "t1",
-                &NodeInvocationLookup {
-                    run_id: "draft-http-mismatch",
-                    node_id: "notify",
-                    occurrence: 0,
-                    attempt: 0,
+                TENANT,
+                &ConnectionEffectLookup {
+                    current_plan_hash: &unknown_plan_hash,
+                    ..exact_lookup
                 },
             )
             .await
-            .unwrap()
-            .expect("mismatched draft run still exists");
-        assert!(!mismatched_node.admitted_artifact);
-        assert!(!mismatched_node.attempt_matches);
+            .expect("load wrong-current-plan snapshot")
+            .expect("run remains visible for wrong current plan");
+        assert!(wrong_current.root_plan_matches);
+        assert!(!wrong_current.resolution_matches);
+        assert!(!wrong_current.node_permitted);
+        assert!(!wrong_current.attempt_matches);
+
+        let unknown_source_hash = digest(b"effect-live-unknown-source-artifact");
+        let wrong_source = postgres
+            .connection_effect_snapshot(
+                COMPONENT,
+                DEFAULT_PROJECT,
+                TENANT,
+                &ConnectionEffectLookup {
+                    source_artifact_hash: &unknown_source_hash,
+                    ..exact_lookup
+                },
+            )
+            .await
+            .expect("load wrong-source snapshot")
+            .expect("run remains visible for wrong source artifact");
+        assert!(!wrong_source.resolution_matches);
+        assert!(!wrong_source.attempt_matches);
+        assert!(!wrong_source.node_permitted);
+        assert!(wrong_source.requirement_json.is_none());
+
+        let wrong_requirement = postgres
+            .connection_effect_snapshot(
+                COMPONENT,
+                DEFAULT_PROJECT,
+                TENANT,
+                &ConnectionEffectLookup {
+                    requirement_name: "other-manager",
+                    ..exact_lookup
+                },
+            )
+            .await
+            .expect("load wrong-requirement snapshot")
+            .expect("run remains visible for wrong requirement");
+        assert!(wrong_requirement.resolution_matches);
+        assert!(!wrong_requirement.attempt_matches);
+        assert!(!wrong_requirement.node_permitted);
+        assert!(wrong_requirement.requirement_json.is_none());
+
+        let privileges_after = admin
+            .query_one(
+                "SELECT has_table_privilege('wamn_app','wamn_run.effect_attempts','SELECT'), \
+                        has_table_privilege('wamn_app','wamn_run.effect_attempts','INSERT'), \
+                        has_function_privilege( \
+                          'wamn_app','wamn_run.guard_effect_fact_append()','EXECUTE')",
+                &[],
+            )
+            .await
+            .expect("recheck immutable attempt privileges");
+        assert!(privileges_after.get::<_, bool>(0));
+        assert!(!privileges_after.get::<_, bool>(1));
+        assert!(!privileges_after.get::<_, bool>(2));
     }
 
     // R18-neg (wamn-2jkm.65) — the fail-CLOSED branch, exercised against a REAL

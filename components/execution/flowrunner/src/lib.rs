@@ -421,46 +421,6 @@ fn load_execution_plan(run_id: &str) -> Result<wamn_catalog::ExecutionPlanV2, St
     }
     Ok(plan)
 }
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct EffectRunClaims {
-    tenant_id: String,
-    environment: String,
-    catalog_id: String,
-    catalog_version: i32,
-    artifact_digest: String,
-}
-
-const EFFECT_RUN_CLAIMS_SQL: &str = "\
-SELECT tenant_id, environment, catalog_id, catalog_version, \
-       invocation_context #>> '{principal,artifact-digest}' \
-  FROM runs \
- WHERE run_id = $1 AND status = 'running'";
-
-fn load_effect_run_claims(run_id: &str) -> Result<EffectRunClaims, String> {
-    let rows = client::query(EFFECT_RUN_CLAIMS_SQL, &[text(run_id)]).map_err(|e| err_name(&e))?;
-    let row = rows
-        .rows
-        .first()
-        .ok_or("run is absent or its status does not admit effects")?;
-    let string = |index: usize, name: &str| match row.get(index) {
-        Some(SqlValue::Text(value)) if !value.is_empty() => Ok(value.clone()),
-        other => Err(format!("effect run {name} shape: {other:?}")),
-    };
-    let catalog_version = match row.get(3) {
-        Some(SqlValue::Int32(value)) => *value,
-        Some(SqlValue::Int64(value)) => i32::try_from(*value)
-            .map_err(|_| "effect run catalog_version is out of range".to_string())?,
-        other => return Err(format!("effect run catalog_version shape: {other:?}")),
-    };
-    Ok(EffectRunClaims {
-        tenant_id: string(0, "tenant_id")?,
-        environment: string(1, "environment")?,
-        catalog_id: string(2, "catalog_id")?,
-        catalog_version,
-        artifact_digest: string(4, "artifact_digest")?,
-    })
-}
-
 /// Read the run's persisted `flow_version` — the version the dispatcher (or the
 /// direct driver's own `open_run`) stamped when the run row was written.
 /// `Some(v)` on a resume (the row exists); `None` for a fresh run whose row this
@@ -786,7 +746,6 @@ fn custom_node_dispatch(
     _run_id: &str,
     _flow: &Flow,
     _artifact: Option<&wamn_catalog::PinnedArtifact>,
-    _effect_run: Option<&EffectRunClaims>,
 ) -> Result<NodeOutcome, String> {
     Err("custom node dispatch refuses without an authoritative execution-plan adapter".to_string())
 }
@@ -1069,19 +1028,11 @@ fn dispatch_node(
     run_id: &str,
     flow: &Flow,
     artifact: Option<&wamn_catalog::PinnedArtifact>,
-    effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeOutcome, String> {
-    let outcome = dispatch_node_unvalidated(
-        d,
-        run_id,
-        flow,
-        artifact,
-        effect_run,
-        kill_after_write,
-        http_status,
-    )?;
+    let outcome =
+        dispatch_node_unvalidated(d, run_id, flow, artifact, kill_after_write, http_status)?;
     validate_dispatched_action(d, &outcome)?;
     Ok(outcome)
 }
@@ -1099,7 +1050,6 @@ fn dispatch_node_unvalidated(
     run_id: &str,
     flow: &Flow,
     artifact: Option<&wamn_catalog::PinnedArtifact>,
-    effect_run: Option<&EffectRunClaims>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeOutcome, String> {
@@ -1148,7 +1098,7 @@ fn dispatch_node_unvalidated(
         // A supplied component is addressed only by the implementation digest
         // pinned into this run's immutable artifact. The trusted host resolves
         // its environment placement, signs the envelope, and owns transport.
-        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow, artifact, effect_run),
+        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow, artifact),
         ResolvedNode::InvokeFlow => {
             Err("invoke-flow is handled by the claimed-run child runtime".to_string())
         }
@@ -1188,26 +1138,11 @@ fn dispatch_node_unvalidated(
                 raw_sql: wamn_nodes::required_capabilities(node_type)
                     .is_some_and(|capabilities| capabilities.contains(&sdk::Capability::RawSql))
                     && raw_sql_enabled(),
-                http_effect: match (effect_run, d.connection.as_deref()) {
-                    (Some(run), Some(requirement_name)) => {
-                        Some(wamn_node_guest::caps::HttpEffectContext {
-                            version: "0.1".to_string(),
-                            tenant_id: run.tenant_id.clone(),
-                            environment: run.environment.clone(),
-                            catalog_id: run.catalog_id.clone(),
-                            catalog_version: run.catalog_version,
-                            run_id: run_id.to_string(),
-                            flow_id: flow.flow_id.clone(),
-                            flow_version: flow.version,
-                            artifact_digest: run.artifact_digest.clone(),
-                            node_id: d.node.clone(),
-                            occurrence: d.occurrence,
-                            attempt: d.attempt,
-                            requirement_name: requirement_name.to_string(),
-                        })
-                    }
-                    _ => None,
-                },
+                // The claimed-run interpreter is hard-refused until the
+                // authoritative frame-fact adapter lands. Supplying any
+                // root/current plan or source-artifact hash here would invent
+                // authority, so no trusted HTTP effect context is exposed yet.
+                http_effect: None,
             };
             let granted = wamn_nodes::granted_for(sdk::NodeCtx::raw_sql_enabled(&ctx));
             Ok(
@@ -1493,15 +1428,8 @@ fn execute(
                     .map_err(|error| error.to_string())?;
             }
             Step::Dispatch(d) => {
-                let outcome = dispatch_node(
-                    &d,
-                    run_id,
-                    &flow,
-                    None,
-                    None,
-                    kill_after_write,
-                    &mut http_status,
-                )?;
+                let outcome =
+                    dispatch_node(&d, run_id, &flow, None, kill_after_write, &mut http_status)?;
                 if d.node_type == "fail" {
                     let config: FailConfig =
                         serde_json::from_value(d.config.clone()).expect("validated fail config");

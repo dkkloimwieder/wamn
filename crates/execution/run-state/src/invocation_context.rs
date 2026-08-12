@@ -106,6 +106,7 @@ pub struct HttpEffectPrincipal {
     current_plan_hash: String,
     frame_id: u64,
     local_node_id: String,
+    occurrence: u32,
     source_artifact_hash: String,
     requirement_name: String,
 }
@@ -116,6 +117,7 @@ impl HttpEffectPrincipal {
         current_plan_hash: impl Into<String>,
         frame_id: u64,
         local_node_id: impl Into<String>,
+        occurrence: u32,
         source_artifact_hash: impl Into<String>,
         requirement_name: impl Into<String>,
     ) -> Result<Self, InvocationContextError> {
@@ -124,6 +126,7 @@ impl HttpEffectPrincipal {
             current_plan_hash: current_plan_hash.into(),
             frame_id,
             local_node_id: local_node_id.into(),
+            occurrence,
             source_artifact_hash: source_artifact_hash.into(),
             requirement_name: requirement_name.into(),
         };
@@ -152,6 +155,10 @@ impl HttpEffectPrincipal {
 
     pub fn local_node_id(&self) -> &str {
         &self.local_node_id
+    }
+
+    pub fn occurrence(&self) -> u32 {
+        self.occurrence
     }
 
     pub fn source_artifact_hash(&self) -> &str {
@@ -317,6 +324,7 @@ mod tests {
                 hash('b'),
                 2,
                 "notify",
+                4,
                 hash('c'),
                 "manager-notifications",
             )
@@ -327,6 +335,7 @@ mod tests {
         assert_eq!(effect.http_effect().unwrap().current_plan_hash(), hash('b'));
         assert_eq!(effect.http_effect().unwrap().frame_id(), 2);
         assert_eq!(effect.http_effect().unwrap().local_node_id(), "notify");
+        assert_eq!(effect.http_effect().unwrap().occurrence(), 4);
         assert_eq!(
             effect.http_effect().unwrap().source_artifact_hash(),
             hash('c')
@@ -338,32 +347,63 @@ mod tests {
     }
 
     #[test]
-    fn dispatched_effect_context_carries_exact_six_trusted_facts() {
+    fn dispatched_effect_context_round_trips_exactly_seven_trusted_facts() {
         let effect = HttpEffectPrincipal::new(
             hash('a'),
             hash('b'),
             0,
             "notify",
+            3,
             hash('c'),
             "manager-notifications",
         )
         .unwrap();
         let object = serde_json::to_value(&effect).unwrap();
         let keys = object.as_object().unwrap();
-        assert_eq!(keys.len(), 6, "{object}");
+        assert_eq!(keys.len(), 7, "{object}");
         for key in [
             "root-plan-hash",
             "current-plan-hash",
             "frame-id",
             "local-node-id",
+            "occurrence",
             "source-artifact-hash",
             "requirement-name",
         ] {
             assert!(keys.contains_key(key), "missing {key}: {object}");
         }
-        for residue in ["occurrence", "attempt", "execution-bundle-hash"] {
+        for residue in ["attempt", "execution-bundle-hash"] {
             assert!(!keys.contains_key(residue), "retained old fact {residue}");
         }
+        assert_eq!(
+            serde_json::from_value::<HttpEffectPrincipal>(object).unwrap(),
+            effect
+        );
+    }
+
+    #[test]
+    fn dispatched_effect_context_rejects_old_and_unknown_shapes() {
+        let effect = HttpEffectPrincipal::new(
+            hash('a'),
+            hash('b'),
+            0,
+            "notify",
+            3,
+            hash('c'),
+            "manager-notifications",
+        )
+        .unwrap();
+
+        let mut old_shape = serde_json::to_value(&effect).unwrap();
+        old_shape.as_object_mut().unwrap().remove("occurrence");
+        assert!(serde_json::from_value::<HttpEffectPrincipal>(old_shape).is_err());
+
+        let mut unknown_shape = serde_json::to_value(&effect).unwrap();
+        unknown_shape
+            .as_object_mut()
+            .unwrap()
+            .insert("attempt".to_string(), json!(0));
+        assert!(serde_json::from_value::<HttpEffectPrincipal>(unknown_shape).is_err());
     }
 
     #[test]
@@ -393,6 +433,7 @@ mod tests {
                     hash('b'),
                     0,
                     local_node_id,
+                    0,
                     source_artifact_hash,
                     requirement_name,
                 )

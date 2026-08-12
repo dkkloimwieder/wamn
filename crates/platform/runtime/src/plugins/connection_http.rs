@@ -9,6 +9,7 @@ use wamn_node_manifest::{
     HttpBodyDigest, HttpOperation, HttpSemanticHeader, fingerprint_http_operation,
     normalize_portable_http_target,
 };
+use wamn_run_state::invocation_context::HttpEffectPrincipal;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::plugin::HostPlugin;
@@ -83,10 +84,9 @@ impl ConnectionHttp {
         &self,
         component_id: &str,
         context: &InvocationContext,
-        requirement_name: &str,
         request: &RelativeRequest,
     ) -> Result<Response, EffectError> {
-        validate_claims(&self.tenant, context, requirement_name, request)?;
+        validate_claims(context, request)?;
         let target = normalize_portable_http_target(&request.path_and_query).map_err(|error| {
             tracing::warn!(
                 phase = "target-normalization",
@@ -95,15 +95,15 @@ impl ConnectionHttp {
             );
             EffectError::AuthorityDenied
         })?;
-        let operation_fingerprint = operation_fingerprint(request, target.clone())
+        let _operation_fingerprint = operation_fingerprint(request, target.clone())
             .map_err(|error| log_effect_authority_denied("operation-fingerprint", error))?;
         let stable_key = format!(
-            "{}:{}:{}",
-            context.run_id, context.node_id, context.occurrence
+            "{}:{}:{}:{}",
+            context.run_id, context.frame_id, context.local_node_id, context.occurrence
         );
+        let frame_id = i64::try_from(context.frame_id).map_err(|_| EffectError::InvalidContext)?;
         let occurrence =
             i32::try_from(context.occurrence).map_err(|_| EffectError::InvalidContext)?;
-        let attempt = i32::try_from(context.attempt).map_err(|_| EffectError::InvalidContext)?;
         let snapshot = self
             .postgres
             .connection_effect_snapshot(
@@ -112,25 +112,19 @@ impl ConnectionHttp {
                 &self.tenant,
                 &ConnectionEffectLookup {
                     run_id: &context.run_id,
-                    node_id: &context.node_id,
+                    root_plan_hash: &context.root_plan_hash,
+                    current_plan_hash: &context.current_plan_hash,
+                    frame_id,
+                    local_node_id: &context.local_node_id,
                     occurrence,
-                    attempt,
-                    requirement_name,
-                    flow_id: &context.flow_id,
-                    flow_version: i32::try_from(context.flow_version)
-                        .map_err(|_| EffectError::InvalidContext)?,
-                    catalog_id: &context.catalog_id,
-                    catalog_version: context.catalog_version,
-                    environment: &context.environment,
-                    artifact_digest: &context.artifact_digest,
-                    operation_fingerprint: &operation_fingerprint,
-                    stable_key: &stable_key,
+                    source_artifact_hash: &context.source_artifact_hash,
+                    requirement_name: &context.requirement_name,
                 },
             )
             .await
             .map_err(|error| EffectError::Transport(error.to_string()))?
             .ok_or(EffectError::InvalidContext)?;
-        authorize_snapshot(context, requirement_name, &snapshot)?;
+        authorize_snapshot(&snapshot)?;
 
         let definition = snapshot
             .definition
@@ -244,37 +238,29 @@ fn require_direct_transport(
 }
 
 fn validate_claims(
-    tenant: &str,
     context: &InvocationContext,
-    requirement_name: &str,
     request: &RelativeRequest,
 ) -> Result<(), EffectError> {
-    if context.version != "0.1"
-        || context.tenant_id != tenant
-        || context.run_id.is_empty()
-        || context.node_id.is_empty()
-        || context.artifact_digest.is_empty()
-        || context.requirement_name != requirement_name
-        || request.method.is_empty()
-    {
+    if context.version != "0.1" || context.run_id.is_empty() || request.method.is_empty() {
         return Err(EffectError::InvalidContext);
     }
+    HttpEffectPrincipal::new(
+        context.root_plan_hash.as_str(),
+        context.current_plan_hash.as_str(),
+        context.frame_id,
+        context.local_node_id.as_str(),
+        context.occurrence,
+        context.source_artifact_hash.as_str(),
+        context.requirement_name.as_str(),
+    )
+    .map_err(|_| EffectError::InvalidContext)?;
     Ok(())
 }
 
-fn authorize_snapshot(
-    context: &InvocationContext,
-    requirement_name: &str,
-    snapshot: &ConnectionEffectSnapshot,
-) -> Result<(), EffectError> {
+fn authorize_snapshot(snapshot: &ConnectionEffectSnapshot) -> Result<(), EffectError> {
     if snapshot.run_status != "running"
-        || snapshot.flow_id != context.flow_id
-        || u32::try_from(snapshot.flow_version).ok() != Some(context.flow_version)
-        || snapshot.catalog_id.as_deref() != Some(context.catalog_id.as_str())
-        || snapshot.catalog_version != Some(i64::from(context.catalog_version))
-        || snapshot.environment.as_deref() != Some(context.environment.as_str())
-        || snapshot.admitted_artifact_digest.as_deref() != Some(context.artifact_digest.as_str())
-        || !snapshot.source_admitted
+        || !snapshot.root_plan_matches
+        || !snapshot.resolution_matches
         || !snapshot.attempt_matches
     {
         return Err(EffectError::InvalidContext);
@@ -282,7 +268,7 @@ fn authorize_snapshot(
     let Some(requirement) = snapshot.requirement_json.as_ref() else {
         return Err(EffectError::UndeclaredRequirement);
     };
-    if snapshot.node_connection.as_deref() != Some(requirement_name) || !snapshot.node_permitted {
+    if !snapshot.node_permitted {
         return Err(EffectError::NodeNotPermitted);
     }
     if !snapshot.binding_active || !snapshot.binding_valid || snapshot.instance_id.is_none() {
@@ -300,18 +286,15 @@ fn authorize_snapshot(
     if snapshot.requirement_type.as_deref() != Some("http")
         || snapshot.contract.as_deref() != Some(HTTP_CONTRACT)
         || requirement
-            .pointer("/descriptor/requirement-type")
+            .pointer("/requirement-type")
             .and_then(serde_json::Value::as_str)
             != Some("http")
         || requirement
-            .pointer("/descriptor/contract")
+            .pointer("/contract")
             .and_then(serde_json::Value::as_str)
             != Some(HTTP_CONTRACT)
     {
         return Err(EffectError::Incompatible);
-    }
-    if !snapshot.attempt_recorded {
-        return Err(EffectError::InvalidContext);
     }
     Ok(())
 }
@@ -500,26 +483,20 @@ impl http_effect::Host for ActiveCtx<'_> {
     async fn send(
         &mut self,
         context: InvocationContext,
-        requirement_name: String,
         request: RelativeRequest,
     ) -> wash_runtime::wasmtime::Result<Result<Response, EffectError>> {
         let plugin = plugin_of(self)?;
         let result = plugin
-            .send(
-                self.component_id.as_ref(),
-                &context,
-                &requirement_name,
-                &request,
-            )
+            .send(self.component_id.as_ref(), &context, &request)
             .await;
         if let Err(error) = &result {
             tracing::warn!(
                 error = ?error,
                 run_id = context.run_id,
-                node_id = context.node_id,
+                frame_id = context.frame_id,
+                local_node_id = context.local_node_id,
                 occurrence = context.occurrence,
-                attempt = context.attempt,
-                requirement_name,
+                requirement_name = context.requirement_name,
                 "trusted HTTP effect refused"
             );
         }
@@ -531,20 +508,20 @@ impl http_effect::Host for ActiveCtx<'_> {
 mod tests {
     use super::*;
 
+    fn hash(byte: char) -> String {
+        format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
     fn context() -> InvocationContext {
         InvocationContext {
             version: "0.1".to_string(),
-            tenant_id: "tenant-a".into(),
-            environment: "prod".into(),
-            catalog_id: "catalog-a".into(),
-            catalog_version: 3,
             run_id: "run-a".into(),
-            flow_id: "flow-a".into(),
-            flow_version: 2,
-            artifact_digest: "sha256:artifact".into(),
-            node_id: "notify".into(),
+            root_plan_hash: hash('a'),
+            current_plan_hash: hash('b'),
+            frame_id: 4,
+            local_node_id: "notify".into(),
             occurrence: 0,
-            attempt: 1,
+            source_artifact_hash: hash('c'),
             requirement_name: "manager-notifications".into(),
         }
     }
@@ -552,21 +529,13 @@ mod tests {
     fn snapshot() -> ConnectionEffectSnapshot {
         ConnectionEffectSnapshot {
             run_status: "running".into(),
-            flow_id: "flow-a".into(),
-            flow_version: 2,
-            catalog_id: Some("catalog-a".into()),
-            catalog_version: Some(3),
-            environment: Some("prod".into()),
-            admitted_artifact_digest: Some("sha256:artifact".into()),
-            source_admitted: true,
+            root_plan_matches: true,
+            resolution_matches: true,
             attempt_matches: true,
             requirement_json: Some(serde_json::json!({
-                "descriptor": {
-                    "requirement-type": "http",
-                    "contract": HTTP_CONTRACT
-                }
+                "requirement-type": "http",
+                "contract": HTTP_CONTRACT
             })),
-            node_connection: Some("manager-notifications".into()),
             node_permitted: true,
             binding_active: true,
             binding_valid: true,
@@ -580,24 +549,22 @@ mod tests {
             definition_hash: Some("sha256:def".into()),
             credential_handle: Some("notify-auth".into()),
             draft_generation_granted: true,
-            attempt_recorded: true,
         }
     }
 
     #[test]
     fn refusal_precedence_is_explicit_and_typed() {
-        let context = context();
         let mut facts = snapshot();
         facts.requirement_json = None;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &facts),
+            authorize_snapshot(&facts),
             Err(EffectError::UndeclaredRequirement)
         ));
 
         let mut facts = snapshot();
         facts.node_permitted = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &facts),
+            authorize_snapshot(&facts),
             Err(EffectError::NodeNotPermitted)
         ));
 
@@ -605,14 +572,13 @@ mod tests {
         facts.instance_enabled = false;
         facts.active_generation = None;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &facts),
+            authorize_snapshot(&facts),
             Err(EffectError::InactiveGeneration)
         ));
     }
 
     #[test]
     fn callback_binding_mutant_is_denied_before_transport_resolution() {
-        let context = context();
         let mut inactive = snapshot();
         inactive.binding_active = false;
         let mut invalid = snapshot();
@@ -621,7 +587,7 @@ mod tests {
         missing.instance_id = None;
         for facts in [&inactive, &invalid, &missing] {
             assert!(matches!(
-                authorize_snapshot(&context, "manager-notifications", facts),
+                authorize_snapshot(facts),
                 Err(EffectError::Unbound)
             ));
         }
@@ -629,48 +595,64 @@ mod tests {
 
     #[test]
     fn wrong_attempt_and_wrong_run_identity_fail_before_authorization() {
-        let context = context();
         let mut wrong_attempt = snapshot();
         wrong_attempt.attempt_matches = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &wrong_attempt),
+            authorize_snapshot(&wrong_attempt),
             Err(EffectError::InvalidContext)
         ));
 
         let mut wrong_run = snapshot();
-        wrong_run.admitted_artifact_digest = Some("sha256:other-run-artifact".into());
+        wrong_run.root_plan_matches = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &wrong_run),
+            authorize_snapshot(&wrong_run),
+            Err(EffectError::InvalidContext)
+        ));
+    }
+
+    #[test]
+    fn trusted_attempt_context_is_validated_before_authority_lookup() {
+        let context = context();
+        let request = RelativeRequest {
+            method: "POST".into(),
+            path_and_query: "/holds".into(),
+            headers: Vec::new(),
+            body: None,
+        };
+        assert!(validate_claims(&context, &request).is_ok());
+
+        let mut invalid = context;
+        invalid.current_plan_hash = "sha256:NOT-CANONICAL".into();
+        assert!(matches!(
+            validate_claims(&invalid, &request),
             Err(EffectError::InvalidContext)
         ));
     }
 
     #[test]
     fn durable_intent_is_required_before_the_wire_path() {
-        let context = context();
         let mut missing = snapshot();
-        missing.attempt_recorded = false;
+        missing.attempt_matches = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &missing),
+            authorize_snapshot(&missing),
             Err(EffectError::InvalidContext)
         ));
-        assert!(authorize_snapshot(&context, "manager-notifications", &snapshot()).is_ok());
+        assert!(authorize_snapshot(&snapshot()).is_ok());
     }
 
     #[test]
     fn mismatched_source_or_revoked_draft_generation_is_denied_before_network_data() {
-        let context = context();
         let mut mismatched_source = snapshot();
-        mismatched_source.source_admitted = false;
+        mismatched_source.resolution_matches = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &mismatched_source),
+            authorize_snapshot(&mismatched_source),
             Err(EffectError::InvalidContext)
         ));
 
         let mut revoked = snapshot();
         revoked.draft_generation_granted = false;
         assert!(matches!(
-            authorize_snapshot(&context, "manager-notifications", &revoked),
+            authorize_snapshot(&revoked),
             Err(EffectError::AuthorityDenied)
         ));
     }
@@ -685,8 +667,6 @@ mod tests {
 
         use crate::plugins::wamn_postgres::{DEFAULT_PROJECT, WamnPostgresConfig};
 
-        const OPERATION_FINGERPRINT: &str =
-            "sha256:a7f547c9a327cb96a331dde7f8760ef8c8b16b63174aac4864019001ebf25e79";
         const PROBE_AUTHORITY: &str = "127.0.0.1:18081";
 
         let Some(url) = std::env::var("WAMN_CONNECTION_EFFECT_PG_URL").ok() else {
@@ -728,40 +708,6 @@ mod tests {
             headers: Vec::new(),
             body: None,
         };
-        let target = normalize_portable_http_target(&request.path_and_query)
-            .expect("canonical probe target");
-        assert_eq!(
-            operation_fingerprint(&request, target).expect("probe operation fingerprint"),
-            OPERATION_FINGERPRINT,
-            "the live fixture's durable intent must pin this exact request"
-        );
-        let lookup = ConnectionEffectLookup {
-            run_id: "draft-http-granted",
-            node_id: "notify",
-            occurrence: 0,
-            attempt: 0,
-            requirement_name: "manager",
-            flow_id: "http-flow",
-            flow_version: 2,
-            catalog_id: "c-http",
-            catalog_version: 1,
-            environment: "dev",
-            artifact_digest: "artifact-http-draft",
-            operation_fingerprint: OPERATION_FINGERPRINT,
-            stable_key: "draft-http-granted:notify:0",
-        };
-        let snapshot = postgres
-            .connection_effect_snapshot("draft-http-runner", DEFAULT_PROJECT, "t1", &lookup)
-            .await
-            .expect("load live draft authorization snapshot")
-            .expect("live exact draft run exists");
-        assert!(snapshot.source_admitted);
-        assert!(!snapshot.attempt_matches);
-        assert!(!snapshot.attempt_recorded);
-        assert_eq!(snapshot.active_generation, Some(1));
-        assert_eq!(snapshot.generation, Some(1));
-        assert!(!snapshot.draft_generation_granted);
-
         let vault = Arc::new(WamnCredentials::from_projects(HashMap::from([(
             DEFAULT_PROJECT.to_string(),
             HashMap::from([(
@@ -781,22 +727,18 @@ mod tests {
         );
         let context = InvocationContext {
             version: "0.1".to_string(),
-            tenant_id: "t1".into(),
-            environment: "dev".into(),
-            catalog_id: "c-http".into(),
-            catalog_version: 1,
-            run_id: "draft-http-granted".into(),
-            flow_id: "http-flow".into(),
-            flow_version: 2,
-            artifact_digest: "artifact-http-draft".into(),
-            node_id: "notify".into(),
+            run_id: "missing-effect-attempt".into(),
+            root_plan_hash: hash('a'),
+            current_plan_hash: hash('b'),
+            frame_id: 8,
+            local_node_id: "notify".into(),
             occurrence: 0,
-            attempt: 0,
+            source_artifact_hash: hash('c'),
             requirement_name: "manager".into(),
         };
 
         let result = connection
-            .send("draft-http-runner", &context, "manager", &request)
+            .send("draft-http-runner", &context, &request)
             .await;
         tokio::time::sleep(Duration::from_millis(50)).await;
         let observed_wires = wire_count.load(Ordering::SeqCst);

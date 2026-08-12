@@ -155,7 +155,8 @@ demand-gated.
 
 **Node identity: dynamic frames for uniqueness, stable selectors
 for authors.** A call-site chain grows per recursion depth, so it
-cannot be a static identity. Durable uniqueness is the frame:
+cannot be a static identity. Durable uniqueness for a recorded node
+fact or attempt comes from the executing frame:
 `frame_id` (root-run-local, monotonic) · `parent_frame_id` ·
 `call_site_id` · `current_plan_hash` · `local_node_id` ·
 `occurrence`; a node fact or attempt is keyed
@@ -170,14 +171,21 @@ addition. The node-id charset rule stands.
 dispatched effect carries trusted execution facts: root plan hash
 (the run identity and anchor, `runs.execution_bundle_hash` non-null)
 · **current plan hash** · `frame_id` · local node id · source
-artifact hash · requirement name. Authority verifies: the run's
-resolution map contains the current plan hash · the current plan
-contains the node · the frame descends from the root frame · the
-attempt identity matches `(frame, node, occurrence)`; then resolves
+artifact hash · requirement name · `occurrence`. Authority verifies:
+the run's resolution map contains the current plan hash · the current plan
+contains the node · the immutable attempt row matches the selected
+`(frame, node, occurrence)` and trusted effect facts; then resolves
 that plan's source artifact + requirement → environment binding →
-active generation — no per-effect graph walk. Callee effects authorize against the callee's identity
-while executing under the root run, principal, trace, deadline, and
-budgets. The attempt ledger is self-describing.
+active generation — no per-effect graph walk. Callee effects
+authorize against the callee's identity while executing under the
+root run, principal, trace, deadline, and budgets. The attempt ledger
+is self-describing. Each immutable attempt row is runtime-attested
+ancestry for that effect's link: the trusted interpreter mints the
+frame and its parent link into the existing pre-dispatch write-ahead
+row. Links through pure intermediate frames are attested by descendant
+attempt records; the pure frames are not independently row-backed.
+There is no `run_frames` relation or other frame registry. Full descent
+from the root is therefore not a separate authorization check.
 
 **The call contract is intrinsic — recorded data, not a flag.** At
 its own validation, every callable plan records a

@@ -187,7 +187,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
         exact: "source_run.admission_context_version = '0.1'",
-        expected_count: 3,
+        expected_count: 1,
     },
     GovernedLiteral {
         path: "test-support/infrastructure/scenario_worker_gate.rs",
@@ -222,11 +222,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/node/guest/src/caps.rs",
         exact: "pub version: String,",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "components/execution/flowrunner/src/lib.rs",
-        exact: r#"version: "0.1".to_string(),"#,
         expected_count: 1,
     },
     GovernedLiteral {

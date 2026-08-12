@@ -4,17 +4,13 @@ package wamn:runner@0.1.0;
 interface http-effect {
   record invocation-context {
     version: string,
-    tenant-id: string,
-    environment: string,
-    catalog-id: string,
-    catalog-version: s32,
     run-id: string,
-    flow-id: string,
-    flow-version: u32,
-    artifact-digest: string,
-    node-id: string,
+    root-plan-hash: string,
+    current-plan-hash: string,
+    frame-id: u64,
+    local-node-id: string,
     occurrence: u32,
-    attempt: u32,
+    source-artifact-hash: string,
     requirement-name: string,
   }
 
@@ -40,7 +36,6 @@ interface http-effect {
   }
   send: func(
     context: invocation-context,
-    requirement-name: string,
     request: relative-request,
   ) -> result<response, effect-error>;
 }
