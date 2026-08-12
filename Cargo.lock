@@ -4666,7 +4666,9 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wamn-catalog",
  "wamn-flow",
+ "wamn-node-manifest",
  "wamn-pg-core",
  "wamn-runner",
 ]

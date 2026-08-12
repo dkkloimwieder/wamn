@@ -175,6 +175,18 @@ BEGIN
 END
 $$;
 
+CREATE FUNCTION wamn_run.reject_immutable_flow_resolution_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'run-flow-resolution-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_flow_resolution_change() FROM PUBLIC;
+
 -- ---------------------------------------------------------------------------
 -- runs: one row per flow execution. `input_json` is the trigger payload replay
 -- seeds the entry node with; `result_json` is the last node's output on
@@ -321,6 +333,166 @@ ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
+
+-- ---------------------------------------------------------------------------
+-- run_flow_resolutions: the immutable release-bound executable map for one run.
+-- Claim-time resolution inserts the complete reachable flow-name set exactly
+-- once, before guest execution. Retries verify an identical complete map; they
+-- never delete, recompute, or rewrite rows. Production claim composition,
+-- queue mutation, terminalization, and transaction boundaries live outside this
+-- substrate. These evidence rows intentionally do not reference runs: terminal
+-- run pruning must not be blocked by immutable resolution evidence, while
+-- materialization itself validates that a live run exists under tenant RLS.
+-- ---------------------------------------------------------------------------
+CREATE TABLE wamn_run.run_flow_resolutions (
+    tenant_id             text NOT NULL CHECK (tenant_id <> ''),
+    run_id                text NOT NULL CHECK (run_id <> ''),
+    flow_id               text NOT NULL CHECK (flow_id <> ''),
+    execution_bundle_hash text NOT NULL
+        CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
+    source_artifact_hash  text NOT NULL CHECK (source_artifact_hash <> ''),
+    PRIMARY KEY (tenant_id, run_id, flow_id),
+    CONSTRAINT run_flow_resolutions_execution_bundle_fk
+        FOREIGN KEY (tenant_id, execution_bundle_hash)
+        REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)
+);
+CREATE INDEX run_flow_resolutions_execution_bundle
+    ON wamn_run.run_flow_resolutions (tenant_id, execution_bundle_hash);
+ALTER TABLE wamn_run.run_flow_resolutions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.run_flow_resolutions FORCE ROW LEVEL SECURITY;
+CREATE POLICY run_flow_resolutions_tenant ON wamn_run.run_flow_resolutions
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+CREATE TRIGGER run_flow_resolutions_update_immutable
+BEFORE UPDATE ON wamn_run.run_flow_resolutions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_flow_resolution_change();
+CREATE TRIGGER run_flow_resolutions_delete_immutable
+BEFORE DELETE ON wamn_run.run_flow_resolutions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_flow_resolution_change();
+GRANT SELECT, INSERT ON wamn_run.run_flow_resolutions TO wamn_app;
+GRANT SELECT ON wamn_run.run_flow_resolutions TO wamn_scenario_author;
+
+CREATE FUNCTION wamn_run.materialize_run_flow_resolutions(
+    p_run_id text,
+    p_resolution_map jsonb
+)
+RETURNS TABLE (result_code text, fail_kind text)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_tenant text := NULLIF(current_setting('app.tenant', true), '');
+    proposed_count int;
+    existing_count int;
+    root_flow text;
+    differs boolean;
+BEGIN
+    IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    SELECT r.flow_id INTO root_flow
+    FROM wamn_run.runs AS r
+    WHERE r.tenant_id = current_tenant
+      AND r.run_id = p_run_id
+    FOR KEY SHARE OF r;
+    IF root_flow IS NULL THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions;
+    CREATE TEMP TABLE proposed_run_flow_resolutions
+        ON COMMIT DROP
+    AS
+    SELECT entry.value ->> 'flow-id' AS flow_id,
+           entry.value ->> 'execution-bundle-hash' AS execution_bundle_hash,
+           entry.value ->> 'source-artifact-hash' AS source_artifact_hash
+    FROM jsonb_array_elements(p_resolution_map) AS entry(value);
+
+    SELECT count(*) INTO proposed_count FROM pg_temp.proposed_run_flow_resolutions;
+    IF proposed_count = 0
+       OR EXISTS (
+            SELECT 1 FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            WHERE proposed.flow_id IS NULL OR proposed.flow_id = ''
+               OR proposed.execution_bundle_hash IS NULL
+               OR proposed.execution_bundle_hash !~ '^sha256:[0-9a-f]{64}$'
+               OR proposed.source_artifact_hash IS NULL
+               OR proposed.source_artifact_hash = ''
+       )
+       OR EXISTS (
+            SELECT 1
+            FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            GROUP BY proposed.flow_id
+            HAVING count(*) > 1
+       ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_temp.proposed_run_flow_resolutions
+        WHERE flow_id = root_flow
+    ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    SELECT count(*) INTO existing_count
+    FROM wamn_run.run_flow_resolutions AS existing
+    WHERE existing.tenant_id = current_tenant
+      AND existing.run_id = p_run_id;
+
+    IF existing_count > 0 THEN
+        SELECT EXISTS (
+            (
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+                EXCEPT
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            )
+            UNION ALL
+            (
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+                EXCEPT
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+            )
+        ) INTO differs;
+        IF differs THEN
+            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+        ELSE
+            RETURN QUERY SELECT 'resolved'::text, NULL::text;
+        END IF;
+        RETURN;
+    END IF;
+
+    INSERT INTO wamn_run.run_flow_resolutions (
+        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
+    )
+    SELECT current_tenant, p_run_id, proposed.flow_id,
+           proposed.execution_bundle_hash, proposed.source_artifact_hash
+    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
+    RETURN QUERY SELECT 'resolved'::text, NULL::text;
+EXCEPTION
+    WHEN foreign_key_violation OR check_violation OR unique_violation THEN
+        RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
+    TO wamn_app;
 
 -- HTTP invocation idempotency ledger (§6.2). The identity is intentionally
 -- definition-independent: reusing a client key after a definition change must

@@ -73,6 +73,7 @@ mod model;
 pub mod queue;
 mod reconstruct;
 mod rerun;
+mod resolution;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
 pub mod schema_drift;
@@ -87,6 +88,10 @@ pub use capture::{Captured, derive as derive_capture};
 pub use model::{NodeRunRecord, RunRecord};
 pub use reconstruct::{ReconstructError, reconstruct, reconstruct_with_context};
 pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};
+pub use resolution::{
+    BoundConnectionRequirement, CandidatePlanOverride, CatalogResolutionPlan,
+    FlowResolutionRefusal, PinnedRunResolution, RunFlowResolution, resolve_run_flow_resolutions,
+};
 pub use status::{
     EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,
     RunStatus,

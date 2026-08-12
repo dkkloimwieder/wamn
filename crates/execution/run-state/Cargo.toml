@@ -17,6 +17,8 @@ wamn-runner = { workspace = true }
 # (Plan::compile takes a Flow); this is the direct edge for the policy type, and
 # it is guest-compilable (the flowrunner guest already links wamn-flow).
 wamn-flow = { workspace = true }
+# Claim-time resolution exact-byte reads the immutable execution-plan wire.
+wamn-catalog = { workspace = true }
 # Composed run and queue statements carry their positional-parameter arity.
 wamn-pg-core = { workspace = true }
 # The run/node-run records import/export as JSON (run-history read model);
@@ -24,3 +26,6 @@ wamn-pg-core = { workspace = true }
 # contract (like wamn-schema-compiler / wamn-api / wamn-runner).
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+wamn-node-manifest = { workspace = true }

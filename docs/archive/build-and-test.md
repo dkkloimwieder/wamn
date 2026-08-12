@@ -5811,6 +5811,61 @@ rustfmt --edition 2024 --check \
 git diff --check
 ```
 
+## SR-MVP — immutable release-bound run-flow resolutions (`wamn-0h0g.4.12`)
+
+This debug-only gate proves the exact immutable resolution substrate for an
+already selected/locked run. It owns pure resolution refusals, schema-control
+repair/drift inventory, and the PostgreSQL 18 materialization proof; it does not
+claim runs, mutate queues, terminalize runs, compose production transactions, or
+dispatch effects. Use the isolated lane target below; cross-worktree target
+sharing can execute artifacts compiled from a different checkout.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state -p wamn-schema-control
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance --lib schema_drift::
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
+  -p wamn-proof-conformance --all-targets -- -D warnings
+
+docker run --rm -d --name wamn-0h0g-4-12-pg \
+  -p 127.0.0.1:15652:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-4-12-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15652/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --test run_state_live \
+  run_state_live -- --ignored --exact --nocapture
+
+docker stop wamn-0h0g-4-12-pg
+
+docker run --rm -d --name wamn-0h0g-4-12-ctl-pg \
+  -p 127.0.0.1:15653:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-4-12-ctl-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15653/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+  run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+
+docker stop wamn-0h0g-4-12-ctl-pg
+
+rustfmt --edition 2024 --check \
+  crates/execution/run-state/src/{lib.rs,resolution.rs,sql.rs} \
+  crates/execution/run-state/tests/run_state_live.rs \
+  crates/schema/control/src/run_plane.rs \
+  services/ctl/tests/run_plane_live.rs \
+  tests/conformance/src/schema_drift.rs
+python3 -m json.tool architecture/state-owners.json >/dev/null
+git diff --check
+```
+
 ## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
 
 This debug-only gate proves exact `call-flow { flow-id }` validation, candidate

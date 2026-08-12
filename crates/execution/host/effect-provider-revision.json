@@ -6570,6 +6570,38 @@
       "value": "^1"
     },
     {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/default-features",
+      "value": "true"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/features",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/optional",
+      "value": "false"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/package",
+      "value": "wamn-catalog"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/registry",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/source",
+      "value": "path:crates/catalog/model"
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/target",
+      "value": ""
+    },
+    {
+      "tag": "dependency/wamn-run-state/all-targets/wamn-catalog/version",
+      "value": "^0.1.0"
+    },
+    {
       "tag": "dependency/wamn-run-state/all-targets/wamn-flow/default-features",
       "value": "true"
     },

@@ -144,6 +144,114 @@ pub fn select_run_dispatch_sql() -> String {
     )
 }
 
+/// Read the already selected run's pinned release members and exact plan bytes.
+///
+/// This is a transaction-compatible substrate read: no queue selection,
+/// classification, lease grant, terminalization, or commit boundary. `$1` run id.
+pub fn select_release_resolution_plans_sql() -> String {
+    "SELECT member.flow_id, member.execution_bundle_hash, artifact.artifact_hash, \
+            bundle.exact_bytes \
+       FROM runs AS run \
+       JOIN catalog.release_flows AS member \
+         ON member.tenant_id = run.tenant_id \
+        AND member.catalog_id = run.catalog_id \
+        AND member.catalog_version = run.catalog_version \
+       JOIN catalog.flow_artifacts AS artifact \
+         ON artifact.tenant_id = member.tenant_id \
+        AND artifact.flow_id = member.flow_id \
+        AND artifact.flow_version = member.flow_version \
+       JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = member.tenant_id \
+        AND bundle.execution_bundle_hash = member.execution_bundle_hash \
+      WHERE run.tenant_id = current_setting('app.tenant', true) \
+        AND run.run_id = $1 \
+      ORDER BY member.flow_id"
+        .to_string()
+}
+
+/// Read active connection bindings visible to a run's pinned release.
+///
+/// The pure resolver compares these rows with each reachable plan's recorded
+/// artifact-local requirements. `$1` run id.
+pub fn select_release_resolution_bindings_sql() -> String {
+    "SELECT binding.artifact_hash, binding.requirement_name, \
+            instance.requirement_type, instance.contract \
+       FROM runs AS run \
+       JOIN catalog.connection_bindings AS binding \
+         ON binding.tenant_id = run.tenant_id \
+        AND binding.catalog_id = run.catalog_id \
+        AND binding.catalog_version = run.catalog_version \
+        AND binding.environment = run.environment \
+        AND binding.binding_status = 'active' \
+        AND binding.validation_status = 'valid' \
+       JOIN catalog.connection_instances AS instance \
+         ON instance.tenant_id = binding.tenant_id \
+        AND instance.environment = binding.environment \
+        AND instance.instance_id = binding.instance_id \
+        AND instance.lifecycle_status = 'enabled' \
+       JOIN catalog.connection_generations AS generation \
+         ON generation.tenant_id = instance.tenant_id \
+        AND generation.environment = instance.environment \
+        AND generation.instance_id = instance.instance_id \
+        AND generation.generation = instance.active_generation \
+      WHERE run.tenant_id = current_setting('app.tenant', true) \
+        AND run.run_id = $1 \
+      ORDER BY binding.artifact_hash, binding.requirement_name"
+        .to_string()
+}
+
+/// Read the already selected run's validated draft candidate override.
+///
+/// This is a trusted loader, not caller-supplied JSON authority: every draft
+/// identity value comes from the run's immutable `invocation_context` pins and
+/// the run's own catalog/environment/root-flow/execution-bundle pins. `$1` run
+/// id.
+pub fn select_run_candidate_resolution_plan_sql() -> String {
+    "SELECT draft.flow_id, draft.execution_bundle_hash, draft.draft_artifact_hash, \
+            draft.binding_base_artifact_hash, bundle.exact_bytes \
+       FROM runs AS run \
+       JOIN catalog.validated_flow_drafts AS draft \
+         ON draft.tenant_id = run.tenant_id \
+        AND draft.flow_id = run.flow_id \
+        AND draft.runtime_flow_version = run.flow_version \
+        AND draft.catalog_id = run.catalog_id \
+        AND draft.catalog_version = run.catalog_version \
+        AND draft.environment = run.environment \
+        AND draft.draft_artifact_hash = run.invocation_context #>> '{principal,artifact-digest}' \
+        AND draft.draft_id = run.invocation_context #>> '{principal,draft-id}' \
+        AND draft.draft_revision::text = run.invocation_context #>> '{principal,draft-revision}' \
+        AND draft.draft_content_hash = run.invocation_context #>> '{principal,draft-content-hash}' \
+        AND draft.validated_draft_hash = run.invocation_context #>> '{principal,validated-draft-hash}' \
+        AND draft.execution_bundle_hash = run.execution_bundle_hash \
+        AND draft.binding_base_artifact_hash = run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
+        AND draft.suite_flow_version::text = run.invocation_context #>> '{principal,suite-flow-version}' \
+       JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = draft.tenant_id \
+        AND bundle.execution_bundle_hash = draft.execution_bundle_hash \
+      WHERE run.tenant_id = current_setting('app.tenant', true) \
+        AND run.run_id = $1 \
+        AND run.trigger_source = 'scenario-draft' \
+        AND run.admission_context_version = '0.1' \
+        AND run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
+        AND run.invocation_context ->> 'version' = '0.1' \
+        AND run.invocation_context #>> '{principal,tenant-id}' = run.tenant_id \
+        AND run.invocation_context #>> '{principal,environment}' = run.environment \
+        AND run.invocation_context #>> '{principal,catalog-id}' = run.catalog_id \
+        AND run.invocation_context #>> '{principal,catalog-version}' = run.catalog_version::text \
+        AND run.invocation_context #>> '{principal,run-id}' = run.run_id \
+        AND run.invocation_context #>> '{principal,flow-id}' = run.flow_id \
+        AND run.invocation_context #>> '{principal,flow-version}' = run.flow_version::text"
+        .to_string()
+}
+
+/// Insert or verify one complete immutable run-flow resolution map. `$1` run id,
+/// `$2` JSON array of `{flow-id, execution-bundle-hash, source-artifact-hash}`.
+pub fn materialize_run_flow_resolutions_sql() -> String {
+    "SELECT result_code, fail_kind \
+       FROM materialize_run_flow_resolutions($1, $2::text::jsonb)"
+        .to_string()
+}
+
 /// Persist the run's durable retry/context checkpoint. `$1` run_id, `$2`
 /// state_json.
 pub fn update_run_state_sql() -> String {
@@ -362,6 +470,104 @@ mod tests {
     }
 
     #[test]
+    fn resolution_substrate_sql_is_transaction_compatible_and_pinned() {
+        let plans = select_release_resolution_plans_sql();
+        assert!(plans.contains("FROM runs AS run"), "{plans}");
+        assert!(plans.contains("run.catalog_id"), "{plans}");
+        assert!(plans.contains("run.catalog_version"), "{plans}");
+        assert!(plans.contains("catalog.release_flows AS member"), "{plans}");
+        assert!(
+            plans.contains("catalog.execution_bundles AS bundle"),
+            "{plans}"
+        );
+        assert!(plans.contains("bundle.exact_bytes"), "{plans}");
+        assert!(!plans.contains("catalog_heads"), "{plans}");
+
+        let bindings = select_release_resolution_bindings_sql();
+        assert!(
+            bindings.contains("catalog.connection_bindings AS binding"),
+            "{bindings}"
+        );
+        assert!(
+            bindings.contains("binding.environment = run.environment"),
+            "{bindings}"
+        );
+        assert!(
+            bindings.contains("binding.binding_status = 'active'"),
+            "{bindings}"
+        );
+        assert!(
+            bindings.contains("binding.validation_status = 'valid'"),
+            "{bindings}"
+        );
+        assert!(
+            bindings.contains("instance.lifecycle_status = 'enabled'"),
+            "{bindings}"
+        );
+
+        let candidate = select_run_candidate_resolution_plan_sql();
+        assert!(candidate.contains("FROM runs AS run"), "{candidate}");
+        assert!(
+            candidate.contains("catalog.validated_flow_drafts AS draft"),
+            "{candidate}"
+        );
+        assert!(
+            candidate.contains("catalog.execution_bundles AS bundle"),
+            "{candidate}"
+        );
+        assert!(
+            candidate.contains("draft.execution_bundle_hash = run.execution_bundle_hash"),
+            "{candidate}"
+        );
+        for pin in [
+            "draft-id",
+            "draft-revision",
+            "draft-content-hash",
+            "validated-draft-hash",
+            "binding-base-artifact-hash",
+            "suite-flow-version",
+            "tenant-id",
+            "catalog-id",
+            "catalog-version",
+            "run-id",
+            "flow-id",
+            "flow-version",
+            "artifact-digest",
+        ] {
+            assert!(
+                candidate.contains(pin),
+                "candidate loader omits {pin}: {candidate}"
+            );
+        }
+        assert!(candidate.contains("run.admission_context_version = '0.1'"));
+        assert!(candidate.contains("run.invocation_context ->> 'version' = '0.1'"));
+        assert!(!candidate.contains("catalog_heads"), "{candidate}");
+        assert!(!candidate.contains("$2"), "{candidate}");
+
+        let materialize = materialize_run_flow_resolutions_sql();
+        assert!(materialize.contains("materialize_run_flow_resolutions($1, $2::text::jsonb)"));
+        for forbidden in [
+            "BEGIN",
+            "COMMIT",
+            "run_queue",
+            "lease_owner",
+            "lease_generation",
+            "lease_expires_at",
+            "DELETE FROM",
+            "SET status",
+            "FOR UPDATE SKIP LOCKED",
+        ] {
+            assert!(
+                !plans.contains(forbidden)
+                    && !bindings.contains(forbidden)
+                    && !candidate.contains(forbidden)
+                    && !materialize.contains(forbidden),
+                "resolution SQL must not own claim composition token {forbidden}"
+            );
+        }
+    }
+
+    #[test]
     fn execution_input_is_transient_and_trusted_columns_replace_input_causation() {
         let expression = execution_input_sql("run_row");
         assert!(expression.starts_with("CASE WHEN run_row.event_root_run_id IS NOT NULL"));
@@ -416,6 +622,20 @@ mod tests {
             assert!(ddl.contains(col), "runs column {col} missing from DDL");
         }
         for col in [
+            "CREATE TABLE wamn_run.run_flow_resolutions",
+            "flow_id",
+            "execution_bundle_hash",
+            "source_artifact_hash",
+            "run_flow_resolutions_update_immutable",
+            "run_flow_resolutions_delete_immutable",
+            "materialize_run_flow_resolutions",
+        ] {
+            assert!(
+                ddl.contains(col),
+                "run_flow_resolutions contract {col} missing from DDL"
+            );
+        }
+        for col in [
             "node_id",
             "occurrence",
             "seq",
@@ -460,6 +680,20 @@ mod tests {
         assert!(
             !sql.contains("node_runs"),
             "node_runs cascades, not deleted directly"
+        );
+        assert!(
+            !sql.contains("run_flow_resolutions"),
+            "immutable resolution evidence is not pruned with terminal runs"
+        );
+        let ddl = include_str!("../../../../deploy/sql/run-state.sql");
+        let resolutions = ddl
+            .split("CREATE TABLE wamn_run.run_flow_resolutions (")
+            .nth(1)
+            .and_then(|tail| tail.split(");").next())
+            .expect("run_flow_resolutions DDL exists");
+        assert!(
+            !resolutions.contains("REFERENCES wamn_run.runs"),
+            "run pruning must not be blocked by a resolution-to-runs FK"
         );
     }
 }

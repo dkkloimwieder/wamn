@@ -219,6 +219,36 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
+        table: "run_flow_resolutions",
+        name: "run_flow_resolutions_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Inline("tenant_id"),
+    },
+    CheckSpec {
+        table: "run_flow_resolutions",
+        name: "run_flow_resolutions_run_id_check",
+        definition: "CHECK (run_id <> ''::text)",
+        origin: CheckOrigin::Inline("run_id"),
+    },
+    CheckSpec {
+        table: "run_flow_resolutions",
+        name: "run_flow_resolutions_flow_id_check",
+        definition: "CHECK (flow_id <> ''::text)",
+        origin: CheckOrigin::Inline("flow_id"),
+    },
+    CheckSpec {
+        table: "run_flow_resolutions",
+        name: "run_flow_resolutions_execution_bundle_hash_check",
+        definition: "CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Inline("execution_bundle_hash"),
+    },
+    CheckSpec {
+        table: "run_flow_resolutions",
+        name: "run_flow_resolutions_source_artifact_hash_check",
+        definition: "CHECK (source_artifact_hash <> ''::text)",
+        origin: CheckOrigin::Inline("source_artifact_hash"),
+    },
+    CheckSpec {
         table: "node_runs",
         name: "node_runs_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -702,6 +732,8 @@ const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-disposition-immutable';\nEND\n$function$\n";
 
+const REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_flow_resolution_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'run-flow-resolution-immutable';\nEND\n$function$\n";
+
 const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-report-immutable';\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-test-set-immutable';\nEND\n$function$\n";
@@ -922,6 +954,122 @@ $function$
 
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 
+const MATERIALIZE_RUN_FLOW_RESOLUTIONS_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.materialize_run_flow_resolutions(p_run_id text, p_resolution_map jsonb)
+ RETURNS TABLE(result_code text, fail_kind text)
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+    current_tenant text := NULLIF(current_setting('app.tenant', true), '');
+    proposed_count int;
+    existing_count int;
+    root_flow text;
+    differs boolean;
+BEGIN
+    IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    SELECT r.flow_id INTO root_flow
+    FROM wamn_run.runs AS r
+    WHERE r.tenant_id = current_tenant
+      AND r.run_id = p_run_id
+    FOR KEY SHARE OF r;
+    IF root_flow IS NULL THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions;
+    CREATE TEMP TABLE proposed_run_flow_resolutions
+        ON COMMIT DROP
+    AS
+    SELECT entry.value ->> 'flow-id' AS flow_id,
+           entry.value ->> 'execution-bundle-hash' AS execution_bundle_hash,
+           entry.value ->> 'source-artifact-hash' AS source_artifact_hash
+    FROM jsonb_array_elements(p_resolution_map) AS entry(value);
+
+    SELECT count(*) INTO proposed_count FROM pg_temp.proposed_run_flow_resolutions;
+    IF proposed_count = 0
+       OR EXISTS (
+            SELECT 1 FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            WHERE proposed.flow_id IS NULL OR proposed.flow_id = ''
+               OR proposed.execution_bundle_hash IS NULL
+               OR proposed.execution_bundle_hash !~ '^sha256:[0-9a-f]{64}$'
+               OR proposed.source_artifact_hash IS NULL
+               OR proposed.source_artifact_hash = ''
+       )
+       OR EXISTS (
+            SELECT 1
+            FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            GROUP BY proposed.flow_id
+            HAVING count(*) > 1
+       ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_temp.proposed_run_flow_resolutions
+        WHERE flow_id = root_flow
+    ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    SELECT count(*) INTO existing_count
+    FROM wamn_run.run_flow_resolutions AS existing
+    WHERE existing.tenant_id = current_tenant
+      AND existing.run_id = p_run_id;
+
+    IF existing_count > 0 THEN
+        SELECT EXISTS (
+            (
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+                EXCEPT
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            )
+            UNION ALL
+            (
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+                EXCEPT
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+            )
+        ) INTO differs;
+        IF differs THEN
+            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+        ELSE
+            RETURN QUERY SELECT 'resolved'::text, NULL::text;
+        END IF;
+        RETURN;
+    END IF;
+
+    INSERT INTO wamn_run.run_flow_resolutions (
+        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
+    )
+    SELECT current_tenant, p_run_id, proposed.flow_id,
+           proposed.execution_bundle_hash, proposed.source_artifact_hash
+    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
+    RETURN QUERY SELECT 'resolved'::text, NULL::text;
+EXCEPTION
+    WHEN foreign_key_violation OR check_violation OR unique_violation THEN
+        RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+END
+$function$
+"#;
+
 const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
     p_tenant_id text,
     p_catalog_id text,
@@ -992,6 +1140,18 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;"#;
+
+const REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_flow_resolution_change()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'run-flow-resolution-immutable';
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_flow_resolution_change() FROM PUBLIC;"#;
 
 const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()
 RETURNS trigger
@@ -1236,6 +1396,128 @@ const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
     wamn_run.guard_event_lineage_immutable();";
 
+const MATERIALIZE_RUN_FLOW_RESOLUTIONS_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.materialize_run_flow_resolutions(
+    p_run_id text,
+    p_resolution_map jsonb
+)
+RETURNS TABLE (result_code text, fail_kind text)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    current_tenant text := NULLIF(current_setting('app.tenant', true), '');
+    proposed_count int;
+    existing_count int;
+    root_flow text;
+    differs boolean;
+BEGIN
+    IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    SELECT r.flow_id INTO root_flow
+    FROM wamn_run.runs AS r
+    WHERE r.tenant_id = current_tenant
+      AND r.run_id = p_run_id
+    FOR KEY SHARE OF r;
+    IF root_flow IS NULL THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions;
+    CREATE TEMP TABLE proposed_run_flow_resolutions
+        ON COMMIT DROP
+    AS
+    SELECT entry.value ->> 'flow-id' AS flow_id,
+           entry.value ->> 'execution-bundle-hash' AS execution_bundle_hash,
+           entry.value ->> 'source-artifact-hash' AS source_artifact_hash
+    FROM jsonb_array_elements(p_resolution_map) AS entry(value);
+
+    SELECT count(*) INTO proposed_count FROM pg_temp.proposed_run_flow_resolutions;
+    IF proposed_count = 0
+       OR EXISTS (
+            SELECT 1 FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            WHERE proposed.flow_id IS NULL OR proposed.flow_id = ''
+               OR proposed.execution_bundle_hash IS NULL
+               OR proposed.execution_bundle_hash !~ '^sha256:[0-9a-f]{64}$'
+               OR proposed.source_artifact_hash IS NULL
+               OR proposed.source_artifact_hash = ''
+       )
+       OR EXISTS (
+            SELECT 1
+            FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            GROUP BY proposed.flow_id
+            HAVING count(*) > 1
+       ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text;
+        RETURN;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_temp.proposed_run_flow_resolutions
+        WHERE flow_id = root_flow
+    ) THEN
+        RETURN QUERY SELECT 'refused'::text, 'unresolvable-name'::text;
+        RETURN;
+    END IF;
+
+    SELECT count(*) INTO existing_count
+    FROM wamn_run.run_flow_resolutions AS existing
+    WHERE existing.tenant_id = current_tenant
+      AND existing.run_id = p_run_id;
+
+    IF existing_count > 0 THEN
+        SELECT EXISTS (
+            (
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+                EXCEPT
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+            )
+            UNION ALL
+            (
+                SELECT proposed.flow_id, proposed.execution_bundle_hash,
+                       proposed.source_artifact_hash
+                FROM pg_temp.proposed_run_flow_resolutions AS proposed
+                EXCEPT
+                SELECT existing.flow_id, existing.execution_bundle_hash,
+                       existing.source_artifact_hash
+                FROM wamn_run.run_flow_resolutions AS existing
+                WHERE existing.tenant_id = current_tenant
+                  AND existing.run_id = p_run_id
+            )
+        ) INTO differs;
+        IF differs THEN
+            RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+        ELSE
+            RETURN QUERY SELECT 'resolved'::text, NULL::text;
+        END IF;
+        RETURN;
+    END IF;
+
+    INSERT INTO wamn_run.run_flow_resolutions (
+        tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash
+    )
+    SELECT current_tenant, p_run_id, proposed.flow_id,
+           proposed.execution_bundle_hash, proposed.source_artifact_hash
+    FROM pg_temp.proposed_run_flow_resolutions AS proposed;
+    RETURN QUERY SELECT 'resolved'::text, NULL::text;
+EXCEPTION
+    WHEN foreign_key_violation OR check_violation OR unique_violation THEN
+        RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
+    TO wamn_app;"#;
+
 struct HelperSpec {
     name: &'static str,
     definition: &'static str,
@@ -1262,6 +1544,16 @@ const HELPER_SPECS: &[HelperSpec] = &[
         name: "reject_immutable_effect_fact_change",
         definition: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF,
         sql: REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_SQL,
+    },
+    HelperSpec {
+        name: "reject_immutable_flow_resolution_change",
+        definition: REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_DEF,
+        sql: REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_SQL,
+    },
+    HelperSpec {
+        name: "materialize_run_flow_resolutions",
+        definition: MATERIALIZE_RUN_FLOW_RESOLUTIONS_DEF,
+        sql: MATERIALIZE_RUN_FLOW_RESOLUTIONS_SQL,
     },
     HelperSpec {
         name: "reject_immutable_authoring_test_set_change",
@@ -1305,6 +1597,24 @@ fn trigger_specs() -> Vec<TriggerSpec> {
         definition: RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
         sql: RUNS_EVENT_LINEAGE_TRIGGER_SQL.to_string(),
     }];
+    for event in ["update", "delete"] {
+        let name = format!("run_flow_resolutions_{event}_immutable");
+        let event_sql = event.to_ascii_uppercase();
+        specs.push(TriggerSpec {
+            table: "run_flow_resolutions".to_string(),
+            name: name.clone(),
+            definition: format!(
+                "CREATE TRIGGER {name} BEFORE {event_sql} ON \
+                 wamn_run.run_flow_resolutions FOR EACH ROW EXECUTE FUNCTION \
+                 wamn_run.reject_immutable_flow_resolution_change()"
+            ),
+            sql: format!(
+                "CREATE TRIGGER {name} BEFORE {event_sql} ON \
+                 wamn_run.run_flow_resolutions FOR EACH ROW EXECUTE FUNCTION \
+                 wamn_run.reject_immutable_flow_resolution_change();"
+            ),
+        });
+    }
     for table in [
         "effect_attempts",
         "effect_attempt_dispatches",
@@ -1736,6 +2046,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         schema: AuthoringTableSchema::RunPlane,
         table: "runs",
         app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
+        author: &["SELECT"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
+        table: "run_flow_resolutions",
+        app: &["SELECT", "INSERT"],
         author: &["SELECT"],
     },
     AuthoringPrivilegeSpec {
@@ -3119,7 +3435,7 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
-              ('runs', 'test_suites', 'test_cases', \
+              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', \
@@ -3150,7 +3466,7 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'test_suites', 'test_cases', \
+              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
@@ -3180,7 +3496,7 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'test_suites', 'test_cases', \
+              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
@@ -3207,7 +3523,7 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'test_suites', 'test_cases', \
+              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
@@ -3311,6 +3627,8 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
      WHERE n.nspname = $1 \
        AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
+                         'reject_immutable_flow_resolution_change', \
+                         'materialize_run_flow_resolutions', \
                          'reject_immutable_authoring_test_set_change', \
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
@@ -3851,6 +4169,7 @@ CREATE INDEX event_registrations_by_entity
             record_tables(RUN_STATE_SQL, "wamn_run"),
             [
                 "runs",
+                "run_flow_resolutions",
                 "invocation_admissions",
                 "node_runs",
                 "effect_attempts",
@@ -4022,6 +4341,102 @@ CREATE INDEX event_registrations_by_entity
         ));
     }
 
+    #[test]
+    fn run_flow_resolutions_schema_of_record_is_immutable_and_tenant_scoped() {
+        let resolutions = table_section(RUN_STATE_SQL, "wamn_run", "run_flow_resolutions");
+        for column in [
+            "tenant_id             text NOT NULL CHECK (tenant_id <> '')",
+            "run_id                text NOT NULL CHECK (run_id <> '')",
+            "flow_id               text NOT NULL CHECK (flow_id <> '')",
+            "execution_bundle_hash text NOT NULL",
+            "source_artifact_hash  text NOT NULL CHECK (source_artifact_hash <> '')",
+        ] {
+            assert!(
+                resolutions.contains(column),
+                "run_flow_resolutions missing {column}"
+            );
+        }
+        assert!(
+            !resolutions.contains("created_at"),
+            "ratified run_flow_resolutions table has exactly five columns"
+        );
+        assert!(resolutions.contains("PRIMARY KEY (tenant_id, run_id, flow_id)"));
+        assert!(
+            !resolutions.contains("REFERENCES wamn_run.runs"),
+            "resolution evidence intentionally outlives pruned runs"
+        );
+        assert!(!resolutions.contains("run_flow_resolutions_run_fk"));
+        assert!(resolutions.contains("CONSTRAINT run_flow_resolutions_execution_bundle_fk"));
+        assert!(
+            RUN_STATE_SQL
+                .contains("ALTER TABLE wamn_run.run_flow_resolutions ENABLE ROW LEVEL SECURITY")
+        );
+        assert!(
+            RUN_STATE_SQL
+                .contains("ALTER TABLE wamn_run.run_flow_resolutions FORCE ROW LEVEL SECURITY")
+        );
+        assert!(RUN_STATE_SQL.contains("CREATE TRIGGER run_flow_resolutions_update_immutable"));
+        assert!(RUN_STATE_SQL.contains("CREATE TRIGGER run_flow_resolutions_delete_immutable"));
+        assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-flow-resolution-immutable'"));
+
+        let checks: Vec<&CheckSpec> = CHECK_SPECS
+            .iter()
+            .filter(|spec| spec.table == "run_flow_resolutions")
+            .collect();
+        assert_eq!(checks.len(), 5);
+        for (name, definition) in [
+            (
+                "run_flow_resolutions_tenant_id_check",
+                "CHECK (tenant_id <> ''::text)",
+            ),
+            (
+                "run_flow_resolutions_run_id_check",
+                "CHECK (run_id <> ''::text)",
+            ),
+            (
+                "run_flow_resolutions_flow_id_check",
+                "CHECK (flow_id <> ''::text)",
+            ),
+            (
+                "run_flow_resolutions_execution_bundle_hash_check",
+                "CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+            ),
+            (
+                "run_flow_resolutions_source_artifact_hash_check",
+                "CHECK (source_artifact_hash <> ''::text)",
+            ),
+        ] {
+            assert!(checks.iter().any(|spec| {
+                spec.name == name
+                    && spec.definition == definition
+                    && matches!(spec.origin, CheckOrigin::Inline(_))
+            }));
+        }
+        assert!(
+            RUN_STATE_SQL.contains("CREATE FUNCTION wamn_run.materialize_run_flow_resolutions")
+        );
+        let materialize_start = RUN_STATE_SQL
+            .find("CREATE FUNCTION wamn_run.materialize_run_flow_resolutions")
+            .expect("materialize function exists");
+        let materialize_tail = &RUN_STATE_SQL[materialize_start..];
+        let materialize_end = materialize_tail
+            .find("REVOKE ALL ON FUNCTION")
+            .expect("materialize function revokes public privileges");
+        let materialize = &materialize_tail[..materialize_end];
+        for forbidden in [
+            "BEGIN;",
+            "COMMIT;",
+            "run_queue",
+            "lease_generation",
+            "SET status",
+        ] {
+            assert!(
+                !materialize.contains(forbidden),
+                "resolution substrate must not own {forbidden}"
+            );
+        }
+    }
+
     /// The multi-line `runs.status` CHECK parses whole (paren-depth), and
     /// `fail_kind` — the fqg.16 sibling — is present as a column.
     #[test]
@@ -4171,6 +4586,7 @@ CREATE INDEX event_registrations_by_entity
                 "invocation_admissions_expiry",
                 "invocation_admissions_run",
                 "node_runs_seq",
+                "run_flow_resolutions_execution_bundle",
                 "run_queue_claimable",
                 "run_queue_partition",
                 "runs_event_root",
@@ -4211,8 +4627,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            18,
-            "all eighteen run-plane tables at target, including test-set inputs and reports"
+            19,
+            "all nineteen run-plane tables at target, including resolutions, test-set inputs, and reports"
         );
     }
 
@@ -4958,6 +5374,7 @@ CREATE INDEX event_registrations_by_entity
             creates,
             [
                 "runs",
+                "run_flow_resolutions",
                 "invocation_admissions",
                 "node_runs",
                 "effect_attempts",
@@ -5168,11 +5585,29 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            9
+            11
         );
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "reject_immutable_flow_resolution_change"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "materialize_run_flow_resolutions"
+                && action.sql.contains("GRANT EXECUTE")
+                && !action.sql.contains("SECURITY DEFINER")
+        }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target == "runs.runs_event_lineage_immutable"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "run_flow_resolutions.run_flow_resolutions_update_immutable"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "run_flow_resolutions.run_flow_resolutions_delete_immutable"
         }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -5188,7 +5623,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            27
+            29
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -5198,6 +5633,62 @@ CREATE INDEX event_registrations_by_entity
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target
                     == "authoring_suite_reports.authoring_suite_reports_update_immutable"
+        }));
+    }
+
+    #[test]
+    fn run_flow_resolution_helper_and_trigger_drift_is_repaired_not_dropped() {
+        let mut obs = observation_at_record();
+        obs.helper_functions.insert(
+            "materialize_run_flow_resolutions".into(),
+            "CREATE OR REPLACE FUNCTION demo.materialize_run_flow_resolutions()".into(),
+        );
+        obs.helper_functions
+            .remove("reject_immutable_flow_resolution_change");
+        obs.triggers.insert(
+            (
+                "run_flow_resolutions".into(),
+                "run_flow_resolutions_update_immutable".into(),
+            ),
+            "CREATE TRIGGER run_flow_resolutions_update_immutable BEFORE UPDATE ON demo.run_flow_resolutions FOR EACH ROW EXECUTE FUNCTION demo.legacy()".into(),
+        );
+        obs.triggers.remove(&(
+            "run_flow_resolutions".into(),
+            "run_flow_resolutions_delete_immutable".into(),
+        ));
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "materialize_run_flow_resolutions"
+                && action.sql.contains("CREATE OR REPLACE FUNCTION")
+                && action
+                    .sql
+                    .contains("DROP TABLE IF EXISTS pg_temp.proposed_run_flow_resolutions")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairHelperFunction
+                && action.target == "reject_immutable_flow_resolution_change"
+                && action.sql.contains("run-flow-resolution-immutable")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "run_flow_resolutions.run_flow_resolutions_update_immutable"
+                && action.sql.contains("DROP TRIGGER")
+                && action
+                    .sql
+                    .contains("reject_immutable_flow_resolution_change")
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "run_flow_resolutions.run_flow_resolutions_delete_immutable"
+                && action
+                    .sql
+                    .contains("reject_immutable_flow_resolution_change")
+        }));
+        assert!(!plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::DropExtraTrigger
+                && action.target.starts_with("run_flow_resolutions.")
         }));
     }
 
@@ -5365,6 +5856,13 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_run_plane_helper_functions_sql().contains("pg_get_functiondef"));
         assert!(
             select_run_plane_helper_functions_sql().contains("reject_immutable_effect_fact_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql()
+                .contains("reject_immutable_flow_resolution_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql().contains("materialize_run_flow_resolutions")
         );
         assert!(
             select_run_plane_helper_functions_sql()

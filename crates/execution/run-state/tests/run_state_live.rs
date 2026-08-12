@@ -87,6 +87,216 @@ fn run_state_live() {
     let terminalize = terminalize_sql();
     let reserved_checkpoint = reserved_checkpoint_sql();
     let complete = complete_sql();
+    let materialize_resolutions = wamn_run_state::sql::materialize_run_flow_resolutions_sql();
+    let select_resolution_plans = wamn_run_state::sql::select_release_resolution_plans_sql();
+
+    // The release-bound resolution map is immutable once materialized. A retry
+    // with the identical complete map succeeds; incomplete or mixed proposals
+    // and pre-existing partial/mixed maps refuse without dropping/recomputing
+    // rows; RLS hides other tenants; triggers reject direct mutation.
+    success(
+        &url,
+        "INSERT INTO catalog.execution_bundles \
+           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+         VALUES ('t1', \
+           'sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b', \
+           '0.1',convert_to('{\"other\":true}','UTF8'),14); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','resolution-1','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'), \
+          ('t1','resolution-forged','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'), \
+          ('t1','resolution-preexisting-incomplete','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'), \
+          ('t1','resolution-preexisting-mixed','f',1,'cat',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running');",
+    );
+    let resolution_script = format!(
+        "{} PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE first_resolution AS \
+           EXECUTE resolution_stmt('resolution-1', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}},\
+               {{\"flow-id\":\"g\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-g\"}}]'); \
+         CREATE TEMP TABLE retry_resolution AS \
+           EXECUTE resolution_stmt('resolution-1', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}},\
+               {{\"flow-id\":\"g\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-g\"}}]'); \
+         CREATE TEMP TABLE incomplete_resolution AS \
+           EXECUTE resolution_stmt('resolution-1', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}}]'); \
+         CREATE TEMP TABLE mixed_resolution AS \
+           EXECUTE resolution_stmt('resolution-1', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}},\
+               {{\"flow-id\":\"g\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-g\"}}]'); \
+         INSERT INTO run_flow_resolutions \
+             (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
+         VALUES (current_setting('app.tenant', true),'resolution-forged','f',\
+             'sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b',\
+             'sha256:forged-artifact'), \
+            (current_setting('app.tenant', true),'resolution-preexisting-incomplete','f',\
+             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+             'sha256:artifact-root'), \
+            (current_setting('app.tenant', true),'resolution-preexisting-mixed','f',\
+             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
+             'sha256:artifact-root'), \
+            (current_setting('app.tenant', true),'resolution-preexisting-mixed','g',\
+             'sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b',\
+             'sha256:mixed-artifact'); \
+         CREATE TEMP TABLE forged_resolution AS \
+           EXECUTE resolution_stmt('resolution-forged', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}}]'); \
+         CREATE TEMP TABLE preexisting_incomplete AS \
+           EXECUTE resolution_stmt('resolution-preexisting-incomplete', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}},\
+               {{\"flow-id\":\"g\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-g\"}}]'); \
+         CREATE TEMP TABLE preexisting_mixed AS \
+           EXECUTE resolution_stmt('resolution-preexisting-mixed', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}},\
+               {{\"flow-id\":\"g\",\
+                 \"execution-bundle-hash\":\"sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b\",\
+                 \"source-artifact-hash\":\"sha256:artifact-g\"}}]'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM first_resolution) = 'resolved', \
+                  'first resolution inserts'; \
+           ASSERT (SELECT result_code FROM retry_resolution) = 'resolved', \
+                  'identical retry verifies'; \
+           ASSERT (SELECT fail_kind FROM incomplete_resolution) = 'foreign-revision', \
+                  'incomplete existing map refuses'; \
+           ASSERT (SELECT fail_kind FROM mixed_resolution) = 'foreign-revision', \
+                  'mixed existing map refuses'; \
+           ASSERT (SELECT fail_kind FROM forged_resolution) = 'foreign-revision', \
+                  'forged preexisting map refuses'; \
+           ASSERT (SELECT fail_kind FROM preexisting_incomplete) = 'foreign-revision', \
+                  'preexisting one-row map refuses expected two-row retry'; \
+           ASSERT (SELECT fail_kind FROM preexisting_mixed) = 'foreign-revision', \
+                  'preexisting mixed map refuses expected retry'; \
+           ASSERT (SELECT count(*) FROM run_flow_resolutions WHERE run_id='resolution-1') = 2, \
+                  'refusals do not recompute or drop rows'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        materialize_resolutions
+    );
+    success(&url, &resolution_script);
+
+    let hidden_script = format!(
+        "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL search_path TO wamn_run; \
+         SET LOCAL app.tenant = 't2'; \
+         PREPARE resolution_stmt (text,text) AS {}; \
+         CREATE TEMP TABLE hidden AS \
+           EXECUTE resolution_stmt('resolution-1', \
+             '[{{\"flow-id\":\"f\",\
+                 \"execution-bundle-hash\":\"sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\",\
+                 \"source-artifact-hash\":\"sha256:artifact-root\"}}]'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT fail_kind FROM hidden) = 'unresolvable-name', \
+                  'other tenant cannot see the run or map'; \
+         END $$; COMMIT;",
+        materialize_resolutions
+    );
+    success(&url, &hidden_script);
+
+    // A run pinned to catalog version 1 keeps reading version 1 release members
+    // after the catalog head moves to version 2.
+    success(
+        &url,
+        "INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version,state) \
+         VALUES ('t1','cat-republish',1,'prod','0.1','superseded'), \
+                ('t1','cat-republish',2,'prod','0.1','applied'); \
+         INSERT INTO catalog.flow_artifacts \
+           (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
+         VALUES ('t1','f',1,'0.1','{}','graph-v1','artifact-v1'), \
+                ('t1','f',2,'0.1','{}','graph-v2','artifact-v2'); \
+         INSERT INTO catalog.release_manifests \
+           (tenant_id,catalog_id,catalog_version,members_json) \
+         VALUES ('t1','cat-republish',1, \
+                 '[{\"flow-id\":\"f\",\"flow-version\":1,\"artifact-hash\":\"artifact-v1\"}]'), \
+                ('t1','cat-republish',2, \
+                 '[{\"flow-id\":\"f\",\"flow-version\":2,\"artifact-hash\":\"artifact-v2\"}]'); \
+         INSERT INTO catalog.release_flows \
+           (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
+         VALUES ('t1','cat-republish',1,'f',1, \
+                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
+                ('t1','cat-republish',2,'f',2, \
+                 'sha256:dbcbb05208bbb6cc1181867c1498e0e60dcbe6e4097bbada64fe1408114fa81b'); \
+         INSERT INTO catalog.catalog_heads \
+           (tenant_id,catalog_id,environment,applied_catalog_version) \
+         VALUES ('t1','cat-republish','prod',1); \
+         INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','resolution-republish','f',1,'cat-republish',1,'prod', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'running'); \
+         UPDATE catalog.catalog_heads \
+            SET applied_catalog_version = 2 \
+          WHERE tenant_id='t1' AND catalog_id='cat-republish' AND environment='prod';",
+    );
+    let republish_script = format!(
+        "{} PREPARE plan_stmt (text) AS {}; \
+         CREATE TEMP TABLE pinned_plan AS EXECUTE plan_stmt('resolution-republish'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM pinned_plan) = 1, \
+                  'one pinned release member remains visible'; \
+           ASSERT (SELECT execution_bundle_hash FROM pinned_plan) = \
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+                  'head movement does not change the run pinned release map'; \
+           ASSERT (SELECT artifact_hash FROM pinned_plan) = 'artifact-v1', \
+                  'source artifact stays pinned to version one'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        select_resolution_plans
+    );
+    success(&url, &republish_script);
+
+    success(
+        &url,
+        "DO $$ BEGIN \
+           BEGIN \
+             UPDATE wamn_run.run_flow_resolutions \
+                SET source_artifact_hash = 'sha256:changed' \
+              WHERE tenant_id='t1' AND run_id='resolution-1' AND flow_id='f'; \
+             RAISE EXCEPTION 'resolution update unexpectedly succeeded'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             ASSERT SQLERRM = 'run-flow-resolution-immutable', 'update immutable message'; \
+           END; \
+           BEGIN \
+             DELETE FROM wamn_run.run_flow_resolutions \
+              WHERE tenant_id='t1' AND run_id='resolution-1' AND flow_id='f'; \
+             RAISE EXCEPTION 'resolution delete unexpectedly succeeded'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             ASSERT SQLERRM = 'run-flow-resolution-immutable', 'delete immutable message'; \
+           END; \
+         END $$;",
+    );
 
     // A stale entry boundary cannot insert its synthetic node checkpoint. The
     // same statement succeeds under the current generation.

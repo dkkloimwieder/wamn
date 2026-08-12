@@ -1528,8 +1528,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        18,
-        "all eighteen run-plane tables at target"
+        19,
+        "all nineteen run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
