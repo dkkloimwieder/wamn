@@ -267,9 +267,75 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("error_kind"),
     },
     CheckSpec {
+        table: "node_runs",
+        name: "node_runs_frame_check",
+        definition: "CHECK (frame_id >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_frame_relation_check",
+        definition: "CHECK (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL OR frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0 AND parent_frame_id < frame_id AND call_site_id IS NOT NULL AND call_site_id ~ '^[a-z0-9-]+$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_plan_hash_check",
+        definition: "CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "node_runs",
+        name: "node_runs_local_node_check",
+        definition: "CHECK (local_node_id ~ '^[a-z0-9-]+$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
         table: "effect_attempts",
         name: "effect_attempts_tenant_check",
         definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_root_plan_hash_check",
+        definition: "CHECK (root_plan_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_current_plan_hash_check",
+        definition: "CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_frame_check",
+        definition: "CHECK (frame_id >= 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_frame_relation_check",
+        definition: "CHECK (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL OR frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0 AND parent_frame_id < frame_id AND call_site_id IS NOT NULL AND call_site_id ~ '^[a-z0-9-]+$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_local_node_check",
+        definition: "CHECK (local_node_id ~ '^[a-z0-9-]+$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_source_artifact_check",
+        definition: "CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "effect_attempts",
+        name: "effect_attempts_requirement_check",
+        definition: "CHECK (requirement_name <> ''::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -1805,9 +1871,47 @@ const RETIRED_EFFECT_ATTEMPT_COLUMNS: &[&str] = &[
     "recovery_class",
 ];
 
+const NODE_FRAME_COLUMNS: &[&str] = &[
+    "frame_id",
+    "parent_frame_id",
+    "call_site_id",
+    "current_plan_hash",
+    "local_node_id",
+];
+
+const EFFECT_FRAME_COLUMNS: &[&str] = &[
+    "root_plan_hash",
+    "current_plan_hash",
+    "frame_id",
+    "parent_frame_id",
+    "call_site_id",
+    "local_node_id",
+    "source_artifact_hash",
+    "requirement_name",
+];
+
 const EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF: &str = "CREATE UNIQUE INDEX \
 effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree \
-(tenant_id, run_id, node_id, occurrence)";
+(tenant_id, run_id, frame_id, local_node_id, occurrence)";
+const NODE_RUNS_PKEY_DEF: &str = "CREATE UNIQUE INDEX node_runs_pkey ON \
+wamn_run.node_runs USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)";
+
+const NODE_FRAME_CHECKS: &[&str] = &[
+    "node_runs_frame_check",
+    "node_runs_frame_relation_check",
+    "node_runs_plan_hash_check",
+    "node_runs_local_node_check",
+];
+
+const EFFECT_FRAME_CHECKS: &[&str] = &[
+    "effect_attempts_root_plan_hash_check",
+    "effect_attempts_current_plan_hash_check",
+    "effect_attempts_frame_check",
+    "effect_attempts_frame_relation_check",
+    "effect_attempts_local_node_check",
+    "effect_attempts_source_artifact_check",
+    "effect_attempts_requirement_check",
+];
 
 const RETIRED_EFFECT_ATTEMPT_INDEXES: &[&str] = &[
     "effect_attempts_occurrence",
@@ -1837,6 +1941,282 @@ fn retirement_owned_check(table: &str, name: &str) -> bool {
     )
 }
 
+fn frame_identity_column(table: &str, column: &str) -> bool {
+    (table == "node_runs" && NODE_FRAME_COLUMNS.contains(&column))
+        || (table == "effect_attempts" && EFFECT_FRAME_COLUMNS.contains(&column))
+        || (matches!(table, "node_runs" | "effect_attempts") && column == "node_id")
+}
+
+fn frame_identity_check(table: &str, name: &str) -> bool {
+    (table == "node_runs" && NODE_FRAME_CHECKS.contains(&name))
+        || (table == "effect_attempts" && EFFECT_FRAME_CHECKS.contains(&name))
+}
+
+fn expected_check_definition(table: &str, name: &str) -> Option<&'static str> {
+    CHECK_SPECS
+        .iter()
+        .find(|spec| spec.table == table && spec.name == name)
+        .map(|spec| spec.definition)
+}
+
+fn column_contract_complete(
+    obs: &RunPlaneObservation,
+    table: &str,
+    column: &str,
+    ty: &str,
+    not_null: bool,
+) -> bool {
+    let key = (table.to_string(), column.to_string());
+    obs.tables
+        .get(table)
+        .is_some_and(|columns| columns.contains(column))
+        && obs
+            .column_types
+            .get(&key)
+            .is_some_and(|actual| actual == ty)
+        && obs.non_nullable_columns.contains(&key) == not_null
+}
+
+fn check_contract_complete(obs: &RunPlaneObservation, table: &str, names: &[&str]) -> bool {
+    names.iter().all(|name| {
+        expected_check_definition(table, name).is_some_and(|expected| {
+            obs.checks
+                .get(&(table.to_string(), (*name).to_string()))
+                .is_some_and(|actual| actual == expected)
+        })
+    })
+}
+
+fn node_frame_contract_complete(obs: &RunPlaneObservation, schema: &BareSchemaName) -> bool {
+    let Some(columns) = obs.tables.get("node_runs") else {
+        return true;
+    };
+    !columns.contains("node_id")
+        && column_contract_complete(obs, "node_runs", "frame_id", "bigint", true)
+        && column_contract_complete(obs, "node_runs", "parent_frame_id", "bigint", false)
+        && column_contract_complete(obs, "node_runs", "call_site_id", "text", false)
+        && column_contract_complete(obs, "node_runs", "current_plan_hash", "text", true)
+        && column_contract_complete(obs, "node_runs", "local_node_id", "text", true)
+        && check_contract_complete(obs, "node_runs", NODE_FRAME_CHECKS)
+        && obs.indexes.get("node_runs_pkey").is_some_and(|definition| {
+            normalize_observed_schema(definition, schema) == NODE_RUNS_PKEY_DEF
+        })
+}
+
+fn effect_frame_contract_complete(obs: &RunPlaneObservation, schema: &BareSchemaName) -> bool {
+    let Some(columns) = obs.tables.get("effect_attempts") else {
+        return true;
+    };
+    !columns.contains("node_id")
+        && column_contract_complete(obs, "effect_attempts", "root_plan_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "current_plan_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "frame_id", "bigint", true)
+        && column_contract_complete(obs, "effect_attempts", "parent_frame_id", "bigint", false)
+        && column_contract_complete(obs, "effect_attempts", "call_site_id", "text", false)
+        && column_contract_complete(obs, "effect_attempts", "local_node_id", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "source_artifact_hash", "text", true)
+        && column_contract_complete(obs, "effect_attempts", "requirement_name", "text", true)
+        && check_contract_complete(obs, "effect_attempts", EFFECT_FRAME_CHECKS)
+        && (obs
+            .indexes
+            .get("effect_attempts_occurrence_key")
+            .is_some_and(|definition| {
+                normalize_observed_schema(definition, schema) == EFFECT_ATTEMPTS_OCCURRENCE_KEY_DEF
+            })
+            || retired_effect_frame_identity_complete(obs))
+}
+
+fn retired_effect_frame_identity_complete(obs: &RunPlaneObservation) -> bool {
+    [
+        (
+            "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
+            "(tenant_id, attempt_id, run_id, frame_id, local_node_id, occurrence)",
+        ),
+        (
+            "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
+            "(tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)",
+        ),
+    ]
+    .iter()
+    .all(|(name, columns)| {
+        observed_index(obs, name).is_some_and(|definition| {
+            definition
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .split_once(" USING btree ")
+                .is_some_and(|(_, actual)| actual == *columns)
+        })
+    })
+}
+
+fn observed_index<'a>(obs: &'a RunPlaneObservation, name: &str) -> Option<&'a String> {
+    obs.indexes.get(postgres_visible_identifier(name))
+}
+
+fn postgres_visible_identifier(name: &str) -> &str {
+    if name.len() <= wamn_schema_model::MAX_IDENTIFIER_BYTES {
+        return name;
+    }
+    let mut end = wamn_schema_model::MAX_IDENTIFIER_BYTES;
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    &name[..end]
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FrameIdentityCutoverTargets {
+    node: bool,
+    effect: bool,
+}
+
+impl FrameIdentityCutoverTargets {
+    const fn needed(self) -> bool {
+        self.node || self.effect
+    }
+
+    fn includes_table(self, table: &str) -> bool {
+        matches!(
+            (table, self.node, self.effect),
+            ("node_runs", true, _) | ("effect_attempts", _, true)
+        )
+    }
+}
+
+fn frame_identity_cutover_targets(
+    obs: &RunPlaneObservation,
+    schema: &BareSchemaName,
+) -> FrameIdentityCutoverTargets {
+    FrameIdentityCutoverTargets {
+        node: !node_frame_contract_complete(obs, schema),
+        effect: !effect_frame_contract_complete(obs, schema),
+    }
+}
+
+fn frame_identity_cutover_sql(
+    schema: &BareSchemaName,
+    targets: FrameIdentityCutoverTargets,
+) -> String {
+    debug_assert!(targets.needed());
+    let schema = schema.quoted();
+    let mut sql = String::new();
+    let mut populated = Vec::new();
+    if targets.node {
+        sql.push_str(&format!(
+            "LOCK TABLE {schema}.node_runs IN ACCESS EXCLUSIVE MODE;\n"
+        ));
+        populated.push(format!("EXISTS (SELECT 1 FROM {schema}.node_runs)"));
+    }
+    if targets.effect {
+        sql.push_str(&format!(
+            "LOCK TABLE {schema}.effect_attempts IN ACCESS EXCLUSIVE MODE;\n"
+        ));
+        populated.push(format!("EXISTS (SELECT 1 FROM {schema}.effect_attempts)"));
+    }
+    sql.push_str(&format!(
+        r#"DO $frame_identity_cutover$
+BEGIN
+    IF {} THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'frame-identity-cutover-requires-empty-node-and-effect-facts';
+    END IF;
+END
+$frame_identity_cutover$;
+"#,
+        populated.join(" OR ")
+    ));
+    if targets.node {
+        sql.push_str(&format!(
+            r#"ALTER TABLE {schema}.node_runs
+    DROP CONSTRAINT IF EXISTS node_runs_pkey,
+    DROP CONSTRAINT IF EXISTS node_runs_frame_check,
+    DROP CONSTRAINT IF EXISTS node_runs_frame_relation_check,
+    DROP CONSTRAINT IF EXISTS node_runs_plan_hash_check,
+    DROP CONSTRAINT IF EXISTS node_runs_local_node_check;
+ALTER TABLE {schema}.node_runs
+    DROP COLUMN IF EXISTS node_id,
+    DROP COLUMN IF EXISTS frame_id,
+    DROP COLUMN IF EXISTS parent_frame_id,
+    DROP COLUMN IF EXISTS call_site_id,
+    DROP COLUMN IF EXISTS current_plan_hash,
+    DROP COLUMN IF EXISTS local_node_id;
+ALTER TABLE {schema}.node_runs
+    ADD COLUMN frame_id bigint NOT NULL DEFAULT 0,
+    ADD COLUMN parent_frame_id bigint,
+    ADD COLUMN call_site_id text,
+    ADD COLUMN current_plan_hash text NOT NULL,
+    ADD COLUMN local_node_id text NOT NULL,
+    ADD CONSTRAINT node_runs_frame_check CHECK (frame_id >= 0),
+    ADD CONSTRAINT node_runs_frame_relation_check CHECK (
+        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
+        OR (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
+            AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
+            AND call_site_id ~ '^[a-z0-9-]+$')
+    ),
+    ADD CONSTRAINT node_runs_plan_hash_check CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT node_runs_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    ADD PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence);
+"#
+        ));
+    }
+    if targets.effect {
+        sql.push_str(&format!(
+            r#"ALTER TABLE {schema}.effect_attempts
+    DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_root_plan_hash_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_current_plan_hash_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_frame_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_frame_relation_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_local_node_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_source_artifact_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_requirement_check,
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key,
+    DROP CONSTRAINT IF EXISTS effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence;
+DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key;
+DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key;
+ALTER TABLE {schema}.effect_attempts
+    DROP COLUMN IF EXISTS node_id,
+    DROP COLUMN IF EXISTS root_plan_hash,
+    DROP COLUMN IF EXISTS current_plan_hash,
+    DROP COLUMN IF EXISTS frame_id,
+    DROP COLUMN IF EXISTS parent_frame_id,
+    DROP COLUMN IF EXISTS call_site_id,
+    DROP COLUMN IF EXISTS local_node_id,
+    DROP COLUMN IF EXISTS source_artifact_hash,
+    DROP COLUMN IF EXISTS requirement_name;
+ALTER TABLE {schema}.effect_attempts
+    ADD COLUMN root_plan_hash text NOT NULL,
+    ADD COLUMN current_plan_hash text NOT NULL,
+    ADD COLUMN frame_id bigint NOT NULL DEFAULT 0,
+    ADD COLUMN parent_frame_id bigint,
+    ADD COLUMN call_site_id text,
+    ADD COLUMN local_node_id text NOT NULL,
+    ADD COLUMN source_artifact_hash text NOT NULL,
+    ADD COLUMN requirement_name text NOT NULL,
+    ADD CONSTRAINT effect_attempts_root_plan_hash_check CHECK (root_plan_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT effect_attempts_current_plan_hash_check CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT effect_attempts_frame_check CHECK (frame_id >= 0),
+    ADD CONSTRAINT effect_attempts_frame_relation_check CHECK (
+        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
+        OR (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
+            AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
+            AND call_site_id ~ '^[a-z0-9-]+$')
+    ),
+    ADD CONSTRAINT effect_attempts_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    ADD CONSTRAINT effect_attempts_source_artifact_check CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{{64}}$'),
+    ADD CONSTRAINT effect_attempts_requirement_check CHECK (requirement_name <> ''),
+    ADD CONSTRAINT effect_attempts_occurrence_key
+    UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence);
+"#
+        ));
+    }
+    sql
+}
+
 fn retire_attempt_recovery_lineage_sql(
     schema: &BareSchemaName,
     node_columns: &BTreeSet<String>,
@@ -1851,7 +2231,7 @@ DO $retire$
 BEGIN
     IF EXISTS (
         SELECT 1 FROM {schema}.effect_attempts
-         GROUP BY tenant_id,run_id,node_id,occurrence
+         GROUP BY tenant_id,run_id,frame_id,local_node_id,occurrence
         HAVING count(*) > 1
     ) THEN
         RAISE EXCEPTION USING
@@ -1866,7 +2246,8 @@ BEGIN
                SELECT 1 FROM {schema}.effect_attempts AS a
                 WHERE a.tenant_id = n.tenant_id
                   AND a.run_id = n.run_id
-                  AND a.node_id = n.node_id
+                  AND a.frame_id = n.frame_id
+                  AND a.local_node_id = n.local_node_id
                   AND a.occurrence = n.occurrence
            )
     ) THEN
@@ -1920,7 +2301,7 @@ DROP INDEX IF EXISTS {schema}.effect_attempts_tenant_id_run_id_node_id_occurrenc
         sql.push_str(&format!(
             "ALTER TABLE {schema}.effect_attempts DROP CONSTRAINT IF EXISTS effect_attempts_occurrence_key;\n\
              DROP INDEX IF EXISTS {schema}.effect_attempts_occurrence_key;\n\
-             ALTER TABLE {schema}.effect_attempts ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,node_id,occurrence);\n",
+             ALTER TABLE {schema}.effect_attempts ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence);\n",
         ));
     }
     sql
@@ -2324,6 +2705,8 @@ pub enum RunPlaneActionKind {
     CreateTable,
     /// Add a record column missing from a present table.
     AddColumn,
+    /// Strict empty-only conversion from legacy node/effect identity to frames.
+    FrameIdentityCutover,
     /// Refuse unsafe history, then retire legacy recovery/successor schema
     /// without rewriting immutable attempt facts.
     RetireAttemptRecoveryLineage,
@@ -2632,6 +3015,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             },
         });
         return plan;
+    }
+
+    let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
+    if frame_cutover_targets.needed() {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::FrameIdentityCutover,
+            target: "node_runs.effect_attempts.frame-identity".to_string(),
+            sql: frame_identity_cutover_sql(schema, frame_cutover_targets),
+        });
     }
 
     // The standalone record files grant privileged authoring writes to this
@@ -2958,6 +3350,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if table == "runs" && col == "execution_bundle_hash" {
                     continue;
                 }
+                if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
+                    continue;
+                }
                 if !live_cols.contains(col) {
                     plan.actions.push(RunPlaneAction {
                         kind: RunPlaneActionKind::AddColumn,
@@ -2972,6 +3367,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             let known: BTreeSet<&str> = record_cols.iter().map(|(c, _)| c.as_str()).collect();
             for col in live_cols {
+                if frame_cutover_targets.includes_table(&table)
+                    && frame_identity_column(&table, col)
+                {
+                    continue;
+                }
                 if !known.contains(col.as_str()) {
                     plan.extra_columns.push((table.clone(), col.clone()));
                 }
@@ -2991,6 +3391,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         .collect();
     for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {
+            continue;
+        }
+        if frame_cutover_targets.includes_table(spec.table)
+            && frame_identity_check(spec.table, spec.name)
+        {
             continue;
         }
         let Some(columns) = obs.tables.get(spec.table) else {
@@ -3029,6 +3434,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && record_table_names().contains(table.as_str())
             && !expected_checks.contains(&(table.as_str(), name.as_str()))
             && !retirement_owned_check(table, name)
+            && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
@@ -3058,7 +3464,8 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             .tables
             .get("effect_attempts")
             .unwrap_or(&record_attempt_columns);
-        let occurrence_key_present = !obs.tables.contains_key("effect_attempts")
+        let occurrence_key_present = frame_cutover_targets.effect
+            || !obs.tables.contains_key("effect_attempts")
             || obs
                 .indexes
                 .get("effect_attempts_occurrence_key")
@@ -3088,9 +3495,10 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 "effect_attempts".to_string(),
                 "effect_attempts_predecessor_fk".to_string(),
             ))
-            || RETIRED_EFFECT_ATTEMPT_INDEXES
-                .iter()
-                .any(|name| obs.indexes.contains_key(*name));
+            || (!frame_cutover_targets.effect
+                && RETIRED_EFFECT_ATTEMPT_INDEXES
+                    .iter()
+                    .any(|name| observed_index(obs, name).is_some()));
         if retired_shape_present || !occurrence_key_present {
             plan.actions.push(RunPlaneAction {
                 kind: RunPlaneActionKind::RetireAttemptRecoveryLineage,
@@ -4109,10 +4517,33 @@ CREATE INDEX event_registrations_by_entity
             obs.triggers
                 .insert((spec.table, spec.name), spec.definition);
         }
+        obs.indexes
+            .insert("node_runs_pkey".to_string(), NODE_RUNS_PKEY_DEF.to_string());
         obs.indexes.insert(
             "effect_attempts_occurrence_key".to_string(),
-            "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+            "CREATE UNIQUE INDEX effect_attempts_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
         );
+        for (table, column, ty, not_null) in [
+            ("node_runs", "frame_id", "bigint", true),
+            ("node_runs", "parent_frame_id", "bigint", false),
+            ("node_runs", "call_site_id", "text", false),
+            ("node_runs", "current_plan_hash", "text", true),
+            ("node_runs", "local_node_id", "text", true),
+            ("effect_attempts", "root_plan_hash", "text", true),
+            ("effect_attempts", "current_plan_hash", "text", true),
+            ("effect_attempts", "frame_id", "bigint", true),
+            ("effect_attempts", "parent_frame_id", "bigint", false),
+            ("effect_attempts", "call_site_id", "text", false),
+            ("effect_attempts", "local_node_id", "text", true),
+            ("effect_attempts", "source_artifact_hash", "text", true),
+            ("effect_attempts", "requirement_name", "text", true),
+        ] {
+            let key = (table.to_string(), column.to_string());
+            obs.column_types.insert(key.clone(), ty.to_string());
+            if not_null {
+                obs.non_nullable_columns.insert(key);
+            }
+        }
         for (column, ty) in [
             ("catalog_id", "text"),
             ("catalog_version", "integer"),
@@ -5103,7 +5534,22 @@ CREATE INDEX event_registrations_by_entity
         }
         obs.indexes.insert(
             "effect_attempts_occurrence".to_string(),
-            "CREATE INDEX effect_attempts_occurrence ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence, attempt_index)".to_string(),
+            "CREATE INDEX effect_attempts_occurrence ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
+        );
+        obs.indexes.remove("effect_attempts_occurrence_key");
+        obs.indexes.insert(
+            postgres_visible_identifier(
+                "effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key",
+            )
+            .to_string(),
+            "CREATE UNIQUE INDEX effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key ON wamn_run.effect_attempts USING btree (tenant_id, attempt_id, run_id, frame_id, local_node_id, occurrence)".to_string(),
+        );
+        obs.indexes.insert(
+            postgres_visible_identifier(
+                "effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key",
+            )
+            .to_string(),
+            "CREATE UNIQUE INDEX effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key ON wamn_run.effect_attempts USING btree (tenant_id, run_id, frame_id, local_node_id, occurrence, attempt_index)".to_string(),
         );
         obs.foreign_keys.insert(
             (
@@ -5120,7 +5566,15 @@ CREATE INDEX event_registrations_by_entity
             "legacy predecessor".to_string(),
         );
 
-        let action = plan_run_plane(&schema("demo"), &obs)
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover),
+            "retired index names must not masquerade as legacy indexed columns"
+        );
+        let action = plan
             .actions
             .into_iter()
             .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
@@ -5157,43 +5611,22 @@ CREATE INDEX event_registrations_by_entity
 
     #[test]
     fn check_and_index_only_attempt_residue_still_retires() {
-        for (check, index) in [
-            (Some("node_runs_check3"), None),
-            (
-                None,
-                Some("effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key"),
-            ),
-        ] {
-            let mut obs = observation_at_record();
-            if let Some(name) = check {
-                obs.checks.insert(
-                    ("node_runs".to_string(), name.to_string()),
-                    "CHECK (true)".to_string(),
-                );
-            }
-            if let Some(name) = index {
-                obs.indexes.insert(
-                    name.to_string(),
-                    format!("CREATE UNIQUE INDEX {name} ON wamn_run.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence, attempt_index)"),
-                );
-            }
+        let mut obs = observation_at_record();
+        obs.checks.insert(
+            ("node_runs".to_string(), "node_runs_check3".to_string()),
+            "CHECK (true)".to_string(),
+        );
 
-            let action = plan_run_plane(&schema("demo"), &obs)
-                .actions
-                .into_iter()
-                .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-                .expect("residual retired object plans retirement");
-            if let Some(name) = check {
-                assert!(action.sql.contains(name));
-            }
-            if let Some(name) = index {
-                assert!(action.sql.contains(name));
-            }
-        }
+        let action = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
+            .expect("residual retired check plans retirement");
+        assert!(action.sql.contains("node_runs_check3"));
     }
 
     #[test]
-    fn drifted_occurrence_key_is_replaced_by_exact_single_shot_identity() {
+    fn drifted_occurrence_key_is_replaced_by_frame_identity_cutover() {
         let mut obs = observation_at_record();
         obs.indexes.insert(
             "effect_attempts_occurrence_key".to_string(),
@@ -5203,16 +5636,309 @@ CREATE INDEX event_registrations_by_entity
         let action = plan_run_plane(&schema("demo"), &obs)
             .actions
             .into_iter()
-            .find(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-            .expect("drifted occurrence identity plans replacement");
+            .find(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+            .expect("drifted occurrence identity plans frame cutover");
         assert!(
             action
                 .sql
                 .contains("DROP INDEX IF EXISTS \"demo\".effect_attempts_occurrence_key")
         );
         assert!(action.sql.contains(
-            "ADD CONSTRAINT effect_attempts_occurrence_key UNIQUE (tenant_id,run_id,node_id,occurrence)"
+            "ADD CONSTRAINT effect_attempts_occurrence_key\n    UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)"
         ));
+    }
+
+    #[test]
+    fn frame_identity_cutover_is_empty_only_and_precedes_ddl() {
+        let mut obs = observation_at_record();
+        for column in NODE_FRAME_COLUMNS {
+            obs.tables
+                .get_mut("node_runs")
+                .expect("node table")
+                .remove(*column);
+        }
+        for column in EFFECT_FRAME_COLUMNS {
+            obs.tables
+                .get_mut("effect_attempts")
+                .expect("attempt table")
+                .remove(*column);
+        }
+        obs.indexes.insert(
+            "effect_attempts_occurrence_key".to_string(),
+            "CREATE INDEX effect_attempts_occurrence_key ON demo.effect_attempts USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert_eq!(
+            plan.actions.first().map(|action| action.kind),
+            Some(RunPlaneActionKind::FrameIdentityCutover),
+            "frame cutover must precede all other DDL: {:#?}",
+            plan.actions
+        );
+        let action = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+            .expect("frame identity cutover");
+        assert_eq!(action.target, "node_runs.effect_attempts.frame-identity");
+        assert!(
+            action
+                .sql
+                .contains("LOCK TABLE \"demo\".node_runs IN ACCESS EXCLUSIVE MODE")
+        );
+        assert!(
+            action
+                .sql
+                .contains("LOCK TABLE \"demo\".effect_attempts IN ACCESS EXCLUSIVE MODE")
+        );
+        assert!(action.sql.contains("ERRCODE = '55000'"));
+        assert!(
+            action.sql.contains(
+                "MESSAGE = 'frame-identity-cutover-requires-empty-node-and-effect-facts'"
+            )
+        );
+        assert!(
+            action.sql.find("RAISE EXCEPTION").expect("refusal")
+                < action.sql.find("ALTER TABLE").expect("ddl"),
+            "refusal must precede all DDL: {}",
+            action.sql
+        );
+        assert!(
+            action.sql.contains(
+                "ADD PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence)"
+            )
+        );
+        assert!(
+            action
+                .sql
+                .contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
+        );
+        for verb in ["UPDATE ", "DELETE ", "INSERT INTO "] {
+            assert!(
+                !action.sql.contains(verb),
+                "cutover fabricates history with {verb}"
+            );
+        }
+        for frame_column in NODE_FRAME_COLUMNS.iter().chain(EFFECT_FRAME_COLUMNS.iter()) {
+            let target_suffix = format!(".{frame_column}");
+            assert!(
+                !plan.actions.iter().any(|planned| {
+                    planned.kind == RunPlaneActionKind::AddColumn
+                        && planned.target.ends_with(&target_suffix)
+                }),
+                "frame column {frame_column} must be owned by the atomic cutover"
+            );
+        }
+    }
+
+    #[test]
+    fn frame_identity_cutover_locks_only_present_drifted_tables() {
+        for (case, remove_table, expected_lock, absent_lock) in [
+            (
+                "node-only",
+                "effect_attempts",
+                "LOCK TABLE \"demo\".node_runs",
+                "LOCK TABLE \"demo\".effect_attempts",
+            ),
+            (
+                "effect-only",
+                "node_runs",
+                "LOCK TABLE \"demo\".effect_attempts",
+                "LOCK TABLE \"demo\".node_runs",
+            ),
+        ] {
+            let mut obs = observation_at_record();
+            obs.tables.remove(remove_table);
+            if remove_table != "node_runs" {
+                for column in NODE_FRAME_COLUMNS {
+                    obs.tables
+                        .get_mut("node_runs")
+                        .expect("node table")
+                        .remove(*column);
+                }
+            }
+            if remove_table != "effect_attempts" {
+                for column in EFFECT_FRAME_COLUMNS {
+                    obs.tables
+                        .get_mut("effect_attempts")
+                        .expect("attempt table")
+                        .remove(*column);
+                }
+            }
+
+            let action = plan_run_plane(&schema("demo"), &obs)
+                .actions
+                .into_iter()
+                .next()
+                .expect(case);
+            assert_eq!(action.kind, RunPlaneActionKind::FrameIdentityCutover);
+            assert!(action.sql.contains(expected_lock), "{case}: {}", action.sql);
+            assert!(
+                !action.sql.contains(absent_lock),
+                "{case} locks missing peer: {}",
+                action.sql
+            );
+            assert!(
+                action
+                    .sql
+                    .contains("frame-identity-cutover-requires-empty-node-and-effect-facts")
+            );
+            assert!(
+                action.sql.find("RAISE EXCEPTION").expect("refusal")
+                    < action.sql.find("ALTER TABLE").expect("ddl"),
+                "{case}: refusal must precede DDL"
+            );
+        }
+    }
+
+    #[test]
+    fn current_populated_single_target_creates_missing_peer_without_frame_refusal() {
+        let mut obs = observation_at_record();
+        obs.tables.remove("effect_attempts");
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover),
+            "current node_runs plus missing peer must not false-refuse: {:#?}",
+            plan.actions
+        );
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::CreateTable && action.target == "effect_attempts"
+        }));
+    }
+
+    #[test]
+    fn frame_identity_cutover_is_idempotent_at_record_shape() {
+        let plan = plan_run_plane(&schema("demo"), &observation_at_record());
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+        );
+    }
+
+    #[test]
+    fn frame_identity_contract_drift_uses_cutover_not_generic_repairs() {
+        #[expect(
+            clippy::type_complexity,
+            reason = "the table-driven proof pairs each drift label with one noncapturing mutation"
+        )]
+        let cases: [(&str, fn(&mut RunPlaneObservation)); 5] = [
+            ("wrong-type", |obs| {
+                obs.column_types.insert(
+                    ("node_runs".to_string(), "frame_id".to_string()),
+                    "integer".to_string(),
+                );
+            }),
+            ("wrong-nullability", |obs| {
+                obs.non_nullable_columns.remove(&(
+                    "effect_attempts".to_string(),
+                    "requirement_name".to_string(),
+                ));
+            }),
+            ("wrong-node-pk", |obs| {
+                obs.indexes.insert(
+                    "node_runs_pkey".to_string(),
+                    "CREATE UNIQUE INDEX node_runs_pkey ON demo.node_runs USING btree (tenant_id, run_id, node_id, occurrence)".to_string(),
+                );
+            }),
+            ("wrong-frame-check", |obs| {
+                obs.checks.insert(
+                    (
+                        "node_runs".to_string(),
+                        "node_runs_frame_relation_check".to_string(),
+                    ),
+                    "CHECK (frame_id >= 0)".to_string(),
+                );
+            }),
+            ("legacy-node-id", |obs| {
+                obs.tables
+                    .get_mut("node_runs")
+                    .expect("node table")
+                    .insert("node_id".to_string());
+                obs.tables
+                    .get_mut("effect_attempts")
+                    .expect("attempt table")
+                    .insert("node_id".to_string());
+            }),
+        ];
+
+        for (case, mutate) in cases {
+            let mut obs = observation_at_record();
+            mutate(&mut obs);
+            let plan = plan_run_plane(&schema("demo"), &obs);
+            let action = plan.actions.first().expect(case);
+            let node_target = matches!(
+                case,
+                "wrong-type" | "wrong-node-pk" | "wrong-frame-check" | "legacy-node-id"
+            );
+            let effect_target = matches!(case, "wrong-nullability" | "legacy-node-id");
+            assert_eq!(
+                action.kind,
+                RunPlaneActionKind::FrameIdentityCutover,
+                "{case}: {:#?}",
+                plan.actions
+            );
+            assert!(
+                action.sql.contains("DROP COLUMN IF EXISTS node_id"),
+                "{case}: {}",
+                action.sql
+            );
+            assert_eq!(
+                action.sql.contains("LOCK TABLE \"demo\".node_runs"),
+                node_target,
+                "{case}: wrong node target: {}",
+                action.sql
+            );
+            assert_eq!(
+                action.sql.contains("LOCK TABLE \"demo\".effect_attempts"),
+                effect_target,
+                "{case}: wrong effect target: {}",
+                action.sql
+            );
+            assert_eq!(
+                action
+                    .sql
+                    .contains("ADD CONSTRAINT node_runs_frame_relation_check"),
+                node_target,
+                "{case}: wrong node repair: {}",
+                action.sql
+            );
+            assert_eq!(
+                action
+                    .sql
+                    .contains("ADD CONSTRAINT effect_attempts_source_artifact_check"),
+                effect_target,
+                "{case}: wrong effect repair: {}",
+                action.sql
+            );
+            assert!(!plan.actions.iter().any(|planned| {
+                planned.kind == RunPlaneActionKind::AddColumn
+                    && matches!(
+                        planned.target.as_str(),
+                        "node_runs.frame_id" | "effect_attempts.requirement_name"
+                    )
+            }));
+            assert!(!plan.actions.iter().any(|planned| {
+                planned.kind == RunPlaneActionKind::RepairConstraint
+                    && matches!(
+                        planned.target.as_str(),
+                        "node_runs.node_runs_frame_relation_check"
+                            | "effect_attempts.effect_attempts_source_artifact_check"
+                    )
+            }));
+            assert!(
+                !plan.extra_columns.iter().any(|(table, column)| matches!(
+                    table.as_str(),
+                    "node_runs" | "effect_attempts"
+                ) && column == "node_id"),
+                "{case}: legacy node_id should be cutover-owned, not surfaced"
+            );
+        }
     }
 
     #[test]
@@ -5232,7 +5958,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             action
                 .sql
-                .contains("GROUP BY tenant_id,run_id,node_id,occurrence")
+                .contains("GROUP BY tenant_id,run_id,frame_id,local_node_id,occurrence")
         );
         assert!(action.sql.contains("HAVING count(*) > 1"));
         assert!(

@@ -313,14 +313,16 @@ fn load_node_runs(rows: &[tokio_postgres::Row], run_id: &str) -> Vec<NodeRunReco
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         let node_id: String = row.get(0);
-        let occurrence: i32 = row.get(1);
-        let seq: i32 = row.get(2);
-        let port: Option<String> = row.get(3);
-        let output_text: Option<String> = row.get(4);
+        let current_plan_hash: String = row.get(1);
+        let occurrence: i32 = row.get(2);
+        let seq: i32 = row.get(3);
+        let port: Option<String> = row.get(4);
+        let output_text: Option<String> = row.get(5);
         // SQL NULL output => None => CaptureOff, exactly as the guest maps it.
         let output = output_text.map(|s| serde_json::from_str::<Value>(&s).expect("output json"));
         let mut rec = NodeRunRecord::success(
             run_id,
+            current_plan_hash,
             &node_id,
             seq as u32,
             port.unwrap_or_else(|| "main".into()),
@@ -378,7 +380,7 @@ async fn toggle_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         let row = app
             .query_one(
                 "SELECT output_json IS NULL, capture_mode FROM node_runs \
-                 WHERE run_id = $1 AND node_id = 'a'",
+                 WHERE run_id = $1 AND local_node_id = 'a'",
                 &[&run_id],
             )
             .await?;
@@ -430,7 +432,7 @@ async fn truncate_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> 
         .query_one(
             "SELECT output_json IS NULL, input_json IS NULL, preview_head, payload_size, \
                     payload_hash, capture_mode, redacted \
-               FROM node_runs WHERE run_id = 'cap-big' AND node_id = 'a'",
+               FROM node_runs WHERE run_id = 'cap-big' AND local_node_id = 'a'",
             &[],
         )
         .await?;

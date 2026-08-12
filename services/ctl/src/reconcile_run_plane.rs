@@ -122,7 +122,11 @@ pub async fn reconcile(
     if apply {
         let mut applied = 0;
         if plan.actions.first().is_some_and(|action| {
-            action.kind == wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
+            matches!(
+                action.kind,
+                wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
+                    | wamn_schema_control::RunPlaneActionKind::FrameIdentityCutover
+            )
         }) {
             let action = &plan.actions[0];
             client

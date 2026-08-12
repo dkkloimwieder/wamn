@@ -532,9 +532,11 @@ CREATE POLICY invocation_admissions_tenant ON wamn_run.invocation_admissions
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- node_runs: one row per node execution, the branch-aware reconstruction source.
--- The idempotency key is (tenant_id, run_id, node_id, occurrence): `occurrence`
--- disambiguates a node the flow LOOPS through (0 = first visit).
+-- node_runs: one row per framed node execution, the branch-aware reconstruction source.
+-- The idempotency key is (tenant_id, run_id, frame_id, local_node_id, occurrence):
+-- `occurrence` disambiguates a node the frame LOOPS through (0 = first visit).
+-- Frameless/call-free executions use the root frame (frame_id 0, no parent or
+-- call site) with current_plan_hash = runs.execution_bundle_hash.
 -- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
 -- (status success/error) in `seq` order, folding each as an emission on
 -- `output_port` carrying `output_json`; a `started` row is an outstanding node
@@ -546,7 +548,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 CREATE TABLE wamn_run.node_runs (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),
     run_id        text NOT NULL,
-    node_id       text NOT NULL,
+    frame_id      bigint NOT NULL DEFAULT 0,
+    parent_frame_id bigint,
+    call_site_id  text,
+    current_plan_hash text NOT NULL,
+    local_node_id text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
     seq           int  NOT NULL,
     status        text NOT NULL
@@ -567,7 +573,18 @@ CREATE TABLE wamn_run.node_runs (
     redacted      boolean NOT NULL DEFAULT false,
     started_at    timestamptz NOT NULL DEFAULT now(),
     ended_at      timestamptz,
-    PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
+    CONSTRAINT node_runs_frame_check CHECK (frame_id >= 0),
+    CONSTRAINT node_runs_frame_relation_check CHECK (
+        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
+        OR
+        (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
+         AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
+         AND call_site_id ~ '^[a-z0-9-]+$')
+    ),
+    CONSTRAINT node_runs_plan_hash_check
+        CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT node_runs_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
 -- Reconstruction reads a run's completed rows in dispatch order.
@@ -589,7 +606,14 @@ CREATE TABLE wamn_run.effect_attempts (
     tenant_id       text NOT NULL,
     attempt_id      uuid NOT NULL DEFAULT gen_random_uuid(),
     run_id          text NOT NULL,
-    node_id         text NOT NULL,
+    root_plan_hash  text NOT NULL,
+    current_plan_hash text NOT NULL,
+    frame_id        bigint NOT NULL DEFAULT 0,
+    parent_frame_id bigint,
+    call_site_id    text,
+    local_node_id   text NOT NULL,
+    source_artifact_hash text NOT NULL,
+    requirement_name text NOT NULL,
     occurrence      int NOT NULL,
     seq             int NOT NULL,
     generation_fact_kind text NOT NULL,
@@ -604,6 +628,22 @@ CREATE TABLE wamn_run.effect_attempts (
     attempt_key text,
     created_at      timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT effect_attempts_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT effect_attempts_root_plan_hash_check
+        CHECK (root_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT effect_attempts_current_plan_hash_check
+        CHECK (current_plan_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT effect_attempts_frame_check CHECK (frame_id >= 0),
+    CONSTRAINT effect_attempts_frame_relation_check CHECK (
+        (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL)
+        OR
+        (frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0
+         AND parent_frame_id < frame_id AND call_site_id IS NOT NULL
+         AND call_site_id ~ '^[a-z0-9-]+$')
+    ),
+    CONSTRAINT effect_attempts_local_node_check CHECK (local_node_id ~ '^[a-z0-9-]+$'),
+    CONSTRAINT effect_attempts_source_artifact_check
+        CHECK (source_artifact_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT effect_attempts_requirement_check CHECK (requirement_name <> ''),
     CONSTRAINT effect_attempts_occurrence_check CHECK (occurrence >= 0),
     CONSTRAINT effect_attempts_seq_check CHECK (seq >= 0),
     CONSTRAINT effect_attempts_generation_fact_check
@@ -628,7 +668,7 @@ CREATE TABLE wamn_run.effect_attempts (
         CHECK (attempt_input_ref <> ''),
     PRIMARY KEY (tenant_id, attempt_id),
     CONSTRAINT effect_attempts_occurrence_key
-        UNIQUE (tenant_id, run_id, node_id, occurrence),
+        UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence),
     UNIQUE (tenant_id, attempt_id, attempt_started_at)
 );
 -- Deliberately no FK from (tenant_id, run_id) to runs: effect attempts are an

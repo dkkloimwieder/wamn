@@ -109,7 +109,7 @@ pub fn plan_partial_rerun(
 ) -> Result<PartialRerun, RerunError> {
     let nr = node_runs
         .iter()
-        .find(|nr| nr.node_id == from_node && nr.occurrence == occurrence)
+        .find(|nr| nr.local_node_id == from_node && nr.occurrence == occurrence)
         .ok_or_else(|| RerunError::NoSuchNodeRun {
             node: from_node.to_string(),
             occurrence,

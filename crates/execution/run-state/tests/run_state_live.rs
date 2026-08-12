@@ -333,7 +333,7 @@ fn run_state_live() {
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM current_entry) = 'recorded', \
                   'current entry generation records'; \
-           ASSERT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1' AND node_id='in'), \
+           ASSERT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1' AND local_node_id='in'), \
                   'current generation writes entry checkpoint'; \
          END $$; COMMIT;",
         app_preamble(),
@@ -547,8 +547,10 @@ fn run_state_live() {
            (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
          VALUES ('t1','attempt-1','worker-c',now()+interval '1 minute',4); \
          INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,status) \
-         VALUES ('t1','attempt-1','effect',0,1,'started');",
+           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
+         VALUES ('t1','attempt-1',0, \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'effect',0,1,'started');",
     );
     let complete_script = format!(
         "{} PREPARE complete_stmt \

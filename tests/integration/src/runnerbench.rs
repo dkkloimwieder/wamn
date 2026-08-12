@@ -209,7 +209,9 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.node_runs (\
             tenant_id text NOT NULL, \
-            run_id text NOT NULL, node_id text NOT NULL, \
+            run_id text NOT NULL, \
+            frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
+            current_plan_hash text NOT NULL, local_node_id text NOT NULL, \
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, \
             status text NOT NULL, \
             output_port text, output_json jsonb, input_json jsonb, \
@@ -218,7 +220,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
             started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
+            PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\

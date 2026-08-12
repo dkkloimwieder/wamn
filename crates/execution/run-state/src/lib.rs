@@ -31,7 +31,14 @@
 //! // The run was killed after `a` committed: only `a` is persisted. `a` is a
 //! // `cron` entry, so its recorded output is the admitted input, unchanged.
 //! let run = RunRecord::new("run-1", "f", 1, json!({"n": 1}));
-//! let node_runs = [NodeRunRecord::success("run-1", "a", 0, "main", json!({"n": 1}))];
+//! let node_runs = [NodeRunRecord::success(
+//!     "run-1",
+//!     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+//!     "a",
+//!     0,
+//!     "main",
+//!     json!({"n": 1}),
+//! )];
 //! let st = reconstruct(&plan, &run, &node_runs).unwrap();
 //! assert_eq!(st.status(), ExecutionStatus::Running);
 //! assert_eq!(st.step_seq(), 1); // `a` folded; `b` is the outstanding frontier

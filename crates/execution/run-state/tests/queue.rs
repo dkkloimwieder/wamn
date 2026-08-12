@@ -1832,8 +1832,8 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          CREATE TEMP TABLE lease_t0 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
          EXECUTE csr_stmt('cd-0','n1',0,0,'main','\"out\"','\"in\"','out',5,'sha256:out','full',false,120000,'cd-owner');\n\
          DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND status='success') = 1, 'combined record wrote the checkpoint'; \
-           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND node_id='n1') = 5, 'combined record binds payload_size as bigint'; \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1' AND status='success') = 1, 'combined record wrote the checkpoint'; \
+           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1') = 5, 'combined record binds payload_size as bigint'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t0), 'combined record renewed the lease'; \
          END $$;\n\
          -- Per-visit occurrence (wamn-03m/cjv.10): a REPLAY of visit 0 is an\n\
@@ -1842,23 +1842,23 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          EXECUTE csr_stmt('cd-0','n1',0,90,'main','\"out-replay\"','\"in\"','out-replay',12,'sha256:out-replay','full',false,120000,'cd-owner');\n\
          EXECUTE csr_stmt('cd-0','n1',1,91,'main','\"out-v2\"','\"in2\"','out-v2',8,'sha256:out-v2','full',false,120000,'cd-owner');\n\
          DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n1') = 2, 'distinct visits persist distinct rows'; \
-           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND occurrence=0) = '\"out\"', 'a replayed visit does not overwrite its row'; \
-           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND node_id='n1' AND occurrence=1) = '\"out-v2\"', 'the second visit carries its own emission'; \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1') = 2, 'distinct visits persist distinct rows'; \
+           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1' AND occurrence=0) = '\"out\"', 'a replayed visit does not overwrite its row'; \
+           ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1' AND occurrence=1) = '\"out-v2\"', 'the second visit carries its own emission'; \
          END $$;\n\
          -- A straggler with the WRONG owner still records (idempotent checkpoint,\n\
          -- same as the split path) but cannot renew the lease.\n\
          CREATE TEMP TABLE lease_t1 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
          EXECUTE csr_stmt('cd-0','n2',0,1,'main','\"out\"','\"in\"','out',5,'sha256:out','full',false,300000,'not-the-owner');\n\
          DO $$ BEGIN \
-           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND node_id='n2') = 1, 'wrong-owner record still checkpoints'; \
+           ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n2') = 1, 'wrong-owner record still checkpoints'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') = (SELECT lease_expires_at FROM lease_t1), 'wrong-owner record does NOT renew the lease'; \
          END $$;\n\
          -- The error-routed twin.\n\
          EXECUTE cer_stmt('cd-0','n3',0,2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}','error',12,'sha256:error','full',false,240000,'cd-owner');\n\
          DO $$ BEGIN \
-           ASSERT (SELECT error_kind FROM node_runs WHERE run_id='cd-0' AND node_id='n3') = 'terminal', 'combined error record carries the taxonomy'; \
-           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND node_id='n3') = 12, 'combined error record binds payload_size as bigint'; \
+           ASSERT (SELECT error_kind FROM node_runs WHERE run_id='cd-0' AND local_node_id='n3') = 'terminal', 'combined error record carries the taxonomy'; \
+           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n3') = 12, 'combined error record binds payload_size as bigint'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t1), 'error record renews the lease too'; \
          END $$;\n\
          -- Completion + dequeue, atomic in one statement.\n\

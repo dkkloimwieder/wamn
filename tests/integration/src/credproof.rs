@@ -543,7 +543,7 @@ async fn assert_delivery(admin_url: &str, run_id: &str, secret: &str) -> anyhow:
     let row = client
         .query_one(
             "SELECT output_json::text FROM wamn_run.node_runs \
-               WHERE tenant_id=$1 AND run_id=$2 AND node_id='notify'",
+               WHERE tenant_id=$1 AND run_id=$2 AND local_node_id='notify'",
             &[&TENANT, &run_id],
         )
         .await?;

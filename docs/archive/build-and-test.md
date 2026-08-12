@@ -5866,6 +5866,97 @@ python3 -m json.tool architecture/state-owners.json >/dev/null
 git diff --check
 ```
 
+## SR-MVP — framed node/effect fact identity (`wamn-0h0g.4.13`)
+
+This debug-only gate proves the framed durable identity and trusted effect
+payload shape. It owns schema/model/payload shape only: no effect intent writer,
+authorization/send path, dispatch creation, or call-frame interpreter runtime is
+claimed here. Keep all package, WIT, and wire versions at `0.1`/`0.1.0`; negative
+tests use non-version sentinels.
+
+Use isolated root and component targets so this lane cannot read artifacts from
+another worktree:
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state -p wamn-schema-control \
+  -p wamn-ctl -p wamn-proof-integration
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-run-state -p wamn-schema-control \
+  -p wamn-ctl --all-targets -- -D warnings
+# The untouched dispatcher helpers are retained by wamn-0h0g.12.13.
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-proof-integration \
+  --all-targets -- -D warnings -A dead-code
+
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13-components CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline --manifest-path components/Cargo.toml -p flowrunner
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13-components CARGO_INCREMENTAL=0 \
+  cargo check --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2
+# Flowrunner remains deliberately hard-refused until wamn-0h0g.3.4/.5.4 land;
+# deny every warning except the resulting dead code on both native and wasm targets.
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13-components CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner --all-targets -- -D warnings -A dead-code
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13-components CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2 -- -D warnings -A dead-code
+
+docker rm -f wamn-0h0g-4-13-run-state-pg 2>/dev/null || true
+docker run --rm -d --name wamn-0h0g-4-13-run-state-pg \
+  -p 127.0.0.1:15654:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-4-13-run-state-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15654/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --test run_state_live \
+  run_state_live -- --ignored --exact --nocapture
+
+docker rm -f wamn-0h0g-4-13-run-state-pg
+
+docker rm -f wamn-0h0g-4-13-run-plane-pg 2>/dev/null || true
+docker run --rm -d --name wamn-0h0g-4-13-run-plane-pg \
+  -p 127.0.0.1:15655:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-4-13-run-plane-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15655/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+  run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+
+docker rm -f wamn-0h0g-4-13-run-plane-pg
+
+rustfmt --edition 2024 --check --config skip_children=true \
+  components/execution/flowrunner/src/lib.rs \
+  crates/execution/run-state/src/invocation_context.rs \
+  crates/execution/run-state/src/lib.rs \
+  crates/execution/run-state/src/model.rs \
+  crates/execution/run-state/src/queue/sql.rs \
+  crates/execution/run-state/src/reconstruct.rs \
+  crates/execution/run-state/src/rerun.rs \
+  crates/execution/run-state/src/sql.rs \
+  crates/execution/run-state/src/transitions.rs \
+  crates/execution/run-state/tests/queue.rs \
+  crates/execution/run-state/tests/run_state_live.rs \
+  crates/execution/run-state/tests/store.rs \
+  crates/schema/control/src/run_plane.rs \
+  services/ctl/src/reconcile_run_plane.rs \
+  services/ctl/tests/run_plane_live.rs \
+  test-support/fixtures/runner.rs \
+  tests/integration/src/capturebench.rs \
+  tests/integration/src/credproof.rs \
+  tests/integration/src/failoverbench.rs \
+  tests/integration/src/nodeinvoke.rs \
+  tests/integration/src/runnerbench.rs
+git diff --check
+```
+
 ## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
 
 This debug-only gate proves exact `call-flow { flow-id }` validation, candidate

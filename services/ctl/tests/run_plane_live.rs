@@ -230,6 +230,7 @@ async fn run_plane_reconcile_live() {
     };
     let su = connect(&url).await;
     shared_runner_legacy_leg(&su).await;
+    frame_identity_cutover_leg(&su).await;
     attempt_retirement_leg(&su).await;
     unsafe_attempt_retirement_refusal_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
@@ -495,14 +496,16 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
          CREATE SCHEMA {SCHEMA} AUTHORIZATION rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
          CREATE TABLE {SCHEMA}.node_runs ( \
-           tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+           tenant_id text NOT NULL, run_id text NOT NULL, \
+           frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
+           current_plan_hash text NOT NULL, local_node_id text NOT NULL, \
            occurrence int NOT NULL, seq int NOT NULL, attempt int NOT NULL, \
            status text NOT NULL, selected_recovery_class text, recovery_class text, \
            generation_fact_kind text, connection_generation text, \
            credential_generation text, attempt_started_at timestamptz, \
            attempt_dispatched_at timestamptz, attempt_deadline_at timestamptz, \
            attempt_input_ref text, attempt_key text, \
-           PRIMARY KEY (tenant_id,run_id,node_id,occurrence)); \
+           PRIMARY KEY (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
          ALTER TABLE {SCHEMA}.node_runs ENABLE ROW LEVEL SECURITY; \
          ALTER TABLE {SCHEMA}.node_runs FORCE ROW LEVEL SECURITY; \
          CREATE POLICY node_runs_tenant ON {SCHEMA}.node_runs \
@@ -510,11 +513,11 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
            WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant',true),'')); \
          RESET ROLE; \
          INSERT INTO {SCHEMA}.node_runs \
-           (tenant_id,run_id,node_id,occurrence,seq,attempt,status, \
+           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,attempt,status, \
             selected_recovery_class,recovery_class,generation_fact_kind, \
             attempt_started_at,attempt_dispatched_at,attempt_deadline_at, \
             attempt_input_ref) VALUES \
-           ('hidden','legacy','effect',0,0,0,'started','never-replay', \
+           ('hidden','legacy',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','effect',0,0,0,'started','never-replay', \
            'never-replay','not-required',now(),now(),now()+interval '1 minute', \
             'sha256:hidden'); \
          SET ROLE rp_owner_no_bypass; \
@@ -593,21 +596,21 @@ async fn add_retired_attempt_shape(su: &Client) {
              ADD CONSTRAINT effect_attempts_recovery_class_check CHECK (true), \
              ADD CONSTRAINT effect_attempts_key_check CHECK (true), \
              ADD CONSTRAINT effect_attempts_tenant_id_attempt_id_run_id_node_id_occurrence_key \
-               UNIQUE (tenant_id,attempt_id,run_id,node_id,occurrence), \
+               UNIQUE (tenant_id,attempt_id,run_id,frame_id,local_node_id,occurrence), \
              ADD CONSTRAINT effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key \
-               UNIQUE (tenant_id,run_id,node_id,occurrence,attempt_index); \
+               UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence,attempt_index); \
          ALTER TABLE {SCHEMA}.node_runs \
              ADD CONSTRAINT node_runs_current_effect_attempt_fk \
-             FOREIGN KEY (tenant_id,current_effect_attempt_id,run_id,node_id,occurrence) \
+             FOREIGN KEY (tenant_id,current_effect_attempt_id,run_id,frame_id,local_node_id,occurrence) \
              REFERENCES {SCHEMA}.effect_attempts \
-               (tenant_id,attempt_id,run_id,node_id,occurrence); \
+               (tenant_id,attempt_id,run_id,frame_id,local_node_id,occurrence); \
          ALTER TABLE {SCHEMA}.effect_attempts \
              ADD CONSTRAINT effect_attempts_predecessor_fk \
-             FOREIGN KEY (tenant_id,predecessor_attempt_id,run_id,node_id,occurrence) \
+             FOREIGN KEY (tenant_id,predecessor_attempt_id,run_id,frame_id,local_node_id,occurrence) \
              REFERENCES {SCHEMA}.effect_attempts \
-               (tenant_id,attempt_id,run_id,node_id,occurrence); \
+               (tenant_id,attempt_id,run_id,frame_id,local_node_id,occurrence); \
          CREATE INDEX effect_attempts_occurrence ON {SCHEMA}.effect_attempts \
-             (tenant_id,run_id,node_id,occurrence,attempt_index);"
+             (tenant_id,run_id,frame_id,local_node_id,occurrence,attempt_index);"
     ))
     .await
     .expect("add retired attempt shape");
@@ -673,6 +676,230 @@ async fn retired_shape_schema_snapshot(su: &Client) -> String {
     .get(0)
 }
 
+async fn create_old_frame_identity_tables(su: &Client, node: bool, effect: bool, populated: bool) {
+    reset(su).await;
+    su.batch_execute(&format!("CREATE SCHEMA {SCHEMA};"))
+        .await
+        .expect("create frame-cutover schema");
+    if node {
+        su.batch_execute(&format!(
+            "CREATE TABLE {SCHEMA}.node_runs ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+               occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, status text NOT NULL, \
+               PRIMARY KEY (tenant_id,run_id,node_id,occurrence));"
+        ))
+        .await
+        .expect("create old node_runs");
+        if populated {
+            su.batch_execute(&format!(
+                "INSERT INTO {SCHEMA}.node_runs(tenant_id,run_id,node_id,occurrence,seq,status) \
+                 VALUES ('t1','r1','n1',0,0,'success');"
+            ))
+            .await
+            .expect("seed old node_runs");
+        }
+    }
+    if effect {
+        su.batch_execute(&format!(
+            "CREATE TABLE {SCHEMA}.effect_attempts ( \
+               tenant_id text NOT NULL, attempt_id uuid NOT NULL, run_id text NOT NULL, \
+               node_id text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
+               generation_fact_kind text NOT NULL, attempt_started_at timestamptz NOT NULL, \
+               attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
+               PRIMARY KEY (tenant_id,attempt_id), \
+               UNIQUE (tenant_id,attempt_id,attempt_started_at), \
+               CONSTRAINT effect_attempts_occurrence_key \
+                 UNIQUE (tenant_id,run_id,node_id,occurrence));"
+        ))
+        .await
+        .expect("create old effect_attempts");
+        if populated {
+            su.batch_execute(&format!(
+                "INSERT INTO {SCHEMA}.effect_attempts \
+                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
+                    attempt_started_at,attempt_deadline_at,attempt_input_ref) \
+                 VALUES ('t1','00000000-0000-0000-0000-000000000413','r1','n1',0,0, \
+                         'not-required','2026-01-01 UTC','2026-01-02 UTC','sha256:input');"
+            ))
+            .await
+            .expect("seed old effect_attempts");
+        }
+    }
+}
+
+async fn frame_identity_cutover_leg(su: &Client) {
+    for (label, node, effect) in [
+        ("both-present", true, true),
+        ("node-only", true, false),
+        ("effect-only", false, true),
+    ] {
+        create_old_frame_identity_tables(su, node, effect, true).await;
+        su.batch_execute("GRANT wamn_scenario_author TO wamn_app")
+            .await
+            .expect("seed role-membership mutation sentinel");
+        let before = retired_shape_schema_snapshot(su).await;
+        let error = reconcile_run_plane::reconcile(su, &schema(), true)
+            .await
+            .expect_err("populated old frame identity must refuse before DDL");
+        assert!(
+            format!("{error:#}")
+                .contains("frame-identity-cutover-requires-empty-node-and-effect-facts"),
+            "{label}: wrong refusal: {error:#}"
+        );
+        assert_eq!(
+            retired_shape_schema_snapshot(su).await,
+            before,
+            "{label}: refusal must leave schema unchanged"
+        );
+        let membership_retained: bool = su
+            .query_one(
+                "SELECT pg_has_role('wamn_app', 'wamn_scenario_author', 'MEMBER')",
+                &[],
+            )
+            .await
+            .expect("read role-membership mutation sentinel")
+            .get(0);
+        assert!(
+            membership_retained,
+            "{label}: refusal must precede role bootstrap"
+        );
+    }
+
+    for (label, drift_sql) in [
+        (
+            "drifted-frame-check",
+            format!(
+                "ALTER TABLE {SCHEMA}.node_runs \
+                   DROP CONSTRAINT node_runs_frame_relation_check, \
+                   ADD CONSTRAINT node_runs_frame_relation_check CHECK (frame_id >= 0);"
+            ),
+        ),
+        (
+            "drifted-frame-pk",
+            format!(
+                "ALTER TABLE {SCHEMA}.node_runs DROP CONSTRAINT node_runs_pkey, \
+                   ADD PRIMARY KEY (tenant_id,run_id,local_node_id,occurrence);"
+            ),
+        ),
+        (
+            "retained-legacy-node-id",
+            format!(
+                "ALTER TABLE {SCHEMA}.node_runs \
+                   ADD COLUMN node_id text NOT NULL DEFAULT 'legacy';"
+            ),
+        ),
+    ] {
+        reset(su).await;
+        su.batch_execute(CATALOG_SCHEMA_SQL)
+            .await
+            .expect("apply catalog for populated frame drift refusal");
+        su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
+            .await
+            .expect("apply current run-state for populated frame drift refusal");
+        seed_run_pin_parents(su, "t1", "frame-cat", 1, "dev").await;
+        su.batch_execute(&format!(
+            "INSERT INTO {SCHEMA}.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                execution_bundle_hash,status) \
+             VALUES ('t1',$${label}$$,'f',1,'frame-cat',1,'dev',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'running'); \
+             INSERT INTO {SCHEMA}.node_runs \
+               (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
+             VALUES ('t1',$${label}$$,0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success'); \
+             {drift_sql}"
+        ))
+        .await
+        .expect("seed populated frame drift");
+        let before = retired_shape_schema_snapshot(su).await;
+        let error = reconcile_run_plane::reconcile(su, &schema(), true)
+            .await
+            .expect_err("populated late frame identity drift must refuse before DDL");
+        assert!(
+            format!("{error:#}")
+                .contains("frame-identity-cutover-requires-empty-node-and-effect-facts"),
+            "{label}: wrong refusal: {error:#}"
+        );
+        assert_eq!(
+            retired_shape_schema_snapshot(su).await,
+            before,
+            "{label}: refusal must leave schema unchanged"
+        );
+    }
+
+    create_old_frame_identity_tables(su, true, true, false).await;
+    let plan = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("empty old frame identity cutover succeeds");
+    assert!(
+        plan.actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+    );
+    let old_identity_residue: i64 = su
+        .query_one(
+            "SELECT count(*) FROM information_schema.columns \
+              WHERE table_schema=$1 AND table_name IN ('node_runs','effect_attempts') \
+                AND column_name='node_id'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read upgraded frame identity columns")
+        .get(0);
+    assert_eq!(
+        old_identity_residue, 0,
+        "empty cutover retained legacy node_id"
+    );
+    let again = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("frame identity cutover idempotence");
+    assert!(
+        !again
+            .actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+    );
+
+    reset(su).await;
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog for current single-target proof");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema()))
+        .await
+        .expect("apply current run-state");
+    su.batch_execute(&format!("DROP TABLE {SCHEMA}.effect_attempts CASCADE;"))
+        .await
+        .expect("remove effect peer");
+    seed_run_pin_parents(su, "t1", "frame-cat", 1, "dev").await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','framed-current','f',1,'frame-cat',1,'dev',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'running'); \
+         INSERT INTO {SCHEMA}.node_runs \
+           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
+         VALUES ('t1','framed-current',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'n1',0,0,'success');"
+    ))
+    .await
+    .expect("seed current populated node target");
+    let plan = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("current populated node target creates missing effect peer");
+    assert!(
+        !plan
+            .actions
+            .iter()
+            .any(|action| action.kind == RunPlaneActionKind::FrameIdentityCutover)
+    );
+    let exists: bool = su
+        .query_one(
+            "SELECT to_regclass($1::text) IS NOT NULL",
+            &[&format!("{SCHEMA}.effect_attempts")],
+        )
+        .await
+        .expect("read recreated effect peer")
+        .get(0);
+    assert!(exists, "missing current peer was not recreated");
+}
+
 async fn attempt_retirement_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -721,12 +948,14 @@ async fn attempt_retirement_leg(su: &Client) {
                    'idem-43','retired-terminal','completed', \
                    '2025-01-01 00:00:00 UTC','2025-01-01 00:30:00 UTC'); \
          INSERT INTO {SCHEMA}.node_runs \
-             (tenant_id,run_id,node_id,occurrence,seq,status,output_port,output_json, \
+             (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status,output_port,output_json, \
               input_json,input_ref,output_ref,preview_head,payload_size,payload_hash, \
               capture_mode,redacted,started_at,ended_at,attempt, \
               selected_recovery_class,recovery_class,generation_fact_kind, \
               attempt_started_at,attempt_deadline_at,attempt_input_ref) \
-           VALUES ('t1','retired-terminal','effect',0,1,'success','main', \
+           VALUES ('t1','retired-terminal',0, \
+                   'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                   'effect',0,1,'success','main', \
                    '{{\"result\":\"preserved\"}}','{{\"input\":\"preserved\"}}', \
                    'sha256:node-input','sha256:node-output','preview-43',43, \
                    'sha256:payload-43','full',false, \
@@ -734,14 +963,19 @@ async fn attempt_retirement_leg(su: &Client) {
                    'never-replay','never-replay','not-required', \
                    '2025-01-01 00:00:00 UTC','2025-01-01 01:00:00 UTC','sha256:legacy'); \
          INSERT INTO {SCHEMA}.effect_attempts \
-             (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+             (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+              local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
               generation_fact_kind,connection_name,connection_generation, \
               credential_generation,verified_author_principal, \
               verified_publisher_principal,attempt_started_at,attempt_deadline_at, \
               attempt_input_ref,attempt_key,created_at,attempt_index,legacy_imported, \
               selected_recovery_class,recovery_class) \
            VALUES ('t1','00000000-0000-0000-0000-000000000043', \
-                   'retired-terminal','effect',0,1,'attested','connection-43', \
+                   'retired-terminal', \
+                   'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                   'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                   0,'effect','sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                   'manager',0,1,'attested','connection-43', \
                    'connection-generation-43','credential-generation-43', \
                    'author-43','publisher-43','2025-01-01 00:00:00 UTC', \
                    '2025-01-01 01:00:00 UTC','sha256:legacy','legacy-key', \
@@ -814,46 +1048,60 @@ async fn attempt_retirement_leg(su: &Client) {
             .any(|action| { action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage })
     );
 
-    // A same-name non-unique index is not the one-attempt boundary. Reconcile
-    // replaces it atomically and the repaired identity rejects a successor.
-    su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.effect_attempts \
-           DROP CONSTRAINT effect_attempts_occurrence_key; \
-         CREATE INDEX effect_attempts_occurrence_key ON {SCHEMA}.effect_attempts \
-           (tenant_id,run_id,node_id,occurrence);"
-    ))
-    .await
-    .expect("install drifted occurrence index");
-    let repaired = reconcile_run_plane::reconcile(su, &schema, true)
-        .await
-        .expect("repair drifted occurrence identity");
-    assert!(
-        repaired
-            .actions
-            .iter()
-            .any(|action| action.kind == RunPlaneActionKind::RetireAttemptRecoveryLineage)
-    );
-    let repaired_index = indexdef(su, "effect_attempts_occurrence_key")
-        .await
-        .expect("repaired occurrence identity");
-    assert!(
-        repaired_index.starts_with("CREATE UNIQUE INDEX"),
-        "occurrence identity is unique: {repaired_index}"
-    );
     let duplicate = su
         .batch_execute(&format!(
             "INSERT INTO {SCHEMA}.effect_attempts \
-               (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+               (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                 generation_fact_kind,attempt_started_at,attempt_deadline_at, \
                 attempt_input_ref) VALUES \
                ('t1','00000000-0000-0000-0000-000000000044', \
-                'retired-terminal','effect',0,2,'not-required', \
+                'retired-terminal', \
+                'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                0,'effect','sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
+                'manager',0,2,'not-required', \
                 '2025-01-01 00:30:00 UTC','2025-01-01 01:30:00 UTC', \
                 'sha256:second')"
         ))
         .await
         .expect_err("one occurrence refuses a second attempt");
     assert_db_code(duplicate, "23505", "single-shot occurrence identity");
+
+    // A same-name non-unique index is not the one-attempt boundary. Populated
+    // frame identity is never repaired in place: refuse before any mutation.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.effect_attempts \
+         DROP CONSTRAINT effect_attempts_occurrence_key; \
+         CREATE INDEX effect_attempts_occurrence_key ON {SCHEMA}.effect_attempts \
+           (tenant_id,run_id,frame_id,local_node_id,occurrence);"
+    ))
+    .await
+    .expect("install drifted occurrence index");
+    let schema_before_drift_refusal = retired_shape_schema_snapshot(su).await;
+    let history_before_drift_refusal = retired_history_snapshot(su).await;
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("populated occurrence identity drift must refuse");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres
+        .as_db_error()
+        .expect("occurrence drift is a database refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "frame-identity-cutover-requires-empty-node-and-effect-facts"
+    );
+    assert_eq!(
+        retired_shape_schema_snapshot(su).await,
+        schema_before_drift_refusal,
+        "populated occurrence drift refusal leaves schema unchanged"
+    );
+    assert_eq!(
+        retired_history_snapshot(su).await,
+        history_before_drift_refusal,
+        "populated occurrence drift refusal leaves history unchanged"
+    );
 
     let lineage_after: String = su
         .query_one(
@@ -872,7 +1120,7 @@ async fn attempt_retirement_leg(su: &Client) {
     // A failure after the ALTERs proves the transaction-free action batch is
     // still one implicit PostgreSQL transaction and leaves the client usable.
     su.batch_execute(&format!(
-        "ALTER TABLE {SCHEMA}.effect_attempts DROP CONSTRAINT effect_attempts_occurrence_key; \
+        "DROP INDEX {SCHEMA}.effect_attempts_occurrence_key; \
          ALTER TABLE {SCHEMA}.effect_attempts \
              ALTER COLUMN attempt_index SET NOT NULL, \
              ALTER COLUMN attempt_index SET DEFAULT 0;"
@@ -922,15 +1170,18 @@ async fn unsafe_attempt_retirement_refusal_leg(su: &Client) {
         add_retired_attempt_shape(su).await;
         if case == "successors" {
             su.batch_execute(&format!(
-                "ALTER TABLE {SCHEMA}.effect_attempts \
-                   DROP CONSTRAINT effect_attempts_tenant_id_run_id_node_id_occurrence_attempt_index_key; \
-                 INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq, \
+                "INSERT INTO {SCHEMA}.effect_attempts \
+                   (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
                     generation_fact_kind,attempt_started_at,attempt_deadline_at, \
                     attempt_input_ref,attempt_index) VALUES \
-                   ('t1','00000000-0000-0000-0000-000000000051','r','n',0,1, \
+                   ('t1','00000000-0000-0000-0000-000000000051','r', \
+                    $${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                    'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1, \
                     'not-required','2025-01-01 UTC','2025-01-02 UTC','sha256:a',0), \
-                   ('t1','00000000-0000-0000-0000-000000000052','r','n',0,1, \
+                   ('t1','00000000-0000-0000-0000-000000000052','r', \
+                    $${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                    'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1, \
                     'not-required','2025-01-01 UTC','2025-01-02 UTC','sha256:b',1);"
             ))
             .await
@@ -954,8 +1205,8 @@ async fn unsafe_attempt_retirement_refusal_leg(su: &Client) {
                            'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex'), \
                            'running'); \
                  INSERT INTO {SCHEMA}.node_runs \
-                   (tenant_id,run_id,node_id,occurrence,seq,status) \
-                   VALUES ('t1','active-orphan','effect',0,1,'started');"
+                   (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
+                   VALUES ('t1','active-orphan',0,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'effect',0,1,'started');"
             ))
             .await
             .expect("seed active projection without intent");
@@ -2473,10 +2724,12 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
         .execute(
             &format!(
                 "INSERT INTO {SCHEMA}.effect_attempts \
-                   (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
+                   (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
                     attempt_started_at,attempt_deadline_at,attempt_input_ref) \
                  VALUES ('t1','00000000-0000-0000-0000-000000000509', \
-                         'forged','effect',0,0,'not-required', \
+                         'forged',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                         'effect',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
                          now(),now()+interval '1 minute','sha256:forged')"
             ),
             &[],
@@ -2552,14 +2805,17 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     // append identity's history order.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.effect_attempts \
-             (tenant_id,attempt_id,run_id,node_id,occurrence,seq,generation_fact_kind, \
+             (tenant_id,attempt_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+              local_node_id,source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
               attempt_started_at,attempt_deadline_at,attempt_input_ref) \
              VALUES \
              ('t1','00000000-0000-0000-0000-000000000530', \
-                     'audit-run','n',0,0,'not-required', \
+                     'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                     'n',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,0,'not-required', \
                      now(),now()+interval '1 minute','sha256:audit'), \
              ('t1','00000000-0000-0000-0000-000000000540', \
-                     'audit-run','temporal',0,1,'not-required', \
+                     'audit-run',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,$${EMPTY_EXECUTION_BUNDLE_HASH}$$,0, \
+                     'temporal',$${EMPTY_EXECUTION_BUNDLE_HASH}$$,'manager',0,1,'not-required', \
                      now(),now()+interval '1 minute','sha256:temporal'); \
          INSERT INTO {SCHEMA}.effect_attempt_dispatches \
              (tenant_id,attempt_id,attempt_started_at,dispatched_at) \

@@ -192,6 +192,7 @@ fn runner_ddl(schema: &str) -> String {
             created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             catalog_id text, catalog_version bigint, environment text, \
+            execution_bundle_hash text NOT NULL DEFAULT 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
             attachment_id text, registration_id text, event_source_run_id text, \
             event_root_run_id text, event_depth int, \
             invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
@@ -215,7 +216,9 @@ fn runner_ddl(schema: &str) -> String {
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.runs TO wamn_app;\
          CREATE TABLE {schema}.node_runs (\
-            tenant_id text NOT NULL, run_id text NOT NULL, node_id text NOT NULL, \
+            tenant_id text NOT NULL, run_id text NOT NULL, \
+            frame_id bigint NOT NULL DEFAULT 0, parent_frame_id bigint, call_site_id text, \
+            current_plan_hash text NOT NULL, local_node_id text NOT NULL, \
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
@@ -223,7 +226,7 @@ fn runner_ddl(schema: &str) -> String {
             preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
             redacted boolean NOT NULL DEFAULT false, \
             started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
-            PRIMARY KEY (tenant_id, run_id, node_id, occurrence), \
+            PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.node_runs FORCE ROW LEVEL SECURITY;\
@@ -705,7 +708,7 @@ async fn gate_body(
     }
     for row in seed_conn
         .query(
-            &format!("SELECT node_id, status, error_kind FROM {SCHEMA}.node_runs WHERE run_id = 'ni-0' ORDER BY seq"),
+            &format!("SELECT local_node_id, status, error_kind FROM {SCHEMA}.node_runs WHERE run_id = 'ni-0' ORDER BY seq"),
             &[],
         )
         .await?
@@ -721,7 +724,7 @@ async fn gate_body(
     let out_row = seed_conn
         .query_one(
             &format!(
-                "SELECT output_json::text FROM {SCHEMA}.node_runs WHERE run_id = 'ni-0' AND node_id = 'call'"
+                "SELECT output_json::text FROM {SCHEMA}.node_runs WHERE run_id = 'ni-0' AND local_node_id = 'call'"
             ),
             &[],
         )
@@ -1093,7 +1096,7 @@ async fn gate_body(
                 "SELECT r.status, r.fail_kind, r.fail_node, n.status, n.error_kind, q.lease_owner \
                    FROM {SCHEMA}.runs AS r \
                    LEFT JOIN {SCHEMA}.node_runs AS n \
-                     ON n.tenant_id=r.tenant_id AND n.run_id=r.run_id AND n.node_id='call' \
+                     ON n.tenant_id=r.tenant_id AND n.run_id=r.run_id AND n.local_node_id='call' \
                    LEFT JOIN {SCHEMA}.run_queue AS q \
                      ON q.tenant_id=r.tenant_id AND q.run_id=r.run_id \
                   WHERE r.run_id = 'ni-mismatch'"

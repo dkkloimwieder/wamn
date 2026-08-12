@@ -330,10 +330,11 @@ pub fn complete_dequeue_sql() -> String {
 
 /// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
 /// [`run_sql::insert_node_run_success`] (`$1`..`$7`, idempotent by
-/// `(run_id, node_id, occurrence)`) with the [`renew_lease_sql`] write (ttl_ms,
-/// owner — owner-guarded, sharing `$1` run_id). The renew fires even when the
-/// record is a conflict no-op (a replay of an already-recorded visit), so a
-/// long cyclic walk's lease stays live exactly as the split pair kept it.
+/// `(run_id, frame_id, local_node_id, occurrence)`) with the
+/// [`renew_lease_sql`] write (ttl_ms, owner — owner-guarded, sharing `$1` run
+/// id). The renew fires even when the record is a conflict no-op (a replay of an
+/// already-recorded visit), so a long cyclic walk's lease stays live exactly as
+/// the split pair kept it.
 pub fn record_success_and_renew_sql() -> String {
     checkpoint_then_renew(run_sql::insert_node_run_success())
 }

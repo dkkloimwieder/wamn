@@ -42,6 +42,7 @@ authority AS ( \
              ELSE 'ready' \
            END AS result_code, \
            r.tenant_id, r.run_id, r.status, \
+           r.execution_bundle_hash, \
            r.caller_outcome_kind, r.caller_outcome_json, \
            r.caller_http_status, r.caller_release_node_id, \
            r.caller_outcome_hash, r.caller_released_at, r.run_deadline_at \
@@ -244,7 +245,7 @@ impl ReservedCheckpointResult {
 /// exact claim generation.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// node id, occurrence, sequence, output port, output JSON text, input JSON
+/// local node id, occurrence, sequence, output port, output JSON text, input JSON
 /// text, preview head, payload size, payload hash, capture mode, redacted,
 /// lease TTL milliseconds. A replayed checkpoint still renews, but a stale
 /// owner or generation cannot insert the checkpoint.
@@ -253,14 +254,16 @@ pub fn reserved_checkpoint_sql() -> String {
         "{FENCED_PREFIX}, \
          recorded AS ( \
              INSERT INTO node_runs \
-                    (tenant_id, run_id, node_id, occurrence, seq, status, \
+                    (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
+                     local_node_id, occurrence, seq, status, \
                      output_port, output_json, input_json, preview_head, \
                      payload_size, payload_hash, capture_mode, redacted) \
-             SELECT a.tenant_id, a.run_id, $5, $6, $7, '{success}', \
+             SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
+                    $5, $6, $7, '{success}', \
                     $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
-             ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING \
+             ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
              RETURNING run_id \
          ), \
          renewed AS ( \
@@ -293,15 +296,17 @@ pub fn node_context_checkpoint_sql() -> String {
         "{FENCED_PREFIX}, \
          recorded AS ( \
              INSERT INTO node_runs \
-                    (tenant_id, run_id, node_id, occurrence, seq, status, \
+                    (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
+                     local_node_id, occurrence, seq, status, \
                      output_port, output_json, input_json, preview_head, \
                      payload_size, payload_hash, capture_mode, redacted) \
-             SELECT a.tenant_id, a.run_id, $5, $6, $7, '{success}', \
+             SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
+                    $5, $6, $7, '{success}', \
                     $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
                 AND jsonb_typeof($16::text::jsonb) = 'object' \
-             ON CONFLICT (tenant_id, run_id, node_id, occurrence) DO NOTHING \
+             ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
              RETURNING run_id \
          ), \
          checkpointed AS ( \
@@ -430,7 +435,7 @@ impl CheckpointResult {
 /// Complete one persisted effect attempt and advance the run checkpoint.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
-/// node id, occurrence, output port, output JSON text, state JSON text.
+/// local node id, occurrence, output port, output JSON text, state JSON text.
 pub fn complete_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -438,7 +443,7 @@ pub fn complete_sql() -> String {
              SELECT n.* FROM node_runs AS n, authority AS a \
               WHERE a.result_code = 'ready' \
                 AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
               FOR UPDATE OF n \
          ), \
          classified AS ( \
@@ -458,7 +463,7 @@ pub fn complete_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
              RETURNING n.tenant_id, n.run_id \
          ), \
          checkpointed AS ( \
@@ -476,7 +481,7 @@ pub fn complete_sql() -> String {
 
 /// Complete a successful attempt, checkpoint replacement context, and renew.
 ///
-/// Params: fence `$1..$4`, node id, occurrence, output port, captured output,
+/// Params: fence `$1..$4`, local node id, occurrence, output port, captured output,
 /// captured input, preview, size, hash, capture mode, redacted, replacement
 /// context document, and lease TTL milliseconds.
 pub fn complete_attempt_success_sql() -> String {
@@ -486,7 +491,7 @@ pub fn complete_attempt_success_sql() -> String {
              SELECT n.* FROM node_runs AS n, authority AS a \
               WHERE a.result_code = 'ready' \
                 AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
               FOR UPDATE OF n \
          ), \
          classified AS ( \
@@ -507,7 +512,7 @@ pub fn complete_attempt_success_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
              RETURNING n.tenant_id, n.run_id \
          ), \
          checkpointed AS ( \
@@ -536,7 +541,7 @@ pub fn complete_attempt_success_sql() -> String {
 
 /// Complete an error-routed attempt and renew the exact queue lease.
 ///
-/// Params: fence `$1..$4`, node id, occurrence, captured error output,
+/// Params: fence `$1..$4`, local node id, occurrence, captured error output,
 /// captured input, error kind/detail, preview, size, hash, capture mode,
 /// redacted, and lease TTL milliseconds.
 pub fn complete_attempt_error_sql() -> String {
@@ -546,7 +551,7 @@ pub fn complete_attempt_error_sql() -> String {
              SELECT n.* FROM node_runs AS n, authority AS a \
               WHERE a.result_code = 'ready' \
                 AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
               FOR UPDATE OF n \
          ), \
          classified AS ( \
@@ -569,7 +574,7 @@ pub fn complete_attempt_error_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.node_id = $5 AND n.occurrence = $6 \
+                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
              RETURNING n.tenant_id, n.run_id \
          ), \
          renewed AS ( \
@@ -708,6 +713,8 @@ mod tests {
     fn reserved_checkpoint_inserts_only_from_ready_generation_authority() {
         let sql = reserved_checkpoint_sql();
         assert!(sql.contains("INSERT INTO node_runs"), "{sql}");
+        assert!(sql.contains("r.execution_bundle_hash"), "{sql}");
+        assert!(sql.contains("a.execution_bundle_hash"), "{sql}");
         assert!(sql.contains("FROM authority AS a"), "{sql}");
         assert!(sql.contains("WHERE a.result_code = 'ready'"), "{sql}");
         assert!(
@@ -771,6 +778,7 @@ mod tests {
         assert!(sql.starts_with("WITH input AS"));
         assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
         assert!(sql.contains("INSERT INTO node_runs"));
+        assert!(sql.contains("a.execution_bundle_hash"));
         assert!(sql.contains("jsonb_typeof($16::text::jsonb) = 'object'"));
         assert!(sql.contains("SET state_json = jsonb_set"));
         assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
@@ -856,7 +864,24 @@ mod tests {
             .and_then(|(_, tail)| tail.split_once("\n);"))
             .map(|(table, _)| table)
             .expect("effect_attempts table");
-        assert!(attempts.contains("UNIQUE (tenant_id, run_id, node_id, occurrence)"));
+        assert!(
+            attempts.contains("UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)")
+        );
+        for frame_fact in [
+            "root_plan_hash",
+            "current_plan_hash",
+            "frame_id",
+            "parent_frame_id",
+            "call_site_id",
+            "local_node_id",
+            "source_artifact_hash",
+            "requirement_name",
+        ] {
+            assert!(
+                attempts.contains(frame_fact),
+                "attempt table lacks frame/effect fact {frame_fact}"
+            );
+        }
         for residue in [
             "attempt_index",
             "predecessor_attempt_id",

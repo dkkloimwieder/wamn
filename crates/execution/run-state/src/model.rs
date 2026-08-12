@@ -84,17 +84,29 @@ impl RunRecord {
     }
 }
 
-/// One row of `node_runs`: a single node execution — the branch-aware
-/// reconstruction source. A node the flow LOOPS through has one row per visit,
+/// One row of `node_runs`: a single framed node execution — the branch-aware
+/// reconstruction source. A node the frame LOOPS through has one row per visit,
 /// disambiguated by `occurrence`; retries of one occurrence share the row and
 /// bump `attempt`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct NodeRunRecord {
     pub run_id: String,
-    pub node_id: String,
+    /// Root-run-local frame identity. Frameless/call-free runs use the root
+    /// frame, `0`.
+    pub frame_id: u64,
+    /// The parent frame when this row belongs to a call frame; absent on root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_frame_id: Option<u64>,
+    /// The caller's local call-site node id for a call frame; absent on root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_id: Option<String>,
+    /// The execution-bundle hash for the currently executing frame.
+    pub current_plan_hash: String,
+    /// The node id local to `current_plan_hash`.
+    pub local_node_id: String,
     /// Which visit of this node (0 = the first); the loop-safe part of the
-    /// idempotency key `(run_id, node_id, occurrence)`.
+    /// idempotency key `(run_id, frame_id, local_node_id, occurrence)`.
     #[serde(default)]
     pub occurrence: u32,
     /// Dispatch order within the run — reconstruction replays completed rows by
@@ -151,14 +163,19 @@ impl NodeRunRecord {
     /// sets the public `occurrence` field from the row.
     pub fn success(
         run_id: impl Into<String>,
-        node_id: impl Into<String>,
+        current_plan_hash: impl Into<String>,
+        local_node_id: impl Into<String>,
         seq: u32,
         port: impl Into<String>,
         payload: Value,
     ) -> NodeRunRecord {
         NodeRunRecord {
             run_id: run_id.into(),
-            node_id: node_id.into(),
+            frame_id: 0,
+            parent_frame_id: None,
+            call_site_id: None,
+            current_plan_hash: current_plan_hash.into(),
+            local_node_id: local_node_id.into(),
             occurrence: 0,
             seq,
             attempt: 0,

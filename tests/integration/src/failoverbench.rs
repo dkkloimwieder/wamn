@@ -547,7 +547,7 @@ async fn failover_phase(harness: &Harness, app_url: &str, iters: usize) -> anyho
     // broken replay-from-`entry` (w re-dispatched after re-walking the prefix ->
     // seq==4). Robust to the conditional's branch (unlike MAX over all nodes).
     let w_seq_q = format!(
-        "SELECT COALESCE(MAX(seq), -1)::int FROM {SCHEMA}.node_runs WHERE run_id = $1 AND node_id = 'w'"
+        "SELECT COALESCE(MAX(seq), -1)::int FROM {SCHEMA}.node_runs WHERE run_id = $1 AND local_node_id = 'w'"
     );
     // Force a claimed run's queue row reap-eligible: lease lapsed more than grace ago
     // ($1 ms) and the redelivery budget spent — the exact predicate the janitor reaps.

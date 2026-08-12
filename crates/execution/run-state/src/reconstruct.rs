@@ -70,13 +70,13 @@ pub fn reconstruct(
             .output
             .clone()
             .ok_or_else(|| ReconstructError::CaptureOff {
-                node: nr.node_id.clone(),
+                node: nr.local_node_id.clone(),
             })?;
         let port = nr
             .output_port
             .clone()
             .unwrap_or_else(|| MAIN_PORT.to_string());
-        recorded.push(Recorded::new(nr.node_id.clone(), port, payload));
+        recorded.push(Recorded::new(nr.local_node_id.clone(), port, payload));
     }
 
     let input = run.input.clone().unwrap_or(serde_json::Value::Null);

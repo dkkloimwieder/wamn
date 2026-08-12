@@ -14,6 +14,8 @@ use wamn_run_state::{
 };
 use wamn_runner::{NodeOutcome, Plan, ResumeError, Step};
 
+const PLAN_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+
 fn flow(json_str: &str) -> Flow {
     Flow::from_json(json_str).expect("fixture flow parses")
 }
@@ -80,6 +82,7 @@ fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<Strin
 fn entry_row(run: &RunRecord, node: &str) -> NodeRunRecord {
     NodeRunRecord::success(
         run.run_id.clone(),
+        PLAN_HASH,
         node,
         0,
         "main",
@@ -97,7 +100,7 @@ fn reconstruct_linear_resumes_at_the_killed_node() {
     let run = RunRecord::new("r1", "lin4", 1, json!({ "trig": 1 }));
     let node_runs = [
         entry_row(&run, "a"),
-        NodeRunRecord::success("r1", "b", 1, "main", json!({ "at": "b" })),
+        NodeRunRecord::success("r1", PLAN_HASH, "b", 1, "main", json!({ "at": "b" })),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(st.step_seq(), 2);
@@ -117,7 +120,7 @@ fn reconstruct_ignores_started_rows() {
             status: NodeRunStatus::Started, // b was in flight; no emission
             output: None,
             output_port: None,
-            ..NodeRunRecord::success("r1", "b", 1, "main", Value::Null)
+            ..NodeRunRecord::success("r1", PLAN_HASH, "b", 1, "main", Value::Null)
         },
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
@@ -134,9 +137,16 @@ fn reconstruct_is_branch_aware_kill_mid_branch_completes_the_right_branch() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "brc", 1, json!({}));
     let node_runs = [
-        NodeRunRecord::success("r1", "start", 0, "main", json!({})),
-        NodeRunRecord::success("r1", "cond", 1, "false", json!({ "picked": "false" })),
-        NodeRunRecord::success("r1", "n1", 2, "main", json!({ "wrote": "n" })),
+        NodeRunRecord::success("r1", PLAN_HASH, "start", 0, "main", json!({})),
+        NodeRunRecord::success(
+            "r1",
+            PLAN_HASH,
+            "cond",
+            1,
+            "false",
+            json!({ "picked": "false" }),
+        ),
+        NodeRunRecord::success("r1", PLAN_HASH, "n1", 2, "main", json!({ "wrote": "n" })),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
     assert_eq!(drive_collect(&plan, &mut st), ["n2"]); // y1/y2 never run
@@ -156,13 +166,13 @@ fn reconstruct_replays_an_error_routed_node() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "err", 1, json!({}));
     let node_runs = [
-        NodeRunRecord::success("r1", "a", 0, "main", json!({})),
+        NodeRunRecord::success("r1", PLAN_HASH, "a", 0, "main", json!({})),
         NodeRunRecord {
             status: NodeRunStatus::Error,
             output_port: Some("error".into()),
             output: Some(json!({ "error": { "message": "boom" } })),
             error_kind: Some(NodeErrorKind::Terminal),
-            ..NodeRunRecord::success("r1", "work", 1, "error", Value::Null)
+            ..NodeRunRecord::success("r1", PLAN_HASH, "work", 1, "error", Value::Null)
         },
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
@@ -188,6 +198,7 @@ fn diamond_e() -> Flow {
 fn success_at(node: &str, occurrence: u32, seq: u32) -> NodeRunRecord {
     let mut nr = NodeRunRecord::success(
         "r1",
+        PLAN_HASH,
         node,
         seq,
         "main",
@@ -276,7 +287,7 @@ fn reconstruct_capture_off_run_is_not_replayable() {
     // A completed success row with no captured output (9.6 capture off).
     let node_runs = [NodeRunRecord {
         output: None,
-        ..NodeRunRecord::success("r1", "a", 0, "main", Value::Null)
+        ..NodeRunRecord::success("r1", PLAN_HASH, "a", 0, "main", Value::Null)
     }];
     let err = reconstruct(&plan, &run, &node_runs).unwrap_err();
     assert_eq!(err, ReconstructError::CaptureOff { node: "a".into() });
@@ -288,7 +299,14 @@ fn reconstruct_detects_history_drift() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     // First recorded step names "b", but the flow dispatches "a" first.
-    let node_runs = [NodeRunRecord::success("r1", "b", 0, "main", json!({}))];
+    let node_runs = [NodeRunRecord::success(
+        "r1",
+        PLAN_HASH,
+        "b",
+        0,
+        "main",
+        json!({}),
+    )];
     let err = reconstruct(&plan, &run, &node_runs).unwrap_err();
     assert_eq!(
         err,
@@ -306,7 +324,7 @@ fn reconstruct_sorts_by_seq_not_row_order() {
     let plan = compile(&f);
     let run = RunRecord::new("r1", "lin4", 1, json!({}));
     let node_runs = [
-        NodeRunRecord::success("r1", "b", 1, "main", json!({ "at": "b" })),
+        NodeRunRecord::success("r1", PLAN_HASH, "b", 1, "main", json!({ "at": "b" })),
         entry_row(&run, "a"),
     ];
     let mut st = reconstruct(&plan, &run, &node_runs).unwrap();
@@ -370,14 +388,14 @@ fn partial_rerun_seeds_from_the_failed_nodes_captured_input() {
     // c failed; its captured input is recorded on the node-run.
     let node_runs = [
         entry_row(&orig, "a"),
-        NodeRunRecord::success("orig", "b", 1, "main", json!({ "at": "b" })),
+        NodeRunRecord::success("orig", PLAN_HASH, "b", 1, "main", json!({ "at": "b" })),
         NodeRunRecord {
             status: NodeRunStatus::Error,
             output: Some(json!({ "error": { "message": "transient" } })),
             output_port: Some("error".into()),
             input: Some(json!({ "captured": "c-input" })),
             error_kind: Some(NodeErrorKind::Retryable),
-            ..NodeRunRecord::success("orig", "c", 2, "error", Value::Null)
+            ..NodeRunRecord::success("orig", PLAN_HASH, "c", 2, "error", Value::Null)
         },
     ];
     let pr = plan_partial_rerun(&orig, &node_runs, "c", 0, "rerun-1").unwrap();
@@ -408,7 +426,14 @@ fn partial_rerun_seeds_from_the_failed_nodes_captured_input() {
 #[test]
 fn partial_rerun_unknown_node_run_is_rejected() {
     let orig = RunRecord::new("orig", "lin4", 1, json!({}));
-    let node_runs = [NodeRunRecord::success("orig", "a", 0, "main", json!({}))];
+    let node_runs = [NodeRunRecord::success(
+        "orig",
+        PLAN_HASH,
+        "a",
+        0,
+        "main",
+        json!({}),
+    )];
     let err = plan_partial_rerun(&orig, &node_runs, "zzz", 0, "rerun-1").unwrap_err();
     assert_eq!(
         err,
@@ -425,6 +450,7 @@ fn partial_rerun_requires_captured_input() {
     // The node ran but its input was not captured (9.6 capture off).
     let node_runs = [NodeRunRecord::success(
         "orig",
+        PLAN_HASH,
         "c",
         2,
         "main",
@@ -615,11 +641,23 @@ fn records_round_trip_as_json() {
         status: NodeRunStatus::Error,
         error_kind: Some(NodeErrorKind::RateLimited),
         input: Some(json!({ "in": true })),
-        ..NodeRunRecord::success("r1", "w", 2, "error", json!({ "error": {} }))
+        ..NodeRunRecord::success("r1", PLAN_HASH, "w", 2, "error", json!({ "error": {} }))
     };
     let s2 = serde_json::to_string(&nr).unwrap();
     assert_eq!(serde_json::from_str::<NodeRunRecord>(&s2).unwrap(), nr);
+    assert!(s2.contains("\"current-plan-hash\""));
+    assert!(s2.contains("\"local-node-id\":\"w\""));
+    assert!(!s2.contains("\"node-id\""));
     assert!(s2.contains("\"error-kind\":\"rate-limited\""));
+    let mut old_shape = serde_json::to_value(&nr).unwrap();
+    old_shape
+        .as_object_mut()
+        .unwrap()
+        .insert("node-id".to_string(), serde_json::json!("w"));
+    assert!(
+        serde_json::from_value::<NodeRunRecord>(old_shape).is_err(),
+        "old node-id shape must not deserialize as a framed node fact"
+    );
 }
 
 // ---- deploy/sql/run-state.sql drift guard --------------------------------------
@@ -638,10 +676,36 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
     assert!(sql.contains("current_setting('app.tenant', true)"));
     assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
-    // Lineage columns (immutable-replay design) + the loop-safe node-run key.
+    // Lineage columns (immutable-replay design) + the frame-keyed node-run key.
     assert!(sql.contains("replay_of"));
     assert!(sql.contains("root_run_id"));
-    assert!(sql.contains("PRIMARY KEY (tenant_id, run_id, node_id, occurrence)"));
+    assert!(sql.contains("PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence)"));
+    for frame_column in [
+        "frame_id",
+        "parent_frame_id",
+        "call_site_id",
+        "current_plan_hash",
+        "local_node_id",
+    ] {
+        assert!(
+            sql.contains(frame_column),
+            "run-state.sql missing frame column {frame_column}"
+        );
+    }
+    for effect_fact in [
+        "root_plan_hash",
+        "current_plan_hash",
+        "frame_id",
+        "local_node_id",
+        "source_artifact_hash",
+        "requirement_name text NOT NULL",
+        "UNIQUE (tenant_id, run_id, frame_id, local_node_id, occurrence)",
+    ] {
+        assert!(
+            sql.contains(effect_fact),
+            "run-state.sql missing effect attempt fact {effect_fact}"
+        );
+    }
     assert!(sql.contains("runs_idempotency"));
     assert!(sql.contains("REFERENCES wamn_run.runs"));
     // Reserved 5.10 / 9.6 seams.
@@ -760,9 +824,10 @@ fn run_state_schema_applies_and_isolates_on_postgres() {
            ('t2','run-b','f',1,'run-state-fixture',1,'test',\
             'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',\
             'running','k-b');\n\
-         INSERT INTO wamn_run.node_runs (tenant_id, run_id, node_id, seq, status, output_port, output_json) \
-           VALUES ('t1','run-a','n0',0,'success','main','{}'::jsonb), \
-                  ('t1','run-a','n1',1,'success','main','{}'::jsonb);\n",
+         INSERT INTO wamn_run.node_runs \
+           (tenant_id, run_id, frame_id, current_plan_hash, local_node_id, seq, status, output_port, output_json) \
+           VALUES ('t1','run-a',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','n0',0,'success','main','{}'::jsonb), \
+                  ('t1','run-a',0,'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a','n1',1,'success','main','{}'::jsonb);\n",
     );
     // As wamn_app under tenant t1: sees only t1's run + its two node-runs.
     script.push_str(

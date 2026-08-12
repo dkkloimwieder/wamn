@@ -509,32 +509,37 @@ fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
     for row in &rs.rows {
         let node_id = match row.first() {
             Some(SqlValue::Text(s)) => s.clone(),
-            other => return Err(format!("node_runs.node_id shape: {other:?}")),
+            other => return Err(format!("node_runs.local_node_id shape: {other:?}")),
         };
-        let occurrence = match row.get(1) {
+        let current_plan_hash = match row.get(1) {
+            Some(SqlValue::Text(s)) => s.clone(),
+            other => return Err(format!("node_runs.current_plan_hash shape: {other:?}")),
+        };
+        let occurrence = match row.get(2) {
             Some(SqlValue::Int32(n)) => *n as u32,
             Some(SqlValue::Int64(n)) => *n as u32,
             other => return Err(format!("node_runs.occurrence shape: {other:?}")),
         };
-        let seq = match row.get(2) {
+        let seq = match row.get(3) {
             Some(SqlValue::Int32(n)) => *n as u32,
             Some(SqlValue::Int64(n)) => *n as u32,
             other => return Err(format!("node_runs.seq shape: {other:?}")),
         };
-        let port = match row.get(3) {
+        let port = match row.get(4) {
             Some(SqlValue::Text(s)) => s.clone(),
             _ => MAIN_PORT.to_string(),
         };
         // A JSON value round-trips as `Some`; a SQL NULL output_json (9.6 capture
         // off / preview) is `None`, which reconstruction surfaces as CaptureOff —
         // distinct from a captured JSON `null` payload (Some(Value::Null)).
-        let output = match row.get(4) {
+        let output = match row.get(5) {
             Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Some(
                 serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?,
             ),
             _ => None,
         };
-        let mut rec = NodeRunRecord::success(run_id, node_id, seq, port, Value::Null);
+        let mut rec =
+            NodeRunRecord::success(run_id, current_plan_hash, node_id, seq, port, Value::Null);
         rec.output = output;
         rec.occurrence = occurrence;
         out.push(rec);
@@ -557,7 +562,7 @@ fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
 }
 
 /// Record a completed node execution — the durable per-node checkpoint, written
-/// after the node's effect commits. Idempotent by (run_id, node_id, occurrence):
+/// after the node's effect commits. Idempotent by (run_id, frame_id, local_node_id, occurrence):
 /// `occurrence` is the engine-computed visit ([`Dispatch::occurrence`]), so a
 /// merge/loop node's Nth visit lands as its own row and ON CONFLICT dedupes only
 /// a replay of the SAME visit (wamn-03m / R24).
