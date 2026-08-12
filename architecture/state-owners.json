@@ -52,10 +52,6 @@
       "path": "crates/data/entity-access",
       "role": "persistence"
     },
-    "event-registration-api": {
-      "path": "crates/data/api/src/registration.rs",
-      "role": "persistence"
-    },
     "event-registration-model": {
       "path": "crates/events/registration",
       "role": "semantic"
@@ -1139,12 +1135,10 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "event-registration-api",
         "schema-control",
         "ctl-copy"
       ],
       "readers": [
-        "event-registration-api",
         "schema-control",
         "ctl-copy",
         "materializer"
