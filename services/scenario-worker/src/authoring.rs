@@ -744,12 +744,18 @@ fn validate_workspace_flow_identity(
     Ok(())
 }
 
-/// Validate and persist one exact draft revision without creating a release.
-fn build_root_execution_plan(
+struct CompiledExecutionPlan {
+    plan: ExecutionPlanV2,
+    exact_bytes: Vec<u8>,
+    execution_bundle_hash: String,
+}
+
+/// Compile one deterministic exact-byte own-flow execution plan.
+fn compile_root_execution_plan(
     flow: &wamn_flow::Flow,
     root_artifact_hash: &str,
     runtime_revision: ExecutionRuntimeRevision,
-) -> anyhow::Result<ExecutionPlanV2> {
+) -> anyhow::Result<CompiledExecutionPlan> {
     let node_id = |value: &str| ExecutionNodeId::new(value);
     let entry = flow
         .nodes
@@ -766,8 +772,11 @@ fn build_root_execution_plan(
         }
         wamn_flow::EntryKind::Cron | wamn_flow::EntryKind::Event => serde_json::Value::Bool(true),
     };
-    let nodes = flow
-        .nodes
+    let mut semantic_requirements = flow.connection_requirements.iter().collect::<Vec<_>>();
+    semantic_requirements.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut semantic_nodes = flow.nodes.iter().collect::<Vec<_>>();
+    semantic_nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    let nodes = semantic_nodes
         .iter()
         .map(|node| {
             if node.node_type == "call-flow" {
@@ -796,10 +805,10 @@ fn build_root_execution_plan(
                 .connection
                 .as_ref()
                 .map(|name| {
-                    let requirement = flow
-                        .connection_requirements
-                        .iter()
-                        .find(|candidate| candidate.name == *name)
+                    let requirement = semantic_requirements
+                        .binary_search_by(|candidate| candidate.name.as_str().cmp(name.as_str()))
+                        .ok()
+                        .map(|index| semantic_requirements[index])
                         .with_context(|| {
                             format!("node {:?} has unresolved connection {name:?}", node.id)
                         })?;
@@ -824,8 +833,24 @@ fn build_root_execution_plan(
             })
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let edges = flow
-        .edges
+    let mut semantic_edges = flow.edges.iter().collect::<Vec<_>>();
+    semantic_edges.sort_by(|left, right| {
+        (
+            left.from.as_str(),
+            left.from_port.as_str(),
+            left.ordinal.unwrap_or(0),
+            left.to.as_str(),
+            left.to_port.as_deref().unwrap_or(""),
+        )
+            .cmp(&(
+                right.from.as_str(),
+                right.from_port.as_str(),
+                right.ordinal.unwrap_or(0),
+                right.to.as_str(),
+                right.to_port.as_deref().unwrap_or(""),
+            ))
+    });
+    let edges = semantic_edges
         .iter()
         .map(|edge| {
             Ok(ExecutionPlanEdge {
@@ -876,7 +901,15 @@ fn build_root_execution_plan(
         body: body.clone(),
     };
     body.callable_contract = probe.derived_callable_contract()?;
-    ExecutionPlanV2::new(runtime_revision, root_artifact_hash, body).map_err(anyhow::Error::new)
+    let plan = ExecutionPlanV2::new(runtime_revision, root_artifact_hash, body)
+        .map_err(anyhow::Error::new)?;
+    let exact_bytes = serde_json::to_vec(&plan).context("serialize exact execution bundle")?;
+    let execution_bundle_hash = execution_bundle_hash(&exact_bytes);
+    Ok(CompiledExecutionPlan {
+        plan,
+        exact_bytes,
+        execution_bundle_hash,
+    })
 }
 
 async fn validate_call_flow_callees(
@@ -1029,14 +1062,18 @@ pub(crate) async fn validate_flow_draft(
                 }));
             }
         };
-    let execution_plan = build_root_execution_plan(
+    let compiled_plan = compile_root_execution_plan(
         &flow,
         artifact.identity().artifact_hash().as_str(),
         TrustedExecutionRuntimeRevision::from_flowrunner_bytes(flowrunner_bytes)
             .execution_runtime_revision(),
     )?;
-    let draft = match DraftArtifact::new(&request.tenant_id, &flow, implementations, execution_plan)
-    {
+    let draft = match DraftArtifact::new(
+        &request.tenant_id,
+        &flow,
+        implementations,
+        compiled_plan.plan.clone(),
+    ) {
         Ok(draft) => draft,
         Err(error) => {
             return Ok(Err(DraftRunRefusal::InvalidDraft {
@@ -1105,9 +1142,6 @@ pub(crate) async fn validate_flow_draft(
         .context("suite flow version must be a positive u32")?;
     let draft_revision =
         u64::try_from(request.draft_revision).context("draft revision must be a positive u64")?;
-    let execution_bundle_bytes =
-        serde_json::to_vec(draft.execution_plan()).context("serialize exact execution bundle")?;
-    let execution_bundle_hash = execution_bundle_hash(&execution_bundle_bytes);
     let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
         tenant_id: &request.tenant_id,
         draft_id: &request.draft_id,
@@ -1116,7 +1150,7 @@ pub(crate) async fn validate_flow_draft(
         runtime_flow_version: flow.version,
         draft_content_hash: draft.content_hash().as_str(),
         draft_artifact_hash: artifact.identity().artifact_hash().as_str(),
-        execution_bundle_hash: &execution_bundle_hash,
+        execution_bundle_hash: &compiled_plan.execution_bundle_hash,
         catalog_id: &request.catalog_id,
         catalog_version,
         environment: &request.environment,
@@ -1129,8 +1163,8 @@ pub(crate) async fn validate_flow_draft(
             wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
             &[
                 &request.tenant_id,
-                &execution_bundle_hash,
-                &execution_bundle_bytes,
+                &compiled_plan.execution_bundle_hash,
+                &compiled_plan.exact_bytes,
             ],
         )
         .await
@@ -1151,7 +1185,7 @@ pub(crate) async fn validate_flow_draft(
                 &graph_json,
                 &artifact.graph_hash(),
                 &artifact.identity().artifact_hash().as_str(),
-                &execution_bundle_hash,
+                &compiled_plan.execution_bundle_hash,
                 &binding_base_artifact_hash,
                 &validated_identity.as_str(),
                 &definition,
@@ -1176,7 +1210,7 @@ pub(crate) async fn validate_flow_draft(
                     &request.suite_flow_version,
                     &runtime_flow_version,
                     &artifact.identity().artifact_hash().as_str(),
-                    &execution_bundle_hash,
+                    &compiled_plan.execution_bundle_hash,
                     &binding_base_artifact_hash,
                     &validated_identity.as_str(),
                 ],
@@ -1210,7 +1244,7 @@ pub(crate) async fn validate_flow_draft(
         catalog_id: request.catalog_id.clone(),
         catalog_version: request.catalog_version,
         environment: request.environment.clone(),
-        execution_bundle_hash,
+        execution_bundle_hash: compiled_plan.execution_bundle_hash,
         validated_draft_hash: validated_identity.as_str().to_string(),
         binding_base_artifact_hash,
     }))
@@ -2100,8 +2134,202 @@ mod tests {
         assert!(validate.contains("locked_catalog_version != Some(request.catalog_version)"));
     }
 
+    fn test_runtime_revision() -> ExecutionRuntimeRevision {
+        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        ExecutionRuntimeRevision {
+            flowrunner_component_digest: digest_b.into(),
+            effect_provider_revision: digest_a.into(),
+            host_effect_contract_version: "0.1".into(),
+        }
+    }
+
+    fn test_root_artifact_hash() -> &'static str {
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut out = String::with_capacity(bytes.len() * 2);
+        for byte in bytes {
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        out
+    }
+
+    fn golden_flow() -> wamn_flow::Flow {
+        wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"golden-flow","version":1,
+              "nodes":[
+                {"id":"respond","type":"respond","config":{"status":200}},
+                {"id":"transform","type":"transform","config":{"expression":"@"}},
+                {"id":"request","type":"request","config":{"input-schema":{"type":"object"}}}
+              ],
+              "edges":[
+                {"from":"transform","to":"respond","ordinal":7},
+                {"from":"request","to":"transform","ordinal":3}
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn compiled_golden_flow() -> CompiledExecutionPlan {
+        compile_root_execution_plan(
+            &golden_flow(),
+            test_root_artifact_hash(),
+            test_runtime_revision(),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn root_plan_retains_responder_order_and_derives_callable_contract() {
+    fn deterministic_plan_compiler_sorts_unordered_nodes_and_ordinal_keyed_edges() {
+        let first = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"permuted","version":1,
+              "nodes":[
+                {"id":"respond","type":"respond","config":{"status":200}},
+                {"id":"transform","type":"transform","config":{"expression":"@"}},
+                {"id":"request","type":"request","config":{"input-schema":true}}
+              ],
+              "edges":[
+                {"from":"transform","to":"respond","ordinal":9},
+                {"from":"request","to":"respond","ordinal":2},
+                {"from":"request","to":"transform","ordinal":1}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let second = wamn_flow::Flow::from_json(
+            r#"{
+              "schema-version":"0.1","flow-id":"permuted","version":1,
+              "edges":[
+                {"from":"request","to":"transform","ordinal":1},
+                {"from":"transform","to":"respond","ordinal":9},
+                {"from":"request","to":"respond","ordinal":2}
+              ],
+              "nodes":[
+                {"id":"request","type":"request","config":{"input-schema":true}},
+                {"id":"respond","type":"respond","config":{"status":200}},
+                {"id":"transform","type":"transform","config":{"expression":"@"}}
+              ]
+            }"#,
+        )
+        .unwrap();
+
+        let left =
+            compile_root_execution_plan(&first, test_root_artifact_hash(), test_runtime_revision())
+                .unwrap();
+        let right = compile_root_execution_plan(
+            &second,
+            test_root_artifact_hash(),
+            test_runtime_revision(),
+        )
+        .unwrap();
+
+        assert_eq!(left.exact_bytes, right.exact_bytes);
+        assert_eq!(left.execution_bundle_hash, right.execution_bundle_hash);
+        assert_eq!(
+            left.plan
+                .body
+                .nodes
+                .iter()
+                .map(|node| node.local_node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["request", "respond", "transform"]
+        );
+        assert_eq!(
+            left.plan
+                .body
+                .edges
+                .iter()
+                .map(|edge| {
+                    (
+                        edge.source.as_str(),
+                        edge.destination.as_str(),
+                        edge.fan_out_ordinal,
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("request", "transform", 1),
+                ("request", "respond", 2),
+                ("transform", "respond", 9)
+            ]
+        );
+    }
+
+    #[test]
+    fn deterministic_plan_compiler_golden_bytes_and_hash_are_exact() {
+        let compiled = compiled_golden_flow();
+        let expected_bytes = br#"{"header":{"format-version":"0.1","plan-compiler-revision":"0.1","runtime-revision":{"flowrunner-component-digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","effect-provider-revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","host-effect-contract-version":"0.1"},"root-artifact-hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"body":{"entry-instruction":"request","nodes":[{"local-node-id":"request","source-node-id":"request","type":"request","config":{"input-schema":{"type":"object"}},"effect-policy":"pure"},{"local-node-id":"respond","source-node-id":"respond","type":"respond","config":{"status":200},"effect-policy":"pure"},{"local-node-id":"transform","source-node-id":"transform","type":"transform","config":{"expression":"@"},"effect-policy":"pure"}],"edges":[{"source":"request","source-port":"main","destination":"transform","fan-out-ordinal":3},{"source":"transform","source-port":"main","destination":"respond","fan-out-ordinal":7}],"root-terminal-behavior":{"kind":"respond","responders":["respond"]},"entry-input-schema-guard":{"type":"object"},"callable-contract":{"version":"0.1","input-schema-hash":"sha256:a2c799262a3ce3c19ef5cdd983bf3d12b43ab3c426227091b909dcb7054738c0","return-contract":"untyped-json-body","effect-ceiling":"effectful"},"source-map":[{"local-node-id":"request","source-node-id":"request"},{"local-node-id":"respond","source-node-id":"respond"},{"local-node-id":"transform","source-node-id":"transform"}]}}"#;
+        let expected_hash =
+            "sha256:874c72a9efee67d1b2e8afd16c3bd38c6ca12a1ff35a2a5b0ff13a4c5569cad8";
+
+        assert_eq!(
+            compiled.exact_bytes.as_slice(),
+            expected_bytes.as_slice(),
+            "actual json={}",
+            String::from_utf8(compiled.exact_bytes.clone()).unwrap()
+        );
+        assert_eq!(
+            compiled.execution_bundle_hash,
+            expected_hash,
+            "actual hash={} bytes={}",
+            compiled.execution_bundle_hash,
+            hex(&compiled.exact_bytes)
+        );
+        assert!(compiled.execution_bundle_hash.starts_with("sha256:"));
+        assert!(
+            compiled.execution_bundle_hash["sha256:".len()..]
+                .chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
+    }
+
+    #[test]
+    fn deterministic_plan_compiler_child_process_rebuild_probe() {
+        if std::env::var("WAMN_0H0G_3_2_CHILD_REBUILD").as_deref() != Ok("1") {
+            return;
+        }
+        let compiled = compiled_golden_flow();
+        println!(
+            "WAMN_CHILD_REBUILD {} {}",
+            compiled.execution_bundle_hash,
+            hex(&compiled.exact_bytes)
+        );
+    }
+
+    #[test]
+    fn deterministic_plan_compiler_cross_process_rebuild_is_identical() {
+        let compiled = compiled_golden_flow();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .env("WAMN_0H0G_3_2_CHILD_REBUILD", "1")
+            .arg("deterministic_plan_compiler_child_process_rebuild_probe")
+            .arg("--nocapture")
+            .output()
+            .expect("spawn child process deterministic rebuild probe");
+        assert!(
+            output.status.success(),
+            "child process failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("child stdout is utf-8");
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with("WAMN_CHILD_REBUILD "))
+            .expect("child rebuild line present");
+        let parts = line.split_whitespace().collect::<Vec<_>>();
+        assert_eq!(parts[1], compiled.execution_bundle_hash);
+        assert_eq!(parts[2], hex(&compiled.exact_bytes));
+    }
+
+    #[test]
+    fn root_plan_derives_callable_contract_guard_hash_and_source_map() {
         let flow = wamn_flow::Flow::from_json(
             r#"{
               "schema-version":"0.1","flow-id":"multi-respond","version":1,
@@ -2117,18 +2345,10 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let plan = build_root_execution_plan(
-            &flow,
-            digest_a,
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: digest_b.into(),
-                effect_provider_revision: digest_a.into(),
-                host_effect_contract_version: "0.1".into(),
-            },
-        )
-        .unwrap();
+        let plan =
+            compile_root_execution_plan(&flow, test_root_artifact_hash(), test_runtime_revision())
+                .unwrap()
+                .plan;
 
         assert_eq!(
             plan.body.root_terminal_behavior,
@@ -2140,6 +2360,18 @@ mod tests {
             }
         );
         assert_eq!(plan.body.entry_input_schema_guard, serde_json::json!(true));
+        assert_eq!(
+            plan.body
+                .source_map
+                .iter()
+                .map(|entry| (entry.local_node_id.as_str(), entry.source_node_id.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("request", "request"),
+                ("respond-a", "respond-a"),
+                ("respond-z", "respond-z")
+            ]
+        );
         assert_eq!(
             plan.body.callable_contract,
             Some(CallableContract {
@@ -2171,18 +2403,10 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let plan = build_root_execution_plan(
-            &flow,
-            digest_a,
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: digest_b.into(),
-                effect_provider_revision: digest_a.into(),
-                host_effect_contract_version: "0.1".into(),
-            },
-        )
-        .unwrap();
+        let plan =
+            compile_root_execution_plan(&flow, test_root_artifact_hash(), test_runtime_revision())
+                .unwrap()
+                .plan;
 
         assert_eq!(plan.body.callable_contract, None);
     }
@@ -2207,18 +2431,10 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let plan = build_root_execution_plan(
-            &flow,
-            digest_a,
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: digest_b.into(),
-                effect_provider_revision: digest_a.into(),
-                host_effect_contract_version: "0.1".into(),
-            },
-        )
-        .unwrap();
+        let plan =
+            compile_root_execution_plan(&flow, test_root_artifact_hash(), test_runtime_revision())
+                .unwrap()
+                .plan;
 
         assert!(plan.body.callable_contract.is_some());
     }
@@ -2236,18 +2452,10 @@ mod tests {
             }"#,
         )
         .unwrap();
-        let digest_a = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let digest_b = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-        let plan = build_root_execution_plan(
-            &flow,
-            digest_a,
-            ExecutionRuntimeRevision {
-                flowrunner_component_digest: digest_b.into(),
-                effect_provider_revision: digest_a.into(),
-                host_effect_contract_version: "0.1".into(),
-            },
-        )
-        .unwrap();
+        let compiled =
+            compile_root_execution_plan(&flow, test_root_artifact_hash(), test_runtime_revision())
+                .unwrap();
+        let plan = compiled.plan;
 
         let call = plan
             .body
@@ -2262,6 +2470,11 @@ mod tests {
         );
         assert_eq!(call.effect_policy, ExecutionEffectPolicy::Effectful);
         assert!(call.source_connection_requirement.is_none());
+        assert_eq!(plan.body.edges[0].fan_out_ordinal, 0);
         assert!(plan.requires_idempotency_key());
+        assert_eq!(
+            compiled.execution_bundle_hash,
+            execution_bundle_hash(&compiled.exact_bytes)
+        );
     }
 }
