@@ -19,10 +19,7 @@ use wash_runtime::host::allowed_hosts::AllowedHost;
 use wamn_execution_host::{
     DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, injected_capabilities,
 };
-use wamn_run_state::queue::{
-    admit_pinned_draft_scenario_run_sql, admit_pinned_triggered_run_sql,
-    lock_pinned_trigger_catalog_head_sql,
-};
+use wamn_run_state::admission::{AdmissionTransition, admission_transaction};
 use wamn_run_state::{FailKind as StoredFailKind, RunStatus as StoredRunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
@@ -1170,9 +1167,13 @@ async fn execute_target(
             .transaction()
             .await
             .context("begin pinned scenario admission")?;
+        let admission_recipe = admission_transaction(match &target {
+            ScenarioTarget::Release(_) => AdmissionTransition::PinnedScenarioRelease,
+            ScenarioTarget::Draft { .. } => AdmissionTransition::PinnedScenarioDraft,
+        });
         let locked_catalog_version: Option<i32> = transaction
             .query_one(
-                &lock_pinned_trigger_catalog_head_sql(),
+                admission_recipe.lock_head(),
                 &[&target.catalog_id(), &target.environment()],
             )
             .await
@@ -1191,11 +1192,12 @@ async fn execute_target(
             verify_locked_catalog_version(target.catalog_version(), locked_catalog_version)?;
         }
         let mut duplicate_admission = false;
+        let report_id = report_sink.as_ref().map(|sink| sink.report_id);
         let admission_refusal = match &target {
             ScenarioTarget::Release(release) => {
                 let row = transaction
                     .query_one(
-                        &admit_pinned_triggered_run_sql(),
+                        admission_recipe.admit(),
                         &[
                             &run_id,
                             &args.flow_id,
@@ -1208,6 +1210,7 @@ async fn execute_target(
                             &case_id,
                             &release.artifact_hash,
                             &env!("CARGO_PKG_VERSION"),
+                            &report_id,
                         ],
                     )
                     .await
@@ -1246,7 +1249,7 @@ async fn execute_target(
             ScenarioTarget::Draft { pin, .. } => {
                 let row = transaction
                     .query_one(
-                        &admit_pinned_draft_scenario_run_sql(),
+                        admission_recipe.admit(),
                         &[
                             &run_id,
                             &args.flow_id,
@@ -1266,6 +1269,7 @@ async fn execute_target(
                             &pin.suite_flow_version,
                             &pin.validated_draft_hash,
                             &env!("CARGO_PKG_VERSION"),
+                            &report_id,
                         ],
                     )
                     .await
@@ -1884,11 +1888,9 @@ mod tests {
             .expect("end of shared execute function")
             .0;
         let transaction = execute.find("let transaction = client").unwrap();
-        let lock = execute
-            .find("lock_pinned_trigger_catalog_head_sql")
-            .unwrap();
+        let lock = execute.find("admission_recipe.lock_head()").unwrap();
         let recheck = execute.find("verify_locked_catalog_version").unwrap();
-        let admission = execute.find("admit_pinned_triggered_run_sql").unwrap();
+        let admission = execute.find("admission_recipe.admit()").unwrap();
         let commit = admission + execute[admission..].find(".commit()").unwrap();
 
         assert!(transaction < lock);

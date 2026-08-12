@@ -527,7 +527,7 @@ pub fn write_ahead_triggered_run_sql() -> String {
 /// move the head between the final admission check and the run insert.
 ///
 /// Params: `$1` catalog id, `$2` environment.
-pub fn lock_pinned_trigger_catalog_head_sql() -> String {
+pub(crate) fn lock_pinned_trigger_catalog_head_sql() -> String {
     "SELECT lock_catalog_head(\
        NULLIF(current_setting('app.tenant', true), ''), $1, $2) \
      AS applied_catalog_version"
@@ -543,8 +543,8 @@ pub fn lock_pinned_trigger_catalog_head_sql() -> String {
 /// Params: `$1` run id, `$2` flow id, `$3` flow version, `$4` catalog id,
 /// `$5` catalog version, `$6` environment, `$7` input JSON text,
 /// `$8` suite id, `$9` case id, `$10` artifact hash,
-/// `$11` platform revision.
-pub fn admit_pinned_triggered_run_sql() -> String {
+/// `$11` platform revision, `$12` optional authoring report id.
+pub(crate) fn admit_pinned_triggered_run_sql() -> String {
     format!(
         "WITH release_member AS MATERIALIZED ( \
            SELECT h.tenant_id, rf.execution_bundle_hash, a.artifact_hash \
@@ -563,6 +563,7 @@ pub fn admit_pinned_triggered_run_sql() -> String {
               AND h.environment = $6 AND rf.flow_id = $2 AND rf.flow_version = $3 \
               AND a.artifact_hash = $10 \
               AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $11 <> '' \
+              AND ($12::text IS NULL OR $12::text <> '') \
               AND (SELECT count(*) \
                      FROM jsonb_array_elements(rm.members_json) AS member \
                     WHERE member ->> 'flow-id' = rf.flow_id \
@@ -595,7 +596,8 @@ pub fn admit_pinned_triggered_run_sql() -> String {
                       'run-id', $1::text, 'flow-id', $2::text, \
                       'flow-version', $3::int, 'artifact-digest', member.artifact_hash), \
                     'source', jsonb_build_object( \
-                      'producer', 'scenario', 'suite-id', $8::text, 'case-id', $9::text)), \
+                      'producer', 'scenario', 'suite-id', $8::text, 'case-id', $9::text, \
+                      'report-id', $12::text)), \
                   '0.1', $11 \
              FROM root_plan AS member \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
@@ -620,7 +622,15 @@ pub fn admit_pinned_triggered_run_sql() -> String {
                         OR existing.trigger_source IS DISTINCT FROM 'scenario' \
                         OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
                         OR existing.execution_bundle_hash \
-                           IS DISTINCT FROM member.execution_bundle_hash) \
+                           IS DISTINCT FROM member.execution_bundle_hash \
+                        OR existing.invocation_context #>> '{{principal,artifact-digest}}' \
+                           IS DISTINCT FROM member.artifact_hash \
+                        OR existing.invocation_context #>> '{{source,suite-id}}' \
+                           IS DISTINCT FROM $8::text \
+                        OR existing.invocation_context #>> '{{source,case-id}}' \
+                           IS DISTINCT FROM $9::text \
+                        OR existing.invocation_context #>> '{{source,report-id}}' \
+                           IS DISTINCT FROM $12::text) \
                     THEN 'conflicting-run-identity' \
                   ELSE 'duplicate' \
                 END AS result_code, \
@@ -648,8 +658,8 @@ pub fn admit_pinned_triggered_run_sql() -> String {
 /// `$12` internal draft-content hash, `$13` exact ordinary draft artifact hash,
 /// `$14` execution-bundle hash, `$15` immutable binding-base artifact hash,
 /// `$16` source-suite flow version, `$17` validated-draft hash,
-/// `$18` platform revision.
-pub fn admit_pinned_draft_scenario_run_sql() -> String {
+/// `$18` platform revision, `$19` authoring report id.
+pub(crate) fn admit_pinned_draft_scenario_run_sql() -> String {
     format!(
         "WITH draft AS MATERIALIZED ( \
            SELECT d.* \
@@ -662,7 +672,7 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
               AND d.draft_artifact_hash = $13 AND d.execution_bundle_hash = $14 \
               AND d.binding_base_artifact_hash = $15 \
               AND d.suite_flow_version = $16 AND d.validated_draft_hash = $17 \
-              AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $18 <> '' \
+              AND $1 <> '' AND $8 <> '' AND $9 <> '' AND $18 <> '' AND $19 <> '' \
          ), root_plan AS MATERIALIZED ( \
            SELECT d.* \
              FROM draft AS d \
@@ -743,12 +753,13 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                       'flow-version', d.runtime_flow_version, \
                       'artifact-digest', d.draft_artifact_hash, \
                       'draft-id', d.draft_id, 'draft-revision', d.draft_revision, \
+                      'draft-content-hash', d.draft_content_hash, \
                       'validated-draft-hash', d.validated_draft_hash, \
                       'binding-base-artifact-hash', d.binding_base_artifact_hash, \
                       'suite-flow-version', d.suite_flow_version), \
                     'source', jsonb_build_object( \
                       'producer', 'draft-scenario', 'suite-id', $8::text, \
-                      'case-id', $9::text)), \
+                      'case-id', $9::text, 'report-id', $19::text)), \
                   '0.1', $18 \
              FROM authorized_draft AS d \
            ON CONFLICT (tenant_id, run_id) DO NOTHING \
@@ -775,7 +786,27 @@ pub fn admit_pinned_draft_scenario_run_sql() -> String {
                         OR existing.trigger_source IS DISTINCT FROM 'scenario-draft' \
                         OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
                         OR existing.execution_bundle_hash \
-                           IS DISTINCT FROM d.execution_bundle_hash) \
+                           IS DISTINCT FROM d.execution_bundle_hash \
+                        OR existing.invocation_context #>> '{{principal,artifact-digest}}' \
+                           IS DISTINCT FROM d.draft_artifact_hash \
+                        OR existing.invocation_context #>> '{{principal,draft-id}}' \
+                           IS DISTINCT FROM d.draft_id \
+                        OR existing.invocation_context #>> '{{principal,draft-revision}}' \
+                           IS DISTINCT FROM d.draft_revision::text \
+                        OR existing.invocation_context #>> '{{principal,draft-content-hash}}' \
+                           IS DISTINCT FROM d.draft_content_hash \
+                        OR existing.invocation_context #>> '{{principal,validated-draft-hash}}' \
+                           IS DISTINCT FROM d.validated_draft_hash \
+                        OR existing.invocation_context #>> '{{principal,binding-base-artifact-hash}}' \
+                           IS DISTINCT FROM d.binding_base_artifact_hash \
+                        OR existing.invocation_context #>> '{{principal,suite-flow-version}}' \
+                           IS DISTINCT FROM d.suite_flow_version::text \
+                        OR existing.invocation_context #>> '{{source,suite-id}}' \
+                           IS DISTINCT FROM $8::text \
+                        OR existing.invocation_context #>> '{{source,case-id}}' \
+                           IS DISTINCT FROM $9::text \
+                        OR existing.invocation_context #>> '{{source,report-id}}' \
+                           IS DISTINCT FROM $19::text) \
                     THEN 'conflicting-run-identity' \
                   ELSE 'duplicate' \
                 END AS result_code, \

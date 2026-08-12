@@ -6,18 +6,18 @@
 use std::collections::HashSet;
 
 use wamn_run_state::RunStatus;
+use wamn_run_state::admission::{AdmissionTransition, admission_transaction};
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
-    acquire_partitions_sql, active_flows_sql, admit_pinned_triggered_run_sql,
-    begin_claimed_run_sql, claim_batch_sql, claim_dispatch_sql, claim_partition_head_sql,
-    claim_state, complete_dequeue_sql, dead_letter_dequeue_sql, dead_letters_on_terminal,
-    dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql,
-    enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable, janitor_sweep_sql,
-    janitor_verdict, lease_deadline, lease_live, lock_pinned_trigger_catalog_head_sql,
-    mark_running_sql, mint_evt_run_id, orphans, park_sql, parked_due_sql, partition_lease_live,
-    plan_acquire, plan_claim, plan_partition_claim, record_error_and_renew_sql,
-    record_success_and_renew_sql, release_partition_sql, renew_lease_sql, renew_partition_sql,
-    should_renew, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    acquire_partitions_sql, active_flows_sql, begin_claimed_run_sql, claim_batch_sql,
+    claim_dispatch_sql, claim_partition_head_sql, claim_state, complete_dequeue_sql,
+    dead_letter_dequeue_sql, dead_letters_on_terminal, dequeue_sql, enqueue_evt_sql,
+    enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql,
+    is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
+    mint_evt_run_id, orphans, park_sql, parked_due_sql, partition_lease_live, plan_acquire,
+    plan_claim, plan_partition_claim, record_error_and_renew_sql, record_success_and_renew_sql,
+    release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
+    write_ahead_triggered_run_sql,
 };
 
 const RECORD_SUCCESS_RENEW_PARAM_TYPES: [&str; 14] = [
@@ -1226,9 +1226,23 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
 }
 
 #[test]
+fn public_admission_api_selects_release_and_draft_scenario_recipes() {
+    let release = admission_transaction(AdmissionTransition::PinnedScenarioRelease);
+    let draft = admission_transaction(AdmissionTransition::PinnedScenarioDraft);
+
+    assert_eq!(release.lock_head(), draft.lock_head());
+    assert!(release.admit().contains("release_member AS MATERIALIZED"));
+    assert!(release.admit().contains("'scenario'"));
+    assert!(draft.admit().contains("draft AS MATERIALIZED"));
+    assert!(draft.admit().contains("'scenario-draft'"));
+    assert_ne!(release.admit(), draft.admit());
+}
+
+#[test]
 fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
-    let lock = lock_pinned_trigger_catalog_head_sql();
-    let sql = admit_pinned_triggered_run_sql();
+    let admission = admission_transaction(AdmissionTransition::PinnedScenarioRelease);
+    let lock = admission.lock_head();
+    let sql = admission.admit();
 
     assert!(lock.contains("SELECT lock_catalog_head"));
     assert!(lock.contains("$1, $2"));
@@ -1259,6 +1273,7 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
         "'producer', 'scenario'",
         "'suite-id', $8::text",
         "'case-id', $9::text",
+        "'report-id', $12::text",
     ] {
         assert!(sql.contains(context_field), "missing {context_field}");
     }
@@ -1273,7 +1288,9 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
 
 #[test]
 fn admission_derives_root_bundle_from_authoritative_member() {
-    let sql = admit_pinned_triggered_run_sql();
+    let sql = admission_transaction(AdmissionTransition::PinnedScenarioRelease)
+        .admit()
+        .to_string();
 
     assert!(sql.contains("rf.execution_bundle_hash"));
     assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
@@ -1282,8 +1299,42 @@ fn admission_derives_root_bundle_from_authoritative_member() {
     assert!(sql.contains("member.execution_bundle_hash, 'dispatched'"));
     assert!(sql.contains("THEN 'missing-root-plan'"));
     assert!(sql.contains("THEN 'conflicting-run-identity'"));
+    assert!(
+        sql.contains("existing.invocation_context #>> '{principal,artifact-digest}'"),
+        "duplicate identity must include the release artifact pin"
+    );
     let retired_json_pin = ["execution", "bundle", "hash"].join("-");
     assert!(!sql.contains(&format!("'{retired_json_pin}'")));
+}
+
+#[test]
+fn release_duplicate_identity_covers_authoritative_pins() {
+    let sql = admission_transaction(AdmissionTransition::PinnedScenarioRelease)
+        .admit()
+        .to_string();
+
+    for predicate in [
+        "existing.flow_id IS DISTINCT FROM $2",
+        "existing.flow_version IS DISTINCT FROM $3",
+        "existing.catalog_id IS DISTINCT FROM $4",
+        "existing.catalog_version IS DISTINCT FROM $5::int",
+        "existing.environment IS DISTINCT FROM $6",
+        "existing.execution_bundle_hash \
+                           IS DISTINCT FROM member.execution_bundle_hash",
+        "existing.invocation_context #>> '{principal,artifact-digest}' \
+                           IS DISTINCT FROM member.artifact_hash",
+        "existing.invocation_context #>> '{source,suite-id}' \
+                           IS DISTINCT FROM $8::text",
+        "existing.invocation_context #>> '{source,case-id}' \
+                           IS DISTINCT FROM $9::text",
+        "existing.invocation_context #>> '{source,report-id}' \
+                           IS DISTINCT FROM $12::text",
+    ] {
+        assert!(
+            sql.contains(predicate),
+            "release duplicate omits {predicate}"
+        );
+    }
 }
 
 // [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —

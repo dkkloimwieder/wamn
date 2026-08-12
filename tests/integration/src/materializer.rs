@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 pub mod tests {
-    use wamn_run_state::admission::admission_sql;
+    use wamn_run_state::admission::{AdmissionTransition, RunStateSchema, admission_transaction};
 
     const SHELL: &str = include_str!("../../../components/execution/materializer/src/main.rs");
     const PURE_SQL: &str = include_str!("../../../crates/events/materializer/src/sql.rs");
@@ -41,7 +41,10 @@ pub mod tests {
 
     #[test]
     fn admission_scopes_dedup_and_records_registration_evidence() {
-        let sql = admission_sql().admit().to_string();
+        let schema = RunStateSchema::default();
+        let sql = admission_transaction(AdmissionTransition::CallableFlow { schema: &schema })
+            .admit()
+            .to_string();
         assert!(sql.contains("'evt:' || i.registration_id || ':' || i.event_seq::text"));
         assert!(sql.contains("er.registration <> i.registration_document"));
         assert!(sql.contains("'{registration-hash}'"));
@@ -54,7 +57,7 @@ pub mod tests {
         assert!(SHELL.contains("text(&plan.source_run_id)"));
         assert!(SHELL.contains("text(&plan.causation.root)"));
         assert!(SHELL.contains("env_or(\"WAMN_MAT_RUN_SCHEMA\", \"wamn_run\")"));
-        assert!(SHELL.contains("admission_sql_for_schema(&cfg.run_schema)"));
+        assert!(SHELL.contains("AdmissionTransition::CallableFlow"));
         assert!(!SHELL.contains("let recipe = admission_sql();"));
         assert!(!SHELL.contains("UPDATE wamn_run.runs"));
     }

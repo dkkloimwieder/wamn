@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
-use wamn_run_state::admission::{admission_sql, registration_evidence};
+use wamn_run_state::admission::{
+    AdmissionTransition, RunStateSchema, admission_transaction, registration_evidence,
+};
 use wamn_run_state::queue::claim_partition_head_sql;
 
 fn psql(url: &str, script: &str) -> Output {
@@ -236,7 +238,8 @@ fn admission_live() {
         ),
     );
 
-    let recipe = admission_sql();
+    let schema = RunStateSchema::default();
+    let recipe = admission_transaction(AdmissionTransition::CallableFlow { schema: &schema });
     let admit = recipe.admit().to_string();
     let prepared = prepare(&admit);
 

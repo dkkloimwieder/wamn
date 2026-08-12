@@ -17,7 +17,9 @@ use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
 use wamn_flow_invocation::{
     Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
-use wamn_run_state::admission::{AdmissionResult, admission_sql};
+use wamn_run_state::admission::{
+    AdmissionProducer, AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
+};
 use wamn_run_state::invocation::{
     InvocationOutcome, InvocationPoll, InvocationRecovery, InvocationTarget,
     lookup_invocation_recovery_sql, poll_invocation_outcome_sql, resolve_invocation_target_sql,
@@ -430,7 +432,10 @@ impl InvocationBackend for PostgresInvocationBackend {
             .query_one("SELECT gen_random_uuid()::text", &[])
             .await?
             .get(0);
-        let recipe = admission_sql();
+        let run_schema = RunStateSchema::default();
+        let recipe = admission_transaction(AdmissionTransition::CallableFlow {
+            schema: &run_schema,
+        });
         transaction
             .query_one(
                 recipe.lock_head(),
@@ -438,7 +443,7 @@ impl InvocationBackend for PostgresInvocationBackend {
             )
             .await?;
 
-        let producer = "http";
+        let producer = AdmissionProducer::Http.as_sql();
         let catalog_version = admission.target.catalog_version;
         let flow_version = admission.target.flow_version;
         let input = serde_json::to_string(&admission.input)?;

@@ -11,7 +11,9 @@ use crate::readerbench::{self, ReaderBenchArgs};
 use wamn_control_provision::sql as provision_sql;
 use wamn_control_registry::sql as registry_sql;
 use wamn_gate_harness::{check, seed_flow_version};
-use wamn_run_state::admission::{AdmissionResult, RunStateSchema, admission_sql_for_schema};
+use wamn_run_state::admission::{
+    AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
+};
 use wamn_test_fixtures::runner::connect_app;
 
 const ORG: &str = "ec7j";
@@ -496,7 +498,7 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
     let mut app = connect_app(&args.database_url, SCHEMA, TENANT).await?;
     let transaction = app.transaction().await?;
     let schema = RunStateSchema::new(SCHEMA)?;
-    let recipe = admission_sql_for_schema(&schema);
+    let recipe = admission_transaction(AdmissionTransition::CallableFlow { schema: &schema });
     transaction
         .query_one(recipe.lock_head(), &[&CATALOG_ID, &ENV])
         .await?;
@@ -808,7 +810,8 @@ mod tests {
         assert_eq!(graph["nodes"][0]["type"], "webhook-in");
         assert_eq!(graph["nodes"][1]["type"], "pg-write");
         assert_eq!(graph["edges"].as_array().unwrap().len(), 1);
-        let recipe = admission_sql_for_schema(&RunStateSchema::new(SCHEMA).unwrap());
+        let schema = RunStateSchema::new(SCHEMA).unwrap();
+        let recipe = admission_transaction(AdmissionTransition::CallableFlow { schema: &schema });
         assert!(
             recipe
                 .admit()

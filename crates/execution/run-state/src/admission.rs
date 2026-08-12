@@ -1,15 +1,17 @@
 //! Callable-flow admission.
 //!
-//! Every HTTP and event producer enters the run plane through the ordered
-//! same-transaction recipe returned by [`admission_sql`]. Its first statement
-//! takes the stable catalog-head key-share lock; its second rechecks the
-//! producer-specific definition and writes the run, queue row, and (for HTTP)
-//! admission ledger atomically.
+//! Producers enter the run plane through the ordered same-transaction recipe
+//! returned by [`admission_transaction`]. Its first statement takes the stable
+//! catalog-head key-share lock; its second rechecks the producer-specific
+//! definition and writes the run, queue row, and any producer ledger atomically.
 
 use serde_json::Value;
 use wamn_pg_core::Identifier;
 
-use crate::queue::PartitionPolicy;
+use crate::queue::{
+    PartitionPolicy, admit_pinned_draft_scenario_run_sql, admit_pinned_triggered_run_sql,
+    lock_pinned_trigger_catalog_head_sql,
+};
 
 /// Validated schema containing the durable run-state tables and functions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -171,14 +173,25 @@ pub fn registration_evidence(document: &Value) -> (String, String) {
     )
 }
 
-/// The ordered SQL recipe for one admission transaction.
+/// Admission transition composed by a producer-owned transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdmissionTransition<'a> {
+    /// Shared callable-flow admission for HTTP and event producers.
+    CallableFlow { schema: &'a RunStateSchema },
+    /// Management/test-set admission for one exact released suite case.
+    PinnedScenarioRelease,
+    /// Management/test-set admission for one exact validated draft suite case.
+    PinnedScenarioDraft,
+}
+
+/// The ordered statements for one admission transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdmissionSql {
+pub struct AdmissionTransaction {
     lock_head: String,
     admit: String,
 }
 
-impl AdmissionSql {
+impl AdmissionTransaction {
     /// Execute first in the transaction to acquire the stable head lock.
     pub fn lock_head(&self) -> &str {
         &self.lock_head
@@ -190,9 +203,24 @@ impl AdmissionSql {
     }
 }
 
+/// Compose the stable admission statements for a producer-owned transaction.
+pub fn admission_transaction(transition: AdmissionTransition<'_>) -> AdmissionTransaction {
+    match transition {
+        AdmissionTransition::CallableFlow { schema } => admission_sql_for_schema(schema),
+        AdmissionTransition::PinnedScenarioRelease => AdmissionTransaction {
+            lock_head: lock_pinned_trigger_catalog_head_sql(),
+            admit: admit_pinned_triggered_run_sql(),
+        },
+        AdmissionTransition::PinnedScenarioDraft => AdmissionTransaction {
+            lock_head: lock_pinned_trigger_catalog_head_sql(),
+            admit: admit_pinned_draft_scenario_run_sql(),
+        },
+    }
+}
+
 /// Build the required lock-then-admit transaction recipe.
-pub fn admission_sql() -> AdmissionSql {
-    AdmissionSql {
+pub(crate) fn admission_sql() -> AdmissionTransaction {
+    AdmissionTransaction {
         lock_head: lock_catalog_head_sql(),
         admit: admit_sql(),
     }
@@ -202,13 +230,13 @@ pub fn admission_sql() -> AdmissionSql {
 ///
 /// The canonical schema retains its historical byte shape. Alternate schemas
 /// are always PostgreSQL-quoted and can only enter through [`RunStateSchema`].
-pub fn admission_sql_for_schema(schema: &RunStateSchema) -> AdmissionSql {
+pub(crate) fn admission_sql_for_schema(schema: &RunStateSchema) -> AdmissionTransaction {
     let canonical = admission_sql();
     if schema.as_str() == RunStateSchema::default().as_str() {
         return canonical;
     }
     let qualifier = schema.qualifier();
-    AdmissionSql {
+    AdmissionTransaction {
         lock_head: canonical.lock_head.replace("wamn_run.", &qualifier),
         admit: canonical.admit.replace("wamn_run.", &qualifier),
     }

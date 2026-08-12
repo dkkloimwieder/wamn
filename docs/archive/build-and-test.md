@@ -5754,3 +5754,59 @@ CARGO_TARGET_DIR=/tmp/wamn-target-fqg14 \
   cargo test --locked -p wamn-run-state --test run_state_live \
   run_state_live -- --ignored --exact --nocapture
 ```
+
+## SR-MVP — settled admission authority (`wamn-0h0g.4.8`)
+
+This debug-only gate proves that HTTP, event, release-scenario, and
+draft-scenario producers compose the one public run-state admission recipe in
+their own transactions. It also pins the immutable catalog and candidate
+identity, report consistency carrier, and absence of an invocation-JSON
+execution-bundle duplicate. The live legs use one disposable PostgreSQL 18
+database and never target the development cluster.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state -p wamn-runtime \
+  -p wamn-scenario-worker -p wamn-proof-integration
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-run-state -p wamn-runtime \
+  -p wamn-scenario-worker --all-targets -- -D warnings
+# The integration dispatcher keeps process helpers for cluster-only proof legs.
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-proof-integration \
+  --all-targets -- -D warnings -A dead-code
+
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3-components CARGO_INCREMENTAL=0 \
+  cargo build --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner -p materializer --target wasm32-wasip2
+
+docker run --rm -d --name wamn-0h0g-4-8-pg \
+  -p 127.0.0.1:15648:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-4-8-pg pg_isready -U postgres -d wamn; do sleep 1; done
+
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15648/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --test admission_live \
+  admission_live -- --ignored --exact --nocapture
+
+WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15648/wamn \
+WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15648/wamn \
+WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15648/wamn \
+WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-wave3-components/wasm32-wasip2/debug/flowrunner.wasm \
+CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-scenario-worker \
+  --test authoring_loop_live authoring_loop_live -- --ignored --exact --nocapture
+
+docker stop wamn-0h0g-4-8-pg
+
+rustfmt --edition 2024 --check \
+  components/execution/materializer/src/main.rs \
+  crates/execution/run-state/src/{admission.rs,lib.rs} \
+  crates/execution/run-state/src/queue/{mod.rs,sql.rs} \
+  crates/execution/run-state/tests/{admission_live.rs,draft_admission.rs,queue.rs} \
+  crates/platform/runtime/src/flow_invocation.rs \
+  services/scenario-worker/src/lib.rs \
+  tests/integration/src/{causation_e2e.rs,materializer.rs}
+git diff --check
+```

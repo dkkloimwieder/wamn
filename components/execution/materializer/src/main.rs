@@ -47,7 +47,7 @@ use wamn_materializer::{
     sql::{select_registrations_sql, select_release_flow_sql},
 };
 use wamn_run_state::admission::{
-    AdmissionProducer, AdmissionResult, RunStateSchema, admission_sql_for_schema,
+    AdmissionProducer, AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
     registration_evidence,
 };
 
@@ -406,7 +406,9 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
 /// exactly-once no-op. Every typed drift/refusal rolls back and is retried from
 /// candidate resolution on redelivery.
 fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, String> {
-    let recipe = admission_sql_for_schema(&cfg.run_schema);
+    let recipe = admission_transaction(AdmissionTransition::CallableFlow {
+        schema: &cfg.run_schema,
+    });
     let txn = client::begin().map_err(|e| pg_name(&e))?;
     txn.query(
         recipe.lock_head(),

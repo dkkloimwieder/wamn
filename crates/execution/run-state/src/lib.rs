@@ -37,8 +37,8 @@
 //! assert_eq!(st.step_seq(), 1); // `a` folded; `b` is the outstanding frontier
 //! ```
 //!
-//! Event admission and enqueue operations use the transaction builders exposed
-//! by this crate.
+//! Admission and enqueue producers compose the transaction API exposed by this
+//! crate while owning their database transactions.
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!
