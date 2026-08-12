@@ -586,6 +586,32 @@
       "drift_gate": "SR13:catalog-live"
     },
     {
+      "id": "catalog.execution_bundles",
+      "plane": "project",
+      "semantic_owner": "catalog-model",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/catalog-schema.sql",
+      "writers": [
+        "catalog-schema-installer",
+        "schema-control",
+        "scenario-catalog",
+        "scenario-worker",
+        "ctl-copy"
+      ],
+      "readers": [
+        "schema-control",
+        "scenario-catalog",
+        "scenario-worker",
+        "run-state",
+        "flowrunner",
+        "ctl-copy"
+      ],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:catalog-live"
+    },
+    {
       "id": "catalog.release_manifests",
       "plane": "project",
       "semantic_owner": "catalog-model",

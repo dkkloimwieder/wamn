@@ -1342,6 +1342,51 @@ fn repository_state_ownership_manifest_is_complete() {
 }
 
 #[test]
+fn catalog_execution_bundles_state_ownership_is_ratified() {
+    let repository = repository();
+    let manifest = read_manifest(&repository);
+    let object = manifest
+        .objects
+        .iter()
+        .find(|object| object.id == "catalog.execution_bundles")
+        .expect("catalog.execution_bundles is registered");
+
+    assert_eq!(object.ownership.plane, "project");
+    assert_eq!(object.ownership.semantic_owner, "catalog-model");
+    assert_eq!(object.ownership.migration_owners, ["schema-control"]);
+    assert_eq!(
+        object.ownership.schema_source,
+        "deploy/sql/catalog-schema.sql"
+    );
+    assert_eq!(
+        object.ownership.writers,
+        [
+            "catalog-schema-installer",
+            "schema-control",
+            "scenario-catalog",
+            "scenario-worker",
+            "ctl-copy",
+        ]
+    );
+    assert_eq!(
+        object.ownership.readers,
+        [
+            "schema-control",
+            "scenario-catalog",
+            "scenario-worker",
+            "run-state",
+            "flowrunner",
+            "ctl-copy",
+        ]
+    );
+    assert_eq!(
+        object.ownership.compatibility_horizon,
+        "catalog-format-and-platform-schema-major"
+    );
+    assert_eq!(object.ownership.drift_gate, "SR13:catalog-live");
+}
+
+#[test]
 fn missing_scan_exclusion_path_is_rejected() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
