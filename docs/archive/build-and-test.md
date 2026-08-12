@@ -5760,10 +5760,9 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-run-state -p wamn-runtime \
   -p wamn-scenario-worker --all-targets -- -D warnings
-# The integration dispatcher keeps process helpers for cluster-only proof legs.
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-proof-integration \
-  --all-targets -- -D warnings -A dead-code
+  --all-targets -- -D warnings
 
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3-components CARGO_INCREMENTAL=0 \
   cargo build --locked --offline --manifest-path components/Cargo.toml \
@@ -5876,10 +5875,9 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-run-state -p wamn-schema-control \
   -p wamn-ctl --all-targets -- -D warnings
-# The untouched dispatcher helpers are retained by wamn-0h0g.12.13.
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13 CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-proof-integration \
-  --all-targets -- -D warnings -A dead-code
+  --all-targets -- -D warnings
 
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-13-components CARGO_INCREMENTAL=0 \
   cargo test --locked --offline --manifest-path components/Cargo.toml -p flowrunner

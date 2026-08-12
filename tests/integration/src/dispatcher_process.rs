@@ -49,10 +49,6 @@ impl DispatcherProcess {
         )
     }
 
-    pub(crate) fn spawn_traced(specs: &[ProjectSpec], nats_url: &str) -> anyhow::Result<Self> {
-        Self::spawn_at_level(specs, nats_url, None, None, None, None, "info")
-    }
-
     fn spawn_at_level(
         specs: &[ProjectSpec],
         nats_url: &str,
@@ -148,42 +144,6 @@ impl DispatcherProcess {
             }
         }
     }
-
-    pub(crate) async fn emit_trigger_span(
-        &mut self,
-        run_id: &str,
-        flow_id: &str,
-        flow_version: i32,
-        trigger_source: &str,
-        tenant: &str,
-    ) -> anyhow::Result<()> {
-        let command = serde_json::json!({
-            "command": "emit-trigger-span",
-            "run_id": run_id,
-            "flow_id": flow_id,
-            "flow_version": flow_version,
-            "trigger_source": trigger_source,
-            "tenant": tenant,
-        });
-        self.stdin
-            .write_all(command.to_string().as_bytes())
-            .await
-            .context("write dispatcher span command")?;
-        self.stdin.write_all(b"\n").await?;
-        self.stdin.flush().await?;
-        let mut line = String::new();
-        anyhow::ensure!(
-            self.stdout.read_line(&mut line).await? != 0,
-            "dispatcher closed before acknowledging trigger span"
-        );
-        let response: SpanResponse =
-            serde_json::from_str(&line).context("parse dispatcher span response")?;
-        anyhow::ensure!(
-            response.status == "span-emitted" && response.run_id == run_id,
-            "unexpected dispatcher span response: {line}"
-        );
-        Ok(())
-    }
 }
 
 impl Drop for DispatcherProcess {
@@ -206,12 +166,6 @@ enum StepResponse {
         interval_ms: i64,
         message: String,
     },
-}
-
-#[derive(Debug, Deserialize)]
-struct SpanResponse {
-    status: String,
-    run_id: String,
 }
 
 #[expect(
