@@ -123,10 +123,6 @@
       "path": "components/execution/materializer",
       "role": "effect"
     },
-    "api-gateway": {
-      "path": "components/ingress/api-gateway",
-      "role": "effect"
-    },
     "node-guest": {
       "path": "crates/node/guest",
       "role": "reader"
@@ -1645,7 +1641,6 @@
         "ctl-publish"
       ],
       "readers": [
-        "api-gateway",
         "node-guest",
         "flowrunner"
       ],
@@ -1682,7 +1677,6 @@
       ],
       "schema_source": "crates/schema/compiler/src/emit.rs",
       "writers": [
-        "api-gateway",
         "entity-access",
         "schema-compiler",
         "flowrunner",
