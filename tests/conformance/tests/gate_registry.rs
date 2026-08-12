@@ -13,7 +13,10 @@ use std::path::{Path, PathBuf};
 const REGISTRY_PATH: &str = "architecture/gate-registry.json";
 const GATE_DIRECTORY: &str = "deploy/gates";
 const BUILD_AND_TEST_DOC: &str = "docs/archive/build-and-test.md";
-const PLAN_DOCUMENT: &str = "docs/archive/PLAN/PLAN.md";
+const LIVE_GATE_AUTHORITY_DOCUMENT: &str = "docs/scope-reduction-mvp.md";
+const LIVE_GATE_AUTHORITY_ANCHOR: &str = "## D · Gate-manifest disposition";
+const HISTORICAL_PLAN_DOCUMENT: &str = "docs/archive/PLAN/PLAN.md";
+const EXPECTED_GATE_AUTHORITY: &str = "MVP gate-manifest disposition derives from docs/scope-reduction-mvp.md Appendix D. Retained D-number and recipe metadata is historical registry compatibility only. Commands, artifact inputs, and dependencies derive from the referenced Job manifests and recipe-test directives and are intentionally absent.";
 const EVIDENCE_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 const SCHEDULING_FOLLOW_UP: &str = "bd:wamn-2jdm.8";
 
@@ -309,7 +312,7 @@ fn validate_registry(
     registry: &Registry,
     manifests: &BTreeSet<String>,
     recipes: &BTreeMap<String, RecipeSelector>,
-    plan: &str,
+    historical_plan: &str,
     root: &Path,
 ) -> Result<(), String> {
     if registry.schema_version != "0.1" {
@@ -318,8 +321,10 @@ fn validate_registry(
             registry.schema_version
         ));
     }
-    if !registry.authority.contains("docs/archive/PLAN/PLAN.md")
-        || !registry.authority.contains("intentionally absent")
+    let live_authority = fs::read_to_string(root.join(LIVE_GATE_AUTHORITY_DOCUMENT))
+        .map_err(|error| format!("failed to read live gate authority: {error}"))?;
+    if registry.authority != EXPECTED_GATE_AUTHORITY
+        || !live_authority.contains(LIVE_GATE_AUTHORITY_ANCHOR)
         || registry.registry_owner != "bd:wamn-2jdm.2"
         || !registry
             .machine_evidence_policy
@@ -364,9 +369,9 @@ fn validate_registry(
                 decision.id, decision.status
             ));
         }
-        if !plan.contains(&decision.plan_anchor) {
+        if !historical_plan.contains(&decision.plan_anchor) {
             return Err(format!(
-                "{} no longer resolves in authoritative PLAN anchor {:?}",
+                "{} no longer resolves in historical PLAN compatibility anchor {:?}",
                 decision.id, decision.plan_anchor
             ));
         }
@@ -381,10 +386,10 @@ fn validate_registry(
         }
         if !matches!(decision.status.as_str(), "open" | "planned-not-shipped")
             || decision.reason.trim().is_empty()
-            || !plan.contains(&decision.plan_anchor)
+            || !historical_plan.contains(&decision.plan_anchor)
         {
             return Err(format!(
-                "{} has an invalid authoritative exclusion",
+                "{} has an invalid historical PLAN compatibility exclusion",
                 decision.id
             ));
         }
@@ -397,7 +402,7 @@ fn validate_registry(
             .difference(&expected_decisions)
             .collect();
         return Err(format!(
-            "canonical PLAN decision inventory drift; missing={missing:?}, unknown={unknown:?}"
+            "historical PLAN decision inventory drift; missing={missing:?}, unknown={unknown:?}"
         ));
     }
 
@@ -638,68 +643,77 @@ fn fixtures() -> (
         .expect("build-and-test document must be readable");
     let recipes =
         parse_recipe_selectors(&recipe_document).expect("recipe directives must be valid");
-    let plan =
-        fs::read_to_string(root.join(PLAN_DOCUMENT)).expect("authoritative PLAN must be readable");
-    (root, registry, manifests, recipes, plan)
+    let historical_plan = fs::read_to_string(root.join(HISTORICAL_PLAN_DOCUMENT))
+        .expect("historical PLAN compatibility document must be readable");
+    (root, registry, manifests, recipes, historical_plan)
 }
 
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
-    let (root, registry, manifests, recipes, plan) = fixtures();
+    let (root, registry, manifests, recipes, historical_plan) = fixtures();
     assert_eq!(manifests.len(), 9, "the retained Job inventory changed");
     assert_eq!(recipes.len(), 50, "the documented recipe inventory changed");
-    validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .unwrap_or_else(|error| panic!("{error}"));
 }
 
 #[test]
+fn rejects_gate_authority_drift_mutant() {
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
+    registry.authority.push_str(" drift");
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
+        .expect_err("gate authority drift must fail");
+    assert!(error.contains("registry authority"), "{error}");
+}
+
+#[test]
 fn rejects_unregistered_manifest_mutant() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let index = registry
         .entries
         .iter()
         .position(|entry| entry.source_kind == SourceKind::Manifest)
         .expect("registry must contain a manifest");
     registry.entries.remove(index);
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("an unregistered manifest must fail");
     assert!(error.contains("manifest registry drift"), "{error}");
 }
 
 #[test]
 fn rejects_broken_recipe_selector_mutant() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
         .find(|entry| entry.source_kind == SourceKind::Recipe)
         .expect("registry must contain a recipe");
     entry.source.push_str("-BROKEN");
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("a broken selector must fail");
     assert!(error.contains("broken recipe selector"), "{error}");
 }
 
 #[test]
 fn rejects_removed_decision_mapping_mutant() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
         .find(|entry| !entry.decision_ids.is_empty())
         .expect("registry must contain a shipped decision");
     entry.decision_ids.clear();
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("a missing decision mapping must fail");
     assert!(error.contains("no shipped-decision mapping"), "{error}");
 }
 
 #[test]
 fn rejects_duplicate_decision_ownership_mutant() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let duplicate = registry.decisions[0].clone();
     registry.decisions.push(duplicate);
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("duplicate decision ownership must fail");
     assert!(
         error.contains("duplicate canonical decision owner"),
@@ -709,21 +723,21 @@ fn rejects_duplicate_decision_ownership_mutant() {
 
 #[test]
 fn rejects_decorative_required_gate_mutant() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
         .find(|entry| entry.classification == Classification::RequiredGate)
         .expect("registry must contain a required gate");
     entry.can_fail = false;
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("a decorative required gate must fail");
     assert!(error.contains("decorative required gate"), "{error}");
 }
 
 #[test]
 fn rejects_proven_mutation_without_checked_in_evidence() {
-    let (root, mut registry, manifests, recipes, plan) = fixtures();
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     let entry = registry
         .entries
         .iter_mut()
@@ -732,7 +746,7 @@ fn rejects_proven_mutation_without_checked_in_evidence() {
     entry.mutation_evidence.status = "proven".to_string();
     entry.mutation_evidence.follow_up = None;
     entry.mutation_evidence.evidence = None;
-    let error = validate_registry(&registry, &manifests, &recipes, &plan, &root)
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .expect_err("proven mutation evidence without an evidence record must fail");
     assert!(error.contains("mutation evidence"), "{error}");
 }

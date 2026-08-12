@@ -157,12 +157,14 @@ docker volume rm wamn-cranelift-cargo wamn-cranelift-target
 
 ### Canonical shipped-decision gate registry (PLAN-0.2 / wamn-2jdm.2)
 
-The registry derives commands and execution inputs from every live gate Job and
-documented recipe while owning only the canonical D1-D24 decision mappings and
-non-derivable gate semantics.
+The registry derives MVP gate-manifest disposition from
+`docs/scope-reduction-mvp.md` anchor `## D · Gate-manifest disposition` and
+commands and execution inputs from every live gate Job and documented recipe.
+Retained D1-D24 decision mappings are historical compatibility metadata; the
+registry also owns non-derivable gate semantics.
 
 ```bash
-# recipe-test: PLAN-0-2-GATE-REGISTRY | conformance | wamn-proof-conformance | test | gate_registry | - | 6 | canonical semantic registry covers every Job manifest and recipe selector, authoritative D1-D24 decision ownership, classifications, immutable evidence pointers, and registry mutants
+# recipe-test: PLAN-0-2-GATE-REGISTRY | conformance | wamn-proof-conformance | test | gate_registry | - | 6 | canonical semantic registry covers live Appendix D authority, every Job manifest and recipe selector, historical D1-D24 compatibility metadata, classifications, immutable evidence pointers, and registry mutants
 CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-2 \
   cargo test --locked --offline -p wamn-proof-conformance --test gate_registry
 ```
