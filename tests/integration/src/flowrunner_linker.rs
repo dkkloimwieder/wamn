@@ -3,10 +3,9 @@
 //! `components/execution/flowrunner/wit/world.wit` is the single source of the
 //! guest's import set, and `instantiate_pre` fails outright when any import is
 //! unlinked. `ExecutionHost` owns that registration on the production path; the
-//! benches that build their own [`Linker`] (they inject bench-owned stores,
-//! virtual clocks, and recording egress handlers that the production host does
-//! not) register through this helper instead of each carrying its own copy — a
-//! new world import is swept here once, for every bench.
+//! tests that build their own [`Linker`] register through this helper instead
+//! of each carrying its own copy — a new world import is swept here once, for
+//! every retained test.
 //!
 //! Linking an import is not backing it: the caller still owns its store's
 //! plugin map. An effect no bench fixture reaches may stay unbacked, in which
@@ -18,20 +17,14 @@
 //! here AND in that guard's mapping table — the two additions that silently
 //! skipped this file (9721d42, 914f661) can no longer pass.
 
-use wamn_runtime::plugins::{connection_http, runner_egress, wamn_logging, wamn_postgres};
+use wamn_runtime::plugins::{connection_http, wamn_logging, wamn_postgres};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::component::Linker;
 
 /// Register every host import of the `wamn:flowrunner` world on `linker`.
 pub fn add_flowrunner_imports_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
-    wasmtime_wasi::p2::add_to_linker_async(linker)?;
-    // S6: the legacy raw `http-call` node leaves through wasi:http, so a bench
-    // can interpose its own egress handler on the store.
-    wasmtime_wasi_http::p2::add_only_http_to_linker_async(linker)?;
     wamn_postgres::add_to_linker(linker)?;
-    // fqg.11 / l5i9.12.2: the TRUSTED per-run egress and causation channels
-    // the runner declares before it dispatches a run.
-    runner_egress::add_runner_to_linker(linker)?;
+    // l5i9.12.2: the TRUSTED per-run causation channel.
     wamn_postgres::add_runner_causation_to_linker(linker)?;
     // PLAN-2B (wamn-ko5r.8): the TRUSTED one-frame portable HTTP effect the
     // `http-request` node calls.

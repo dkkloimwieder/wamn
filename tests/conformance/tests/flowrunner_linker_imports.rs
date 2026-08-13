@@ -22,22 +22,6 @@ const REGISTRATIONS: &[(&str, &str)] = &[
     ("wamn:postgres/types@0.1.0", "wamn_postgres::add_to_linker"),
     ("wamn:postgres/client@0.1.0", "wamn_postgres::add_to_linker"),
     (
-        "wasi:clocks/wall-clock@0.2.12",
-        "wasmtime_wasi::p2::add_to_linker_async",
-    ),
-    (
-        "wasi:http/types@0.2.12",
-        "wasmtime_wasi_http::p2::add_only_http_to_linker_async",
-    ),
-    (
-        "wasi:http/outgoing-handler@0.2.12",
-        "wasmtime_wasi_http::p2::add_only_http_to_linker_async",
-    ),
-    (
-        "wamn:runner/egress@0.1.0",
-        "runner_egress::add_runner_to_linker",
-    ),
-    (
         "wamn:runner/causation@0.1.0",
         "wamn_postgres::add_runner_causation_to_linker",
     ),
@@ -145,11 +129,11 @@ fn complaints(wit: &str, linker: &str) -> Vec<String> {
 fn flowrunner_world_imports_match_the_shared_linker_registrations() {
     let imports = declared_imports(WORLD_WIT);
     assert!(
-        imports.len() >= 9 && imports.iter().all(|import| import.contains(':')),
+        imports.len() == 5 && imports.iter().all(|import| import.contains(':')),
         "world.wit import parse returned {imports:?} — the WIT layout changed under the guard"
     );
     assert!(
-        registration_calls(LINKER_SOURCE).len() >= 7,
+        registration_calls(LINKER_SOURCE).len() == 4,
         "flowrunner_linker.rs registration parse found too few calls — the helper layout \
          changed under the guard"
     );

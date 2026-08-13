@@ -5,22 +5,8 @@ edition.workspace = true
 
 [dependencies]
 wit-bindgen = { workspace = true }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-# The production runner (5.2) is the pure `wamn-runner` engine reducer over the
-# canonical `wamn-flow` (5.1) graph; this component is the thin shell that drives
-# it against wamn:postgres + the native standard nodes (the wamn-api pattern).
+# Shared standard-node contract types used by the capability adapter.
 wamn-flow = { workspace = true }
-wamn-catalog = { workspace = true }
-wamn-runner = { workspace = true }
-# One guest-safe owner for run history, queue, lease, timer, and replay state.
-wamn-run-state = { workspace = true }
-# The standard node library and flow-model capability facade this component
-# implements over its real imports (wamn:postgres, wasi:http). The library is
-# pure — node behavior, taxonomy classification, and the dispatch-time
-# capability policy all live (and are tested) in the crates; this shell only
-# mirrors WIT values and performs the effects.
-wamn-nodes = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

@@ -202,13 +202,7 @@ dependencies = [
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
- "serde",
- "serde_json",
- "wamn-catalog",
  "wamn-flow",
- "wamn-run-state",
- "wamn-runner",
- "wamn-standard-nodes",
  "wit-bindgen 0.44.0",
 ]
 

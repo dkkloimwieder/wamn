@@ -32,18 +32,20 @@ mod tests {
     }
 
     #[test]
-    fn flowrunner_exact_claimed_export_is_fenced_and_distinct_from_run_next() {
-        assert!(FLOWRUNNER_WIT.contains(
-            "export execute-claimed: func(\n    run-id: string,\n    lease-owner: string,\n    lease-generation: s64,\n    lease-ttl-ms: u64,\n  ) -> result<u32, string>;"
-        ));
-        assert!(FLOWRUNNER_WIT.contains(
-            "export run-next: func(lease-ttl-ms: u64) -> result<tuple<bool, option<string>, u32>, string>;"
-        ));
-        let exact = FLOWRUNNER_WIT
-            .split("export execute-claimed:")
-            .nth(1)
-            .expect("execute-claimed export");
-        assert!(!exact.lines().take(7).any(|line| line.contains("option<")));
+    fn flowrunner_world_is_versioned_and_exports_only_run() {
+        let code = FLOWRUNNER_WIT
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("///"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(FLOWRUNNER_WIT.contains("package wamn:flowrunner@0.1.0;"));
+        assert!(
+            code.contains(
+                "export run: func(run-id: string, payload: string) -> result<u32, string>;"
+            )
+        );
+        assert_eq!(code.matches("export ").count(), 1);
     }
 
     #[test]

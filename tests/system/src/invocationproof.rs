@@ -1,4 +1,4 @@
-//! Black-box contract guards for exact claimed-run execution.
+//! Black-box guards for run admission and the single-shot runner surface.
 
 #[cfg(test)]
 mod tests {
@@ -8,12 +8,20 @@ mod tests {
         include_str!("../../../components/execution/flowrunner/wit/world.wit");
 
     #[test]
-    fn exact_driver_is_versioned_by_shape_and_does_not_alias_run_next() {
-        assert!(FLOWRUNNER_WIT.contains(
-            "export execute-claimed: func(\n    run-id: string,\n    lease-owner: string,\n    lease-generation: s64,\n    lease-ttl-ms: u64,\n  ) -> result<u32, string>;"
-        ));
-        assert_eq!(FLOWRUNNER_WIT.matches("export execute-claimed:").count(), 1);
-        assert_eq!(FLOWRUNNER_WIT.matches("export run-next:").count(), 1);
+    fn flowrunner_is_versioned_at_zero_one_and_exports_run_alone() {
+        let code = FLOWRUNNER_WIT
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("///"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(code.contains("package wamn:flowrunner@0.1.0;"));
+        assert!(
+            code.contains(
+                "export run: func(run-id: string, payload: string) -> result<u32, string>;"
+            )
+        );
+        assert_eq!(code.matches("export ").count(), 1);
     }
 
     #[test]
