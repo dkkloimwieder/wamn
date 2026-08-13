@@ -18,6 +18,21 @@ errata folded through round 10
 > purged from the repo and host Docker (`wamn-0h0g.1.5`); the full
 > execution rulings (1–8) live in the tracker notes.
 
+> **Capture carrier amendment (owner-ratified by `wamn-0h0g.8.14`,
+> implemented by `wamn-0h0g.8.3`).** Effective run capture has exactly
+> one carrier: `wamn_run.runs.capture_mode text NOT NULL DEFAULT 'off'
+> CHECK (capture_mode IN ('full','off'))`. Run-state admission writes it
+> once; asynchronous execution reads it. Only draft-sourced runs may carry
+> `full`; published HTTP/event and test-set admissions are `off`, and
+> non-draft admission paths accept no mode. The draft-run operation fills an
+> omitted mode as `full`, while the column default remains fail-closed `off`.
+> The admission immutability trigger protects the column. There is no
+> `invocation_context` entry, derivation, duplicate carrier, contract change,
+> identity change, or version change. Oversized captured output is derived
+> from stored facts: `output IS NULL AND output_size IS NOT NULL` renders
+> typed `output-too-large` metadata; the read side never consults the
+> write-time ceiling.
+
 **Principle.** Product-thesis properties are mandatory acceptance
 *outcomes*; no supporting mechanism is exempt, and an implementation
 survives only as the smallest coherent way to satisfy its outcome. Sunk

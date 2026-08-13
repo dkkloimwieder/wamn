@@ -9,6 +9,11 @@ horizon: post-POC (assumes FLOW-SPEC rev18 + POC-PLAN r6 land)
 
 # Wamn — the plan
 
+> **Archive notice for MVP scope-reduction work.** `docs/scope-reduction-mvp.md`
+> is the only live MVP charter after `wamn-0h0g.12.9`. Later rulings recorded
+> here, including `runs.capture_mode`, are historical fold-back/provenance only;
+> the charter governs.
+
 An opinionated low-code platform for industrial clients: visual dataflows, built-in
 Postgres, schema designer, generated APIs, hosted frontends — WASI components on
 wasmCloud atop Kubernetes.
@@ -630,7 +635,7 @@ ceiling instead.
 | `payload.ceiling` | env | *(to set)* | above it, typed rejection rather than degradation |
 | `payload.compress` | env | on | JSON typically 5–10×; moves the crossover materially |
 | `payload.store` | env | platform blob namespace | distinct from client storage |
-| `runs.capture_mode` | immutable run admission | direct draft-run: `full`; every published or test-set run: `off` | `full` \| `off`; never derived from mutable flow or environment state |
+| `runs.capture_mode` | historical/provenance; live MVP authority is `docs/scope-reduction-mvp.md` | direct draft-run: `full`; every published or test-set run: `off` | `full` \| `off`; never derived from mutable flow or environment state |
 | capture output ceiling | platform writer | 64 KiB | write-side only; over-ceiling `full` output is NULL while size and optional hash remain, so reads derive `output-too-large` without consulting the current ceiling |
 | `blob.retention` | env | **reachability-governed** — retained while referenced by an active checkpoint, a retained replay/audit seed, or a retained caller outcome | platform GC only; *not* a duration |
 | `blob.orphan-ttl` | env | *(to set)* | a separate mechanism: collects objects written but never referenced — the blob-before-checkpoint failure window |
@@ -2629,7 +2634,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | **Run placement — inline or queued** | Item 3's exit. One execution model, two placements — the queue row exists either way; only who executes it differs. If inline does not earn its complexity, there is one placement | 3 |
 | **Runs-per-process density** | One replica drives one run at a time today, so request concurrency scales only by pod count; 2A's instance pooling is the mechanism, measured in 3 | 2A, 3 |
 | ~~**Payload inline threshold and hard ceiling**~~ | **Deferred (2026-08-04):** the v1 floor is bounded in-band payloads on frozen `wamn:node@0.1.x`; the two numbers are set by measurement when item 1's parked tail reactivates | — |
-| ~~**Does capture serve the studio's run view, or move to the telemetry pipeline?**~~ | **Settled (2026-08-04; carrier ratified by `wamn-0h0g.8.14`):** capture remains platform data serving the author's run history. Its sole effective run carrier is `wamn_run.runs.capture_mode text NOT NULL DEFAULT 'off' CHECK (capture_mode IN ('full','off'))`, written once by run-state admission and read by asynchronous execution. A cross-column constraint permits `full` only for draft-sourced runs; published HTTP/event and all test-set admissions are `off`, and non-draft admission paths accept no mode. The draft-run operation schema fills an omitted value as `full`; the storage default remains fail-closed `off`. The admission-pin immutability trigger protects the column. There is no `invocation_context` entry, derivation, contract change, or identity/version change. Relocation waits for the parked tail and must preserve durable Replay seeds | — |
+| ~~**Does capture serve the studio's run view, or move to the telemetry pipeline?**~~ | **Historical/provenance only; live MVP authority is the capture carrier amendment in `docs/scope-reduction-mvp.md` (`wamn-0h0g.12.9`). Settled (2026-08-04; carrier ratified by `wamn-0h0g.8.14`):** capture remains platform data serving the author's run history. Its sole effective run carrier is `wamn_run.runs.capture_mode text NOT NULL DEFAULT 'off' CHECK (capture_mode IN ('full','off'))`, written once by run-state admission and read by asynchronous execution. A cross-column constraint permits `full` only for draft-sourced runs; published HTTP/event and all test-set admissions are `off`, and non-draft admission paths accept no mode. The draft-run operation schema fills an omitted value as `full`; the storage default remains fail-closed `off`. The admission-pin immutability trigger protects the column. There is no `invocation_context` entry, derivation, contract change, or identity/version change. Relocation waits for the parked tail and must preserve durable Replay seeds | — |
 | **Where does raw SQL's structural close land?** | D8's precondition does not exist; the shipped guard is defeatable by dynamic SQL | 4 |
 | **Do D15's latency SLOs get product sign-off?** | Recorded pending it; never obtained. Until then the synchronous path carries no numeric commitment | 3 |
 | **Does the catalog get a float field type?** | Industrial telemetry is natively float; D11/D12 assume it. Today authors invent a `numeric` scale or hide it in untyped `json`. The recorded ban covers material quantities only | Beyond, but decided earlier |
