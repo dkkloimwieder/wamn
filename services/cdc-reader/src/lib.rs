@@ -1065,6 +1065,8 @@ enum PublishOutcome {
 /// default ack-inflight semaphore (so `send` never blocks on backpressure), and
 /// large enough that the ack round trip amortizes across a whole transaction.
 const MAX_IN_FLIGHT: usize = 256;
+const ASYNC_NATS_DEFAULT_MAX_ACK_INFLIGHT: usize = 5_000;
+const _: () = assert!(MAX_IN_FLIGHT < ASYNC_NATS_DEFAULT_MAX_ACK_INFLIGHT);
 
 /// One row event's wire form, prepared once and re-published as-is on a retry
 /// (the `Nats-Msg-Id` in `id` is what the JetStream duplicate window keys on).
@@ -1889,7 +1891,6 @@ mod tests {
         // default max-ack-inflight semaphore, so `send` never blocks on
         // backpressure while the pipeline holds a batch.
         assert_eq!(MAX_IN_FLIGHT, 256);
-        assert!(MAX_IN_FLIGHT < 5_000);
     }
 
     #[tokio::test(start_paused = true)]
