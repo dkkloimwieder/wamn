@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.2.5"
+readonly OUTCOME="HTTP effects require the exact current plan, source resolution, and attempt"
+
 readonly CAMPAIGN="current-plan-effect-authority"
 readonly BEAD="wamn-0h0g.2.5"
 
@@ -32,7 +35,7 @@ load_mutation() {
   case "$id" in
     connection-node-permission-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
+      EXPECTED_SHA="fa581bea81e9afa26b167ad11efbd47bfa3e8fd0616750207d8745bf5289b2d7"
       NEEDLE='if !snapshot.node_permitted {'
       REPLACEMENT='if false {'
       GATE="plugins::connection_http::tests::refusal_precedence_is_explicit_and_typed"
@@ -40,7 +43,7 @@ load_mutation() {
       ;;
     connection-attempt-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
+      EXPECTED_SHA="fa581bea81e9afa26b167ad11efbd47bfa3e8fd0616750207d8745bf5289b2d7"
       NEEDLE='|| !snapshot.attempt_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -48,7 +51,7 @@ load_mutation() {
       ;;
     connection-root-plan-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
+      EXPECTED_SHA="fa581bea81e9afa26b167ad11efbd47bfa3e8fd0616750207d8745bf5289b2d7"
       NEEDLE='|| !snapshot.root_plan_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::wrong_attempt_and_wrong_run_identity_fail_before_authorization"
@@ -56,7 +59,7 @@ load_mutation() {
       ;;
     connection-resolution-bypass)
       TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
-      EXPECTED_SHA="09e5cc2fb5d978eb0f7bd16740286cc37f95ac543e5a26391d69e1a0ff1637d1"
+      EXPECTED_SHA="fa581bea81e9afa26b167ad11efbd47bfa3e8fd0616750207d8745bf5289b2d7"
       NEEDLE='|| !snapshot.resolution_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::mismatched_source_or_revoked_draft_generation_is_denied_before_network_data"
@@ -64,7 +67,7 @@ load_mutation() {
       ;;
     claims-root-bundle-for-current-plan)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
+      EXPECTED_SHA="e67c2ee071aec3fbc7d69b84cfaace0fad52129674bfe944f1317cc75fd9da1b"
       NEEDLE='WHERE bundle.execution_bundle_hash = $3 \'
       REPLACEMENT='WHERE bundle.execution_bundle_hash = $2 \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -72,7 +75,7 @@ load_mutation() {
       ;;
     claims-drop-source-resolution-match)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
+      EXPECTED_SHA="e67c2ee071aec3fbc7d69b84cfaace0fad52129674bfe944f1317cc75fd9da1b"
       NEEDLE='AND resolution.source_artifact_hash = $7 \'
       REPLACEMENT='AND true \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -80,7 +83,7 @@ load_mutation() {
       ;;
     claims-drop-attempt-occurrence-match)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
+      EXPECTED_SHA="e67c2ee071aec3fbc7d69b84cfaace0fad52129674bfe944f1317cc75fd9da1b"
       NEEDLE='AND attempt.occurrence = $6 \'
       REPLACEMENT='AND true \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
@@ -88,7 +91,7 @@ load_mutation() {
       ;;
     claims-invert-plan-node-permission)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="f8d4d43e9641992964e1360dc1e4998261723a0450d5368f91a46a47052917e4"
+      EXPECTED_SHA="e67c2ee071aec3fbc7d69b84cfaace0fad52129674bfe944f1317cc75fd9da1b"
       NEEDLE='COALESCE(plan_node.match_count = 1 AND plan_node.permitted, false)'
       REPLACEMENT='COALESCE(plan_node.match_count = 1 AND NOT plan_node.permitted, false)'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-2jdm.23"
+readonly OUTCOME="credential connection proofs fail when their fixed fixtures are weakened"
+
 readonly CAMPAIGN="credential-proof-fixtures"
 readonly BEAD="wamn-2jdm.23"
 
@@ -24,14 +27,14 @@ load_mutation() {
   case "$id" in
     positive-artifact-credential)
       TARGET="deploy/cred/notify.flow.json"
-      EXPECTED_SHA="86d9318b8453e4714cbb3a46f07a61a0ef582ba1d5133871ead45e5c4cc9eeeb"
+      EXPECTED_SHA="72597c457fd67b56363ce69b6135e33db8fadc8392a875fef798968492e85388"
       NEEDLE='      "connection": "notify-endpoint",'
       REPLACEMENT='      "credential": "notify-token",'
       GATE="credproof::tests::positive_fixture_uses_only_a_portable_connection"
       ;;
     deny-missing-connection)
       TARGET="deploy/cred/deny.flow.json"
-      EXPECTED_SHA="e4f4e3c3867694c302bf70c1ed3649a91f50de188c9819037ada000f81b60091"
+      EXPECTED_SHA="6bfce3218a54a6b2db47a7c10fe88e4f07775fc2c35d4301b1cf67a667dc8d6e"
       NEEDLE='      "connection": "notify-endpoint",'
       REPLACEMENT=''
       GATE="credproof::tests::deny_fixture_has_no_environment_binding_material"

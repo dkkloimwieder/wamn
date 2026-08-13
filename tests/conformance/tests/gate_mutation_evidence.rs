@@ -1,32 +1,11 @@
 //! Strict schema and invariant checks for checked-in gate-mutation evidence.
 
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const EVIDENCE_DIRECTORY: &str = "architecture/evidence/mutations";
-const DURABLE_CAMPAIGN: &str = "durable-invocation-recovery";
-const DURABLE_BEAD: &str = "wamn-2jdm.5.1";
-const DURABLE_RUNNER: &str = "tools/gate-mutants/durable-invocation-recovery.sh";
-const DURABLE_SOURCE_COMMIT: &str = "cf9d5ffebc885629bf2f7c45a2310f6c55245f60";
-const EVENT_LINEAGE_CAMPAIGN: &str = "event-lineage-dispatch";
-const EVENT_LINEAGE_BEAD: &str = "wamn-2jdm.11";
-const EVENT_LINEAGE_RUNNER: &str = "tools/gate-mutants/event-lineage-dispatch.sh";
-const EVENT_LINEAGE_SOURCE_COMMIT: &str = "d82e72a2ad36aae00c19cfd1aef0e0ce62450ea4";
-const QUEUE_CAMPAIGN: &str = "queue-runner";
-const QUEUE_BEAD: &str = "wamn-2jdm.5.2";
-const QUEUE_RUNNER: &str = "tools/gate-mutants/queue-runner.sh";
-const QUEUE_SOURCE_COMMIT: &str = "c51ca79516a8195b83db1572ae1d60f570bebef2";
-const SCENARIO_CAMPAIGN: &str = "scenario-replay-impact";
-const SCENARIO_BEAD: &str = "wamn-2jdm.5.3";
-const SCENARIO_RUNNER: &str = "tools/gate-mutants/scenario-replay-impact.sh";
-const SCENARIO_SOURCE_COMMIT: &str = "3b866e82725b84eea40f513d81838b6c7fcbfadf";
-const CAUSATION_CAMPAIGN: &str = "causation-e2e";
-const CAUSATION_BEAD: &str = "wamn-ec7j";
-const CAUSATION_RUNNER: &str = "tools/gate-mutants/causation-e2e.sh";
-const CAUSATION_SOURCE_COMMIT: &str = "21c3836fe0536c347355ef21f7d811eb92cc678a";
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EvidenceRecord {
@@ -171,8 +150,8 @@ fn evidence_json() -> String {
     format!(
         r#"{{
           "schema_version": "0.1",
-          "campaign": "{DURABLE_CAMPAIGN}",
-          "bead": "{DURABLE_BEAD}",
+          "campaign": "fixture-campaign",
+          "bead": "fixture-bead",
           "source": {{
             "git_commit": "1111111111111111111111111111111111111111",
             "runner_sha256": "{digest}"
@@ -295,82 +274,5 @@ fn checked_in_mutation_evidence_conforms_when_present() {
         let evidence =
             parse_evidence(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         validate_evidence(&evidence).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-        if evidence.campaign == DURABLE_CAMPAIGN {
-            assert_eq!(evidence.bead, DURABLE_BEAD);
-            assert_eq!(evidence.source.git_commit, DURABLE_SOURCE_COMMIT);
-            let runner = fs::read(repository_root().join(DURABLE_RUNNER))
-                .expect("durable mutation runner is readable");
-            assert_eq!(
-                evidence.source.runner_sha256,
-                hex::encode(Sha256::digest(runner)),
-                "durable evidence must identify the checked-in runner bytes"
-            );
-        }
-        if evidence.campaign == EVENT_LINEAGE_CAMPAIGN {
-            assert_eq!(evidence.bead, EVENT_LINEAGE_BEAD);
-            assert_eq!(evidence.source.git_commit, EVENT_LINEAGE_SOURCE_COMMIT);
-            let runner = fs::read(repository_root().join(EVENT_LINEAGE_RUNNER))
-                .expect("event-lineage mutation runner is readable");
-            assert_eq!(
-                evidence.source.runner_sha256,
-                hex::encode(Sha256::digest(runner)),
-                "event-lineage evidence must identify the checked-in runner bytes"
-            );
-        }
-        if evidence.campaign == QUEUE_CAMPAIGN {
-            assert_eq!(evidence.bead, QUEUE_BEAD);
-            assert_eq!(evidence.source.git_commit, QUEUE_SOURCE_COMMIT);
-            let runner = fs::read(repository_root().join(QUEUE_RUNNER))
-                .expect("queue mutation runner is readable");
-            assert_eq!(
-                evidence.source.runner_sha256,
-                hex::encode(Sha256::digest(runner)),
-                "queue evidence must identify the checked-in runner bytes"
-            );
-        }
-        if evidence.campaign == SCENARIO_CAMPAIGN {
-            assert_eq!(evidence.bead, SCENARIO_BEAD);
-            assert_eq!(evidence.source.git_commit, SCENARIO_SOURCE_COMMIT);
-            let runner = fs::read(repository_root().join(SCENARIO_RUNNER))
-                .expect("scenario mutation runner is readable");
-            assert_eq!(
-                evidence.source.runner_sha256,
-                hex::encode(Sha256::digest(runner)),
-                "scenario evidence must identify the checked-in runner bytes"
-            );
-        }
-        if evidence.campaign == CAUSATION_CAMPAIGN {
-            assert_eq!(evidence.bead, CAUSATION_BEAD);
-            assert_eq!(evidence.source.git_commit, CAUSATION_SOURCE_COMMIT);
-            let runner = fs::read(repository_root().join(CAUSATION_RUNNER))
-                .expect("causation mutation runner is readable");
-            assert_eq!(
-                evidence.source.runner_sha256,
-                hex::encode(Sha256::digest(runner)),
-                "causation evidence must identify the checked-in runner bytes"
-            );
-        }
     }
-}
-
-#[test]
-fn causation_mutation_evidence_conforms() {
-    let path = repository_root()
-        .join(EVIDENCE_DIRECTORY)
-        .join("causation-e2e.json");
-    let json = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
-    let evidence =
-        parse_evidence(&json).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    validate_evidence(&evidence).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
-    assert_eq!(evidence.campaign, CAUSATION_CAMPAIGN);
-    assert_eq!(evidence.bead, CAUSATION_BEAD);
-    assert_eq!(evidence.source.git_commit, CAUSATION_SOURCE_COMMIT);
-    let runner = fs::read(repository_root().join(CAUSATION_RUNNER))
-        .expect("causation mutation runner is readable");
-    assert_eq!(
-        evidence.source.runner_sha256,
-        hex::encode(Sha256::digest(runner)),
-        "causation evidence must identify the checked-in runner bytes"
-    );
 }

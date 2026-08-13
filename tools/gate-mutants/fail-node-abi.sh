@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-ayq7.25"
+readonly OUTCOME="malformed fail results are refused before the lifecycle transaction"
+
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
 readonly MUTATION="fail-result-bypasses-exact-terminal-validation"
 readonly TEST="tests::malformed_fail_actions_are_refused_before_the_lifecycle_transaction"
 readonly NEEDLE='validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
 readonly REPLACEMENT='if dispatch.node_type != "fail" { validate_fail_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
-readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
+readonly EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

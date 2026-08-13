@@ -14,8 +14,11 @@
 # Network-free: the gate is the package harness's static half.
 set -euo pipefail
 
+readonly OWNER="bd:wamn-ftfc.14"
+readonly OUTCOME="the generated authoring collection detects a silently dropped optional field"
+
 readonly TARGET="clients/authoring-client/src/cli/cli.ts"
-readonly EXPECTED_SHA="28f766c0db94c383c4134ba1c25fc3b2804c178fd26233f80a1c3cff436472b5"
+readonly EXPECTED_SHA="568ee27086b29ecabaf67d1115b2f10c483b34a16150a95586886cdf3172cbb8"
 readonly NEEDLE='    ...(options.provenance === undefined ? {} : { provenance: options.provenance }),'
 readonly REPLACEMENT='    ...(options.provenance === undefined ? {} : {}),'
 readonly GATE="every CLI request has the shape of its checked-in collection section"

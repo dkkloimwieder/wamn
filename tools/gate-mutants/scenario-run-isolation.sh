@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-jole"
+readonly OUTCOME="each scenario root run receives a distinct schema and run identity"
+
 readonly TARGET="services/scenario-worker/src/lib.rs"
-readonly EXPECTED_SHA="05005e75b808ddfba15a2004d79c9bb107eba79e28d9203abe13e2ee5d820972"
+readonly EXPECTED_SHA="c7049ec229803561b63119edd4101d6f68de79454fad7deb8c2b289a76c47857"
 readonly NEEDLE='let schema = template.replace("{ordinal}", &ordinal.to_string());'
 readonly REPLACEMENT='let schema = template.replace("{ordinal}", "0");'
 readonly GATE="tests::root_runs_in_one_invocation_have_distinct_schema_and_run_identity"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-l5i9.73"
+readonly OUTCOME="run-plane drift plans and applies the canonical helpers, checks, and actions"
+
 readonly CAMPAIGN="run-plane-canonical"
 readonly BEAD="wamn-l5i9.73"
 readonly EXPECTED_PROFILE="debug"
@@ -28,30 +31,38 @@ load_mutation() {
   case "$id" in
     check-catalog-is-not-planned)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0"
+      EXPECTED_SHA="592f583862d177f32f4130d66af942383e5ccfee65ffba11121de2cd0a50b00b"
       NEEDLE='for spec in CHECK_SPECS {
-        let Some(columns)'
+        if spec.table == "runs" && spec.name == "runs_check" {'
       REPLACEMENT='for spec in &[] as &[CheckSpec] {
-        let Some(columns)'
+        if spec.table == "runs" && spec.name == "runs_check" {'
       GATE="run_plane::tests::drifted_and_missing_checks_plan_exact_repairs"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control "$GATE" -- --exact)
       ;;
     missing-helper-is-accepted)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="18bab7707252a1635757349f0fa5da3a4c575e6ef4e5932c402f86ce2b37c0b0"
-      NEEDLE='.get("lock_catalog_head")
-        .is_none_or(|def| normalize_observed_schema(def, schema) != LOCK_CATALOG_HEAD_DEF)'
-      REPLACEMENT='.get("lock_catalog_head")
-        .is_some_and(|def| normalize_observed_schema(def, schema) != LOCK_CATALOG_HEAD_DEF)'
+      EXPECTED_SHA="592f583862d177f32f4130d66af942383e5ccfee65ffba11121de2cd0a50b00b"
+      NEEDLE='.helper_functions
+            .get(spec.name)
+            .is_none_or(|definition| {
+                normalize_observed_schema(definition, schema) != spec.definition.as_ref()
+            })'
+      REPLACEMENT='.helper_functions
+            .get(spec.name)
+            .is_some_and(|definition| {
+                normalize_observed_schema(definition, schema) != spec.definition.as_ref()
+            })'
       GATE="run_plane::tests::missing_helpers_and_trigger_are_repaired_for_present_runs"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control "$GATE" -- --exact)
       ;;
     effect-shell-does-not-apply)
       TARGET="services/ctl/src/reconcile_run_plane.rs"
-      EXPECTED_SHA="9c72aaf2b9fd98220986950c3d753eef89b8189ca8b761fd0fc348e3acdef69b"
-      NEEDLE='client
+      EXPECTED_SHA="1d830da8fb767ff12f4c3fbb1228690c70ea98daf9169f4ca6ea33e8efa7de22"
+      NEEDLE='for action in &plan.actions[applied..] {
+            client
                 .batch_execute(&action.sql)'
-      REPLACEMENT='client
+      REPLACEMENT='for action in &plan.actions[applied..] {
+            client
                 .batch_execute("SELECT 1")'
       GATE="run_plane_reconcile_live"
       TEST_ARGV=(cargo test --locked -p wamn-ctl --test run_plane_live "$GATE" -- --exact --nocapture)

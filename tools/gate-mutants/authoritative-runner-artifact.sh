@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-2jdm.5.10"
+readonly OUTCOME="runner lookup fails closed on mismatched authoritative catalog identity"
+
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
 readonly MUTATION="runner-accepts-wrong-catalog-version"
 readonly TEST="tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity"
-readonly NEEDLE="AND rf.catalog_version = r.catalog_version \\"
-readonly REPLACEMENT="AND rf.catalog_version = r.flow_version \\"
-readonly EXPECTED_SHA="421dd197a699bd764329c0e4255538dd4b943b1a16a9f936fd5515fe25434d8e"
+readonly NEEDLE="AND d.catalog_version = r.catalog_version \\"
+readonly REPLACEMENT="AND d.catalog_version = r.flow_version \\"
+readonly EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

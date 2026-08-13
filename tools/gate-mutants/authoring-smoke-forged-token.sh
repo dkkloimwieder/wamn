@@ -13,8 +13,11 @@
 #     tools/gate-mutants/authoring-smoke-forged-token.sh run
 set -euo pipefail
 
+readonly OWNER="bd:wamn-jvzx.4"
+readonly OUTCOME="the authenticated authoring smoke refuses a forged credential"
+
 readonly TARGET="clients/authoring-client/scripts/smoke.mjs"
-readonly EXPECTED_SHA="8c398eced30b6b8dae6fc87b8aa00a490ba8076b5fa74d85ef1b00b808bcb4ff"
+readonly EXPECTED_SHA="6a39f78bdea5a28866fa7829adce94f79b79d668469d3282f10cbea891dacb4d"
 readonly NEEDLE='credential: "forged", expect: "refused"'
 readonly REPLACEMENT='credential: "forged", expect: "authorized"'
 readonly GATE="authoring-leg-forged-token-status"
@@ -37,6 +40,9 @@ assert_precondition() {
     echo "$TARGET must contain the mutation anchor exactly once" >&2
     exit 2
   }
+}
+
+assert_live_environment() {
   for variable in WAMN_AUTHORING_SMOKE_BASE_URL WAMN_AUTHORING_SMOKE_PRINCIPAL_A \
     WAMN_AUTHORING_SMOKE_PRINCIPAL_B; do
     [[ -n "${!variable:-}" ]] || {
@@ -47,6 +53,7 @@ assert_precondition() {
 }
 
 run_gate() {
+  assert_live_environment
   node "$TARGET" \
     --base-url "$WAMN_AUTHORING_SMOKE_BASE_URL" \
     --principal "$WAMN_AUTHORING_SMOKE_PRINCIPAL_A" \

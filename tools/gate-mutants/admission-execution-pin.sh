@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.2.4"
+readonly OUTCOME="admission derives and freezes the authoritative execution-bundle pin"
+
 readonly CAMPAIGN="admission-execution-pin"
 readonly BEAD="wamn-0h0g.2.4"
 readonly EXPECTED_PROFILE="debug"
@@ -31,7 +34,7 @@ load_mutation() {
   case "$id" in
     release-member-hash-replaced-by-caller-json)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="b003f77129de11e84419341895eba94ccda40a244c0a887f3d3a94c6df9fefc8"
+      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
       NEEDLE="                  member.execution_bundle_hash, '{dispatched}', 'scenario', \\"
       REPLACEMENT="                  \$7::text::jsonb ->> 'execution-bundle-hash', '{dispatched}', 'scenario', \\"
       GATE="admission_derives_root_bundle_from_authoritative_member"
@@ -39,7 +42,7 @@ load_mutation() {
       ;;
     missing-root-plan-admits-run)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="145b1e7656f46ed60f998adc19c8b262e5fa51dde221cd229a2e3344df0c6575"
+      EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
       NEEDLE="      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \\"
       REPLACEMENT="      WHEN rp.execution_bundle_hash IS NULL THEN 'ready' \\"
       GATE="admission::tests::admission_derives_root_bundle_from_authoritative_member"
@@ -47,7 +50,7 @@ load_mutation() {
       ;;
     runs-execution-bundle-fk-removed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="5d8a8967ba040f6f55a8277b2ad01a21815b0fecbc3c94c633bd0d69ca9832b5"
+      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
       NEEDLE='    CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)'
@@ -58,7 +61,7 @@ load_mutation() {
       ;;
     run-admission-pin-update-allowed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="5d8a8967ba040f6f55a8277b2ad01a21815b0fecbc3c94c633bd0d69ca9832b5"
+      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
       NEEDLE='CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash'
       REPLACEMENT='CREATE TRIGGER runs_admission_pins_immutable
@@ -68,7 +71,7 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment'
       ;;
     draft-json-bundle-pin-restored)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="b003f77129de11e84419341895eba94ccda40a244c0a887f3d3a94c6df9fefc8"
+      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
       NEEDLE="                      'validated-draft-hash', d.validated_draft_hash, \\"
       REPLACEMENT="                      'validated-draft-hash', d.validated_draft_hash, \\
                       'execution-bundle-hash', d.execution_bundle_hash, \\"
@@ -77,15 +80,9 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment'
       ;;
     legacy-plan-pin-fabricated-from-artifact)
       TARGET="services/ctl/src/publish_catalog.rs"
-      EXPECTED_SHA="08e3581c29d9b91c52196df4d469e0c69387395d8c1f17d65b7cdeb0b3ce1f64"
-      NEEDLE='        artifact,
-        supplied_node_types,
-        execution_bundle_hash: None,'
-      REPLACEMENT='        execution_bundle_hash: Some(
-            artifact.identity().artifact_hash().as_str().to_string(),
-        ),
-        artifact,
-        supplied_node_types,'
+      EXPECTED_SHA="ccb01cfba2b3f341b484de5ac88692b64fca453e1f8a267c83f463070b3206ab"
+      NEEDLE='                prepared.execution_bundle_hash.as_ref().ok_or_else(|| {'
+      REPLACEMENT='                Some(prepared.artifact.identity().artifact_hash().as_str()).ok_or_else(|| {'
       GATE="publish_catalog::tests::legacy_publication_without_validated_plan_returns_missing_root_plan"
       TEST_ARGV=(cargo test --locked -p wamn-ctl --lib "$GATE" -- --exact)
       ;;

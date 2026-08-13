@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-ayq7.20"
+readonly OUTCOME="respond remains routed through the standard-node ABI"
+
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
 readonly MUTATION="respond-falls-out-of-standard-dispatch"
 readonly TEST="tests::respond_resolves_through_the_standard_node_abi"
 readonly NEEDLE='node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
 readonly REPLACEMENT='node_type if node_type != "respond" && wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),'
-readonly EXPECTED_SHA="684da11d95f4974e8d45c898b353eca4682cd9a2bb7bf56000a52c3af58df6e2"
+readonly EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

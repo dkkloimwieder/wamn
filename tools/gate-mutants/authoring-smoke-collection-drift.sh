@@ -7,8 +7,11 @@
 # Network-free: the gate is the smoke script's static `--check` half.
 set -euo pipefail
 
+readonly OWNER="bd:wamn-jvzx.4"
+readonly OUTCOME="the authenticated smoke refuses hand-written request-collection drift"
+
 readonly TARGET="clients/authoring-client/scripts/smoke.mjs"
-readonly EXPECTED_SHA="8c398eced30b6b8dae6fc87b8aa00a490ba8076b5fa74d85ef1b00b808bcb4ff"
+readonly EXPECTED_SHA="6a39f78bdea5a28866fa7829adce94f79b79d668469d3282f10cbea891dacb4d"
 readonly NEEDLE='    writePath(document, path, values[field]);'
 readonly REPLACEMENT='    writePath(document, path, values[field]);
     writePath(document, ["body", "command", "input", "flow-id"], "hand-rolled-flow");'

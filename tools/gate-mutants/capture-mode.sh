@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.8.3"
+readonly OUTCOME="capture remains immutable full-or-off with fail-closed storage and projection"
+
 readonly CAMPAIGN="capture-mode"
 readonly BEAD="wamn-0h0g.8.3"
 readonly EXPECTED_PROFILE="debug"
@@ -132,7 +135,7 @@ load_mutation() {
       ;;
     retain-capture-off-error-detail)
       TARGET="components/execution/flowrunner/src/lib.rs"
-      EXPECTED_SHA="da62e10564c6e71cc1c433e9a0a674b8ca4bc525f45c9b0f792e503a5ac7c0e2"
+      EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
       NEEDLE='    let detail = if capture_detail {
         wamn_run_state::capture::scrub(&mut detail);
         jsonb(&detail)

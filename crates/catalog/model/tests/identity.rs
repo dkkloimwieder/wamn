@@ -284,6 +284,18 @@ fn omitted_unresolved_mutable_and_noncanonical_inputs_are_rejected() {
 }
 
 #[test]
+fn request_nodes_require_an_explicit_pinned_interface() {
+    let respond = node_interface("respond", Vec::new(), EffectPolicy::Pure);
+    let missing_request = Artifact::new("tenant-a", &request_flow(), vec![interface(), respond])
+        .expect_err("request must not be model-owned");
+    assert!(matches!(
+        missing_request,
+        CatalogIdentityError::UnresolvedInterface { ref node_type }
+            if node_type == "request"
+    ));
+}
+
+#[test]
 fn release_activation_head_and_hash_parser_preserve_scope_invariants() {
     let artifact = artifact();
     let sources = vec![source(

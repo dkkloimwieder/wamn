@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-2jdm.11"
+readonly OUTCOME="trusted event lineage is preserved from claim through dispatch"
+
 readonly CAMPAIGN="event-lineage-dispatch"
 readonly BEAD="wamn-2jdm.11"
 readonly EXPECTED_PROFILE="debug"
@@ -28,7 +31,7 @@ load_mutation() {
   case "$id" in
     combined-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="aab6fc9b1faa54ffcb891f45cd9b83643e61e6e4b3ad0d4a86f221ea5a6d09d8"
+      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
       NEEDLE='execution_input = run_sql::execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="combined_claim_and_checkpoint_builders_compose_the_split_statements"
@@ -36,7 +39,7 @@ load_mutation() {
       ;;
     split-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/sql.rs"
-      EXPECTED_SHA="d0841e3acb444bfa5663be7481c337e81142e1b810760222cc5198993f5a1d84"
+      EXPECTED_SHA="930dc8a47bec8c20f1877faf9c56b69a153d8aa33592fbcbe3d6fabfab587c5f"
       NEEDLE='execution_input = execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="sql::tests::dispatch_read_projects_flow_and_input"
@@ -44,7 +47,7 @@ load_mutation() {
       ;;
     flowrunner-ignores-dispatch-causation)
       TARGET="components/execution/flowrunner/src/lib.rs"
-      EXPECTED_SHA="bab7eee8800092e95977c0adf2aa8c6edc5d32570a068f33641cab77e31cd210"
+      EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
       NEEDLE='let causation = input.get("causation");'
       REPLACEMENT='let causation = input.get("retired-causation");'
       GATE="tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run"

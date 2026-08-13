@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-ayq7.22"
+readonly OUTCOME="malformed request actions are refused before durable checkpointing"
+
 readonly TARGET="components/execution/flowrunner/src/lib.rs"
 readonly MUTATION="request-success-bypasses-exact-emission-validation"
 readonly TEST="tests::malformed_request_actions_are_refused_before_durable_checkpointing"
 readonly NEEDLE='validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?;'
 readonly REPLACEMENT='if dispatch.node_type != "request" { validate_request_outcome(dispatch, outcome).map_err(|error| error.to_string())?; }'
-readonly EXPECTED_SHA="25498ff8eac774926c6df401b052e7fe78cb6808980e6c74a793eeca7adaabcc"
+readonly EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

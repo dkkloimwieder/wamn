@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-4u7p.38"
+readonly OUTCOME="request cannot regain the model-owned interface exemption reserved for call-flow"
+
 readonly TARGET="crates/catalog/model/src/lib.rs"
 readonly MUTATION="request-regains-model-owned-interface-exemption"
-readonly TEST="publish_catalog::tests::built_in_only_artifacts_round_trip_every_lifecycle_contract"
-readonly NEEDLE='const MODEL_OWNED_NODES: [&str; 0] = [];'
-readonly REPLACEMENT='const MODEL_OWNED_NODES: [&str; 1] = ["request"];'
-readonly EXPECTED_SHA="5120d9655521962db6369466d48dc741054a9466eca68abdcf4842f115846813"
+readonly TEST="request_nodes_require_an_explicit_pinned_interface"
+readonly NEEDLE='const MODEL_OWNED_NODES: [&str; 1] = ["call-flow"];'
+readonly REPLACEMENT='const MODEL_OWNED_NODES: [&str; 2] = ["call-flow", "request"];'
+readonly EXPECTED_SHA="df6fe470d282fb42fe1f1808ac187e876c377c71d9735f4426447b4feb7cb30e"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -37,7 +40,7 @@ check() {
 }
 
 gate() {
-  cargo test --locked -p wamn-ctl --lib "$TEST" -- --exact
+  cargo test --locked -p wamn-catalog --test identity "$TEST" -- --exact
 }
 
 run_mutant() (

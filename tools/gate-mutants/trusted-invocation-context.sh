@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-99wl"
+readonly OUTCOME="admission rejects malformed trusted invocation context"
+
 readonly TARGET="crates/execution/run-state/src/admission.rs"
-readonly EXPECTED_SHA="1e28de40f6590d5bb4d1ba0a4ca50913be9d21811935d04beff5ef3cc5d63a2a"
+readonly EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
 readonly NEEDLE='OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM '\''object'\'' \'
 readonly REPLACEMENT='OR false \'
 readonly GATE="admission::tests::admission_persists_the_versioned_release_artifact_principal"

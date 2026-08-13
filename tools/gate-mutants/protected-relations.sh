@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.13.33"
+readonly OUTCOME="the generated protected-relation table matches live catalog authority"
+
 repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 table="$repository/architecture/protected-writes.json"
 live_test="$repository/services/ctl/tests/protected_relations_live.rs"
 static_test="$repository/tests/conformance/tests/protected_relations.rs"
 expected_table_sha=5603f40e12455e40a325ff44f9a1f46eee3ecde4b6813c3c8ecaaaae5856e4a7
-expected_live_sha=5b4d66a0ca8068e0a3a996c3fa8cd1de9530bbd538780bfd50a76669d5000210
+expected_live_sha=57a114672b628d0f99bbd664e71f324f69ef7e5f349b5090e71cab81a951a01c
 expected_static_sha=5813f727402cd68698e97d14d28752b3797ffaded27fe49804fbe17931a97219
 target_dir=${CARGO_TARGET_DIR:-/tmp/wamn-target-0h0g-13-33}
 

@@ -24,36 +24,6 @@ struct GovernedJsonSchema {
 
 const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
     GovernedJsonSchema {
-        path: "architecture/evidence/mutations/authoritative-runner-artifact.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/causation-e2e.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/credential-proof-fixtures.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/durable-invocation-recovery.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/event-lineage-dispatch.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/materializer-run-schema.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/portable-http-connection-floor.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/queue-runner.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/run-plane-canonical.json",
-    },
-    GovernedJsonSchema {
-        path: "architecture/evidence/mutations/scenario-replay-impact.json",
-    },
-    GovernedJsonSchema {
         path: "architecture/gate-registry.json",
     },
     GovernedJsonSchema {

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-4q3c.12"
+readonly OUTCOME="runner egress rejects forbidden resolved destination addresses"
+
 readonly CAMPAIGN="runner-egress-address"
 readonly BEAD="wamn-4q3c.12"
 readonly TARGET="deploy/gates/runner-connection-egress.yaml"

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-ec7j"
+readonly OUTCOME="the exact admitted run causation survives the reader pipeline"
+
 readonly CAMPAIGN="causation-e2e"
 readonly BEAD="wamn-ec7j"
 
@@ -28,7 +31,7 @@ load_mutation() {
   case "$id" in
     invocation-drops-sink-write)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="eb6ed9b5b035e14bcc35c3c72623eaa9f0d37670ad158b0e2486ed50bba49eee"
+      EXPECTED_SHA="016b0226b51903f221bb8a4e5ec3d64336d5e0c1581246cd9a2d810da8f25df8"
       NEEDLE='{ "id": "write", "type": "pg-write" }'
       REPLACEMENT='{ "id": "write", "type": "transform" }'
       GATE="causation_e2e::tests::invocation_fixture_drives_one_gate_scoped_pg_write"
@@ -36,7 +39,7 @@ load_mutation() {
       ;;
     reader-requests-r1)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="eb6ed9b5b035e14bcc35c3c72623eaa9f0d37670ad158b0e2486ed50bba49eee"
+      EXPECTED_SHA="016b0226b51903f221bb8a4e5ec3d64336d5e0c1581246cd9a2d810da8f25df8"
       NEEDLE='stream_replicas: 3,'
       REPLACEMENT='stream_replicas: 1,'
       GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"
@@ -44,7 +47,7 @@ load_mutation() {
       ;;
     readerbench-drops-exact-causation)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="eb6ed9b5b035e14bcc35c3c72623eaa9f0d37670ad158b0e2486ed50bba49eee"
+      EXPECTED_SHA="016b0226b51903f221bb8a4e5ec3d64336d5e0c1581246cd9a2d810da8f25df8"
       NEEDLE='expect_causation_run: Some(run_id.into()),'
       REPLACEMENT='expect_causation_run: None,'
       GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"

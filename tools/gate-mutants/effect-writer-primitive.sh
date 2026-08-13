@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.4.9"
+readonly OUTCOME="the private effect writer preserves ledger, credential, and activation boundaries"
+
 readonly CAMPAIGN="effect-writer-primitive"
 readonly BEAD="wamn-0h0g.4.9"
 readonly EXPECTED_PROFILE="debug"
@@ -48,7 +51,7 @@ load_mutation() {
   case "$id" in
     restore-attempt-key-column)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="8009b85401a5e3cfda2d7a5b0444fe84f67b9c9772153abdb4cd8cd2c01f764c"
+      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
       NEEDLE='    attempt_input_ref text NOT NULL,'
       REPLACEMENT='    attempt_input_ref text NOT NULL,
     attempt_key text,'
@@ -57,7 +60,7 @@ load_mutation() {
       ;;
     bypass-populated-ledger-preflight)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="fca678cc9fbc70a6f515e708a22bab6ace4a6ad1adf0e9e32195c02dfeeb4c7c"
+      EXPECTED_SHA="592f583862d177f32f4130d66af942383e5ccfee65ffba11121de2cd0a50b00b"
       NEEDLE='DO $retire$
 BEGIN
     IF {populated} THEN'
@@ -69,7 +72,7 @@ BEGIN
       ;;
     allow-login-stable-writer-role)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="fca678cc9fbc70a6f515e708a22bab6ace4a6ad1adf0e9e32195c02dfeeb4c7c"
+      EXPECTED_SHA="592f583862d177f32f4130d66af942383e5ccfee65ffba11121de2cd0a50b00b"
       NEEDLE="WHERE rolname = 'wamn_effect_writer' AND NOT rolcanlogin \\"
       REPLACEMENT="WHERE rolname = 'wamn_effect_writer' \\"
       GATE="run_plane_reconcile_live"
@@ -77,7 +80,7 @@ BEGIN
       ;;
     grant-attempt-insert-to-app)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="8009b85401a5e3cfda2d7a5b0444fe84f67b9c9772153abdb4cd8cd2c01f764c"
+      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
       NEEDLE='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer;'
       REPLACEMENT='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_app;'
       GATE="run_plane::tests::effect_writer_surface_uses_acl_not_insert_authorization_triggers"

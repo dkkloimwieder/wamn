@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-0h0g.3.2"
+readonly OUTCOME="execution-plan compilation remains deterministic and canonical"
+
 readonly TARGET="services/scenario-worker/src/authoring.rs"
-readonly EXPECTED_SHA="e6f790345348f4654d3d30233a90d755062db2b721b501022c0af48f45e53258"
+readonly EXPECTED_SHA="b70b8435d1df7050f630c64d32435009c7fcef4c4480d2c6a319d0c514f016fd"
 readonly GATE="deterministic_plan_compiler"
 
 ROOT="$(git rev-parse --show-toplevel)"

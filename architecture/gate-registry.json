@@ -244,9 +244,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/causation-e2e.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -298,9 +297,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -326,9 +324,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/durable-invocation-recovery.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -404,9 +401,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -432,9 +428,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -459,9 +454,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -701,9 +695,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -837,9 +830,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/durable-invocation-recovery.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -867,9 +859,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/durable-invocation-recovery.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -896,9 +887,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/durable-invocation-recovery.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -1031,9 +1021,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/causation-e2e.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.4"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -1113,9 +1102,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/scenario-replay-impact.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.6"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -1304,9 +1292,8 @@
       "allowed_skips": [],
       "coverage_exclusions": [],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/queue-runner.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
@@ -1611,9 +1598,8 @@
         "does not execute recovery or prove attempt-intent atomicity"
       ],
       "mutation_evidence": {
-        "status": "proven",
-        "follow_up": null,
-        "evidence": "architecture/evidence/mutations/durable-invocation-recovery.json"
+        "status": "pending",
+        "follow_up": "bd:wamn-2jdm.5"
       },
       "cadence": "per-recovery-contract-or-spec-change",
       "latest_evidence": {

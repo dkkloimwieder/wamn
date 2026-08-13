@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+readonly OWNER="bd:wamn-l5i9.72"
+readonly OUTCOME="materializer writes remain confined to the validated run schema"
+
 readonly CAMPAIGN="materializer-run-schema"
 readonly BEAD="wamn-l5i9.72"
 readonly EXPECTED_PROFILE="debug"
@@ -28,7 +31,7 @@ load_mutation() {
   case "$id" in
     materializer-default-bypasses-canonical-schema)
       TARGET="components/execution/materializer/src/main.rs"
-      EXPECTED_SHA="3dcf0d6b142ed8731b422c527601fcc697ca5801431fcf779baf2b08fcd4d3d4"
+      EXPECTED_SHA="82f3e23e99a407749aebf8cae1ca85da39aafdb7b867a18ce57f26d302772ebe"
       NEEDLE='env_or("WAMN_MAT_RUN_SCHEMA", "wamn_run")'
       REPLACEMENT='env_or("WAMN_MAT_RUN_SCHEMA", "mutant_run")'
       GATE="materializer::tests::admission_scopes_dedup_and_records_registration_evidence"
@@ -36,7 +39,7 @@ load_mutation() {
       ;;
     custom-schema-leaves-admission-boundaries-canonical)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f"
+      EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
       NEEDLE='admit: canonical.admit.replace("wamn_run.", &qualifier),'
       REPLACEMENT='admit: canonical.admit,'
       GATE="admission::tests::custom_admission_schema_qualifies_every_run_state_reference"
@@ -44,7 +47,7 @@ load_mutation() {
       ;;
     invalid-schema-bypasses-identifier-validation)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="af1c0d8c1a4e4a13ae2867f0d469932d5729672811ff1bc5c9d6405ce1320d0f"
+      EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
       NEEDLE='Identifier::new(value).map(Self)'
       REPLACEMENT='Identifier::new("mutant_run").map(Self)'
       GATE="admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers"

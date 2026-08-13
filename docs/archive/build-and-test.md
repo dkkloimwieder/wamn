@@ -874,18 +874,10 @@ cargo test -p wamn-test-infrastructure --lib scenario_worker_gate::tests::suite_
 cargo test -p wamn-test-infrastructure --lib \
   scenario_worker_gate::tests::flattened_impact_suites_deserialize_as_suite_selectors
 
-# Checked-in PLAN-0.2 scenario/replay/impact mutation campaign. `check` pins
-# clean source hashes; `green-all` runs one debug gate per 11 named mutants; `run-all`
-# requires every fixed mutant to turn red and restores each target byte-exactly.
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
-  tools/gate-mutants/scenario-replay-impact.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
-  tools/gate-mutants/scenario-replay-impact.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-3 \
-  tools/gate-mutants/scenario-replay-impact.sh run-all
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-# Immutable green/red evidence:
-# architecture/evidence/mutations/scenario-replay-impact.json
+# Historical only after the MVP deletion charter: the former PLAN-0.2
+# scenario/replay/impact mutation runner and evidence record were removed with
+# the non-retained replay/impact surface. There is no current runnable
+# scenario-replay-impact mutation command in this recipe.
 
 # Local seed-demo recipes that required `disposition-node.wasm` were deleted by
 # `.6.3`; they are not current runnable gates.
@@ -908,11 +900,11 @@ kubectl -n wamn-system logs job/suiteexec
 # CASE/root run (db-state asserts see only that run's writes). Child subflows
 # share the root case run's isolation boundary. Suites are small; canonical
 # run-plane provisioning remains sub-second per case locally.
-# The checked-in scenario/replay/impact campaign above owns the suite-selection,
-# case-isolation, aggregate-fold, RLS, replay, and impact-traversal mutants and
-# their immutable green/red evidence.
-# wamn-jole's focused mutation collapses two root runs onto ordinal 0; the
-# named identity test must turn red and the source is restored byte-exactly.
+# The broad scenario/replay/impact campaign was deleted with its non-retained
+# surfaces. wamn-jole's retained focused mutation owns only root-run isolation:
+# it collapses two root runs onto ordinal 0, the named identity test must turn
+# red, and the source is restored byte-exactly. bd:wamn-2jdm.6 tracks any new
+# mutation proof still required by retained suite selection.
 CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target \
   tools/gate-mutants/scenario-run-isolation.sh run
 ```
@@ -1362,12 +1354,8 @@ cargo test -p wamn-run-state   # pure text pins + queue.rs live
 # delay-merge; a structurally-different v2 (linear in->r) is registered+activated
 # MID-RUN; the pinned resume keeps driving v1 (completed, 7 node_runs rows, m/r
 # visits (2,0,1)). See [5.14] production runner (run-worker, fqg.8) for the run cmd.
-# Historical evidence only after `wamn-0h0g.4.9`: the runner and JSON stay
-# byte-exact for provenance, but their removed stable-key/recovery anchors are
-# not a current mutation command. Validate the immutable evidence record only.
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-# Immutable green/red evidence:
-# architecture/evidence/mutations/durable-invocation-recovery.json
+# Historical only after `wamn-0h0g.4.9`: the removed stable-key/recovery anchors
+# are no longer a current mutation command or required evidence record.
 ```
 
 ### [5.9] credential vault (plugins/wamn_credentials + credproof)
@@ -1440,10 +1428,8 @@ docker stop wamn-rq-pg wamn-rq-nats
 kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 
-# Historical only: `tools/gate-mutants/queue-runner.sh` is the retired PLAN-0.2
-# campaign and is not runnable against the current source tree.
-# `architecture/evidence/mutations/queue-runner.json` is retained as historical
-# green/red evidence, not as a current gate result.
+# Historical only: the former PLAN-0.2 queue-runner mutation campaign was
+# retired and is not runnable against the current source tree.
 ```
 
 Trusted event lineage in runner execution input has its own focused campaign.
@@ -1458,8 +1444,8 @@ CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
 CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-11 \
   tools/gate-mutants/event-lineage-dispatch.sh run-all
 cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-# Immutable green/red evidence:
-# architecture/evidence/mutations/event-lineage-dispatch.json
+# The former receipt was de-claimed when the runner was repinned without
+# rerunning its mutants; bd:wamn-2jdm.5 owns a new immutable receipt.
 ```
 
 D20 (R6, wamn-1d4) the `partitioned(key)` head-unavailability policy lands here:
@@ -1949,8 +1935,9 @@ kubectl -n wamn-system logs job/causation-e2e  # -> overall PASS: true
 Mutation harness: `tools/gate-mutants/causation-e2e.sh` applies exact-hash
 mutants for the admitted `pg-write`, the reader's R3 request, and the exact run-id
 causation assertion. Each must turn its named debug unit gate red; the trap
-restores and verifies all starting hashes. Typed results live in
-`architecture/evidence/mutations/causation-e2e.json`.
+restores and verifies all starting hashes. The former receipt was de-claimed
+when the runner was repinned without rerunning its mutants; bd:wamn-2jdm.4 owns
+a new immutable receipt.
 
 ### [EVT-REG / wamn-l5i9.16] registration surface — catalog + minimal API
 
@@ -2687,8 +2674,8 @@ cargo test -p wamn-waker   # decision units (parse/decide/scale-parse)
 # recipe-test: H5-WAKEPROOF | integration | wamn-proof-integration | lib | - | wakeproof::tests:: | 1 | tests/integration/src/wakeproof.rs cron-flow fixture parse and validation
 cargo test -p wamn-proof-integration --lib wakeproof::tests::
 cargo clippy -p wamn-waker -p wamn-gates --all-targets
-# The retired `queue-runner` campaign recorded historical waker-decision
-# mutation evidence; it is not a runnable current gate.
+# The retired queue-runner campaign recorded historical waker-decision mutation
+# context; it is not a runnable current gate or required evidence record.
 # In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):
 docker build --target waker -t wamn-waker:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-waker:dev --name wamn
@@ -4340,28 +4327,10 @@ kubectl -n wamn-system get pod -l app=callable-flow-wave2 \
   -o jsonpath='{.items[0].status.containerStatuses[0].imageID}{"\n"}'
 ```
 
-The PLAN-0.2 mutation campaign for the callable-flow family is
-`tools/gate-mutants/callable-flow-aggregate.sh`. It overlays the debug
-`wamn-gates` executable on the Dockerfile-owned gates image, loads the exact
-image into kind, and drives fresh Jobs through `tools/kubernetes-gate-run`.
-Each F0-F4 mutant runs both its direct Job and the Wave-1 or Wave-2 aggregate
-that claims it; schema, cron, `f2invoke`, `f3proof`, `f4proof`, and both Wave
-identity refusals run at their deployed boundary. Expected-negative Jobs use
-`tools/gate-mutants/callable-flow-state-probe.sh` before and after execution
-and require an identical state digest. The runner accepts fixed argv only,
-restores every mutation byte-exactly, removes each case's Jobs and exact local
-and kind tag/import-digest image references before advancing, and records typed evidence in
-`architecture/evidence/mutations/callable-flow-aggregate.json`.
-
-```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
-  tools/gate-mutants/callable-flow-aggregate.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
-  tools/gate-mutants/callable-flow-aggregate.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
-  tools/gate-mutants/callable-flow-aggregate.sh run-all
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-```
+The former callable-flow aggregate mutation campaign and state-probe helper are
+not present in the MVP-reduced tree. The retained callable-flow recipes above
+remain the current runnable gates; there is no current aggregate mutation
+command or checked-in aggregate evidence record in this file.
 
 ### Deleted time-shift component provenance
 
@@ -5102,9 +5071,10 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-23 \
   cargo test --locked -p wamn-ctl --lib publish_catalog
 CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-23 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-23 \
-  tools/gate-mutants/cron-node-abi.sh run
 ```
+
+The former `cron-node-abi` mutation runner was deleted with the non-retained
+component-plane campaign; there is no current runnable cron-node-abi command.
 
 ## PLAN-2A — event standard-node dispatch (`wamn-ayq7.24`)
 
@@ -5155,11 +5125,13 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
 
 Publication resolves platform and supplied nodes into the same canonical
 resolved-contract bundle. Built-in-only artifacts persist a non-empty bundle,
-and runtime reconstruction verifies those exact contracts without a current
-model-owned fallback. Historical versions retain their explicit compatibility
-readers; unknown versions fail closed. The mutation reintroduces the former
-`request` exemption and must make the focused publication-to-runtime round-trip
-gate fail before restoring the catalog source byte-exact.
+and runtime reconstruction verifies those exact contracts. The model-owned
+`call-flow { flow-id }` validator is the sole current exemption from
+interface-backed standard-node resolution. Historical versions retain their
+explicit compatibility readers; unknown versions fail closed. The mutation
+reintroduces the former `request` exemption and must make the focused
+publication-to-runtime round-trip gate fail before restoring the catalog source
+byte-exact.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-4u7p-38 \
