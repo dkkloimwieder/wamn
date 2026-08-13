@@ -157,8 +157,6 @@ fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::Migra
         target,
         base: None,
         dry_run: false,
-        confirm_with_backup: false,
-        acknowledge_impact: false,
         skip_reconcile_replica_identity: false,
     }
 }

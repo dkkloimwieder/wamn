@@ -74,9 +74,10 @@ RUN --mount=type=cache,id=wamn-root-cargo-registry,target=/usr/local/cargo/regis
       -p wamn-host -p wamn-ctl -p wamn-dispatcher \
       -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader \
       -p wamn-waker -p wamn-gates \
+ && cargo build --locked --release -p wamn-ctl --features ops --bin wamn-ctl-ops \
  && install -d /native-output \
  && for artifact in \
-      wamn-host wamn-ctl wamn-dispatcher wamn-run-worker \
+      wamn-host wamn-ctl wamn-ctl-ops wamn-dispatcher wamn-run-worker \
       wamn-scenario-worker wamn-cdc-reader wamn-waker wamn-gates; do \
       install -m 0755 "target/release/${artifact}" "/native-output/${artifact}"; \
     done
@@ -202,6 +203,8 @@ COPY --from=builder /native-output/wamn-gates /usr/local/bin/wamn-gates
 # Control-plane integration proofs drive the deployable ctl artifact through its
 # executable boundary; the proof packages do not link the service crate.
 COPY --from=builder /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+# Operations-only impact analysis crosses its own executable boundary.
+COPY --from=builder /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 # Stored-suite compatibility is a process adapter: the gate invokes the product
 # worker binary and never links its execution engine into wamn-gates.
 COPY --from=builder /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker

@@ -50,7 +50,7 @@ enum Command {
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the 11.2 flow test-suite gate (test cases as catalog data: envelope round-trip + version binding + RLS + FK cascade in an ephemeral schema)
     Suiteproof(suiteproof::SuiteProofArgs),
-    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl impact-report` names the affected flow/suite/api resource and gates a destructive change with dependents behind acknowledgement
+    /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow + suite in an ephemeral schema, then assert `wamn-ctl-ops impact-report` names the affected flow/suite/api resource and carries reprovision guidance for a destructive change with dependents
     Impactproof(impactproof::ImpactProofArgs),
     /// Prove exact claimed-run execution through the production host and baked flowrunner image.
     Invocationproof(invocationproof::InvocationProofArgs),

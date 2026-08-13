@@ -1784,41 +1784,18 @@ apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-OIDMAP / wamn-l5i9.11] relation-OID → catalog-entity keying (R9b)
 
-Docs: docs/archive/events/event-plane-jetstream.md §4/§5, docs/archive/review-findings.md R9b. The
-reader resolves each relation OID to its stable catalog **entity id** via the
-`wamn_entities` map (`relation_oid → entity_id, table_name`), maintained by
-`publish-catalog`/`migrate-catalog` IN the DDL transaction (OID-keyed, so a
-rename only updates `table_name`; pg_class OIDs survive `ALTER TABLE RENAME`).
-The envelope carries `entity` (the id — ABSENT ⇒ unmapped, the
-delayed-never-lost fallback) and `table` (physical name); the subject's entity
-segment is the id, so consumer filters are rename-proof. Same throwaway rig as
-[EVT-READER]; the live gate gains **phase F**, the rename drill.
+Historical proof record. The reader still resolves a relation OID through the
+`wamn_entities` map and uses the stable entity id in mapped envelopes and
+subjects. The destructive live rename drill was retired by
+`wamn-0h0g.9.5`: default `migrate-catalog` is additive-only, so a table rename is
+no longer a supported MVP operation. This section is not a runnable rename
+recipe.
 
 ```bash
 cargo test -p wamn-event-wire                # +unmapped-marker + entity/table wire pin
 cargo test -p wamn-control-provision entity_map      # the OID-keyed upsert drift guard ($2::text)
 cargo test -p wamn-cdc-reader --lib          # +entity_lookup_sql pin, +map-order bundle test
-# Local live gate (adds the rename drill: provision entity `sales_orders` as
-# table `orders` via the REAL migrate-catalog path, wipe+publish-catalog
-# backfill, rename → `orders2`, assert the pg_class OID is constant and every
-# envelope/subject carries the stable id across the rename; platform tables
-# publish entity-ABSENT):
-WAMN_READER_PG_URL=postgres://postgres:postgres@127.0.0.1:5448/postgres \
-WAMN_READER_NATS_URL=nats://127.0.0.1:4261 \
-  cargo test -p wamn-cdc-reader --test event_reader_live
-# In-cluster gate of record: incluster_l5i9_10.sh's shape + a rename-drill step
-# driving migrate-catalog, asserted with the new readerbench flags:
-./target/debug/wamn-gates readerbench --nats-url nats://<node>:30493 \
-  --org t10cdc --project app --env dev --stream EVT_t10cdc_dev \
-  --filter-entity sales_orders --expect-entity-id sales_orders \
-  --id-field num --expect-ids 80,81,90,91,92
 ```
-
-Mutation harness: scratchpad `mutate_l5i9_11.py` — M1 map upsert dropped from
-migrate-catalog's apply txn, M2 dropped from publish-catalog, M3 the reader's
-map lookup bypassed (everything unmapped), M4 the subject keyed by the table
-even when mapped, M5 the upsert loses `ON CONFLICT` — each fails a NAMED live
-assert; apply/test/restore with sha256, DEBUG builds.
 
 ### [EVT-CAUSATION-STITCH] reader stitches wamn.causation (l5i9.12.1)
 
@@ -2164,11 +2141,10 @@ the plan's per-op attribution) → flows via event registration (id-keyed,
 rename-proof) + node config (NAME-keyed `config["entity"]`, NOT rename-proof) →
 those flows' test suites (all versions) → the generated-API resources. The pure
 decision is `crates/schema/control/src/impact` (`analyze` → `ImpactReport`); the `$n` reads live
-next to their D24/suite siblings in `crates/schema/control/src/sql.rs`. `wamn-ctl
-impact-report` is the read-only surface; `migrate-catalog` ALWAYS renders the
-report and `--acknowledge-impact` REFUSES a destructive plan with dependent
-flows/suites (typed error, non-zero exit, before the apply tx — nothing mutated),
-orthogonal to `--confirm-with-backup`. The report enumerates the
+next to their D24/suite siblings in `crates/schema/control/src/sql.rs`.
+`wamn-ctl-ops impact-report` is the read-only operations surface. The default
+`migrate-catalog` command is additive-only and neither loads impact analysis nor
+offers a destructive override. The report enumerates the
 `(tenant, flow_id, flow_version, suite_id)` tuples that would run; suite EXECUTION
 of those tuples is the wamn-0lfu executor (`testkitbench --impact-report`, see
 [11.2-exec] above). `impact::suite_selectors[_json]` flattens
@@ -2184,13 +2160,15 @@ cargo clippy -p wamn-schema-control -p wamn-ctl -p wamn-gates --all-targets
 # Live gate (throwaway PG): materialize v1 {orders, audit}, seed a dependent flow
 # per entity (registration + active node-config graph + suite), stage v2 =
 # destructive-on-orders (drop column) + additive-on-audit (add column) → the report
-# names EXACTLY orders' flow/suite/api and NOT audit's; migrate REFUSES without
-# --acknowledge-impact (nothing mutated) and PROCEEDS with it. Hermetic:
+# names EXACTLY orders' flow/suite/api and NOT audit's; destructive changes carry
+# reprovision guidance while additive changes do not. Hermetic:
 docker run -d --name wave-wvb-pg -p 15502:5432 -e POSTGRES_PASSWORD=pg postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:pg@127.0.0.1:15502/postgres \
-  cargo test -p wamn-ctl --test impact_report_live -- --nocapture
+  cargo test -p wamn-ctl --features ops --test impact_report_live -- --nocapture
 # In-cluster gate-of-record candidate: the analysis in an ephemeral schema
-# (name-keyed node-config + suite + api edges; destructive gates, additive does not):
+# (name-keyed node-config + suite + api edges; destructive carries reprovision
+# guidance, additive does not):
+WAMN_CTL_OPS_BIN=./target/debug/wamn-ctl-ops \
 WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:15502/postgres \
 WAMN_PG_ADMIN_URL=postgres://postgres:pg@127.0.0.1:15502/postgres \
   ./target/debug/wamn-gates --log-level error impactproof
@@ -5390,6 +5368,49 @@ cargo tree --locked --offline -p wamn-ctl --edges normal --depth 1
 # impact-report, and pin-run. The tree omits a direct wamn-run-state entry.
 
 cargo fmt -p wamn-ctl -- --check
+git diff --check
+```
+
+## SR-MVP — additive-only catalog migration (`wamn-0h0g.9.5`)
+
+The default control binary accepts only safely additive catalog plans. Its
+`migrate-catalog` help has no backup-confirmation or impact-acknowledgement
+override; both dry-run and apply refuse a destructive target and point to
+environment reprovisioning. Dry-run renders only the forward additive plan and
+does not construct rollback or impact plans. Impact analysis remains available
+only through `wamn-ctl-ops impact-report`.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --all-targets
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --features ops --all-targets
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-ctl -p wamn-test-infrastructure \
+    -p wamn-proof-integration --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-cdc-reader \
+    --test event_reader_live -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-ctl --features ops --all-targets -- -D warnings
+
+# Optional live proof on a disposable PostgreSQL 18 database. It covers
+# additive dry-run/apply, destructive dry-run/apply refusal with zero mutation,
+# and the registration-orphan refusal ordering.
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --test orphan_guard_live \
+    -- --nocapture --test-threads=1
+
+# Four byte-pinned mutants: destructive dry-run, destructive apply, restored
+# override flag, and default-loaded impact shell. The first two use the same
+# disposable PostgreSQL URL as the live proof.
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-5 CARGO_INCREMENTAL=0 \
+  tools/gate-mutants/migrate-catalog-additive.sh run-all
+
+cargo fmt -p wamn-ctl -p wamn-cdc-reader -p wamn-test-infrastructure \
+  -p wamn-proof-integration -- --check
 git diff --check
 ```
 

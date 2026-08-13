@@ -4170,7 +4170,6 @@ dependencies = [
  "tracing-subscriber",
  "wamn-control-provision",
  "wamn-control-registry",
- "wamn-ctl",
  "wamn-event-wire",
  "wamn-pg-core",
 ]

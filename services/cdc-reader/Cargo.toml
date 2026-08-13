@@ -28,7 +28,6 @@ wamn-pg-core = { workspace = true }
 wamn-control-registry = { workspace = true }
 
 [dev-dependencies]
-# The event_reader_live gate provisions its fixture env (publication, slot,
-# catalog) through the SR9 verb crate + the pure provisioning builders.
-wamn-ctl = { workspace = true }
+# The event_reader_live gate provisions its fixture env (publication and slot)
+# through the pure provisioning builders.
 wamn-control-provision = { workspace = true }

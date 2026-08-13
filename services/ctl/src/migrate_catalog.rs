@@ -7,16 +7,17 @@
 //! lifecycle via wamn-schema-control, `$n`-parameterized SQL); this shell holds the
 //! connection. Two modes:
 //!
-//! * `--dry-run` — read + plan + print the report (DDL + rollback) and run the
+//! * `--dry-run` — read + plan + print the additive apply steps and run the
 //!   read-only D24 registration-orphan probe (surfacing + failing on an
 //!   orphaning target, exactly as the apply path would refuse), touching nothing;
 //! * apply — read the current applied version (locked `FOR UPDATE`), plan, and
 //!   run the whole plan in **one transaction** so a mid-plan failure rolls back
 //!   with zero residue (the R9c invariant).
 //!
-//! A destructive migration is refused unless `--confirm-with-backup` is passed
-//! (the 3.2 gate, honored by the engine). Connects as a **superuser** (the DDL
-//! creates tables + policies + grants, like `publish-catalog --provision`).
+//! The default command applies additive migrations only. A destructive target is
+//! refused; replacing an environment from a dump is an operations workflow.
+//! Connects as a **superuser** (the DDL creates tables + policies + grants, like
+//! `publish-catalog --provision`).
 
 use std::path::PathBuf;
 
@@ -26,7 +27,7 @@ use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
 
 use wamn_schema_control::{
-    BareSchemaName, Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value, dry_run,
+    BareSchemaName, Catalog, Confirmation, Env, MigrationError, MigrationRequest, Value,
     plan_migration, sql,
 };
 
@@ -61,22 +62,9 @@ pub struct MigrateCatalogArgs {
     #[arg(long)]
     pub base: Option<u32>,
 
-    /// Print the plan (DDL + rollback) without applying it.
+    /// Print the additive apply steps without applying them.
     #[arg(long)]
     pub dry_run: bool,
-
-    /// Acknowledge a destructive migration + assert a backup checkpoint was taken
-    /// (the 3.2 gate). Required to apply a plan that drops/retypes.
-    #[arg(long)]
-    pub confirm_with_backup: bool,
-
-    /// Acknowledge the schema-change impact (11.8). Required to APPLY a destructive
-    /// plan whose affected entities carry dependent flows or suites — the report is
-    /// always rendered; this asserts the operator has reviewed the blast radius.
-    /// Orthogonal to `--confirm-with-backup` (that gate is about data loss; this is
-    /// about downstream flows/suites). No effect on an additive or no-dependent plan.
-    #[arg(long)]
-    pub acknowledge_impact: bool,
 
     /// Skip the post-migrate REPLICA IDENTITY reconcile (EVT-RI-ORCH, l5i9.61).
     /// By default a successful migration reconciles RI for the data schema so an
@@ -95,12 +83,6 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
 
     let env = Env::new(&args.environment);
     let env_str = env.as_str().to_string();
-    let confirm = if args.confirm_with_backup {
-        Confirmation::ConfirmedWithBackup
-    } else {
-        Confirmation::None
-    };
-
     let (mut client, conn) = tokio_postgres::connect(&args.admin_database_url, NoTls)
         .await
         .context("admin connect")?;
@@ -123,57 +105,37 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         .await
         .context("set search_path")?;
         let current = read_current_applied(&tx, &args.tenant, &target.catalog_id, &env_str).await?;
+        // Nothing is executed — drop the transaction.
+        drop(tx);
+
+        // D24 (EVT-REG, wamn-1bfe): run the SAME read-only registration-orphan
+        // probe the apply path runs (guard_registration_orphans), so a dry run
+        // cannot report clean while the real migrate-catalog would REFUSE before
+        // the apply transaction. The orphan refusal is UNCONDITIONAL — unlike the
+        // additive-only gate, there is no override — so it joins the stale-base /
+        // not-forward preconditions dry-run already exits nonzero on. Read-only:
+        // mutates nothing (matches --dry-run's contract).
+        let orphan_check =
+            crate::publish_catalog::guard_registration_orphans(&client, &target).await;
+        if let Err(e) = orphan_check {
+            conn_task.abort();
+            bail!("[dry-run] would REFUSE at apply — {e}");
+        }
+
+        // Keep the same refusal order as apply: the unconditional orphan guard
+        // runs before the additive-only planner. No destructive report or
+        // rollback is constructed for the default command.
         let request = MigrationRequest {
             tenant: &args.tenant,
             environment: env,
             current: current.as_ref(),
             target: &target,
             expected_base: args.base,
-            confirm,
+            confirm: Confirmation::None,
         };
-        let report = plan_error(dry_run(&request))?;
-        // Nothing is executed — drop the transaction (rolls back the lock).
-        drop(tx);
-        println!("{}", report.render());
-
-        // [11.8] (wamn-wvb): render the schema-change impact report — the SAME
-        // read-only dependency edges the apply path gates on, so a dry run previews
-        // the blast radius (affected flows via registration + node config, their
-        // suites, the generated-API resources). The --acknowledge-impact gate is
-        // OVERRIDABLE (like --confirm-with-backup), so a dry run SURFACES it rather
-        // than failing on it (unlike the unconditional D24 orphan refusal below).
-        let impact_plan = crate::impact_report::compile_plan(current.as_ref(), &target)?;
-        let impact = crate::impact_report::gather_impact(
-            &client,
-            &impact_plan,
-            current.as_ref(),
-            &target,
-            schema.as_str(),
-        )
-        .await?;
-        println!("{}", impact.render());
-        if impact.requires_acknowledgement() && !args.acknowledge_impact {
-            println!(
-                "[dry-run] apply would REFUSE without --acknowledge-impact \
-                 (destructive change with dependent flows/suites)"
-            );
-        }
-
-        // D24 (EVT-REG, wamn-1bfe): run the SAME read-only registration-orphan
-        // probe the apply path runs (guard_registration_orphans), so a dry run
-        // cannot report clean while the real migrate-catalog would REFUSE before
-        // the apply transaction. The orphan refusal is UNCONDITIONAL — unlike the
-        // destructive gate (which dry-run merely surfaces, because
-        // --confirm-with-backup overrides it), there is no override — so it joins
-        // the stale-base / not-forward preconditions dry-run already exits nonzero
-        // on: the verdict is surfaced as a marked dry-run finding AND fails the
-        // dry run. Read-only: mutates nothing (matches --dry-run's contract).
-        let orphan_check =
-            crate::publish_catalog::guard_registration_orphans(&client, &target).await;
+        let plan = plan_error(plan_migration(&request))?;
         conn_task.abort();
-        if let Err(e) = orphan_check {
-            bail!("[dry-run] would REFUSE at apply — {e}");
-        }
+        print_dry_run(&plan);
         return Ok(());
     }
     crate::publish_catalog::ensure_wamn_app_role(&client).await?;
@@ -187,41 +149,6 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
     // with publish-catalog (the bead's carrier verb).
     crate::publish_catalog::guard_registration_orphans(&client, &target).await?;
 
-    // [11.8] (wamn-wvb): render the schema-change impact report and enforce the
-    // acknowledge gate BEFORE the apply transaction (a refusal mutates nothing,
-    // mirroring the D24 guard). The current-applied snapshot is read read-only and
-    // dropped; the authoritative apply below re-reads it under FOR UPDATE.
-    {
-        let snap = client
-            .transaction()
-            .await
-            .context("begin impact snapshot")?;
-        snap.batch_execute(&format!(
-            "SET LOCAL search_path = {}, catalog",
-            schema.quoted()
-        ))
-        .await
-        .context("set search_path")?;
-        let current =
-            read_current_applied(&snap, &args.tenant, &target.catalog_id, &env_str).await?;
-        drop(snap);
-        let impact_plan = crate::impact_report::compile_plan(current.as_ref(), &target)?;
-        let impact = crate::impact_report::gather_impact(
-            &client,
-            &impact_plan,
-            current.as_ref(),
-            &target,
-            schema.as_str(),
-        )
-        .await?;
-        println!("{}", impact.render());
-        if impact.requires_acknowledgement() && !args.acknowledge_impact {
-            // Typed refusal (non-zero exit), mirroring OrphaningPublish /
-            // RequiresConfirmation — the operator reviews the report + re-runs.
-            return Err(impact.acknowledgement_refusal().into());
-        }
-    }
-
     let plan = match apply_catalog_target(
         &mut client,
         &args.tenant,
@@ -229,10 +156,11 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         &schema,
         &target,
         args.base,
-        confirm,
+        Confirmation::None,
         true,
     )
-    .await?
+    .await
+    .map_err(default_migration_error)?
     {
         ApplyOutcome::Applied(plan) => plan,
         // migrate-catalog keeps re-applying a version an ERROR (the copy driver
@@ -260,15 +188,10 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         .from_version
         .map_or_else(|| "(none)".to_string(), |v| v.to_string());
     println!(
-        "applied migration {from} -> {} for catalog {:?} in environment {} ({}{} operation(s))",
+        "applied migration {from} -> {} for catalog {:?} in environment {} ({} operation(s))",
         plan.to_version,
         plan.catalog_id,
         plan.environment,
-        if plan.destructive {
-            "DESTRUCTIVE, "
-        } else {
-            ""
-        },
         plan.statements
             .iter()
             .filter(|s| s.params.is_empty())
@@ -278,6 +201,23 @@ pub async fn run(args: MigrateCatalogArgs) -> anyhow::Result<()> {
         println!("  [warning] {w}");
     }
     Ok(())
+}
+
+fn print_dry_run(plan: &wamn_schema_control::ApplyPlan) {
+    let from = plan
+        .from_version
+        .map_or_else(|| "(none)".to_string(), |v| v.to_string());
+    println!(
+        "migration {from} -> {} for catalog {:?} in environment {}\n  additive",
+        plan.to_version, plan.catalog_id, plan.environment
+    );
+    for warning in &plan.warnings {
+        println!("  [warning] {warning}");
+    }
+    println!("\n-- apply plan --");
+    for statement in &plan.statements {
+        println!("{}", statement.summary);
+    }
 }
 
 /// Outcome of applying a target catalog against a live database.
@@ -310,7 +250,7 @@ pub(crate) async fn ensure_data_schema(
 
 /// Read the current applied version for `(tenant, catalog, environment)`,
 /// locked `FOR UPDATE` (the apply transaction holds it). `pub(crate)` so the
-/// read-only `impact-report` verb (11.8) reads the same current-applied snapshot.
+/// operations-only `impact-report` verb reads the same current-applied snapshot.
 pub(crate) async fn read_current_applied(
     tx: &tokio_postgres::Transaction<'_>,
     tenant: &str,
@@ -459,7 +399,7 @@ pub(crate) async fn apply_catalog_target_in_transaction(
             }
             return Ok(ApplyOutcome::AlreadyApplied { version });
         }
-        other => plan_error(other)?,
+        other => other.map_err(anyhow::Error::new)?,
     };
     for stmt in &plan.statements {
         if !should_execute_migration_statement(advance_release_head, stmt) {
@@ -685,17 +625,23 @@ async fn carry_forward_release(
     Ok(())
 }
 
-/// Map a [`MigrationError`] to a clear operator-facing failure (the confirmation
-/// gate especially needs a legible message).
+/// Map a default-command [`MigrationError`] to a clear operator-facing failure.
 fn plan_error<T>(r: Result<T, MigrationError>) -> anyhow::Result<T> {
-    r.map_err(|e| match &e {
-        MigrationError::RequiresConfirmation(rc) => anyhow::anyhow!(
-            "migration is destructive; re-run with --confirm-with-backup after taking a backup \
-             checkpoint. Destructive: {}",
-            rc.destructive.join("; ")
-        ),
-        _ => anyhow::anyhow!("{e}"),
-    })
+    r.map_err(anyhow::Error::new)
+        .map_err(default_migration_error)
+}
+
+fn default_migration_error(error: anyhow::Error) -> anyhow::Error {
+    let Some(MigrationError::RequiresConfirmation(requires_confirmation)) =
+        error.downcast_ref::<MigrationError>()
+    else {
+        return error;
+    };
+    anyhow::anyhow!(
+        "migration is destructive; default migrate-catalog applies additive changes only. \
+         reprovision the environment for destructive changes. Destructive: {}",
+        requires_confirmation.destructive.join("; ")
+    )
 }
 
 fn to_sql_params(vals: &[Value]) -> Vec<&(dyn ToSql + Sync)> {
@@ -719,6 +665,24 @@ pub(crate) fn is_bare_ident(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_confirmation_error_does_not_relabel_the_shared_ops_error() {
+        let shared = anyhow::Error::new(MigrationError::RequiresConfirmation(
+            wamn_schema_control::RequiresConfirmation {
+                destructive: vec!["drop column orders.note".to_string()],
+            },
+        ));
+        assert!(
+            shared
+                .to_string()
+                .contains("explicit confirmation + a backup")
+        );
+
+        let default = default_migration_error(shared).to_string();
+        assert!(default.contains("reprovision the environment"));
+        assert!(!default.contains("--confirm-with-backup"));
+    }
 
     #[tokio::test]
     async fn migration_carries_the_sealed_release_forward_before_head_advance() {

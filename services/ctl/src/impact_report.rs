@@ -1,4 +1,4 @@
-//! The `impact-report` subcommand (11.8): the read-only **effect shell** for
+//! The operations-only `impact-report` subcommand (11.8): the read-only **effect shell** for
 //! `wamn-schema-control` — it reads the current applied catalog + a `--target`, compiles
 //! the migration plan (the same wamn-schema-compiler compiler `migrate-catalog` uses), reads
 //! the dependency edges (event registrations, active flow graphs, test suites)
@@ -6,10 +6,10 @@
 //! [`wamn_schema_control::impact::ImpactReport`]. It **mutates nothing** — the schema-designer
 //! surface for "what breaks if I apply this".
 //!
-//! The heavy lifting ([`gather_impact`]) is shared with `migrate-catalog`, which
-//! renders the same report on every dry-run and apply and gates a destructive
-//! plan with dependents behind `--acknowledge-impact`. The pure decision is
-//! `wamn_schema_control::impact::analyze`; this shell only holds the connection (SR6).
+//! The heavy lifting ([`gather_impact`]) is shared with the operations-only
+//! `copy-project-env` publish gate. The pure decision is
+//! `wamn_schema_control::impact::analyze`; this shell only holds the connection
+//! (SR6).
 //!
 //! **Tenant scoping.** The registration/flow/suite reads are CROSS-TENANT (the
 //! superuser bypasses RLS): a shared entity's change hits every tenant's flows and
@@ -99,16 +99,17 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
     println!("{}", impact.render());
     if impact.requires_acknowledgement() {
         println!(
-            "NOTE: applying this migration requires --acknowledge-impact \
-             (a destructive change with dependent flows/suites)."
+            "NOTE: this destructive change has dependent flows or suites; use this report \
+             when reprovisioning the environment."
         );
     }
     Ok(())
 }
 
-/// Compile the migration plan for impact analysis with the SAME wamn-schema-compiler compiler
-/// `migrate-catalog` applies — `migrate` from the current applied version, or a
-/// whole-catalog `create` for a first materialization. The per-op entity +
+/// Compile a migration plan for operations impact analysis with the same
+/// wamn-schema-compiler compiler the catalog applier uses — `migrate` from the
+/// current applied version, or a whole-catalog `create` for a first
+/// materialization. The per-op entity +
 /// additive/destructive classification is the authoritative "affected entities"
 /// source (no SQL re-parse).
 pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Result<MigrationPlan> {
@@ -120,7 +121,8 @@ pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Resu
 }
 
 /// Read the dependency edges for `plan` and fold them through
-/// `wamn_schema_control::impact::analyze`. Shared by `impact-report` and `migrate-catalog`.
+/// `wamn_schema_control::impact::analyze`. Shared by `impact-report` and the
+/// `copy-project-env` publish gate.
 ///
 /// Cross-tenant, superuser (RLS bypassed). Each read is `to_regclass`-probed so a
 /// project that is not registration- or run-state-provisioned yet simply

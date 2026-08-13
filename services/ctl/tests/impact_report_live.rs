@@ -1,4 +1,6 @@
-//! Live gate for schema-change impact analysis (11.8, wamn-wvb).
+#![cfg(feature = "ops")]
+
+//! Live gate for operations-only schema-change impact analysis (11.8, wamn-wvb).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url of a throwaway Postgres (recipe:
 //! docs/archive/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
@@ -15,8 +17,6 @@
 //!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/suite/api
 //!      resource on the destructive entity — never `E_untouched`'s (the untouched
 //!      partition) — and requires acknowledgement;
-//!   4. assert the REAL `migrate-catalog` apply REFUSES the destructive plan
-//!      without `--acknowledge-impact` (mutating nothing) and PROCEEDS with it.
 //!
 //! Hermetic: drops+recreates the `catalog` metadata schema + the data schema.
 
@@ -77,7 +77,7 @@ fn v2_json() -> String {
 /// An active flow whose single postgres node references `entity_name` by NAME.
 fn graph_json(flow_id: &str, entity_name: &str) -> String {
     format!(
-        r#"{{"schema-version":"0.1","flow-id":"{flow_id}","version":1,"trigger":{{"type":"manual"}},"entry":"n","nodes":[{{"id":"n","type":"postgres","config":{{"entity":"{entity_name}","op":"get"}}}}]}}"#
+        r#"{{"schema-version":"0.1","flow-id":"{flow_id}","version":1,"nodes":[{{"id":"n","type":"postgres","config":{{"entity":"{entity_name}","op":"get"}}}}],"edges":[]}}"#
     )
 }
 
@@ -95,12 +95,7 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-fn migrate_args(
-    target: std::path::PathBuf,
-    url: &str,
-    confirm: bool,
-    acknowledge: bool,
-) -> migrate_catalog::MigrateCatalogArgs {
+fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::MigrateCatalogArgs {
     migrate_catalog::MigrateCatalogArgs {
         admin_database_url: url.to_string(),
         tenant: TENANT.to_string(),
@@ -109,8 +104,6 @@ fn migrate_args(
         target,
         base: None,
         dry_run: false,
-        confirm_with_backup: confirm,
-        acknowledge_impact: acknowledge,
         skip_reconcile_replica_identity: true,
     }
 }
@@ -130,6 +123,19 @@ async fn reset(su: &Client) {
     ))
     .await
     .expect("reset schemas + ensure wamn_app role");
+    su.batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .expect("ensure wamn_scenario_author role");
+    su.batch_execute(
+        "DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
+             CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$;",
+    )
+    .await
+    .expect("ensure wamn_effect_writer role");
     su.batch_execute(catalog_schema)
         .await
         .expect("apply deploy/sql/catalog-schema.sql");
@@ -191,19 +197,8 @@ async fn column_present(su: &Client, table: &str, column: &str) -> bool {
     .get(0)
 }
 
-async fn applied_version(su: &Client) -> i32 {
-    su.query_one(
-        "SELECT version FROM catalog.catalogs \
-         WHERE tenant_id = $1 AND catalog_id = $2 AND environment = 'dev' AND state = 'applied'",
-        &[&TENANT, &CATALOG_ID],
-    )
-    .await
-    .expect("read applied version")
-    .get(0)
-}
-
 #[tokio::test]
-async fn impact_report_names_the_affected_and_gates_the_destructive_apply() {
+async fn impact_report_names_the_affected_change() {
     let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the 11.8 impact-analysis gate");
         return;
@@ -213,7 +208,7 @@ async fn impact_report_names_the_affected_and_gates_the_destructive_apply() {
 
     // v1: materialize orders + audit.
     let v1_file = write_tmp("wvb_v1.json", &v1_json());
-    migrate_catalog::run(migrate_args(v1_file, &url, false, false))
+    migrate_catalog::run(migrate_args(v1_file, &url))
         .await
         .expect("first materialization applies");
     assert!(column_present(&su, "orders", "note").await);
@@ -289,44 +284,8 @@ async fn impact_report_names_the_affected_and_gates_the_destructive_apply() {
     assert_eq!(audit.flows_via_registration[0].flow_id, "flow-u");
     assert_eq!(audit.suites[0].suite_id, "decoy");
 
-    // The gate condition: a destructive change with dependents needs acknowledgement.
+    // Operations callers receive the typed destructive-with-dependents verdict.
     assert!(report.requires_acknowledgement());
-
-    // --- the REAL verb: refuse without, proceed with, --acknowledge-impact --
-    let v2_file = write_tmp("wvb_v2.json", &v2_json());
-    // confirm_with_backup satisfies the 3.2 gate, so the impact gate is what refuses.
-    let err = migrate_catalog::run(migrate_args(v2_file.clone(), &url, true, false))
-        .await
-        .expect_err("a destructive migration with impact refuses without --acknowledge-impact");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("acknowledge-impact"),
-        "refusal names the flag: {msg}"
-    );
-    assert!(
-        msg.contains("orders"),
-        "refusal names the affected entity: {msg}"
-    );
-    // NOTHING mutated: v1 still applied, orders.note survives.
-    assert_eq!(applied_version(&su).await, 1, "the refusal mutated nothing");
-    assert!(
-        column_present(&su, "orders", "note").await,
-        "the dropped column survives the refusal"
-    );
-
-    // With acknowledgement (and the backup gate) the destructive migration applies.
-    migrate_catalog::run(migrate_args(v2_file, &url, true, true))
-        .await
-        .expect("the acknowledged destructive migration applies");
-    assert_eq!(applied_version(&su).await, 2);
-    assert!(
-        !column_present(&su, "orders", "note").await,
-        "orders.note is now dropped"
-    );
-    assert!(
-        column_present(&su, "audit", "ts").await,
-        "audit.ts is now added"
-    );
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"

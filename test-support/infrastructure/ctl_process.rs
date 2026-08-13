@@ -9,6 +9,7 @@ use anyhow::Context as _;
 use tokio::process::Command;
 
 const CTL_BINARY_ENV: &str = "WAMN_CTL_BIN";
+const CTL_OPS_BINARY_ENV: &str = "WAMN_CTL_OPS_BIN";
 static INPUT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Run `wamn-ctl` with `args`, returning its captured process output.
@@ -18,10 +19,29 @@ where
     S: AsRef<OsStr>,
 {
     let binary = ctl_binary();
-    ctl_command(&binary, args)
+    run_binary("wamn-ctl", &binary, args).await
+}
+
+/// Run `wamn-ctl-ops` and require a successful exit status.
+pub async fn run_ops_checked<I, S>(args: I) -> anyhow::Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let binary = ctl_ops_binary();
+    let output = run_binary("wamn-ctl-ops", &binary, args).await?;
+    require_success("wamn-ctl-ops", output)
+}
+
+async fn run_binary<I, S>(name: &str, binary: &OsStr, args: I) -> anyhow::Result<Output>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    ctl_command(binary, args)
         .output()
         .await
-        .with_context(|| format!("launch wamn-ctl process {}", binary.to_string_lossy()))
+        .with_context(|| format!("launch {name} process {}", binary.to_string_lossy()))
 }
 
 /// Run `wamn-ctl` and require a successful exit status.
@@ -31,11 +51,15 @@ where
     S: AsRef<OsStr>,
 {
     let output = run(args).await?;
+    require_success("wamn-ctl", output)
+}
+
+fn require_success(name: &str, output: Output) -> anyhow::Result<Output> {
     if output.status.success() {
         return Ok(output);
     }
     anyhow::bail!(
-        "wamn-ctl failed with {}\nstdout:\n{}\nstderr:\n{}",
+        "{name} failed with {}\nstdout:\n{}\nstderr:\n{}",
         output.status,
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),
@@ -78,24 +102,32 @@ pub async fn reconcile_replica_identity(
 }
 
 fn ctl_binary() -> OsString {
-    if let Some(binary) = std::env::var_os(CTL_BINARY_ENV) {
+    binary(CTL_BINARY_ENV, "wamn-ctl")
+}
+
+fn ctl_ops_binary() -> OsString {
+    binary(CTL_OPS_BINARY_ENV, "wamn-ctl-ops")
+}
+
+fn binary(env: &str, name: &str) -> OsString {
+    if let Some(binary) = std::env::var_os(env) {
         return binary;
     }
 
     let sibling = std::env::current_exe().ok().and_then(|exe| {
         let dir = exe.parent()?;
-        let direct = dir.join("wamn-ctl");
+        let direct = dir.join(name);
         if direct.is_file() {
             return Some(direct);
         }
         (dir.file_name().and_then(OsStr::to_str) == Some("deps"))
-            .then(|| dir.parent().map(|parent| parent.join("wamn-ctl")))
+            .then(|| dir.parent().map(|parent| parent.join(name)))
             .flatten()
             .filter(|path| path.is_file())
     });
     sibling
         .map(PathBuf::into_os_string)
-        .unwrap_or_else(|| OsString::from("wamn-ctl"))
+        .unwrap_or_else(|| OsString::from(name))
 }
 
 fn ctl_command<I, S>(binary: &OsStr, args: I) -> Command
@@ -126,6 +158,27 @@ mod tests {
                 "--log-level",
                 "error",
                 "prune-run-history",
+                "--tenant",
+                "tenant-a",
+            ]
+            .map(OsStr::new)
+        );
+    }
+
+    #[test]
+    fn command_preserves_the_ops_cli_boundary() {
+        let command = ctl_command(
+            OsStr::new("/proof/wamn-ctl-ops"),
+            ["impact-report", "--tenant", "tenant-a"],
+        );
+        let command = command.as_std();
+        assert_eq!(command.get_program(), "/proof/wamn-ctl-ops");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                "--log-level",
+                "error",
+                "impact-report",
                 "--tenant",
                 "tenant-a",
             ]

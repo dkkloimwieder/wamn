@@ -809,8 +809,7 @@ async fn drain(
     // The per-SESSION OID → entity-id cache (wamn-l5i9.11): resolved lazily at
     // a relation's first row event, NEVER invalidated mid-session — pg_class
     // OIDs survive renames, so a cached resolution stays correct by
-    // construction (asserted by the live gate's rename drill). A fresh session
-    // re-resolves from the map.
+    // construction. A fresh session re-resolves from the map.
     let mut entities: HashMap<u32, Option<String>> = HashMap::new();
     loop {
         let ev = match stream.next_event().await {

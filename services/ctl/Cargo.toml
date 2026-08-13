@@ -14,6 +14,11 @@ name = "wamn-ctl-ops"
 path = "src/bin/wamn-ctl-ops.rs"
 required-features = ["ops"]
 
+[[test]]
+name = "impact_report_live"
+path = "tests/impact_report_live.rs"
+required-features = ["ops"]
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
@@ -57,6 +62,6 @@ wamn-platform-identity = { workspace = true }
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 wamn-run-state = { workspace = true, optional = true }
 wamn-scenario-catalog = { workspace = true }
-# 11.8 impact-report / migrate-catalog acknowledge gate: the PURE schema-change
-# impact analysis (entities → flows via registration + node config → suites →
+# 11.8 ops-only impact-report and copy gate: the PURE schema-change impact
+# analysis (entities → flows via registration + node config → suites →
 # generated-API). This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

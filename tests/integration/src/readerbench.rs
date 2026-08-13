@@ -51,8 +51,7 @@ pub struct ReaderBenchArgs {
     pub entity: String,
 
     /// Expected stable catalog entity id (wamn-l5i9.11): assert EVERY event's
-    /// envelope `entity` equals it — across renames, where the physical table
-    /// name changes mid-program. Omit for an unmapped-table program.
+    /// envelope `entity` equals it. Omit for an unmapped-table program.
     #[arg(long)]
     pub expect_entity_id: Option<String>,
 
@@ -63,8 +62,7 @@ pub struct ReaderBenchArgs {
 
     /// Drain only this entity SEGMENT's subjects (a filtered consumer) instead
     /// of the whole stream — for asserting one entity's program on a stream
-    /// that also carries other tables' events (e.g. the rename drill sharing
-    /// the stream with the platform-table noise).
+    /// that also carries other tables' events.
     #[arg(long)]
     pub filter_entity: Option<String>,
 
@@ -235,9 +233,8 @@ pub async fn run(args: ReaderBenchArgs) -> anyhow::Result<()> {
         got_ids == args.expect_ids,
     );
     match &args.expect_entity_id {
-        // The wamn-l5i9.11 rename drill: EVERY envelope carries the stable
-        // catalog entity id — even where the physical table name changed
-        // mid-program (the tables observed are reported for the log).
+        // Every mapped envelope carries the stable catalog entity id. The
+        // physical tables observed are reported for the log.
         Some(id) => {
             let tables: std::collections::BTreeSet<&str> =
                 delivered.iter().map(|(_, _, e)| e.table.as_str()).collect();

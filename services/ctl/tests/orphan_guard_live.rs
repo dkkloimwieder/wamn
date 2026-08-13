@@ -6,8 +6,9 @@
 //! `migrate_catalog::run`) against the REAL storage SQL
 //! (deploy/sql/catalog-schema.sql), proving both verbs REFUSE a catalog that
 //! would remove an entity still referenced by an event registration — naming
-//! every orphan across ALL tenants — while mutating nothing, and PROCEED once the
-//! registrations are deleted (and when the removed entity is unreferenced).
+//! every orphan across ALL tenants — while mutating nothing. Once the
+//! registrations are deleted, the default command reaches its separate
+//! additive-only refusal for the destructive target.
 //!
 //! Hermetic: each scenario drops+recreates the `catalog` metadata schema, the
 //! data schema, and the publish snapshot tables in its preamble, so a re-run
@@ -20,6 +21,7 @@ use wamn_ctl::{migrate_catalog, publish_catalog};
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 const E_SALES: &str = r#"{"id":"sales_orders","name":"orders","fields":[{"id":"status","name":"status","type":{"kind":"text"}}]}"#;
+const E_SALES_ADDITIVE: &str = r#"{"id":"sales_orders","name":"orders","fields":[{"id":"status","name":"status","type":{"kind":"text"}},{"id":"note","name":"note","type":{"kind":"text"}}]}"#;
 const E_LINES: &str = r#"{"id":"line_items","name":"lines","fields":[{"id":"qty","name":"qty","type":{"kind":"int"}}]}"#;
 const DATA_SCHEMA: &str = "rmxa_data";
 
@@ -56,6 +58,9 @@ async fn reset(su: &Client) {
     ))
     .await
     .expect("reset schemas + ensure wamn_app role");
+    su.batch_execute(wamn_schema_control::ensure_scenario_author_role_sql())
+        .await
+        .expect("ensure wamn_scenario_author role");
     su.batch_execute(CATALOG_SCHEMA)
         .await
         .expect("apply deploy/sql/catalog-schema.sql (the storage target)");
@@ -92,6 +97,17 @@ async fn table_present(su: &Client, qualified: &str) -> bool {
     )
     .await
     .expect("probe table")
+    .get(0)
+}
+
+async fn column_present(su: &Client, table: &str, column: &str) -> bool {
+    su.query_one(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
+         WHERE table_schema = $1 AND table_name = $2 AND column_name = $3)",
+        &[&DATA_SCHEMA, &table, &column],
+    )
+    .await
+    .expect("probe column")
     .get(0)
 }
 
@@ -136,11 +152,7 @@ fn publish_args(catalog: std::path::PathBuf, url: &str) -> publish_catalog::Publ
     }
 }
 
-fn migrate_args(
-    target: std::path::PathBuf,
-    url: &str,
-    confirm: bool,
-) -> migrate_catalog::MigrateCatalogArgs {
+fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::MigrateCatalogArgs {
     migrate_catalog::MigrateCatalogArgs {
         admin_database_url: url.to_string(),
         tenant: "t1".to_string(),
@@ -149,22 +161,19 @@ fn migrate_args(
         target,
         base: None,
         dry_run: false,
-        confirm_with_backup: confirm,
-        acknowledge_impact: false,
         skip_reconcile_replica_identity: true,
     }
 }
 
-/// `migrate-catalog --dry-run` args (wamn-1bfe): the plan/report path plus the
-/// read-only D24 orphan probe, never an apply. Confirmation is irrelevant to a
-/// dry run (it does not gate on it), so reuse `migrate_args`'s defaults.
+/// `migrate-catalog --dry-run` args (wamn-1bfe): the additive planner plus the
+/// read-only D24 orphan probe, never an apply.
 fn migrate_dry_run_args(
     target: std::path::PathBuf,
     url: &str,
 ) -> migrate_catalog::MigrateCatalogArgs {
     migrate_catalog::MigrateCatalogArgs {
         dry_run: true,
-        ..migrate_args(target, url, false)
+        ..migrate_args(target, url)
     }
 }
 
@@ -209,8 +218,8 @@ async fn publish_scenario(su: &Client, url: &str) {
         "d24_pub_ab.json",
         &cat_json(1, &format!("{E_SALES},{E_LINES}")),
     );
-    let a_only = write_tmp("d24_pub_a.json", &cat_json(1, E_SALES));
-    let b_only = write_tmp("d24_pub_b.json", &cat_json(1, E_LINES));
+    let a_only = write_tmp("d24_pub_a.json", &cat_json(2, E_SALES));
+    let b_only = write_tmp("d24_pub_b.json", &cat_json(3, E_LINES));
 
     // Seed: publish the full catalog {sales_orders, line_items} for tenant t1.
     publish_catalog::run(publish_args(ab, url))
@@ -281,7 +290,7 @@ async fn migrate_scenario(su: &Client, url: &str) {
     let b_v2 = write_tmp("d24_mig_b_v2.json", &cat_json(2, E_LINES));
 
     // v1: materialize {sales_orders -> orders, line_items -> lines}.
-    migrate_catalog::run(migrate_args(ab, url, false))
+    migrate_catalog::run(migrate_args(ab, url))
         .await
         .expect("first materialization applies");
     assert!(table_present(su, &format!("{DATA_SCHEMA}.orders")).await);
@@ -291,8 +300,8 @@ async fn migrate_scenario(su: &Client, url: &str) {
     insert_reg(su, "t2", "reg-t2", "sales_orders").await;
 
     // v2 removes `sales_orders` — still referenced. REFUSED before the apply tx,
-    // independent of the destructive-backup gate (no --confirm-with-backup here).
-    let err = migrate_catalog::run(migrate_args(b_v2.clone(), url, false))
+    // independently of the default command's additive-only gate.
+    let err = migrate_catalog::run(migrate_args(b_v2.clone(), url))
         .await
         .expect_err("orphaning migration must be refused");
     let msg = err.to_string();
@@ -321,21 +330,43 @@ async fn migrate_scenario(su: &Client, url: &str) {
         "registrations untouched by the refusal"
     );
 
-    // Delete the registrations, then the destructive migration proceeds (with the
-    // backup confirmation the drop requires); `orders` is dropped, v2 applied.
+    // Delete the registrations. The orphan guard now clears, exposing the
+    // separate additive-only refusal; the default command still mutates nothing.
     su.execute(
         "DELETE FROM catalog.event_registrations WHERE catalog_id = 'shop'",
         &[],
     )
     .await
     .expect("owner deletes the registrations");
-    migrate_catalog::run(migrate_args(b_v2, url, true))
+    let err = migrate_catalog::run(migrate_args(b_v2, url))
         .await
-        .expect("re-migrate proceeds once the registrations are gone");
+        .expect_err("default migrate refuses the unreferenced destructive target");
+    let msg = err.to_string();
+    assert!(msg.contains("destructive"), "refusal is destructive: {msg}");
     assert!(
-        !table_present(su, &format!("{DATA_SCHEMA}.orders")).await,
-        "the unreferenced entity's table is now dropped"
+        msg.contains("reprovision"),
+        "refusal names the supported replacement path: {msg}"
     );
+    for orphan in ["reg-t1", "reg-t2"] {
+        assert!(
+            !msg.contains(orphan),
+            "cleared orphan {orphan:?} is absent from the additive-only refusal: {msg}"
+        );
+    }
+    assert!(
+        table_present(su, &format!("{DATA_SCHEMA}.orders")).await,
+        "the additive-only refusal leaves the unreferenced entity table intact"
+    );
+    let applied: i32 = su
+        .query_one(
+            "SELECT version FROM catalog.catalogs \
+             WHERE tenant_id='t1' AND catalog_id='shop' AND environment='dev' AND state='applied'",
+            &[],
+        )
+        .await
+        .expect("read applied version after additive-only refusal")
+        .get(0);
+    assert_eq!(applied, 1, "the additive-only refusal preserved v1");
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
@@ -347,8 +378,9 @@ async fn migrate_scenario(su: &Client, url: &str) {
 /// wamn-1bfe: `migrate-catalog --dry-run` must SURFACE the D24 refusal, so an
 /// operator cannot dry-run clean and then fail the real run. A dry run whose
 /// target removes a still-referenced entity fails with the marked verdict naming
-/// every orphan across ALL tenants — while mutating NOTHING — and turns clean
-/// again once the registrations are deleted (proving the probe is not vacuous).
+/// every orphan across ALL tenants — while mutating NOTHING. Once the
+/// registrations are deleted, the distinct additive-only refusal proves the
+/// orphan probe was not vacuous.
 async fn dry_run_scenario(su: &Client, url: &str) {
     reset(su).await;
 
@@ -359,7 +391,7 @@ async fn dry_run_scenario(su: &Client, url: &str) {
     let b_v2 = write_tmp("d24_dry_b_v2.json", &cat_json(2, E_LINES));
 
     // v1: materialize {sales_orders -> orders, line_items -> lines}.
-    migrate_catalog::run(migrate_args(ab, url, false))
+    migrate_catalog::run(migrate_args(ab, url))
         .await
         .expect("first materialization applies");
     assert!(table_present(su, &format!("{DATA_SCHEMA}.orders")).await);
@@ -405,17 +437,30 @@ async fn dry_run_scenario(su: &Client, url: &str) {
         "dry-run left the registrations intact"
     );
 
-    // Delete the registrations — the SAME dry run now reports clean (Ok), proving
-    // the probe refuses only a real orphan, not vacuously.
+    // Delete the registrations. The orphan guard now clears and the same dry run
+    // reaches the separate additive-only refusal, proving the probe was not the
+    // source of the remaining error.
     su.execute(
         "DELETE FROM catalog.event_registrations WHERE catalog_id = 'shop'",
         &[],
     )
     .await
     .expect("owner deletes the registrations");
-    migrate_catalog::run(migrate_dry_run_args(b_v2, url))
+    let err = migrate_catalog::run(migrate_dry_run_args(b_v2, url))
         .await
-        .expect("dry-run proceeds once the registrations are gone");
+        .expect_err("destructive dry-run refuses after the orphan is cleared");
+    let msg = err.to_string();
+    assert!(msg.contains("destructive"), "refusal is destructive: {msg}");
+    for orphan in ["reg-t1", "reg-t2"] {
+        assert!(
+            !msg.contains(orphan),
+            "cleared orphan {orphan:?} is absent from the additive-only refusal: {msg}"
+        );
+    }
+    assert!(
+        table_present(su, &format!("{DATA_SCHEMA}.orders")).await,
+        "the destructive dry-run leaves the entity table intact"
+    );
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
@@ -466,7 +511,7 @@ async fn dry_run_no_data_schema_scenario(su: &Client, url: &str) {
     );
 
     // A real (non-dry) run then provisions the schema + materializes the tables.
-    migrate_catalog::run(migrate_args(ab, url, false))
+    migrate_catalog::run(migrate_args(ab, url))
         .await
         .expect("the real run provisions the data schema");
     assert!(
@@ -475,6 +520,37 @@ async fn dry_run_no_data_schema_scenario(su: &Client, url: &str) {
     );
     assert!(table_present(su, &format!("{DATA_SCHEMA}.orders")).await);
     assert!(table_present(su, &format!("{DATA_SCHEMA}.lines")).await);
+
+    // A forward additive change is accepted by both paths. Dry-run reports it
+    // without adding the column; apply adds it and advances the catalog.
+    let additive = write_tmp(
+        "nr61_additive.json",
+        &cat_json(2, &format!("{E_SALES_ADDITIVE},{E_LINES}")),
+    );
+    migrate_catalog::run(migrate_dry_run_args(additive.clone(), url))
+        .await
+        .expect("additive dry-run succeeds");
+    assert!(
+        !column_present(su, "orders", "note").await,
+        "additive dry-run does not add the column"
+    );
+    migrate_catalog::run(migrate_args(additive, url))
+        .await
+        .expect("additive apply succeeds");
+    assert!(
+        column_present(su, "orders", "note").await,
+        "additive apply adds the column"
+    );
+    let applied: i32 = su
+        .query_one(
+            "SELECT version FROM catalog.catalogs \
+             WHERE tenant_id='t1' AND catalog_id='shop' AND environment='dev' AND state='applied'",
+            &[],
+        )
+        .await
+        .expect("read applied additive version")
+        .get(0);
+    assert_eq!(applied, 2, "additive apply advances the catalog");
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"

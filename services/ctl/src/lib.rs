@@ -12,6 +12,7 @@ pub mod copy_project_env;
 pub mod dump_project_env;
 pub mod enable_cdc_project_env;
 mod env_policies;
+#[cfg(feature = "ops")]
 pub mod impact_report;
 pub mod migrate_catalog;
 pub mod provision;

@@ -11,10 +11,10 @@
 //!   2. seed one active flow whose postgres node names entity `orders` by NAME
 //!      (the config-keyed edge) + a version-bound suite;
 //!   3. compile a v1→v2 plan IN MEMORY (drop a column on `orders` = destructive)
-//!      and read the live edges through `wamn-ctl impact-report`
+//!      and read the live edges through `wamn-ctl-ops impact-report`
 //!      — asserting it names the seeded flow + suite + `/api/rest/orders`, and that
-//!      the DESTRUCTIVE change with a dependent flow REQUIRES acknowledgement while
-//!      an ADDITIVE change on the same entity does NOT.
+//!      the DESTRUCTIVE change with a dependent flow carries reprovision guidance
+//!      while an ADDITIVE change on the same entity does NOT.
 //!
 //! Self-contained: it seeds only its ephemeral schema and drops it at the end. The
 //! event-registration edge (which reads the shared `catalog.event_registrations`)
@@ -31,6 +31,8 @@ use wamn_schema_model::Catalog;
 use crate::ctl_process;
 const FLOW_ID: &str = "impactproof-flow";
 const SUITE_ID: &str = "smoke";
+const REPROVISION_NOTE: &str = "NOTE: this destructive change has dependent flows or suites; use \
+     this report when reprovisioning the environment.";
 
 #[derive(Debug, Args)]
 pub struct ImpactProofArgs {
@@ -79,7 +81,7 @@ fn cat(version: u32, orders_fields: &[&str], audit_fields: &[&str]) -> Catalog {
 /// The seeded flow: one active postgres node reading entity `orders` BY NAME.
 fn flow_graph() -> String {
     format!(
-        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":1,"trigger":{{"type":"manual"}},"entry":"n","nodes":[{{"id":"n","type":"postgres","config":{{"entity":"orders","op":"get"}}}}]}}"#
+        r#"{{"schema-version":"0.1","flow-id":"{FLOW_ID}","version":1,"nodes":[{{"id":"n","type":"postgres","config":{{"entity":"orders","op":"get"}}}}],"edges":[]}}"#
     )
 }
 
@@ -120,25 +122,6 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     let (admin, admin_task) = connect(&admin_url).await?;
     provision(&admin, &admin_url, &args.schema).await?;
 
-    // --- seed one active flow (name-keyed edge) + its suite (app role) ---
-    let (app, app_task) = connect(&app_url).await?;
-    scope_session(&app, &args.tenant, &args.schema).await?;
-    seed_flow_version(&app, &args.tenant, FLOW_ID, 1, true, &flow_graph(), true)
-        .await
-        .context("seed active flow")?;
-    seed_test_suite(
-        &app,
-        &args.tenant,
-        FLOW_ID,
-        1,
-        SUITE_ID,
-        "impactproof smoke",
-    )
-    .await
-    .context("seed suite")?;
-    drop(app);
-    let _ = app_task.await;
-
     // --- the analysis: v1 -> v2 drops orders.note (DESTRUCTIVE) -------------
     let mut ok = true;
     let v1 = cat(1, &["status", "note"], &["kind"]);
@@ -159,7 +142,28 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     ])
     .await
     .context("apply current catalog through wamn-ctl")?;
-    let destructive = ctl_process::run_checked([
+
+    // Seed the dependent flow only after the first release exists. First-release
+    // publication deliberately refuses legacy flow rows without release sources.
+    let (app, app_task) = connect(&app_url).await?;
+    scope_session(&app, &args.tenant, &args.schema).await?;
+    seed_flow_version(&app, &args.tenant, FLOW_ID, 1, true, &flow_graph(), true)
+        .await
+        .context("seed active flow")?;
+    seed_test_suite(
+        &app,
+        &args.tenant,
+        FLOW_ID,
+        1,
+        SUITE_ID,
+        "impactproof smoke",
+    )
+    .await
+    .context("seed suite")?;
+    drop(app);
+    let _ = app_task.await;
+
+    let destructive = ctl_process::run_ops_checked([
         "impact-report",
         "--admin-database-url",
         &admin_url,
@@ -210,14 +214,14 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     );
     check(
         &mut ok,
-        "GATE: a destructive change with a dependent flow REQUIRES acknowledgement",
-        report.contains("requires --acknowledge-impact"),
+        "OPS: a destructive change with a dependent flow carries reprovision guidance",
+        report.contains(REPROVISION_NOTE),
     );
 
-    // --- the negative: an ADDITIVE change on the same entity does NOT gate ---
+    // --- the negative: an ADDITIVE change omits reprovision guidance --------
     let v2_additive = cat(2, &["status", "note", "extra"], &["kind"]); // orders ADDs a column
     let additive_path = write_catalog_fixture("additive", &v2_additive)?;
-    let additive = ctl_process::run_checked([
+    let additive = ctl_process::run_ops_checked([
         "impact-report",
         "--admin-database-url",
         &admin_url,
@@ -235,8 +239,8 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     let add_report = String::from_utf8(additive.stdout).context("impact output is UTF-8")?;
     check(
         &mut ok,
-        "GATE: an additive change on the SAME dependent entity does NOT require acknowledgement",
-        !add_report.contains("requires --acknowledge-impact")
+        "OPS: an additive change on the SAME dependent entity omits reprovision guidance",
+        !add_report.contains(REPROVISION_NOTE)
             && add_report.contains("[additive   ] entity \"orders\" (id \"orders\")"),
     );
     for path in [&v1_path, &destructive_path, &additive_path] {
@@ -267,10 +271,35 @@ async fn provision(admin: &Client, admin_url: &str, schema: &str) -> anyhow::Res
             "DROP SCHEMA IF EXISTS {schema} CASCADE; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
-             END IF; END $$;"
+             END IF; END $$; \
+             DO $$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
+                 CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE \
+                 ALTER ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
+                 CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE \
+                 ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+             END $$; \
+             REVOKE wamn_scenario_author FROM wamn_app; \
+             DO $$ BEGIN \
+               EXECUTE format( \
+                 'REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database() \
+               ); \
+               EXECUTE format( \
+                 'GRANT CONNECT ON DATABASE %I TO wamn_app', current_database() \
+               ); \
+             END $$;"
         ))
         .await
-        .context("reset schema + ensure wamn_app role")?;
+        .context("reset schema + ensure run-plane roles")?;
     ctl_process::run_checked([
         "reconcile-run-plane",
         "--admin-database-url",
