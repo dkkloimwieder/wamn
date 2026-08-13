@@ -23,9 +23,6 @@ pub mod provision_project_env;
 #[cfg(feature = "ops")]
 pub mod prune_run_history;
 pub mod publish_catalog;
-// [11.7] wamn-12g: the copy-project-env publish gate's DB adapter.
-#[cfg(feature = "ops")]
-mod publish_gate;
 pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 #[cfg(feature = "ops")]

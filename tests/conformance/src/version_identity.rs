@@ -158,11 +158,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 2,
     },
     GovernedLiteral {
-        path: "test-support/infrastructure/scenario_worker_gate.rs",
-        exact: "r.admission_context_version = '0.1'",
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "tests/conformance/src/schema_drift.rs",
         exact: "admission_context_version text NOT NULL DEFAULT '0.1'",
         expected_count: 1,

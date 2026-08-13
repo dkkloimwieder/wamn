@@ -12,10 +12,8 @@
 //! either depending on the other. A second implementation of "is this env
 //! gated?" is how a control becomes bypassable.
 //!
-//! This module decides only WHETHER a gate applies. Whether the gate is
-//! SATISFIED — which suites must be green, and what counts as evidence — is
-//! `wamn_schema_control::publish_gate`, next to the impact analysis that names
-//! the suites.
+//! This module only resolves which stored policy applies. The management-owned
+//! publication path is responsible for interpreting that policy.
 
 use serde::{Deserialize, Serialize};
 

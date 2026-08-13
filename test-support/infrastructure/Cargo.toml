@@ -10,20 +10,7 @@ path = "lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true, features = ["derive", "env"] }
-hyper = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
-serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "process", "rt"] }
-tokio-postgres = { workspace = true }
-tracing = { workspace = true }
-wamn-gate-harness = { workspace = true }
-wamn-runtime = { workspace = true }
-wamn-scenario-catalog = { workspace = true }
-wamn-scenario-model = { workspace = true }
-wamn-scenario-runtime = { workspace = true }
-wamn-schema-control = { workspace = true, features = ["ops"] }
 wamn-schema-model = { workspace = true }
-wash-runtime = { workspace = true }

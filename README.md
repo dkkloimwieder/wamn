@@ -24,7 +24,7 @@ services/               native deployable Rust services
   dispatcher            shared trigger dispatcher service (SR9 split)
   executor              production flow-runner service; emits the stable
                         wamn-run-worker binary
-  scenario-worker       management service + transitional stored-test executor
+  scenario-worker       authoring management service
   cdc-reader            CDC event-reader service (SR9 split)
   waker                 scale-to-zero wake actuator
 

@@ -51,7 +51,7 @@ load_mutation() {
   case "$id" in
     restore-attempt-key-column)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='    attempt_input_ref text NOT NULL,'
       REPLACEMENT='    attempt_input_ref text NOT NULL,
     attempt_key text,'
@@ -60,7 +60,7 @@ load_mutation() {
       ;;
     bypass-populated-ledger-preflight)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="dcef5623453ae7d80f1bb18e5677b23cf4a711a61fb469470b6bb6ffbb0f1484"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE='DO $retire$
 BEGIN
     IF {populated} THEN'
@@ -72,7 +72,7 @@ BEGIN
       ;;
     allow-login-stable-writer-role)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="dcef5623453ae7d80f1bb18e5677b23cf4a711a61fb469470b6bb6ffbb0f1484"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE="WHERE rolname = 'wamn_effect_writer' AND NOT rolcanlogin \\"
       REPLACEMENT="WHERE rolname = 'wamn_effect_writer' \\"
       GATE="run_plane_reconcile_live"
@@ -80,7 +80,7 @@ BEGIN
       ;;
     grant-attempt-insert-to-app)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer;'
       REPLACEMENT='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_app;'
       GATE="run_plane::tests::effect_writer_surface_uses_acl_not_insert_authorization_triggers"

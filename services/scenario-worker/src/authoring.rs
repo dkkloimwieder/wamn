@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use anyhow::{Context as _, bail};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 
@@ -18,16 +17,11 @@ use wamn_catalog::{
     CALLABLE_CONTRACT_VERSION, CallFlowInstruction, CallableContract, CallableEffectCeiling,
     CallableReturnContract, DraftArtifact, ExecutionConnectionRequirement, ExecutionEffectPolicy,
     ExecutionNodeId, ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode, ExecutionPlanV2,
-    ExecutionRuntimeRevision, ExecutionSourceMapEntry, PinnedDraftArtifact, RootTerminalBehavior,
-    StoredValidatedDraftContext, ValidatedDraftIdentity, ValidatedDraftIdentityInput,
-    execution_bundle_hash, read_execution_plan,
+    ExecutionRuntimeRevision, ExecutionSourceMapEntry, RootTerminalBehavior,
+    ValidatedDraftIdentity, ValidatedDraftIdentityInput, execution_bundle_hash,
+    read_execution_plan,
 };
 use wamn_execution_host::TrustedExecutionRuntimeRevision;
-use wamn_scenario_model::{
-    AuthoringCaseReport, AuthoringExecutionResult, AuthoringReport, AuthoringReportState,
-    ExecutionLineage, FlowFailureKind, Outcome, PendingAuthoringReport,
-    PendingAuthoringReportReason, RunTerminalStatus, ScenarioRefusal,
-};
 use wamn_scenario_runtime::ScenarioSchemaName;
 
 const AUTHORING_ROLE_PROBE_SQL: &str = "\
@@ -45,16 +39,11 @@ WITH session_role AS ( \
            ('catalog', 'draft_safe_connection_grants', 'INSERT'), \
            ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
            ('catalog', 'authoring_command_audit', 'INSERT'), \
-           ('catalog', 'publish_gate_audit', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
            ($1::text, 'authoring_test_case_runs', 'INSERT'), \
            ($1::text, 'authoring_test_case_runs', 'UPDATE'), \
            ($1::text, 'authoring_test_reports', 'INSERT'), \
-           ($1::text, 'authoring_report_reservations', 'INSERT'), \
-           ($1::text, 'authoring_report_reservations', 'UPDATE'), \
-           ($1::text, 'authoring_suite_case_facts', 'INSERT'), \
-           ($1::text, 'authoring_suite_reports', 'INSERT'), \
            ($1::text, 'authoring_test_sets', 'INSERT') \
 ) \
 SELECT current_user = session_user, \
@@ -102,7 +91,8 @@ SELECT current_user = session_user, \
          AND pg_catalog.has_table_privilege(current_user, $2, 'INSERT') \
          AND pg_catalog.has_table_privilege(current_user, $2, 'UPDATE'), \
        pg_catalog.has_table_privilege(current_user, $3, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $3, 'INSERT'), \
+         AND pg_catalog.has_table_privilege(current_user, $3, 'INSERT') \
+         AND pg_catalog.has_table_privilege(current_user, $3, 'UPDATE'), \
        pg_catalog.has_table_privilege(current_user, $4, 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, $4, 'INSERT'), \
        pg_catalog.has_function_privilege(current_user, $5, 'EXECUTE'), \
@@ -177,15 +167,6 @@ pub(crate) struct InternalDevAdmin {
     _private: (),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AuthoringDatabaseIdentity {
-    pub database: String,
-    pub session_user: String,
-    pub server_address: Option<String>,
-    pub server_port: Option<i32>,
-    pub source_schema: String,
-}
-
 impl InternalDevAdmin {
     /// Construct the token at the internal process boundary.
     ///
@@ -199,16 +180,14 @@ impl InternalDevAdmin {
 /// Trusted process-local adapter for the typed authoring commands and queries.
 ///
 /// It owns a dedicated host-author database connection, a fixed tenant, and a
-/// validated run-plane schema. The guest/runtime database URL is never stored
-/// here and the private capability token is never returned to callers.
+/// validated run-plane schema. The private capability token is never returned
+/// to callers.
 pub struct InternalAuthoringBackend {
     authority: InternalDevAdmin,
     client: Client,
     connection_task: tokio::task::JoinHandle<()>,
     tenant_id: Box<str>,
     source_schema: ScenarioSchemaName,
-    authoring_url_hash: String,
-    database_identity: AuthoringDatabaseIdentity,
 }
 
 impl InternalAuthoringBackend {
@@ -244,9 +223,9 @@ impl InternalAuthoringBackend {
             .await
             .context("pin trusted search path before authoring authority probe")?;
         let qualified = |table: &str| format!("{}.{}", source_schema.as_str(), table);
-        let reservation = qualified("authoring_report_reservations");
-        let case_facts = qualified("authoring_suite_case_facts");
-        let reports = qualified("authoring_suite_reports");
+        let reservations = qualified("authoring_test_run_reservations");
+        let case_runs = qualified("authoring_test_case_runs");
+        let reports = qualified("authoring_test_reports");
         let test_sets = qualified("authoring_test_sets");
         let runs = qualified("runs");
         let lock_catalog_head = format!(
@@ -258,8 +237,8 @@ impl InternalAuthoringBackend {
                 AUTHORING_ROLE_PROBE_SQL,
                 &[
                     &source_schema.as_str(),
-                    &reservation,
-                    &case_facts,
+                    &reservations,
+                    &case_runs,
                     &reports,
                     &lock_catalog_head,
                     &runs,
@@ -280,29 +259,12 @@ impl InternalAuthoringBackend {
                 );
             }
         }
-        let identity_row = client
-            .query_one(
-                "SELECT pg_catalog.current_database(), session_user, \
-                        pg_catalog.inet_server_addr()::text, pg_catalog.inet_server_port()",
-                &[],
-            )
-            .await
-            .context("read dedicated authoring database identity")?;
-        let database_identity = AuthoringDatabaseIdentity {
-            database: identity_row.get(0),
-            session_user: identity_row.get(1),
-            server_address: identity_row.get(2),
-            server_port: identity_row.get(3),
-            source_schema: source_schema.as_str().to_string(),
-        };
         let backend = Self {
             authority: InternalDevAdmin::at_process_boundary(),
             client,
             connection_task,
             tenant_id: tenant_id.into_boxed_str(),
             source_schema,
-            authoring_url_hash: sha256(authoring_database_url.as_bytes()),
-            database_identity,
         };
         backend.scope().await?;
         Ok(backend)
@@ -324,22 +286,6 @@ impl InternalAuthoringBackend {
             .await
             .context("inject fixed authoring tenant and run schema")?;
         Ok(())
-    }
-
-    fn require_distinct_runtime_url(&self, args: &super::ScenarioWorkerArgs) -> anyhow::Result<()> {
-        let runtime_url = super::database_url(args)?;
-        if sha256(runtime_url.as_bytes()) == self.authoring_url_hash {
-            bail!("runtime/guest and host-author database credentials must be distinct");
-        }
-        Ok(())
-    }
-
-    fn require_run_scope(&self, args: &super::ScenarioWorkerArgs) -> anyhow::Result<()> {
-        self.require_tenant(&args.tenant)?;
-        if args.source_schema != self.source_schema.as_str() {
-            bail!("scenario source schema differs from the backend's fixed run schema");
-        }
-        self.require_distinct_runtime_url(args)
     }
 }
 
@@ -483,45 +429,6 @@ pub enum RevokeDraftSafeGenerationResult {
     AlreadyRevokedOrAbsent,
 }
 
-/// Read-only report lookup input.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AuthoringReportQuery {
-    pub tenant_id: String,
-    pub report_id: String,
-}
-
-/// One exact stored-suite case bound into an immutable report command.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct AuthoringCommandCase {
-    pub case_id: String,
-    pub case_content_hash: String,
-    pub run_id: String,
-    pub execution_schema: String,
-}
-
-/// Observation-affecting command inputs reserved before the first admission.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub(crate) struct AuthoringReportCommand {
-    pub version: u32,
-    pub target_kind: String,
-    pub flowrunner_digest: String,
-    pub source_schema: String,
-    pub execution_schema_template: String,
-    pub project: String,
-    pub allowed_hosts: Vec<String>,
-    pub scenario_credentials_digest: Option<String>,
-    pub postgres_pool_max_size: u64,
-    pub postgres_wait_timeout_ms: u64,
-    pub postgres_statement_timeout_ms: u32,
-    pub postgres_row_limit: u64,
-    pub epoch_secs: u64,
-    pub random_seed: u64,
-    pub lease_ttl_ms: u64,
-    pub cases: Vec<AuthoringCommandCase>,
-}
-
 impl InternalAuthoringBackend {
     /// Save an incrementally editable flow document under optimistic revision control.
     pub async fn save_flow_draft(
@@ -564,45 +471,6 @@ impl InternalAuthoringBackend {
         revoke_draft_safe_generation(&self.authority, &self.client, revoke).await
     }
 
-    /// Execute a stored suite against one exact validated draft and retain its report.
-    pub async fn execute_validated_draft(
-        &mut self,
-        args: &super::ScenarioWorkerArgs,
-        pin: &ValidatedDraftPin,
-        report_id: &str,
-    ) -> anyhow::Result<AuthoringExecutionResult> {
-        self.require_run_scope(args)?;
-        self.require_tenant(&pin.tenant_id)?;
-        self.scope().await?;
-        super::execute_validated_draft(
-            &self.authority,
-            &mut self.client,
-            &self.database_identity,
-            args,
-            pin,
-            report_id,
-        )
-        .await
-    }
-
-    /// Execute a released stored suite while retaining the same lineage read model.
-    pub async fn execute_released_with_report(
-        &mut self,
-        args: &super::ScenarioWorkerArgs,
-        report_id: &str,
-    ) -> anyhow::Result<AuthoringExecutionResult> {
-        self.require_run_scope(args)?;
-        self.scope().await?;
-        super::execute_released_with_report(
-            &self.authority,
-            &mut self.client,
-            &self.database_identity,
-            args,
-            report_id,
-        )
-        .await
-    }
-
     /// Record one authorized management command on the append-only ledger.
     ///
     /// The row is written with the same author credential and fixed tenant
@@ -616,16 +484,6 @@ impl InternalAuthoringBackend {
         self.require_tenant(audit.tenant_id())?;
         self.scope().await?;
         crate::management::insert_command_audit(&self.client, audit).await
-    }
-
-    /// Read one missing, pending, or finalized immutable authoring report.
-    pub async fn authoring_report(
-        &mut self,
-        query: &AuthoringReportQuery,
-    ) -> anyhow::Result<AuthoringReportState> {
-        self.require_tenant(&query.tenant_id)?;
-        self.scope().await?;
-        authoring_report(&self.authority, &self.client, &self.source_schema, query).await
     }
 }
 
@@ -1318,668 +1176,9 @@ pub(crate) async fn revoke_draft_safe_generation(
     })
 }
 
-/// Reverified executable draft loaded from the immutable validation row.
-#[derive(Debug)]
-pub(crate) struct LoadedValidatedDraft {
-    pub graph_json: String,
-    pub draft_edited_at: SystemTime,
-    pub runner_digest: String,
-}
-
-/// Reload and rehash every exact draft pin before a worker instantiates it.
-pub(crate) async fn load_validated_draft(
-    client: &Client,
-    pin: &ValidatedDraftPin,
-) -> anyhow::Result<Result<LoadedValidatedDraft, DraftRunRefusal>> {
-    let row = client
-        .query_opt(
-            wamn_scenario_catalog::authoring::select_validated_flow_draft_sql(),
-            &[
-                &pin.tenant_id,
-                &pin.draft_id,
-                &pin.draft_revision,
-                &pin.draft_content_hash,
-                &pin.catalog_id,
-                &pin.catalog_version,
-                &pin.environment,
-                &pin.suite_flow_version,
-                &pin.runtime_flow_version,
-                &pin.draft_artifact_hash,
-                &pin.execution_bundle_hash,
-                &pin.binding_base_artifact_hash,
-                &pin.validated_draft_hash,
-            ],
-        )
-        .await
-        .context("reload exact validated flow draft")?;
-    let Some(row) = row else {
-        return Ok(Err(DraftRunRefusal::CatalogDrift));
-    };
-    let stored_draft_id: String = row.get(0);
-    let stored_draft_revision: i64 = row.get(1);
-    let draft_edited_at: SystemTime = row.get(2);
-    let stored_environment: String = row.get(3);
-    let stored_flow_id: String = row.get(4);
-    let stored_runtime_version: i32 = row.get(5);
-    if stored_draft_id != pin.draft_id
-        || stored_draft_revision != pin.draft_revision
-        || stored_environment != pin.environment
-        || stored_flow_id != pin.flow_id
-        || stored_runtime_version != pin.runtime_flow_version
-    {
-        return Ok(Err(DraftRunRefusal::CatalogDrift));
-    }
-    let runtime_flow_version = u32::try_from(stored_runtime_version)
-        .context("stored draft runtime version must be a positive u32")?;
-    let draft_revision = u64::try_from(stored_draft_revision)
-        .context("stored draft revision must be a positive u64")?;
-    let graph_json: String = row.get(6);
-    let graph_hash: String = row.get(7);
-    let draft_artifact_hash: String = row.get(8);
-    let execution_bundle_bytes: Vec<u8> = row.get(9);
-    let stored_binding_base: String = row.get(10);
-    let artifact = match PinnedDraftArtifact::from_storage(
-        &pin.tenant_id,
-        &pin.flow_id,
-        runtime_flow_version,
-        &pin.draft_content_hash,
-        &graph_json,
-        &graph_hash,
-        &draft_artifact_hash,
-        &execution_bundle_bytes,
-        &pin.execution_bundle_hash,
-        StoredValidatedDraftContext {
-            expected_identity_hash: &pin.validated_draft_hash,
-            draft_id: &pin.draft_id,
-            draft_revision,
-            catalog_id: &pin.catalog_id,
-            catalog_version: u32::try_from(pin.catalog_version)
-                .context("stored draft catalog version must be a positive u32")?,
-            environment: &pin.environment,
-            suite_flow_version: u32::try_from(pin.suite_flow_version)
-                .context("stored draft suite version must be a positive u32")?,
-            binding_base_artifact_hash: &stored_binding_base,
-        },
-    ) {
-        Ok(artifact) => artifact,
-        Err(_) => return Ok(Err(DraftRunRefusal::CatalogDrift)),
-    };
-    if artifact.validated_identity().as_str() != pin.validated_draft_hash
-        || draft_artifact_hash != pin.draft_artifact_hash
-        || stored_binding_base != pin.binding_base_artifact_hash
-    {
-        return Ok(Err(DraftRunRefusal::CatalogDrift));
-    }
-    let runner_digest = artifact
-        .execution_plan()
-        .header
-        .runtime_revision
-        .flowrunner_component_digest
-        .clone();
-    Ok(Ok(LoadedValidatedDraft {
-        graph_json: artifact.artifact().flow().to_json(),
-        draft_edited_at,
-        runner_digest,
-    }))
-}
-
-fn parse_run_status(value: &str) -> anyhow::Result<RunTerminalStatus> {
-    match value {
-        "completed" => Ok(RunTerminalStatus::Completed),
-        "failed" => Ok(RunTerminalStatus::Failed),
-        "infrastructure-failure" => Ok(RunTerminalStatus::InfrastructureFailure),
-        "effect-uncertain" => Ok(RunTerminalStatus::EffectUncertain),
-        "dispatched" | "running" => bail!("report run status {value:?} is not terminal"),
-        other => bail!("unknown report run status {other:?}"),
-    }
-}
-
-fn parse_fail_kind(value: Option<&str>) -> anyhow::Result<Option<FlowFailureKind>> {
-    value
-        .map(|value| match value {
-            "terminal" => Ok(FlowFailureKind::Terminal),
-            "retry-exhausted" => Ok(FlowFailureKind::RetryExhausted),
-            "invalid-input" => Ok(FlowFailureKind::InvalidInput),
-            "runaway-budget" => Ok(FlowFailureKind::RunawayBudget),
-            "effect-uncertain" => Ok(FlowFailureKind::EffectUncertain),
-            "depth-budget" => Ok(FlowFailureKind::DepthBudget),
-            "dispatch-budget" => Ok(FlowFailureKind::DispatchBudget),
-            other => bail!("unknown report fail kind {other:?}"),
-        })
-        .transpose()
-}
-
-fn run_status_sql(value: RunTerminalStatus) -> &'static str {
-    match value {
-        RunTerminalStatus::Completed => "completed",
-        RunTerminalStatus::Failed => "failed",
-        RunTerminalStatus::InfrastructureFailure => "infrastructure-failure",
-        RunTerminalStatus::EffectUncertain => "effect-uncertain",
-    }
-}
-
-fn fail_kind_sql(value: FlowFailureKind) -> &'static str {
-    match value {
-        FlowFailureKind::Terminal => "terminal",
-        FlowFailureKind::RetryExhausted => "retry-exhausted",
-        FlowFailureKind::InvalidInput => "invalid-input",
-        FlowFailureKind::RunawayBudget => "runaway-budget",
-        FlowFailureKind::EffectUncertain => "effect-uncertain",
-        FlowFailureKind::DepthBudget => "depth-budget",
-        FlowFailureKind::DispatchBudget => "dispatch-budget",
-    }
-}
-
-/// Exact reservation identity written before the first case admission.
-pub(crate) struct AuthoringReportReservation<'a> {
-    pub tenant_id: &'a str,
-    pub report_id: &'a str,
-    pub execution_id: &'a str,
-    pub flow_id: &'a str,
-    pub suite_flow_version: i32,
-    pub suite_id: &'a str,
-    pub command: &'a AuthoringReportCommand,
-    pub lineage: &'a ExecutionLineage,
-}
-
-struct StoredAuthoringReservation {
-    execution_id: String,
-    flow_id: String,
-    suite_flow_version: i32,
-    suite_id: String,
-    command: AuthoringReportCommand,
-    command_hash: String,
-    lineage: ExecutionLineage,
-    lineage_hash: String,
-    state: String,
-}
-
-fn canonical_json<T: Serialize>(value: &T) -> anyhow::Result<(String, String)> {
-    let value = serde_json::to_value(value).context("serialize canonical authoring JSON")?;
-    let bytes = wamn_flow::canonical_json_bytes(&value);
-    let json = String::from_utf8(bytes).expect("canonical JSON is UTF-8");
-    Ok((json, wamn_flow::canonical_json_sha256(&value)))
-}
-
-fn decode_reservation(row: &tokio_postgres::Row) -> anyhow::Result<StoredAuthoringReservation> {
-    let command_json: String = row.get(4);
-    let command_hash: String = row.get(5);
-    let command_value: serde_json::Value =
-        serde_json::from_str(&command_json).context("parse reserved authoring command")?;
-    if wamn_flow::canonical_json_sha256(&command_value) != command_hash {
-        bail!("reserved authoring command hash does not match its JSON");
-    }
-    let lineage_json: String = row.get(6);
-    let lineage_hash: String = row.get(7);
-    let lineage_value: serde_json::Value =
-        serde_json::from_str(&lineage_json).context("parse reserved authoring lineage")?;
-    if wamn_flow::canonical_json_sha256(&lineage_value) != lineage_hash {
-        bail!("reserved authoring lineage hash does not match its JSON");
-    }
-    Ok(StoredAuthoringReservation {
-        execution_id: row.get(0),
-        flow_id: row.get(1),
-        suite_flow_version: row.get(2),
-        suite_id: row.get(3),
-        command: serde_json::from_value(command_value)
-            .context("decode reserved authoring command")?,
-        command_hash,
-        lineage: serde_json::from_value(lineage_value)
-            .context("decode reserved authoring lineage")?,
-        lineage_hash,
-        state: row.get(8),
-    })
-}
-
-async fn select_reservation(
-    client: &Client,
-    tenant_id: &str,
-    report_id: &str,
-) -> anyhow::Result<Option<StoredAuthoringReservation>> {
-    client
-        .query_opt(
-            wamn_scenario_catalog::authoring::select_authoring_report_reservation_sql(),
-            &[&tenant_id, &report_id],
-        )
-        .await
-        .context("read authoring report reservation")?
-        .as_ref()
-        .map(decode_reservation)
-        .transpose()
-}
-
-async fn select_case_facts(
-    client: &Client,
-    tenant_id: &str,
-    report_id: &str,
-    command: &AuthoringReportCommand,
-) -> anyhow::Result<Vec<AuthoringCaseReport>> {
-    let rows = client
-        .query(
-            wamn_scenario_catalog::authoring::select_authoring_suite_case_facts_sql(),
-            &[&tenant_id, &report_id],
-        )
-        .await
-        .context("read immutable authoring case facts")?;
-    if rows.len() > command.cases.len() {
-        bail!("authoring report has more facts than reserved cases");
-    }
-    let mut facts = Vec::with_capacity(rows.len());
-    for (expected_ordinal, row) in rows.into_iter().enumerate() {
-        let stored_ordinal: i32 = row.get(0);
-        if stored_ordinal != i32::try_from(expected_ordinal).context("case ordinal exceeds i32")? {
-            bail!("authoring case facts are not a contiguous prefix");
-        }
-        let expected = &command.cases[expected_ordinal];
-        let case_id: String = row.get(1);
-        let run_id: String = row.get(2);
-        if case_id != expected.case_id || run_id != expected.run_id {
-            bail!("authoring case fact does not match its reserved command position");
-        }
-        let stored_passed: bool = row.get(3);
-        let status_text: String = row.get(4);
-        let fail_kind_text: Option<String> = row.get(5);
-        let fail_node: Option<String> = row.get(6);
-        let outcome_json: String = row.get(7);
-        let outcome: Outcome =
-            serde_json::from_str(&outcome_json).context("parse authoring case outcome")?;
-        let fact = AuthoringCaseReport::new(
-            case_id,
-            run_id,
-            parse_run_status(&status_text)?,
-            parse_fail_kind(fail_kind_text.as_deref())?,
-            fail_node,
-            outcome,
-        );
-        if fact.passed != stored_passed {
-            bail!("stored case pass/fail disagrees with its immutable outcome");
-        }
-        facts.push(fact);
-    }
-    Ok(facts)
-}
-
-fn pending_report(
-    query: &AuthoringReportQuery,
-    reservation: &StoredAuthoringReservation,
-    reason: PendingAuthoringReportReason,
-    captured_cases: Vec<AuthoringCaseReport>,
-) -> PendingAuthoringReport {
-    PendingAuthoringReport {
-        report_id: query.report_id.clone(),
-        execution_id: reservation.execution_id.clone(),
-        tenant_id: query.tenant_id.clone(),
-        flow_id: reservation.flow_id.clone(),
-        suite_flow_version: reservation.suite_flow_version,
-        suite_id: reservation.suite_id.clone(),
-        lineage: reservation.lineage.clone(),
-        reason,
-        captured_cases,
-    }
-}
-
-/// Reserve a deterministic report identity before any case admission.
-pub(crate) async fn reserve_authoring_report(
-    authority: &InternalDevAdmin,
-    client: &Client,
-    source_schema: &ScenarioSchemaName,
-    reservation: &AuthoringReportReservation<'_>,
-) -> anyhow::Result<AuthoringReportState> {
-    for (value, name) in [
-        (reservation.tenant_id, "tenant-id"),
-        (reservation.report_id, "report-id"),
-        (reservation.execution_id, "execution-id"),
-        (reservation.flow_id, "flow-id"),
-        (reservation.suite_id, "suite-id"),
-    ] {
-        validate_identity(value, name)?;
-    }
-    let (command_json, command_hash) = canonical_json(reservation.command)?;
-    let (lineage_json, lineage_hash) = canonical_json(reservation.lineage)?;
-    client
-        .query_opt(
-            wamn_scenario_catalog::authoring::insert_authoring_report_reservation_sql(),
-            &[
-                &reservation.tenant_id,
-                &reservation.report_id,
-                &reservation.execution_id,
-                &reservation.flow_id,
-                &reservation.suite_flow_version,
-                &reservation.suite_id,
-                &command_json,
-                &command_hash,
-                &lineage_json,
-                &lineage_hash,
-            ],
-        )
-        .await
-        .context("reserve immutable authoring report identity")?;
-    let stored = select_reservation(client, reservation.tenant_id, reservation.report_id)
-        .await?
-        .context("authoring report reservation disappeared after insert")?;
-    if stored.execution_id != reservation.execution_id
-        || stored.flow_id != reservation.flow_id
-        || stored.suite_flow_version != reservation.suite_flow_version
-        || stored.suite_id != reservation.suite_id
-        || stored.command != *reservation.command
-        || stored.command_hash != command_hash
-        || stored.lineage != *reservation.lineage
-        || stored.lineage_hash != lineage_hash
-    {
-        bail!("report identity is already reserved for a different authoring command");
-    }
-    authoring_report(
-        authority,
-        client,
-        source_schema,
-        &AuthoringReportQuery {
-            tenant_id: reservation.tenant_id.to_string(),
-            report_id: reservation.report_id.to_string(),
-        },
-    )
-    .await
-}
-
-/// Append one observed case fact beneath a pending reservation.
-pub(crate) async fn append_authoring_case_fact(
-    _authority: &InternalDevAdmin,
-    client: &Client,
-    tenant_id: &str,
-    report_id: &str,
-    ordinal: usize,
-    fact: &AuthoringCaseReport,
-) -> anyhow::Result<()> {
-    let ordinal = i32::try_from(ordinal).context("report case ordinal exceeds i32")?;
-    let fail_kind = fact.fail_kind.map(fail_kind_sql);
-    let outcome_json = serde_json::to_string(&fact.outcome)?;
-    client
-        .query_opt(
-            wamn_scenario_catalog::authoring::insert_authoring_suite_case_fact_sql(),
-            &[
-                &tenant_id,
-                &report_id,
-                &ordinal,
-                &fact.case_id,
-                &fact.run_id,
-                &fact.passed,
-                &run_status_sql(fact.status),
-                &fail_kind,
-                &fact.fail_node,
-                &outcome_json,
-            ],
-        )
-        .await
-        .with_context(|| format!("append immutable case fact {:?}", fact.case_id))?;
-    let reservation = select_reservation(client, tenant_id, report_id)
-        .await?
-        .context("case fact has no report reservation")?;
-    if reservation.state != "pending" {
-        bail!("cannot append a case fact after report finalization");
-    }
-    let facts = select_case_facts(client, tenant_id, report_id, &reservation.command).await?;
-    let stored = facts
-        .get(usize::try_from(ordinal).expect("non-negative i32 fits usize"))
-        .context("case fact insert conflicted without the expected stored fact")?;
-    if stored != fact {
-        bail!("stored case fact differs from the observed result");
-    }
-    Ok(())
-}
-
-/// Finalize one immutable summary from its already appended fact prefix.
-pub(crate) async fn finalize_authoring_report(
-    authority: &InternalDevAdmin,
-    client: &mut Client,
-    source_schema: &ScenarioSchemaName,
-    report: &AuthoringReport,
-) -> anyhow::Result<()> {
-    let query = AuthoringReportQuery {
-        tenant_id: report.tenant_id.clone(),
-        report_id: report.report_id.clone(),
-    };
-    match authoring_report(authority, client, source_schema, &query).await? {
-        AuthoringReportState::NotFound => bail!("cannot finalize an unreserved report"),
-        AuthoringReportState::Finalized(existing) if existing == *report => return Ok(()),
-        AuthoringReportState::Finalized(_) => {
-            bail!("finalized authoring report differs from the requested summary")
-        }
-        AuthoringReportState::Pending(pending) => {
-            if matches!(
-                pending.reason,
-                PendingAuthoringReportReason::CaptureInterrupted { .. }
-            ) {
-                bail!("capture-interrupted authoring report must remain pending");
-            }
-            if pending.captured_cases != report.cases {
-                bail!("final report cases differ from the immutable captured fact prefix");
-            }
-        }
-    }
-    let (lineage_json, lineage_hash) = canonical_json(&report.lineage)?;
-    let refusal_json = report
-        .refusal
-        .as_ref()
-        .map(serde_json::to_string)
-        .transpose()?;
-    let edit_to_run_ms = report
-        .edit_to_run_ms
-        .map(i64::try_from)
-        .transpose()
-        .context("edit-to-run latency exceeds i64")?;
-    let transaction = client
-        .transaction()
-        .await
-        .context("begin immutable authoring report finalization")?;
-    let locked_state: String = transaction
-        .query_opt(
-            wamn_scenario_catalog::authoring::lock_authoring_report_reservation_state_sql(),
-            &[&report.tenant_id, &report.report_id],
-        )
-        .await
-        .context("lock authoring report reservation for finalization")?
-        .context("authoring report reservation disappeared during finalization")?
-        .get(0);
-    if locked_state == "finalized" {
-        transaction
-            .commit()
-            .await
-            .context("release finalized authoring report reservation lock")?;
-        return match authoring_report(authority, client, source_schema, &query).await? {
-            AuthoringReportState::Finalized(existing) if existing == *report => Ok(()),
-            AuthoringReportState::Finalized(_) => {
-                bail!("concurrent finalized report differs from the requested summary")
-            }
-            _ => bail!("finalized reservation lost its immutable report summary"),
-        };
-    }
-    if locked_state != "pending" {
-        bail!("unknown locked authoring report state {locked_state:?}");
-    }
-    transaction
-        .execute(
-            wamn_scenario_catalog::authoring::insert_authoring_suite_report_sql(),
-            &[
-                &report.tenant_id,
-                &report.report_id,
-                &report.execution_id,
-                &report.flow_id,
-                &report.suite_flow_version,
-                &report.suite_id,
-                &report.passed,
-                &lineage_json,
-                &lineage_hash,
-                &edit_to_run_ms,
-                &refusal_json,
-            ],
-        )
-        .await
-        .context("persist immutable authoring suite summary")?;
-    let finalized = transaction
-        .execute(
-            wamn_scenario_catalog::authoring::finalize_authoring_report_reservation_sql(),
-            &[&report.tenant_id, &report.report_id],
-        )
-        .await
-        .context("finalize immutable authoring report reservation")?;
-    if finalized != 1 {
-        bail!("authoring report reservation was not pending during finalization");
-    }
-    transaction
-        .commit()
-        .await
-        .context("commit immutable authoring report finalization")?;
-    Ok(())
-}
-
-async fn finalized_report(
-    client: &Client,
-    query: &AuthoringReportQuery,
-    reservation: &StoredAuthoringReservation,
-    cases: Vec<AuthoringCaseReport>,
-) -> anyhow::Result<AuthoringReport> {
-    let row = client
-        .query_opt(
-            wamn_scenario_catalog::authoring::select_authoring_suite_report_sql(),
-            &[&query.tenant_id, &query.report_id],
-        )
-        .await
-        .context("read finalized authoring suite report")?
-        .context("finalized reservation has no immutable suite summary")?;
-    let execution_id: String = row.get(0);
-    let flow_id: String = row.get(1);
-    let suite_flow_version: i32 = row.get(2);
-    let suite_id: String = row.get(3);
-    let stored_passed: bool = row.get(4);
-    let lineage_json: String = row.get(5);
-    let lineage_value: serde_json::Value =
-        serde_json::from_str(&lineage_json).context("parse finalized report lineage")?;
-    if wamn_flow::canonical_json_sha256(&lineage_value) != reservation.lineage_hash {
-        bail!("final report lineage does not match its reservation hash");
-    }
-    let lineage: ExecutionLineage = serde_json::from_value(lineage_value)?;
-    if execution_id != reservation.execution_id
-        || flow_id != reservation.flow_id
-        || suite_flow_version != reservation.suite_flow_version
-        || suite_id != reservation.suite_id
-        || lineage != reservation.lineage
-    {
-        bail!("final report identity differs from its immutable reservation");
-    }
-    let edit_to_run_ms: Option<i64> = row.get(6);
-    let refusal_json: Option<String> = row.get(7);
-    let refusal: Option<ScenarioRefusal> = refusal_json
-        .as_deref()
-        .map(serde_json::from_str)
-        .transpose()?;
-    let report = AuthoringReport::new(
-        &query.report_id,
-        execution_id,
-        &query.tenant_id,
-        flow_id,
-        suite_flow_version,
-        suite_id,
-        lineage,
-        edit_to_run_ms
-            .map(u64::try_from)
-            .transpose()
-            .context("negative edit-to-run milliseconds")?,
-        refusal,
-        cases,
-    );
-    if report.passed != stored_passed {
-        bail!("stored suite pass/fail disagrees with its immutable case outcomes");
-    }
-    Ok(report)
-}
-
-/// Read one missing, pending, or finalized report without exposing mutation.
-pub(crate) async fn authoring_report(
-    _authority: &InternalDevAdmin,
-    client: &Client,
-    source_schema: &ScenarioSchemaName,
-    query: &AuthoringReportQuery,
-) -> anyhow::Result<AuthoringReportState> {
-    let Some(reservation) = select_reservation(client, &query.tenant_id, &query.report_id).await?
-    else {
-        return Ok(AuthoringReportState::NotFound);
-    };
-    if reservation.command.source_schema != source_schema.as_str() {
-        bail!("reserved authoring command names a different fixed source schema");
-    }
-    let cases = select_case_facts(
-        client,
-        &query.tenant_id,
-        &query.report_id,
-        &reservation.command,
-    )
-    .await?;
-    match reservation.state.as_str() {
-        "finalized" => Ok(AuthoringReportState::Finalized(
-            finalized_report(client, query, &reservation, cases).await?,
-        )),
-        "pending" => {
-            let mut admitted = Vec::new();
-            for expected in &reservation.command.cases[cases.len()..] {
-                let execution_schema = ScenarioSchemaName::new(&expected.execution_schema)
-                    .context("reserved command has an invalid execution schema")?;
-                let sql = format!(
-                    "SELECT run_id FROM {}.runs \
-                     WHERE tenant_id = pg_catalog.current_setting('app.tenant', true) \
-                       AND run_id = $1",
-                    execution_schema.as_str()
-                );
-                if client
-                    .query_opt(&sql, &[&expected.run_id])
-                    .await
-                    .context("detect admitted authoring run without a captured fact")?
-                    .is_some()
-                {
-                    admitted.push(expected.run_id.clone());
-                }
-            }
-            let reason = if admitted.is_empty() {
-                PendingAuthoringReportReason::AwaitingAdmission
-            } else {
-                PendingAuthoringReportReason::CaptureInterrupted { run_ids: admitted }
-            };
-            Ok(AuthoringReportState::Pending(pending_report(
-                query,
-                &reservation,
-                reason,
-                cases,
-            )))
-        }
-        other => bail!("unknown authoring report reservation state {other:?}"),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn authoring_case_status_round_trips_effect_uncertain_and_rejects_unknown_values() {
-        assert_eq!(
-            parse_run_status("effect-uncertain").unwrap(),
-            RunTerminalStatus::EffectUncertain
-        );
-        assert_eq!(
-            run_status_sql(RunTerminalStatus::EffectUncertain),
-            "effect-uncertain"
-        );
-        assert!(parse_run_status("effect-unknown").is_err());
-    }
-
-    #[test]
-    fn authoring_budget_fail_kinds_round_trip_exact_literals() {
-        for (kind, literal) in [
-            (FlowFailureKind::DepthBudget, "depth-budget"),
-            (FlowFailureKind::DispatchBudget, "dispatch-budget"),
-        ] {
-            assert_eq!(parse_fail_kind(Some(literal)).unwrap(), Some(kind));
-            assert_eq!(fail_kind_sql(kind), literal);
-        }
-    }
 
     #[test]
     fn bundle_hash_is_bound_to_actual_flowrunner_bytes() {
@@ -2034,7 +1233,6 @@ mod tests {
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'INSERT')"));
-        assert!(AUTHORING_ROLE_PROBE_SQL.contains("('catalog', 'publish_gate_audit', 'INSERT')"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("pg_catalog.has_table_privilege(current_user, $7, 'SELECT')")
@@ -2042,6 +1240,10 @@ mod tests {
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("pg_catalog.has_table_privilege(current_user, $7, 'INSERT')")
+        );
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL
+                .contains("pg_catalog.has_table_privilege(current_user, $3, 'UPDATE')")
         );
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'UPDATE')"));
         for allowed in [

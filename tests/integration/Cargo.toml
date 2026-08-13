@@ -8,7 +8,6 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
-async-trait = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
 clap = { workspace = true, features = ["derive", "env"] }
@@ -20,7 +19,6 @@ pg_walstream = { workspace = true }
 reqwest = { workspace = true, features = ["rustls"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-sha2 = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "net", "process", "sync", "time", "rt", "macros"] }
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
 tracing = { workspace = true }
@@ -44,7 +42,6 @@ wamn-schema-model = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true, features = ["washlet"] }
 wasmtime-wasi = { workspace = true }
-wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 wamn-run-state = { workspace = true, features = ["test-util"] }

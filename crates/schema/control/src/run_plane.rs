@@ -50,8 +50,10 @@
 //! and preserved. The explicit frame/effect-writer cutovers physically remove
 //! only the named retired identity/recovery columns after their locked safety
 //! preflights; the capture-projection cutover drops only its three retired,
-//! non-authoritative node columns under lock. PostgreSQL validates new CHECKs against existing rows and aborts
-//! on incompatible legacy data rather than fabricating history.
+//! non-authoritative node columns under lock; and the stored-suite cutover drops
+//! only its five retired run-plane relations, retired catalog audit relation,
+//! and two helper functions. PostgreSQL validates new CHECKs against existing
+//! rows and aborts on incompatible legacy data rather than fabricating history.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -64,7 +66,7 @@ use wamn_pg_core::{Identifier, InvalidIdentifier};
 /// stand-in drift guard pins.
 const RUN_STATE_SQL: &str = include_str!("../../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
 
@@ -563,18 +565,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
-        table: "test_suites",
-        name: "test_suites_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "test_cases",
-        name: "test_cases_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
         table: "authoring_test_sets",
         name: "authoring_test_sets_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -851,186 +841,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Table,
     },
     CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_report_id_check",
-        definition: "CHECK (report_id <> ''::text)",
-        origin: CheckOrigin::Inline("report_id"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_execution_id_check",
-        definition: "CHECK (execution_id <> ''::text)",
-        origin: CheckOrigin::Inline("execution_id"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_flow_id_check",
-        definition: "CHECK (flow_id <> ''::text)",
-        origin: CheckOrigin::Inline("flow_id"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_suite_flow_version_check",
-        definition: "CHECK (suite_flow_version > 0)",
-        origin: CheckOrigin::Inline("suite_flow_version"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_suite_id_check",
-        definition: "CHECK (suite_id <> ''::text)",
-        origin: CheckOrigin::Inline("suite_id"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_command_json_check",
-        definition: "CHECK (jsonb_typeof(command_json) = 'object'::text)",
-        origin: CheckOrigin::Inline("command_json"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_command_hash_check",
-        definition: "CHECK (command_hash <> ''::text)",
-        origin: CheckOrigin::Inline("command_hash"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_lineage_json_check",
-        definition: "CHECK (jsonb_typeof(lineage_json) = 'object'::text AND ((lineage_json ->> 'kind'::text) = ANY (ARRAY['draft'::text, 'release'::text])))",
-        origin: CheckOrigin::Inline("lineage_json"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_lineage_hash_check",
-        definition: "CHECK (lineage_hash <> ''::text)",
-        origin: CheckOrigin::Inline("lineage_hash"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_state_check",
-        definition: "CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
-        origin: CheckOrigin::Inline("state"),
-    },
-    CheckSpec {
-        table: "authoring_report_reservations",
-        name: "authoring_report_reservations_finalization_pair",
-        definition: "CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_report_id_check",
-        definition: "CHECK (report_id <> ''::text)",
-        origin: CheckOrigin::Inline("report_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_ordinal_check",
-        definition: "CHECK (ordinal >= 0)",
-        origin: CheckOrigin::Inline("ordinal"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_case_id_check",
-        definition: "CHECK (case_id <> ''::text)",
-        origin: CheckOrigin::Inline("case_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_run_id_check",
-        definition: "CHECK (run_id <> ''::text)",
-        origin: CheckOrigin::Inline("run_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_status_check",
-        definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
-        origin: CheckOrigin::Inline("status"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_fail_kind_check",
-        definition: "CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text]))",
-        origin: CheckOrigin::Inline("fail_kind"),
-    },
-    CheckSpec {
-        table: "authoring_suite_case_facts",
-        name: "authoring_suite_case_facts_outcome_check",
-        definition: "CHECK (jsonb_typeof(outcome) = 'object'::text)",
-        origin: CheckOrigin::Inline("outcome"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_report_id_check",
-        definition: "CHECK (report_id <> ''::text)",
-        origin: CheckOrigin::Inline("report_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_execution_id_check",
-        definition: "CHECK (execution_id <> ''::text)",
-        origin: CheckOrigin::Inline("execution_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_flow_id_check",
-        definition: "CHECK (flow_id <> ''::text)",
-        origin: CheckOrigin::Inline("flow_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_suite_flow_version_check",
-        definition: "CHECK (suite_flow_version > 0)",
-        origin: CheckOrigin::Inline("suite_flow_version"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_suite_id_check",
-        definition: "CHECK (suite_id <> ''::text)",
-        origin: CheckOrigin::Inline("suite_id"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_lineage_json_check",
-        definition: "CHECK (jsonb_typeof(lineage_json) = 'object'::text AND ((lineage_json ->> 'kind'::text) = ANY (ARRAY['draft'::text, 'release'::text])))",
-        origin: CheckOrigin::Inline("lineage_json"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_lineage_hash_check",
-        definition: "CHECK (lineage_hash <> ''::text)",
-        origin: CheckOrigin::Inline("lineage_hash"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_edit_to_run_ms_check",
-        definition: "CHECK (edit_to_run_ms IS NULL OR edit_to_run_ms >= 0)",
-        origin: CheckOrigin::Inline("edit_to_run_ms"),
-    },
-    CheckSpec {
-        table: "authoring_suite_reports",
-        name: "authoring_suite_reports_refusal_check",
-        definition: "CHECK (refusal IS NULL OR jsonb_typeof(refusal) = 'object'::text)",
-        origin: CheckOrigin::Inline("refusal"),
-    },
-    CheckSpec {
         table: "run_queue",
         name: "run_queue_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -1072,171 +882,7 @@ const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTIO
 
 const REJECT_IMMUTABLE_FLOW_RESOLUTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_flow_resolution_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'run-flow-resolution-immutable';\nEND\n$function$\n";
 
-const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-report-immutable';\nEND\n$function$\n";
-
 const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-test-set-immutable';\nEND\n$function$\n";
-
-const GUARD_AUTHORING_REPORT_WRITE_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write()
- RETURNS trigger
- LANGUAGE plpgsql
-AS $function$
-DECLARE
-    new_row jsonb := to_jsonb(NEW);
-    old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END;
-    reservation_command jsonb;
-    expected_case_count bigint;
-    actual_case_count bigint;
-    max_fact_ordinal int;
-    all_facts_passed boolean;
-BEGIN
-    IF TG_TABLE_NAME = 'authoring_report_reservations' THEN
-        IF TG_OP = 'INSERT' THEN
-            IF new_row ->> 'state' <> 'pending'
-               OR new_row -> 'finalized_at' <> 'null'::jsonb THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'authoring-report-reservation-must-start-pending';
-            END IF;
-            IF jsonb_typeof(new_row -> 'command_json' -> 'cases')
-                   IS DISTINCT FROM 'array' THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-            IF jsonb_array_length(new_row -> 'command_json' -> 'cases')
-                   > 2147483647 THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-            IF EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                WHERE jsonb_typeof(command_case.value) <> 'object'
-                   OR NULLIF(command_case.value ->> 'case-id', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'case-content-hash', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'run-id', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'execution-schema', '') IS NULL
-            ) OR EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                GROUP BY command_case.value ->> 'case-id'
-                HAVING count(*) > 1
-            ) OR EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                GROUP BY command_case.value ->> 'run-id'
-                HAVING count(*) > 1
-            ) THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-        ELSIF TG_OP = 'UPDATE' THEN
-            IF (new_row - 'state' - 'finalized_at')
-                   IS DISTINCT FROM (old_row - 'state' - 'finalized_at')
-               OR old_row ->> 'state' <> 'pending'
-               OR new_row ->> 'state' <> 'finalized'
-               OR new_row -> 'finalized_at' = 'null'::jsonb
-               OR NOT EXISTS (
-                   SELECT 1 FROM wamn_run.authoring_suite_reports AS report
-                   WHERE report.tenant_id = old_row ->> 'tenant_id'
-                     AND report.report_id = old_row ->> 'report_id'
-               ) THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'authoring-report-reservation-uncontrolled-update';
-            END IF;
-        ELSE
-            RAISE EXCEPTION USING
-                ERRCODE = '55000',
-                MESSAGE = 'authoring-report-reservation-unexpected-operation';
-        END IF;
-    ELSIF TG_TABLE_NAME = 'authoring_suite_case_facts' AND TG_OP = 'INSERT' THEN
-        SELECT reservation.command_json INTO reservation_command
-        FROM wamn_run.authoring_report_reservations AS reservation
-        WHERE reservation.tenant_id = new_row ->> 'tenant_id'
-          AND reservation.report_id = new_row ->> 'report_id'
-          AND reservation.state = 'pending'
-        FOR UPDATE;
-        IF reservation_command IS NULL OR NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(
-                reservation_command -> 'cases'
-            ) WITH ORDINALITY AS command_case(value, position)
-            WHERE command_case.position - 1
-                    = (new_row ->> 'ordinal')::bigint
-              AND command_case.value ->> 'case-id'
-                    = new_row ->> 'case_id'
-              AND command_case.value ->> 'run-id'
-                    = new_row ->> 'run_id'
-              AND NULLIF(command_case.value ->> 'case-content-hash', '')
-                    IS NOT NULL
-        ) THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-case-fact-command-mismatch';
-        END IF;
-    ELSIF TG_TABLE_NAME = 'authoring_suite_reports' AND TG_OP = 'INSERT' THEN
-        SELECT reservation.command_json INTO reservation_command
-        FROM wamn_run.authoring_report_reservations AS reservation
-        WHERE reservation.tenant_id = new_row ->> 'tenant_id'
-          AND reservation.report_id = new_row ->> 'report_id'
-          AND reservation.execution_id = new_row ->> 'execution_id'
-          AND reservation.flow_id = new_row ->> 'flow_id'
-          AND reservation.suite_flow_version
-                = (new_row ->> 'suite_flow_version')::int
-          AND reservation.suite_id = new_row ->> 'suite_id'
-          AND reservation.lineage_json = new_row -> 'lineage_json'
-          AND reservation.lineage_hash = new_row ->> 'lineage_hash'
-          AND reservation.state = 'pending'
-        FOR UPDATE;
-        IF reservation_command IS NULL THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-reservation-mismatch';
-        END IF;
-
-        expected_case_count := jsonb_array_length(
-            reservation_command -> 'cases'
-        );
-        SELECT count(*), COALESCE(max(fact.ordinal), -1),
-               COALESCE(bool_and(fact.passed), true)
-        INTO actual_case_count, max_fact_ordinal, all_facts_passed
-        FROM wamn_run.authoring_suite_case_facts AS fact
-        WHERE fact.tenant_id = new_row ->> 'tenant_id'
-          AND fact.report_id = new_row ->> 'report_id';
-
-        IF (new_row -> 'refusal' = 'null'::jsonb
-            AND actual_case_count <> expected_case_count)
-           OR (new_row -> 'refusal' <> 'null'::jsonb
-               AND actual_case_count > expected_case_count)
-           OR max_fact_ordinal <> actual_case_count - 1 THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-case-cardinality-mismatch';
-        END IF;
-        IF (new_row ->> 'passed')::boolean IS DISTINCT FROM
-           (new_row -> 'refusal' = 'null'::jsonb AND all_facts_passed) THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-summary-mismatch';
-        END IF;
-    ELSE
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'authoring-report-unexpected-write';
-    END IF;
-    RETURN NEW;
-END
-$function$
-"#;
 
 const GUARD_EFFECT_DISPOSITION_APPEND_DEF: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
  RETURNS trigger
@@ -1353,18 +999,6 @@ END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_flow_resolution_change() FROM PUBLIC;"#;
 
-const REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_report_change()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RAISE EXCEPTION USING
-        ERRCODE = '55000',
-        MESSAGE = 'authoring-report-immutable';
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_report_change() FROM PUBLIC;"#;
-
 const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -1376,168 +1010,6 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_test_set_change() FROM PUBLIC;"#;
-
-const GUARD_AUTHORING_REPORT_WRITE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    new_row jsonb := to_jsonb(NEW);
-    old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END;
-    reservation_command jsonb;
-    expected_case_count bigint;
-    actual_case_count bigint;
-    max_fact_ordinal int;
-    all_facts_passed boolean;
-BEGIN
-    IF TG_TABLE_NAME = 'authoring_report_reservations' THEN
-        IF TG_OP = 'INSERT' THEN
-            IF new_row ->> 'state' <> 'pending'
-               OR new_row -> 'finalized_at' <> 'null'::jsonb THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'authoring-report-reservation-must-start-pending';
-            END IF;
-            IF jsonb_typeof(new_row -> 'command_json' -> 'cases')
-                   IS DISTINCT FROM 'array' THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-            IF jsonb_array_length(new_row -> 'command_json' -> 'cases')
-                   > 2147483647 THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-            IF EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                WHERE jsonb_typeof(command_case.value) <> 'object'
-                   OR NULLIF(command_case.value ->> 'case-id', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'case-content-hash', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'run-id', '') IS NULL
-                   OR NULLIF(command_case.value ->> 'execution-schema', '') IS NULL
-            ) OR EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                GROUP BY command_case.value ->> 'case-id'
-                HAVING count(*) > 1
-            ) OR EXISTS (
-                SELECT 1
-                FROM jsonb_array_elements(
-                    new_row -> 'command_json' -> 'cases'
-                ) AS command_case(value)
-                GROUP BY command_case.value ->> 'run-id'
-                HAVING count(*) > 1
-            ) THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '23514',
-                    MESSAGE = 'authoring-report-command-cases-invalid';
-            END IF;
-        ELSIF TG_OP = 'UPDATE' THEN
-            IF (new_row - 'state' - 'finalized_at')
-                   IS DISTINCT FROM (old_row - 'state' - 'finalized_at')
-               OR old_row ->> 'state' <> 'pending'
-               OR new_row ->> 'state' <> 'finalized'
-               OR new_row -> 'finalized_at' = 'null'::jsonb
-               OR NOT EXISTS (
-                   SELECT 1 FROM wamn_run.authoring_suite_reports AS report
-                   WHERE report.tenant_id = old_row ->> 'tenant_id'
-                     AND report.report_id = old_row ->> 'report_id'
-               ) THEN
-                RAISE EXCEPTION USING
-                    ERRCODE = '55000',
-                    MESSAGE = 'authoring-report-reservation-uncontrolled-update';
-            END IF;
-        ELSE
-            RAISE EXCEPTION USING
-                ERRCODE = '55000',
-                MESSAGE = 'authoring-report-reservation-unexpected-operation';
-        END IF;
-    ELSIF TG_TABLE_NAME = 'authoring_suite_case_facts' AND TG_OP = 'INSERT' THEN
-        SELECT reservation.command_json INTO reservation_command
-        FROM wamn_run.authoring_report_reservations AS reservation
-        WHERE reservation.tenant_id = new_row ->> 'tenant_id'
-          AND reservation.report_id = new_row ->> 'report_id'
-          AND reservation.state = 'pending'
-        FOR UPDATE;
-        IF reservation_command IS NULL OR NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(
-                reservation_command -> 'cases'
-            ) WITH ORDINALITY AS command_case(value, position)
-            WHERE command_case.position - 1
-                    = (new_row ->> 'ordinal')::bigint
-              AND command_case.value ->> 'case-id'
-                    = new_row ->> 'case_id'
-              AND command_case.value ->> 'run-id'
-                    = new_row ->> 'run_id'
-              AND NULLIF(command_case.value ->> 'case-content-hash', '')
-                    IS NOT NULL
-        ) THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-case-fact-command-mismatch';
-        END IF;
-    ELSIF TG_TABLE_NAME = 'authoring_suite_reports' AND TG_OP = 'INSERT' THEN
-        SELECT reservation.command_json INTO reservation_command
-        FROM wamn_run.authoring_report_reservations AS reservation
-        WHERE reservation.tenant_id = new_row ->> 'tenant_id'
-          AND reservation.report_id = new_row ->> 'report_id'
-          AND reservation.execution_id = new_row ->> 'execution_id'
-          AND reservation.flow_id = new_row ->> 'flow_id'
-          AND reservation.suite_flow_version
-                = (new_row ->> 'suite_flow_version')::int
-          AND reservation.suite_id = new_row ->> 'suite_id'
-          AND reservation.lineage_json = new_row -> 'lineage_json'
-          AND reservation.lineage_hash = new_row ->> 'lineage_hash'
-          AND reservation.state = 'pending'
-        FOR UPDATE;
-        IF reservation_command IS NULL THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-reservation-mismatch';
-        END IF;
-
-        expected_case_count := jsonb_array_length(
-            reservation_command -> 'cases'
-        );
-        SELECT count(*), COALESCE(max(fact.ordinal), -1),
-               COALESCE(bool_and(fact.passed), true)
-        INTO actual_case_count, max_fact_ordinal, all_facts_passed
-        FROM wamn_run.authoring_suite_case_facts AS fact
-        WHERE fact.tenant_id = new_row ->> 'tenant_id'
-          AND fact.report_id = new_row ->> 'report_id';
-
-        IF (new_row -> 'refusal' = 'null'::jsonb
-            AND actual_case_count <> expected_case_count)
-           OR (new_row -> 'refusal' <> 'null'::jsonb
-               AND actual_case_count > expected_case_count)
-           OR max_fact_ordinal <> actual_case_count - 1 THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-case-cardinality-mismatch';
-        END IF;
-        IF (new_row ->> 'passed')::boolean IS DISTINCT FROM
-           (new_row -> 'refusal' = 'null'::jsonb AND all_facts_passed) THEN
-            RAISE EXCEPTION USING
-                ERRCODE = '23514',
-                MESSAGE = 'authoring-report-summary-mismatch';
-        END IF;
-    ELSE
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'authoring-report-unexpected-write';
-    END IF;
-    RETURN NEW;
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.guard_authoring_report_write() FROM PUBLIC;"#;
 
 const GUARD_EFFECT_DISPOSITION_APPEND_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.guard_effect_disposition_append()
 RETURNS trigger
@@ -1655,37 +1127,37 @@ fn materialize_helper_repair_sql() -> String {
     )
 }
 
-fn flow_test_helper_sql(name: &str) -> &'static str {
+fn authoring_test_helper_sql(name: &str) -> &'static str {
     let head = format!("CREATE OR REPLACE FUNCTION wamn_run.{name}()");
-    let start = FLOW_TESTS_SQL
+    let start = AUTHORING_TESTS_SQL
         .find(&head)
-        .unwrap_or_else(|| panic!("flow-test record must define {name}"));
-    let tail = &FLOW_TESTS_SQL[start..];
+        .unwrap_or_else(|| panic!("authoring-test record must define {name}"));
+    let tail = &AUTHORING_TESTS_SQL[start..];
     let function_end = tail
         .find("\n$$;")
         .map(|offset| offset + "\n$$;".len())
-        .unwrap_or_else(|| panic!("flow-test helper {name} must close its body"));
+        .unwrap_or_else(|| panic!("authoring-test helper {name} must close its body"));
     let privileges = &tail[function_end..];
     let revoke_end = privileges
         .find(';')
         .map(|offset| function_end + offset + 1)
-        .unwrap_or_else(|| panic!("flow-test helper {name} must revoke PUBLIC"));
+        .unwrap_or_else(|| panic!("authoring-test helper {name} must revoke PUBLIC"));
     &tail[..revoke_end]
 }
 
-fn flow_test_helper_definition(name: &str) -> String {
-    let sql = flow_test_helper_sql(name);
+fn authoring_test_helper_definition(name: &str) -> String {
+    let sql = authoring_test_helper_sql(name);
     let (header, body_and_privileges) = sql
         .split_once("\nAS $$\n")
-        .unwrap_or_else(|| panic!("flow-test helper {name} must use its canonical delimiter"));
+        .unwrap_or_else(|| panic!("authoring-test helper {name} must use its canonical delimiter"));
     let body = body_and_privileges
         .split_once("\n$$;")
         .map(|(body, _)| body)
-        .unwrap_or_else(|| panic!("flow-test helper {name} must close its canonical body"));
+        .unwrap_or_else(|| panic!("authoring-test helper {name} must close its canonical body"));
     let signature = header
         .lines()
         .next()
-        .expect("flow-test helper signature is non-empty");
+        .expect("authoring-test helper signature is non-empty");
     format!("{signature}\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n{body}\n$function$\n")
 }
 
@@ -1728,32 +1200,22 @@ fn helper_specs() -> Vec<HelperSpec> {
         ),
         HelperSpec {
             name: "reject_immutable_authoring_test_orchestration_change",
-            definition: Cow::Owned(flow_test_helper_definition(
+            definition: Cow::Owned(authoring_test_helper_definition(
                 "reject_immutable_authoring_test_orchestration_change",
             )),
-            sql: Cow::Borrowed(flow_test_helper_sql(
+            sql: Cow::Borrowed(authoring_test_helper_sql(
                 "reject_immutable_authoring_test_orchestration_change",
             )),
         },
         HelperSpec {
             name: "guard_authoring_test_orchestration_write",
-            definition: Cow::Owned(flow_test_helper_definition(
+            definition: Cow::Owned(authoring_test_helper_definition(
                 "guard_authoring_test_orchestration_write",
             )),
-            sql: Cow::Borrowed(flow_test_helper_sql(
+            sql: Cow::Borrowed(authoring_test_helper_sql(
                 "guard_authoring_test_orchestration_write",
             )),
         },
-        borrowed_helper_spec(
-            "reject_immutable_authoring_report_change",
-            REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF,
-            REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_SQL,
-        ),
-        borrowed_helper_spec(
-            "guard_authoring_report_write",
-            GUARD_AUTHORING_REPORT_WRITE_DEF,
-            GUARD_AUTHORING_REPORT_WRITE_SQL,
-        ),
         borrowed_helper_spec(
             "guard_effect_disposition_append",
             GUARD_EFFECT_DISPOSITION_APPEND_DEF,
@@ -1917,60 +1379,6 @@ fn trigger_specs() -> Vec<TriggerSpec> {
             "authoring_test_reports_delete_immutable",
             "DELETE",
             "reject_immutable_authoring_test_orchestration_change",
-        ),
-        (
-            "authoring_report_reservations",
-            "authoring_report_reservations_controlled_insert",
-            "INSERT",
-            "guard_authoring_report_write",
-        ),
-        (
-            "authoring_report_reservations",
-            "authoring_report_reservations_controlled_update",
-            "UPDATE",
-            "guard_authoring_report_write",
-        ),
-        (
-            "authoring_report_reservations",
-            "authoring_report_reservations_delete_immutable",
-            "DELETE",
-            "reject_immutable_authoring_report_change",
-        ),
-        (
-            "authoring_suite_case_facts",
-            "authoring_suite_case_facts_require_pending",
-            "INSERT",
-            "guard_authoring_report_write",
-        ),
-        (
-            "authoring_suite_case_facts",
-            "authoring_suite_case_facts_update_immutable",
-            "UPDATE",
-            "reject_immutable_authoring_report_change",
-        ),
-        (
-            "authoring_suite_case_facts",
-            "authoring_suite_case_facts_delete_immutable",
-            "DELETE",
-            "reject_immutable_authoring_report_change",
-        ),
-        (
-            "authoring_suite_reports",
-            "authoring_suite_reports_require_reservation",
-            "INSERT",
-            "guard_authoring_report_write",
-        ),
-        (
-            "authoring_suite_reports",
-            "authoring_suite_reports_update_immutable",
-            "UPDATE",
-            "reject_immutable_authoring_report_change",
-        ),
-        (
-            "authoring_suite_reports",
-            "authoring_suite_reports_delete_immutable",
-            "DELETE",
-            "reject_immutable_authoring_report_change",
         ),
     ] {
         specs.push(TriggerSpec {
@@ -2710,9 +2118,9 @@ fn disposition_provenance_migration_sql() -> &'static str {
 }
 
 /// The run-plane record files in APPLY ORDER: run-state first (schema header +
-/// `runs`, which everything FKs), then the flow registry, then the 11.2 flow
-/// test-suite tables (FK to `flows`, so AFTER it), then the queue.
-const RUN_PLANE_FILES: [&str; 4] = [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL];
+/// `runs`, which everything FKs), then the flow registry, authoring-test
+/// persistence, and finally the queue.
+const RUN_PLANE_FILES: [&str; 4] = [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL];
 
 #[derive(Clone, Copy)]
 enum AuthoringTableSchema {
@@ -2831,18 +2239,6 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
-        table: "test_suites",
-        app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
-        author: &["SELECT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
-        table: "test_cases",
-        app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
-        author: &["SELECT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
         table: "authoring_test_sets",
         app: &[],
         author: &["SELECT", "INSERT"],
@@ -2865,24 +2261,6 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         app: &[],
         author: &["SELECT", "INSERT"],
     },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
-        table: "authoring_report_reservations",
-        app: &[],
-        author: &["SELECT", "INSERT", "UPDATE"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
-        table: "authoring_suite_case_facts",
-        app: &[],
-        author: &["SELECT", "INSERT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
-        table: "authoring_suite_reports",
-        app: &[],
-        author: &["SELECT", "INSERT"],
-    },
 ];
 
 const TABLE_PRIVILEGE_TYPES: [&str; 7] = [
@@ -2894,6 +2272,59 @@ const TABLE_PRIVILEGE_TYPES: [&str; 7] = [
     "REFERENCES",
     "TRIGGER",
 ];
+
+/// Stored-suite persistence removed by wamn-0h0g.8.10, ordered child first.
+const RETIRED_STORED_SUITE_TABLES: [&str; 5] = [
+    "authoring_suite_reports",
+    "authoring_suite_case_facts",
+    "authoring_report_reservations",
+    "test_cases",
+    "test_suites",
+];
+
+/// Helper functions retained only long enough for the stored-suite cutover.
+const RETIRED_STORED_SUITE_FUNCTIONS: [&str; 2] = [
+    "guard_authoring_report_write",
+    "reject_immutable_authoring_report_change",
+];
+const RETIRED_STORED_SUITE_CATALOG_TABLE: &str = "publish_gate_audit";
+
+fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    RETIRED_STORED_SUITE_TABLES
+        .iter()
+        .any(|table| obs.tables.contains_key(*table))
+        || RETIRED_STORED_SUITE_FUNCTIONS
+            .iter()
+            .any(|function| obs.helper_functions.contains_key(*function))
+        || obs
+            .catalog_tables
+            .contains(RETIRED_STORED_SUITE_CATALOG_TABLE)
+}
+
+fn stored_suite_cutover_sql(schema: &BareSchemaName) -> String {
+    RETIRED_STORED_SUITE_TABLES
+        .iter()
+        .map(|table| {
+            format!(
+                "DROP TABLE IF EXISTS {}.{}",
+                schema.quoted(),
+                quote_ident(table)
+            )
+        })
+        .chain(RETIRED_STORED_SUITE_FUNCTIONS.iter().map(|function| {
+            format!(
+                "DROP FUNCTION IF EXISTS {}.{}()",
+                schema.quoted(),
+                quote_ident(function)
+            )
+        }))
+        .chain(std::iter::once(format!(
+            "DROP TABLE IF EXISTS catalog.{}",
+            quote_ident(RETIRED_STORED_SUITE_CATALOG_TABLE)
+        )))
+        .collect::<Vec<_>>()
+        .join("; ")
+}
 
 /// The outbox-era tables the l5i9.19 teardown retired. A pre-teardown schema
 /// (or one restored from a pre-teardown snapshot) still carries them.
@@ -3106,8 +2537,8 @@ pub struct RunPlaneObservation {
     /// catalog-head lock without gaining direct UPDATE/row-lock authority.
     pub scenario_author_can_lock_catalog_head: bool,
     /// EVERY ordinary table in the target schema → its live column names.
-    /// Includes entity/floor tables (ignored by the planner) and any legacy
-    /// outbox-era tables (planned for teardown).
+    /// Includes entity/floor tables (ignored by the planner) and retired
+    /// outbox/stored-suite tables (planned for teardown).
     pub tables: BTreeMap<String, BTreeSet<String>>,
     /// Live columns that still carry NOT NULL authority.
     pub non_nullable_columns: BTreeSet<(String, String)>,
@@ -3152,8 +2583,8 @@ pub struct RunPlaneObservation {
     /// Every non-internal trigger on a record table, keyed by `(table, name)`,
     /// with PostgreSQL's canonical `pg_get_triggerdef(..., true)` definition.
     pub triggers: BTreeMap<(String, String), String>,
-    /// Canonical `pg_get_functiondef` output for the run-state helper
-    /// functions, keyed by function name.
+    /// Canonical `pg_get_functiondef` output for retained helpers and the two
+    /// retired stored-suite helpers, keyed by function name.
     pub helper_functions: BTreeMap<String, String>,
 }
 
@@ -3175,6 +2606,8 @@ pub enum RunPlaneActionKind {
     CaptureProjectionCutover,
     /// Remove invocation-admission expiry and make the client key optional.
     InvocationAdmissionRetentionCutover,
+    /// Delete retired stored-suite tables, audit relation, and helper functions.
+    StoredSuiteCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
@@ -3797,6 +3230,14 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             kind: RunPlaneActionKind::InvocationAdmissionRetentionCutover,
             target: "invocation_admissions.retention".to_string(),
             sql: statements.join("; "),
+        });
+    }
+
+    if stored_suite_cutover_needed(obs) {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::StoredSuiteCutover,
+            target: "stored-suite-persistence".to_string(),
+            sql: stored_suite_cutover_sql(schema),
         });
     }
 
@@ -4957,13 +4398,9 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
-              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
-               'authoring_test_sets', \
+              ('runs', 'run_flow_resolutions', 'authoring_test_sets', \
                'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports', \
-               'authoring_report_reservations', \
-               'authoring_suite_case_facts', \
-               'authoring_suite_reports'))) \
+               'authoring_test_reports'))) \
       ORDER BY table_schema, table_name, grantee, privilege_type"
 }
 
@@ -4990,12 +4427,9 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
-               'authoring_test_sets', \
+              ('runs', 'run_flow_resolutions', 'authoring_test_sets', \
                'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports', \
-               'authoring_report_reservations', \
-               'authoring_suite_case_facts', 'authoring_suite_reports'))) \
+               'authoring_test_reports'))) \
         AND pg_catalog.has_table_privilege( \
               actor.oid, relation.oid, privilege.name) \
       ORDER BY namespace.nspname, relation.relname, actor.rolname, privilege.name"
@@ -5022,12 +4456,9 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
-               'authoring_test_sets', \
+              ('runs', 'run_flow_resolutions', 'authoring_test_sets', \
                'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports', \
-               'authoring_report_reservations', \
-               'authoring_suite_case_facts', 'authoring_suite_reports'))) \
+               'authoring_test_reports'))) \
         AND pg_catalog.has_any_column_privilege( \
               actor.oid, relation.oid, privilege.name) \
       ORDER BY namespace.nspname, relation.relname, actor.rolname, privilege.name"
@@ -5051,12 +4482,9 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
-               'authoring_test_sets', \
+              ('runs', 'run_flow_resolutions', 'authoring_test_sets', \
                'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports', \
-               'authoring_report_reservations', \
-               'authoring_suite_case_facts', 'authoring_suite_reports'))) \
+               'authoring_test_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
 }
 
@@ -5230,7 +4658,8 @@ pub fn select_schema_triggers_sql() -> &'static str {
      ORDER BY c.relname, t.tgname"
 }
 
-/// The canonical definitions of the run-state helper functions in `$1`.
+/// Retained helper definitions plus the two names needed to observe the
+/// stored-suite cutover in `$1`.
 pub fn select_run_plane_helper_functions_sql() -> &'static str {
     "SELECT p.proname, pg_get_functiondef(p.oid) \
      FROM pg_proc p \
@@ -5914,19 +5343,27 @@ CREATE INDEX event_registrations_by_entity
         );
         assert_eq!(record_tables(FLOWS_SQL, "wamn_run"), ["flows"]);
         assert_eq!(
-            record_tables(FLOW_TESTS_SQL, "wamn_run"),
+            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "test_suites",
-                "test_cases",
                 "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
-                "authoring_report_reservations",
-                "authoring_suite_case_facts",
-                "authoring_suite_reports",
             ]
         );
+        for table in RETIRED_STORED_SUITE_TABLES {
+            assert!(
+                !AUTHORING_TESTS_SQL.contains(&format!("CREATE TABLE wamn_run.{table}")),
+                "retired table {table} remains in the schema of record"
+            );
+        }
+        for function in RETIRED_STORED_SUITE_FUNCTIONS {
+            assert!(
+                !AUTHORING_TESTS_SQL
+                    .contains(&format!("CREATE OR REPLACE FUNCTION wamn_run.{function}")),
+                "retired helper {function} remains in the schema of record"
+            );
+        }
         assert_eq!(
             record_tables(RUN_QUEUE_SQL, "wamn_run"),
             ["run_queue", "partition_owner", "run_dead_letters"]
@@ -6320,9 +5757,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(dispositions.contains("effect_dispositions_delete_immutable"));
         assert!(!dispositions.contains("node_runs_current_effect_attempt_fk"));
 
-        let cases = table_section(FLOW_TESTS_SQL, "wamn_run", "test_cases");
-        assert!(!cases.contains("reject_immutable_authoring_test_set_change"));
-        let test_sets = table_section(FLOW_TESTS_SQL, "wamn_run", "authoring_test_sets");
+        let test_sets = table_section(AUTHORING_TESTS_SQL, "wamn_run", "authoring_test_sets");
         assert!(test_sets.contains("authoring_test_sets_update_immutable"));
         assert!(test_sets.contains("GRANT SELECT, INSERT"));
         assert!(!test_sets.contains("reject_immutable_authoring_report_change"));
@@ -6343,7 +5778,6 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(
             names,
             [
-                "authoring_suite_reports_flow",
                 "effect_attempts_bulk_scope",
                 "effect_dispositions_append_order",
                 "effect_dispositions_attempt_history",
@@ -6394,9 +5828,87 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            22,
-            "all twenty-two run-plane tables at target, including durable test orchestration"
+            17,
+            "all seventeen retained run-plane tables are at target"
         );
+    }
+
+    #[test]
+    fn stored_suite_cutover_is_child_first_exact_and_idempotent() {
+        let mut legacy = observation_at_record();
+        for table in RETIRED_STORED_SUITE_TABLES {
+            legacy.tables.insert(table.to_string(), BTreeSet::new());
+        }
+        for function in RETIRED_STORED_SUITE_FUNCTIONS {
+            legacy
+                .helper_functions
+                .insert(function.to_string(), "legacy".to_string());
+        }
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let cutover = &plan.actions[0];
+        assert_eq!(cutover.kind, RunPlaneActionKind::StoredSuiteCutover);
+        assert_eq!(cutover.target, "stored-suite-persistence");
+        assert_eq!(
+            cutover.sql,
+            "DROP TABLE IF EXISTS \"demo\".\"authoring_suite_reports\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_suite_case_facts\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_report_reservations\"; \
+             DROP TABLE IF EXISTS \"demo\".\"test_cases\"; \
+             DROP TABLE IF EXISTS \"demo\".\"test_suites\"; \
+             DROP FUNCTION IF EXISTS \"demo\".\"guard_authoring_report_write\"(); \
+             DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_report_change\"(); \
+             DROP TABLE IF EXISTS catalog.\"publish_gate_audit\""
+        );
+        for retained in [
+            "authoring_test_sets",
+            "authoring_test_run_reservations",
+            "authoring_test_case_runs",
+            "authoring_test_reports",
+        ] {
+            assert!(!cutover.sql.contains(retained), "cutover drops {retained}");
+        }
+
+        for table in RETIRED_STORED_SUITE_TABLES {
+            legacy.tables.remove(table);
+        }
+        for function in RETIRED_STORED_SUITE_FUNCTIONS {
+            legacy.helper_functions.remove(function);
+        }
+        assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
+    }
+
+    #[test]
+    fn orphaned_publish_gate_audit_independently_plans_the_cutover() {
+        let mut legacy = observation_at_record();
+        legacy
+            .catalog_tables
+            .insert(RETIRED_STORED_SUITE_CATALOG_TABLE.to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        let cutovers = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
+            .collect::<Vec<_>>();
+        assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
+        assert_eq!(
+            cutovers[0].sql,
+            "DROP TABLE IF EXISTS \"demo\".\"authoring_suite_reports\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_suite_case_facts\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_report_reservations\"; \
+             DROP TABLE IF EXISTS \"demo\".\"test_cases\"; \
+             DROP TABLE IF EXISTS \"demo\".\"test_suites\"; \
+             DROP FUNCTION IF EXISTS \"demo\".\"guard_authoring_report_write\"(); \
+             DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_report_change\"(); \
+             DROP TABLE IF EXISTS catalog.\"publish_gate_audit\""
+        );
+
+        legacy
+            .catalog_tables
+            .remove(RETIRED_STORED_SUITE_CATALOG_TABLE);
+        assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
     }
 
     #[test]
@@ -7759,15 +7271,10 @@ CREATE INDEX event_registrations_by_entity
                 "effect_disposition_requests",
                 "effect_dispositions",
                 "flows",
-                "test_suites",
-                "test_cases",
                 "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
-                "authoring_report_reservations",
-                "authoring_suite_case_facts",
-                "authoring_suite_reports",
                 "run_queue",
                 "partition_owner",
                 "run_dead_letters"
@@ -7777,26 +7284,6 @@ CREATE INDEX event_registrations_by_entity
             plan.actions
                 .iter()
                 .any(|a| a.kind == RunPlaneActionKind::EnsureCatalogSchema)
-        );
-        let report_helper = plan
-            .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::RepairHelperFunction
-                    && action.target == "reject_immutable_authoring_report_change"
-            })
-            .expect("authoring report helper is provisioned");
-        let report_table = plan
-            .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::CreateTable
-                    && action.target == "authoring_suite_reports"
-            })
-            .expect("authoring report table is provisioned");
-        assert!(
-            report_helper < report_table,
-            "the standalone run-plane helper must exist before report triggers"
         );
         let test_set_helper = plan
             .actions
@@ -8268,7 +7755,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            12
+            10
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairHelperFunction
@@ -8306,16 +7793,11 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            36
+            27
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target == "authoring_test_sets.authoring_test_sets_delete_immutable"
-        }));
-        assert!(plan.actions.iter().any(|action| {
-            action.kind == RunPlaneActionKind::RepairTrigger
-                && action.target
-                    == "authoring_suite_reports.authoring_suite_reports_update_immutable"
         }));
     }
 
@@ -8614,7 +8096,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_run_capture_privileges_sql().contains("has_column_privilege"));
         assert!(select_run_capture_privileges_sql().contains("capture_mode"));
         assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
-        assert!(select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
+        assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
         // Every observation query must see the ledger, or the planner reads an
         // empty privilege set and plans a repair that can never converge.
         for observation in [
@@ -8656,6 +8138,7 @@ CREATE INDEX event_registrations_by_entity
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_authoring_report_change")
         );
+        assert!(select_run_plane_helper_functions_sql().contains("guard_authoring_report_write"));
         assert!(
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_authoring_test_set_change")

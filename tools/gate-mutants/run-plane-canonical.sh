@@ -31,7 +31,7 @@ load_mutation() {
   case "$id" in
     check-catalog-is-not-planned)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="dcef5623453ae7d80f1bb18e5677b23cf4a711a61fb469470b6bb6ffbb0f1484"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE='for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {'
       REPLACEMENT='for spec in &[] as &[CheckSpec] {
@@ -41,7 +41,7 @@ load_mutation() {
       ;;
     missing-helper-is-accepted)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="dcef5623453ae7d80f1bb18e5677b23cf4a711a61fb469470b6bb6ffbb0f1484"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE='.helper_functions
             .get(spec.name)
             .is_none_or(|definition| {

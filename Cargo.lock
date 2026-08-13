@@ -4208,7 +4208,6 @@ dependencies = [
  "ring",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -4340,7 +4339,6 @@ dependencies = [
  "anyhow",
  "serde_json",
  "tokio-postgres",
- "wamn-scenario-catalog",
 ]
 
 [[package]]
@@ -4449,7 +4447,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-nats",
- "async-trait",
  "bytes",
  "chrono",
  "clap",
@@ -4461,7 +4458,6 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
  "tokio-postgres",
  "tracing",
@@ -4485,7 +4481,6 @@ dependencies = [
  "wamn-test-infrastructure",
  "wash-runtime",
  "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4610,7 +4605,6 @@ name = "wamn-scenario-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "bytes",
  "clap",
  "http-body-util",
@@ -4628,7 +4622,6 @@ dependencies = [
  "wamn-execution-host",
  "wamn-flow",
  "wamn-platform-identity",
- "wamn-run-state",
  "wamn-runtime",
  "wamn-scenario-catalog",
  "wamn-scenario-model",
@@ -4706,23 +4699,10 @@ name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
- "hyper",
  "reqwest",
- "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
- "tokio-postgres",
- "tracing",
- "wamn-gate-harness",
- "wamn-runtime",
- "wamn-scenario-catalog",
- "wamn-scenario-model",
- "wamn-scenario-runtime",
- "wamn-schema-control",
  "wamn-schema-model",
- "wash-runtime",
 ]
 
 [[package]]

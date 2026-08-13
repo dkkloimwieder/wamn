@@ -424,8 +424,8 @@ fn validate_owned_state(
             migration_owners
         ));
     }
-    if writers.is_empty() || readers.is_empty() {
-        return Err(format!("`{id}` must document both writers and readers"));
+    if readers.is_empty() {
+        return Err(format!("`{id}` must document at least one reader"));
     }
     let source_exists = manifest
         .canonical_sources
@@ -1432,6 +1432,20 @@ fn conflicting_second_migration_owner_is_rejected() {
 }
 
 #[test]
+fn a_relation_with_only_author_sql_mutation_may_have_no_static_writer() {
+    let repository = repository();
+    let manifest = read_manifest(&repository);
+    let flows = manifest
+        .objects
+        .iter()
+        .find(|object| object.id == "wamn_run.flows")
+        .expect("flows ownership record");
+
+    assert!(flows.ownership.writers.is_empty());
+    validate_manifest(&repository, &manifest).expect("author-only relation is valid");
+}
+
+#[test]
 fn temporary_writer_cannot_expand_to_platform_object() {
     let repository = repository();
     let mut manifest = read_manifest(&repository);
@@ -1674,12 +1688,12 @@ fn plpgsql_trigger_operation_literal_is_not_an_update() {
     let discoveries = discover_writes(
         "crates/schema/control/src/run_plane.rs",
         741,
-        "CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_report_write() \
+        "CREATE OR REPLACE FUNCTION wamn_run.guard_authoring_test_orchestration_write() \
          RETURNS trigger LANGUAGE plpgsql AS $function$ \
          DECLARE \
              old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END; \
          BEGIN \
-             UPDATE wamn_run.authoring_report_reservations \
+             UPDATE wamn_run.authoring_test_run_reservations \
                 SET state = 'observed' \
               WHERE report_id = old_row ->> 'report_id'; \
              RETURN NEW; \
@@ -1688,7 +1702,7 @@ fn plpgsql_trigger_operation_literal_is_not_an_update() {
     assert_only_write(
         &discoveries,
         "update",
-        "wamn_run.authoring_report_reservations",
+        "wamn_run.authoring_test_run_reservations",
     );
 }
 
@@ -1716,20 +1730,20 @@ fn row_lock_clause_is_not_an_update() {
         "deploy/sql/flow-tests.sql",
         1,
         "SELECT to_jsonb(reservation) INTO reservation_command \
-           FROM wamn_run.authoring_report_reservations AS reservation \
+           FROM wamn_run.authoring_test_run_reservations AS reservation \
           WHERE reservation.state = 'pending' \
           FOR UPDATE; \
           IF reservation_command IS NULL THEN \
               RAISE EXCEPTION USING ERRCODE = '55000'; \
           END IF; \
-          UPDATE wamn_run.authoring_report_reservations \
+          UPDATE wamn_run.authoring_test_run_reservations \
              SET state = 'claimed' \
            WHERE report_id = reservation_command ->> 'report_id';",
     );
     assert_only_write(
         &discoveries,
         "update",
-        "wamn_run.authoring_report_reservations",
+        "wamn_run.authoring_test_run_reservations",
     );
 }
 

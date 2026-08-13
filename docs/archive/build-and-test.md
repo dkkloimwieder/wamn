@@ -722,75 +722,6 @@ kubectl -n wamn-system apply -f deploy/gates/testhostbench-job.yaml
 kubectl -n wamn-system logs -f job/testhostbench
 ```
 
-### [11.4] assertion library (testkitbench)
-
-Docs: docs/archive/testing/scenario-model.md · Crate: crates/scenarios/model · Fixture: deploy/gates/testkit-cases.json
-
-```bash
-# Unit tests (the pure vocabulary: serde drift-guards, subset semantics, the
-# evaluate() truth table, ExactlyThese set-equality):
-cargo test -p wamn-scenario-model
-
-# The gate loads a checked-in Vec<TestCase>, drives node-level cases through a
-# warm ServeNode and flow-level cases through the scenario capability set, and
-# folds each evaluate() AssertionResult into a PASS/FAIL line.
-# Local iteration (throwaway container + the same fixture SQL):
-docker run -d --name wamn-pg -p 5450:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-# (node cases need only the wasm; flow cases need the DB URLs)
-./target/release/wamn-gates --log-level error testkitbench \
-  --cases deploy/gates/testkit-cases.json \
-  --node components/target/wasm32-wasip2/release/disposition_node.wasm \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
-# In-cluster gate of record:
-kubectl -n wamn-system apply -f deploy/gates/testkitbench-job.yaml
-kubectl -n wamn-system logs -f job/testkitbench
-```
-
-#### [11.2-exec / wamn-0lfu] stored scenarios
-
-`wamn-scenario-worker` is the product artifact. It reads one stored suite and
-executes each root case run in a distinct caller-provisioned run schema through
-the same flowrunner component used by the production executor. Every root run
-also gets a fresh Postgres plugin/pool and `ExecutionHost`; a pool therefore
-never reuses prepared statements across run schemas. Callable child subflows
-remain inside their root case run's schema/pool/host; this boundary does not
-provision a separate schema for each child `runs` row. The required
-`--execution-schema-template` contains `{ordinal}` exactly once (for example,
-`scenario_run_{ordinal}`), so case isolation is structural without giving the
-worker schema-creation credentials. It resumes parked work with virtual time,
-evaluates the scenario-model assertions, and emits a JSON report.
-Before loading the guest or executing a node, it resolves exactly one applied
-`catalog.catalog_heads` → `release_flows` / `release_manifests` →
-`flow_artifacts` member and verifies the stored canonical artifact, including
-its occurrence-recovery selection. Missing, ambiguous, mismatched, or
-unverifiable release state is a pre-execution refusal; there is no mutable
-`flows` fallback. Immediately before each root run, one transaction locks and
-rechecks that catalog head, rechecks the exact member and artifact hash, then
-atomically inserts the fully pinned run and queue row. SQL constructs the
-versioned trusted invocation principal from that verified release member.
-Its deterministic clock, random, credentials, and recording/deny egress
-adapters come from `wamn-scenario-runtime`; none are linked into
-`wamn-executor`.
-
-```bash
-cargo test -p wamn-scenario-model -p wamn-scenario-catalog \
-  -p wamn-scenario-runtime -p wamn-scenario-worker
-cargo test --locked --offline -p wamn-run-state --test queue
-cargo test --locked --offline -p wamn-test-infrastructure --lib scenario_worker_gate::tests
-cargo run -p wamn-scenario-worker -- --help
-
-# DbState adapter gate of record (disposable PostgreSQL 18; no kind rollout):
-docker run -d --name wamn-dbstate-proof -p 55439:5432 \
-  -e POSTGRES_PASSWORD=postgres postgres:18
-until docker exec wamn-dbstate-proof pg_isready -U postgres; do sleep 1; done
-WAMN_DB_STATE_TEST_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55439/postgres \
-  cargo test -p wamn-scenario-runtime --test db_state_live -- --ignored --nocapture
-docker rm -f wamn-dbstate-proof
-```
-
 #### [PLAN-6A / wamn-ftfc.13] public authoring contract
 
 `wamn-authoring-model` is the pure, frontend-neutral command and projection
@@ -822,10 +753,10 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-13 \
 This ignored gate owns one disposable PostgreSQL database. It provisions the
 canonical `wamn_app` login and a distinct login inheriting only the NOLOGIN
 `wamn_scenario_author` role, then drives the public process-local authoring
-backend through save, validation, draft and release execution, exact retry,
-catalog-head drift, and capture-interrupted recovery. Validation and execution
-consume the same flowrunner component compiled from the current checkout. On a
-green run the test drops its two run schemas, `catalog`, and all three roles;
+backend through draft save and validation against a pinned release. Validation
+consumes the flowrunner component compiled from the current checkout and leaves
+the release rows unchanged. On a green run the test drops its run schema,
+`catalog`, and all three roles;
 removing the disposable container is the failure-path cleanup.
 
 ```bash
@@ -840,157 +771,12 @@ until docker exec wamn-ftfc11-pg pg_isready -U postgres -d wamn; do sleep 1; don
 
 WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15623/wamn \
 WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15623/wamn \
-WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15623/wamn \
 WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-ftfc-11/wasm32-wasip2/debug/flowrunner.wasm \
 CARGO_TARGET_DIR=/tmp/wamn-target-ftfc-11 \
   cargo test --locked --offline -p wamn-scenario-worker \
   --test authoring_loop_live authoring_loop_live -- --ignored --exact --nocapture
 
 docker stop wamn-ftfc11-pg
-```
-
-The retained `testkitbench --suite / --impact-report` path is the compatibility
-and integration proof for previously shipped gates:
-
-The 11.4 `testkitbench` subcommand doubles as the STORED-suite EXECUTOR: it loads
-`test_suites` / `test_cases` rows from a schema, re-validates each `case_body`
-against the `wamn-scenario-model` vocabulary on READ, and executes each case as its OWN
-run through scenario-runtime — a FRESH ephemeral schema per case (the source
-schema is read-only), the verified graph read from the exact applied immutable
-catalog release member,
-`ScenarioCapabilities::virtualized` + `RecordingEgress` (trusted
-`--allowed-hosts` outer policy intersected with the flow's declared policy;
-case assertions never authorize) + `ExecutionHost` + drain, then
-`wamn_scenario_model::evaluate` per case. The hermetic success suite contains
-two root runs and requires each run's private `sink` to contain exactly one row,
-so collapsing both runs onto one schema turns the gate red. One `check` line per assertion + a
-per-suite/summary line; nonzero exit on any failure.
-
-Selection (exactly one source; `--cases` file mode is preserved unchanged):
-- `--suite <flow_id>@<version> --tenant <t> --source-schema <s>` — runs EVERY
-  suite of that flow version (single tenant).
-- `--impact-report <path>` — a JSON array of `SuiteSelector`
-  `{tenant, flow_id, flow_version, suite_id}`, the flattened
-  `wamn_schema_control::impact::SuiteEdge` tuples. Since wamn-gn6b that type
-  carries its own `Serialize`/`Deserialize` (`deny_unknown_fields`) and
-  `impact::suite_selectors[_json]` emits the array. `SuiteSelector` remains a
-  LOCAL deserialize struct in the executor — deliberately, so the gate keeps a
-  reader independent of the producer — and two named tests hold the two halves
-  together: `suite_selector_matches_the_suite_edge_shape` (field-for-field shape
-  + unknown-field rejection) and `flattened_impact_suites_deserialize_as_suite_selectors`
-  (a real `suite_selectors_json` array round-trips into the executor's struct).
-  Both live in `test-support/infrastructure/scenario_worker_gate.rs`.
-- `--seed-demo` — the hermetic gate: self-seeds `--source-schema` (production
-  `wamn-ctl publish-catalog --provision --runstate` process boundary) with a
-  drivable `request → postgres(create sink) → respond` release member and an
-  undrivable `request → disposition-recommendation → respond` member pinned to
-  the exact `--node` component digest. It poisons the legacy `flows` projections,
-  runs success/malformed/refusal/assertion-failure suites, and verifies exact
-  root-run pins before cleanup. No external data or live egress target.
-
-RLS posture: the fixture adapter enumerates source suites/case ordinals via its
-ADMIN (superuser, RLS-bypassing) session with an explicit
-`(tenant, flow_id, flow_version [, suite_id])` predicate. The product worker
-re-reads case bodies and the immutable catalog release through its tenant-scoped
-`wamn_app` session; the running flow uses that same role in the isolated case
-schema. The `flow-tests.sql` FORCE-RLS floor is untouched. SQL read builders:
-`wamn_scenario_catalog::sql::{select_suites_for_flow_sql, select_cases_for_suite_sql}`
-(drift-guarded against `deploy/sql/flow-tests.sql`).
-
-Drivability refusal (cross-lane contract): before driving, the executor checks
-the graph's `nodes[].type` against the drivable set — the flowrunner built-in
-dispatch arms (`BUILTIN_NODE_TYPES`, drift-guarded against
-`components/execution/flowrunner/src/lib.rs`) ∪ the standard node library
-(`STANDARD_NODE_TYPES`, drift-guarded against `crates/execution/standard-nodes/src/lib.rs`
-`NODE_TYPES` name+count). A flow with a guest-baked type (F1's
-`validate-receipt`/`upsert-receipt`/`evaluate-specs`/`create-holds`) → a typed
-per-suite SKIP naming the undrivable types (NOT a crash, NOT a silent pass), so
-F1 refuses cleanly while F3/F4 (std nodes) drive.
-
-```bash
-# Unit tests (SuiteSelector = SuiteEdge shape, i32→u32 version boundary,
-# selection exclusivity, drivability, coherence, egress authorization separation,
-# node-set drift guards) + the flow-tests sql drift/predicate guards:
-# Integration proof: the router delegates testkitbench to the integration
-# library; scenario catalog retains its own storage tests.
-# recipe-test: H5-TESTKITBENCH | integration | wamn-proof-integration | lib | - | testkitbench::tests:: | 1 | tests/integration/src/testkitbench.rs scenario-runtime ownership guard
-cargo test -p wamn-proof-integration --lib testkitbench::tests::
-cargo test -p wamn-scenario-catalog
-
-# The producer/consumer seam itself (wamn-gn6b): the executor's LOCAL
-# SuiteSelector must stay field-for-field with wamn_schema_control SuiteEdge, and
-# a real suite_selectors_json array must deserialize into it.
-# recipe-test: H5-SUITE-SELECTOR | integration | wamn-test-infrastructure | lib | - | scenario_worker_gate::tests::suite_selector | 1 | test-support/infrastructure/scenario_worker_gate.rs SuiteEdge shape guard
-cargo test -p wamn-test-infrastructure --lib scenario_worker_gate::tests::suite_selector
-cargo test -p wamn-test-infrastructure --lib \
-  scenario_worker_gate::tests::flattened_impact_suites_deserialize_as_suite_selectors
-
-# Historical only after the MVP deletion charter: the former PLAN-0.2
-# scenario/replay/impact mutation runner and evidence record were removed with
-# the non-retained replay/impact surface. There is no current runnable
-# scenario-replay-impact mutation command in this recipe.
-
-# Local seed-demo recipes that required `disposition-node.wasm` were deleted by
-# `.6.3`; they are not current runnable gates.
-
-# In-cluster gate of record:
-kubectl -n wamn-system apply -f deploy/gates/suiteexec-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/suiteexec --timeout=180s
-kubectl -n wamn-system logs job/suiteexec
-
-# Wave-end COMPOSITION gate (integrator-run, over the parallel lane's stored
-# POC suites in poc_f1 — F1 refuses cleanly, F3/F4 drive). The exact shape:
-#   testkitbench --suite <flow_id>@<version> --tenant <poc-tenant> \
-#     --source-schema poc_f1 --flowrunner /bench/flowrunner.wasm
-#     --database-url $WAMN_PG_URL --admin-database-url $WAMN_PG_ADMIN_URL
-# (or --impact-report over the flattened SuiteEdge tuples). F3/F4 flows that make
-# real egress (ERP/notify) need a reachable target or the case's egress asserts
-# to expect the exact authority — see (h) in the executor docs.
-
-# ROOT-RUN ISOLATION: a fresh exec schema, plugin/pool, and host per stored-suite
-# CASE/root run (db-state asserts see only that run's writes). Child subflows
-# share the root case run's isolation boundary. Suites are small; canonical
-# run-plane provisioning remains sub-second per case locally.
-# The broad scenario/replay/impact campaign was deleted with its non-retained
-# surfaces. wamn-jole's retained focused mutation owns only root-run isolation:
-# it collapses two root runs onto ordinal 0, the named identity test must turn
-# red, and the source is restored byte-exactly. bd:wamn-2jdm.6 tracks any new
-# mutation proof still required by retained suite selection.
-CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target \
-  tools/gate-mutants/scenario-run-isolation.sh run
-```
-
-### [11.3 / wamn-htn] record-and-replay fixtures (pin-run + pinproof)
-
-Docs: docs/archive/testing/scenario-model.md → "Record-and-replay: pin a run". The `pin_run`
-transform (a `wamn_run_state` run + its `node_runs` → a `wamn_scenario_model::TestCase`)
-lives in `wamn-scenario-catalog`, while the additive `normalize` vocabulary
-(`ignore-paths` + `canonicalize`, no regex) stays in the pure model. The `wamn-ctl pin-run`
-verb is the effect shell (app-role read + pure pin + INSERT into
-`test_suites`/`test_cases`); secrets are scrubbed at pin time (even from a `full`
-run), volatile ids/timestamps are normalized, and a run without a stored terminal
-output is refused (`PinError::NotCaptured`).
-
-```bash
-# Unit tests (pure pin/normalize logic + the run-store pin read builders):
-cargo test -p wamn-scenario-model -p wamn-scenario-catalog -p wamn-run-state -p wamn-ctl
-
-# pinproof (host-side, provisions an ephemeral schema via the SAME ensure_* path
-# production uses; seeds a full-capture run carrying a secret + volatile fields,
-# pins it via the REAL ctl core, asserts scrub + normalize + replay round-trip
-# (volatile mutation passes, real mutation fails) + uncaptured-run refusal). Any
-# throwaway PG works (it provisions the wamn_app role + schema itself):
-docker run -d --name wamn-pg -e POSTGRES_PASSWORD=postgres -p 5461:5432 postgres:18
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5461/postgres \
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5461/postgres \
-  ./target/debug/wamn-gates --log-level error pinproof
-docker rm -f wamn-pg
-# IN-CLUSTER: deploy/gates/pinproof-job.yaml (kubectl apply; wait complete; logs).
-# 3 mutants killed (apply/test/restore, debug builds): M1 skip scrub-on-pin →
-# pin_full_run_scrubs_secrets (+ pinproof SCRUB assert); M2 treat None output as
-# replayable → the uncaptured-run refusal (+ pinproof REFUSE assert); M3 normalize
-# no-op / over-removes → replay_round_trip_tolerates_volatile_but_rejects_real (+
-# normalize_collapses_volatile_but_keeps_real_on_both_sides).
 ```
 
 ### [2.6] DB-path egress review
@@ -1196,7 +982,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
 
 WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15624/wamn \
 WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15624/wamn \
-WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15624/wamn \
 WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-0h0g-2-4-components/wasm32-wasip2/debug/flowrunner.wasm \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-2-4 CARGO_INCREMENTAL=0 \
   cargo test --locked -p wamn-scenario-worker --test authoring_loop_live \
@@ -2048,163 +1833,28 @@ WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:55431/postgres \
 docker rm -f wave3-pg-rmxa
 ```
 
-### [11.2 / wamn-828] test cases as catalog data — flow-tests schema, promote-with-flow
+### [CALLABLE-FLOWS-POC-F1 / wamn-3rj] F1 shared fixture coherence
 
-Docs: docs/archive/testing/scenario-catalog.md. A flow's test suites/cases live as catalog data
-(`deploy/sql/flow-tests.sql`: `wamn_run.test_suites` + `wamn_run.test_cases`,
-both FORCE-RLS + `wamn_app` grants), versioned WITH the flow via the FK to
-`wamn_run.flows` ON DELETE CASCADE. Suites copy through
-`copy-project-env --include definition` (block 5); the mutable `wamn_run.flows`
-registry is NOT copied (immutable release is authoritative, 5wd1.46), so a
-destination flow registration is a precondition and
-`wamn-schema-control::check_suite_orphans` refuses FIRST (D24 shape) a copy carrying a
-suite pinned to a version the destination does not already hold (re-keying
-suites onto release identity is wamn-l2mi). The suite/case envelope
-and validation live in `wamn-scenario-model`; `wamn-scenario-catalog` owns the
-SQL queries, ordering, compatibility translations, and pin-from-run transform.
-reconcile-run-plane manages the new tables (they are in `RUN_PLANE_FILES`).
-
-```bash
-cargo test -p wamn-scenario-model -p wamn-scenario-catalog
-cargo test -p wamn-schema-control --features ops
-cargo test -p wamn-ctl --features ops                     # copy driver units
-cargo clippy -p wamn-schema-control -p wamn-ctl --features ops --all-targets
-cargo clippy -p wamn-scenario-catalog -p wamn-gates --all-targets
-# Live promote gate (throwaway PG): drives the REAL copy-project-env verb across
-# two project-env databases — suite/cases copy onto a dst that pre-registers
-# flow v1 (dst registration is a precondition; the mutable flows registry is
-# not copied), a foreign tenant sees ZERO suites (RLS), dropping flow v1
-# CASCADES its suite (FK), and an orphan-pinned suite copy is REFUSED. Applies
-# deploy/sql/postgres-init.sql (dedicated DB `wamn`); URLs target /wamn:
-docker run -d --name lane-828-pg -p 5465:5432 -e POSTGRES_PASSWORD=postgres \
-  -v "$PWD/deploy/sql/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro" postgres:18
-# (postgres:18 inits-then-restarts — wait for a DOUBLE pg_isready before connecting)
-WAMN_CTL_PG_URL=postgres://postgres:postgres@127.0.0.1:5465/wamn \
-  cargo test -p wamn-ctl --features ops --test suite_promote_live -- --nocapture
-# In-cluster gate-of-record candidate: the same arc in an ephemeral schema
-# (envelope round-trip + version binding + RLS + FK cascade):
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5465/wamn \
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5465/wamn \
-  ./target/debug/wamn-gates --log-level error suiteproof
-docker rm -f lane-828-pg
-# IN-CLUSTER: deploy/gates/suiteproof-job.yaml (kubectl apply; wait complete; logs).
-# 3 mutants killed (apply/test/restore, debug builds): M1 copy block #5 skipped →
-# suite_promote_live PROMOTE assert; M2 suite-orphan guard inverted →
-# suite_promote_live GUARD assert (+ orphan.rs suite_pinned_to_an_absent_version…);
-# M3 RLS policy dropped from flow-tests.sql → suiteproof RLS zero-rows assert.
-```
-
-### [CALLABLE-FLOWS-POC / wamn-5wd1.40] from-zero F0–F4 catalog
-
-The promoted material-receiving catalog is the single from-zero data fixture
-for F0–F4. The local tests pin its receipt-line and hold natural keys,
-required `dispositions.decided_at`, and unique `disposition_reviews` key. The
-live Job compiles that same fixture through `wamn-schema-compiler`, injects a
-failure halfway through the ordered DDL in one transaction, verifies zero
-residue, then proves a clean retry is byte-identical and the database rejects
-all named negative cases.
-
-```bash
-# recipe-test: H5-CALLABLE-FLOW-SCHEMA | system | wamn-proof-system | lib | - | pocsuiteproof::tests:: | 4 | tests/system/src/pocsuiteproof.rs canonical F0-F4 schema contract and fault seam
-cargo test --locked -p wamn-proof-system --lib pocsuiteproof::tests::
-
-kubectl -n wamn-system apply -f deploy/gates/callable-flow-schema-job.yaml
-kubectl -n wamn-system wait --for=condition=complete \
-  job/callable-flow-schema --timeout=180s
-kubectl -n wamn-system logs job/callable-flow-schema
-```
-
-### [POC-TESTS / wamn-3rj] F1/F3/F4 stored suites + drive-and-fold (pocsuiteproof)
-
-Docs: docs/archive/poc/poc-material-receiving.md ("Tests", L37–39). The F1/F3/F4 POC test
-suites as STORED DATA — `wamn-scenario-model` envelopes persisted by
-`wamn-scenario-catalog`
-(`deploy/gates/poc-f{1,3,4}-suite.json`, case bodies = `wamn_scenario_model::TestCase`)
-seeded into `wamn_run.test_suites`/`test_cases` (the 11.2 tables) and then PROVEN
-REAL: the `pocsuiteproof` gate seeds them and drives each flow ONCE through its
-own harness path, folding every stored assertion through `wamn_scenario_model::evaluate`.
-
-What the stored suites cover (the expressible core) vs what stays in the sibling
-proof gates:
-- **F1** (`poc-f1-suite`): flow-level cases over `receipt-received` v1. The
-  legacy embedded webhook driver was retired by `wamn-5wd1.57`; the callable
-  graph/release proof below owns the current F1 path and `.9` owns the composed
-  from-zero stored-suite campaign.
-- **F3** (`poc-f3-suite`): `escalate-stale-holds` v1 under the ExecutionHost
-  scenario capability set at a fixed virtual epoch. The **48h cutoff** is proven by
-  time-offset arithmetic (`scheduled-at − 48h`) against **epoch-anchored** seed rows
-  (2 stale opened 49h before the epoch, 1 fresh AT it, 1 stale-disposed) — 48h
-  evaluated in wall-clock milliseconds. Asserts escalated=2 / open=1 / disposed=1
-  (`DbState`) + the two notify `Egress{count 2, none-denied}`. The credential
-  digest + cycle-visit count stay in `f3proof`.
-- **F4** (`poc-f4-suite`): deleted by `.6.3` with the custom-node/serve-node
-  path; no current stored-suite recipe exercises that member.
-
-The fixture-realism and stored-data tests remain useful independently. The old
-hard-wired F1 drive is RETIRED (wamn-97sj), not merely demoted: it read
-`poc-webhook-f1.wasm`, which the callable cutover deleted, so the leg could not
-run at all — and because it ran first it also blocked F3/F4 on any invocation
-without `--seed-only`. The gate now has no `--webhook-entry` flag; F1 is
-seed-only (phases A and C still round-trip, RLS-check, and FK-bind its suite),
-and the callable F1 arc (`callable_f1` + `deploy/gates/callable-flow-f1-job.yaml`)
-owns the flow's behaviour.
+The shared F1 fixture retains its independent catalog, flow, seed, and burst
+coherence check.
 
 ```bash
 # recipe-test: H5-F1-FIXTURE | system | wamn-test-fixtures | lib | - | f1fixture::tests:: | 1 | shared F1 catalog, flow, seed, and burst fixture coherence
 cargo test --locked -p wamn-test-fixtures --lib f1fixture::tests::
 ```
 
-```bash
-# Unit / drift / coherence tests (pure — no DB): the 3 embedded suites parse +
-# validate-on-write, the F1 flow-ref binding, the F3/F4 graph copies mirror the
-# committed source fixtures (deploy/poc/f3-flow.json,
-# crates/execution/flow-model/tests/fixtures/f4-disposition-recorded.flow.json), the F3
-# epoch-anchor straddles the cutoff, the F4 flow-egress spy names exactly
-# {/dispositions} (the signed node hop is platform transport):
-# Integration-proof boundary: pocsuiteproof fixtures and assertions live in
-# wamn-proof-integration; wamn-gates only routes the executable subcommand.
-# recipe-test: H5-POCSUITEPROOF | integration | wamn-proof-integration | lib | - | pocsuiteproof::tests:: | 7 | tests/integration/src/pocsuiteproof.rs stored F1/F3/F4 suite fixtures
-cargo test -p wamn-proof-integration --lib pocsuiteproof::tests::
-cargo test -p wamn-scenario-model -p wamn-scenario-catalog
+### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/API
 
-# Seed-only (the wave-end composition gate's path): seed the 3 suites into a
-# shared target schema/tenant at a flow version and STOP (no drive, no drop) —
-# 0lfu then loads them by flow@version + tenant. seed-only is ADDITIVE on a
-# LIVE target: it ensure_*s the tables IF NOT EXISTS (never DROPs the schema)
-# and registers missing flows ON CONFLICT DO NOTHING (a production-registered
-# flow row keeps its graph_json/active untouched):
-./target/debug/wamn-gates --log-level error pocsuiteproof --seed-only \
-  --schema poc_f1 --tenant demo-tenant --flow-version 1 \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5450/wamn \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5450/wamn
-
-# 3 mutants killed (apply/test/restore via sha256 byte-restore, debug builds):
-# M1 F1/F3/F4 seed step skipped in Phase A → embedded_suites/STORE counts + drive
-#   "no run facts captured"; M2 the ExactlyThese fold inverted (evaluate.rs
-#   unexpected-check) → f4_egress_spy + exactly_these_catches_an_extra_call; M3 the
-#   F3 epoch anchor broken (stale seeded now()-relative) → f3_epoch_anchor_straddles
-#   + the live escalated=2/open=1 DbState asserts.
-```
-
-### [11.8 / wamn-wvb] schema-change impact analysis — affected flows/suites/API
-
-Docs: docs/archive/testing/impact-analysis.md. Before a migration applies, enumerate the
-dependency graph a change touches: affected entities (additive/destructive, from
-the plan's per-op attribution) → flows via event registration (id-keyed,
-rename-proof) + node config (NAME-keyed `config["entity"]`, NOT rename-proof) →
-those flows' test suites (all versions) → the generated-API resources. The pure
-decision is `crates/schema/control/src/impact` (`analyze` → `ImpactReport`); the `$n` reads live
-next to their D24/suite siblings in `crates/schema/control/src/sql.rs`.
-`wamn-ctl-ops impact-report` is the read-only operations surface. The default
-`migrate-catalog` command is additive-only and neither loads impact analysis nor
-offers a destructive override. The report enumerates the
-`(tenant, flow_id, flow_version, suite_id)` tuples that would run; suite EXECUTION
-of those tuples is the wamn-0lfu executor (`testkitbench --impact-report`, see
-[11.2-exec] above). `impact::suite_selectors[_json]` flattens
-`ImpactReport.entities[].suites[]` into that executor's `SuiteSelector` array —
-and the same flattening is what the [11.7] publish gate checks evidence for
-(below). `migrate-catalog` itself does NOT run suites: the gate binds to stored
-suite results at promotion, not to a re-run at migration.
+Docs: docs/archive/testing/impact-analysis.md. Before a migration applies,
+enumerate the dependency graph a change touches: affected entities
+(additive/destructive, from the plan's per-operation attribution) → flows via
+event registration (id-keyed, rename-proof) and node config (name-keyed, not
+rename-proof) → generated-API resources. The pure decision is
+`crates/schema/control/src/impact` (`analyze` → `ImpactReport`); its reads
+live in `crates/schema/control/src/sql.rs`. `wamn-ctl-ops impact-report` is
+the read-only operations surface. The default `migrate-catalog` command is
+additive-only and neither loads impact analysis nor offers a destructive
+override.
 
 ```bash
 cargo test -p wamn-schema-control --features ops        # pure ops decision + drift-guard pins (3 mutants killed here)
@@ -2212,15 +1862,15 @@ cargo test -p wamn-ctl --features ops                    # operations driver uni
 cargo clippy -p wamn-schema-control -p wamn-ctl --features ops --all-targets
 cargo clippy -p wamn-gates --all-targets
 # Live gate (throwaway PG): materialize v1 {orders, audit}, seed a dependent flow
-# per entity (registration + active node-config graph + suite), stage v2 =
+# per entity (registration + active node-config graph), stage v2 =
 # destructive-on-orders (drop column) + additive-on-audit (add column) → the report
-# names EXACTLY orders' flow/suite/api and NOT audit's; destructive changes carry
+# names EXACTLY orders' flow/api and NOT audit's; destructive changes carry
 # reprovision guidance while additive changes do not. Hermetic:
 docker run -d --name wave-wvb-pg -p 15502:5432 -e POSTGRES_PASSWORD=pg postgres:18
 WAMN_CTL_PG_URL=postgres://postgres:pg@127.0.0.1:15502/postgres \
   cargo test -p wamn-ctl --features ops --test impact_report_live -- --nocapture
 # In-cluster gate-of-record candidate: the analysis in an ephemeral schema
-# (name-keyed node-config + suite + api edges; destructive carries reprovision
+# (name-keyed node-config + api edges; destructive carries reprovision
 # guidance, additive does not):
 WAMN_CTL_OPS_BIN=./target/debug/wamn-ctl-ops \
 WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:15502/postgres \
@@ -2232,79 +1882,6 @@ docker rm -f wave-wvb-pg
 # wamn-schema-control untouched_entity_flows_are_not_reported; M2 destructive classification
 # forced additive → destructive_change_with_impact_keeps_both_facts; M3
 # node-config keyed on entity.id not name → node_config_edge_keys_on_entity_name_not_id.
-```
-
-### [11.7 / wamn-12g] publish gates & policy — per-project rules + gate audit
-
-Design: `docs/archive/platform-plan.md` §11.7. Per-project rules ("prod deploys require
-green suite") enforced on the deploy/promote verb, with every verdict recorded.
-
-POLICY lives in the T1 registry in two layers —
-`registry.env_policies.requires_green_suite` (the org-wide per-env default,
-`false` so an upgrade gates nothing) and `registry.project_publish_policies` (the
-per-project override, authoritative in BOTH directions). They are combined by ONE
-pure function, `wamn_control_registry::resolve_publish_policy`, so the CLI and
-the future management transport cannot disagree about what is gated.
-
-EVIDENCE is `wamn_schema_control::publish_gate`. For every `SuiteEdge` the 11.8
-impact report names, it requires a `wamn_run.authoring_suite_reports` row that
-(a) passed, (b) carries RELEASE lineage for the exact
-`(catalog_id, catalog_version, environment)` being promoted, and (c) whose
-recorded `artifact_hash` equals the hash that release actually pins for the flow
-(`release_flows` ⋈ `flow_artifacts`). (c) is FRESHNESS as a hash comparison, not
-a timestamp window — a hash match is a statement about the current bytes, where
-"recent" is only a guess about them. Each miss is its own typed defect
-(`no-report` / `draft-only` / `foreign-release` / `failed` / `unpinned-flow` /
-`stale-artifact`) so a refusal names the cause.
-
-ENFORCEMENT is `copy-project-env --include definition`, after every read and
-before the definition transaction — a refusal mutates nothing but its own audit
-row. `migrate-catalog` / `publish-catalog` are unchanged. The decision ships as a
-LIBRARY (`wamn-schema-control`, which `services/scenario-worker` already depends
-on) so wamn-ftfc.33 can mount the same seam at the authenticated transport;
-ma5's human/promoter proof binds there, not in the CLI.
-
-AUDIT is `catalog.publish_gate_audit` — append-only, recording PASSES AND
-REFUSALS with the per-suite evidence pointer. Deliberately NOT
-`authoring_command_audit`: that ledger's rows carry a verified principal and
-`wamn-ctl` is an operator CLI with none.
-
-FAIL-CLOSED: no shipped producer writes `authoring_suite_reports` yet (that
-backend is wamn-ftfc.28/.33), so an env gated today refuses with `no-report`
-until it lands. A definition copy now REQUIRES `--system-database-url` — a
-promotion that cannot read its policy cannot be shown to be allowed.
-
-```bash
-# Pure decision (evidence classification, fail-closed, refusal rendering) + the
-# registry policy resolution + the SQL drift guards pinning the evidence read,
-# the freshness join, and the ledger write against deploy/sql:
-# recipe-test: H5-PUBLISH-GATE | integration | wamn-schema-control | lib | - | publish_gate:: | 8 | crates/schema/control/src/publish_gate.rs green-suite decision
-cargo test -p wamn-schema-control --features ops --lib publish_gate::
-cargo test -p wamn-control-registry --lib publish_policy::
-cargo clippy -p wamn-schema-control --features ops --all-targets --locked -- -D warnings
-cargo clippy -p wamn-control-registry --all-targets --locked -- -D warnings
-
-# Live gate (throwaway PG): a gated env refuses with no evidence and mutates
-# nothing; fresh release-pinned evidence promotes and the ledger keeps the report
-# id; a pass against SUPERSEDED flow bytes is refused; a per-project override
-# gates (and exempts) one project; the ledger refuses UPDATE and DELETE.
-# Evidence is seeded through the REAL reservation -> case-fact -> report triggers
-# and the release is minted by the REAL publish-catalog writer. Hermetic: each
-# scenario drops+recreates its own system/src/dst databases.
-docker run -d --name wave6-12g-pg -p 15612:5432 -e POSTGRES_PASSWORD=pg postgres:18
-WAMN_CTL_PG_URL=postgres://postgres:pg@127.0.0.1:15612/postgres \
-  cargo test -p wamn-ctl --features ops --test publish_gate_live -- --test-threads=1
-docker rm -f wave6-12g-pg
-# 3 mutants killed (apply/test/restore via sha256 byte-restore, debug builds):
-# M1 missing evidence yields no defect → wamn-schema-control
-#   required_gate_refuses_when_no_report_exists + a_gated_env_refuses_a_promotion_with_no_suite_report;
-# M2 the artifact-hash freshness comparison disabled →
-#   stale_artifact_hash_is_not_evidence_about_the_shipped_bytes +
-#   a_pass_against_superseded_flow_bytes_is_refused;
-# M3 the verdict recorded only after the refusal returns →
-#   a_refusal_is_recorded_in_the_append_only_ledger.
-# LIVE T1 SYSDB APPLY IS A DEFERRAL: the additive registry DDL
-# (env_policies.requires_green_suite + project_publish_policies) is owner-run.
 ```
 
 ### [EVT-MAT / wamn-l5i9.17] materializer — CDC events → flow runs (Service-first)
@@ -2805,7 +2382,6 @@ implementation commit; substitute that tag without editing the tracked Job.
 # recipe-test: H5-CALLABLE-F3 | system | wamn-proof-system | lib | - | callable_f3::tests:: | 5 | tests/system/src/callable_f3.rs F3 graph, attachment, recovery, and failure windows
 cargo test --locked -p wamn-proof-system --lib callable_f3::tests::
 cargo test --locked -p wamn-flow --test flows f3_
-cargo test --locked -p wamn-proof-integration --lib pocsuiteproof::tests::
 
 docker build --target gates -t wamn-gates:cf-f3-<commit> .
 kind load docker-image wamn-gates:cf-f3-<commit> --name wamn
@@ -3653,8 +3229,8 @@ gate runs against a throwaway postgres it provisions from scratch:
 1. **Storage.** The adapter's startup authority probe hard-requires
    `catalog.{flow_drafts,validated_flow_drafts,draft_safe_connection_grants,
    authoring_command_audit}` plus
-   `<run-schema>.{authoring_report_reservations,authoring_suite_case_facts,
-   authoring_suite_reports}`. `wamn-ctl reconcile-run-plane` creates all of those
+   `<run-schema>.{authoring_test_sets,authoring_test_run_reservations,
+   authoring_test_case_runs,authoring_test_reports}`. `wamn-ctl reconcile-run-plane` creates all of those
    TABLES additively — the catalog ones included (`CreateCatalogTable` actions).
    `catalog` is one schema shared by every project schema in the database, so one
    run covers them all.
@@ -5252,7 +4828,6 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
 
 WAMN_AUTHORING_LOOP_ADMIN_PG_URL=postgresql://postgres:postgres@127.0.0.1:15648/wamn \
 WAMN_AUTHORING_LOOP_AUTHOR_PG_URL=postgresql://wamn_authoring_loop_author:wamn-author-live@127.0.0.1:15648/wamn \
-WAMN_AUTHORING_LOOP_APP_PG_URL=postgresql://wamn_app:wamn-app-live@127.0.0.1:15648/wamn \
 WAMN_AUTHORING_LOOP_FLOWRUNNER=/tmp/wamn-target-wave3-components/wasm32-wasip2/debug/flowrunner.wasm \
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-scenario-worker \
@@ -5551,7 +5126,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
     --test migrate migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres \
     -- --exact --nocapture
 
-# Regenerate and verify the 77-row core+ops authority table from pg_catalog.
+# Regenerate and verify the 71-row core+ops authority table from pg_catalog.
 WAMN_UPDATE_PROTECTED_RELATIONS=1 \
 WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
@@ -5645,6 +5220,37 @@ The three test-orchestration mutants remove the plan-hash join, omit a durable
 case table from schema-control, and recreate the from-zero bug where triggers
 located after a shared helper never install. Each must fail its named owner
 test, then restore the exact source hash.
+
+## SR-MVP — stored-suite persistence deletion (`wamn-0h0g.8.10`)
+
+The populated-schema cutover deletes the five legacy stored-suite/report
+tables, their two helpers, and `catalog.publish_gate_audit`, while preserving
+all four management-owned `authoring_test_*` relations. The generated authority
+table proves the deleted objects are absent and the remaining 71 relations have
+complete ownership and grant-derived exposure records.
+
+```bash
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test run_plane_live stored_suite_cutover_live \
+    -- --exact --nocapture --test-threads=1
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+    --test state_ownership --test protected_relations --test gate_registry
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-schema-control -p wamn-ctl \
+    -p wamn-scenario-worker -p wamn-scenario-catalog \
+    -p wamn-proof-integration -p wamn-proof-conformance \
+    --features wamn-ctl/ops --all-targets -- -D warnings
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/protected-relations.sh run-all
+
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/protected-relations.sh
+git diff --check
+```
 
 ## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
 

@@ -11,12 +11,8 @@
 //!   `migrate-catalog` runs), plus the immutable **flow artifacts and release
 //!   membership**, the **RLS
 //!   policy rows** (re-compiled and applied on the dst), the **event
-//!   registration rows** (EVT-REG — copied verbatim, no re-apply), and the
-//!   **11.2 flow test suites + cases** (copied verbatim, version-bound to the
-//!   flow versions already present on the destination legacy test plane). A
-//!   suite-orphan guard refuses FIRST, naming
-//!   any suite that pins a flow version the destination will not hold. Config
-//!   has no defined artifact yet — deferred, noted at runtime.
+//!   registration rows** (EVT-REG — copied verbatim, no re-apply). Config has no
+//!   defined artifact yet — deferred, noted at runtime.
 //! * `include: data` — `pg_restore --data-only --disable-triggers` of the data
 //!   schema from a fresh `pg_dump -Fd` snapshot (the q3n.10 artifact, recorded
 //!   in `provisioning.dumps`).
@@ -61,14 +57,12 @@ use wamn_control_registry::Triple;
 use crate::migrate_catalog::{
     ApplyOutcome, TargetReconciliationWindow, reconcile_catalog_target_in_transaction,
 };
-use crate::publish_catalog::ensure_flow_tests;
 use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum IncludeArg {
-    /// Structure only: catalog + flows + RLS policies + event registrations +
-    /// 11.2 flow test suites/cases.
+    /// Structure only: catalog + flows + RLS policies + event registrations.
     Definition,
     /// Rows only: `pg_restore --data-only` of the data schema.
     Data,
@@ -139,8 +133,8 @@ pub struct CopyProjectEnvArgs {
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the copy
     /// saga (`provisioning.copy_sagas`) + the dump/confirmation records. Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. Required for definition copies (publish policy
-    /// and destructive-reconciliation attestations) and for --cutover.
+    /// `WAMN_SYSTEM_ADMIN_URL`. Required for destructive definition
+    /// reconciliation attestations and for --cutover.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
@@ -227,10 +221,10 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .as_deref()
         .context("copy needs --src-admin-url (a superuser URL to the SOURCE cluster)")?;
     let dst_admin = args.dst_admin_url.as_deref().unwrap_or(src_admin);
-    if (args.cutover || include.wants_definition()) && args.system_database_url.is_none() {
+    if (args.cutover || args.confirm_with_backup) && args.system_database_url.is_none() {
         bail!(
-            "this copy requires --system-database-url: definition copies read operations \
-             policy/attestations, and cutover records its durable pipeline in the T1 registry"
+            "this copy requires --system-database-url: destructive reconciliation records its \
+             attestation and cutover records its durable pipeline in the T1 registry"
         );
     }
 
@@ -459,9 +453,8 @@ async fn exec_snapshot(
 }
 
 /// The definition pass: applied catalogs (via the 2.5 migrate engine), flow
-/// registrations, RLS policy rows + their compiled application, event
-/// registration rows, and the 11.2 flow test suites/cases (all copied verbatim).
-/// Config has no defined artifact yet — deferred.
+/// registrations, RLS policy rows + their compiled application, and event
+/// registration rows. Config has no defined artifact yet — deferred.
 async fn exec_copy_definition(
     ctx: &mut ExecCtx<'_>,
     _src: &Triple,
@@ -488,15 +481,6 @@ async fn exec_copy_definition(
             "{side} database has no catalog.catalogs — {hint}"
         );
     }
-
-    // 0. The 11.2 suite-orphan guard — BEFORE any mutation (the D24 shape). A
-    //    definition copy carries the tenant's test suites (block 5); each pins a
-    //    concrete flow version. Refuse if a suite pins a version ABSENT from the
-    //    destination's legacy test-plane registry — this copy installs no flows
-    //    of its own, so the `test_suites → flows` FK would otherwise reject the
-    //    insert with a bare error mid-copy. src has no test-suite table ⇒ clean
-    //    pass. Runs on the validated flow schema.
-    guard_suite_orphans(&src_client, &dst_client, &ctx.flow_schema, tenant).await?;
 
     // 1. Applied catalogs: promote each of the src env's applied catalogs into
     //    the dst env through the migrate engine (one-transaction apply each).
@@ -567,15 +551,6 @@ async fn exec_copy_definition(
         )
         .await
         .context("read source catalog heads")?;
-
-    // 0b. The [11.7] publish gate (wamn-12g) — the LAST read-only step before
-    //     anything is written. Everything above this point is a SELECT, so a
-    //     refusal here mutates nothing but its own audit row (the D24 / 11.8
-    //     shape). Placed after the catalog read rather than beside the
-    //     suite-orphan guard because the gate is ABOUT the release being
-    //     promoted: it needs each catalog's identity and version to know which
-    //     suite reports could possibly be evidence.
-    enforce_publish_gate(ctx, &src_client, &dst_client, &catalogs).await?;
 
     // Destructive target reconciliation is authorized by a durable operations
     // record, not by an invocation-local flag. The flag mints that record; a
@@ -1041,7 +1016,6 @@ async fn exec_copy_definition(
     );
     tx.commit().await.context("commit atomic definition copy")?;
 
-    let fs = &ctx.flow_schema;
     println!("  mutable flows.active registry: not copied (immutable release is authoritative)");
 
     // 3. RLS policies: copy the definition rows, then re-compile and apply them
@@ -1117,103 +1091,6 @@ async fn exec_copy_definition(
         registrations.len()
     );
 
-    // 5. Flow test suites + cases (11.2): copy the tenant's suite/case rows
-    //    verbatim (per-row INSERT ... ON CONFLICT DO UPDATE, the flows-block
-    //    shape). Both are version-bound: each row pins `(flow_id, flow_version)`
-    //    and FKs into the destination's OWN flows registry, which this copy never
-    //    writes (immutable release publication is authoritative) — the block-0
-    //    guard has already refused any suite whose FK target is absent there.
-    //    Suites BEFORE cases: `test_cases → test_suites` FK. Superuser
-    //    bypasses the tenant-FORCE RLS; the tenant filter scopes the read.
-    let src_has_suites: Option<String> = src_client
-        .query_one(
-            &format!("SELECT to_regclass('{fs}.test_suites')::text"),
-            &[],
-        )
-        .await?
-        .get(0);
-    if src_has_suites.is_some() {
-        // The pre-mutation guard proved the destination's legacy test-plane
-        // flow row already exists, so the FK target precedes this table.
-        ensure_flow_tests(&dst_client, fs).await?;
-        let suites = src_client
-            .query(
-                &format!(
-                    "SELECT flow_id, flow_version, suite_id, name \
-                     FROM {fs}.test_suites WHERE tenant_id = $1"
-                ),
-                &[&tenant],
-            )
-            .await
-            .context("read src test suites")?;
-        for row in &suites {
-            let flow_id: String = row.get(0);
-            let flow_version: i32 = row.get(1);
-            let suite_id: String = row.get(2);
-            let name: String = row.get(3);
-            dst_client
-                .execute(
-                    &format!(
-                        "INSERT INTO {fs}.test_suites \
-                           (tenant_id, flow_id, flow_version, suite_id, name) \
-                         VALUES ($1, $2, $3, $4, $5) \
-                         ON CONFLICT (tenant_id, flow_id, flow_version, suite_id) DO UPDATE SET \
-                           name = EXCLUDED.name, updated_at = now()"
-                    ),
-                    &[&tenant, &flow_id, &flow_version, &suite_id, &name],
-                )
-                .await
-                .with_context(|| {
-                    format!("copy test suite {suite_id} ({flow_id} v{flow_version})")
-                })?;
-        }
-        let cases = src_client
-            .query(
-                &format!(
-                    "SELECT flow_id, flow_version, suite_id, case_id, ordinal, case_body::text \
-                     FROM {fs}.test_cases WHERE tenant_id = $1"
-                ),
-                &[&tenant],
-            )
-            .await
-            .context("read src test cases")?;
-        for row in &cases {
-            let flow_id: String = row.get(0);
-            let flow_version: i32 = row.get(1);
-            let suite_id: String = row.get(2);
-            let case_id: String = row.get(3);
-            let ordinal: i32 = row.get(4);
-            let case_body: String = row.get(5);
-            dst_client
-                .execute(
-                    &format!(
-                        "INSERT INTO {fs}.test_cases \
-                           (tenant_id, flow_id, flow_version, suite_id, case_id, ordinal, case_body) \
-                         VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb) \
-                         ON CONFLICT (tenant_id, flow_id, flow_version, suite_id, case_id) DO UPDATE SET \
-                           ordinal = EXCLUDED.ordinal, case_body = EXCLUDED.case_body"
-                    ),
-                    &[
-                        &tenant,
-                        &flow_id,
-                        &flow_version,
-                        &suite_id,
-                        &case_id,
-                        &ordinal,
-                        &case_body,
-                    ],
-                )
-                .await
-                .with_context(|| format!("copy test case {case_id} of suite {suite_id}"))?;
-        }
-        println!(
-            "  flow tests: {} suite(s) + {} case(s) copied",
-            suites.len(),
-            cases.len()
-        );
-    } else {
-        println!("  flow tests: src has no {fs}.test_suites — skipped");
-    }
     println!("  config: no defined artifact yet — deferred");
 
     drop(src_client);
@@ -1262,209 +1139,6 @@ fn guard_copy_destination(
         unresolved_sources: &[],
     })
     .map_err(anyhow::Error::new)
-}
-
-/// The [11.7] publish gate (wamn-12g): refuse a definition promotion into an
-/// env whose policy requires green suites when the suites that promotion touches
-/// are not PROVEN green for exactly the release being carried.
-///
-/// One verdict is decided, printed, and recorded PER CATALOG, because the policy
-/// is about a release and a definition copy may carry several. Every verdict is
-/// appended to the destination's `catalog.publish_gate_audit` — including
-/// `not-required` ones, so the ledger shows the rule that was in force at the
-/// time rather than only the deploys that happened to be gated.
-///
-/// The suites checked are exactly the ones the 11.8 impact report names for this
-/// promotion, flattened through the wamn-gn6b seam
-/// ([`wamn_schema_control::impact::suite_selectors`]) — the same tuples the
-/// stored-suite executor would run. A malformed selector (an edge missing an
-/// identity field) is an ERROR, not a skipped suite: a gate that silently drops
-/// what it cannot name is not a gate.
-async fn enforce_publish_gate(
-    ctx: &ExecCtx<'_>,
-    src: &tokio_postgres::Client,
-    dst: &tokio_postgres::Client,
-    catalogs: &[wamn_schema_control::Catalog],
-) -> anyhow::Result<()> {
-    let tenant = ctx.args.tenant.as_deref().expect("checked upfront");
-    let system_url = ctx.args.system_database_url.as_deref().context(
-        "a definition copy needs --system-database-url: the [11.7] publish policy lives in the \
-         T1 registry, and a promotion that cannot read its policy cannot be shown to be allowed",
-    )?;
-    let target = crate::publish_gate::GateTarget {
-        org: &ctx.args.dst_org,
-        project: &ctx.args.dst_project,
-        source_env: ctx.args.src_env.as_str(),
-        target_env: ctx.args.dst_env.as_str(),
-        tenant,
-    };
-    let (system, system_task) = connect(system_url)
-        .await
-        .context("system db connect (publish policy)")?;
-    let policy = crate::publish_gate::read_policy(&system, &target).await;
-    system_task.abort();
-    let policy = policy?;
-
-    // The destination's applied catalogs are the impact analysis's "current":
-    // the promotion's blast radius is what changes ON THE DESTINATION.
-    let dst_applied = read_applied_catalogs(dst, tenant, ctx.args.dst_env.as_str()).await?;
-
-    for cat in catalogs {
-        let selectors = {
-            let plan = crate::impact_report::compile_plan(dst_applied.get(&cat.catalog_id), cat)?;
-            // Edges are read from the SOURCE: it holds the flows and suites this
-            // promotion carries, which the destination may not have yet.
-            let impact = crate::impact_report::gather_impact(
-                src,
-                &plan,
-                dst_applied.get(&cat.catalog_id),
-                cat,
-                ctx.flow_schema.as_str(),
-            )
-            .await?;
-            wamn_schema_control::impact::suite_selectors(&impact)
-                .map_err(anyhow::Error::new)
-                .with_context(|| {
-                    format!(
-                        "catalog {:?} names suites the publish gate cannot identify",
-                        cat.catalog_id
-                    )
-                })?
-        };
-        let catalog_version = i32::try_from(cat.version)
-            .with_context(|| format!("catalog version {} exceeds i32", cat.version))?;
-        let reports = crate::publish_gate::read_suite_reports(
-            src,
-            ctx.flow_schema.as_str(),
-            tenant,
-            &cat.catalog_id,
-        )
-        .await?;
-        let hashes = crate::publish_gate::read_release_artifact_hashes(
-            src,
-            tenant,
-            &cat.catalog_id,
-            catalog_version,
-        )
-        .await?;
-        let pin = wamn_schema_control::publish_gate::ReleasePin {
-            catalog_id: cat.catalog_id.clone(),
-            catalog_version,
-            environment: ctx.args.src_env.clone(),
-        };
-        let report = wamn_schema_control::publish_gate::evaluate(
-            policy.requires_green_suite,
-            &selectors,
-            &reports,
-            &pin,
-            &hashes,
-        );
-        println!(
-            "  catalog {:?}: {}",
-            cat.catalog_id,
-            report.render().trim_end()
-        );
-        // Recorded BEFORE the refusal propagates: a blocked deploy must leave a
-        // durable trace, which is the whole point of a change-control gate.
-        crate::publish_gate::record_verdict(dst, &target, &policy, cat, &report).await?;
-        if !report.is_satisfied() {
-            return Err(report.refusal().into());
-        }
-    }
-    Ok(())
-}
-
-/// Read one env's applied catalogs into a `catalog_id -> Catalog` map.
-async fn read_applied_catalogs(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    env: &str,
-) -> anyhow::Result<std::collections::BTreeMap<String, wamn_schema_control::Catalog>> {
-    let rows = client
-        .query(
-            &wamn_schema_control::sql::select_applied_catalogs_sql(),
-            &[&tenant, &env],
-        )
-        .await
-        .context("enumerate applied catalogs")?;
-    let mut applied = std::collections::BTreeMap::new();
-    for row in &rows {
-        let catalog_id: String = row.get(0);
-        let Some(doc) = row.get::<_, Option<String>>(2) else {
-            continue;
-        };
-        let cat = wamn_schema_control::Catalog::from_json(&doc)
-            .with_context(|| format!("parse applied catalog {catalog_id:?}"))?;
-        applied.insert(catalog_id, cat);
-    }
-    Ok(applied)
-}
-
-/// The 11.2 suite-orphan guard (wamn-828): refuse a definition copy that would
-/// carry a suite pinning a flow version the destination will not have. Reads the
-/// src's suites (scoped to `tenant`) and the `(flow_id, version)` pairs the copy
-/// finds in the destination's legacy test-plane registry, then runs the pure
-/// [`wamn_schema_control::check_suite_orphans`]. A src without the `test_suites` table
-/// (never provisioned for suites) has nothing to orphan: a clean pass. Read-only.
-async fn guard_suite_orphans(
-    src: &tokio_postgres::Client,
-    dst: &tokio_postgres::Client,
-    flow_schema: &BareSchemaName,
-    tenant: &str,
-) -> anyhow::Result<()> {
-    let src_has_suites: Option<String> = src
-        .query_one(
-            &format!("SELECT to_regclass('{flow_schema}.test_suites')::text"),
-            &[],
-        )
-        .await?
-        .get(0);
-    if src_has_suites.is_none() {
-        return Ok(());
-    }
-    let suites_sql = wamn_schema_control::sql::select_suites_for_tenant_sql(flow_schema.as_str());
-    let referenced: Vec<wamn_schema_control::SuiteRef> = src
-        .query(&suites_sql, &[&tenant])
-        .await
-        .context("read src test suites for the suite-orphan guard")?
-        .iter()
-        .map(|row| wamn_schema_control::SuiteRef {
-            suite_id: row.get(0),
-            tenant: row.get(1),
-            flow_id: row.get(2),
-            flow_version: row.get(3),
-        })
-        .collect();
-    if referenced.is_empty() {
-        return Ok(());
-    }
-    // Test suites still FK to the legacy test-plane registry. Immutable release
-    // publication never writes it, so only versions already present on the
-    // destination satisfy the suite-copy guard.
-    let versions_sql =
-        wamn_schema_control::sql::select_flow_versions_for_tenant_sql(flow_schema.as_str());
-    let mut present: std::collections::BTreeSet<(String, i32)> = std::collections::BTreeSet::new();
-    for client in [dst] {
-        let has_flows: Option<String> = client
-            .query_one(
-                &format!("SELECT to_regclass('{flow_schema}.flows')::text"),
-                &[],
-            )
-            .await?
-            .get(0);
-        if has_flows.is_none() {
-            continue;
-        }
-        for row in client
-            .query(&versions_sql, &[&tenant])
-            .await
-            .context("read flow versions for the suite-orphan guard")?
-        {
-            present.insert((row.get(0), row.get(1)));
-        }
-    }
-    wamn_schema_control::check_suite_orphans(&present, &referenced)
-        .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// Re-compile the copied RLS policy rows per catalog and apply the compiled
@@ -1613,7 +1287,6 @@ async fn exec_verify(
                 "verify FAILED: applied catalog {sid:?} differs on the dst"
             );
         }
-        let fs = &ctx.flow_schema;
         for (label, sql) in [
             (
                 "rls policies",
@@ -1623,24 +1296,12 @@ async fn exec_verify(
                 "event registrations",
                 "SELECT count(*) FROM catalog.event_registrations WHERE tenant_id = $1".to_string(),
             ),
-            (
-                "test suites",
-                format!("SELECT count(*) FROM {fs}.test_suites WHERE tenant_id = $1"),
-            ),
-            (
-                "test cases",
-                format!("SELECT count(*) FROM {fs}.test_cases WHERE tenant_id = $1"),
-            ),
         ] {
-            let s: i64 = match src_client.query_one(sql.as_str(), &[&tenant]).await {
-                Ok(row) => row.get(0),
-                // The src may have no test-suite tables at all —
-                // nothing to compare.
-                Err(_) if label == "test suites" || label == "test cases" => {
-                    continue;
-                }
-                Err(e) => return Err(e).context("verify src counts"),
-            };
+            let s: i64 = src_client
+                .query_one(sql.as_str(), &[&tenant])
+                .await
+                .context("verify src counts")?
+                .get(0);
             let d: i64 = dst_client
                 .query_one(sql.as_str(), &[&tenant])
                 .await
@@ -1653,7 +1314,7 @@ async fn exec_verify(
         }
         println!(
             "  verified: {} applied catalog(s) byte-equal; flows + RLS + \
-             event-registration + test-suite/case counts match",
+             event-registration counts match",
             src_rows.len()
         );
     }

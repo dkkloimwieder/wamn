@@ -30,7 +30,5 @@ pub mod readerbench;
 pub mod rie2ebench;
 pub mod runnerbench;
 pub mod streambench;
-pub mod suiteproof;
-pub mod testkitbench;
 pub mod wakeproof;
 pub mod walbench;

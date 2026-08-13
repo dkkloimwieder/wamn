@@ -19,9 +19,9 @@
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
 //! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs),
-//! the flow registry (`deploy/sql/flows.sql`), and the 11.2 flow test-suite
-//! tables (`deploy/sql/flow-tests.sql`: test_suites/test_cases) into the project
-//! schema — the canonical deploy files, embedded at compile time and rewritten
+//! the flow registry (`deploy/sql/flows.sql`), and the authoring test
+//! orchestration tables (`deploy/sql/flow-tests.sql`) into the project schema —
+//! the canonical deploy files, embedded at compile time and rewritten
 //! from `wamn_run` to the target schema — when their tables are absent;
 //! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
@@ -280,11 +280,11 @@ async fn publish(
         } else {
             println!("flow registry already present in schema {schema}; skipping");
         }
-        // 11.2 test-suite tables (FK to flows, so AFTER ensure_flow_registry).
+        // Authoring test orchestration (FKs to runs, so after ensure_runstate).
         if ensure_flow_tests(client, schema).await? {
-            println!("applied flow test-suite tables (test_suites/test_cases) in schema {schema}");
+            println!("applied authoring test orchestration in schema {schema}");
         } else {
-            println!("flow test-suite tables already present in schema {schema}; skipping");
+            println!("authoring test orchestration already present in schema {schema}; skipping");
         }
     }
 
@@ -498,8 +498,7 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                     EXISTS (SELECT 1 FROM information_schema.columns \
                              WHERE table_schema = 'catalog' \
                                AND table_name = 'authoring_command_audit' \
-                               AND column_name = 'provenance_commit'), \
-                    to_regclass('catalog.publish_gate_audit') IS NOT NULL",
+                               AND column_name = 'provenance_commit')",
             &[],
         )
         .await?;
@@ -642,22 +641,6 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
                 .context("install authoring command provenance attribution")?;
         }
 
-        // [11.7] wamn-12g: the publish gate REFUSES when it cannot record its
-        // verdict, so a catalog provisioned before this ledger existed must gain
-        // it here or every gated promotion into that project would fail on a
-        // missing table rather than on its actual evidence.
-        if !release_row.get::<_, bool>(25) {
-            let start = CATALOG_SCHEMA_SQL
-                .find("-- BEGIN PUBLISH GATE AUDIT MIGRATION")
-                .expect("publish gate audit migration start");
-            let end = CATALOG_SCHEMA_SQL
-                .find("-- END PUBLISH GATE AUDIT MIGRATION")
-                .expect("publish gate audit migration end");
-            client
-                .batch_execute(&CATALOG_SCHEMA_SQL[start..end])
-                .await
-                .context("install publish gate audit")?;
-        }
         ensure_authoring_catalog_privileges(client).await?;
         return Ok(());
     }
@@ -714,8 +697,6 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.publish_gate_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT ON catalog.publish_gate_audit TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
                IF has_table_privilege('wamn_app', 'catalog.flow_drafts', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.flow_drafts', 'UPDATE') \
@@ -727,10 +708,6 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'DELETE') \
-                  OR has_table_privilege('wamn_app', 'catalog.publish_gate_audit', 'SELECT') \
-                  OR has_table_privilege('wamn_app', 'catalog.publish_gate_audit', 'INSERT') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.publish_gate_audit', 'UPDATE') \
-                  OR has_table_privilege('wamn_scenario_author', 'catalog.publish_gate_audit', 'DELETE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'UPDATE') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.catalogs', 'DELETE') \
@@ -1326,40 +1303,19 @@ pub async fn ensure_flow_registry(
     Ok(true)
 }
 
-/// Apply `deploy/sql/flow-tests.sql` (the 11.2 test-suite tables) into `schema`
-/// when its `test_suites` table is absent. Returns whether it applied. The FK to
-/// `flows` means [`ensure_flow_registry`] MUST have run first — publish calls
-/// them in that order below.
+/// Apply the authoring test orchestration artifact into `schema` when all four
+/// retained tables are absent. Returns whether it applied.
 pub async fn ensure_flow_tests(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
 ) -> anyhow::Result<bool> {
     ensure_wamn_app_role(client).await?;
-    let suites_present = table_exists(client, schema, "test_suites").await?;
-    let cases_present = table_exists(client, schema, "test_cases").await?;
-    anyhow::ensure!(
-        suites_present == cases_present,
-        "flow test-suite storage is partially installed; reconcile it before publication"
-    );
-    if !suites_present {
-        let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
-        client
-            .batch_execute(&ddl)
-            .await
-            .context("apply flow test-suite tables")?;
-        ensure_authoring_run_privileges(client, schema).await?;
-        return Ok(true);
-    }
-
     let authoring_storage = client
         .query_one(&authoring_run_storage_probe_sql(schema), &[])
         .await
-        .context("probe authoring test-set and report storage")?;
-    anyhow::ensure!(
-        authoring_storage.get::<_, bool>(0),
-        "authoring test-set storage is absent; reconcile it before publication"
-    );
+        .context("probe authoring test orchestration storage")?;
     let authoring_objects = [
+        authoring_storage.get::<_, bool>(0),
         authoring_storage.get::<_, bool>(1),
         authoring_storage.get::<_, bool>(2),
         authoring_storage.get::<_, bool>(3),
@@ -1369,19 +1325,13 @@ pub async fn ensure_flow_tests(
     } else {
         anyhow::ensure!(
             authoring_objects.iter().all(|present| !*present),
-            "authoring report storage is partially installed; reconcile it before publication"
+            "authoring test orchestration is partially installed; reconcile it before publication"
         );
-        let source = include_str!("../../../deploy/sql/flow-tests.sql");
-        let start = source
-            .find("-- BEGIN AUTHORING REPORT STORAGE MIGRATION")
-            .expect("authoring report storage migration start");
-        let end = source
-            .find("-- END AUTHORING REPORT STORAGE MIGRATION")
-            .expect("authoring report storage migration end");
+        let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
         client
-            .batch_execute(&rewrite_schema(&source[start..end], schema))
+            .batch_execute(&ddl)
             .await
-            .context("install authoring report storage")?;
+            .context("install authoring test orchestration")?;
         true
     };
     ensure_authoring_run_privileges(client, schema).await?;
@@ -1392,9 +1342,9 @@ fn authoring_run_storage_probe_sql(schema: &BareSchemaName) -> String {
     let schema = schema.as_str();
     format!(
         "SELECT to_regclass('{schema}.authoring_test_sets') IS NOT NULL, \
-                to_regclass('{schema}.authoring_report_reservations') IS NOT NULL, \
-                to_regclass('{schema}.authoring_suite_case_facts') IS NOT NULL, \
-                to_regclass('{schema}.authoring_suite_reports') IS NOT NULL"
+                to_regclass('{schema}.authoring_test_run_reservations') IS NOT NULL, \
+                to_regclass('{schema}.authoring_test_case_runs') IS NOT NULL, \
+                to_regclass('{schema}.authoring_test_reports') IS NOT NULL"
     )
 }
 
@@ -1414,24 +1364,21 @@ fn authoring_run_privileges_sql(schema: &BareSchemaName) -> String {
     format!(
         "REVOKE wamn_scenario_author FROM wamn_app; \
              GRANT USAGE ON SCHEMA {schema_name} TO wamn_scenario_author; \
-             GRANT SELECT ON {schema_name}.runs, {schema_name}.test_suites, \
-                 {schema_name}.test_cases \
-                 TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON {test_sets} \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT, INSERT ON {test_sets} \
                  TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_report_reservations \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_run_reservations \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_report_reservations \
+             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_test_run_reservations \
                  TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_suite_case_facts \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_case_runs \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT ON {schema_name}.authoring_suite_case_facts \
+             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_test_case_runs \
                  TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_suite_reports \
+             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_reports \
                  FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT ON {schema_name}.authoring_suite_reports \
+             GRANT SELECT, INSERT ON {schema_name}.authoring_test_reports \
                  TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
                IF EXISTS ( \
@@ -1661,7 +1608,9 @@ mod tests {
         let schema = BareSchemaName::new("project_run").expect("valid test schema");
         let probe = authoring_run_storage_probe_sql(&schema);
         assert!(probe.contains("project_run.authoring_test_sets"));
-        assert!(probe.contains("project_run.authoring_report_reservations"));
+        assert!(probe.contains("project_run.authoring_test_run_reservations"));
+        assert!(probe.contains("project_run.authoring_test_case_runs"));
+        assert!(probe.contains("project_run.authoring_test_reports"));
 
         let privileges = authoring_run_privileges_sql(&schema);
         assert!(

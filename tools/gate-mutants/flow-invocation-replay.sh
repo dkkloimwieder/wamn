@@ -92,7 +92,7 @@ load_mutation() {
       ;;
     storage-client-key-restores-not-null)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="aac82669b8c6d962c9fab427edf76cf705191f29f6c8e6c32ed654712f761d48"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE='            alterations.push("ALTER COLUMN client_key_digest DROP NOT NULL".to_string());'
       REPLACEMENT='            alterations.push("ALTER COLUMN client_key_digest SET NOT NULL".to_string());'
       GATE="run_plane::tests::invocation_admission_retention_cutover_is_exact_and_idempotent"

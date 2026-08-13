@@ -37,19 +37,15 @@ load_mutation() {
       ;;
     schema-control-drops-case-runs)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="cb0f4e863502745969db8b3cc4aeeec81d5a94564f2c68cb728a0282fa9b9b85"
-      NEEDLE='            record_tables(FLOW_TESTS_SQL, "wamn_run"),
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
+      NEEDLE='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "test_suites",
-                "test_cases",
                 "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",'
-      REPLACEMENT='            record_tables(FLOW_TESTS_SQL, "wamn_run"),
+      REPLACEMENT='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "test_suites",
-                "test_cases",
                 "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_reports",'
@@ -58,7 +54,7 @@ load_mutation() {
       ;;
     from-zero-skips-post-helper-triggers)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="cb0f4e863502745969db8b3cc4aeeec81d5a94564f2c68cb728a0282fa9b9b85"
+      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
       NEEDLE='        if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {'

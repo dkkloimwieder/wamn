@@ -130,59 +130,6 @@ pub async fn seed_flow_version_if_absent(
     Ok(())
 }
 
-/// Seed one 11.2 test-suite row (idempotent) for a flow version. Version-bound:
-/// the `(tenant, flow_id, flow_version)` must already exist in `flows` (the FK).
-/// Table names are unqualified — the caller's `search_path` (scope_session)
-/// selects the schema.
-pub async fn seed_test_suite(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    flow_id: &str,
-    flow_version: i32,
-    suite_id: &str,
-    name: &str,
-) -> anyhow::Result<()> {
-    client
-        .execute(
-            &wamn_scenario_catalog::sql::upsert_suite_sql(),
-            &[&tenant, &flow_id, &flow_version, &suite_id, &name],
-        )
-        .await?;
-    Ok(())
-}
-
-/// Seed one 11.2 test-case row (idempotent). The `case_json` BODY is opaque
-/// jsonb (bound via `::text::jsonb`); FKs into the suite of the same
-/// `(tenant, flow_id, flow_version, suite_id)`.
-#[allow(clippy::too_many_arguments)]
-pub async fn seed_test_case(
-    client: &tokio_postgres::Client,
-    tenant: &str,
-    flow_id: &str,
-    flow_version: i32,
-    suite_id: &str,
-    case_id: &str,
-    ordinal: i32,
-    case_json: &str,
-) -> anyhow::Result<()> {
-    serde_json::from_str::<Value>(case_json)?;
-    client
-        .execute(
-            &wamn_scenario_catalog::sql::upsert_case_sql(),
-            &[
-                &tenant,
-                &flow_id,
-                &flow_version,
-                &suite_id,
-                &case_id,
-                &ordinal,
-                &case_json,
-            ],
-        )
-        .await?;
-    Ok(())
-}
-
 /// Flip the active flow version: exactly one active version per flow.
 pub async fn set_active_flow_version(
     client: &tokio_postgres::Client,

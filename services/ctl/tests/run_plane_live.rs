@@ -4,7 +4,7 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
 //! throwaway Postgres (recipe: docs/archive/build-and-test.md [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. Thirteen legs run sequentially under the main
+//! skipped cleanly when unset. Sixteen legs run sequentially under the main
 //! test entry (they share the `catalog` schema and the `wamn_app` role); the
 //! execution-pin cutover has one separate test entry:
 //!
@@ -39,12 +39,15 @@
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
 //!   a no-op.
+//! - **stored-suite cutover**: all five retired tables and both helper functions
+//!   are removed child first while the four authoring-test relations survive;
+//!   a second pass is a no-op.
 //! - **current = no-op**: a schema at the schema of record plans NOTHING, in
 //!   both dry-run and apply mode (the idempotence contract).
-//! - **authoring additive upgrade + authority repair**: the pre-6A catalog and
-//!   suite schemas gain draft/report/grant storage; stale guest grants and
-//!   membership are removed; real author-role writes, rapid exact-generation
-//!   revoke/re-grant, report finalization, and guest/release-write refusals are
+//! - **authoring additive upgrade + authority repair**: the pre-6A catalog gains
+//!   draft/grant storage and the run plane gains authoring-test storage; stale
+//!   guest grants and membership are removed; real author-role writes, rapid
+//!   exact-generation revoke/re-grant, and guest/release-write refusals are
 //!   exercised.
 //! - **catalog-head lock concurrency**: both runtime and author admission call
 //!   the tenant-checking SECURITY DEFINER bridge; its SHARE lock blocks the
@@ -65,7 +68,7 @@ use wamn_schema_control::{BareSchemaName, RunPlaneActionKind, rewrite_schema};
 
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const CATALOG_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
@@ -257,6 +260,7 @@ async fn run_plane_reconcile_live() {
     from_zero_leg(&su).await;
     capture_mode_additive_leg(&su, &url).await;
     invocation_admission_retention_leg(&su).await;
+    stored_suite_cutover_leg(&su).await;
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
@@ -272,6 +276,16 @@ async fn execution_pin_cutover_live() {
     };
     let su = connect(&url).await;
     execution_pin_cutover_leg(&su).await;
+}
+
+#[tokio::test]
+async fn stored_suite_cutover_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the stored-suite cutover gate");
+        return;
+    };
+    let su = connect(&url).await;
+    stored_suite_cutover_leg(&su).await;
 }
 
 async fn regress_execution_pin_contract(su: &Client) {
@@ -1371,9 +1385,9 @@ async fn shared_runner_legacy_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply legacy-compatible flows");
-    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
-        .expect("apply legacy-compatible flow tests");
+        .expect("apply authoring tests");
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog schema");
@@ -1742,11 +1756,10 @@ async fn from_zero_leg(su: &Client) {
         "effect_disposition_requests",
         "effect_dispositions",
         "flows",
-        "test_suites",
-        "test_cases",
-        "authoring_report_reservations",
-        "authoring_suite_case_facts",
-        "authoring_suite_reports",
+        "authoring_test_sets",
+        "authoring_test_run_reservations",
+        "authoring_test_case_runs",
+        "authoring_test_reports",
         "run_queue",
         "partition_owner",
         "run_dead_letters",
@@ -1819,9 +1832,9 @@ async fn current_noop_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
-        .expect("apply flow-tests");
+        .expect("apply authoring tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
@@ -1836,8 +1849,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        22,
-        "all twenty-two run-plane tables at target"
+        17,
+        "all seventeen run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -1862,9 +1875,9 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
-        .expect("apply flow-tests");
+        .expect("apply authoring tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
@@ -2057,9 +2070,9 @@ async fn invocation_admission_retention_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
         .await
-        .expect("apply flow-tests");
+        .expect("apply authoring tests");
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
@@ -2112,18 +2125,113 @@ async fn invocation_admission_retention_leg(su: &Client) {
     );
 }
 
-/// PLAN 6A additive storage and the host/guest authority boundary. This starts
-/// from the immediately preceding catalog/suite record, proves both ctl
-/// provisioning paths add only the new sections, then exercises adversarial
-/// direct, inherited, membership, and ownership authority drift.
+async fn stored_suite_cutover_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog before stored-suite cutover");
+    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+        su.batch_execute(&rewrite_schema(ddl, &schema))
+            .await
+            .expect("apply current run plane before stored-suite cutover");
+    }
+    su.batch_execute(&format!(
+        "CREATE TABLE {SCHEMA}.test_suites (id int PRIMARY KEY); \
+         CREATE TABLE {SCHEMA}.test_cases ( \
+           id int PRIMARY KEY, suite_id int REFERENCES {SCHEMA}.test_suites(id)); \
+         CREATE TABLE {SCHEMA}.authoring_report_reservations (id int PRIMARY KEY); \
+         CREATE TABLE {SCHEMA}.authoring_suite_case_facts ( \
+           id int PRIMARY KEY, reservation_id int \
+             REFERENCES {SCHEMA}.authoring_report_reservations(id)); \
+         CREATE TABLE {SCHEMA}.authoring_suite_reports ( \
+           id int PRIMARY KEY, reservation_id int \
+             REFERENCES {SCHEMA}.authoring_report_reservations(id)); \
+         CREATE FUNCTION {SCHEMA}.guard_authoring_report_write() RETURNS trigger \
+           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
+         CREATE FUNCTION {SCHEMA}.reject_immutable_authoring_report_change() RETURNS trigger \
+           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
+         CREATE TRIGGER authoring_report_reservations_guard \
+           BEFORE INSERT ON {SCHEMA}.authoring_report_reservations \
+           FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.guard_authoring_report_write(); \
+         CREATE TRIGGER authoring_suite_reports_immutable \
+           BEFORE UPDATE ON {SCHEMA}.authoring_suite_reports \
+           FOR EACH ROW EXECUTE FUNCTION \
+             {SCHEMA}.reject_immutable_authoring_report_change(); \
+         CREATE TABLE catalog.publish_gate_audit (audit_id int PRIMARY KEY); \
+         INSERT INTO catalog.publish_gate_audit VALUES (1);"
+    ))
+    .await
+    .expect("install retired stored-suite persistence");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("stored-suite cutover applies");
+    let cutovers = plan
+        .actions
+        .iter()
+        .filter(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
+        .collect::<Vec<_>>();
+    assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
+
+    for table in [
+        "authoring_suite_reports",
+        "authoring_suite_case_facts",
+        "authoring_report_reservations",
+        "test_cases",
+        "test_suites",
+    ] {
+        assert!(
+            !table_exists(su, SCHEMA, table).await,
+            "retired table {table} is absent"
+        );
+    }
+    assert!(
+        !table_exists(su, "catalog", "publish_gate_audit").await,
+        "populated retired publish-gate audit is absent"
+    );
+    for table in [
+        "authoring_test_sets",
+        "authoring_test_run_reservations",
+        "authoring_test_case_runs",
+        "authoring_test_reports",
+    ] {
+        assert!(
+            table_exists(su, SCHEMA, table).await,
+            "retained table {table} survives"
+        );
+    }
+    let retired_functions: i64 = su
+        .query_one(
+            "SELECT count(*) FROM pg_proc AS proc \
+             JOIN pg_namespace AS namespace ON namespace.oid = proc.pronamespace \
+             WHERE namespace.nspname = $1 \
+               AND proc.proname IN \
+                 ('guard_authoring_report_write', \
+                  'reject_immutable_authoring_report_change')",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("count retired stored-suite functions")
+        .get(0);
+    assert_eq!(retired_functions, 0);
+
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("stored-suite cutover second reconcile plans");
+    assert!(
+        again.is_noop(),
+        "stored-suite cutover converged: {:#?}",
+        again.actions
+    );
+}
+
+/// PLAN 6A additive storage and the host/guest authority boundary. This proves
+/// both ctl provisioning paths add their retained sections, then exercises
+/// adversarial direct, inherited, membership, and ownership authority drift.
 async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     reset(su).await;
     let schema = schema();
-    let legacy_flow_tests = without_marked_section(
-        FLOW_TESTS_SQL,
-        "-- BEGIN AUTHORING REPORT STORAGE MIGRATION",
-        "-- END AUTHORING REPORT STORAGE MIGRATION",
-    );
     let legacy_catalog = without_marked_section(
         CATALOG_SCHEMA_SQL,
         "-- BEGIN AUTHORING DRAFT STORAGE MIGRATION",
@@ -2160,10 +2268,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows before authoring additive upgrade");
-    su.batch_execute(&rewrite_schema(&legacy_flow_tests, &schema))
-        .await
-        .expect("apply pre-authoring flow-test storage");
-
     for table in [
         "flow_drafts",
         "validated_flow_drafts",
@@ -2176,9 +2280,10 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         );
     }
     for table in [
-        "authoring_report_reservations",
-        "authoring_suite_case_facts",
-        "authoring_suite_reports",
+        "authoring_test_sets",
+        "authoring_test_run_reservations",
+        "authoring_test_case_runs",
+        "authoring_test_reports",
     ] {
         assert!(
             !table_exists(su, SCHEMA, table).await,
@@ -2192,14 +2297,14 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     assert!(
         wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
             .await
-            .expect("additively install authoring report storage"),
-        "the first additive flow-test upgrade reports installation"
+            .expect("additively install authoring-test storage"),
+        "the first additive authoring-test install reports installation"
     );
     assert!(
         !wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
             .await
-            .expect("reapply authoring report storage"),
-        "the additive flow-test upgrade is idempotent"
+            .expect("reapply authoring-test storage"),
+        "the additive authoring-test install is idempotent"
     );
     for table in [
         "flow_drafts",
@@ -2273,9 +2378,10 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .await
         .expect("the wamn-ftfc.2 column upgrades are idempotent");
     for table in [
-        "authoring_report_reservations",
-        "authoring_suite_case_facts",
-        "authoring_suite_reports",
+        "authoring_test_sets",
+        "authoring_test_run_reservations",
+        "authoring_test_case_runs",
+        "authoring_test_reports",
     ] {
         assert!(
             table_exists(su, SCHEMA, table).await,
@@ -2292,8 +2398,8 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
          GRANT wamn_scenario_author TO wamn_app; \
          GRANT INSERT, UPDATE, DELETE ON catalog.validated_flow_drafts TO wamn_app; \
          GRANT INSERT, UPDATE, DELETE ON catalog.release_manifests TO wamn_scenario_author; \
-         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_report_reservations TO wamn_app; \
-         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_suite_case_facts TO PUBLIC; \
+         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_run_reservations TO wamn_app; \
+         GRANT ALL PRIVILEGES ON {SCHEMA}.authoring_test_case_runs TO PUBLIC; \
          REVOKE EXECUTE ON FUNCTION {SCHEMA}.lock_catalog_head(text,text,text) \
            FROM wamn_scenario_author; \
          DO $role$ BEGIN \
@@ -2532,158 +2638,32 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .expect_err("an active grant cannot be rewritten outside revoke/regrant");
     assert_db_code(uncontrolled, "55000", "uncontrolled grant mutation");
 
-    // Reservation command is the one-snapshot authority for ordered cases.
-    // Its array positions are zero-based report ordinals; each fact must match
-    // the reserved case/content identity and deterministic run id.
-    let command = r#"{"target":{"kind":"draft"},"observation-options":{},"cases":[{"case-id":"case-a","case-content-hash":"sha256:case-a","run-id":"run-a","execution-schema":"rp_live"},{"case-id":"case-b","case-content-hash":"sha256:case-b","run-id":"run-b","execution-schema":"rp_live"}]}"#;
-    let lineage = r#"{"kind":"draft","validated-draft-hash":"sha256:validated"}"#;
+    // The retained content-addressed test-set row is author-owned and immutable.
+    let test_set_document = r#"{"schema-version":"0.1","cases":[]}"#;
     su.execute(
         &format!(
-            "INSERT INTO {SCHEMA}.authoring_report_reservations \
-               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                command_json,command_hash,lineage_json,lineage_hash) \
-             VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a', \
-                     $1::text::jsonb,'sha256:command-a',$2::text::jsonb,'sha256:lineage-a')"
+            "INSERT INTO {SCHEMA}.authoring_test_sets \
+               (tenant_id,test_set_hash,schema_version,exact_bytes,byte_length) \
+             SELECT 't1', \
+                    'sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'), \
+                    '0.1', convert_to($1,'UTF8'), \
+                    octet_length(convert_to($1,'UTF8'))"
         ),
-        &[&command, &lineage],
+        &[&test_set_document],
     )
     .await
-    .expect("reserve report before first admission");
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
-               (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
-             VALUES ('t1','report-a',0,'case-a','run-a',true,'completed','{{}}')"
-        ),
-        &[],
-    )
-    .await
-    .expect("append first exact case fact");
-
-    for (ordinal, case_id, run_id, label) in [
-        (0, "wrong-case", "run-a", "wrong case"),
-        (1, "case-a", "run-a", "wrong ordinal"),
-        (2, "case-extra", "run-extra", "extra case"),
-    ] {
-        let error = su
-            .execute(
-                &format!(
-                    "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
-                       (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
-                     VALUES ('t1','report-a',$1,$2,$3,true,'completed','{{}}')"
-                ),
-                &[&ordinal, &case_id, &run_id],
-            )
-            .await
-            .expect_err("command-mismatched case fact must be refused");
-        assert_db_code(error, "23514", label);
-    }
-    let missing = su
+    .expect("host author stores an exact test set");
+    let immutable = su
         .execute(
             &format!(
-                "INSERT INTO {SCHEMA}.authoring_suite_reports \
-                   (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                    passed,lineage_json,lineage_hash) \
-                 VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a',true, \
-                         $1::text::jsonb,'sha256:lineage-a')"
-            ),
-            &[&lineage],
-        )
-        .await
-        .expect_err("non-refusal final report requires every reserved case");
-    assert_db_code(missing, "23514", "missing case finalization");
-
-    let gap_command = r#"{"cases":[{"case-id":"g0","case-content-hash":"sha256:g0","run-id":"gr0","execution-schema":"rp_live"},{"case-id":"g1","case-content-hash":"sha256:g1","run-id":"gr1","execution-schema":"rp_live"},{"case-id":"g2","case-content-hash":"sha256:g2","run-id":"gr2","execution-schema":"rp_live"}]}"#;
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.authoring_report_reservations \
-               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                command_json,command_hash,lineage_json,lineage_hash) \
-             VALUES ('t1','report-gap','execution-gap','flow-a',1,'suite-a', \
-                     $1::text::jsonb,'sha256:command-gap',$2::text::jsonb,'sha256:lineage-a')"
-        ),
-        &[&gap_command, &lineage],
-    )
-    .await
-    .expect("reserve gap mutant report");
-    for (ordinal, case_id, run_id) in [(0, "g0", "gr0"), (2, "g2", "gr2")] {
-        su.execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
-                   (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
-                 VALUES ('t1','report-gap',$1,$2,$3,false,'failed','{{}}')"
-            ),
-            &[&ordinal, &case_id, &run_id],
-        )
-        .await
-        .expect("individual gap mutant fact still matches its command entry");
-    }
-    let gap = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.authoring_suite_reports \
-                   (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                    passed,lineage_json,lineage_hash,refusal) \
-                 VALUES ('t1','report-gap','execution-gap','flow-a',1,'suite-a',false, \
-                         $1::text::jsonb,'sha256:lineage-a', \
-                         '{{\"kind\":\"capture-interrupted\"}}')"
-            ),
-            &[&lineage],
-        )
-        .await
-        .expect_err("a refusal may retain only a contiguous observed prefix");
-    assert_db_code(gap, "23514", "gapped refusal finalization");
-
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
-               (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
-             VALUES ('t1','report-a',1,'case-b','run-b',true,'completed','{{}}')"
-        ),
-        &[],
-    )
-    .await
-    .expect("append second exact case fact");
-    su.batch_execute("BEGIN")
-        .await
-        .expect("begin final report transaction");
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.authoring_suite_reports \
-               (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                passed,lineage_json,lineage_hash) \
-             VALUES ('t1','report-a','execution-a','flow-a',1,'suite-a',true, \
-                     $1::text::jsonb,'sha256:lineage-a')"
-        ),
-        &[&lineage],
-    )
-    .await
-    .expect("insert complete immutable final report");
-    su.execute(
-        &format!(
-            "UPDATE {SCHEMA}.authoring_report_reservations \
-             SET state='finalized', finalized_at=clock_timestamp() \
-             WHERE tenant_id='t1' AND report_id='report-a'"
-        ),
-        &[],
-    )
-    .await
-    .expect("finalize reservation after final report exists");
-    su.batch_execute("COMMIT")
-        .await
-        .expect("commit report insert and finalization atomically");
-    let late_fact = su
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.authoring_suite_case_facts \
-                   (tenant_id,report_id,ordinal,case_id,run_id,passed,status,outcome) \
-                 VALUES ('t1','report-a',1,'case-b','run-b',true,'completed','{{}}')"
+                "UPDATE {SCHEMA}.authoring_test_sets SET schema_version='0.1' \
+                 WHERE tenant_id='t1'"
             ),
             &[],
         )
         .await
-        .expect_err("finalized report facts cannot be appended");
-    assert_db_code(late_fact, "23514", "post-finalization fact append");
+        .expect_err("authoring test sets are immutable");
+    assert_db_code(immutable, "55000", "immutable authoring test set");
 
     // The host author can read release source facts and tenant runs, but has no
     // release publication mutation surface.
@@ -2713,17 +2693,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     su.batch_execute("RESET ROLE; SELECT set_config('app.tenant','',false)")
         .await
         .expect("leave host-author role");
-    let immutable = su
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.authoring_suite_case_facts SET passed=false \
-                 WHERE tenant_id='t1' AND report_id='report-a' AND ordinal=0"
-            ),
-            &[],
-        )
-        .await
-        .expect_err("even migration authority hits immutable report triggers");
-    assert_db_code(immutable, "55000", "immutable case fact update");
 
     // Use a real guest login here: a superuser session that executes
     // `SET ROLE wamn_app` retains its session-user right to assume any role,
@@ -2743,20 +2712,21 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .await
         .expect_err("guest cannot forge a draft write");
     assert_db_code(guest_draft, "42501", "guest draft forgery");
-    let guest_report = guest
+    let guest_test_set = guest
         .execute(
             &format!(
-                "INSERT INTO {SCHEMA}.authoring_report_reservations \
-                 (tenant_id,report_id,execution_id,flow_id,suite_flow_version,suite_id, \
-                  command_json,command_hash,lineage_json,lineage_hash) VALUES \
-                 ('t1','forged','forged','flow-a',1,'suite-a', \
-                  '{{\"cases\":[]}}','x','{{\"kind\":\"draft\"}}','x')"
+                "INSERT INTO {SCHEMA}.authoring_test_sets \
+                   (tenant_id,test_set_hash,schema_version,exact_bytes,byte_length) \
+                 SELECT 't1', \
+                        'sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'), \
+                        '0.1', convert_to($1,'UTF8'), \
+                        octet_length(convert_to($1,'UTF8'))"
             ),
-            &[],
+            &[&test_set_document],
         )
         .await
-        .expect_err("guest cannot forge a report reservation");
-    assert_db_code(guest_report, "42501", "guest report forgery");
+        .expect_err("guest cannot forge a test-set write");
+    assert_db_code(guest_test_set, "42501", "guest test-set forgery");
     let assume_author = guest
         .batch_execute("SET ROLE wamn_scenario_author")
         .await
@@ -2852,7 +2822,7 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     su.batch_execute(CATALOG_SCHEMA_SQL)
         .await
         .expect("apply catalog-schema");
-    for ddl in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL, RUN_QUEUE_SQL] {
+    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
         su.batch_execute(&rewrite_schema(ddl, &schema))
             .await
             .expect("apply current run-plane record");

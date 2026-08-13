@@ -4,15 +4,15 @@
 //! runs the WHOLE analysis against a throwaway Postgres (`WAMN_PG_ADMIN_URL`
 //! superuser to provision, `WAMN_PG_URL` app role for the RLS-scoped seed) in an
 //! EPHEMERAL schema it owns end to end — ADDITIVE ONLY, no DDL applied, dropped at
-//! the end (the suiteproof shape):
+//! the end:
 //!
-//!   1. provision the run-plane + flow-tests tables through the SAME `ensure_*`
+//!   1. provision the run-plane tables through the SAME `ensure_*`
 //!      path production provisioning uses (`publish-catalog --runstate`);
 //!   2. seed one active flow whose postgres node names entity `orders` by NAME
-//!      (the config-keyed edge) + a version-bound suite;
+//!      (the config-keyed edge);
 //!   3. compile a v1→v2 plan IN MEMORY (drop a column on `orders` = destructive)
 //!      and read the live edges through `wamn-ctl-ops impact-report`
-//!      — asserting it names the seeded flow + suite + `/api/rest/orders`, and that
+//!      — asserting it names the seeded flow + `/api/rest/orders`, and that
 //!      the DESTRUCTIVE change with a dependent flow carries reprovision guidance
 //!      while an ADDITIVE change on the same entity does NOT.
 //!
@@ -25,13 +25,12 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::{Client, NoTls};
 
-use wamn_gate_harness::{check, scope_session, seed_flow_version, seed_test_suite};
+use wamn_gate_harness::{check, scope_session, seed_flow_version};
 use wamn_schema_model::Catalog;
 
 use crate::ctl_process;
 const FLOW_ID: &str = "impactproof-flow";
-const SUITE_ID: &str = "smoke";
-const REPROVISION_NOTE: &str = "NOTE: this destructive change has dependent flows or suites; use \
+const REPROVISION_NOTE: &str = "NOTE: this destructive change has dependent flows; use \
      this report when reprovisioning the environment.";
 
 #[derive(Debug, Args)]
@@ -40,7 +39,7 @@ pub struct ImpactProofArgs {
     #[arg(long)]
     pub database_url: Option<String>,
 
-    /// Superuser URL — provisions the ephemeral schema + run-plane/test tables AND
+    /// Superuser URL — provisions the ephemeral schema + run-plane tables AND
     /// runs the cross-tenant (RLS-bypassing) impact reads.
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
@@ -49,7 +48,7 @@ pub struct ImpactProofArgs {
     #[arg(long, default_value = "wamn_impactproof")]
     pub schema: String,
 
-    /// The owning tenant the flow + suite are seeded under.
+    /// The owning tenant the flow is seeded under.
     #[arg(long, default_value = "demo-tenant")]
     pub tenant: String,
 
@@ -150,16 +149,6 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
     seed_flow_version(&app, &args.tenant, FLOW_ID, 1, true, &flow_graph(), true)
         .await
         .context("seed active flow")?;
-    seed_test_suite(
-        &app,
-        &args.tenant,
-        FLOW_ID,
-        1,
-        SUITE_ID,
-        "impactproof smoke",
-    )
-    .await
-    .context("seed suite")?;
     drop(app);
     let _ = app_task.await;
 
@@ -193,14 +182,6 @@ pub async fn run(args: ImpactProofArgs) -> anyhow::Result<()> {
             "flow via node config:  tenant {:?} flow {:?} v1",
             args.tenant, FLOW_ID
         )) && report.contains("(config entity \"orders\")"),
-    );
-    check(
-        &mut ok,
-        "SUITE: the affected flow's suite is enumerated",
-        report.contains(&format!(
-            "suite: tenant {:?} flow {:?} v1 suite {:?}",
-            args.tenant, FLOW_ID, SUITE_ID
-        )),
     );
     check(
         &mut ok,
@@ -309,7 +290,7 @@ async fn provision(admin: &Client, admin_url: &str, schema: &str) -> anyhow::Res
     ])
     .await
     .context("reconcile run-plane through wamn-ctl")?;
-    println!("## provisioned schema {schema} (run-state + flows + test_suites/test_cases)");
+    println!("## provisioned schema {schema} (run-state + flows)");
     Ok(())
 }
 

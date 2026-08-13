@@ -1,6 +1,6 @@
 [package]
 name = "wamn-scenario-catalog"
-description = "Transitional persistence queries for stored product tests."
+description = "Persistence queries for the internal authoring surface."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

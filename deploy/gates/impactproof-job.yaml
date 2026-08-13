@@ -1,12 +1,11 @@
 # 11.8 in-cluster gate: impactproof drives schema-change impact analysis
 # (wamn-wvb) against the shared postgres, provisioning its own EPHEMERAL schema
 # (wamn_impactproof) through the superuser url — no shared-schema mutation, dropped
-# at the end. It applies the deploy/sql/flows.sql + flow-tests.sql tables via the
-# SAME publish-catalog --runstate ensure_* path production uses, seeds one active
-# flow whose postgres node names entity `orders` by NAME + a version-bound suite,
-# then folds a v1->v2 (drop-column) plan through
+# at the end. It applies the run-plane tables through the SAME publish-catalog
+# --runstate path production uses, seeds one active flow whose postgres node
+# names entity `orders` by NAME, then folds a v1->v2 (drop-column) plan through
 # wamn_schema_control::impact::analyze and asserts
-# the report names the affected flow/suite/api resource and preserves the two
+# the report names the affected flow/API resource and preserves the two
 # independent facts: destructiveness and downstream impact.
 # The event-registration edge (shared catalog.event_registrations) is proven by
 # the throwaway-PG live gate, not here. Co-located with postgres, NO cpu limit (the

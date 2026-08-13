@@ -469,11 +469,17 @@ fn validate_registry(
                     entry.source
                 )
             })?;
-            let compatible = matches!(
-                (entry.classification, decision.status.as_str()),
-                (Classification::Retired, "retired")
-            ) || (entry.classification != Classification::Retired
-                && decision.status == "shipped");
+            let historical_primary = entry.classification == Classification::Retired
+                && decision.status == "shipped"
+                && decision.primary_source.source_kind == SourceKind::Retired
+                && decision.primary_source.source == entry.source;
+            let compatible = historical_primary
+                || matches!(
+                    (entry.classification, decision.status.as_str()),
+                    (Classification::Retired, "retired")
+                )
+                || (entry.classification != Classification::Retired
+                    && decision.status == "shipped");
             if !compatible {
                 return Err(format!(
                     "{} classification and {} status disagree",
@@ -611,6 +617,18 @@ fn validate_registry(
     }
 
     for decision in &registry.decisions {
+        if decision.status == "shipped"
+            && decision.primary_source.source_kind == SourceKind::Retired
+            && !registry.entries.iter().any(|entry| {
+                entry.classification != Classification::Retired
+                    && entry.decision_ids.contains(&decision.id)
+            })
+        {
+            return Err(format!(
+                "{} has a retired historical primary but no live supporting gate mapping",
+                decision.id
+            ));
+        }
         let primary_key = format!(
             "{:?}:{}",
             decision.primary_source.source_kind, decision.primary_source.source
@@ -651,8 +669,8 @@ fn fixtures() -> (
 #[test]
 fn canonical_registry_covers_every_live_gate_source() {
     let (root, registry, manifests, recipes, historical_plan) = fixtures();
-    assert_eq!(manifests.len(), 9, "the retained Job inventory changed");
-    assert_eq!(recipes.len(), 45, "the documented recipe inventory changed");
+    assert_eq!(manifests.len(), 7, "the retained Job inventory changed");
+    assert_eq!(recipes.len(), 40, "the documented recipe inventory changed");
     validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
         .unwrap_or_else(|error| panic!("{error}"));
 }
@@ -719,6 +737,24 @@ fn rejects_duplicate_decision_ownership_mutant() {
         error.contains("duplicate canonical decision owner"),
         "{error}"
     );
+}
+
+#[test]
+fn rejects_retired_primary_without_live_support_mutant() {
+    let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
+    for entry in &mut registry.entries {
+        if entry.classification != Classification::Retired
+            && entry.decision_ids.iter().any(|decision| decision == "D1")
+        {
+            entry.decision_ids.retain(|decision| decision != "D1");
+            if entry.decision_ids.is_empty() {
+                entry.decision_ids.push("D14".to_string());
+            }
+        }
+    }
+    let error = validate_registry(&registry, &manifests, &recipes, &historical_plan, &root)
+        .expect_err("a retired primary without live support must fail");
+    assert!(error.contains("no live supporting gate mapping"), "{error}");
 }
 
 #[test]

@@ -3,7 +3,7 @@
 #   docker build --target ctl        -t wamn-ctl:dev        .  # one-shot verbs
 #   docker build --target dispatcher -t wamn-dispatcher:dev .  # trigger dispatcher
 #   docker build --target run-worker -t wamn-run-worker:dev .  # production executor (+flowrunner.wasm)
-#   docker build --target scenario-worker -t wamn-scenario-worker:dev . # deterministic scenarios
+#   docker build --target scenario-worker -t wamn-scenario-worker:dev . # authoring management
 #   docker build --target cdc-reader -t wamn-cdc-reader:dev .  # CDC event reader
 #   docker build --target waker      -t wamn-waker:dev      .  # scale-to-zero wake actuator
 #   docker build --target gates      -t wamn-gates:dev      .  # gates: FROM host + suite + fixtures
@@ -172,13 +172,10 @@ COPY --from=component-builder /component-output/flowrunner.wasm /components/flow
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 
-# ---- scenario-worker image: deterministic product scenarios ----------------
+# ---- scenario-worker image: authoring management service -------------------
 FROM debian:trixie-slim AS scenario-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
-# Deliberately the same compiled guest as the production executor. Capability
-# composition differs in the native service artifact, not in flow semantics.
-COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 
@@ -206,9 +203,6 @@ COPY --from=builder /native-output/wamn-gates /usr/local/bin/wamn-gates
 COPY --from=builder /native-output/wamn-ctl /usr/local/bin/wamn-ctl
 # Operations-only impact analysis crosses its own executable boundary.
 COPY --from=builder /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
-# Stored-suite compatibility is a process adapter: the gate invokes the product
-# worker binary and never links its execution engine into wamn-gates.
-COPY --from=builder /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
 # Reader-inclusive gates exercise the native CDC service through its executable
 # boundary; the gates package does not link the service crate.
 COPY --from=builder /native-output/wamn-cdc-reader /usr/local/bin/wamn-cdc-reader

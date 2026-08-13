@@ -11,4 +11,3 @@ anyhow = { workspace = true }
 # The PG fixture/seed helpers (scope_session / seed_flow_version): gates hold
 # the connection, the harness holds the one copy of the fixture SQL.
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
-wamn-scenario-catalog = { workspace = true }

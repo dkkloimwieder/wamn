@@ -98,28 +98,6 @@ pub fn select_registration_docs_for_catalog_sql() -> String {
         .to_string()
 }
 
-/// The 11.2 suite-orphan guard read (wamn-828): the test suites a definition
-/// copy carries for `$1` (tenant), from `<schema>.test_suites`, projecting
-/// `(suite_id, tenant_id, flow_id, flow_version)` — what [`crate::check_suite_orphans`]
-/// folds against the flow versions the copy will install. Unlike the pinned
-/// `catalog`-schema builders above, `schema` is the copy verb's `--flow-schema`
-/// (the `wamn_run` → project-schema convention): it is interpolated, so the
-/// caller passes a VALIDATED bare identifier (`is_bare_ident`); the value is `$1`.
-/// Ordered for a deterministic refusal listing.
-pub fn select_suites_for_tenant_sql(schema: &str) -> String {
-    format!(
-        "SELECT suite_id, tenant_id, flow_id, flow_version FROM {schema}.test_suites \
-         WHERE tenant_id = $1 ORDER BY flow_id, flow_version, suite_id"
-    )
-}
-
-/// The 11.2 suite-orphan guard read: the `(flow_id, version)` pairs present in
-/// `<schema>.flows` for `$1` (tenant) — the versions a suite may pin. Same
-/// validated-bare-`schema` contract as [`select_suites_for_tenant_sql`]; value `$1`.
-pub fn select_flow_versions_for_tenant_sql(schema: &str) -> String {
-    format!("SELECT flow_id, version FROM {schema}.flows WHERE tenant_id = $1")
-}
-
 // ---------------------------------------------------------------------------
 // Immutable catalog releases (FLOW-SPEC rev18 §5.1–§5.4a).
 // ---------------------------------------------------------------------------
@@ -273,7 +251,7 @@ pub fn select_release_artifacts_sql() -> &'static str {
 // ops `impact-report` / `copy-project-env` shells fold through
 // `wamn_schema_control::impact::analyze`.
 // All cross-tenant (the superuser driver bypasses RLS), like the D24 read above:
-// a shared entity's change hits every tenant's flow/suite, so the report must see
+// a shared entity's change hits every tenant's flow, so the report must see
 // them all. SR12: the pure decision has no RLS/superuser — the throwaway-PG live
 // gate (wamn-ctl `tests/impact_report_live.rs`) covers that these see every tenant.
 // ---------------------------------------------------------------------------
@@ -291,83 +269,12 @@ pub fn select_registration_flow_refs_for_catalog_sql() -> String {
 /// The 11.8 node-config edge: every ACTIVE flow's `graph_json` across ALL tenants,
 /// so the analysis can scan each graph for a postgres node's `config["entity"]`
 /// (the name-keyed edge). Projects `(tenant_id, flow_id, version, graph_json)`.
-/// Same validated-bare-`schema` contract as [`select_suites_for_tenant_sql`]
-/// (the flow registry lives in the project schema, not the fixed `catalog` one).
+/// `schema` is the caller-validated project schema, not the fixed `catalog` one.
 pub fn select_active_flows_sql(schema: &str) -> String {
     format!(
         "SELECT tenant_id, flow_id, version, graph_json::text FROM {schema}.flows \
          WHERE active ORDER BY tenant_id, flow_id, version"
     )
-}
-
-/// The 11.8 suite edge: every test suite across ALL tenants, so the analysis can
-/// keep the suites of the flows a change touches (all versions — the tuple the
-/// parked executor wamn-0lfu would run). Projects
-/// `(tenant_id, flow_id, flow_version, suite_id)`; the affected-flow filter is the
-/// pure decision's, not SQL's. Same validated-bare-`schema` contract as
-/// [`select_suites_for_tenant_sql`].
-pub fn select_all_suites_sql(schema: &str) -> String {
-    format!(
-        "SELECT tenant_id, flow_id, flow_version, suite_id FROM {schema}.test_suites \
-         ORDER BY tenant_id, flow_id, flow_version, suite_id"
-    )
-}
-
-/// [11.7] wamn-12g: the durable suite reports offered as publish-gate evidence.
-///
-/// Params: `$1` tenant, `$2` catalog id. Projects
-/// `(flow_id, suite_flow_version, suite_id, report_id, passed, lineage_json)`.
-/// Scoped to one catalog because a report about another application's release
-/// can never be evidence here; the release/version/freshness decision itself is
-/// the operations publish gate's, not SQL's.
-///
-/// NEWEST FIRST: the gate takes the first report that proves a suite green, so
-/// a re-run after a fix is considered before the failure it replaced. Ordering
-/// is total (`report_id` breaks a same-timestamp tie) so the verdict — and the
-/// evidence pointer recorded in the audit ledger — is reproducible.
-///
-/// Same validated-bare-`schema` contract as [`select_all_suites_sql`].
-pub fn select_suite_reports_for_catalog_sql(schema: &str) -> String {
-    format!(
-        "SELECT flow_id, suite_flow_version, suite_id, report_id, passed, lineage_json::text \
-         FROM {schema}.authoring_suite_reports \
-         WHERE tenant_id = $1 AND lineage_json ->> 'catalog-id' = $2 \
-         ORDER BY created_at DESC, report_id"
-    )
-}
-
-/// [11.7] wamn-12g: the artifact hash each flow of one immutable release pins —
-/// the publish gate's FRESHNESS authority.
-///
-/// Params: `$1` tenant, `$2` catalog id, `$3` catalog version. Projects
-/// `(flow_id, artifact_hash)`. Both tables are DB-immutable, so this answers
-/// "which bytes does this release ship for this flow?" with a value that cannot
-/// be edited out from under a recorded suite report.
-pub fn select_release_flow_artifact_hashes_sql() -> &'static str {
-    "SELECT rf.flow_id, fa.artifact_hash \
-     FROM catalog.release_flows AS rf \
-     JOIN catalog.flow_artifacts AS fa \
-       ON fa.tenant_id = rf.tenant_id \
-      AND fa.flow_id = rf.flow_id \
-      AND fa.flow_version = rf.flow_version \
-     WHERE rf.tenant_id = $1 AND rf.catalog_id = $2 AND rf.catalog_version = $3 \
-     ORDER BY rf.flow_id"
-}
-
-/// [11.7] wamn-12g: append one publish-gate verdict to the append-only ledger.
-///
-/// Params: `$1` tenant, `$2` verb, `$3` decision, `$4` requires_green_suite,
-/// `$5` policy_source, `$6` org, `$7` project, `$8` source_env, `$9` target_env,
-/// `$10` catalog id, `$11` catalog version, `$12` findings JSON text.
-///
-/// `operator_session` is `session_user`, taken from the SESSION rather than a
-/// parameter: a caller cannot claim to be someone else, and the column is
-/// honestly a database role — never an authenticated principal.
-pub fn record_publish_gate_sql() -> &'static str {
-    "INSERT INTO catalog.publish_gate_audit \
-       (tenant_id, verb, decision, requires_green_suite, policy_source, org, project, \
-        source_env, target_env, catalog_id, catalog_version, findings_json, operator_session) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::text::jsonb, session_user)"
 }
 
 /// A cheap, dependency-free checksum (FNV-1a 64) of the applied DDL script — an
@@ -391,7 +298,6 @@ mod tests {
 
     const CATALOG_SCHEMA: &str = include_str!("../../../../deploy/sql/catalog-schema.sql");
     const FLOWS_SCHEMA: &str = include_str!("../../../../deploy/sql/flows.sql");
-    const FLOW_TESTS_SCHEMA: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
 
     #[test]
     fn registration_flow_refs_read_tracks_event_registrations() {
@@ -420,108 +326,6 @@ mod tests {
             assert!(sql.contains(col), "read references column {col}");
             assert!(FLOWS_SCHEMA.contains(col), "flows.sql no longer has {col}");
         }
-    }
-
-    #[test]
-    fn all_suites_read_tracks_test_suites() {
-        let sql = super::select_all_suites_sql("app");
-        assert!(FLOW_TESTS_SCHEMA.contains("CREATE TABLE wamn_run.test_suites"));
-        for col in ["tenant_id", "flow_id", "flow_version", "suite_id"] {
-            assert!(sql.contains(col), "read references column {col}");
-            assert!(
-                FLOW_TESTS_SCHEMA.contains(col),
-                "flow-tests.sql no longer has {col}"
-            );
-        }
-    }
-
-    /// [11.7] wamn-12g drift guard. The gate reads its evidence through these
-    /// column names; a rename must fail HERE, because against a live database a
-    /// renamed column surfaces as "no evidence found", which the gate correctly
-    /// — and uselessly — turns into a blanket refusal.
-    #[test]
-    fn suite_report_evidence_read_tracks_authoring_suite_reports() {
-        let sql = super::select_suite_reports_for_catalog_sql("app");
-        assert!(FLOW_TESTS_SCHEMA.contains("CREATE TABLE wamn_run.authoring_suite_reports"));
-        for col in [
-            "flow_id",
-            "suite_flow_version",
-            "suite_id",
-            "report_id",
-            "passed",
-            "lineage_json",
-            "created_at",
-        ] {
-            assert!(sql.contains(col), "read references column {col}");
-            assert!(
-                FLOW_TESTS_SCHEMA.contains(col),
-                "flow-tests.sql no longer has {col}"
-            );
-        }
-        // The lineage discriminator the pure decision keys on is the one the
-        // model serializes (`kind`, kebab-case fields).
-        assert!(FLOW_TESTS_SCHEMA.contains("lineage_json ->> 'kind' IN ('draft', 'release')"));
-        assert!(sql.contains("lineage_json ->> 'catalog-id' = $2"));
-        // Newest first, with a total tie-break, so the verdict is reproducible.
-        assert!(sql.contains("ORDER BY created_at DESC, report_id"));
-    }
-
-    /// [11.7] wamn-12g drift guard: freshness is only as trustworthy as the
-    /// immutability of the two tables it joins.
-    #[test]
-    fn release_artifact_hash_read_tracks_the_immutable_release_tables() {
-        let sql = super::select_release_flow_artifact_hashes_sql();
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.release_flows"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.flow_artifacts"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER release_flows_immutable"));
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER flow_artifacts_immutable"));
-        for col in ["artifact_hash", "flow_version", "catalog_version"] {
-            assert!(sql.contains(col), "read references column {col}");
-            assert!(
-                CATALOG_SCHEMA.contains(col),
-                "catalog-schema.sql no longer has {col}"
-            );
-        }
-    }
-
-    /// [11.7] wamn-12g drift guard: the ledger write must match the ledger's
-    /// closed CHECKs, and must not accept an operator identity as a parameter.
-    #[test]
-    fn publish_gate_ledger_write_tracks_the_audit_table() {
-        let sql = super::record_publish_gate_sql();
-        assert!(CATALOG_SCHEMA.contains("CREATE TABLE IF NOT EXISTS catalog.publish_gate_audit"));
-        assert!(CATALOG_SCHEMA.contains("BEGIN PUBLISH GATE AUDIT MIGRATION"));
-        assert!(CATALOG_SCHEMA.contains("END PUBLISH GATE AUDIT MIGRATION"));
-        for col in [
-            "tenant_id",
-            "verb",
-            "decision",
-            "requires_green_suite",
-            "policy_source",
-            "source_env",
-            "target_env",
-            "findings_json",
-            "operator_session",
-        ] {
-            assert!(sql.contains(col), "write references column {col}");
-            assert!(
-                CATALOG_SCHEMA.contains(col),
-                "catalog-schema.sql no longer has {col}"
-            );
-        }
-        // Every decision the pure report can emit must satisfy the CHECK.
-        assert!(
-            CATALOG_SCHEMA.contains("CHECK (decision IN ('passed', 'refused', 'not-required'))")
-        );
-        assert!(
-            CATALOG_SCHEMA.contains("CHECK (policy_source IN ('env-default', 'project-override'))")
-        );
-        // The session identity is taken from the session, never a parameter.
-        assert!(sql.contains("session_user"));
-        assert!(!sql.contains("$13"));
-        // Append-only: the ledger carries the shared immutability trigger.
-        assert!(CATALOG_SCHEMA.contains("CREATE TRIGGER publish_gate_audit_immutable"));
-        assert!(CATALOG_SCHEMA.contains("BEFORE UPDATE OR DELETE ON catalog.publish_gate_audit"));
     }
 
     #[test]

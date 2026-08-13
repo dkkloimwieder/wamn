@@ -15,12 +15,10 @@ wamn-runtime = { workspace = true }
 wamn-scenario-runtime = { workspace = true }
 wamn-scenario-model = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
-wamn-run-state = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true }
 anyhow = { workspace = true }
-async-trait = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true, features = ["derive", "env"] }
 http-body-util = { workspace = true }

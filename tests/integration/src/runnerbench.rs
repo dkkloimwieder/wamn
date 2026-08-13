@@ -303,9 +303,8 @@ fn aliased_columns(sql: &str, alias: &str) -> std::collections::BTreeSet<String>
 /// executes, and from the run row to the NODE_RUN row. thvs swept `runs` against
 /// the first three; run-next then walked one statement further and died `42703:
 /// a required run column does not exist` — the same rot, one table and one
-/// statement over each time, while `testkitbench` patched its own copy of the
-/// delta by hand rather than the stand-in. Deriving both rows from the STATEMENTS
-/// names the path once and lets the columns follow.
+/// statement over each time. Deriving both rows from the STATEMENTS names the
+/// path once and lets the columns follow.
 #[cfg(test)]
 pub(crate) fn assert_carries_every_run_next_column(gate: &str, ddl: &str) {
     // The statements a `run-next` turn executes: claim + dispatch read, the

@@ -152,7 +152,7 @@ async fn invalid_overlong_publish_is_pre_effect_and_non_aliasing_live() {
         "wamn_entities",
         "runs",
         "flows",
-        "test_suites",
+        "authoring_test_sets",
     ] {
         assert!(
             relations.iter().any(|relation| relation == expected),

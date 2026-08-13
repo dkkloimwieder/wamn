@@ -25,10 +25,6 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/components/flowrunner.wasm",
         ),
         (
-            "/component-output/flowrunner.wasm",
-            "/components/flowrunner.wasm",
-        ),
-        (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",
         ),

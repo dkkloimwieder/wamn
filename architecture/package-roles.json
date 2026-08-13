@@ -350,11 +350,11 @@
       "deployable": true,
       "native": {
         "native_kind": "transition-runtime",
-        "native_reason": "Stored deterministic scenario execution currently embeds the production flowrunner and native deterministic capability adapters.",
-        "owner": "wamn-5wd1.7 / scenario execution owners",
-        "credential_failure_scope": "One worker confines a selected stored suite, project database access, deterministic adapters, and run failure.",
-        "tested_boundary": "Scenario-worker process-boundary, stored-suite, and replay proofs exercise the executable.",
-        "exit_condition": "Exit when an independently deployed component workload can provide the same stored-suite, observation, and deterministic-adapter boundary."
+        "native_reason": "The service authenticates authoring commands and owns the management-side authoring store.",
+        "owner": "management and authoring owners",
+        "credential_failure_scope": "One service confines its authoring credential, project database access, and command-attribution boundary.",
+        "tested_boundary": "Management authentication, attribution, and authoring-store proofs exercise the executable.",
+        "exit_condition": "Exit when the management API and authoring store move to their ratified successor deployment."
       }
     },
     {

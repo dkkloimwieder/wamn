@@ -36,9 +36,8 @@ use wamn_catalog::Artifact;
 use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
 use wamn_flow::{Flow, MAIN_PORT};
 
-/// The canonical catalog storage DDL — the same standalone deploy artifact
-/// metricbench and testkitbench lay down, so no gate fixture can drift from the
-/// schema of record.
+/// The canonical catalog storage DDL — the same standalone deploy artifact the
+/// retained gates lay down, so no gate fixture can drift from the schema of record.
 const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
 /// The catalog each gate release is published under, suffixed per release. A

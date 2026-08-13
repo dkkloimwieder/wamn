@@ -28,6 +28,7 @@ struct OwnershipEntry {
     semantic_owner: String,
     migration_owners: Vec<String>,
     schema_source: String,
+    writers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,6 +37,7 @@ struct OwnershipFamily {
     semantic_owner: String,
     migration_owners: Vec<String>,
     schema_source: String,
+    writers: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,6 +127,7 @@ fn protected_relation_table_matches_declared_ownership() {
                     is_ops_artifact(&entry.schema_source, &scopes),
                     sole_installer(&entry.id, &entry.migration_owners),
                     entry.semantic_owner,
+                    entry.writers.is_empty(),
                 ),
             )
         })
@@ -136,6 +139,7 @@ fn protected_relation_table_matches_declared_ownership() {
                 is_ops_artifact(&family.schema_source, &scopes),
                 sole_installer(&family.pattern, &family.migration_owners),
                 family.semantic_owner,
+                family.writers.is_empty(),
             ),
         )
     }));
@@ -157,6 +161,13 @@ fn protected_relation_table_matches_declared_ownership() {
             (row.ops, &row.installer, &row.owner),
             (expected.0, &expected.1, &expected.2)
         );
+        if expected.3 {
+            assert_eq!(
+                row.author_reachable, AUTHOR_SQL_EXPOSURE,
+                "{} has no static writer and must be author-SQL writable",
+                row.relation
+            );
+        }
         assert!(
             !row.mechanisms.is_empty(),
             "{} has no mechanism",

@@ -24,18 +24,8 @@ path = "tests/impact_report_live.rs"
 required-features = ["ops"]
 
 [[test]]
-name = "publish_gate_live"
-path = "tests/publish_gate_live.rs"
-required-features = ["ops"]
-
-[[test]]
 name = "protected_relations_live"
 path = "tests/protected_relations_live.rs"
-required-features = ["ops"]
-
-[[test]]
-name = "suite_promote_live"
-path = "tests/suite_promote_live.rs"
 required-features = ["ops"]
 
 [dependencies]
@@ -45,7 +35,6 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "io-util", 
 tokio-postgres = { workspace = true, features = ["with-chrono-0_4"] }
 serde_json = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
-sha2 = { workspace = true }
 chrono = { workspace = true, features = ["clock", "std"] }
 hex = { workspace = true }
 ring = { workspace = true }
@@ -81,6 +70,6 @@ wamn-platform-identity = { workspace = true }
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 wamn-run-state = { workspace = true, optional = true }
 wamn-scenario-catalog = { workspace = true }
-# 11.8 ops-only impact-report and copy gate: the PURE schema-change impact
-# analysis (entities → flows via registration + node config → suites →
-# generated-API). This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.
+# 11.8 ops-only impact-report: the PURE schema-change impact analysis
+# (entities → flows via registration + node config → generated API).
+# This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

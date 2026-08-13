@@ -1,8 +1,7 @@
-//! Persistence statements for the internal draft-to-suite application path.
+//! Persistence statements for the internal flow-draft application path.
 //!
 //! Draft document and validated-artifact semantics remain owned by
-//! `wamn-catalog`; this module owns only the typed application-store boundary
-//! beside the stored suites and reports it executes.
+//! `wamn-catalog`; this module owns only the typed application-store boundary.
 
 /// Insert the first revision of one mutable flow draft.
 ///
@@ -183,81 +182,6 @@ pub fn revoke_draft_safe_generation_sql() -> &'static str {
         AND generation = $4 AND revoked_at IS NULL"
 }
 
-/// Reserve one deterministic report identity before the first case admission.
-///
-/// Params: tenant, report id, execution id, flow id, suite flow version,
-/// suite id, command JSON/hash, lineage JSON/hash.
-pub fn insert_authoring_report_reservation_sql() -> &'static str {
-    "INSERT INTO authoring_report_reservations \
-       (tenant_id, report_id, execution_id, flow_id, suite_flow_version, suite_id, \
-        command_json, command_hash, lineage_json, lineage_hash) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, $8, $9::text::jsonb, $10) \
-     ON CONFLICT DO NOTHING \
-     RETURNING state"
-}
-
-/// Read the exact reservation for idempotence and pending lookup.
-pub fn select_authoring_report_reservation_sql() -> &'static str {
-    "SELECT execution_id, flow_id, suite_flow_version, suite_id, command_json::text, \
-            command_hash, lineage_json::text, lineage_hash, state, created_at, finalized_at \
-       FROM authoring_report_reservations \
-      WHERE tenant_id = $1 AND report_id = $2"
-}
-
-/// Serialize finalizers for one deterministic reservation.
-pub fn lock_authoring_report_reservation_state_sql() -> &'static str {
-    "SELECT state FROM authoring_report_reservations \
-      WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE"
-}
-
-/// Insert one immutable observed case fact while its reservation is pending.
-///
-/// Params: tenant, report id, canonical ordinal, case id, run id, passed,
-/// status, fail kind, fail node, outcome JSON.
-pub fn insert_authoring_suite_case_fact_sql() -> &'static str {
-    "INSERT INTO authoring_suite_case_facts \
-       (tenant_id, report_id, ordinal, case_id, run_id, passed, status, fail_kind, \
-        fail_node, outcome) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text::jsonb) \
-     ON CONFLICT DO NOTHING \
-     RETURNING ordinal"
-}
-
-/// Read immutable case facts in canonical command order.
-pub fn select_authoring_suite_case_facts_sql() -> &'static str {
-    "SELECT ordinal, case_id, run_id, passed, status, fail_kind, fail_node, outcome::text \
-       FROM authoring_suite_case_facts \
-      WHERE tenant_id = $1 AND report_id = $2 \
-      ORDER BY ordinal"
-}
-
-/// Insert the immutable suite-level report summary from complete facts or an
-/// explicitly refused contiguous prefix.
-///
-/// Params: tenant, report id, execution id, flow id, suite flow version,
-/// suite id, passed, lineage JSON/hash, edit-to-run milliseconds, refusal JSON.
-pub fn insert_authoring_suite_report_sql() -> &'static str {
-    "INSERT INTO authoring_suite_reports \
-       (tenant_id, report_id, execution_id, flow_id, suite_flow_version, suite_id, \
-        passed, lineage_json, lineage_hash, edit_to_run_ms, refusal) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text::jsonb, $9, $10, $11::text::jsonb)"
-}
-
-/// Finalize exactly one pending reservation after its immutable summary exists.
-pub fn finalize_authoring_report_reservation_sql() -> &'static str {
-    "UPDATE authoring_report_reservations \
-        SET state = 'finalized', finalized_at = clock_timestamp() \
-      WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'"
-}
-
-/// Read one immutable report summary by tenant and report identity.
-pub fn select_authoring_suite_report_sql() -> &'static str {
-    "SELECT execution_id, flow_id, suite_flow_version, suite_id, passed, lineage_json::text, \
-            edit_to_run_ms, refusal::text \
-       FROM authoring_suite_reports \
-      WHERE tenant_id = $1 AND report_id = $2"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,34 +307,5 @@ mod tests {
         assert!(sql.contains("granted_at + interval '1 microsecond'"));
         assert!(sql.contains("revoked_at + interval '1 microsecond'"));
         assert!(sql.contains("SET revoked_at = NULL"));
-    }
-
-    #[test]
-    fn report_query_is_read_only_and_tenant_scoped() {
-        for sql in [
-            select_authoring_suite_report_sql(),
-            select_authoring_suite_case_facts_sql(),
-            select_authoring_report_reservation_sql(),
-        ] {
-            assert!(sql.starts_with("SELECT"));
-            assert!(sql.contains("tenant_id = $1"));
-            assert!(sql.contains("report_id = $2"));
-            assert!(!sql.contains("UPDATE"));
-            assert!(!sql.contains("DELETE"));
-        }
-    }
-
-    #[test]
-    fn report_finalization_serializes_on_the_pending_reservation() {
-        let lock = lock_authoring_report_reservation_state_sql();
-        assert!(lock.contains("tenant_id = $1"));
-        assert!(lock.contains("report_id = $2"));
-        assert!(lock.ends_with("FOR UPDATE"));
-
-        let finalization = finalize_authoring_report_reservation_sql();
-        assert!(finalization.contains("state = 'pending'"));
-        assert!(finalization.contains("state = 'finalized'"));
-        assert!(insert_authoring_report_reservation_sql().contains("ON CONFLICT DO NOTHING"));
-        assert!(insert_authoring_suite_case_fact_sql().contains("ON CONFLICT DO NOTHING"));
     }
 }

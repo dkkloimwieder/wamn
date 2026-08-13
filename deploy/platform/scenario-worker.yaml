@@ -1,7 +1,6 @@
 # wamn-ctc8.8 management authoring surface — the authenticated HTTP boundary in
-# front of the canonical authoring commands. Runs the SAME wamn-scenario-worker
-# binary the suiteexec gate runs, under its `serve` subcommand; the bare
-# invocation (one stored suite, then exit) is unchanged.
+# front of the canonical authoring commands. The worker exposes only its
+# authenticated `serve` subcommand.
 #
 #   kubectl -n wamn-system apply -f deploy/platform/scenario-worker.yaml
 #   kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=120s

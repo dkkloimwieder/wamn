@@ -4,17 +4,16 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url of a throwaway Postgres (recipe:
 //! docs/archive/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
-//! machinery against the REAL storage SQL (deploy/sql/{catalog-schema,flows,
-//! flow-tests}.sql):
+//! machinery against the REAL storage SQL (deploy/sql/{catalog-schema,flows}.sql):
 //!
 //!   1. materialize a v1 catalog with `E_touched` (`orders`) + `E_untouched`
 //!      (`audit`) through `migrate-catalog`;
 //!   2. seed, on the SAME data schema, a dependent flow per entity — an event
 //!      registration (id-keyed) + an active graph whose postgres node names the
-//!      entity BY NAME (config-keyed) + a version-bound test suite;
+//!      entity BY NAME (config-keyed);
 //!   3. stage v2 = destructive on `E_touched` (drop a column) + additive on
 //!      `E_untouched` (add a column), and assert `wamn_schema_control::impact::analyze` (through
-//!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/suite/api
+//!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/api
 //!      resource on the destructive entity — never `E_untouched`'s (the untouched
 //!      partition) — while retaining the destructive classification;
 //!
@@ -24,7 +23,7 @@ use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::impact_report::{compile_plan, gather_impact};
 use wamn_ctl::migrate_catalog;
-use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_flow_tests, ensure_runstate};
+use wamn_ctl::publish_catalog::{ensure_flow_registry, ensure_runstate};
 use wamn_schema_control::BareSchemaName;
 
 const DATA_SCHEMA: &str = "wvb_data";
@@ -109,8 +108,8 @@ fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::Migra
 }
 
 /// Reset schemas + role, apply the catalog metadata schema, and provision the
-/// run-plane (flows + test_suites) into the DATA schema via the SAME `ensure_*`
-/// production path (publish-catalog --runstate uses it).
+/// run-plane and flows into the data schema through the production `ensure_*`
+/// path used by `publish-catalog --runstate`.
 async fn reset(su: &Client) {
     let schema = BareSchemaName::new(DATA_SCHEMA).expect("live-test schema is valid");
     let catalog_schema = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -139,16 +138,13 @@ async fn reset(su: &Client) {
     su.batch_execute(catalog_schema)
         .await
         .expect("apply deploy/sql/catalog-schema.sql");
-    // Provision flows + test_suites into the DATA schema (ensure_runstate creates it).
+    // Provision flows into the data schema (ensure_runstate creates it).
     ensure_runstate(su, &schema)
         .await
         .expect("ensure run-state");
     ensure_flow_registry(su, &schema)
         .await
         .expect("ensure flows");
-    ensure_flow_tests(su, &schema)
-        .await
-        .expect("ensure flow-tests");
 }
 
 async fn insert_reg(su: &Client, reg_id: &str, flow_id: &str, entity_id: &str) {
@@ -172,18 +168,6 @@ async fn insert_flow(su: &Client, flow_id: &str, entity_name: &str) {
     )
     .await
     .expect("seed flow row");
-}
-
-async fn insert_suite(su: &Client, flow_id: &str, suite_id: &str) {
-    su.execute(
-        &format!(
-            "INSERT INTO {DATA_SCHEMA}.test_suites (tenant_id, flow_id, flow_version, suite_id, name) \
-             VALUES ($1, $2, 1, $3, $3)"
-        ),
-        &[&TENANT, &flow_id, &suite_id],
-    )
-    .await
-    .expect("seed suite row");
 }
 
 async fn column_present(su: &Client, table: &str, column: &str) -> bool {
@@ -214,14 +198,12 @@ async fn impact_report_names_the_affected_change() {
     assert!(column_present(&su, "orders", "note").await);
 
     // Seed a dependent flow per entity: registration (id-keyed) + active graph
-    // (name-keyed) + a version-bound suite. flow-t depends on E_touched; flow-u on
+    // (name-keyed). flow-t depends on E_touched; flow-u on
     // E_untouched (the decoy that must never be attributed to E_touched).
     insert_reg(&su, "reg-touched", "flow-t", "touched").await;
     insert_flow(&su, "flow-t", "orders").await;
-    insert_suite(&su, "flow-t", "smoke").await;
     insert_reg(&su, "reg-untouched", "flow-u", "untouched").await;
     insert_flow(&su, "flow-u", "audit").await;
-    insert_suite(&su, "flow-u", "decoy").await;
 
     // --- the typed analysis, through the shell's live reads -----------------
     let v1 = wamn_schema_model::Catalog::from_json(&v1_json()).unwrap();
@@ -252,9 +234,6 @@ async fn impact_report_names_the_affected_change() {
     assert_eq!(touched.flows_via_node_config.len(), 1);
     assert_eq!(touched.flows_via_node_config[0].flow_id, "flow-t");
     assert_eq!(touched.flows_via_node_config[0].referenced_name, "orders");
-    // suite edge: EXACTLY `smoke` — never `decoy`.
-    assert_eq!(touched.suites.len(), 1);
-    assert_eq!(touched.suites[0].suite_id, "smoke");
     // api edge: the entity's own resource.
     assert!(
         touched
@@ -267,7 +246,7 @@ async fn impact_report_names_the_affected_change() {
         .split("entity \"audit\"")
         .next()
         .expect("report has a touched block before the audit block");
-    for decoy in ["flow-u", "reg-untouched", "decoy"] {
+    for decoy in ["flow-u", "reg-untouched"] {
         assert!(
             !touched_block.contains(decoy),
             "the untouched entity's {decoy:?} must not appear under E_touched:\n{touched_block}"
@@ -282,7 +261,6 @@ async fn impact_report_names_the_affected_change() {
         .expect("untouched entity is in the report");
     assert!(!audit.destructive, "the added-column entity is additive");
     assert_eq!(audit.flows_via_registration[0].flow_id, "flow-u");
-    assert_eq!(audit.suites[0].suite_id, "decoy");
 
     // Operations callers retain both facts without a default-command
     // acknowledgement carrier.

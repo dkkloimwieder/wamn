@@ -986,25 +986,6 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "catalog.publish_gate_audit",
-      "plane": "project",
-      "semantic_owner": "ctl-copy",
-      "migration_owners": [
-        "ctl-publish"
-      ],
-      "schema_source": "deploy/sql/catalog-schema.sql",
-      "writers": [
-        "schema-control",
-        "ctl-copy"
-      ],
-      "readers": [
-        "schema-control",
-        "ctl-copy"
-      ],
-      "compatibility_horizon": "catalog-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
       "id": "catalog.schema_migrations",
       "plane": "project",
       "semantic_owner": "schema-control",
@@ -1292,53 +1273,12 @@
       ],
       "schema_source": "deploy/sql/flows.sql",
       "writers": [
-        "scenario-worker"
       ],
       "readers": [
         "flowrunner",
         "dispatcher"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.test_suites",
-      "plane": "project",
-      "semantic_owner": "scenario-catalog",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flow-tests.sql",
-      "writers": [
-        "scenario-catalog",
-        "ctl-copy"
-      ],
-      "readers": [
-        "scenario-catalog",
-        "ctl-copy",
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.test_cases",
-      "plane": "project",
-      "semantic_owner": "scenario-catalog",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flow-tests.sql",
-      "writers": [
-        "scenario-catalog",
-        "ctl-copy"
-      ],
-      "readers": [
-        "scenario-catalog",
-        "ctl-copy",
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
@@ -1410,63 +1350,6 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "wamn_run.authoring_report_reservations",
-      "plane": "project",
-      "semantic_owner": "scenario-catalog",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flow-tests.sql",
-      "writers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.authoring_suite_case_facts",
-      "plane": "project",
-      "semantic_owner": "scenario-catalog",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flow-tests.sql",
-      "writers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.authoring_suite_reports",
-      "plane": "project",
-      "semantic_owner": "scenario-catalog",
-      "migration_owners": [
-        "schema-control"
-      ],
-      "schema_source": "deploy/sql/flow-tests.sql",
-      "writers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "readers": [
-        "scenario-catalog",
-        "scenario-worker"
-      ],
-      "compatibility_horizon": "scenario-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
       "id": "wamn_run.runs",
       "plane": "project",
       "semantic_owner": "run-state",
@@ -1477,7 +1360,6 @@
       "writers": [
         "run-state",
         "dispatcher",
-        "scenario-worker",
         "flowrunner",
         "materializer"
       ],
@@ -1648,7 +1530,6 @@
         "run-state",
         "dispatcher",
         "scenario-runtime",
-        "scenario-worker",
         "flowrunner",
         "materializer"
       ],
@@ -1656,7 +1537,6 @@
         "run-state",
         "dispatcher",
         "scenario-runtime",
-        "scenario-worker",
         "flowrunner"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",

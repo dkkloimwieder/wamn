@@ -210,8 +210,7 @@ CREATE TABLE registry.projects (
 --
 -- Control-plane metadata only (invariant 3): this records the RULE, never the
 -- EVIDENCE. Which suites actually passed lives in each project-env's own
--- database (`wamn_run.authoring_suite_reports`) and the gate's verdicts land in
--- that project's `catalog.publish_gate_audit` — the T1 registry never
+-- database, and publication evidence remains project-local — the T1 registry never
 -- accumulates per-deploy history.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.project_publish_policies (

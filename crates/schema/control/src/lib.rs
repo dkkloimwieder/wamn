@@ -71,8 +71,6 @@ mod model;
 pub mod ops;
 mod orphan;
 mod publication;
-#[cfg(feature = "ops")]
-pub mod publish_gate;
 mod replica_identity;
 mod run_plane;
 pub mod sql;
@@ -86,10 +84,7 @@ pub use exposure::{
 pub use model::{
     ApplyPlan, DestructiveMigration, Env, MigrationError, MigrationRequest, SqlStatement, Value,
 };
-pub use orphan::{
-    OrphaningPublish, OrphaningSuiteCopy, RegistrationRef, SuiteRef, check_registration_orphans,
-    check_suite_orphans,
-};
+pub use orphan::{OrphaningPublish, RegistrationRef, check_registration_orphans};
 pub use publication::{
     PublicationError, PublicationGuard, ReleaseFlow, canonical_release_flows, guard_publication,
 };

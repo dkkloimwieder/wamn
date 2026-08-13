@@ -82,7 +82,7 @@ load_mutation() {
       ;;
     enable-ops-by-default)
       TARGET="services/ctl/Cargo.toml"
-      EXPECTED_SHA="7fd00fdbc3e0607af1d7af589149f090ea70e25b91ea33e81c12460b8128227c"
+      EXPECTED_SHA="81cdf5954c45936d665cbb305aaa86429468b04703e82cd49d5dbb470df6cb35"
       NEEDLE='default = []'
       REPLACEMENT='default = ["ops"]'
       GATE="mvp_dependency_tree_does_not_enable_ops"
@@ -90,7 +90,7 @@ load_mutation() {
       ;;
     skip-copy-confirmation-read)
       TARGET="services/ctl/src/copy_project_env.rs"
-      EXPECTED_SHA="a839a6ce764118a290bdc9d1dbd6b166f437047408e074d249710b0f384697e4"
+      EXPECTED_SHA="f1ba7686186117809bd77855fe2fc9b08b4a0c59e2186b7ff92c32f8c88c128e"
       NEEDLE='wamn_control_provision::state::select_migration_confirmation_sql()'
       REPLACEMENT='"SELECT NULL::int, '\''backup-checkpoint-attested'\''::text, now(), session_user"'
       GATE="copy_authorization_wiring"
@@ -98,7 +98,7 @@ load_mutation() {
       ;;
     drop-copy-authorization-consumption)
       TARGET="services/ctl/src/copy_project_env.rs"
-      EXPECTED_SHA="a839a6ce764118a290bdc9d1dbd6b166f437047408e074d249710b0f384697e4"
+      EXPECTED_SHA="f1ba7686186117809bd77855fe2fc9b08b4a0c59e2186b7ff92c32f8c88c128e"
       NEEDLE='            authorizations.remove(&cat.catalog_id),'
       REPLACEMENT='            None,'
       GATE="copy_authorization_wiring"

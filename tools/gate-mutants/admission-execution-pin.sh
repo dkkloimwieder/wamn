@@ -42,7 +42,7 @@ load_mutation() {
       ;;
     missing-root-plan-admits-run)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
+      EXPECTED_SHA="642d05b3b6007cba76994ebab90a55c739d1864be7aa1e87891daecac8871e2c"
       NEEDLE="      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \\"
       REPLACEMENT="      WHEN rp.execution_bundle_hash IS NULL THEN 'ready' \\"
       GATE="admission::tests::admission_derives_root_bundle_from_authoritative_member"
@@ -50,7 +50,7 @@ load_mutation() {
       ;;
     runs-execution-bundle-fk-removed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='    CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)'
@@ -61,7 +61,7 @@ load_mutation() {
       ;;
     run-admission-pin-update-allowed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash'
       REPLACEMENT='CREATE TRIGGER runs_admission_pins_immutable
@@ -80,7 +80,7 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment'
       ;;
     legacy-plan-pin-fabricated-from-artifact)
       TARGET="services/ctl/src/publish_catalog.rs"
-      EXPECTED_SHA="ccb01cfba2b3f341b484de5ac88692b64fca453e1f8a267c83f463070b3206ab"
+      EXPECTED_SHA="4a6509ad7f39d94959a9e7d578d638e532ac761432b8280fc8a5e699cf3b27ce"
       NEEDLE='                prepared.execution_bundle_hash.as_ref().ok_or_else(|| {'
       REPLACEMENT='                Some(prepared.artifact.identity().artifact_hash().as_str()).ok_or_else(|| {'
       GATE="publish_catalog::tests::legacy_publication_without_validated_plan_returns_missing_root_plan"

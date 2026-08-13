@@ -1,22 +1,17 @@
 //! The operations-only `impact-report` subcommand (11.8): the read-only **effect shell** for
 //! `wamn-schema-control` — it reads the current applied catalog + a `--target`, compiles
 //! the migration plan (the same wamn-schema-compiler compiler `migrate-catalog` uses), reads
-//! the dependency edges (event registrations, active flow graphs, test suites)
+//! the dependency edges (event registrations and active flow graphs)
 //! across ALL tenants on a superuser connection, and prints the typed
 //! [`wamn_schema_control::impact::ImpactReport`]. It **mutates nothing** — the schema-designer
 //! surface for "what breaks if I apply this".
 //!
-//! The heavy lifting ([`gather_impact`]) is shared with the operations-only
-//! `copy-project-env` publish gate. The pure decision is
-//! `wamn_schema_control::impact::analyze`; this shell only holds the connection
-//! (SR6).
+//! The pure decision is `wamn_schema_control::impact::analyze`; this shell only
+//! holds the connection (SR6).
 //!
-//! **Tenant scoping.** The registration/flow/suite reads are CROSS-TENANT (the
-//! superuser bypasses RLS): a shared entity's change hits every tenant's flows and
-//! suites, so the report must see them all — the per-edge lines carry their
-//! tenant. Suite EXECUTION is out of scope (parked wamn-0lfu); the report
-//! enumerates the `(tenant, flow_id, flow_version, suite_id)` tuples that WOULD
-//! run.
+//! **Tenant scoping.** The registration and flow reads are CROSS-TENANT (the
+//! superuser bypasses RLS): a shared entity's change hits every tenant's flows,
+//! so the report must see them all — the per-edge lines carry their tenant.
 
 use std::path::PathBuf;
 
@@ -27,7 +22,7 @@ use tokio_postgres::NoTls;
 use wamn_schema_control::Env;
 use wamn_schema_control::MigrationPlan;
 use wamn_schema_control::impact::{
-    FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, SuiteEdge, analyze,
+    FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, analyze,
 };
 use wamn_schema_model::Catalog;
 
@@ -51,9 +46,8 @@ pub struct ImpactReportArgs {
     #[arg(long, default_value = "dev")]
     pub environment: String,
 
-    /// The schema holding the data tables AND the flow registry / test suites
-    /// (`<schema>.flows`, `<schema>.test_suites`; the `catalog` metadata schema is
-    /// fixed). This is the schema `publish-catalog --runstate` provisions them into.
+    /// The schema holding the data tables and flow registry (`<schema>.flows`;
+    /// the `catalog` metadata schema is fixed).
     #[arg(long, default_value = "public")]
     pub schema: String,
 
@@ -103,7 +97,7 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
         .any(|entity| entity.destructive && entity.has_downstream_impact())
     {
         println!(
-            "NOTE: this destructive change has dependent flows or suites; use this report \
+            "NOTE: this destructive change has dependent flows; use this report \
              when reprovisioning the environment."
         );
     }
@@ -122,8 +116,7 @@ pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Resu
 }
 
 /// Read the dependency edges for `plan` and fold them through
-/// `wamn_schema_control::impact::analyze`. Shared by `impact-report` and the
-/// `copy-project-env` publish gate.
+/// `wamn_schema_control::impact::analyze`.
 ///
 /// Cross-tenant, superuser (RLS bypassed). Each read is `to_regclass`-probed so a
 /// project that is not registration- or run-state-provisioned yet simply
@@ -179,33 +172,12 @@ pub async fn gather_impact(
         }
     }
 
-    // Edge 4: test suites (of the flows a change touches; the pure decision filters).
-    let mut suites = Vec::new();
-    if table_present(client, &format!("{schema}.test_suites")).await? {
-        let rows = client
-            .query(
-                &wamn_schema_control::sql::select_all_suites_sql(schema),
-                &[],
-            )
-            .await
-            .context("read test suites for impact analysis")?;
-        for row in &rows {
-            suites.push(SuiteEdge {
-                tenant: row.get(0),
-                flow_id: row.get(1),
-                flow_version: row.get(2),
-                suite_id: row.get(3),
-            });
-        }
-    }
-
     Ok(analyze(&ImpactInput {
         plan,
         current,
         target,
         registrations: &registrations,
         flows: &flows,
-        suites: &suites,
     }))
 }
 
