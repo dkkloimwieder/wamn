@@ -27,10 +27,10 @@
 --
 -- SCOPE (what 5.7 does NOT own, reserved as nullable seams below): the durable
 -- run QUEUE + leases + doorbell (5.14) co-transact with these INSERTs but own
--- their own table; the node-level I/O CAPTURE policy (9.6 — scrub/truncate/toggle)
--- fills `input_json`/`output_json`/`preview_head`/`redacted`; the content-
--- addressed payload BYTE store (5.10) is pointed at by `input_ref`/`output_ref`
--- + the `preview_head`/`payload_size`/`payload_hash` preview.
+-- their own table; the run-level I/O CAPTURE policy (9.6) is fixed at admission
+-- and full capture fills scrubbed `input_json`/`output_json` plus the output
+-- size and optional hash; the content-addressed payload BYTE store (5.10) is
+-- pointed at by `input_ref`/`output_ref`.
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
 REVOKE ALL PRIVILEGES ON SCHEMA wamn_run FROM PUBLIC, wamn_effect_writer;
@@ -143,7 +143,8 @@ BEGIN
     IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
+       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -197,6 +198,8 @@ CREATE TABLE wamn_run.runs (
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
+    capture_mode    text NOT NULL DEFAULT 'off'
+        CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
     input_json      jsonb,
     result_json     jsonb,
     state_json      jsonb,
@@ -262,6 +265,9 @@ CREATE TABLE wamn_run.runs (
     CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
     CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
            OR response_deadline_at <= run_deadline_at),
+    CONSTRAINT runs_capture_mode_source_check CHECK (
+      capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
+    ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
@@ -305,10 +311,38 @@ BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app;
+-- The guest-visible application role may drive the existing run-state columns,
+-- but it cannot author or mutate the admission-owned capture carrier. Off-path
+-- admissions omit that column and take its fail-closed database default.
+GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
+GRANT INSERT (
+    tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
+    environment, execution_bundle_hash, attachment_id, registration_id,
+    event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
+    input_json, result_json, state_json, invocation_context,
+    admission_context_version, platform_revision, idempotency_key, replay_of,
+    root_run_id, parent_run_id, parent_node_id, parent_occurrence, invoke_depth,
+    invoke_root_run_id, waiting_child_run_id, waiting_child_occurrence,
+    wait_generation, caller_outcome_kind, caller_outcome_json,
+    caller_http_status, caller_release_node_id, caller_outcome_hash,
+    caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
+    fail_kind, fail_node, fail_reason, created_at, updated_at
+), UPDATE (
+    tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
+    environment, execution_bundle_hash, attachment_id, registration_id,
+    event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
+    input_json, result_json, state_json, invocation_context,
+    admission_context_version, platform_revision, idempotency_key, replay_of,
+    root_run_id, parent_run_id, parent_node_id, parent_occurrence, invoke_depth,
+    invoke_root_run_id, waiting_child_run_id, waiting_child_occurrence,
+    wait_generation, caller_outcome_kind, caller_outcome_json,
+    caller_http_status, caller_release_node_id, caller_outcome_hash,
+    caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
+    fail_kind, fail_node, fail_reason, created_at, updated_at
+) ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
 
 -- ---------------------------------------------------------------------------
@@ -537,9 +571,10 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_a
 -- (status success/error) in `seq` order, folding each as an emission on
 -- `output_port` carrying `output_json`; a `started` row is an outstanding node
 -- the driver re-dispatches. `input_json` is what a partial
--- re-run seeds the node with. The `*_ref` / `preview_*` / `capture_mode` /
--- `redacted` columns are RESERVED nullable seams for 5.10 (payload byte store)
--- and 9.6 (capture policy) — 5.7 leaves them null and stores I/O inline.
+-- re-run seeds the node with. The `*_ref` columns are RESERVED nullable seams
+-- for 5.10 (payload byte store). Capture policy belongs to the run admission
+-- row and is not duplicated per node; full capture stores only scrubbed input,
+-- output, output size, and the optional output hash.
 -- ---------------------------------------------------------------------------
 CREATE TABLE wamn_run.node_runs (
     tenant_id     text NOT NULL CHECK (tenant_id <> ''),
@@ -562,11 +597,8 @@ CREATE TABLE wamn_run.node_runs (
     -- Reserved seams (5.10 payload byte store / 9.6 capture policy):
     input_ref     text,
     output_ref    text,
-    preview_head  text,
-    payload_size  bigint,
+    output_size   bigint,
     payload_hash  text,
-    capture_mode  text,
-    redacted      boolean NOT NULL DEFAULT false,
     started_at    timestamptz NOT NULL DEFAULT now(),
     ended_at      timestamptz,
     CONSTRAINT node_runs_frame_check CHECK (frame_id >= 0),

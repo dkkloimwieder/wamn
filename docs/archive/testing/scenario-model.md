@@ -186,13 +186,14 @@ The pinned case (minimal-correct v0 shape):
 
 **Secret redaction at pin time.** Every payload that becomes part of the case (the
 trigger input, the pinned node output) is passed through
-`wamn_run_state::capture::scrub` first, so a pinned case NEVER contains a secret
-even from a `full`-capture run (where the stored `node_runs` payloads are
-faithful). Scrub is idempotent — a `scrubbed` row is safe to re-scrub.
+`wamn_run_state::capture::scrub` first, so a pinned case NEVER contains a known
+secret. `full` capture already stores scrub-redacted node payloads; the pin path
+re-scrubs defensively, and scrub is idempotent.
 
-**Capture-mode policy.** `off`/`preview` → the terminal node has no stored output
-→ `PinError::NotCaptured` (nothing written); `scrubbed`/`full` → pin
-(re-scrubbed).
+**Capture-mode policy.** `off`, or a `full` output omitted because it exceeded the
+write ceiling, leaves no replayable terminal output and yields
+`PinError::NotCaptured` (nothing written). A stored `full` output can be pinned
+and is re-scrubbed.
 
 ### Normalization (volatile fields)
 

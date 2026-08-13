@@ -1091,9 +1091,7 @@ mod tests {
 
     use wamn_node_manifest::ConnectionTypeDescriptor;
 
-    use crate::types::{
-        Capture, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
-    };
+    use crate::types::{Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy};
 
     use super::ResolvedInterfaces;
 
@@ -1148,7 +1146,6 @@ mod tests {
             allowed_hosts: vec![],
             partition_policy: PartitionPolicy::default(),
             ordering: Ordering::default(),
-            capture: Capture::default(),
         }
     }
 
@@ -1557,6 +1554,16 @@ mod tests {
             1,
         );
         assert!(Flow::from_json(&unknown_flow_field).is_err());
+
+        let retired_capture = request_flow().to_json().replacen(
+            "\"version\": 1,",
+            "\"version\": 1,\n  \"capture\": {\"mode\": \"full\"},",
+            1,
+        );
+        assert!(
+            Flow::from_json(&retired_capture).is_err(),
+            "capture is selected per draft-run operation, never authored into a flow"
+        );
     }
 
     #[test]

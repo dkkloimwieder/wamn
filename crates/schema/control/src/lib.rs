@@ -107,10 +107,11 @@ pub use run_plane::{
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
     select_effect_writer_role_sql, select_effect_writer_schema_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
-    select_run_plane_helper_functions_sql, select_scenario_author_catalog_lock_privilege_sql,
-    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
-    select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
-    select_schema_indexes_sql, select_schema_triggers_sql, strip_registration_state_sql,
+    select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
+    select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
+    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
+    strip_registration_state_sql,
 };
 
 // Re-exported so a driver can name the registration type the reconciler folds

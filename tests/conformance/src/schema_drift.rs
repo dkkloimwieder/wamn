@@ -90,7 +90,8 @@ fn runs_stand_in() -> String {
         status text NOT NULL DEFAULT 'running' \
           CHECK (status IN ('dispatched', 'running', 'completed', 'failed', \
                             'infrastructure-failure', 'effect-uncertain')), \
-        trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+        trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+        input_json jsonb, result_json jsonb, state_json jsonb, \
         invocation_context jsonb NOT NULL DEFAULT '{}'::jsonb, \
         admission_context_version text NOT NULL DEFAULT '0.1', \
         platform_revision text NOT NULL DEFAULT 'legacy', \
@@ -105,6 +106,7 @@ fn runs_stand_in() -> String {
         fail_kind text, fail_node text, fail_reason text, \
         created_at timestamptz NOT NULL DEFAULT now(), \
         updated_at timestamptz NOT NULL DEFAULT now(), \
+        CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
         PRIMARY KEY (tenant_id, run_id));"
         .to_string()
 }

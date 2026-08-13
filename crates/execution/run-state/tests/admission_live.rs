@@ -271,6 +271,8 @@ fn admission_live() {
                ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions WHERE run_id='http-1') = 1; \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='event-1') IS NULL; \
                ASSERT (SELECT stream_seq FROM wamn_run.run_queue WHERE run_id='event-1') = 41; \
+               ASSERT (SELECT capture_mode FROM wamn_run.runs WHERE run_id='http-1') = 'off'; \
+               ASSERT (SELECT capture_mode FROM wamn_run.runs WHERE run_id='event-1') = 'off'; \
                ASSERT (SELECT invocation_context->'source'->>'registration-hash' FROM wamn_run.runs \
                         WHERE run_id='event-1') = '{}'; \
                ASSERT (SELECT invocation_context->>'version' FROM wamn_run.runs \

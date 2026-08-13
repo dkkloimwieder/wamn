@@ -252,6 +252,7 @@ async fn run_plane_reconcile_live() {
     v1_era_drifted_leg(&su, &url).await;
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
+    capture_mode_additive_leg(&su, &url).await;
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
@@ -1842,6 +1843,201 @@ async fn current_noop_leg(su: &Client) {
         apply.is_noop(),
         "current schema apply is a no-op: {:#?}",
         apply.actions
+    );
+}
+
+async fn capture_mode_additive_leg(su: &Client, url: &str) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply run-state");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
+        .await
+        .expect("apply flows");
+    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+        .await
+        .expect("apply flow-tests");
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
+        .await
+        .expect("apply run-queue");
+    seed_run_pin_parents(su, "t1", "capture", 1, "dev").await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) \
+         VALUES ('t1','legacy-off','f',1,'capture',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','completed'); \
+         INSERT INTO {SCHEMA}.node_runs \
+           (tenant_id,run_id,current_plan_hash,local_node_id,seq,status,output_size) \
+         VALUES ('t1','legacy-off','{EMPTY_EXECUTION_BUNDLE_HASH}','legacy-node',0,'success',321); \
+         DROP TRIGGER runs_admission_pins_immutable ON {SCHEMA}.runs; \
+         ALTER TABLE {SCHEMA}.runs \
+           DROP CONSTRAINT runs_capture_mode_source_check, \
+           DROP COLUMN capture_mode; \
+         ALTER TABLE {SCHEMA}.node_runs RENAME COLUMN output_size TO payload_size; \
+         ALTER TABLE {SCHEMA}.node_runs \
+           ADD COLUMN preview_head text, \
+           ADD COLUMN capture_mode text, \
+           ADD COLUMN redacted boolean NOT NULL DEFAULT false;"
+    ))
+    .await
+    .expect("build populated pre-capture carrier schema");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("capture carrier reconcile applies to populated history");
+    assert!(plan.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::AddColumn && action.target == "runs.capture_mode"
+    }));
+    assert!(
+        plan.actions
+            .iter()
+            .any(|action| { action.kind == RunPlaneActionKind::CaptureProjectionCutover })
+    );
+    let mode: String = su
+        .query_one(
+            &format!("SELECT capture_mode FROM {SCHEMA}.runs WHERE run_id='legacy-off'"),
+            &[],
+        )
+        .await
+        .expect("read legacy defaulted mode")
+        .get(0);
+    assert_eq!(mode, "off");
+    for column in ["preview_head", "capture_mode", "redacted"] {
+        assert!(
+            !column_exists(su, "node_runs", column).await,
+            "retired node capture column {column} removed"
+        );
+    }
+    assert!(column_exists(su, "node_runs", "output_size").await);
+    assert!(!column_exists(su, "node_runs", "payload_size").await);
+    let preserved_size: i64 = su
+        .query_one(
+            &format!(
+                "SELECT output_size FROM {SCHEMA}.node_runs \
+                 WHERE run_id='legacy-off' AND local_node_id='legacy-node'"
+            ),
+            &[],
+        )
+        .await
+        .expect("legacy output size was preserved by rename")
+        .get(0);
+    assert_eq!(preserved_size, 321);
+
+    let immutable = su
+        .execute(
+            &format!("UPDATE {SCHEMA}.runs SET capture_mode='full' WHERE run_id='legacy-off'"),
+            &[],
+        )
+        .await
+        .expect_err("post-admission capture mutation refused");
+    assert_db_code(immutable, "55000", "capture mode is admission-immutable");
+    let invalid = su
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                    execution_bundle_hash,status,trigger_source,capture_mode) \
+                 VALUES ('t1','published-full','f',1,'capture',1,'dev', \
+                         '{EMPTY_EXECUTION_BUNDLE_HASH}','completed','http','full')"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("published full capture refused");
+    assert_db_code(invalid, "23514", "only direct draft rows may capture full");
+    su.execute(
+        &format!(
+            "INSERT INTO {SCHEMA}.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                execution_bundle_hash,status,trigger_source,capture_mode) \
+             VALUES ('t1','draft-full','f',1,'capture',1,'dev', \
+                     '{EMPTY_EXECUTION_BUNDLE_HASH}','completed','scenario-draft','full')"
+        ),
+        &[],
+    )
+    .await
+    .expect("canonical direct draft may carry full");
+
+    let app = connect_as(url, "wamn_app", "wamn_app").await;
+    app.batch_execute("SELECT set_config('app.tenant','t1',false)")
+        .await
+        .expect("enter application tenant for capture authority probes");
+    let default_mode: String = app
+        .query_one(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                    execution_bundle_hash,status,trigger_source) \
+                 VALUES ('t1','app-default-off','f',1,'capture',1,'dev', \
+                         '{EMPTY_EXECUTION_BUNDLE_HASH}','dispatched','test') \
+                 RETURNING capture_mode"
+            ),
+            &[],
+        )
+        .await
+        .expect("application admission may omit capture mode and take the safe default")
+        .get(0);
+    assert_eq!(default_mode, "off");
+
+    let explicit_capture = app
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+                    execution_bundle_hash,status,trigger_source,capture_mode) \
+                 VALUES ('t1','app-forged-full','f',1,'capture',1,'dev', \
+                         '{EMPTY_EXECUTION_BUNDLE_HASH}','dispatched','scenario-draft','full')"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("application role cannot name capture mode during admission");
+    assert_db_code(
+        explicit_capture,
+        "42501",
+        "application capture-mode insert refusal",
+    );
+
+    let capture_update = app
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET capture_mode='off' \
+                 WHERE run_id='app-default-off'"
+            ),
+            &[],
+        )
+        .await
+        .expect_err("application role cannot update capture mode after admission");
+    assert_db_code(
+        capture_update,
+        "42501",
+        "application capture-mode update refusal",
+    );
+
+    let ordinary_update = app
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET status='running', updated_at=now() \
+                 WHERE run_id='app-default-off'"
+            ),
+            &[],
+        )
+        .await
+        .expect("application role retains ordinary run-state update authority");
+    assert_eq!(ordinary_update, 1);
+
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("capture carrier second reconcile plans");
+    assert!(
+        again.is_noop(),
+        "capture carrier converged: {:#?}",
+        again.actions
     );
 }
 

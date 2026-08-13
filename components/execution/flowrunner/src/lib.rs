@@ -60,7 +60,7 @@ use wamn_run_state::transitions::{
     TerminalizeResult, complete_attempt_error_sql, complete_attempt_success_sql,
     release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
 };
-use wamn_run_state::{NodeRunRecord, RunRecord, sql as run_sql};
+use wamn_run_state::{CaptureMode, NodeRunRecord, RunRecord, sql as run_sql};
 // The durable-queue claim-path builders (5.14). Scheduling is a separate crate,
 // so the cron/calendar dependency closure never enters this guest (fqg.4).
 // The combined claim/checkpoint/complete statements are the fqg.18 record-stream
@@ -151,14 +151,7 @@ fn raw_sql_enabled_rows(rows: &[Vec<SqlValue>]) -> bool {
     matches!(serde_json::from_str::<Value>(value), Ok(Value::Bool(true)))
 }
 
-/// A boolean column bind (the 9.6 `redacted` flag).
-fn boolean(b: bool) -> SqlValue {
-    SqlValue::Boolean(b)
-}
-
-/// An already-serialized jsonb/text value or SQL NULL — the 9.6 capture columns
-/// (`output_json`/`input_json`/`preview_head`/`payload_hash`) are NULL when
-/// capture is off / preview / oversized.
+/// An already-serialized jsonb/text value or SQL NULL.
 fn opt_text(s: Option<String>) -> SqlValue {
     match s {
         Some(v) => SqlValue::Text(v),
@@ -166,7 +159,7 @@ fn opt_text(s: Option<String>) -> SqlValue {
     }
 }
 
-/// An optional bigint bind (the 9.6 `payload_size` column), NULL when absent.
+/// An optional bigint bind (the 9.6 `output_size` column), NULL when absent.
 fn opt_int64(n: Option<i64>) -> SqlValue {
     match n {
         Some(v) => SqlValue::Int64(v),
@@ -174,31 +167,17 @@ fn opt_int64(n: Option<i64>) -> SqlValue {
     }
 }
 
-/// The 9.6 capture columns for a `node_runs` write, derived from the flow's
-/// [`Flow::capture`] policy over `(output, input)` — the SEVEN trailing binds
-/// `insert_node_run_success_sql` / `insert_node_run_error_sql` share: the two
-/// STORED payloads (`output_json`/`input_json`, NULL under preview/off/oversized)
-/// then preview_head, payload_size, payload_hash, capture_mode, redacted. Returned
-/// with `redacted` as a plain `bool` too, so the error path can scrub its taxonomy
-/// `error_detail` (which can echo the payload) when the stored payloads were
-/// scrubbed.
-fn capture_binds(
-    capture: &wamn_flow::Capture,
-    output: &Value,
-    input: &Value,
-) -> ([SqlValue; 7], bool) {
+/// The four persisted capture facts plus the full-mode scrub decision.
+fn capture_binds(capture: CaptureMode, output: &Value, input: &Value) -> ([SqlValue; 4], bool) {
     let c = wamn_run_state::derive_capture(capture, output, input);
     (
         [
             opt_text(c.output_json),
             opt_text(c.input_json),
-            opt_text(c.preview_head),
-            opt_int64(c.payload_size),
+            opt_int64(c.output_size),
             opt_text(c.payload_hash),
-            text(c.capture_mode),
-            boolean(c.redacted),
         ],
-        c.redacted,
+        capture == CaptureMode::Full,
     )
 }
 
@@ -489,9 +468,9 @@ fn load_completed(run_id: &str) -> Result<Vec<NodeRunRecord>, String> {
             Some(SqlValue::Text(s)) => s.clone(),
             _ => MAIN_PORT.to_string(),
         };
-        // A JSON value round-trips as `Some`; a SQL NULL output_json (9.6 capture
-        // off / preview) is `None`, which reconstruction surfaces as CaptureOff —
-        // distinct from a captured JSON `null` payload (Some(Value::Null)).
+        // A JSON value round-trips as `Some`; a SQL NULL output_json (capture off
+        // or oversized) is `None`, which reconstruction cannot replay — distinct
+        // from a captured JSON `null` payload (Some(Value::Null)).
         let output = match row.get(5) {
             Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Some(
                 serde_json::from_str(s).map_err(|e| format!("node_runs.output_json parse: {e}"))?,
@@ -528,7 +507,7 @@ fn pg_write(run_id: &str, step: i32, payload: &str) -> Result<(), String> {
 /// a replay of the SAME visit (wamn-03m / R24).
 #[expect(
     clippy::too_many_arguments,
-    reason = "the checkpoint row's seven columns plus the 9.6 capture policy"
+    reason = "the checkpoint identity, output facts, capture mode, and context"
 )]
 fn record_node_run(
     run_id: &str,
@@ -538,13 +517,12 @@ fn record_node_run(
     port: &str,
     output: &Value,
     input: &Value,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     context: &Value,
 ) -> Result<(), String> {
-    // 9.6: the flow's capture policy fills the payload + preview/size/hash/mode/
-    // redacted columns before the jsonb choke point (scrub/truncate applied here).
+    // Capture is applied before the jsonb write choke point.
     let (binds, _) = capture_binds(capture, output, input);
-    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let [out_j, in_j, size, hash] = binds;
     let txn = client::begin().map_err(|error| err_name(&error))?;
     txn.execute(
         &run_sql::insert_node_run_success_sql(),
@@ -556,11 +534,8 @@ fn record_node_run(
             text(port),
             out_j,
             in_j,
-            preview,
             size,
             hash,
-            mode,
-            redacted,
         ],
     )
     .map_err(|e| err_name(&e))?;
@@ -871,18 +846,9 @@ fn record_error(
     seq: i32,
     err: &NodeError,
     input: &Value,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
 ) -> Result<(), String> {
-    let (kind, payload, mut detail_json) = error_row_values(err);
-    // 9.6: capture the ERROR payload (the routed emission) under the flow policy.
-    let (binds, redacted) = capture_binds(capture, &payload, input);
-    // When the stored payloads were scrubbed, scrub the taxonomy detail too — it
-    // can echo the payload (message/data), so leaving it raw would leak past the
-    // scrub. Preview/off keep the small taxonomy blob (metadata, not the payload).
-    if redacted {
-        wamn_run_state::capture::scrub(&mut detail_json);
-    }
-    let [out_j, in_j, preview, size, hash, mode, red] = binds;
+    let (kind, [out_j, in_j, detail, size, hash]) = error_capture_binds(capture, err, input);
     client::execute(
         &run_sql::insert_node_run_error_sql(),
         &[
@@ -893,12 +859,9 @@ fn record_error(
             out_j,
             in_j,
             text(kind),
-            jsonb(&detail_json),
-            preview,
+            detail,
             size,
             hash,
-            mode,
-            red,
         ],
     )
     .map_err(|e| err_name(&e))?;
@@ -923,6 +886,28 @@ fn error_row_values(err: &NodeError) -> (&'static str, Value, Value) {
         None => Value::Null,
     };
     (kind, payload, detail_json)
+}
+
+/// Bind an error row under the admitted capture policy.
+///
+/// The typed failure kind is always retained. `full` stores scrubbed payload
+/// facts and taxonomy detail; `off` binds SQL NULL for every payload-bearing
+/// field, including taxonomy detail because it can echo node I/O.
+fn error_capture_binds(
+    capture: CaptureMode,
+    error: &NodeError,
+    input: &Value,
+) -> (&'static str, [SqlValue; 5]) {
+    let (kind, output, mut detail) = error_row_values(error);
+    let (binds, capture_detail) = capture_binds(capture, &output, input);
+    let [output, input, size, hash] = binds;
+    let detail = if capture_detail {
+        wamn_run_state::capture::scrub(&mut detail);
+        jsonb(&detail)
+    } else {
+        SqlValue::Null
+    };
+    (kind, [output, input, detail, size, hash])
 }
 
 /// Record the run's failure verdict (audit parity with poc-webhook-f1).
@@ -1420,7 +1405,7 @@ fn execute(
                     MAIN_PORT,
                     step.payload(),
                     step.payload(),
-                    &flow.capture,
+                    CaptureMode::Off,
                     st.context(),
                 )?;
                 next_seq += 1;
@@ -1444,7 +1429,7 @@ fn execute(
                         next_seq,
                         error,
                         &d.payload,
-                        &flow.capture,
+                        CaptureMode::Off,
                     )?;
                     next_seq += 1;
                     plan.apply(&mut st, &d, outcome, 0)
@@ -1473,7 +1458,7 @@ fn execute(
                             port,
                             payload,
                             &d.payload,
-                            &flow.capture,
+                            CaptureMode::Off,
                             context.as_ref().unwrap_or(&d.context),
                         )?;
                         next_seq += 1;
@@ -1495,7 +1480,7 @@ fn execute(
                             next_seq,
                             err,
                             &d.payload,
-                            &flow.capture,
+                            CaptureMode::Off,
                         )?;
                         next_seq += 1;
                     }
@@ -1672,14 +1657,14 @@ fn checkpoint_child_outcome(
     dispatch: &Dispatch,
     seq: i32,
     outcome: &NodeOutcome,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     ttl_ms: i64,
     owner: &str,
 ) -> Result<(), String> {
     match outcome {
         NodeOutcome::Success { payload, port, .. } => {
             let (binds, _) = capture_binds(capture, payload, &dispatch.payload);
-            let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+            let [out_j, in_j, size, hash] = binds;
             client::execute(
                 &record_success_and_renew_sql(),
                 &[
@@ -1690,11 +1675,8 @@ fn checkpoint_child_outcome(
                     text(port),
                     out_j,
                     in_j,
-                    preview,
                     size,
                     hash,
-                    mode,
-                    redacted,
                     int64(ttl_ms),
                     text(owner),
                 ],
@@ -1702,12 +1684,8 @@ fn checkpoint_child_outcome(
             .map_err(|error| err_name(&error))?;
         }
         NodeOutcome::Error(error) => {
-            let (kind, payload, mut detail) = error_row_values(error);
-            let (binds, redacted) = capture_binds(capture, &payload, &dispatch.payload);
-            if redacted {
-                wamn_run_state::capture::scrub(&mut detail);
-            }
-            let [out_j, in_j, preview, size, hash, mode, red] = binds;
+            let (kind, [out_j, in_j, detail, size, hash]) =
+                error_capture_binds(capture, error, &dispatch.payload);
             client::execute(
                 &record_error_and_renew_sql(),
                 &[
@@ -1718,12 +1696,9 @@ fn checkpoint_child_outcome(
                     out_j,
                     in_j,
                     text(kind),
-                    jsonb(&detail),
-                    preview,
+                    detail,
                     size,
                     hash,
-                    mode,
-                    red,
                     int64(ttl_ms),
                     text(owner),
                 ],
@@ -1773,6 +1748,7 @@ struct ClaimedRun {
     /// dispatched under, the plan-cache probe. `None` only if the column is
     /// somehow unreadable (the flow load then reports it).
     flow_version: Option<u32>,
+    capture_mode: CaptureMode,
     lease_generation: i64,
 }
 
@@ -1807,7 +1783,12 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         Some(SqlValue::Int64(v)) => u32::try_from(*v).ok(),
         _ => None,
     };
-    let lease_generation = match row.get(4) {
+    let capture_mode = match row.get(4) {
+        Some(SqlValue::Text(value)) => CaptureMode::from_sql(value)
+            .ok_or_else(|| format!("unknown runs.capture_mode: {value}"))?,
+        other => return Err(format!("runs.capture_mode shape: {other:?}")),
+    };
+    let lease_generation = match row.get(5) {
         Some(SqlValue::Int64(value)) => *value,
         Some(SqlValue::Int32(value)) => i64::from(*value),
         other => return Err(format!("claim lease_generation shape: {other:?}")),
@@ -1817,6 +1798,7 @@ fn claim_dispatch(owner: &str, ttl_ms: i64) -> Result<Option<ClaimedRun>, String
         flow_id,
         input,
         flow_version,
+        capture_mode,
         lease_generation,
     }))
 }
@@ -1830,14 +1812,14 @@ fn complete_attempt_success(
     dispatch: &Dispatch,
     port: &str,
     output: &Value,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     context: &Value,
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
 ) -> Result<(), String> {
     let (binds, _) = capture_binds(capture, output, &dispatch.payload);
-    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let [out_j, in_j, size, hash] = binds;
     let response = client::query(
         &complete_attempt_success_sql(),
         &[
@@ -1850,11 +1832,8 @@ fn complete_attempt_success(
             text(port),
             out_j,
             in_j,
-            preview,
             size,
             hash,
-            mode,
-            redacted,
             text(context.to_string()),
             int64(ttl_ms),
         ],
@@ -1886,7 +1865,7 @@ fn decode_attempt_completion(rows: &[Vec<SqlValue>]) -> Result<(), String> {
 /// The error-routed twin of [`record_node_run_and_renew`].
 #[expect(
     clippy::too_many_arguments,
-    reason = "the error row's columns + the 9.6 capture policy + the renew pair"
+    reason = "the error row, capture facts, and queue fence form one transition"
 )]
 fn record_error_and_renew(
     run_id: &str,
@@ -1895,17 +1874,12 @@ fn record_error_and_renew(
     _seq: i32,
     err: &NodeError,
     input: &Value,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
 ) -> Result<(), String> {
-    let (kind, payload, mut detail_json) = error_row_values(err);
-    let (binds, redacted) = capture_binds(capture, &payload, input);
-    if redacted {
-        wamn_run_state::capture::scrub(&mut detail_json);
-    }
-    let [out_j, in_j, preview, size, hash, mode, red] = binds;
+    let (kind, [out_j, in_j, detail, size, hash]) = error_capture_binds(capture, err, input);
     let response = client::query(
         &complete_attempt_error_sql(),
         &[
@@ -1918,12 +1892,9 @@ fn record_error_and_renew(
             out_j,
             in_j,
             text(kind),
-            jsonb(&detail_json),
-            preview,
+            detail,
             size,
             hash,
-            mode,
-            red,
             int64(ttl_ms),
         ],
     )
@@ -2156,7 +2127,7 @@ fn complete_respond_and_renew(
     dispatch: &Dispatch,
     port: &str,
     output: &Value,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     context: &Value,
     complete: bool,
     ttl_ms: i64,
@@ -2165,7 +2136,7 @@ fn complete_respond_and_renew(
 ) -> Result<(), String> {
     let txn = client::begin().map_err(|error| err_name(&error))?;
     let (binds, _) = capture_binds(capture, output, &dispatch.payload);
-    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let [out_j, in_j, size, hash] = binds;
     let response = txn
         .query(
             &complete_attempt_success_sql(),
@@ -2179,11 +2150,8 @@ fn complete_respond_and_renew(
                 text(port),
                 out_j,
                 in_j,
-                preview,
                 size,
                 hash,
-                mode,
-                redacted,
                 text(context.to_string()),
                 int64(ttl_ms),
             ],
@@ -2231,18 +2199,14 @@ fn complete_fail_and_renew(
     dispatch: &Dispatch,
     error: &NodeError,
     caller: CallerState,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
 ) -> Result<(), String> {
     let txn = client::begin().map_err(|error| err_name(&error))?;
-    let (kind, output, mut detail) = error_row_values(error);
-    let (binds, redacted) = capture_binds(capture, &output, &dispatch.payload);
-    if redacted {
-        wamn_run_state::capture::scrub(&mut detail);
-    }
-    let [out_j, in_j, preview, size, hash, mode, red] = binds;
+    let (kind, [out_j, in_j, detail, size, hash]) =
+        error_capture_binds(capture, error, &dispatch.payload);
     let response = txn
         .query(
             &complete_attempt_error_sql(),
@@ -2256,12 +2220,9 @@ fn complete_fail_and_renew(
                 out_j,
                 in_j,
                 text(kind),
-                jsonb(&detail),
-                preview,
+                detail,
                 size,
                 hash,
-                mode,
-                red,
                 int64(ttl_ms),
             ],
         )
@@ -2324,14 +2285,14 @@ fn commit_reserved_and_renew(
     step: &ReservedStep,
     caller: CallerState,
     seq: i32,
-    capture: &wamn_flow::Capture,
+    capture: CaptureMode,
     ttl_ms: i64,
     owner: &str,
     lease_generation: i64,
 ) -> Result<(), String> {
     if matches!(step, ReservedStep::Entry { .. }) {
         let (binds, _) = capture_binds(capture, step.payload(), step.payload());
-        let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+        let [out_j, in_j, size, hash] = binds;
         let response = client::query(
             &reserved_checkpoint_sql(),
             &[
@@ -2345,11 +2306,8 @@ fn commit_reserved_and_renew(
                 text(MAIN_PORT),
                 out_j,
                 in_j,
-                preview,
                 size,
                 hash,
-                mode,
-                redacted,
                 int64(ttl_ms),
             ],
         )
@@ -2423,7 +2381,7 @@ fn commit_reserved_and_renew(
     }
 
     let (binds, _) = capture_binds(capture, step.payload(), step.payload());
-    let [out_j, in_j, preview, size, hash, mode, redacted] = binds;
+    let [out_j, in_j, size, hash] = binds;
     txn.execute(
         &record_success_and_renew_sql(),
         &[
@@ -2434,11 +2392,8 @@ fn commit_reserved_and_renew(
             text(MAIN_PORT),
             out_j,
             in_j,
-            preview,
             size,
             hash,
-            mode,
-            redacted,
             int64(ttl_ms),
             text(owner),
         ],
@@ -2708,7 +2663,7 @@ fn claim_partition_head(owner: &str, ttl_ms: i64) -> Result<Option<PartitionHead
 /// `claim_dispatch_sql` returns inline. The `flow_version` (wamn-cox) pins the
 /// partitioned resume to the version the run started under, exactly as the
 /// unpartitioned claim does.
-fn read_dispatch(run_id: &str) -> Result<(String, Option<u32>, Value), String> {
+fn read_dispatch(run_id: &str) -> Result<(String, Option<u32>, Value, CaptureMode), String> {
     let rs = client::query(&run_sql::select_run_dispatch_sql(), &[text(run_id)])
         .map_err(|e| err_name(&e))?;
     let row = rs
@@ -2730,7 +2685,12 @@ fn read_dispatch(run_id: &str) -> Result<(String, Option<u32>, Value), String> {
         }
         _ => Value::Null,
     };
-    Ok((flow_id, flow_version, input))
+    let capture_mode = match row.get(3) {
+        Some(SqlValue::Text(value)) => CaptureMode::from_sql(value)
+            .ok_or_else(|| format!("unknown runs.capture_mode: {value}"))?,
+        other => return Err(format!("runs.capture_mode shape: {other:?}")),
+    };
+    Ok((flow_id, flow_version, input, capture_mode))
 }
 
 /// Flip a partition-head run `dispatched` -> `running`. The unpartitioned
@@ -2798,12 +2758,13 @@ fn claim_partition_run(owner: &str, ttl_ms: i64) -> Result<Option<(String, u32)>
         return Ok(None);
     };
     mark_running(&head.run_id)?;
-    let (_flow_id, _flow_version, input) = read_dispatch(&head.run_id)?;
+    let (_flow_id, _flow_version, input, capture_mode) = read_dispatch(&head.run_id)?;
     let plan = load_execution_plan(&head.run_id)?;
     let claim = execute_claimed(
         &head.run_id,
         &plan,
         input,
+        capture_mode,
         owner,
         ttl_ms,
         Some(&head.partition_key),
@@ -2823,6 +2784,7 @@ fn execute_claimed(
     _run_id: &str,
     _plan: &wamn_catalog::ExecutionPlanV2,
     _input: Value,
+    _capture_mode: CaptureMode,
     _owner: &str,
     _ttl_ms: i64,
     _partition: Option<&str>,
@@ -3015,6 +2977,55 @@ impl Guest for Component {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn captured_error_with_secret() -> NodeError {
+        NodeError::Terminal(ErrorDetail {
+            message: "request denied".to_string(),
+            code: Some("denied".to_string()),
+            data: Some(serde_json::json!({"token": "raw-secret"})),
+        })
+    }
+
+    #[test]
+    fn capture_off_error_binds_retain_only_the_typed_kind() {
+        let (kind, binds) = error_capture_binds(
+            CaptureMode::Off,
+            &captured_error_with_secret(),
+            &serde_json::json!({"password": "raw-secret"}),
+        );
+
+        assert_eq!(kind, "terminal");
+        for (field, bind) in [
+            "output_json",
+            "input_json",
+            "error_detail",
+            "output_size",
+            "payload_hash",
+        ]
+        .into_iter()
+        .zip(binds)
+        {
+            assert!(
+                matches!(bind, SqlValue::Null),
+                "capture-off error bind {field} must be SQL NULL"
+            );
+        }
+    }
+
+    #[test]
+    fn full_capture_error_detail_is_scrubbed_before_binding() {
+        let (_, [_, _, detail, _, _]) = error_capture_binds(
+            CaptureMode::Full,
+            &captured_error_with_secret(),
+            &serde_json::Value::Null,
+        );
+        let SqlValue::Text(detail) = detail else {
+            panic!("full-capture error detail must be a JSON text bind");
+        };
+
+        assert!(!detail.contains("raw-secret"));
+        assert!(detail.contains(wamn_run_state::capture::REDACTED));
+    }
 
     #[test]
     fn dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run() {

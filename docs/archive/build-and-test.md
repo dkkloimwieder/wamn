@@ -1071,8 +1071,8 @@ lives in `wamn-scenario-catalog`, while the additive `normalize` vocabulary
 (`ignore-paths` + `canonicalize`, no regex) stays in the pure model. The `wamn-ctl pin-run`
 verb is the effect shell (app-role read + pure pin + INSERT into
 `test_suites`/`test_cases`); secrets are scrubbed at pin time (even from a `full`
-run), volatile ids/timestamps are normalized, and an `off`/`preview` run is
-refused (`PinError::NotCaptured`).
+run), volatile ids/timestamps are normalized, and a run without a stored terminal
+output is refused (`PinError::NotCaptured`).
 
 ```bash
 # Unit tests (pure pin/normalize logic + the run-store pin read builders):
@@ -1081,7 +1081,7 @@ cargo test -p wamn-scenario-model -p wamn-scenario-catalog -p wamn-run-state -p 
 # pinproof (host-side, provisions an ephemeral schema via the SAME ensure_* path
 # production uses; seeds a full-capture run carrying a secret + volatile fields,
 # pins it via the REAL ctl core, asserts scrub + normalize + replay round-trip
-# (volatile mutation passes, real mutation fails) + preview-run refusal). Any
+# (volatile mutation passes, real mutation fails) + uncaptured-run refusal). Any
 # throwaway PG works (it provisions the wamn_app role + schema itself):
 docker run -d --name wamn-pg -e POSTGRES_PASSWORD=postgres -p 5461:5432 postgres:18
 WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5461/postgres \
@@ -1091,7 +1091,7 @@ docker rm -f wamn-pg
 # IN-CLUSTER: deploy/gates/pinproof-job.yaml (kubectl apply; wait complete; logs).
 # 3 mutants killed (apply/test/restore, debug builds): M1 skip scrub-on-pin →
 # pin_full_run_scrubs_secrets (+ pinproof SCRUB assert); M2 treat None output as
-# replayable → pin_preview_run_is_refused (+ pinproof REFUSE assert); M3 normalize
+# replayable → the uncaptured-run refusal (+ pinproof REFUSE assert); M3 normalize
 # no-op / over-removes → replay_round_trip_tolerates_volatile_but_rejects_real (+
 # normalize_collapses_volatile_but_keeps_real_on_both_sides).
 ```
@@ -1649,18 +1649,10 @@ docker stop wamn-rq-pg wamn-rq-nats
 kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
 kubectl -n wamn-system logs -f job/queuebench
 
-# Checked-in PLAN-0.2 queue/runner mutation campaign. `check` pins the clean
-# source hashes; `green-all` runs every named debug gate; `run-all` requires
-# every fixed mutant to turn its gate red and restores each target byte-exactly.
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
-  tools/gate-mutants/queue-runner.sh check
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
-  tools/gate-mutants/queue-runner.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-2 \
-  tools/gate-mutants/queue-runner.sh run-all
-cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
-# Immutable green/red evidence:
-# architecture/evidence/mutations/queue-runner.json
+# Historical only: `tools/gate-mutants/queue-runner.sh` is the retired PLAN-0.2
+# campaign and is not runnable against the current source tree.
+# `architecture/evidence/mutations/queue-runner.json` is retained as historical
+# green/red evidence, not as a current gate result.
 ```
 
 Trusted event lineage in runner execution input has its own focused campaign.
@@ -2945,8 +2937,8 @@ cargo test -p wamn-waker   # decision units (parse/decide/scale-parse)
 # recipe-test: H5-WAKEPROOF | integration | wamn-proof-integration | lib | - | wakeproof::tests:: | 1 | tests/integration/src/wakeproof.rs cron-flow fixture parse and validation
 cargo test -p wamn-proof-integration --lib wakeproof::tests::
 cargo clippy -p wamn-waker -p wamn-gates --all-targets
-# The checked-in `queue-runner` mutation campaign above owns the waker decision
-# mutant and its immutable green/red evidence.
+# The retired `queue-runner` campaign recorded historical waker-decision
+# mutation evidence; it is not a runnable current gate.
 # In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):
 docker build --target waker -t wamn-waker:dev . && docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-waker:dev --name wamn
@@ -3152,17 +3144,21 @@ kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
 kubectl -n wamn-system logs -f job/dispatchbench
 ```
 
-### [9.6] node-level I/O capture (wamn-srb)
+### [SR-MVP / wamn-0h0g.8.3] admitted full|off capture
 
 Docs: docs/archive/execution/run-state.md § *Node-level I/O capture (9.6)*
 
 ```bash
-# Pure decision + SQL builders (scrub / truncate / preview derivation, the
-# per-flow Flow.capture parse, the prune builder, the model + arity guards):
-cargo test -p wamn-flow -p wamn-run-state
-cargo clippy -p wamn-flow -p wamn-run-state -p wamn-ctl -p wamn-gates --all-targets
-# If Flow.capture changed, regenerate the published schema (drift-guarded):
+# Pure contract, projection, SQL builders, and schema guards. Full capture is
+# scrub-redacted; off records no node payload facts; over-ceiling output records
+# size/hash and projects output-too-large without a read-side ceiling lookup:
+cargo test -p wamn-flow -p wamn-authoring-model -p wamn-run-state
+cargo clippy -p wamn-flow -p wamn-authoring-model -p wamn-run-state -p wamn-schema-control -p wamn-ctl -p wamn-gates --all-targets -- -D warnings
+# Regenerate both published schemas (identities remain 0.1):
 cargo run -p wamn-flow --example print-flow-schema > docs/archive/contracts/flow-schema.schema.json
+cargo run -p wamn-authoring-model --example print-authoring-surface-schema \
+  > docs/archive/contracts/authoring-surface.schema.json
+node clients/authoring-client/scripts/generate.mjs
 # Rebuild the flowrunner guest (9.6 enforcement site; release-wasm exception):
 ( cd components && cargo build --release --target wasm32-wasip2 -p flowrunner )
 
@@ -3174,13 +3170,21 @@ WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5461/wamn \
 WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5461/wamn \
   ./target/debug/wamn-gates --log-level error capturebench --mode all
 docker stop wamn-cap-pg
-# capturebench modes: toggle (NULL payloads + CaptureOff) / truncate (oversized ->
-# preview head/size/hash) / scrub (secret NOWHERE in node_runs, redacted set) /
-# retention (the real prune-run-history verb) / all.
+# capturebench phases cover off writes, oversized output -> NULL payload +
+# size/hash + typed output-too-large, full-capture redaction, and retention.
 # Retention verb (deployed per project-env; app-role, tenant-scoped DELETE):
 #   wamn-ctl prune-run-history --schema <run-schema> --tenant <t> --retention-days 30 [--dry-run]
-kubectl -n wamn-system apply -f deploy/gates/capturebench-job.yaml
-kubectl -n wamn-system logs -f job/capturebench
+
+# Eleven byte-pinned mutants cover both fail-closed defaults, the draft-only full
+# constraint, admission immutability, author-SQL capture denial, capture-off payload suppression, the
+# write-side output ceiling, derived output-too-large projection, full-capture
+# redaction, async mode loading, and capture-off error-detail suppression.
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
+  tools/gate-mutants/capture-mode.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
+  tools/gate-mutants/capture-mode.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
+  tools/gate-mutants/capture-mode.sh run-all
 ```
 
 ### [D6/wamn-q3n.1] control-plane registry model crate
@@ -5164,7 +5168,7 @@ persist N rows and reconstruction replays visit-by-visit.
 ```bash
 cargo test -p wamn-runner    # occurrence semantics + diamond/loop resume (R24 VERIFY)
 cargo test -p wamn-run-state # per-visit reconstruction + legacy collapsed-history Mismatch
-cargo test -p wamn-run-state # composed-statement arity renumbering ($8/$9, $9/$10)
+cargo test -p wamn-run-state # composed-statement arity renumbering ($10/$11, $11/$12)
 # live builders (throwaway PG; the queue live script pins replay-no-op vs distinct-visit row):
 WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-state
 # guests + the gate of record (runnerbench merge-resume: a diamond whose merge is a

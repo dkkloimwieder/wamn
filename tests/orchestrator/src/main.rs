@@ -9,8 +9,8 @@
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::{credprobe, socketguard};
 use wamn_proof_integration::{
-    causation_e2e, credproof, impactproof, invocationproof, nodebench, nodeinvoke, readerbench,
-    runnerbench, suiteproof, testkitbench, wakeproof,
+    capturebench, causation_e2e, credproof, impactproof, invocationproof, nodebench, nodeinvoke,
+    readerbench, runnerbench, suiteproof, testkitbench, wakeproof,
 };
 use wamn_proof_system::traceproof;
 
@@ -31,6 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Prove admitted full/off node I/O capture, oversized-output metadata, redaction, and retention.
+    Capturebench(capturebench::CaptureBenchArgs),
     /// Run the fqg.8 production runner gate (ExecutionHost drains run_queue to completion; drive+reuse+empty)
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
@@ -77,6 +79,7 @@ async fn async_main() -> anyhow::Result<()> {
         wash_runtime::observability::initialize_observability(level, false, false)?;
 
     let result = match cli.command {
+        Command::Capturebench(args) => capturebench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::CausationE2e(args) => causation_e2e::run(args).await,

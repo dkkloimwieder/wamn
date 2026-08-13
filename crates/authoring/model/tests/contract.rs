@@ -6,12 +6,13 @@ use wamn_authoring_model::{
     AuthoringReportQuery, AuthoringRequest, AuthoringResponse, AuthoringScope, AuthoringSuccess,
     BranchCoverageProjection, BranchIdentity, CaseResultProjection, CatalogIdentity,
     CommandRefusal, CommitProvenance, ContractDecodeError, CoverageState, DraftIdentity, DraftRun,
-    DraftRunReceipt, DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity, EdgeInputPort,
-    NodeOutcome, NodeResultProjection, PassFail, PendingReportReason, PendingSuiteProjection,
-    PublishValidatedDraft, PublishedFlowIdentity, ResourceKind, SAFE_INTEGER_MAX, SCHEMA_VERSION,
-    SafeUint64, SaveFlowDraft, SuiteExecutionRefusal, SuiteOutcome, SuiteProjectionState, SuiteRef,
-    SuiteRun, SuiteRunReceipt, ValidateDraft, ValidatedDraftIdentity, ValidatedDraftRef,
-    ValidationIssue, ValidationSeverity, decode_document,
+    DraftRunCapture, DraftRunReceipt, DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity,
+    EdgeInputPort, NodeOutcome, NodeResultProjection, PassFail, PendingReportReason,
+    PendingSuiteProjection, PublishValidatedDraft, PublishedFlowIdentity, ResourceKind,
+    SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, SaveFlowDraft, SuiteExecutionRefusal,
+    SuiteOutcome, SuiteProjectionState, SuiteRef, SuiteRun, SuiteRunReceipt, ValidateDraft,
+    ValidatedDraftIdentity, ValidatedDraftRef, ValidationIssue, ValidationSeverity,
+    decode_document,
 };
 
 /// Definitions whose variants carry structured refusal fields.
@@ -279,6 +280,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
                 scope: scope(),
                 validated_draft: validated_ref(),
                 input: json!({"receipt": "r-1"}),
+                capture: DraftRunCapture::Full,
             }),
         ),
         (
@@ -333,6 +335,47 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
             json!("publish"),
             json!("suite-projection"),
         ]
+    );
+}
+
+#[test]
+fn draft_run_capture_defaults_to_full_and_accepts_only_full_or_off() {
+    let omitted = json!({
+        "scope": {"project-id": "receiving", "environment": "test"},
+        "validated-draft": {"validated-draft-id": "validated-4"},
+        "input": {"receipt": "r-1"}
+    });
+    let decoded: DraftRun = serde_json::from_value(omitted).expect("omitted capture is valid");
+    assert_eq!(decoded.capture, DraftRunCapture::Full);
+
+    for (literal, expected) in [
+        ("full", DraftRunCapture::Full),
+        ("off", DraftRunCapture::Off),
+    ] {
+        let mut document = serde_json::to_value(&decoded).expect("draft run serializes");
+        document["capture"] = json!(literal);
+        let explicit: DraftRun =
+            serde_json::from_value(document).expect("ratified capture literal is valid");
+        assert_eq!(explicit.capture, expected);
+    }
+
+    for retired in ["scrubbed", "preview"] {
+        let mut document = serde_json::to_value(&decoded).expect("draft run serializes");
+        document["capture"] = json!(retired);
+        assert!(
+            serde_json::from_value::<DraftRun>(document).is_err(),
+            "retired capture literal {retired:?} must be refused"
+        );
+    }
+
+    let schema = wamn_authoring_model::json_schema();
+    assert_eq!(
+        schema["definitions"]["DraftRun"]["properties"]["capture"]["default"],
+        json!("full")
+    );
+    assert_eq!(
+        schema["definitions"]["DraftRunCapture"]["enum"],
+        json!(["full", "off"])
     );
 }
 

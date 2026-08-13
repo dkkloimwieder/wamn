@@ -60,10 +60,10 @@ use wamn_schema_control::{
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
     select_effect_writer_role_sql, select_effect_writer_schema_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
-    select_run_plane_helper_functions_sql, select_scenario_author_catalog_lock_privilege_sql,
-    select_scenario_author_role_sql, select_scenario_author_schema_usage_sql,
-    select_schema_checks_sql, select_schema_columns_sql, select_schema_foreign_keys_sql,
-    select_schema_indexes_sql, select_schema_triggers_sql,
+    select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
+    select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
+    select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
+    select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
 #[derive(Debug, Args)]
@@ -245,6 +245,16 @@ async fn observe(
         .await
         .context("read guest scenario-author membership")?
         .get(0);
+    let capture_privileges_sql = select_run_capture_privileges_sql();
+    let capture_privileges = client
+        .query_one(&capture_privileges_sql, &[&schema.as_str()])
+        .await
+        .context("read guest run-capture privileges")?;
+    obs.app_run_capture_privileges = (
+        capture_privileges.get(0),
+        capture_privileges.get(1),
+        capture_privileges.get(2),
+    );
     obs.scenario_author_can_lock_catalog_head = client
         .query_one(
             select_scenario_author_catalog_lock_privilege_sql(),

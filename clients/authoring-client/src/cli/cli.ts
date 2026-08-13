@@ -34,6 +34,7 @@ import {
   type AuthoringScope,
   type CommandRefusal,
   type CommitProvenance,
+  type DraftRunCapture,
   type DraftSuiteProjection,
   type SuiteProjectionState,
 } from "../generated/authoring.js";
@@ -189,12 +190,14 @@ export interface DraftRunOptions {
   readonly scope: AuthoringScope;
   readonly validatedDraftId: string;
   readonly input: unknown;
+  readonly capture?: DraftRunCapture;
 }
 
 export function draftRunRequest(options: DraftRunOptions): AuthoringRequest {
   return request(options.commandId, {
     kind: "draft-run",
     input: {
+      ...(options.capture === undefined ? {} : { capture: options.capture }),
       input: options.input,
       scope: options.scope,
       "validated-draft": { "validated-draft-id": options.validatedDraftId },
@@ -278,6 +281,7 @@ const OPTIONS = new Set([
   "--flow-version",
   "--validated-draft",
   "--input",
+  "--capture",
   "--report-id",
 ]);
 
@@ -356,7 +360,7 @@ common options:
 
 validate:  --file PATH --draft-id ID --flow-id ID --suite-id ID --flow-version N
            [--expected-revision N] [--no-provenance]
-draft-run: --input PATH [--validated-draft ID]
+draft-run: --input PATH [--validated-draft ID] [--capture full|off]
 suite-run: [--validated-draft ID] [--suite-id ID] [--flow-version N]
 promote:   [--validated-draft ID] [--report-id ID]
 runs:      [--report-id ID]
@@ -683,11 +687,20 @@ async function runDraftRun(session: Session): Promise<StepRecord[]> {
   } catch (error) {
     throw new UsageError(`--input ${inputPath} is not JSON: ${(error as Error).message}`);
   }
+  const captureValue = session.parsed.values["capture"];
+  let capture: DraftRunCapture | undefined;
+  if (captureValue !== undefined) {
+    if (captureValue !== "full" && captureValue !== "off") {
+      throw new UsageError("--capture must be full or off");
+    }
+    capture = captureValue;
+  }
   session.transcript.note(`draft-run validated-draft=${validatedDraftId} input=${inputPath}`);
   const step = await execute(
     session.client,
     draftRunRequest({
       commandId: commandId(session, "draft-run", 0),
+      capture,
       input,
       scope: session.scope,
       validatedDraftId,
@@ -803,6 +816,9 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
     if (parsed.help || parsed.verb === undefined) {
       io.err(USAGE);
       return parsed.help ? EXIT_COMPLETED : EXIT_USAGE;
+    }
+    if (parsed.values["capture"] !== undefined && parsed.verb !== "draft-run") {
+      throw new UsageError("--capture is only valid for draft-run");
     }
     const baseUrl = required(parsed, "base-url").replace(/\/+$/, "");
     const scope: AuthoringScope = {

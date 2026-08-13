@@ -31,9 +31,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::types::{
-    Capture, Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy,
-};
+use crate::types::{Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy};
 
 /// The canonical digest preimage of a [`Flow`].
 ///
@@ -82,8 +80,6 @@ pub struct FlowPreimage<'a> {
     partition_policy: PartitionPolicy,
     #[serde(skip_serializing_if = "is_default_ordering")]
     ordering: &'a Ordering,
-    #[serde(skip_serializing_if = "Capture::is_default")]
-    capture: Capture,
 }
 
 /// A graph node's identity: [`Node`] without its editor [`Node::label`].
@@ -159,7 +155,6 @@ impl<'a> FlowPreimage<'a> {
             allowed_hosts: &flow.allowed_hosts,
             partition_policy: flow.partition_policy,
             ordering: &flow.ordering,
-            capture: flow.capture,
         }
     }
 }

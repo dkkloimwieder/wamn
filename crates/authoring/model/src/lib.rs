@@ -343,6 +343,19 @@ pub struct DraftRun {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
     pub input: Value,
+    /// Whether this one draft run captures node input and output. Omission is
+    /// full capture; published and stored-suite runs expose no such choice.
+    #[serde(default)]
+    pub capture: DraftRunCapture,
+}
+
+/// Capture choice for one direct draft run: full capture or no capture.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum DraftRunCapture {
+    #[default]
+    Full,
+    Off,
 }
 
 /// Execute a stored suite against an exact validated draft.

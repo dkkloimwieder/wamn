@@ -675,7 +675,6 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains("CREATE TABLE wamn_run.node_runs"));
     assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
     assert!(sql.contains("current_setting('app.tenant', true)"));
-    assert!(sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
     // Lineage columns (immutable-replay design) + the frame-keyed node-run key.
     assert!(sql.contains("replay_of"));
     assert!(sql.contains("root_run_id"));
@@ -708,19 +707,35 @@ fn run_state_sql_matches_the_model() {
     }
     assert!(sql.contains("runs_idempotency"));
     assert!(sql.contains("REFERENCES wamn_run.runs"));
-    // Reserved 5.10 / 9.6 seams.
-    for seam in [
-        "input_ref",
-        "output_ref",
-        "preview_head",
-        "payload_hash",
-        "capture_mode",
-    ] {
+    // Reserved 5.10 seams and the run-owned 9.6 admission fact.
+    for seam in ["input_ref", "output_ref", "output_size", "payload_hash"] {
         assert!(
             sql.contains(seam),
             "run-state.sql missing reserved seam {seam}"
         );
     }
+    assert!(sql.contains("capture_mode    text NOT NULL DEFAULT 'off'"));
+    assert!(sql.contains(
+        "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
+    ));
+    assert!(sql.contains("OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode"));
+    assert!(sql.contains(
+        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode"
+    ));
+    assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
+    let runs_grants = sql
+        .split_once("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;")
+        .expect("runs read/delete grant is explicit")
+        .1
+        .split_once("GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;")
+        .expect("runs author read grant follows app column grants")
+        .0;
+    assert!(runs_grants.contains("GRANT INSERT ("));
+    assert!(runs_grants.contains("), UPDATE ("));
+    assert!(!runs_grants.contains("capture_mode"));
+    assert!(!sql.contains("payload_size  bigint"));
+    assert!(!sql.contains("preview_head  text"));
+    assert!(!sql.contains("redacted      boolean"));
 
     // Every status literal the CHECK constraints pin comes from the crate enums.
     for s in RunStatus::ALL {

@@ -20,13 +20,12 @@ use wamn_run_state::queue::{
     write_ahead_triggered_run_sql,
 };
 
-const RECORD_SUCCESS_RENEW_PARAM_TYPES: [&str; 14] = [
-    "text", "text", "int", "int", "text", "jsonb", "jsonb", "text", "bigint", "text", "text",
-    "boolean", "bigint", "text",
+const RECORD_SUCCESS_RENEW_PARAM_TYPES: [&str; 11] = [
+    "text", "text", "int", "int", "text", "jsonb", "jsonb", "bigint", "text", "bigint", "text",
 ];
-const RECORD_ERROR_RENEW_PARAM_TYPES: [&str; 15] = [
-    "text", "text", "int", "int", "jsonb", "jsonb", "text", "jsonb", "text", "bigint", "text",
-    "text", "boolean", "bigint", "text",
+const RECORD_ERROR_RENEW_PARAM_TYPES: [&str; 12] = [
+    "text", "text", "int", "int", "jsonb", "jsonb", "text", "jsonb", "bigint", "text", "bigint",
+    "text",
 ];
 
 #[test]
@@ -348,10 +347,12 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
         "'depth', r.event_depth",
         "ELSE r.input_json END)::text AS input_json",
         "r.flow_version AS flow_version",
+        "r.capture_mode AS capture_mode",
     ] {
         assert!(cd.contains(pin), "claim_dispatch_sql missing: {pin}");
     }
-    // The 4th column is the run's OWN version column, never a max-over-active
+    // The run's OWN version and capture columns are returned, never re-derived
+    // from the active flow or a node projection.
     // subselect (the wamn-cox pin: a resume must not re-derive the active version).
     assert!(
         !cd.contains("SELECT max(f.version)") && !cd.contains("f.active"),
@@ -397,37 +398,33 @@ fn combined_claim_and_checkpoint_builders_compose_the_split_statements() {
     );
 
     // record+renew = the 5.7 checkpoint insert verbatim + the owner-guarded
-    // renew tail; param numbering pinned against the head arity ($13/$14 success,
-    // $14/$15 error since the 9.6 capture columns grew the heads — wamn-srb).
+    // renew tail; param numbering pinned against the head arity ($10/$11 success,
+    // $11/$12 error since the 9.6 capture facts grew the heads — wamn-srb).
     let rs = record_success_and_renew_sql();
     assert!(
         rs.contains(&wamn_run_state::sql::insert_node_run_success_sql()),
         "record_success_and_renew_sql no longer composes insert_node_run_success_sql verbatim"
     );
-    assert!(rs.contains("$13::bigint * interval '1 millisecond'"));
-    assert!(rs.contains("AND run_id = $1 AND lease_owner = $14"));
-    assert!(!rs.contains("$15"));
-    assert_eq!(RECORD_SUCCESS_RENEW_PARAM_TYPES.len(), 14);
+    assert!(rs.contains("$10::bigint * interval '1 millisecond'"));
+    assert!(rs.contains("AND run_id = $1 AND lease_owner = $11"));
+    assert!(!rs.contains("$12"));
+    assert_eq!(RECORD_SUCCESS_RENEW_PARAM_TYPES.len(), 11);
     assert_eq!(
         &RECORD_SUCCESS_RENEW_PARAM_TYPES[7..],
-        &[
-            "text", "bigint", "text", "text", "boolean", "bigint", "text"
-        ]
+        &["bigint", "text", "bigint", "text"]
     );
     let re = record_error_and_renew_sql();
     assert!(
         re.contains(&wamn_run_state::sql::insert_node_run_error_sql()),
         "record_error_and_renew_sql no longer composes insert_node_run_error_sql verbatim"
     );
-    assert!(re.contains("$14::bigint * interval '1 millisecond'"));
-    assert!(re.contains("AND run_id = $1 AND lease_owner = $15"));
-    assert!(!re.contains("$16"));
-    assert_eq!(RECORD_ERROR_RENEW_PARAM_TYPES.len(), 15);
+    assert!(re.contains("$11::bigint * interval '1 millisecond'"));
+    assert!(re.contains("AND run_id = $1 AND lease_owner = $12"));
+    assert!(!re.contains("$13"));
+    assert_eq!(RECORD_ERROR_RENEW_PARAM_TYPES.len(), 12);
     assert_eq!(
         &RECORD_ERROR_RENEW_PARAM_TYPES[8..],
-        &[
-            "text", "bigint", "text", "text", "boolean", "bigint", "text"
-        ]
+        &["bigint", "text", "bigint", "text"]
     );
 }
 
@@ -1233,8 +1230,10 @@ fn public_admission_api_selects_release_and_draft_scenario_recipes() {
     assert_eq!(release.lock_head(), draft.lock_head());
     assert!(release.admit().contains("release_member AS MATERIALIZED"));
     assert!(release.admit().contains("'scenario'"));
+    assert!(!release.admit().contains("trigger_source, capture_mode"));
     assert!(draft.admit().contains("draft AS MATERIALIZED"));
     assert!(draft.admit().contains("'scenario-draft'"));
+    assert!(!draft.admit().contains("trigger_source, capture_mode"));
     assert_ne!(release.admit(), draft.admit());
 }
 
@@ -1256,6 +1255,7 @@ fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
     assert_eq!(sql.matches("inserted_queue AS").count(), 1);
     assert!(sql.contains("catalog_id, catalog_version"));
     assert!(sql.contains("environment, execution_bundle_hash, status, trigger_source"));
+    assert!(!sql.contains("trigger_source, capture_mode"));
     assert!(sql.contains("invocation_context"));
     assert!(sql.contains("admission_context_version"));
     for context_field in [
@@ -1319,6 +1319,7 @@ fn release_duplicate_identity_covers_authoritative_pins() {
         "existing.catalog_id IS DISTINCT FROM $4",
         "existing.catalog_version IS DISTINCT FROM $5::int",
         "existing.environment IS DISTINCT FROM $6",
+        "existing.capture_mode IS DISTINCT FROM 'off'",
         "existing.execution_bundle_hash \
                            IS DISTINCT FROM member.execution_bundle_hash",
         "existing.invocation_context #>> '{principal,artifact-digest}' \
@@ -1825,22 +1826,23 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
            ASSERT (SELECT flow_id FROM cd_probe) = 'f', 'combined claim returns the dispatch flow'; \
            ASSERT (SELECT input_json FROM cd_probe) = '\"rec\"', 'combined claim returns the trigger input'; \
            ASSERT (SELECT flow_version FROM cd_probe) = 3, 'claim returns the run''s persisted flow_version (3), not the active one (4)'; \
+           ASSERT (SELECT capture_mode FROM cd_probe) = 'off', 'claim returns the immutable run capture mode'; \
            ASSERT (SELECT lease_owner FROM run_queue WHERE run_id='cd-0') = 'cd-owner', 'combined claim leased the row'; \
            ASSERT (SELECT status FROM runs WHERE run_id='cd-0') = 'running', 'combined claim marked the run running in-statement'; \
          END $$;\n\
          -- Per-node checkpoint + heartbeat: record advances the lease (owner-guarded).\n\
          CREATE TEMP TABLE lease_t0 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
-         EXECUTE csr_stmt('cd-0','n1',0,0,'main','\"out\"','\"in\"','out',5,'sha256:out','full',false,120000,'cd-owner');\n\
+         EXECUTE csr_stmt('cd-0','n1',0,0,'main','\"out\"','\"in\"',5,'sha256:out',120000,'cd-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1' AND status='success') = 1, 'combined record wrote the checkpoint'; \
-           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1') = 5, 'combined record binds payload_size as bigint'; \
+           ASSERT (SELECT output_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1') = 5, 'combined record binds output_size as bigint'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t0), 'combined record renewed the lease'; \
          END $$;\n\
          -- Per-visit occurrence (wamn-03m/cjv.10): a REPLAY of visit 0 is an\n\
          -- ON CONFLICT no-op (first writer wins), while visit 1 of the SAME\n\
          -- node is a distinct row — N visits persist N rows.\n\
-         EXECUTE csr_stmt('cd-0','n1',0,90,'main','\"out-replay\"','\"in\"','out-replay',12,'sha256:out-replay','full',false,120000,'cd-owner');\n\
-         EXECUTE csr_stmt('cd-0','n1',1,91,'main','\"out-v2\"','\"in2\"','out-v2',8,'sha256:out-v2','full',false,120000,'cd-owner');\n\
+         EXECUTE csr_stmt('cd-0','n1',0,90,'main','\"out-replay\"','\"in\"',12,'sha256:out-replay',120000,'cd-owner');\n\
+         EXECUTE csr_stmt('cd-0','n1',1,91,'main','\"out-v2\"','\"in2\"',8,'sha256:out-v2',120000,'cd-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1') = 2, 'distinct visits persist distinct rows'; \
            ASSERT (SELECT output_json FROM node_runs WHERE run_id='cd-0' AND local_node_id='n1' AND occurrence=0) = '\"out\"', 'a replayed visit does not overwrite its row'; \
@@ -1849,16 +1851,16 @@ fn run_queue_schema_applies_and_claims_on_postgres() {
          -- A straggler with the WRONG owner still records (idempotent checkpoint,\n\
          -- same as the split path) but cannot renew the lease.\n\
          CREATE TEMP TABLE lease_t1 AS SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0';\n\
-         EXECUTE csr_stmt('cd-0','n2',0,1,'main','\"out\"','\"in\"','out',5,'sha256:out','full',false,300000,'not-the-owner');\n\
+         EXECUTE csr_stmt('cd-0','n2',0,1,'main','\"out\"','\"in\"',5,'sha256:out',300000,'not-the-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT count(*) FROM node_runs WHERE run_id='cd-0' AND local_node_id='n2') = 1, 'wrong-owner record still checkpoints'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') = (SELECT lease_expires_at FROM lease_t1), 'wrong-owner record does NOT renew the lease'; \
          END $$;\n\
          -- The error-routed twin.\n\
-         EXECUTE cer_stmt('cd-0','n3',0,2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}','error',12,'sha256:error','full',false,240000,'cd-owner');\n\
+         EXECUTE cer_stmt('cd-0','n3',0,2,'{{\"error\":{{}}}}','\"in\"','terminal','{{\"message\":\"x\"}}',12,'sha256:error',240000,'cd-owner');\n\
          DO $$ BEGIN \
            ASSERT (SELECT error_kind FROM node_runs WHERE run_id='cd-0' AND local_node_id='n3') = 'terminal', 'combined error record carries the taxonomy'; \
-           ASSERT (SELECT payload_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n3') = 12, 'combined error record binds payload_size as bigint'; \
+           ASSERT (SELECT output_size FROM node_runs WHERE run_id='cd-0' AND local_node_id='n3') = 12, 'combined error record binds output_size as bigint'; \
            ASSERT (SELECT lease_expires_at FROM run_queue WHERE run_id='cd-0') > (SELECT lease_expires_at FROM lease_t1), 'error record renews the lease too'; \
          END $$;\n\
          -- Completion + dequeue, atomic in one statement.\n\

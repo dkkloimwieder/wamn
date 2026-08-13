@@ -67,7 +67,7 @@ pub mod tests {
         assert!(authority < output);
         assert!(output < context);
         assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
-        assert!(sql.contains("$16::text::jsonb"));
+        assert!(sql.contains("$13::text::jsonb"));
         assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
         assert!(!sql.contains("UPDATE runs SET state_json = $"));
     }

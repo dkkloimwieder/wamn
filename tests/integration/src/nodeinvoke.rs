@@ -188,7 +188,8 @@ fn runner_ddl(schema: &str) -> String {
             flow_version int NOT NULL, \
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+            input_json jsonb, result_json jsonb, state_json jsonb, \
             created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             catalog_id text, catalog_version bigint, environment text, \
@@ -208,6 +209,7 @@ fn runner_ddl(schema: &str) -> String {
             invoke_depth int NOT NULL DEFAULT 0, invoke_root_run_id text, \
             waiting_child_run_id text, waiting_child_occurrence int, wait_generation bigint, \
             fail_kind text, fail_node text, fail_reason text, \
+            CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
@@ -223,8 +225,7 @@ fn runner_ddl(schema: &str) -> String {
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
             input_ref text, output_ref text, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
+            output_size bigint, payload_hash text, \
             started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
             PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\

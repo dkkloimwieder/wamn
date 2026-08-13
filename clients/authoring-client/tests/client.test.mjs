@@ -35,6 +35,17 @@ test("runtime schema support fails closed on unknown keywords and formats", () =
   assert.doesNotThrow(() =>
     assertSupportedAuthoringSchema({ format: "uint64", minimum: 0, type: "integer" }),
   );
+  assert.doesNotThrow(() =>
+    assertSupportedAuthoringSchema({ allOf: [{ $ref: "#/definitions/DraftRunCapture" }], default: "full" }),
+  );
+  assert.throws(
+    () => assertSupportedAuthoringSchema({ allOf: [{ type: "string" }] }),
+    /allOf must contain exactly one \$ref/,
+  );
+  assert.throws(
+    () => assertSupportedAuthoringSchema({ allOf: [{ $ref: "#/definitions/A" }, { $ref: "#/definitions/B" }] }),
+    /allOf must contain exactly one \$ref/,
+  );
   assert.throws(
     () => assertSupportedAuthoringSchema({ pattern: "^[a-z]+$", type: "string" }),
     /unsupported schema keyword pattern/,
@@ -74,6 +85,31 @@ function validateRequest(flowVersion) {
     },
   };
 }
+
+function draftRunRequest(capture) {
+  return {
+    "command-id": "draft-run-1",
+    "schema-version": AUTHORING_SCHEMA_VERSION,
+    command: {
+      kind: "draft-run",
+      input: {
+        ...(capture === undefined ? {} : { capture }),
+        input: { receipt: "r-1" },
+        scope: { environment: "dev", "project-id": "project-1" },
+        "validated-draft": { "validated-draft-id": "validated-1" },
+      },
+    },
+  };
+}
+
+test("draft-run capture accepts omission, full, and off only", () => {
+  for (const capture of [undefined, "full", "off"]) {
+    assert.doesNotThrow(() => parseAuthoringRequest(draftRunRequest(capture)));
+  }
+  for (const retired of ["scrubbed", "preview"]) {
+    assert.throws(() => parseAuthoringRequest(draftRunRequest(retired)), AuthoringPayloadError);
+  }
+});
 
 function response(outcome) {
   return {

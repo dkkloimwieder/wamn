@@ -15,6 +15,7 @@ const supportedKeywords = new Set([
   "$ref",
   "$schema",
   "additionalProperties",
+  "allOf",
   "anyOf",
   // Annotation only in draft-07: it constrains no instance and changes no
   // generated type. An optional field is already optional through `required`.
@@ -55,6 +56,17 @@ function assertSupportedSchema(node, path = "$") {
       assertSupportedSchema(member, `${path}.${keyword}[${index}]`);
     }
   }
+  if (node.allOf !== undefined) {
+    if (
+      !Array.isArray(node.allOf) ||
+      node.allOf.length !== 1 ||
+      Object.keys(node.allOf[0] ?? {}).length !== 1 ||
+      typeof node.allOf[0]?.$ref !== "string"
+    ) {
+      throw new Error(`${path}.allOf must contain exactly one $ref`);
+    }
+    assertSupportedSchema(node.allOf[0], `${path}.allOf[0]`);
+  }
   if (node.items !== undefined) assertSupportedSchema(node.items, `${path}.items`);
   for (const [name, definition] of Object.entries(node.definitions ?? {})) {
     assertSupportedSchema(definition, `${path}.definitions.${name}`);
@@ -83,6 +95,9 @@ function schemaType(node) {
   if (node === false) return "never";
   if (node.$ref !== undefined) {
     return referencedType(node.$ref);
+  }
+  if (Array.isArray(node.allOf)) {
+    return schemaType(node.allOf[0]);
   }
   if (Array.isArray(node.enum)) {
     return node.enum.map(literal).join(" | ");

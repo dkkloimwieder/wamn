@@ -49,7 +49,8 @@
 //! drops a retained table. Unknown live columns are SURFACED (`extra_columns`)
 //! and preserved. The explicit frame/effect-writer cutovers physically remove
 //! only the named retired identity/recovery columns after their locked safety
-//! preflights. PostgreSQL validates new CHECKs against existing rows and aborts
+//! preflights; the capture-projection cutover drops only its three retired,
+//! non-authoritative node columns under lock. PostgreSQL validates new CHECKs against existing rows and aborts
 //! on incompatible legacy data rather than fabricating history.
 
 use std::borrow::Cow;
@@ -76,7 +77,7 @@ const RELEASE_FLOWS_EXECUTION_BUNDLE_FK_DEF: &str = "FOREIGN KEY (tenant_id, exe
 const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
 const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 
 #[derive(Clone, Copy)]
 enum CheckOrigin {
@@ -114,6 +115,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
         name: "runs_status_check",
         definition: "CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Inline("status"),
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_capture_mode_check",
+        definition: "CHECK (capture_mode = ANY (ARRAY['full'::text, 'off'::text]))",
+        origin: CheckOrigin::Inline("capture_mode"),
     },
     CheckSpec {
         table: "runs",
@@ -209,6 +216,14 @@ const CHECK_SPECS: &[CheckSpec] = &[
         table: "runs",
         name: "runs_check9",
         definition: "CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL OR response_deadline_at <= run_deadline_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_capture_mode_source_check",
+        // `pg_get_constraintdef` renders `IS NOT DISTINCT FROM` in this
+        // equivalent canonical form.
+        definition: "CHECK (capture_mode <> 'full'::text OR NOT trigger_source IS DISTINCT FROM 'scenario-draft'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -811,7 +826,7 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-disposition-immutable';\nEND\n$function$\n";
 
@@ -1064,7 +1079,8 @@ BEGIN
     IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
+       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -1463,12 +1479,24 @@ struct TriggerSpec {
 }
 
 fn trigger_specs() -> Vec<TriggerSpec> {
-    let mut specs = vec![TriggerSpec {
-        table: "runs".to_string(),
-        name: "runs_event_lineage_immutable".to_string(),
-        definition: RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
-        sql: RUNS_EVENT_LINEAGE_TRIGGER_SQL.to_string(),
-    }];
+    let mut specs = vec![
+        TriggerSpec {
+            table: "runs".to_string(),
+            name: "runs_event_lineage_immutable".to_string(),
+            definition: RUNS_EVENT_LINEAGE_TRIGGER_DEF.to_string(),
+            sql: RUNS_EVENT_LINEAGE_TRIGGER_SQL.to_string(),
+        },
+        TriggerSpec {
+            table: "runs".to_string(),
+            name: "runs_admission_pins_immutable".to_string(),
+            definition: RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
+            sql: "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF \
+                  catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode \
+                  ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
+                  wamn_run.guard_run_admission_pins_immutable();"
+                .to_string(),
+        },
+    ];
     for event in ["update", "delete"] {
         let name = format!("run_flow_resolutions_{event}_immutable");
         let event_sql = event.to_ascii_uppercase();
@@ -2416,10 +2444,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         app: &["SELECT"],
         author: &["SELECT"],
     },
+    // `runs` has a dedicated column-grant reconciler because capture_mode is
+    // admission-owned while the remaining run columns retain app writes.
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
         table: "runs",
-        app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
+        app: &["SELECT", "DELETE"],
         author: &["SELECT"],
     },
     AuthoringPrivilegeSpec {
@@ -2662,6 +2692,11 @@ pub struct RunPlaneObservation {
     pub effect_ledger_owners: BTreeMap<String, String>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
+    /// Effective `wamn_app` authority on the run capture carrier. The first
+    /// value is a table-level INSERT/UPDATE grant (which covers every column);
+    /// the second is effective INSERT/UPDATE on `runs.capture_mode` itself;
+    /// the third proves app INSERT+UPDATE on every other run column.
+    pub app_run_capture_privileges: (bool, bool, bool),
     /// Direct table grants for the authoring-state security surface, keyed by
     /// `(schema, table, grantee)` and containing uppercase privilege names.
     pub authoring_table_privileges: BTreeMap<(String, String, String), BTreeSet<String>>,
@@ -2747,6 +2782,8 @@ pub enum RunPlaneActionKind {
     AddColumn,
     /// Strict empty-only conversion from legacy node/effect identity to frames.
     FrameIdentityCutover,
+    /// Preserve the output-size fact while removing retired node capture columns.
+    CaptureProjectionCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
@@ -2789,6 +2826,9 @@ pub enum RunPlaneActionKind {
     /// Converge authoring-state schema/table grants and remove guest write
     /// authority or membership in the host-only role.
     RepairAuthoringPrivilege,
+    /// Replace broad application-role run grants with column grants that omit
+    /// the admission-owned `runs.capture_mode` carrier.
+    RepairRunCapturePrivilege,
     /// Strip the legacy `state` key from stored registrations.
     StripRegistrationState,
 }
@@ -2814,6 +2854,63 @@ pub struct RunPlanePlan {
     pub at_target: Vec<String>,
     /// `(table, column)` unknown live columns not in the record — untouched.
     pub extra_columns: Vec<(String, String)>,
+}
+
+const RETIRED_CAPTURE_PROJECTION_COLUMNS: &[&str] = &["preview_head", "capture_mode", "redacted"];
+const LEGACY_OUTPUT_SIZE_COLUMN: &str = "payload_size";
+
+fn capture_output_size_rename_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("node_runs").is_some_and(|columns| {
+        columns.contains(LEGACY_OUTPUT_SIZE_COLUMN) && !columns.contains("output_size")
+    })
+}
+
+fn capture_output_size_conflict(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("node_runs").is_some_and(|columns| {
+        columns.contains(LEGACY_OUTPUT_SIZE_COLUMN) && columns.contains("output_size")
+    })
+}
+
+fn capture_projection_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("node_runs").is_some_and(|columns| {
+        capture_output_size_rename_needed(obs)
+            || capture_output_size_conflict(obs)
+            || RETIRED_CAPTURE_PROJECTION_COLUMNS
+                .iter()
+                .any(|column| columns.contains(*column))
+    })
+}
+
+fn capture_projection_cutover_sql(
+    schema: &BareSchemaName,
+    rename_output_size: bool,
+    output_size_conflict: bool,
+) -> String {
+    let target = schema.quoted();
+    let rename = if rename_output_size {
+        format!(
+            "ALTER TABLE {target}.node_runs \
+               RENAME COLUMN {LEGACY_OUTPUT_SIZE_COLUMN} TO output_size; "
+        )
+    } else {
+        String::new()
+    };
+    let refuse_conflict = if output_size_conflict {
+        "DO $capture_projection$ BEGIN RAISE EXCEPTION USING \
+         ERRCODE = '55000', MESSAGE = 'capture-output-size-columns-conflict'; \
+         END $capture_projection$; "
+    } else {
+        ""
+    };
+    format!(
+        "LOCK TABLE {target}.node_runs IN ACCESS EXCLUSIVE MODE; \
+         {refuse_conflict}\
+         {rename}\
+         ALTER TABLE {target}.node_runs \
+           DROP COLUMN IF EXISTS preview_head, \
+           DROP COLUMN IF EXISTS capture_mode, \
+           DROP COLUMN IF EXISTS redacted"
+    )
 }
 
 impl RunPlanePlan {
@@ -2867,24 +2964,6 @@ fn run_execution_pin_contract_complete(schema: &BareSchemaName, obs: &RunPlaneOb
             obs.indexes.get("runs_execution_bundle"),
             RUNS_EXECUTION_BUNDLE_INDEX_DEF,
         )
-        && run_object(
-            obs.triggers.get(&(
-                "runs".to_string(),
-                "runs_admission_pins_immutable".to_string(),
-            )),
-            RUNS_ADMISSION_PINS_TRIGGER_DEF,
-        )
-        && obs
-            .helper_functions
-            .get("guard_run_admission_pins_immutable")
-            .is_some_and(|definition| {
-                let normalized = normalize_observed_schema(definition, schema);
-                normalized.contains("run-admission-pin-immutable")
-                    && normalized.contains("NEW.catalog_id IS DISTINCT FROM OLD.catalog_id")
-                    && normalized.contains(
-                        "NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash",
-                    )
-            })
 }
 
 fn release_flow_execution_pin_contract_complete(obs: &RunPlaneObservation) -> bool {
@@ -3018,7 +3097,8 @@ BEGIN
     IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id
        OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version
        OR NEW.environment IS DISTINCT FROM OLD.environment
-       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash THEN
+       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash
+       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
@@ -3028,10 +3108,155 @@ END
 $execution_pin_guard$;
 DROP TRIGGER IF EXISTS runs_admission_pins_immutable ON {target}.runs;
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode
 ON {target}.runs
 FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
     )
+}
+
+fn repair_run_capture_privilege_sql(
+    schema: &BareSchemaName,
+    available_columns: impl IntoIterator<Item = String>,
+) -> String {
+    let available_columns = available_columns.into_iter().collect::<BTreeSet<_>>();
+    debug_assert!(available_columns.contains("capture_mode"));
+    let canonical_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+        .into_iter()
+        .map(|(column, _)| column)
+        .collect::<BTreeSet<_>>();
+    let writable_columns = available_columns
+        .iter()
+        .filter(|column| {
+            column.as_str() != "capture_mode" && canonical_columns.contains(column.as_str())
+        })
+        .map(|column| quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let all_columns = available_columns
+        .iter()
+        .map(|column| quote_ident(column))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let qualified = format!("{}.runs", schema.quoted());
+    let writable_grant = if writable_columns.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "GRANT INSERT ({writable_columns}), UPDATE ({writable_columns}) \
+               ON TABLE {qualified} TO wamn_app; "
+        )
+    };
+    format!(
+        "LOCK TABLE {qualified} IN ACCESS EXCLUSIVE MODE; \
+         REVOKE SELECT ({all_columns}), INSERT ({all_columns}), \
+                UPDATE ({all_columns}), REFERENCES ({all_columns}) \
+           ON TABLE {qualified} FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
+         REVOKE ALL PRIVILEGES ON TABLE {qualified} \
+           FROM PUBLIC, wamn_app, {SCENARIO_AUTHOR_ROLE}; \
+         GRANT SELECT, DELETE ON TABLE {qualified} TO wamn_app; \
+         GRANT SELECT ON TABLE {qualified} TO {SCENARIO_AUTHOR_ROLE}; \
+         {writable_grant}\
+         DO $run_capture_acl$ BEGIN \
+           IF EXISTS ( \
+                SELECT 1 \
+                  FROM unnest(ARRAY['wamn_app','{SCENARIO_AUTHOR_ROLE}']) actor, \
+                       unnest(ARRAY['INSERT','UPDATE']) privilege \
+                 WHERE pg_catalog.has_column_privilege( \
+                   actor, '{qualified}', 'capture_mode', privilege)) \
+              OR EXISTS ( \
+                   SELECT 1 \
+                     FROM pg_catalog.pg_class relation \
+                     JOIN pg_catalog.pg_namespace namespace \
+                       ON namespace.oid = relation.relnamespace \
+                     JOIN pg_catalog.pg_attribute attribute \
+                       ON attribute.attrelid = relation.oid \
+                      AND attribute.attname = 'capture_mode' \
+                     CROSS JOIN LATERAL \
+                       pg_catalog.aclexplode(attribute.attacl) acl \
+                    WHERE relation.oid = pg_catalog.to_regclass('{qualified}') \
+                      AND acl.grantee = 0 \
+                      AND acl.privilege_type IN ('INSERT','UPDATE')) \
+              OR NOT pg_catalog.has_table_privilege( \
+                   'wamn_app', '{qualified}', 'SELECT') \
+              OR NOT pg_catalog.has_table_privilege( \
+                   'wamn_app', '{qualified}', 'DELETE') \
+              OR EXISTS ( \
+                   SELECT 1 \
+                     FROM unnest(ARRAY[ \
+                       'INSERT','UPDATE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                    WHERE pg_catalog.has_table_privilege( \
+                      'wamn_app', '{qualified}', privilege)) \
+              OR NOT pg_catalog.has_table_privilege( \
+                   '{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT') \
+              OR EXISTS ( \
+                   SELECT 1 \
+                     FROM unnest(ARRAY[ \
+                       'INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                    WHERE pg_catalog.has_table_privilege( \
+                      '{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege)) \
+              OR EXISTS ( \
+                   SELECT 1 \
+                     FROM pg_catalog.pg_class relation \
+                     CROSS JOIN LATERAL pg_catalog.aclexplode( \
+                       COALESCE(relation.relacl, \
+                                pg_catalog.acldefault('r', relation.relowner))) acl \
+                    WHERE relation.oid = pg_catalog.to_regclass('{qualified}') \
+                      AND acl.grantee = 0) \
+              OR (SELECT owner.rolname \
+                    FROM pg_catalog.pg_class relation \
+                    JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
+                   WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
+                   IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}') \
+           THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                MESSAGE = 'run-capture-author-sql-write-authority'; \
+           END IF; \
+         END $run_capture_acl$"
+    )
+}
+
+fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObservation) -> bool {
+    if !obs.tables.contains_key("runs") {
+        return false;
+    }
+
+    let expected = |values: &[&str]| {
+        values
+            .iter()
+            .map(|value| (*value).to_string())
+            .collect::<BTreeSet<_>>()
+    };
+    let key = |grantee: &str| {
+        (
+            schema.as_str().to_string(),
+            "runs".to_string(),
+            grantee.to_string(),
+        )
+    };
+    let observed =
+        |map: &BTreeMap<_, _>, grantee: &str| map.get(&key(grantee)).cloned().unwrap_or_default();
+
+    observed(&obs.authoring_table_privileges, "PUBLIC") != BTreeSet::new()
+        || observed(&obs.authoring_table_privileges, "wamn_app") != expected(&["SELECT", "DELETE"])
+        || observed(&obs.authoring_table_privileges, SCENARIO_AUTHOR_ROLE) != expected(&["SELECT"])
+        || observed(&obs.authoring_effective_table_privileges, "wamn_app")
+            != expected(&["SELECT", "DELETE"])
+        || observed(
+            &obs.authoring_effective_table_privileges,
+            SCENARIO_AUTHOR_ROLE,
+        ) != expected(&["SELECT"])
+        || observed(&obs.authoring_effective_column_privileges, "wamn_app")
+            != expected(&["SELECT", "INSERT", "UPDATE"])
+        || observed(
+            &obs.authoring_effective_column_privileges,
+            SCENARIO_AUTHOR_ROLE,
+        ) != expected(&["SELECT"])
+        || obs
+            .authoring_table_owners
+            .get(&(schema.as_str().to_string(), "runs".to_string()))
+            .is_some_and(|owner| owner == "wamn_app" || owner == SCENARIO_AUTHOR_ROLE)
+        || obs.app_run_capture_privileges.0
+        || obs.app_run_capture_privileges.1
+        || !obs.app_run_capture_privileges.2
 }
 
 /// Reconcile one project-env's run-plane schema (+ the per-database `catalog`
@@ -3040,6 +3265,11 @@ FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
 pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> RunPlanePlan {
     let mut plan = RunPlanePlan::default();
     let has_runs = obs.tables.contains_key("runs");
+    let capture_mode_present = obs
+        .tables
+        .get("runs")
+        .is_some_and(|columns| columns.contains("capture_mode"));
+    let run_capture_privileges_drifted = run_capture_privileges_drifted(schema, obs);
     let has_release_flows = obs.catalog_tables.contains("release_flows");
     let execution_pin_cutover_needed = (has_runs
         && !run_execution_pin_contract_complete(schema, obs))
@@ -3124,6 +3354,20 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             sql: effect_writer_cutover_sql(schema, obs),
         });
     }
+    let capture_output_size_rename_needed = capture_output_size_rename_needed(obs);
+    let capture_output_size_conflict = capture_output_size_conflict(obs);
+    let capture_projection_cutover_needed = capture_projection_cutover_needed(obs);
+    if capture_projection_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::CaptureProjectionCutover,
+            target: "node_runs.capture-projection".to_string(),
+            sql: capture_projection_cutover_sql(
+                schema,
+                capture_output_size_rename_needed,
+                capture_output_size_conflict,
+            ),
+        });
+    }
 
     // The standalone record files grant privileged authoring writes to this
     // role, so it must exist (and remain non-login/non-bypass) before any
@@ -3143,6 +3387,19 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             kind: RunPlaneActionKind::RepairAuthoringPrivilege,
             target: "wamn_app-membership".to_string(),
             sql: format!("REVOKE {SCENARIO_AUTHOR_ROLE} FROM wamn_app"),
+        });
+    }
+    if capture_mode_present && run_capture_privileges_drifted {
+        let available_columns = obs
+            .tables
+            .get("runs")
+            .expect("capture_mode is present only on a present runs table")
+            .iter()
+            .cloned();
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairRunCapturePrivilege,
+            target: "runs.capture_mode".to_string(),
+            sql: repair_run_capture_privilege_sql(schema, available_columns),
         });
     }
 
@@ -3435,6 +3692,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     // and the guest-visible role are part of the expected map so a stale grant
     // cannot survive an otherwise current schema.
     for spec in AUTHORING_PRIVILEGE_SPECS {
+        if matches!(spec.schema, AuthoringTableSchema::RunPlane) && spec.table == "runs" {
+            continue;
+        }
         let (schema_name, present) = match spec.schema {
             AuthoringTableSchema::Catalog => ("catalog", obs.catalog_tables.contains(spec.table)),
             AuthoringTableSchema::RunPlane => {
@@ -3587,7 +3847,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 continue;
             };
             let record_cols = record_columns(file, "wamn_run", &table);
-            for (col, def) in &record_cols {
+            for (record_column_index, (col, def)) in record_cols.iter().enumerate() {
                 if table == "runs" && col == "execution_bundle_hash" {
                     continue;
                 }
@@ -3603,15 +3863,52 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 {
                     continue;
                 }
+                if capture_output_size_rename_needed && table == "node_runs" && col == "output_size"
+                {
+                    continue;
+                }
                 if !live_cols.contains(col) {
+                    let add_column_sql = format!(
+                        "ALTER TABLE {}.{} ADD COLUMN {def}",
+                        schema.quoted(),
+                        quote_ident(&table),
+                    );
+                    let sql = if table == "runs"
+                        && col == "capture_mode"
+                        && obs.app_run_capture_privileges.0
+                    {
+                        let available_columns = live_cols.iter().cloned().chain(
+                            record_cols[..=record_column_index]
+                                .iter()
+                                .map(|(column, _)| column.clone()),
+                        );
+                        format!(
+                            "LOCK TABLE {}.runs IN ACCESS EXCLUSIVE MODE; {add_column_sql}; {}",
+                            schema.quoted(),
+                            repair_run_capture_privilege_sql(schema, available_columns),
+                        )
+                    } else if table == "runs"
+                        && col != "capture_mode"
+                        && (capture_mode_present
+                            || (!capture_mode_present
+                                && obs.app_run_capture_privileges.0
+                                && record_cols[..record_column_index]
+                                    .iter()
+                                    .any(|(column, _)| column == "capture_mode")))
+                    {
+                        format!(
+                            "{add_column_sql}; GRANT INSERT ({}), UPDATE ({}) ON TABLE {}.runs TO wamn_app",
+                            quote_ident(col),
+                            quote_ident(col),
+                            schema.quoted(),
+                        )
+                    } else {
+                        add_column_sql
+                    };
                     plan.actions.push(RunPlaneAction {
                         kind: RunPlaneActionKind::AddColumn,
                         target: format!("{table}.{col}"),
-                        sql: format!(
-                            "ALTER TABLE {}.{} ADD COLUMN {def}",
-                            schema.quoted(),
-                            quote_ident(&table),
-                        ),
+                        sql,
                     });
                 }
             }
@@ -3634,11 +3931,35 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 {
                     continue;
                 }
+                if capture_projection_cutover_needed
+                    && table == "node_runs"
+                    && RETIRED_CAPTURE_PROJECTION_COLUMNS.contains(&col.as_str())
+                {
+                    continue;
+                }
+                if (capture_output_size_rename_needed || capture_output_size_conflict)
+                    && table == "node_runs"
+                    && col == LEGACY_OUTPUT_SIZE_COLUMN
+                {
+                    continue;
+                }
                 if !known.contains(col.as_str()) {
                     plan.extra_columns.push((table.clone(), col.clone()));
                 }
             }
         }
+    }
+
+    if !capture_mode_present && run_capture_privileges_drifted && !obs.app_run_capture_privileges.0
+    {
+        let record_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+            .into_iter()
+            .map(|(column, _)| column);
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairRunCapturePrivilege,
+            target: "runs.capture_mode".to_string(),
+            sql: repair_run_capture_privilege_sql(schema, record_columns),
+        });
     }
 
     // 2b. Exact CHECK convergence. AddColumn carries its own inline CHECK, so
@@ -3815,7 +4136,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         if record_table_names().contains(table.as_str())
             && !expected_triggers.contains(&(table.as_str(), name.as_str()))
             && name != OUTBOX_TRIGGER_NAME
-            && !(table == "runs" && name == "runs_admission_pins_immutable")
             && !(effect_writer_ledger_cutover_needed
                 && matches!(
                     (table.as_str(), name.as_str()),
@@ -4264,6 +4584,87 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
+}
+
+/// Effective guest authority on the admission-owned run capture carrier.
+///
+/// A table-level INSERT/UPDATE grant covers every present and future column,
+/// so it is observed independently from the named-column check. Both values
+/// are false when either the role, table, or capture column is absent.
+pub fn select_run_capture_privileges_sql() -> String {
+    let writable_columns = record_columns(RUN_STATE_SQL, "wamn_run", "runs")
+        .into_iter()
+        .map(|(column, _)| column)
+        .filter(|column| column != "capture_mode")
+        .map(|column| format!("'{column}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!(
+        "WITH target AS ( \
+           SELECT pg_catalog.to_regclass(pg_catalog.format('%I.runs', $1::text)) AS oid \
+         ), boundary_roles AS ( \
+           SELECT oid FROM pg_catalog.pg_roles \
+            WHERE rolname IN ('wamn_app','wamn_scenario_author') \
+         ), app AS ( \
+           SELECT oid FROM pg_catalog.pg_roles WHERE rolname = 'wamn_app' \
+         ), capture AS ( \
+           SELECT attribute.attnum \
+             FROM target \
+             JOIN pg_catalog.pg_attribute AS attribute \
+               ON attribute.attrelid = target.oid \
+              AND attribute.attname = 'capture_mode' \
+              AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+         ) \
+         SELECT \
+           (EXISTS ( \
+             SELECT 1 \
+               FROM boundary_roles actor \
+               CROSS JOIN unnest(ARRAY['INSERT','UPDATE']) privilege \
+              WHERE pg_catalog.has_table_privilege( \
+                actor.oid, (SELECT oid FROM target), privilege)) \
+            OR EXISTS ( \
+              SELECT 1 \
+                FROM target \
+                JOIN pg_catalog.pg_class relation ON relation.oid = target.oid \
+                CROSS JOIN LATERAL pg_catalog.aclexplode( \
+                  COALESCE(relation.relacl, \
+                           pg_catalog.acldefault('r', relation.relowner))) acl \
+               WHERE acl.grantee = 0 \
+                 AND acl.privilege_type IN ('INSERT','UPDATE'))), \
+           (EXISTS ( \
+              SELECT 1 \
+                FROM boundary_roles actor \
+                CROSS JOIN unnest(ARRAY['INSERT','UPDATE']) privilege \
+               WHERE pg_catalog.has_column_privilege( \
+                 actor.oid, (SELECT oid FROM target), \
+                 (SELECT attnum FROM capture), privilege)) \
+            OR EXISTS ( \
+              SELECT 1 \
+                FROM target \
+                JOIN pg_catalog.pg_attribute attribute \
+                  ON attribute.attrelid = target.oid \
+                 AND attribute.attnum = (SELECT attnum FROM capture) \
+                CROSS JOIN LATERAL \
+                  pg_catalog.aclexplode(attribute.attacl) acl \
+               WHERE acl.grantee = 0 \
+                 AND acl.privilege_type IN ('INSERT','UPDATE'))), \
+           COALESCE(( \
+             SELECT bool_and(CASE \
+               WHEN attribute.attname = ANY (ARRAY[{writable_columns}]::text[]) THEN \
+                 pg_catalog.has_column_privilege( \
+                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
+                 AND pg_catalog.has_column_privilege( \
+                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
+               ELSE \
+                 NOT pg_catalog.has_column_privilege( \
+                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'INSERT') \
+                 AND NOT pg_catalog.has_column_privilege( \
+                   (SELECT oid FROM app), attribute.attrelid, attribute.attnum, 'UPDATE') \
+               END) \
+               FROM pg_catalog.pg_attribute AS attribute \
+              WHERE attribute.attrelid = (SELECT oid FROM target) \
+                AND attribute.attnum > 0 AND NOT attribute.attisdropped), false)"
+    )
 }
 
 /// Effective schema USAGE for the host-only author role on catalog and `$1`.
@@ -4800,6 +5201,15 @@ CREATE INDEX event_registrations_by_entity
                 }
             }
         }
+        obs.app_run_capture_privileges = (false, false, true);
+        obs.authoring_effective_column_privileges
+            .entry((
+                "demo".to_string(),
+                "runs".to_string(),
+                "wamn_app".to_string(),
+            ))
+            .or_default()
+            .extend(["INSERT".to_string(), "UPDATE".to_string()]);
         for table in [
             "effect_attempts",
             "effect_attempt_dispatches",
@@ -6878,6 +7288,186 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
+    fn populated_legacy_runs_gain_fail_closed_capture_mode_additively() {
+        let mut obs = observation_at_record();
+        obs.run_rows = 1;
+        obs.app_run_capture_privileges = (true, false, true);
+        for map in [
+            &mut obs.authoring_table_privileges,
+            &mut obs.authoring_effective_table_privileges,
+        ] {
+            map.insert(
+                (
+                    "demo".to_string(),
+                    "runs".to_string(),
+                    "wamn_app".to_string(),
+                ),
+                ["SELECT", "INSERT", "UPDATE", "DELETE"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+            );
+        }
+        obs.tables
+            .get_mut("runs")
+            .expect("runs table")
+            .remove("capture_mode");
+        obs.checks
+            .remove(&("runs".to_string(), "runs_capture_mode_check".to_string()));
+        obs.checks.remove(&(
+            "runs".to_string(),
+            "runs_capture_mode_source_check".to_string(),
+        ));
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| { action.kind == RunPlaneActionKind::ExecutionPinCutover })
+        );
+        let add = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::AddColumn && action.target == "runs.capture_mode"
+            })
+            .expect("capture mode added independently of execution-pin cutover");
+        assert_eq!(add.kind, RunPlaneActionKind::AddColumn);
+        assert!(
+            add.sql
+                .starts_with("LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE")
+        );
+        assert!(add.sql.contains("capture_mode text NOT NULL DEFAULT 'off'"));
+        assert!(add.sql.contains("CHECK (capture_mode IN ('full', 'off'))"));
+        assert!(
+            add.sql
+                .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs")
+        );
+        assert!(
+            !plan
+                .actions
+                .iter()
+                .any(|action| { action.kind == RunPlaneActionKind::RepairRunCapturePrivilege })
+        );
+        assert!(plan.actions.iter().any(|action| {
+            action.target == "runs.runs_capture_mode_source_check"
+                && action
+                    .sql
+                    .contains("NOT trigger_source IS DISTINCT FROM 'scenario-draft'")
+        }));
+    }
+
+    #[test]
+    fn broad_app_run_grants_are_narrowed_away_from_capture_mode() {
+        let mut obs = observation_at_record();
+        obs.app_run_capture_privileges = (true, true, true);
+        obs.tables
+            .get_mut("runs")
+            .expect("runs table")
+            .insert("legacy_extra".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let repair = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::RepairRunCapturePrivilege)
+            .expect("broad application-role grant is repaired");
+        assert_eq!(repair.target, "runs.capture_mode");
+        assert!(
+            repair
+                .sql
+                .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".runs")
+        );
+        assert!(repair.sql.contains("REVOKE SELECT ("));
+        assert!(repair.sql.contains("tenant_id"));
+        assert!(repair.sql.contains("capture_mode"));
+        let replacement_grant = repair
+            .sql
+            .split_once("GRANT INSERT (")
+            .expect("replacement INSERT grant")
+            .1
+            .split_once("DO $run_capture_acl$")
+            .expect("postcondition follows replacement grant")
+            .0;
+        assert!(!replacement_grant.contains("capture_mode"));
+        assert!(!replacement_grant.contains("legacy_extra"));
+        assert!(
+            repair
+                .sql
+                .contains("run-capture-author-sql-write-authority")
+        );
+    }
+
+    #[test]
+    fn retired_node_capture_projection_is_cut_over_without_rewriting_rows() {
+        let mut obs = observation_at_record();
+        let columns = obs.tables.get_mut("node_runs").expect("node table");
+        columns.remove("output_size");
+        columns.insert(LEGACY_OUTPUT_SIZE_COLUMN.to_string());
+        columns.extend(
+            RETIRED_CAPTURE_PROJECTION_COLUMNS
+                .iter()
+                .map(|column| (*column).to_string()),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::CaptureProjectionCutover)
+            .expect("retired capture projection cutover");
+        assert!(cutover.sql.contains("LOCK TABLE \"demo\".node_runs"));
+        assert!(
+            cutover
+                .sql
+                .contains("RENAME COLUMN payload_size TO output_size")
+        );
+        assert!(!plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::AddColumn && action.target == "node_runs.output_size"
+        }));
+        assert!(!plan.extra_columns.contains(&(
+            "node_runs".to_string(),
+            LEGACY_OUTPUT_SIZE_COLUMN.to_string()
+        )));
+        for column in RETIRED_CAPTURE_PROJECTION_COLUMNS {
+            assert!(
+                cutover
+                    .sql
+                    .contains(&format!("DROP COLUMN IF EXISTS {column}"))
+            );
+            assert!(
+                !plan
+                    .extra_columns
+                    .contains(&("node_runs".to_string(), (*column).to_string()))
+            );
+        }
+        assert!(!cutover.sql.contains("UPDATE"));
+    }
+
+    #[test]
+    fn capture_projection_refuses_ambiguous_output_size_columns() {
+        let mut obs = observation_at_record();
+        obs.tables
+            .get_mut("node_runs")
+            .expect("node table")
+            .insert(LEGACY_OUTPUT_SIZE_COLUMN.to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::CaptureProjectionCutover)
+            .expect("ambiguous output-size projection refuses");
+        assert!(cutover.sql.contains("capture-output-size-columns-conflict"));
+        assert!(!cutover.sql.contains("RENAME COLUMN"));
+        assert!(!plan.extra_columns.contains(&(
+            "node_runs".to_string(),
+            LEGACY_OUTPUT_SIZE_COLUMN.to_string()
+        )));
+    }
+
+    #[test]
     fn drifted_and_missing_checks_plan_exact_repairs() {
         let mut obs = observation_at_record();
         obs.checks.insert(
@@ -6992,6 +7582,10 @@ CREATE INDEX event_registrations_by_entity
         }));
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
+                && action.target == "runs.runs_admission_pins_immutable"
+        }));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairTrigger
                 && action.target == "run_flow_resolutions.run_flow_resolutions_update_immutable"
         }));
         assert!(plan.actions.iter().any(|action| {
@@ -7008,7 +7602,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            26
+            27
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -7312,6 +7906,9 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_schema_triggers_sql().contains("NOT t.tgisinternal"));
         assert!(select_scenario_author_role_sql().contains("rolbypassrls"));
         assert!(select_app_scenario_author_membership_sql().contains("'MEMBER'"));
+        assert!(select_run_capture_privileges_sql().contains("has_table_privilege"));
+        assert!(select_run_capture_privileges_sql().contains("has_column_privilege"));
+        assert!(select_run_capture_privileges_sql().contains("capture_mode"));
         assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
         assert!(select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
         // Every observation query must see the ledger, or the planner reads an

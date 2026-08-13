@@ -29,6 +29,18 @@ DO $scenario_author$ BEGIN
   END IF;
 END $scenario_author$;
 
+-- Stable host-only ACL role for the effect ledger. Credential generations are
+-- provisioned separately; this local fixture needs only the NOLOGIN grant
+-- carrier so canonical run-state.sql can be applied.
+DO $effect_writer$ BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'));
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles
+                 WHERE rolname = 'wamn_effect_writer') THEN
+    CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB
+      NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END $effect_writer$;
+
 CREATE DATABASE wamn OWNER postgres;
 
 \connect wamn
@@ -218,6 +230,8 @@ CREATE TABLE s3.runs (
         CHECK (status IN ('dispatched', 'running', 'completed', 'failed',
                           'infrastructure-failure', 'effect-uncertain')),
     trigger_source  text,
+    capture_mode    text NOT NULL DEFAULT 'off'
+        CHECK (capture_mode IN ('full', 'off')),
     input_json      jsonb,
     result_json     jsonb,
     state_json      jsonb,
@@ -228,6 +242,7 @@ CREATE TABLE s3.runs (
     fail_node       text,
     fail_reason     text,
     updated_at      timestamptz NOT NULL DEFAULT now(),
+    CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'),
     PRIMARY KEY (tenant_id, run_id)
 );
 ALTER TABLE s3.runs ENABLE ROW LEVEL SECURITY;
@@ -235,7 +250,16 @@ ALTER TABLE s3.runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY runs_tenant ON s3.runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON s3.runs TO wamn_app;
+GRANT SELECT, DELETE ON s3.runs TO wamn_app;
+GRANT INSERT (
+    tenant_id, run_id, flow_id, flow_version, status, trigger_source,
+    input_json, result_json, state_json, idempotency_key, replay_of, root_run_id,
+    fail_kind, fail_node, fail_reason, updated_at
+), UPDATE (
+    tenant_id, run_id, flow_id, flow_version, status, trigger_source,
+    input_json, result_json, state_json, idempotency_key, replay_of, root_run_id,
+    fail_kind, fail_node, fail_reason, updated_at
+) ON s3.runs TO wamn_app;
 
 -- One row per node execution; the (tenant_id, run_id, node_id, occurrence)
 -- idempotency key + seq ordering are what reconstruction replays.
@@ -254,11 +278,8 @@ CREATE TABLE s3.node_runs (
     error_detail  jsonb,
     -- 9.6 capture seams the flowrunner guest fills (wamn-srb); mirrors
     -- deploy/sql/run-state.sql so the S3 fixture accepts the guest's writes.
-    preview_head  text,
-    payload_size  bigint,
+    output_size   bigint,
     payload_hash  text,
-    capture_mode  text,
-    redacted      boolean NOT NULL DEFAULT false,
     PRIMARY KEY (tenant_id, run_id, node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES s3.runs (tenant_id, run_id) ON DELETE CASCADE
 );

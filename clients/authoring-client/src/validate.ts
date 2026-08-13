@@ -11,6 +11,7 @@ type JsonSchemaObject = {
   readonly $ref?: string;
   readonly $schema?: string;
   readonly additionalProperties?: boolean;
+  readonly allOf?: ReadonlyArray<JsonSchema>;
   readonly anyOf?: ReadonlyArray<JsonSchema>;
   readonly default?: unknown;
   readonly definitions?: Readonly<Record<string, JsonSchema>>;
@@ -36,6 +37,7 @@ const supportedKeywords = new Set([
   "$ref",
   "$schema",
   "additionalProperties",
+  "allOf",
   "anyOf",
   // Annotation only in draft-07: it constrains no instance, so validation
   // ignores it exactly as it ignores `description`.
@@ -71,6 +73,20 @@ export function assertSupportedAuthoringSchema(value: unknown, path = "$"): void
   }
   if (schema.format !== undefined && !supportedFormats.has(schema.format)) {
     throw new Error(`${path} uses unsupported schema format ${schema.format}`);
+  }
+  if (schema.allOf !== undefined) {
+    const [reference] = schema.allOf;
+    if (
+      schema.allOf.length !== 1 ||
+      reference === null ||
+      typeof reference !== "object" ||
+      Array.isArray(reference) ||
+      Object.keys(reference).length !== 1 ||
+      typeof reference.$ref !== "string"
+    ) {
+      throw new Error(`${path}.allOf must contain exactly one $ref`);
+    }
+    assertSupportedAuthoringSchema(reference, `${path}.allOf[0]`);
   }
   for (const keyword of ["anyOf", "oneOf"] as const) {
     for (const [index, member] of (schema[keyword] ?? []).entries()) {
@@ -163,6 +179,10 @@ function validate(value: unknown, schema: JsonSchema, path: string): void {
     }
     validate(value, definition, path);
     return;
+  }
+
+  if (schema.allOf !== undefined) {
+    validate(value, schema.allOf[0]!, path);
   }
 
   if (schema.oneOf !== undefined) {

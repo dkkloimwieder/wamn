@@ -35,10 +35,12 @@ pub fn ladder_ddl(schema: &str) -> String {
             execution_bundle_hash text NOT NULL DEFAULT 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+            input_json jsonb, result_json jsonb, state_json jsonb, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
             idempotency_key text, replay_of text, root_run_id text, \
             fail_kind text, fail_node text, fail_reason text, \
+            CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
@@ -53,8 +55,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             occurrence int NOT NULL DEFAULT 0, seq int NOT NULL, attempt int NOT NULL DEFAULT 0, \
             status text NOT NULL, output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
+            output_size bigint, payload_hash text, \
             PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
          ALTER TABLE {schema}.node_runs ENABLE ROW LEVEL SECURITY;\

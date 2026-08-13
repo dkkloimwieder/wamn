@@ -1,23 +1,18 @@
-//! The `capturebench` subcommand: the 9.6 node-level I/O capture gates (wamn-srb).
+//! The `capturebench` subcommand: admitted-run node I/O capture gates.
 //!
 //! Pure host-side like dispatchbench (no wasm guest): it applies the REAL
 //! `deploy/sql/run-state.sql` into a throwaway ephemeral schema, then exercises
 //! the SAME pure capture logic (`wamn_run_state::capture`) and the SAME `node_runs`
-//! insert builders the flowrunner guest binds — so the columns a capture policy
-//! produces, the reconstruction verdict, the secret-containment property, and the
+//! insert builders the flowrunner guest binds — so the admitted mode's facts,
+//! the reconstruction verdict, the secret-containment property, and the
 //! retention verb all run against real Postgres over the real prepared statements
 //! (SR12b), without standing up the wasm runtime.
 //!
-//! Modes:
-//!   toggle    — an `off`/`preview` policy writes a row with NULL payloads and the
-//!               right `capture_mode`, and the run reconstructs to CaptureOff
-//!               (non-replayable) — the capture-off seam end to end.
-//!   truncate  — a payload over the size threshold is stored PREVIEW-ONLY (payload
-//!               NULL) with the correct head / full size / content hash, in a mode
-//!               (`full`) that would otherwise store it faithfully.
-//!   scrub     — a payload carrying a KNOWN secret is written through a `scrubbed`
-//!               flow (success + error rows); a containment scan asserts the raw
-//!               secret appears NOWHERE in `node_runs` and `redacted` is set.
+//! Gate phases:
+//!   off              — `off` writes no node I/O facts and reconstructs to CaptureOff.
+//!   output-too-large — a full-capture output over the fixed ceiling is NULL with
+//!                      its full size and content hash retained.
+//!   redaction        — full-capture success and error rows contain no known raw secret.
 //!   retention — old + recent terminal runs (plus a non-terminal run) are
 //!               seeded; the REAL `prune-run-history` verb
 //!               logic prunes the old terminal run (cascading its node_runs), keeps
@@ -29,8 +24,10 @@ use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_flow::{Capture, CaptureMode, Flow, ResolvedInterfaces};
-use wamn_run_state::{NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct};
+use wamn_flow::{Flow, ResolvedInterfaces};
+use wamn_run_state::{
+    CaptureMode, NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct,
+};
 use wamn_runner::Plan;
 
 use crate::ctl_process;
@@ -43,9 +40,9 @@ const SECRET: &str = "hunter2-TOPSECRET-9f3c";
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
-    Toggle,
-    Truncate,
-    Scrub,
+    Off,
+    OutputTooLarge,
+    Redaction,
     Retention,
     All,
 }
@@ -169,25 +166,43 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
 /// Insert a `runs` row (the node_runs FK parent). `created_at` is `now()` shifted
 /// back `age_days` days so the retention gate can seed aged history.
 async fn seed_run(
-    client: &Client,
+    admin_url: &str,
     run_id: &str,
     status: &str,
     age_days: i64,
+    capture_mode: CaptureMode,
 ) -> anyhow::Result<()> {
-    client
+    let trigger_source = match capture_mode {
+        CaptureMode::Full => "scenario-draft",
+        CaptureMode::Off => "test",
+    };
+    let (client, conn) = tokio_postgres::connect(admin_url, NoTls)
+        .await
+        .context("admin seed-run connect")?;
+    let conn_task = tokio::spawn(conn);
+    let result = client
         .execute(
-            "INSERT INTO runs ( \
+            &format!("INSERT INTO {SCHEMA}.runs ( \
                tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
-               execution_bundle_hash, status, created_at \
-             ) VALUES (current_setting('app.tenant', true), $1, 'f', 1, \
+               execution_bundle_hash, status, created_at, trigger_source, capture_mode \
+             ) VALUES ($1, $2, 'f', 1, \
                      'capture-fixture', 1, 'test', \
-                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', $2, \
-                     now() - ($3::bigint * interval '1 day'))",
-            &[&run_id, &status, &age_days],
+                     'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', $3, \
+                     now() - ($4::bigint * interval '1 day'), $5, $6)"),
+            &[
+                &TENANT,
+                &run_id,
+                &status,
+                &age_days,
+                &trigger_source,
+                &capture_mode.as_str(),
+            ],
         )
         .await
-        .context("seed run")?;
-    Ok(())
+        .context("seed run");
+    drop(client);
+    let _ = conn_task.await;
+    result.map(|_| ())
 }
 
 fn to_jsonb(s: &Option<String>) -> Option<Value> {
@@ -196,7 +211,7 @@ fn to_jsonb(s: &Option<String>) -> Option<Value> {
 }
 
 /// Write a completed `success` node-run via `insert_node_run_success_sql` with the
-/// capture columns `capture::derive` produced — the exact 12-param bind the guest
+/// capture columns `capture::derive` produced — the exact nine-param bind the guest
 /// makes.
 async fn write_success(
     client: &Client,
@@ -220,11 +235,8 @@ async fn write_success(
                 &port,
                 &out_j,
                 &in_j,
-                &c.preview_head,
-                &c.payload_size,
+                &c.output_size,
                 &c.payload_hash,
-                &c.capture_mode,
-                &c.redacted,
             ],
         )
         .await
@@ -244,9 +256,7 @@ async fn write_error(
     mut detail: Value,
     c: &capture::Captured,
 ) -> anyhow::Result<()> {
-    if c.redacted {
-        capture::scrub(&mut detail);
-    }
+    capture::scrub(&mut detail);
     let out_j = to_jsonb(&c.output_json);
     let in_j = to_jsonb(&c.input_json);
     let occ: i32 = 0;
@@ -262,11 +272,8 @@ async fn write_error(
                 &in_j,
                 &kind,
                 &detail,
-                &c.preview_head,
-                &c.payload_size,
+                &c.output_size,
                 &c.payload_hash,
-                &c.capture_mode,
-                &c.redacted,
             ],
         )
         .await
@@ -281,17 +288,16 @@ fn resolved_interfaces() -> ResolvedInterfaces {
     ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])])
 }
 
-/// A minimal linear flow `a -> b` behind a typed entry, with the given capture
-/// policy — the reconstruct source for the toggle phase.
+/// A minimal linear flow `a -> b` behind a typed entry.
 ///
 /// 9b7e2a7 (wamn-5wd1.34) replaced the document's `trigger` + `entry` fields with
-/// a typed entry NODE (`request`/`cron`/`event`). The 9.6 capture semantics under
-/// proof here are entry-agnostic — nothing downstream reads the entry kind — so
+/// a typed entry NODE (`request`/`cron`/`event`). Capture is an admission fact and
+/// is deliberately absent from this authored document, so
 /// `cron`, the config-free entry that imposes no `respond` discipline, stands in
 /// for the old `{"type": "manual"}` trigger, and `a` stays an ordinary captured
 /// work node rather than becoming the entry itself.
-fn linear_flow(capture: Value) -> Flow {
-    let mut graph = json!({
+fn linear_flow() -> Flow {
+    let graph = json!({
         "schema-version": "0.1", "flow-id": "cap", "version": 1,
         "nodes": [
             {"id": "in", "type": "cron"},
@@ -300,9 +306,6 @@ fn linear_flow(capture: Value) -> Flow {
         ],
         "edges": [{"from": "in", "to": "a"}, {"from": "a", "to": "b"}],
     });
-    if !capture.is_null() {
-        graph["capture"] = capture;
-    }
     Flow::from_json(&graph.to_string()).expect("capture fixture flow parses")
 }
 
@@ -355,126 +358,104 @@ async fn reconstruct_verdict(
 }
 
 // ---------------------------------------------------------------------------
-// toggle: off/preview => NULL payloads + capture_mode + CaptureOff replay
+// off: no I/O facts + CaptureOff replay
 // ---------------------------------------------------------------------------
 
-async fn toggle_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    println!("\n## toggle — off/preview capture writes NULL payloads and reconstructs CaptureOff");
+async fn off_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!("\n## off — capture writes no I/O facts and reconstructs CaptureOff");
     reset(admin_url).await?;
     let (app, _h) = connect_app(app_url).await?;
 
-    let mut pass = true;
-    for (mode, run_id) in [
-        (CaptureMode::Off, "cap-off"),
-        (CaptureMode::Preview, "cap-prev"),
-    ] {
-        seed_run(&app, run_id, "running", 0).await?;
-        let policy = Capture {
-            mode,
-            ..Capture::default()
-        };
-        let c = capture::derive(&policy, &json!({ "at": "a" }), &json!({ "at": "a" }));
-        write_success(&app, run_id, "a", 0, "main", &c).await?;
+    let run_id = "cap-off";
+    seed_run(admin_url, run_id, "running", 0, CaptureMode::Off).await?;
+    let captured = capture::derive(
+        CaptureMode::Off,
+        &json!({ "at": "a" }),
+        &json!({ "at": "a" }),
+    );
+    write_success(&app, run_id, "a", 0, "main", &captured).await?;
 
-        // The stored row: output_json NULL, capture_mode the effective literal.
-        let row = app
-            .query_one(
-                "SELECT output_json IS NULL, capture_mode FROM node_runs \
-                 WHERE run_id = $1 AND local_node_id = 'a'",
-                &[&run_id],
-            )
-            .await?;
-        let out_null: bool = row.get(0);
-        let recorded_mode: Option<String> = row.get(1);
-        let mode_ok = recorded_mode.as_deref() == Some(mode.as_str());
-
-        // Reconstruction: a completed row with no captured output => CaptureOff.
-        let flow = linear_flow(json!({ "mode": mode.as_str() }));
-        let verdict = reconstruct_verdict(&app, &flow, run_id).await?;
-        let capture_off = matches!(verdict, Err(ReconstructError::CaptureOff { .. }));
-
-        let ok = out_null && mode_ok && capture_off;
-        pass &= ok;
-        println!(
-            "  {}: output_null={out_null} capture_mode={recorded_mode:?} CaptureOff={capture_off} -> {ok}",
-            mode.as_str()
-        );
-    }
-    println!("PASS(toggle: NULL payloads + capture_mode + CaptureOff replay): {pass}");
+    let row = app
+        .query_one(
+            "SELECT output_json IS NULL, input_json IS NULL, output_size IS NULL, \
+                    payload_hash IS NULL FROM node_runs \
+             WHERE run_id = $1 AND local_node_id = 'a'",
+            &[&run_id],
+        )
+        .await?;
+    let no_facts = row.get::<_, bool>(0)
+        && row.get::<_, bool>(1)
+        && row.get::<_, bool>(2)
+        && row.get::<_, bool>(3);
+    let verdict = reconstruct_verdict(&app, &linear_flow(), run_id).await?;
+    let capture_off = matches!(verdict, Err(ReconstructError::CaptureOff { .. }));
+    let pass = no_facts && capture_off;
+    println!("PASS(off: no I/O facts + CaptureOff replay): {pass}");
     Ok(pass)
 }
 
 // ---------------------------------------------------------------------------
-// truncate: an oversized payload is stored preview-only (head/size/hash)
+// output-too-large: an oversized output is NULL with size/hash retained
 // ---------------------------------------------------------------------------
 
-async fn truncate_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    println!("\n## truncate — a payload over the size threshold is stored preview-only");
+async fn output_too_large_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+    println!("\n## output-too-large — an output over the fixed ceiling retains size/hash only");
     reset(admin_url).await?;
     let (app, _h) = connect_app(app_url).await?;
 
-    // A `full` policy with a tiny threshold: the big payload would store faithfully
-    // but for its size, so this isolates the truncation.
-    let big = "x".repeat(4096);
+    let big = "x".repeat(capture::OUTPUT_CAPTURE_CEILING_BYTES);
     let output = json!({ "blob": big });
     let raw_len = output.to_string().len() as i64;
     let expected_hash = format!("{:016x}", capture::fnv1a64(output.to_string().as_bytes()));
-    let policy = Capture {
-        mode: CaptureMode::Full,
-        max_bytes: 64,
-    };
-    let c = capture::derive(&policy, &output, &json!({ "in": 1 }));
+    let c = capture::derive(CaptureMode::Full, &output, &json!({ "in": 1 }));
 
-    seed_run(&app, "cap-big", "running", 0).await?;
+    seed_run(admin_url, "cap-big", "running", 0, CaptureMode::Full).await?;
     write_success(&app, "cap-big", "a", 0, "main", &c).await?;
 
     let row = app
         .query_one(
-            "SELECT output_json IS NULL, input_json IS NULL, preview_head, payload_size, \
-                    payload_hash, capture_mode, redacted \
+            "SELECT output_json IS NULL, input_json IS NOT NULL, output_size, payload_hash \
                FROM node_runs WHERE run_id = 'cap-big' AND local_node_id = 'a'",
             &[],
         )
         .await?;
     let out_null: bool = row.get(0);
-    let in_null: bool = row.get(1);
-    let preview: Option<String> = row.get(2);
-    let size: Option<i64> = row.get(3);
-    let hash: Option<String> = row.get(4);
-    let mode: Option<String> = row.get(5);
-    let redacted: bool = row.get(6);
-
-    let preview_present = preview.as_deref().is_some_and(|p| !p.is_empty());
+    let input_present: bool = row.get(1);
+    let size: Option<i64> = row.get(2);
+    let hash: Option<String> = row.get(3);
     let size_ok = size == Some(raw_len);
     let hash_ok = hash.as_deref() == Some(expected_hash.as_str());
-    let mode_ok = mode.as_deref() == Some("preview");
+    let projected = capture::project_output(None, size, hash.clone())
+        .map(|value| serde_json::to_value(value).expect("projection serializes"));
+    let metadata_ok = projected
+        == Some(json!({
+            "kind": "output-too-large",
+            "size": raw_len,
+            "hash": expected_hash,
+        }));
 
-    let pass = out_null && in_null && preview_present && size_ok && hash_ok && mode_ok && !redacted;
+    let pass = out_null && input_present && size_ok && hash_ok && metadata_ok;
     println!(
-        "  output_null={out_null} input_null={in_null} preview={preview_present} \
-         size={size:?}=={raw_len} hash_ok={hash_ok} mode={mode:?} redacted={redacted}"
+        "  output_null={out_null} input_present={input_present} \
+         size={size:?}=={raw_len} hash_ok={hash_ok} metadata_ok={metadata_ok}"
     );
-    println!("PASS(truncate: oversized payload preview-only with head/size/hash): {pass}");
+    println!("PASS(output-too-large: oversized output NULL with size/hash metadata): {pass}");
     Ok(pass)
 }
 
 // ---------------------------------------------------------------------------
-// scrub: a known secret through a `scrubbed` flow appears NOWHERE in node_runs
+// redaction: full capture always scrubs stored node I/O
 // ---------------------------------------------------------------------------
 
-async fn scrub_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
+async fn redaction_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     println!(
-        "\n## scrub — a known secret through a `scrubbed` flow appears NOWHERE in node_runs \
+        "\n## redaction — a known secret under full capture appears NOWHERE in node_runs \
          (f3proof-style containment)"
     );
     reset(admin_url).await?;
     let (app, _h) = connect_app(app_url).await?;
 
-    let policy = Capture {
-        mode: CaptureMode::Scrubbed,
-        ..Capture::default()
-    };
-    seed_run(&app, "cap-scrub", "running", 0).await?;
+    seed_run(admin_url, "cap-scrub", "running", 0, CaptureMode::Full).await?;
 
     // The secret rides ONLY positions the v0 scrubber is designed to catch: a
     // secret-KEY value (`token`/`api_key`), a nested secret key, and a value-shape
@@ -483,14 +464,14 @@ async fn scrub_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     // fail; the gate proves the CATCHABLE cases are airtight everywhere.)
     let output = json!({ "token": SECRET, "auth": format!("Bearer {SECRET}") });
     let input = json!({ "api_key": SECRET, "nested": { "private_key": SECRET } });
-    let cs = capture::derive(&policy, &output, &input);
+    let cs = capture::derive(CaptureMode::Full, &output, &input);
     write_success(&app, "cap-scrub", "a", 0, "main", &cs).await?;
 
     // An error row: the secret rides the error payload AND the taxonomy detail
     // under secret keys, exercising the guest's error-path detail scrub.
     let err_payload = json!({ "error": { "token": SECRET, "code": "x" } });
     let err_detail = json!({ "message": "node failed", "code": "x", "data": { "secret": SECRET } });
-    let ce = capture::derive(&policy, &err_payload, &input);
+    let ce = capture::derive(CaptureMode::Full, &err_payload, &input);
     write_error(&app, "cap-scrub", "b", 1, "terminal", err_detail, &ce).await?;
 
     // Containment scan (f3proof shape): concatenate every text-bearing column of
@@ -498,33 +479,29 @@ async fn scrub_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
     let rows = app
         .query(
             "SELECT coalesce(output_json::text, '') || coalesce(input_json::text, '') || \
-                    coalesce(preview_head, '') || coalesce(payload_hash, '') || \
-                    coalesce(error_detail::text, '') AS blob, redacted \
+                    coalesce(payload_hash, '') || coalesce(error_detail::text, '') AS blob \
                FROM node_runs WHERE run_id = 'cap-scrub'",
             &[],
         )
         .await?;
     let mut leaked = false;
-    let mut all_redacted = !rows.is_empty();
     let mut placeholder_seen = false;
     for row in &rows {
         let blob: String = row.get(0);
-        let redacted: bool = row.get(1);
         if blob.contains(SECRET) {
             leaked = true;
         }
         if blob.contains(capture::REDACTED) {
             placeholder_seen = true;
         }
-        all_redacted &= redacted;
     }
 
-    let pass = !leaked && all_redacted && placeholder_seen && rows.len() == 2;
+    let pass = !leaked && placeholder_seen && rows.len() == 2;
     println!(
-        "  rows={} leaked={leaked} all_redacted={all_redacted} placeholder_seen={placeholder_seen}",
+        "  rows={} leaked={leaked} placeholder_seen={placeholder_seen}",
         rows.len()
     );
-    println!("PASS(scrub: raw secret nowhere in node_runs + redacted set): {pass}");
+    println!("PASS(redaction: raw secret nowhere in full-capture node rows): {pass}");
     Ok(pass)
 }
 
@@ -550,11 +527,11 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
 
     // Seed: an old completed run (with a node_run, to prove the cascade), a recent
     // completed run, and an OLD but RUNNING run (terminal-only guard).
-    seed_run(&app, "old-done", "completed", 40).await?;
-    let c = capture::derive(&Capture::default(), &json!({ "at": "a" }), &json!({}));
+    seed_run(admin_url, "old-done", "completed", 40, CaptureMode::Full).await?;
+    let c = capture::derive(CaptureMode::Full, &json!({ "at": "a" }), &json!({}));
     write_success(&app, "old-done", "a", 0, "main", &c).await?;
-    seed_run(&app, "recent-done", "completed", 1).await?;
-    seed_run(&app, "old-running", "running", 40).await?;
+    seed_run(admin_url, "recent-done", "completed", 1, CaptureMode::Off).await?;
+    seed_run(admin_url, "old-running", "running", 40, CaptureMode::Off).await?;
 
     let prune = ctl_process::run_checked([
         "prune-run-history",
@@ -611,14 +588,14 @@ pub async fn run(args: CaptureBenchArgs) -> anyhow::Result<()> {
     let run_all = args.mode == Mode::All;
     let mut pass = true;
     let outcome = async {
-        if run_all || args.mode == Mode::Toggle {
-            pass &= toggle_phase(&app_url, &admin_url).await?;
+        if run_all || args.mode == Mode::Off {
+            pass &= off_phase(&app_url, &admin_url).await?;
         }
-        if run_all || args.mode == Mode::Truncate {
-            pass &= truncate_phase(&app_url, &admin_url).await?;
+        if run_all || args.mode == Mode::OutputTooLarge {
+            pass &= output_too_large_phase(&app_url, &admin_url).await?;
         }
-        if run_all || args.mode == Mode::Scrub {
-            pass &= scrub_phase(&app_url, &admin_url).await?;
+        if run_all || args.mode == Mode::Redaction {
+            pass &= redaction_phase(&app_url, &admin_url).await?;
         }
         if run_all || args.mode == Mode::Retention {
             pass &= retention_phase(&app_url, &admin_url).await?;

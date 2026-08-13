@@ -171,8 +171,7 @@ test("every CLI request decodes through the generated closed validator", () => {
     assert.equal(document["schema-version"], AUTHORING_SCHEMA_VERSION, name);
     assert.equal(document.command.kind, name);
   }
-  // The optional provenance claim is the only field a request may omit, and
-  // omitting it stays a valid document.
+  // Optional client claims remain optional at the wire boundary.
   assert.doesNotThrow(() =>
     parseAuthoringRequest(
       cli.saveFlowDraftRequest({
@@ -182,6 +181,25 @@ test("every CLI request decodes through the generated closed validator", () => {
         expectedRevision: 0,
         flowId: "f",
         scope,
+      }),
+    ),
+  );
+  const draftRun = cli.draftRunRequest({
+    commandId: "run-2",
+    input: {},
+    scope,
+    validatedDraftId: "validated-2",
+  });
+  assert.equal(draftRun.command.input.capture, undefined);
+  assert.doesNotThrow(() => parseAuthoringRequest(draftRun));
+  assert.doesNotThrow(() =>
+    parseAuthoringRequest(
+      cli.draftRunRequest({
+        capture: "off",
+        commandId: "run-3",
+        input: {},
+        scope,
+        validatedDraftId: "validated-2",
       }),
     ),
   );
@@ -459,19 +477,23 @@ test("draft-run reports the edit-to-run latency of the working-tree edit", async
   };
   const { io, state } = fakeIo({
     files,
-    reply: (_endpoint, init) => ({
-      status: 200,
-      body: response(commandIdOf(init), {
-        status: "completed",
-        value: {
-          command: "draft-run",
-          result: {
-            "run-id": "run-1",
-            "validated-draft": { "validated-draft-id": "sha256:validated-draft-v4" },
+    reply: (_endpoint, init) => {
+      const request = JSON.parse(init.body).body;
+      assert.equal(request.command.input.capture, "off");
+      return {
+        status: 200,
+        body: response(commandIdOf(init), {
+          status: "completed",
+          value: {
+            command: "draft-run",
+            result: {
+              "run-id": "run-1",
+              "validated-draft": { "validated-draft-id": "sha256:validated-draft-v4" },
+            },
           },
-        },
-      }),
-    }),
+        }),
+      };
+    },
   });
 
   const code = await cli.runCli(
@@ -489,6 +511,8 @@ test("draft-run reports the edit-to-run latency of the working-tree edit", async
       STATE,
       "--input",
       "input.json",
+      "--capture",
+      "off",
     ],
     io,
   );
@@ -497,6 +521,36 @@ test("draft-run reports the edit-to-run latency of the working-tree edit", async
   assert.equal(emitted["edit-to-run-ms"], 1_700_000_000_000 - 1_699_999_990_000);
   assert.ok(state.err.some((line) => line.includes("edit-to-run-ms=10000")));
   assert.equal(JSON.parse(state.files[STATE])["run-id"], "run-1");
+});
+
+test("capture is full or off and only belongs to draft-run", async () => {
+  for (const argv of [
+    [...validateArguments, "--capture", "off"],
+    [
+      "draft-run",
+      "--base-url",
+      "http://surface.invalid",
+      "--token-file",
+      TOKEN_FILE,
+      "--project",
+      "receiving",
+      "--environment",
+      "dev",
+      "--input",
+      "input.json",
+      "--validated-draft",
+      "validated-2",
+      "--capture",
+      "preview",
+    ],
+  ]) {
+    const { io, state } = fakeIo({
+      files: { ...baseFiles, "input.json": "{}" },
+      reply: () => assert.fail("invalid capture must not reach HTTP"),
+    });
+    assert.equal(await cli.runCli(argv, io), cli.EXIT_USAGE);
+    assert.equal(state.calls.length, 0);
+  }
 });
 
 test("runs reports the projection's own edit-to-run latency and case runs", async () => {

@@ -327,8 +327,8 @@ them is the cost trap:
 | Read by | the executor | audit, replay, outcome retrieval | a person or the studio |
 | Scaling | nonterminal working set | retained runs **and effect attempts** | nodes × runs × capture retention |
 | Lifetime | removable at terminal | as long as the promised replay/audit surface requires | independent, usually shortest |
-| Policy | none — always on | retention policy | per-flow dial, may be off |
-| Fidelity | faithful and unscrubbed | authoritative | may be scrubbed, truncated, absent |
+| Policy | none — always on | retention policy | immutable per-run admission: `full` or `off` |
+| Fidelity | faithful and unscrubbed | authoritative | scrub-redacted, bounded, or absent |
 
 Only the **first** is bounded by concurrency. The other two are retention-bounded, and
 effect-attempt facts grow with execution history — so **item 3 measures the three classes
@@ -630,9 +630,8 @@ ceiling instead.
 | `payload.ceiling` | env | *(to set)* | above it, typed rejection rather than degradation |
 | `payload.compress` | env | on | JSON typically 5–10×; moves the crossover materially |
 | `payload.store` | env | platform blob namespace | distinct from client storage |
-| `capture.mode` | flow, node override | `preview` once offload lands | `full` \| `scrubbed` \| `preview` \| `off` — no longer affects recoverability |
-| `capture.max-bytes` | flow | 64 KiB | preview above it |
-| `capture.sample-rate` | flow | 1.0 | what makes debuggability affordable at event-stream rates |
+| `runs.capture_mode` | immutable run admission | direct draft-run: `full`; every published or test-set run: `off` | `full` \| `off`; never derived from mutable flow or environment state |
+| capture output ceiling | platform writer | 64 KiB | write-side only; over-ceiling `full` output is NULL while size and optional hash remain, so reads derive `output-too-large` without consulting the current ceiling |
 | `blob.retention` | env | **reachability-governed** — retained while referenced by an active checkpoint, a retained replay/audit seed, or a retained caller outcome | platform GC only; *not* a duration |
 | `blob.orphan-ttl` | env | *(to set)* | a separate mechanism: collects objects written but never referenced — the blob-before-checkpoint failure window |
 
@@ -649,8 +648,9 @@ ceiling instead.
   node rewrites nothing
 - isolation, both directions: platform GC cannot reach a client blob object; a client flow
   cannot enumerate platform payloads
-- a scrubbed-capture run still carries the unscrubbed payload in its checkpoint — asserted,
-  so the security boundary is documented by a test rather than assumed
+- a `full` run stores scrub-redacted author history while the independent checkpoint retains
+  the faithful resume payload — asserted, so capture is documented as a presentation floor,
+  not a secret-classification or recovery boundary
 
 **Threshold characterization** — sweep payload size 1 KB → 10 MB logarithmically, at
 several concurrencies, against an in-cluster store and an external one, measuring boundary
@@ -2099,7 +2099,7 @@ execution bundle, same composed runner. What differs is entirely outside the art
 | credential `erp-api` | sandbox key | production key, rotated independently |
 | attachment limits | generous | real deadlines |
 | activation | auto-confirmed (studio) | explicitly confirmed, audited |
-| capture | `full` | `preview` |
+| capture | `full` | `off` |
 
 The artifact that ran in dev is the artifact that runs in prod. That is the property the
 whole arrangement exists to protect.
@@ -2151,7 +2151,7 @@ laterally.
 | `draft_runs_enabled` | yes | no | **yes — an admission capability** (see below) |
 | `auto_confirm_activation` | **authoring attachment only** | no | yes if unscoped — must not cover http/internal/cron |
 | `auto_cancel_on_publish` | yes | no | no — cancels your own parked runs |
-| `capture.mode` | `full` | `preview` / sampled | not capability, but data-at-rest — decide with retention |
+| admitted capture | `full` for a direct draft-run | `off` | immutable run policy; not portable artifact data |
 
 **Draft execution is a capability, not merely a path.** A draft run mutates the development
 database, uses development credentials, calls permitted external systems, and consumes
@@ -2687,9 +2687,10 @@ Assumed to exist by work already in flight, owned by no document and no item abo
 3. **Runner capability-union coarseness** — per-node isolation inside the runner is
    logical, not cryptographic. Becomes a real boundary the moment one project has two
    authors.
-4. **Capture volume** — full capture is the default and node I/O snapshots are the largest
-   storage-cost driver, *and today capture is load-bearing for recovery, so it cannot
-   simply be turned off*. **Item 1 owns this**; item 3 measures the result.
+4. **Capture volume** — direct draft-runs default to bounded scrub-redacted `full`; published
+   and test-set runs are `off`. Node I/O snapshots remain the largest author-history storage
+   driver, but capture is not recovery authority. **Item 1 owns this**; item 3 measures the
+   result.
 5. **Per-customer resource floor** — a dedicated org's Postgres does not scale to zero.
 6. **Proof burden versus product maturity.** The callable-flow spec reached rev 18 through
    eleven adversarial review rounds; the POC plan reached r6. That rigor is warranted for

@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringSuccess,
-    SCHEMA_VERSION, decode_document,
+    DraftRunCapture, SCHEMA_VERSION, decode_document,
 };
 
 const COMMANDS: [&str; 6] = [
@@ -217,6 +217,15 @@ fn collection_and_examples_cover_the_exact_public_schema() {
         let document = checked_document(&example.document).expect("decode typed request example");
         let kind = request_kind(&document);
         assert_eq!(example.name, kind, "request section label drifted");
+        if let AuthoringDocument::Request(request) = &document
+            && let AuthoringCommand::DraftRun(draft_run) = &request.command
+        {
+            assert_eq!(
+                draft_run.capture,
+                DraftRunCapture::Full,
+                "the reference request exercises the omitted default-full contract"
+            );
+        }
         assert!(
             request_commands.insert(kind.to_string()),
             "duplicate request example for {kind}"

@@ -153,43 +153,21 @@ either propagates into the ordinary bounded sweep or uses
 `cancel_unreleased_child_sql` to seize the exact child queue generation; both
 paths stop at `caller_released_at`.
 
-## Node-level I/O capture (9.6)
+## Node-level I/O capture (9.6; revised by SR-MVP)
 
-5.7 stores each node's I/O inline; **9.6 (wamn-srb)** decides *how much* and *in
-what form*, per flow. Platform credentials are structurally absent (handles, per
-contract), but **user data flowing through nodes can still carry secrets**, and
-node I/O snapshots are the platform's biggest storage-cost driver — so capture is
-a policy, not an always-on faithful copy.
+Capture is immutable run policy, not authored flow data. Its sole carrier is
+`runs.capture_mode`, admitted once as `full` or `off`; asynchronous execution reads that
+stored value. Direct draft-runs default to `full`. Published HTTP/event runs and every
+test-set case are admitted `off` and expose no mode input.
 
-The policy is a per-flow field, [`Flow.capture`](flow-schema.md), that rides
-`graph_json` (no new plumbing — the flow is in scope at every `node_runs` write).
-It has a **mode** and a **`max-bytes`** size threshold (default 64 KiB). The pure
-application logic — secret scrubbing, size truncation, preview/size/hash
-derivation — lives in `wamn_run_state::capture` (`capture::derive`), unit-tested
-off-cluster and linked by the flowrunner guest, which calls it at each
-`record_node_run*` / `record_error*` write *before* the `jsonb()` choke point.
-The 9.6 seam columns already reserved on `node_runs` (`preview_head`,
-`payload_size`, `payload_hash`, `capture_mode`, `redacted`) are filled there; the
-cold-path byte store (`input_ref`/`output_ref`) stays 5.10's and is left null.
-
-**Modes** (`capture_mode` records the *effective* mode per row):
-
-| mode | stored payloads | preview/size/hash | reconstruct | `redacted` |
-|---|---|---|---|---|
-| `full` (default) | faithful (replayable) | yes (preview scrubbed) | exact | false |
-| `scrubbed` | secret-scrubbed | yes | works, replays scrubbed values | **true** |
-| `preview` | NULL | yes | **CaptureOff** (non-replayable) | false |
-| `off` | NULL | none | **CaptureOff** | false |
-
-The `preview_head` (first 256 chars) is **always** derived from the *scrubbed*
-serialization, so the editor's inspection panel never surfaces a raw secret even
-under `full`. `payload_size` is the full serialized byte length and `payload_hash`
-is a pure `fnv1a64` content id of the output emission.
-
-**Size threshold.** In *any* mode, a payload whose serialization exceeds
-`max-bytes` is stored **preview-only** (payload NULL, `capture_mode = 'preview'`)
-with its full size/hash retained — v0 truncates in Postgres; 5.10 will move the
-bytes to the object store behind `*_ref`.
+`full` stores scrub-redacted input and output for the author-facing history. The writer
+always records the output's serialized byte size and may record its hash. A fixed,
+test-pinned platform ceiling is applied only while writing: an output at or below the
+ceiling stores both the scrubbed output and its size; an output above it stores NULL output
+plus its size and optional hash. `get-run` derives typed `output-too-large` metadata from
+exactly `output IS NULL AND output_size IS NOT NULL`; it never consults the current ceiling,
+so reconfiguration cannot reclassify history. `off` stores neither per-node payload nor
+size/hash. No ceiling, preview, node-level mode, or redaction discriminator is persisted.
 
 **Scrubber (v0).** Pure, guest-compilable, no regex: JSON **key-name** redaction
 (case-insensitive substring on `password`/`passwd`/`secret`/`token`/`api_key`/
@@ -197,18 +175,14 @@ bytes to the object store behind `*_ref`.
 with `[redacted]`, plus **value-shape** checks on string leaves (`Bearer ` tokens,
 `-----BEGIN` PEM blocks, `AKIA` AWS key ids). Recursive over the `Value`; a secret
 key's subtree is redacted wholesale (never recursed into). Kept off the `full` hot
-path — there it touches only the preview.
+path only when capture is `off`; every stored `full` payload passes through it.
 
-**The `scrubbed`/replay tradeoff.** `scrubbed` mode scrubs the **stored**
-`input_json`/`output_json` (and the preview) and sets `redacted = true`, so no raw
-secret is left in the hot store — but a replay/partial-re-run then replays the
-*scrubbed* values, not the originals. `full` keeps replay exact at the cost of
-storing the raw payload; `preview`/`off` make the run non-replayable
-(`ReconstructError::CaptureOff`) by design. Choose per flow's PII stance.
+Capture is not recovery authority. The faithful resume checkpoint is independent of these
+author-facing rows, so scrubbing or omitting capture cannot alter recovery. The scrubber is
+only a known-pattern redaction floor, not a secret-classification guarantee.
 
-**Error rows.** The error payload (the routed `{"error": …}` emission) is captured
-under the same policy; when the stored payloads are scrubbed the taxonomy
-`error_detail` is scrubbed too (it can echo the payload).
+**Error rows.** The routed error payload and taxonomy detail are scrubbed under `full`; both
+are absent under `off`.
 
 **Retention.** The `wamn-ctl prune-run-history` verb (app-role, tenant-scoped)
 deletes terminal runs (completed/failed/cancelled/infrastructure-failure) older
@@ -218,12 +192,10 @@ separate table it never touches, so a pruned cron run cannot re-fire its tick
 only** — replay lineage is not consulted (a lineage-aware policy is a deferral).
 Deploy per project-env with `deploy/platform/run-retention.example.yaml`.
 
-**Gate.** `capturebench` (`--mode toggle|truncate|scrub|retention|all`) applies
-the real `run-state.sql` to a throwaway schema and drives the same pure capture +
-insert builders: toggle (NULL payloads + CaptureOff), truncate (oversized →
-preview head/size/hash), scrub (a known secret appears **nowhere** in `node_runs`,
-`redacted` set), retention (the real prune verb removes old terminal runs, keeps
-recent/non-terminal, leaves `cron_anchor`).
+**Gate.** `capturebench` applies the real `run-state.sql` to a throwaway schema and
+drives the same pure capture + insert builders: `off` writes no payload facts; stored
+`full` output is scrub-redacted; over-ceiling output writes NULL payload plus size/hash and
+projects `output-too-large`; retention removes only old terminal history.
 
 ## Scope (5.7) vs. siblings
 
@@ -233,16 +205,14 @@ model, branch-aware replay, and partial re-run. It deliberately does **not** own
 | Concern | Owner |
 |---|---|
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + leases + NATS doorbell + dispatcher | 5.14 (co-transacts with these INSERTs; owns its own queue table) |
-| The node-level I/O **capture policy** (scrub / truncate / per-flow toggle / PII) | 9.6 (fills the `input`/`output`/`preview`/`redacted` slots) |
-| The content-addressed **payload byte store** for streamed/large payloads | 5.10 (pointed at by the reserved `*_ref` + `preview_*` columns) |
+| The node-level I/O **capture policy** (admitted `full`/`off`, scrub, write ceiling) | 9.6 (fills bounded author-facing `input`/`output`/size/hash facts) |
+| The content-addressed **payload byte store** for streamed/large payloads | 5.10 (pointed at by the reserved `*_ref` columns) |
 | Per-node ordering (`strict`/`partitioned`/`unordered`) | 5.11 |
 | The `cancel(run, reason)` operation | 5.12 |
 
-The reserved nullable seam columns are where 9.6 and 5.10 land without a schema
-change; 5.7 itself leaves them null and stores I/O inline. **9.6 (wamn-srb) now
-fills the capture columns** (`preview_head`, `payload_size`, `payload_hash`,
-`capture_mode`, `redacted`) per the per-flow policy — see *Node-level I/O capture*
-above; the cold-path byte-store pointers (`input_ref`/`output_ref`) remain 5.10's.
+The surviving nullable capture facts are bounded inline input/output plus output size and
+optional hash. The effective mode lives only on `runs`; node-level preview, mode, and
+redaction-marker columns are retired. Cold-path byte-store pointers remain 5.10's.
 
 ## Gates
 

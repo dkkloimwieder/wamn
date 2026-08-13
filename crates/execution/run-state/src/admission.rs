@@ -483,6 +483,7 @@ classified AS ( \
          OR xr.event_source_run_id IS DISTINCT FROM i.event_source_run_id \
          OR xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id \
          OR xr.event_depth IS DISTINCT FROM i.event_depth \
+         OR xr.capture_mode IS DISTINCT FROM 'off' \
          OR xr.input_json IS DISTINCT FROM i.input_json) \
         THEN 'conflicting-run-identity' \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL THEN 'duplicate' \
@@ -699,6 +700,20 @@ mod tests {
         assert!(sql.contains("EXISTS (SELECT 1 FROM created_http)"));
         assert!(ddl.contains("DEFERRABLE INITIALLY DEFERRED"));
         assert_ne!(recipe.lock_head(), recipe.admit());
+    }
+
+    #[test]
+    fn callable_admission_forces_capture_off_without_new_input() {
+        let sql = admission_sql().admit().to_string();
+        assert!(sql.contains("$28::text AS partition_key, $29::text AS partition_policy"));
+        assert!(!sql.contains("$30"));
+        assert!(!sql.contains("event_source_run_id, event_root_run_id, event_depth, capture_mode"));
+        assert!(
+            sql.contains(
+                "CASE WHEN c.producer = 'event' THEN c.event_depth END, jsonb_build_object"
+            )
+        );
+        assert!(sql.contains("xr.capture_mode IS DISTINCT FROM 'off'"));
     }
 
     #[test]

@@ -184,7 +184,8 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             event_source_run_id text, event_root_run_id text, event_depth int, \
             status text NOT NULL DEFAULT 'running' \
               CHECK (status IN ('dispatched','running','completed','failed','infrastructure-failure','effect-uncertain')), \
-            trigger_source text, input_json jsonb, result_json jsonb, state_json jsonb, \
+            trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+            input_json jsonb, result_json jsonb, state_json jsonb, \
             invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
             admission_context_version int NOT NULL DEFAULT 1, \
             platform_revision text NOT NULL DEFAULT 'legacy', \
@@ -200,6 +201,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             fail_kind text, fail_node text, fail_reason text, \
             created_at timestamptz NOT NULL DEFAULT now(), \
             updated_at timestamptz NOT NULL DEFAULT now(), \
+            CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
             PRIMARY KEY (tenant_id, run_id));\
          ALTER TABLE {schema}.runs ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.runs FORCE ROW LEVEL SECURITY;\
@@ -217,8 +219,7 @@ pub(crate) fn runner_ddl(schema: &str) -> String {
             output_port text, output_json jsonb, input_json jsonb, \
             error_kind text, error_detail jsonb, \
             input_ref text, output_ref text, \
-            preview_head text, payload_size bigint, payload_hash text, capture_mode text, \
-            redacted boolean NOT NULL DEFAULT false, \
+            output_size bigint, payload_hash text, \
             started_at timestamptz NOT NULL DEFAULT now(), ended_at timestamptz, \
             PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\

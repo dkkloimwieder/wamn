@@ -65,9 +65,7 @@
 pub mod admission;
 /// Capture-independent effect-attempt generation facts.
 pub mod attempt;
-/// Node-level I/O capture policy application (9.6): the pure scrub / truncate /
-/// preview-derivation the flowrunner guest links to fill a `node_runs` row's
-/// capture columns before the write.
+/// Node-level I/O capture and durable output projection.
 pub mod capture;
 /// Occurrence-keyed child creation, parent parking, and atomic child release.
 pub mod child;
@@ -99,7 +97,10 @@ mod status;
 /// Typed, queue-joined executor transitions.
 pub mod transitions;
 
-pub use capture::{Captured, derive as derive_capture};
+pub use capture::{
+    CaptureMode, Captured, NodeOutputProjection, OutputTooLarge, derive as derive_capture,
+    project_output,
+};
 #[cfg(feature = "native")]
 pub use effect_writer::{
     BeginEffectAttempt, EffectAttempt, EffectAttemptId, EffectDispatchPermit, EffectOutcome,

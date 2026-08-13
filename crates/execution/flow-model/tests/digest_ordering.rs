@@ -261,8 +261,7 @@ const MAXIMAL_GRAPH: &str = r#"{
   "credentials": [{"name": "api-key", "kind": "api-key", "description": "The key"}],
   "allowed-hosts": ["a.example.com"],
   "partition-policy": "leapfrog",
-  "ordering": {"mode": "partitioned", "partition-key": "id"},
-  "capture": {"mode": "scrubbed", "max-bytes": 8}
+  "ordering": {"mode": "partitioned", "partition-key": "id"}
 }"#;
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -292,7 +291,6 @@ fn every_flow_field_is_classified_as_identity_or_display() {
         sorted_keys(&document),
         [
             "allowed-hosts",
-            "capture",
             "connection-requirements",
             "credentials",
             "edges",

@@ -197,19 +197,20 @@ sources only; capture is not an authority or input to any target operation.
 
 ### 3. Observability capture
 
-`node_captures` is an optional one-to-one child of a node occurrence. It owns
-input/output preview, size, digest, effective capture mode, redaction marker,
-and optional bounded inline captured values. `full`, `scrubbed`, `preview`, and
-`off` affect only this table; a value above `capture.max-bytes` is preview-only,
-not another reference root. Capture retention may be shorter than replay-seed
-retention, and deleting it cannot alter a checkpoint, seed, attempt, or caller
-outcome.
+The current projection stores bounded node input/output facts on `node_runs`; capture remains
+non-authoritative and may later move to a one-to-one child. Its one effective policy carrier
+is immutable `runs.capture_mode`: direct draft-run admits `full` by default, while published
+and test-set runs admit `off`. `full` stores scrub-redacted values and always records output
+size. Above the writer's fixed ceiling it stores NULL output plus size and optional hash;
+`get-run` derives `output-too-large` from those facts without consulting the current ceiling.
+`off` stores neither node payload nor size/hash. There is no preview, node-mode, redaction, or
+ceiling discriminator. Capture retention may be shorter than replay-seed retention, and
+deleting it cannot alter a checkpoint, seed, attempt, or caller outcome.
 
-During the migration the existing `node_runs` capture columns may be copied
-before they are removed, but the checkpoint reader must stop consuming them in
-the first compatibility-breaking schema revision. This repository is pre-version
-alpha, so from-zero provisioning is the migration gate; no dual recovery path
-is retained.
+The schema cutover deletes the obsolete node-level preview, mode, and redaction
+columns without reclassifying retained output/size/hash facts. Capture is not
+checkpoint authority, so no compatibility reader or copied recovery path is
+retained.
 
 ## Platform payload objects
 
@@ -374,8 +375,9 @@ raise it.
 - Retain a replay seed after terminal checkpoint deletion and prove its payload
   remains readable; delete the seed and prove it becomes collectible. Prove the
   orphan collector does not delete a young pre-reference object.
-- Run scrubbed capture while asserting the checkpoint and replay seed retain the
-  faithful value. No test or diagnostic prints that value.
+- Run `full` capture with a known-pattern secret while asserting the author projection is
+  scrub-redacted and the checkpoint/replay seed retains the faithful value. No test or
+  diagnostic prints that value.
 - Submit one byte over the ceiling and assert a typed rejection, no run, no
   queue row, no reference edge, and no finalized object beyond an eligible
   orphan. Exercise the analogous node-emission error path.

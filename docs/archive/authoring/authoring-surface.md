@@ -56,7 +56,7 @@ not transports.
 |---|---|---|---|
 | `save-flow-draft` | project/environment scope, draft and flow IDs, expected revision, exact UTF-8 flow-document text, optional commit provenance | exact draft ID, flow ID, and new revision | authorization denied, revision conflict |
 | `validate` | scope, exact draft revision, stored-suite reference | validated-draft ID plus exact draft, artifact, bundle, catalog, environment, and proposed runtime-version pins | authorization denied, missing draft revision, invalid draft, catalog drift, unresolved nodes |
-| `draft-run` | scope, opaque validated-draft reference, one input | run ID and exact validated-draft reference | authorization denied, missing/drifted validated draft, draft connections denied |
+| `draft-run` | scope, opaque validated-draft reference, one input, optional `capture: full \| off` (schema default `full`) | run ID and exact validated-draft reference | authorization denied, missing/drifted validated draft, draft connections denied |
 | `suite-run` | scope, opaque validated-draft reference, stored-suite reference | durable report and execution IDs plus exact validated-draft reference | authorization denied, missing suite/draft, validated-draft drift, draft connections denied, undrivable nodes |
 | `publish` | scope, exact validated-draft reference, successful report ID | immutable flow/version/artifact identity | authorization denied, missing identity, unsuccessful suite, executable drift, nonterminal-run lifecycle conflict |
 | `suite-projection` | scope and report ID | not-found, pending, or finalized versioned projection | authorization denied; infrastructure faults stay on the fault plane |
@@ -72,7 +72,8 @@ The existing `.11` backend seams map without becoming public storage types:
 - `suite-projection` maps to `.11`'s missing/pending/finalized report query and
   is extended with node/branch/edge observations by `wamn-ma5`;
 - `draft-run` remains a distinct canonical use case even where it reuses the
-  validated-draft execution machinery; and
+  validated-draft execution machinery; its schema-filled effective capture mode is admitted
+  once, while published and test-set admission paths force `off`; and
 - `publish` consumes the exact tested executable and successful report. It may
   not rebuild, re-resolve, or substitute an artifact during publication.
 

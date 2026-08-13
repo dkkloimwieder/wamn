@@ -116,6 +116,7 @@ fn exact_claimed_run_live_faults_and_single_driver() {
                ASSERT (SELECT result_code FROM first) = 'claimed'; \
                ASSERT (SELECT flow_id FROM first) = 'flow-a'; \
                ASSERT (SELECT flow_version FROM first) = 7; \
+               ASSERT (SELECT capture_mode FROM first) = 'off'; \
                ASSERT (SELECT status FROM runs WHERE run_id='exact') = 'running'; \
              END $$; \
              CREATE TEMP TABLE second AS EXECUTE begin_claimed('exact','inline-a',1,30000); \

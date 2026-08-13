@@ -52,14 +52,14 @@ pub fn update_run_completed() -> Sql {
     Sql::new(update_run_completed_sql(), 2)
 }
 
-/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$12`).
+/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$9`).
 pub fn insert_node_run_success() -> Sql {
-    Sql::new(insert_node_run_success_sql(), 12)
+    Sql::new(insert_node_run_success_sql(), 9)
 }
 
-/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$13`).
+/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$10`).
 pub fn insert_node_run_error() -> Sql {
-    Sql::new(insert_node_run_error_sql(), 13)
+    Sql::new(insert_node_run_error_sql(), 10)
 }
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
@@ -134,11 +134,13 @@ pub fn select_run_state_sql() -> String {
 /// Event runs receive an execution-only `causation` object synthesized from
 /// trusted `event_root_run_id` / `event_depth` columns. This does not update
 /// `input_json`, and the trusted object replaces any same-named input field.
-/// A per-run `traceparent` (wamn-fl3) is the natural next column added to this
-/// projection.
+/// Capture policy is read from the immutable admission row; no node-level or
+/// authored fallback may replace it. A per-run `traceparent` (wamn-fl3) is the
+/// natural next column added to this projection.
 pub fn select_run_dispatch_sql() -> String {
     format!(
-        "SELECT r.flow_id, r.flow_version, ({execution_input})::text AS input_json \
+        "SELECT r.flow_id, r.flow_version, ({execution_input})::text AS input_json, \
+                r.capture_mode \
            FROM runs AS r WHERE r.run_id = $1",
         execution_input = execution_input_sql("r"),
     )
@@ -277,21 +279,19 @@ pub fn update_run_context_sql() -> String {
 /// the same visit, never a distinct one (wamn-03m / cjv.10 / R24). `$1`
 /// run_id, `$2` local_node_id, `$3` occurrence, `$4` seq, `$5` output_port,
 /// `$6` output_json, `$7` input_json, plus the 9.6 capture columns filled by
-/// [`crate::capture::derive`]: `$8` preview_head, `$9` payload_size,
-/// `$10` payload_hash, `$11` capture_mode, `$12` redacted. A `preview`/`off`
-/// capture leaves `output_json` (`$6`) NULL, which reconstruction reads as
-/// [`CaptureOff`](crate::ReconstructError::CaptureOff).
+/// [`crate::capture::derive`]: `$8` output_size and `$9` payload_hash. Capture
+/// mode is a run admission fact and is not duplicated on the node projection.
 pub fn insert_node_run_success_sql() -> String {
     format!(
         "INSERT INTO node_runs \
            (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
             local_node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            preview_head, payload_size, payload_hash, capture_mode, redacted) \
+            output_size, payload_hash) \
          VALUES (current_setting('app.tenant', true), $1, 0, NULL, NULL, \
                  (SELECT execution_bundle_hash FROM runs \
                    WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1), \
                  $2, $3, $4, '{success}', $5, $6, $7, \
-                 $8, $9, $10, $11, $12) \
+                 $8, $9) \
          ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING",
         success = NodeRunStatus::Success.as_sql(),
     )
@@ -304,20 +304,20 @@ pub fn insert_node_run_success_sql() -> String {
 /// `$1` run_id, `$2` local_node_id, `$3` occurrence (the engine-computed visit),
 /// `$4` seq, `$5` output_json (the error payload), `$6` input_json,
 /// `$7` error_kind, `$8` error_detail, plus the 9.6 capture columns filled by
-/// [`crate::capture::derive`] over the error payload: `$9` preview_head,
-/// `$10` payload_size, `$11` payload_hash, `$12` capture_mode, `$13` redacted.
+/// [`crate::capture::derive`] over the error payload: `$9` output_size and
+/// `$10` payload_hash.
 pub fn insert_node_run_error_sql() -> String {
     format!(
         "INSERT INTO node_runs \
            (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
             local_node_id, occurrence, seq, status, output_port, output_json, input_json, \
             error_kind, error_detail, \
-            preview_head, payload_size, payload_hash, capture_mode, redacted) \
+            output_size, payload_hash) \
          VALUES (current_setting('app.tenant', true), $1, 0, NULL, NULL, \
                  (SELECT execution_bundle_hash FROM runs \
                    WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1), \
                  $2, $3, $4, '{error}', 'error', $5, $6, $7, $8, \
-                 $9, $10, $11, $12, $13) \
+                 $9, $10) \
          ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING",
         error = NodeRunStatus::Error.as_sql(),
     )
@@ -408,12 +408,12 @@ mod tests {
             );
         }
         // The exact contract `queue` composes against, pinned. The node-run
-        // arities grew by the five 9.6 capture columns (wamn-srb): success 7 -> 12,
-        // error 8 -> 13 — the composed renew tail renumbers against these
+        // arities grow by the two durable 9.6 output facts: success 7 -> 9,
+        // error 8 -> 10 — the composed renew tail renumbers against these
         // automatically (`queue::checkpoint_then_renew`).
         assert_eq!(update_run_completed().arity(), 2);
-        assert_eq!(insert_node_run_success().arity(), 12);
-        assert_eq!(insert_node_run_error().arity(), 13);
+        assert_eq!(insert_node_run_success().arity(), 9);
+        assert_eq!(insert_node_run_error().arity(), 10);
     }
 
     /// The builders stay in the house shape: unqualified tables, claim-scoped
@@ -470,6 +470,7 @@ mod tests {
         // fl3 extends this exact projection with `traceparent`.
         let sql = select_run_dispatch_sql();
         assert!(sql.contains("SELECT r.flow_id, r.flow_version"), "{sql}");
+        assert!(sql.contains("r.capture_mode"), "{sql}");
         assert!(sql.contains("FROM runs AS r WHERE r.run_id = $1"), "{sql}");
         for trusted in [
             "r.input_json || jsonb_build_object(",
@@ -634,6 +635,7 @@ mod tests {
             "flow_version",
             "status",
             "trigger_source",
+            "capture_mode",
             "input_json",
             "result_json",
             "state_json",
@@ -670,12 +672,9 @@ mod tests {
             "output_json",
             "error_kind",
             "error_detail",
-            // 9.6 capture columns the builders now write (wamn-srb).
-            "preview_head",
-            "payload_size",
+            // 9.6 capture facts the builders now write (wamn-srb).
+            "output_size",
             "payload_hash",
-            "capture_mode",
-            "redacted",
         ] {
             assert!(ddl.contains(col), "node_runs column {col} missing from DDL");
         }

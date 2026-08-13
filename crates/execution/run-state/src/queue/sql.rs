@@ -209,7 +209,7 @@ const CLAIM_LEASE_SET: &str = "SET lease_owner = $1, \
 /// return the dispatch inputs (`flow_id`, execution-only input) plus the run's
 /// **persisted** `flow_version` so the guest's plan cache can probe for free.
 /// Params: `$1` owner, `$2` ttl_ms. Returns 0 or 1 row: `(run_id, flow_id,
-/// input_json::text, flow_version)`. `flow_version` is the run's OWN column
+/// input_json::text, flow_version, capture_mode)`. `flow_version` is the run's OWN column
 /// (`runs.flow_version`), the version the dispatcher stamped at write-ahead
 /// time (the active version THEN) — not whatever is active NOW. That is what
 /// pins a resume to the version the run started under (wamn-cox): a flow edited
@@ -236,6 +236,7 @@ pub fn claim_dispatch_sql() -> String {
          ) \
          SELECT l.run_id, r.flow_id, ({execution_input})::text AS input_json, \
                 r.flow_version AS flow_version, \
+                r.capture_mode AS capture_mode, \
                 l.lease_generation \
            FROM leased AS l \
            JOIN runs AS r ON r.tenant_id = l.tenant_id AND r.run_id = l.run_id",
@@ -257,7 +258,8 @@ pub fn claim_dispatch_sql() -> String {
 /// only after its prior lease expires, preserving the same owner and
 /// generation. No generic availability scan or generation bump occurs.
 ///
-/// The returned row is `(result_code, flow_id, input_json, flow_version)`.
+/// The returned row is `(result_code, flow_id, input_json, flow_version,
+/// capture_mode)`.
 /// `result_code` is `claimed`, `not-found`, `fence-lost`, `not-inline`,
 /// `already-driven`, or `not-claimed`.
 pub fn begin_claimed_run_sql() -> String {
@@ -265,7 +267,7 @@ pub fn begin_claimed_run_sql() -> String {
         "WITH authority AS MATERIALIZED ( \
              SELECT q.tenant_id, q.run_id, q.lease_owner, q.lease_generation, \
                     q.lease_expires_at, q.partition_key, r.status, r.flow_id, \
-                    r.input_json::text AS input_json, r.flow_version \
+                    r.input_json::text AS input_json, r.flow_version, r.capture_mode \
                FROM run_queue AS q \
                JOIN runs AS r USING (tenant_id, run_id) \
               WHERE q.tenant_id = current_setting('app.tenant', true) \
@@ -298,10 +300,10 @@ pub fn begin_claimed_run_sql() -> String {
              RETURNING q.tenant_id, q.run_id \
          ) \
          SELECT CASE WHEN n.run_id IS NOT NULL THEN 'claimed' ELSE c.result_code END, \
-                c.flow_id, c.input_json, c.flow_version \
+                c.flow_id, c.input_json, c.flow_version, c.capture_mode \
            FROM classified AS c LEFT JOIN renewed AS n USING (tenant_id, run_id) \
          UNION ALL \
-         SELECT 'not-found', NULL::text, NULL::text, NULL::integer \
+         SELECT 'not-found', NULL::text, NULL::text, NULL::integer, NULL::text \
           WHERE NOT EXISTS (SELECT FROM authority)",
         dispatched = RunStatus::Dispatched.as_sql(),
         running = RunStatus::Running.as_sql(),
@@ -329,7 +331,7 @@ pub fn complete_dequeue_sql() -> String {
 }
 
 /// Per-node checkpoint + heartbeat as ONE statement (fqg.18): composes the 5.7
-/// [`run_sql::insert_node_run_success`] (`$1`..`$7`, idempotent by
+/// [`run_sql::insert_node_run_success`] (`$1`..`$9`, idempotent by
 /// `(run_id, frame_id, local_node_id, occurrence)`) with the
 /// [`renew_lease_sql`] write (ttl_ms, owner — owner-guarded, sharing `$1` run
 /// id). The renew fires even when the record is a conflict no-op (a replay of an
@@ -340,7 +342,7 @@ pub fn record_success_and_renew_sql() -> String {
 }
 
 /// The error-routed twin of [`record_success_and_renew_sql`]: composes
-/// [`run_sql::insert_node_run_error`] (`$1`..`$8`) with the
+/// [`run_sql::insert_node_run_error`] (`$1`..`$10`) with the
 /// owner-guarded lease renew.
 pub fn record_error_and_renew_sql() -> String {
     checkpoint_then_renew(run_sql::insert_node_run_error())
@@ -350,8 +352,8 @@ pub fn record_error_and_renew_sql() -> String {
 /// they share (fqg.18). SR11: the tail SHARES the head's `$1` (run_id) and appends
 /// two NEW params — ttl_ms and the owner guard — numbered against the head's arity
 /// ([`Sql::param`]), so a param added upstream (a different crate) can never
-/// silently shift them onto the wrong bind. Success head arity 7 → the renew binds
-/// land at `$8`/`$9`; error head arity 8 → `$9`/`$10`.
+/// silently shift them onto the wrong bind. Success head arity 9 → the renew binds
+/// land at `$10`/`$11`; error head arity 10 → `$11`/`$12`.
 ///
 /// SR12 (composed statement): the pure tests pin the text and the arity
 /// arithmetic; they cannot observe the data-modifying-CTE snapshot semantics,
@@ -584,7 +586,8 @@ pub(crate) fn admit_pinned_triggered_run_sql() -> String {
          ), inserted_run AS ( \
            INSERT INTO runs \
              (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-              environment, execution_bundle_hash, status, trigger_source, input_json, invocation_context, \
+              environment, execution_bundle_hash, status, trigger_source, \
+              input_json, invocation_context, \
               admission_context_version, platform_revision) \
            SELECT member.tenant_id, $1, $2, $3, $4, $5::int, $6, \
                   member.execution_bundle_hash, '{dispatched}', 'scenario', \
@@ -621,6 +624,7 @@ pub(crate) fn admit_pinned_triggered_run_sql() -> String {
                         OR existing.catalog_version IS DISTINCT FROM $5::int \
                         OR existing.environment IS DISTINCT FROM $6 \
                         OR existing.trigger_source IS DISTINCT FROM 'scenario' \
+                        OR existing.capture_mode IS DISTINCT FROM 'off' \
                         OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
                         OR existing.execution_bundle_hash \
                            IS DISTINCT FROM member.execution_bundle_hash \
@@ -739,7 +743,8 @@ pub(crate) fn admit_pinned_draft_scenario_run_sql() -> String {
          ), inserted_run AS ( \
            INSERT INTO runs \
              (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
-              environment, execution_bundle_hash, status, trigger_source, input_json, invocation_context, \
+              environment, execution_bundle_hash, status, trigger_source, \
+              input_json, invocation_context, \
               admission_context_version, platform_revision) \
            SELECT d.tenant_id, $1, d.flow_id, d.runtime_flow_version, d.catalog_id, \
                   d.catalog_version, d.environment, d.execution_bundle_hash, \
@@ -785,6 +790,7 @@ pub(crate) fn admit_pinned_draft_scenario_run_sql() -> String {
                         OR existing.catalog_version IS DISTINCT FROM d.catalog_version \
                         OR existing.environment IS DISTINCT FROM d.environment \
                         OR existing.trigger_source IS DISTINCT FROM 'scenario-draft' \
+                        OR existing.capture_mode IS DISTINCT FROM 'off' \
                         OR existing.input_json IS DISTINCT FROM $7::text::jsonb \
                         OR existing.execution_bundle_hash \
                            IS DISTINCT FROM d.execution_bundle_hash \
@@ -1072,21 +1078,21 @@ mod tests {
     }
 
     /// The real composed statements bind exactly the head's arity + the renew's two
-    /// new params: success $1..$14, error $1..$15, complete $1..$2 (dequeue shares
+    /// new params: success $1..$11, error $1..$12, complete $1..$2 (dequeue shares
     /// $1, adds none). Pinned against the arity the producing crate declares — the
-    /// 9.6 capture columns (wamn-srb) grew the node-run heads (success 7 -> 12,
-    /// error 8 -> 13) and the renew tail renumbered here automatically.
+    /// 9.6 capture columns (wamn-srb) grew the node-run heads (success 7 -> 9,
+    /// error 8 -> 10) and the renew tail renumbered here automatically.
     #[test]
     fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(run_sql::insert_node_run_success().arity(), 12);
+        assert_eq!(run_sql::insert_node_run_success().arity(), 9);
         let s = record_success_and_renew_sql();
-        assert!(s.contains("AND run_id = $1 AND lease_owner = $14"));
-        assert!(!s.contains("$15"));
+        assert!(s.contains("AND run_id = $1 AND lease_owner = $11"));
+        assert!(!s.contains("$12"));
 
-        assert_eq!(run_sql::insert_node_run_error().arity(), 13);
+        assert_eq!(run_sql::insert_node_run_error().arity(), 10);
         let e = record_error_and_renew_sql();
-        assert!(e.contains("AND run_id = $1 AND lease_owner = $15"));
-        assert!(!e.contains("$16"));
+        assert!(e.contains("AND run_id = $1 AND lease_owner = $12"));
+        assert!(!e.contains("$13"));
 
         assert_eq!(run_sql::update_run_completed().arity(), 2);
         let c = complete_dequeue_sql();

@@ -24,6 +24,7 @@ fn draft_admission_uses_one_exact_nonrelease_executable_pin() {
         assert!(sql.contains(predicate), "draft admission omits {predicate}");
     }
     assert!(sql.contains("'scenario-draft'"));
+    assert!(!sql.contains("trigger_source, capture_mode"));
     assert!(sql.contains("'producer', 'draft-scenario'"));
     assert!(sql.contains("'artifact-digest', d.draft_artifact_hash"));
     assert!(!sql.contains("release_flows"));
@@ -58,6 +59,7 @@ fn draft_duplicate_identity_covers_authoritative_pins_and_override_identity() {
         "existing.catalog_id IS DISTINCT FROM d.catalog_id",
         "existing.catalog_version IS DISTINCT FROM d.catalog_version",
         "existing.environment IS DISTINCT FROM d.environment",
+        "existing.capture_mode IS DISTINCT FROM 'off'",
         "existing.execution_bundle_hash \
                            IS DISTINCT FROM d.execution_bundle_hash",
         "existing.invocation_context #>> '{principal,artifact-digest}' \

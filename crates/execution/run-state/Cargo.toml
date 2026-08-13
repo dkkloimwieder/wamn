@@ -23,10 +23,8 @@ test-util = []
 # The reconstruction/partial-re-run planners drive the pure engine's resume/
 # seed_at primitives; the model persists its RunStatus/FailKind/NodeError taxonomy.
 wamn-runner = { workspace = true }
-# 9.6 capture: the per-flow `Flow.capture` policy the pure `capture` module
-# applies at each node_runs write. Already in the closure via wamn-runner
-# (Plan::compile takes a Flow); this is the direct edge for the policy type, and
-# it is guest-compilable (the flowrunner guest already links wamn-flow).
+# Canonical JSON hashing, node-error taxonomy, and reconstruction flow types.
+# Capture policy itself is run-state-owned and no longer comes from `Flow`.
 wamn-flow = { workspace = true }
 # Claim-time resolution exact-byte reads the immutable execution-plan wire.
 wamn-catalog = { workspace = true }

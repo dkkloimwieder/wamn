@@ -246,8 +246,8 @@ impl ReservedCheckpointResult {
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
 /// local node id, occurrence, sequence, output port, output JSON text, input JSON
-/// text, preview head, payload size, payload hash, capture mode, redacted,
-/// lease TTL milliseconds. A replayed checkpoint still renews, but a stale
+/// text, payload size, payload hash, and lease TTL milliseconds.
+/// A replayed checkpoint still renews, but a stale
 /// owner or generation cannot insert the checkpoint.
 pub fn reserved_checkpoint_sql() -> String {
     format!(
@@ -256,11 +256,10 @@ pub fn reserved_checkpoint_sql() -> String {
              INSERT INTO node_runs \
                     (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
                      local_node_id, occurrence, seq, status, \
-                     output_port, output_json, input_json, preview_head, \
-                     payload_size, payload_hash, capture_mode, redacted) \
+                     output_port, output_json, input_json, output_size, payload_hash) \
              SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
                     $5, $6, $7, '{success}', \
-                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
+                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12 \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
              ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
@@ -269,7 +268,7 @@ pub fn reserved_checkpoint_sql() -> String {
          renewed AS ( \
              UPDATE run_queue AS q \
                 SET lease_expires_at = \
-                    now() + ($16::bigint * interval '1 millisecond') \
+                    now() + ($13::bigint * interval '1 millisecond') \
               FROM authority AS a \
               WHERE a.result_code = 'ready' \
                 AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
@@ -287,8 +286,8 @@ pub fn reserved_checkpoint_sql() -> String {
 /// Record a successful user-node emission and its replacement context under the
 /// exact queue fence.
 ///
-/// Params match [`reserved_checkpoint_sql`] through `$15`, followed by the
-/// complete context JSON document (`$16`) and lease TTL milliseconds (`$17`).
+/// Params match [`reserved_checkpoint_sql`] through `$12`, followed by the
+/// complete context JSON document (`$13`) and lease TTL milliseconds (`$14`).
 /// The node output and context checkpoint are one statement: a stale owner or
 /// generation writes neither.
 pub fn node_context_checkpoint_sql() -> String {
@@ -298,21 +297,20 @@ pub fn node_context_checkpoint_sql() -> String {
              INSERT INTO node_runs \
                     (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
                      local_node_id, occurrence, seq, status, \
-                     output_port, output_json, input_json, preview_head, \
-                     payload_size, payload_hash, capture_mode, redacted) \
+                     output_port, output_json, input_json, output_size, payload_hash) \
              SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
                     $5, $6, $7, '{success}', \
-                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12, $13, $14, $15 \
+                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12 \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
-                AND jsonb_typeof($16::text::jsonb) = 'object' \
+                AND jsonb_typeof($13::text::jsonb) = 'object' \
              ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
              RETURNING run_id \
          ), \
          checkpointed AS ( \
              UPDATE runs AS r \
                 SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
-                                           '{{context}}', $16::text::jsonb, true), \
+                                           '{{context}}', $13::text::jsonb, true), \
                     updated_at = now() \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
@@ -323,7 +321,7 @@ pub fn node_context_checkpoint_sql() -> String {
          renewed AS ( \
              UPDATE run_queue AS q \
                 SET lease_expires_at = \
-                    now() + ($17::bigint * interval '1 millisecond') \
+                    now() + ($14::bigint * interval '1 millisecond') \
                FROM authority AS a \
               WHERE a.result_code = 'ready' \
                 AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
@@ -482,8 +480,8 @@ pub fn complete_sql() -> String {
 /// Complete a successful attempt, checkpoint replacement context, and renew.
 ///
 /// Params: fence `$1..$4`, local node id, occurrence, output port, captured output,
-/// captured input, preview, size, hash, capture mode, redacted, replacement
-/// context document, and lease TTL milliseconds.
+/// captured input, size, hash, replacement context document, and lease TTL
+/// milliseconds.
 pub fn complete_attempt_success_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -507,8 +505,8 @@ pub fn complete_attempt_success_sql() -> String {
          completed_attempt AS ( \
              UPDATE node_runs AS n \
                 SET status = 'success', output_port = $7, output_json = $8::text::jsonb, \
-                    input_json = $9::text::jsonb, preview_head = $10, payload_size = $11, \
-                    payload_hash = $12, capture_mode = $13, redacted = $14, ended_at = now() \
+                    input_json = $9::text::jsonb, output_size = $10, \
+                    payload_hash = $11, ended_at = now() \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
@@ -518,16 +516,16 @@ pub fn complete_attempt_success_sql() -> String {
          checkpointed AS ( \
              UPDATE runs AS r \
                 SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
-                                           '{{context}}', $15::text::jsonb, true), \
+                                           '{{context}}', $12::text::jsonb, true), \
                     updated_at = now() \
                FROM completed_attempt AS n \
               WHERE r.tenant_id = n.tenant_id AND r.run_id = n.run_id \
-                AND jsonb_typeof($15::text::jsonb) = 'object' \
+                AND jsonb_typeof($12::text::jsonb) = 'object' \
              RETURNING r.run_id \
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($16::bigint * interval '1 millisecond') \
+                SET lease_expires_at = now() + ($13::bigint * interval '1 millisecond') \
                FROM checkpointed AS p, classified AS c \
               WHERE q.tenant_id = c.tenant_id AND q.run_id = p.run_id \
              RETURNING q.run_id \
@@ -542,8 +540,8 @@ pub fn complete_attempt_success_sql() -> String {
 /// Complete an error-routed attempt and renew the exact queue lease.
 ///
 /// Params: fence `$1..$4`, local node id, occurrence, captured error output,
-/// captured input, error kind/detail, preview, size, hash, capture mode,
-/// redacted, and lease TTL milliseconds.
+/// captured input, error kind/detail, size, hash, and lease TTL
+/// milliseconds.
 pub fn complete_attempt_error_sql() -> String {
     format!(
         "{FENCED_PREFIX}, \
@@ -569,8 +567,8 @@ pub fn complete_attempt_error_sql() -> String {
                 SET status = 'error', output_port = 'error', \
                     output_json = $7::text::jsonb, input_json = $8::text::jsonb, \
                     error_kind = $9, error_detail = $10::text::jsonb, \
-                    preview_head = $11, payload_size = $12, payload_hash = $13, \
-                    capture_mode = $14, redacted = $15, ended_at = now() \
+                    output_size = $11, payload_hash = $12, \
+                    ended_at = now() \
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
@@ -579,7 +577,7 @@ pub fn complete_attempt_error_sql() -> String {
          ), \
          renewed AS ( \
              UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($16::bigint * interval '1 millisecond') \
+                SET lease_expires_at = now() + ($13::bigint * interval '1 millisecond') \
                FROM completed_attempt AS n, classified AS c \
               WHERE q.tenant_id = c.tenant_id AND q.run_id = n.run_id \
              RETURNING q.run_id \
@@ -779,12 +777,39 @@ mod tests {
         assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
         assert!(sql.contains("INSERT INTO node_runs"));
         assert!(sql.contains("a.execution_bundle_hash"));
-        assert!(sql.contains("jsonb_typeof($16::text::jsonb) = 'object'"));
+        assert!(sql.contains("jsonb_typeof($13::text::jsonb) = 'object'"));
         assert!(sql.contains("SET state_json = jsonb_set"));
         assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
-        assert!(sql.contains("'{context}', $16::text::jsonb"));
-        assert!(sql.contains("$17::bigint * interval '1 millisecond'"));
+        assert!(sql.contains("'{context}', $13::text::jsonb"));
+        assert!(sql.contains("$14::bigint * interval '1 millisecond'"));
         assert_eq!(sql.matches("WITH input AS").count(), 1);
+    }
+
+    #[test]
+    fn node_writes_carry_only_authoritative_capture_facts() {
+        let reserved = reserved_checkpoint_sql();
+        assert!(reserved.contains("$13::bigint * interval '1 millisecond'"));
+        assert!(!reserved.contains("$14"));
+
+        let context = node_context_checkpoint_sql();
+        assert!(context.contains("'{context}', $13::text::jsonb"));
+        assert!(context.contains("$14::bigint * interval '1 millisecond'"));
+        assert!(!context.contains("$15"));
+
+        let success = complete_attempt_success_sql();
+        assert!(success.contains("'{context}', $12::text::jsonb"));
+        assert!(success.contains("$13::bigint * interval '1 millisecond'"));
+        assert!(!success.contains("$14"));
+
+        let error = complete_attempt_error_sql();
+        assert!(error.contains("$13::bigint * interval '1 millisecond'"));
+        assert!(!error.contains("$14"));
+
+        for sql in [reserved, context, success, error] {
+            assert!(!sql.contains("preview_head"));
+            assert!(!sql.contains("capture_mode"));
+            assert!(!sql.contains("redacted"));
+        }
     }
 
     #[test]
