@@ -5366,6 +5366,33 @@ rustfmt --edition 2024 --check --config skip_children=true \
 git diff --check
 ```
 
+## SR-MVP — ctl MVP/ops verb split (`wamn-0h0g.9.4`)
+
+This debug-only gate proves the default control-plane binary exposes only MVP
+verbs, the optional operations binary exposes only its five operations verbs,
+and `pin-run` is absent from both. The depth-one dependency assertion ensures
+the ordinary package does not enable the ops-only direct run-state dependency.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --all-targets
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-4 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --features ops --all-targets
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-4 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-ctl --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-4 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-ctl --features ops --all-targets -- -D warnings
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-9-4 \
+  cargo run --locked --offline -p wamn-ctl --bin wamn-ctl -- --help
+cargo tree --locked --offline -p wamn-ctl --edges normal --depth 1
+# The help output omits dump/restore/copy-project-env, prune-run-history,
+# impact-report, and pin-run. The tree omits a direct wamn-run-state entry.
+
+cargo fmt -p wamn-ctl -- --check
+git diff --check
+```
+
 ## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
 
 This debug-only gate proves exact `call-flow { flow-id }` validation, candidate

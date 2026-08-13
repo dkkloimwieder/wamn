@@ -1,3 +1,5 @@
+#![cfg(feature = "ops")]
+
 //! Live-promote gate for 11.2 test cases as catalog data (wamn-828).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** maintenance url (path `/wamn` or

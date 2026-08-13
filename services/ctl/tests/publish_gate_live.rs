@@ -1,3 +1,5 @@
+#![cfg(feature = "ops")]
+
 //! Live gate for the [11.7] publish gate (wamn-12g).
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** maintenance url of a throwaway
