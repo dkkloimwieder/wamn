@@ -1,5 +1,31 @@
 package wamn:runner@0.1.0;
 
+/// Trusted immutable plan supply for one already-claimed root run.
+interface plan-supply {
+  record resolution-plan {
+    flow-id: string,
+    execution-bundle-hash: string,
+    source-artifact-hash: string,
+    exact-bytes: list<u8>,
+  }
+
+  record run-resolution-snapshot {
+    root-flow-id: string,
+    root-execution-bundle-hash: string,
+    plans: list<resolution-plan>,
+  }
+
+  variant supply-error {
+    not-found,
+    incomplete,
+    hash-mismatch,
+    unavailable,
+  }
+
+  /// Load only the immutable resolution rows already materialized at claim.
+  load-run-snapshot: func(run-id: string) -> result<run-resolution-snapshot, supply-error>;
+}
+
 interface causation {
   /// The causation context of a run — {run, root, depth} (wamn-l5i9.12). The
   /// flow-runner declares the run it is about to drive so the host's

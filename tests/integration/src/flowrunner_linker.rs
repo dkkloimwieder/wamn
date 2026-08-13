@@ -17,13 +17,16 @@
 //! here AND in that guard's mapping table — the two additions that silently
 //! skipped this file (9721d42, 914f661) can no longer pass.
 
-use wamn_runtime::plugins::{connection_http, wamn_logging, wamn_postgres};
+use wamn_runtime::plugins::{connection_http, runner_plan_supply, wamn_logging, wamn_postgres};
 use wash_runtime::engine::ctx::SharedCtx;
 use wash_runtime::wasmtime::component::Linker;
 
 /// Register every host import of the `wamn:flowrunner` world on `linker`.
 pub fn add_flowrunner_imports_to_linker(linker: &mut Linker<SharedCtx>) -> anyhow::Result<()> {
     wamn_postgres::add_to_linker(linker)?;
+    // wamn-0h0g.5.13: link the trusted immutable plan-supply channel. These
+    // F.2 harnesses do not back the plugin; an accidental call stays fail-closed.
+    runner_plan_supply::add_to_linker(linker)?;
     // l5i9.12.2: the TRUSTED per-run causation channel.
     wamn_postgres::add_runner_causation_to_linker(linker)?;
     // PLAN-2B (wamn-ko5r.8): the TRUSTED one-frame portable HTTP effect the

@@ -22,6 +22,10 @@ const REGISTRATIONS: &[(&str, &str)] = &[
     ("wamn:postgres/types@0.1.0", "wamn_postgres::add_to_linker"),
     ("wamn:postgres/client@0.1.0", "wamn_postgres::add_to_linker"),
     (
+        "wamn:runner/plan-supply@0.1.0",
+        "runner_plan_supply::add_to_linker",
+    ),
+    (
         "wamn:runner/causation@0.1.0",
         "wamn_postgres::add_runner_causation_to_linker",
     ),
@@ -129,11 +133,11 @@ fn complaints(wit: &str, linker: &str) -> Vec<String> {
 fn flowrunner_world_imports_match_the_shared_linker_registrations() {
     let imports = declared_imports(WORLD_WIT);
     assert!(
-        imports.len() == 5 && imports.iter().all(|import| import.contains(':')),
+        imports.len() == 6 && imports.iter().all(|import| import.contains(':')),
         "world.wit import parse returned {imports:?} — the WIT layout changed under the guard"
     );
     assert!(
-        registration_calls(LINKER_SOURCE).len() == 4,
+        registration_calls(LINKER_SOURCE).len() == 5,
         "flowrunner_linker.rs registration parse found too few calls — the helper layout \
          changed under the guard"
     );

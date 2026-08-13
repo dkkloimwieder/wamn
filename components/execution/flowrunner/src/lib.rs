@@ -1,8 +1,10 @@
 //! Single-shot flow-runner component.
 //!
 //! The public world has one product operation, `run`. Execution remains
-//! fail-closed until the immutable plan supply, frame stack, runtime budgets,
-//! and effect activation land in their owning changes. This component retains
+//! fail-closed until the frame stack, runtime budgets, and effect activation
+//! land in their owning changes. Immutable claimed-run plans already cross the
+//! trusted host supply and are hash-verified before becoming frame inputs.
+//! This component retains
 //! the standard-node capability adapter, including the self-describing trusted
 //! HTTP-effect context consumed by that later execution path.
 
@@ -17,6 +19,122 @@ use wamn_flow::node_contract::{self as sdk};
 use wamn::postgres::client;
 use wamn::postgres::types::{PgError, SqlValue};
 use wamn::runner::http_effect;
+#[cfg(any(target_arch = "wasm32", test))]
+use wamn::runner::plan_supply;
+
+use std::collections::BTreeMap;
+
+/// One hash-verified plan and its immutable resolution facts.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifiedResolutionPlan {
+    flow_id: String,
+    execution_bundle_hash: String,
+    source_artifact_hash: String,
+    plan: wamn_catalog::ExecutionPlanV2,
+}
+
+impl VerifiedResolutionPlan {
+    pub fn flow_id(&self) -> &str {
+        &self.flow_id
+    }
+
+    pub fn execution_bundle_hash(&self) -> &str {
+        &self.execution_bundle_hash
+    }
+
+    pub fn source_artifact_hash(&self) -> &str {
+        &self.source_artifact_hash
+    }
+
+    pub fn plan(&self) -> &wamn_catalog::ExecutionPlanV2 {
+        &self.plan
+    }
+}
+
+/// Complete immutable plan world for one claimed root run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VerifiedResolutionSnapshot {
+    root_flow_id: String,
+    root_execution_bundle_hash: String,
+    plans: BTreeMap<String, VerifiedResolutionPlan>,
+}
+
+impl VerifiedResolutionSnapshot {
+    pub fn root_flow_id(&self) -> &str {
+        &self.root_flow_id
+    }
+
+    pub fn root_execution_bundle_hash(&self) -> &str {
+        &self.root_execution_bundle_hash
+    }
+
+    pub fn root(&self) -> &VerifiedResolutionPlan {
+        self.plans
+            .get(&self.root_flow_id)
+            .expect("verified snapshot retains its exact root")
+    }
+
+    pub fn plan(&self, flow_id: &str) -> Option<&VerifiedResolutionPlan> {
+        self.plans.get(flow_id)
+    }
+
+    pub fn len(&self) -> usize {
+        self.plans.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.plans.is_empty()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_verified_snapshot(run_id: &str) -> Result<VerifiedResolutionSnapshot, String> {
+    let supplied = plan_supply::load_run_snapshot(run_id).map_err(|error| match error {
+        plan_supply::SupplyError::NotFound => "run-resolution-not-found",
+        plan_supply::SupplyError::Incomplete => "run-resolution-incomplete",
+        plan_supply::SupplyError::HashMismatch => "run-resolution-hash-mismatch",
+        plan_supply::SupplyError::Unavailable => "run-resolution-unavailable",
+    })?;
+    verify_resolution_snapshot(supplied)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn verify_resolution_snapshot(
+    supplied: plan_supply::RunResolutionSnapshot,
+) -> Result<VerifiedResolutionSnapshot, String> {
+    let mut plans = BTreeMap::new();
+    for supplied_plan in supplied.plans {
+        let plan = wamn_catalog::read_execution_plan(
+            &supplied_plan.execution_bundle_hash,
+            &supplied_plan.exact_bytes,
+        )
+        .map_err(|_| "run-resolution-hash-mismatch".to_string())?;
+        if plan.header.root_artifact_hash != supplied_plan.source_artifact_hash {
+            return Err("run-resolution-source-mismatch".into());
+        }
+        let flow_id = supplied_plan.flow_id;
+        let verified = VerifiedResolutionPlan {
+            flow_id: flow_id.clone(),
+            execution_bundle_hash: supplied_plan.execution_bundle_hash,
+            source_artifact_hash: supplied_plan.source_artifact_hash,
+            plan,
+        };
+        if plans.insert(flow_id, verified).is_some() {
+            return Err("run-resolution-duplicate-flow".into());
+        }
+    }
+    let root = plans
+        .get(&supplied.root_flow_id)
+        .ok_or_else(|| "run-resolution-root-missing".to_string())?;
+    if root.execution_bundle_hash != supplied.root_execution_bundle_hash {
+        return Err("run-resolution-root-mismatch".into());
+    }
+    Ok(VerifiedResolutionSnapshot {
+        root_flow_id: supplied.root_flow_id,
+        root_execution_bundle_hash: supplied.root_execution_bundle_hash,
+        plans,
+    })
+}
 
 struct Component;
 export!(Component);
@@ -213,14 +331,100 @@ const EXECUTION_INTERPRETER_REFUSAL: &str =
     "execution refuses until authoritative execution-plan interpretation is installed";
 
 impl Guest for Component {
-    fn run(_run_id: String, _payload: String) -> Result<u32, String> {
+    fn run(run_id: String, _payload: String) -> Result<u32, String> {
+        #[cfg(target_arch = "wasm32")]
+        let _snapshot = load_verified_snapshot(&run_id)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = run_id;
         Err(EXECUTION_INTERPRETER_REFUSAL.to_string())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+    use wamn_catalog::{
+        CallableContract, CallableEffectCeiling, CallableReturnContract, ExecutionEffectPolicy,
+        ExecutionNodeId, ExecutionPlanBody, ExecutionPlanNode, ExecutionPlanV2,
+        ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION, RootTerminalBehavior,
+        entry_input_schema_hash, execution_bundle_hash,
+    };
+
     use super::*;
+
+    fn hash(byte: char) -> String {
+        format!("sha256:{}", byte.to_string().repeat(64))
+    }
+
+    fn supplied_plan(flow_id: &str, source_artifact_hash: &str) -> plan_supply::ResolutionPlan {
+        let entry_id = ExecutionNodeId::new("request").unwrap();
+        let respond_id = ExecutionNodeId::new("respond").unwrap();
+        let guard = json!({"type": "object"});
+        let plan = ExecutionPlanV2::new(
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: hash('a'),
+                effect_provider_revision: hash('b'),
+                host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.into(),
+            },
+            source_artifact_hash,
+            ExecutionPlanBody {
+                entry_instruction: entry_id.clone(),
+                nodes: vec![
+                    ExecutionPlanNode {
+                        local_node_id: entry_id.clone(),
+                        source_node_id: "request".into(),
+                        node_type: "request".into(),
+                        config: json!({"input-schema": guard.clone()}),
+                        effect_policy: ExecutionEffectPolicy::Pure,
+                        source_connection_requirement: None,
+                    },
+                    ExecutionPlanNode {
+                        local_node_id: respond_id.clone(),
+                        source_node_id: "respond".into(),
+                        node_type: "respond".into(),
+                        config: json!({"status": 200}),
+                        effect_policy: ExecutionEffectPolicy::Pure,
+                        source_connection_requirement: None,
+                    },
+                ],
+                edges: vec![wamn_catalog::ExecutionPlanEdge {
+                    source: entry_id.clone(),
+                    source_port: "main".into(),
+                    destination: respond_id.clone(),
+                    destination_port: None,
+                    fan_out_ordinal: 0,
+                }],
+                root_terminal_behavior: RootTerminalBehavior::Respond {
+                    responders: vec![respond_id],
+                },
+                entry_input_schema_guard: guard.clone(),
+                callable_contract: Some(CallableContract {
+                    version: wamn_catalog::CALLABLE_CONTRACT_VERSION.into(),
+                    input_schema_hash: entry_input_schema_hash(&guard),
+                    return_contract: CallableReturnContract::UntypedJsonBody,
+                    effect_ceiling: CallableEffectCeiling::Effectful,
+                }),
+                source_map: vec![
+                    wamn_catalog::ExecutionSourceMapEntry {
+                        local_node_id: entry_id,
+                        source_node_id: "request".into(),
+                    },
+                    wamn_catalog::ExecutionSourceMapEntry {
+                        local_node_id: ExecutionNodeId::new("respond").unwrap(),
+                        source_node_id: "respond".into(),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        let exact_bytes = serde_json::to_vec(&plan).unwrap();
+        plan_supply::ResolutionPlan {
+            flow_id: flow_id.into(),
+            execution_bundle_hash: execution_bundle_hash(&exact_bytes),
+            source_artifact_hash: source_artifact_hash.into(),
+            exact_bytes,
+        }
+    }
 
     #[test]
     fn run_refuses_before_database_mutation_until_plan_execution_lands() {
@@ -228,5 +432,56 @@ mod tests {
             <Component as Guest>::run("run".into(), "{}".into()),
             Err(EXECUTION_INTERPRETER_REFUSAL.to_string())
         );
+    }
+
+    #[test]
+    fn supplied_snapshot_verifies_every_plan_and_exact_root() {
+        let root = supplied_plan("root", &hash('c'));
+        let callee = supplied_plan("callee", &hash('d'));
+        let snapshot = verify_resolution_snapshot(plan_supply::RunResolutionSnapshot {
+            root_flow_id: "root".into(),
+            root_execution_bundle_hash: root.execution_bundle_hash.clone(),
+            plans: vec![callee, root],
+        })
+        .unwrap();
+
+        assert_eq!(snapshot.root().flow_id(), "root");
+        assert_eq!(snapshot.len(), 2);
+        assert!(snapshot.plan("callee").is_some());
+        assert!(snapshot.plan("moving-head-name").is_none());
+    }
+
+    #[test]
+    fn forged_callee_bytes_are_refused_before_snapshot_construction() {
+        let mut root = supplied_plan("root", &hash('c'));
+        root.exact_bytes.push(b' ');
+        let error = verify_resolution_snapshot(plan_supply::RunResolutionSnapshot {
+            root_flow_id: "root".into(),
+            root_execution_bundle_hash: root.execution_bundle_hash.clone(),
+            plans: vec![root],
+        })
+        .unwrap_err();
+        assert_eq!(error, "run-resolution-hash-mismatch");
+    }
+
+    #[test]
+    fn duplicate_flow_or_wrong_root_identity_is_refused() {
+        let root = supplied_plan("root", &hash('c'));
+        let duplicate = root.clone();
+        let error = verify_resolution_snapshot(plan_supply::RunResolutionSnapshot {
+            root_flow_id: "root".into(),
+            root_execution_bundle_hash: root.execution_bundle_hash.clone(),
+            plans: vec![root.clone(), duplicate],
+        })
+        .unwrap_err();
+        assert_eq!(error, "run-resolution-duplicate-flow");
+
+        let error = verify_resolution_snapshot(plan_supply::RunResolutionSnapshot {
+            root_flow_id: "root".into(),
+            root_execution_bundle_hash: hash('f'),
+            plans: vec![root],
+        })
+        .unwrap_err();
+        assert_eq!(error, "run-resolution-root-mismatch");
     }
 }

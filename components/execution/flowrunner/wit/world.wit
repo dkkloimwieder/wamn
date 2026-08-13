@@ -8,6 +8,7 @@ package wamn:flowrunner@0.1.0;
 world flowrunner {
   import wamn:postgres/types@0.1.0;
   import wamn:postgres/client@0.1.0;
+  import wamn:runner/plan-supply@0.1.0;
   import wamn:runner/causation@0.1.0;
   import wamn:runner/http-effect@0.1.0;
   import wasi:logging/logging@0.1.0-draft;

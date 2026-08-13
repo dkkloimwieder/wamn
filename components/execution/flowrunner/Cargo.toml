@@ -7,6 +7,11 @@ edition.workspace = true
 wit-bindgen = { workspace = true }
 # Shared standard-node contract types used by the capability adapter.
 wamn-flow = { workspace = true }
+# Parses and hash-verifies exact immutable execution-plan bytes from the host.
+wamn-catalog = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

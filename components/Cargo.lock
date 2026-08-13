@@ -202,6 +202,8 @@ dependencies = [
 name = "flowrunner"
 version = "0.1.0"
 dependencies = [
+ "serde_json",
+ "wamn-catalog",
  "wamn-flow",
  "wit-bindgen 0.44.0",
 ]
@@ -807,15 +809,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-entity-access"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-pg-core",
- "wamn-schema-model",
-]
-
-[[package]]
 name = "wamn-event-reg"
 version = "0.1.0"
 dependencies = [
@@ -898,18 +891,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "wamn-standard-nodes"
-version = "0.1.0"
-dependencies = [
- "jmespath",
- "serde_json",
- "wamn-entity-access",
- "wamn-flow",
- "wamn-pg-core",
- "wamn-schema-model",
 ]
 
 [[package]]

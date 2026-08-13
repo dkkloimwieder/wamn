@@ -100,6 +100,49 @@ pub struct ConnectionEffectSnapshot {
     pub draft_generation_granted: bool,
 }
 
+/// Immutable identity rows for one claimed run's complete resolution map.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunResolutionMetadata {
+    pub tenant_id: String,
+    pub root_flow_id: String,
+    pub root_execution_bundle_hash: String,
+    pub plans: Vec<ResolutionPlanMetadata>,
+}
+
+/// One immutable `run_flow_resolutions` row, without its cacheable bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolutionPlanMetadata {
+    pub flow_id: String,
+    pub execution_bundle_hash: String,
+    pub source_artifact_hash: String,
+}
+
+/// Exact bytes loaded by immutable tenant-scoped execution-bundle identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolutionPlanBytes {
+    pub execution_bundle_hash: String,
+    pub exact_bytes: Vec<u8>,
+}
+
+const RUN_RESOLUTION_METADATA_SQL: &str = "\
+SELECT run.tenant_id, run.flow_id, run.execution_bundle_hash, \
+       resolution.flow_id, resolution.execution_bundle_hash, \
+       resolution.source_artifact_hash \
+  FROM runs AS run \
+  JOIN run_flow_resolutions AS resolution \
+    ON resolution.tenant_id = run.tenant_id \
+   AND resolution.run_id = run.run_id \
+ WHERE run.tenant_id = current_setting('app.tenant', true) \
+   AND run.run_id = $1 \
+ ORDER BY resolution.flow_id";
+
+const RESOLUTION_PLAN_BYTES_SQL: &str = "\
+SELECT bundle.execution_bundle_hash, bundle.exact_bytes \
+  FROM catalog.execution_bundles AS bundle \
+ WHERE bundle.tenant_id = current_setting('app.tenant', true) \
+   AND bundle.execution_bundle_hash = ANY($1::text[]) \
+ ORDER BY bundle.execution_bundle_hash";
+
 const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH authorized_plan AS MATERIALIZED ( \
     SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
@@ -839,6 +882,148 @@ impl WamnPostgres {
         }
     }
 
+    /// Load only the immutable resolution identities already materialized for a run.
+    ///
+    /// This never reads release membership or a catalog head. The component's
+    /// host-injected tenant, project, and schema claims scope the read.
+    pub async fn run_resolution_metadata(
+        &self,
+        component_id: &str,
+        run_id: &str,
+    ) -> anyhow::Result<Option<RunResolutionMetadata>> {
+        let tenant = self
+            .tenant_for(component_id)
+            .context("plan supply has no host-injected tenant")?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let (conn, policy) = self
+            .checkout(&project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &conn,
+                &tenant,
+                schema.as_deref(),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(conn);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let result: anyhow::Result<Option<RunResolutionMetadata>> = async {
+            let rows = conn
+                .query(RUN_RESOLUTION_METADATA_SQL, &[&run_id])
+                .await
+                .context("query immutable run resolution metadata")?;
+            let Some(first) = rows.first() else {
+                return Ok(None);
+            };
+            let tenant_id: String = first.try_get(0)?;
+            let root_flow_id: String = first.try_get(1)?;
+            let root_execution_bundle_hash: String = first.try_get(2)?;
+            let plans = rows
+                .into_iter()
+                .map(|row| {
+                    Ok(ResolutionPlanMetadata {
+                        flow_id: row.try_get(3)?,
+                        execution_bundle_hash: row.try_get(4)?,
+                        source_artifact_hash: row.try_get(5)?,
+                    })
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            Ok(Some(RunResolutionMetadata {
+                tenant_id,
+                root_flow_id,
+                root_execution_bundle_hash,
+                plans,
+            }))
+        }
+        .await;
+        match result {
+            Ok(metadata) => {
+                if let Err(error) = conn.batch_execute("COMMIT").await {
+                    self.destroy(conn);
+                    return Err(error).context("commit immutable resolution metadata read");
+                }
+                Ok(metadata)
+            }
+            Err(error) => {
+                if conn.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(conn);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Load exact immutable plan bytes for cache misses under injected tenant RLS.
+    pub async fn resolution_plan_bytes(
+        &self,
+        component_id: &str,
+        execution_bundle_hashes: &[String],
+    ) -> anyhow::Result<Vec<ResolutionPlanBytes>> {
+        if execution_bundle_hashes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tenant = self
+            .tenant_for(component_id)
+            .context("plan supply has no host-injected tenant")?;
+        let project = self.project_for(component_id);
+        let schema = self.schema_for(component_id);
+        let (conn, policy) = self
+            .checkout(&project)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if let Err(error) = self
+            .begin_with_claims(
+                &conn,
+                &tenant,
+                schema.as_deref(),
+                None,
+                None,
+                policy.statement_timeout_ms,
+            )
+            .await
+        {
+            self.destroy(conn);
+            return Err(anyhow::anyhow!(error.to_string()));
+        }
+        let hashes = execution_bundle_hashes.to_vec();
+        let result: anyhow::Result<Vec<ResolutionPlanBytes>> = async {
+            conn.query(RESOLUTION_PLAN_BYTES_SQL, &[&hashes])
+                .await
+                .context("query immutable resolution plan bytes")?
+                .into_iter()
+                .map(|row| {
+                    Ok(ResolutionPlanBytes {
+                        execution_bundle_hash: row.try_get(0)?,
+                        exact_bytes: row.try_get(1)?,
+                    })
+                })
+                .collect()
+        }
+        .await;
+        match result {
+            Ok(bytes) => {
+                if let Err(error) = conn.batch_execute("COMMIT").await {
+                    self.destroy(conn);
+                    return Err(error).context("commit immutable plan-byte read");
+                }
+                Ok(bytes)
+            }
+            Err(error) => {
+                if conn.batch_execute("ROLLBACK").await.is_err() {
+                    self.destroy(conn);
+                }
+                Err(error)
+            }
+        }
+    }
+
     pub(super) fn destroy(&self, obj: Object) {
         destroy_connection(obj, &self.destroyed);
     }
@@ -990,6 +1175,18 @@ pub(super) enum OneShotResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_supply_reads_only_immutable_run_map_and_bundle_identity() {
+        assert!(RUN_RESOLUTION_METADATA_SQL.contains("JOIN run_flow_resolutions"));
+        assert!(RUN_RESOLUTION_METADATA_SQL.contains("run.run_id = $1"));
+        assert!(RUN_RESOLUTION_METADATA_SQL.contains("ORDER BY resolution.flow_id"));
+        assert!(!RUN_RESOLUTION_METADATA_SQL.contains("release_flows"));
+        assert!(!RUN_RESOLUTION_METADATA_SQL.contains("active"));
+        assert!(RESOLUTION_PLAN_BYTES_SQL.contains("catalog.execution_bundles"));
+        assert!(RESOLUTION_PLAN_BYTES_SQL.contains("ANY($1::text[])"));
+        assert!(!RESOLUTION_PLAN_BYTES_SQL.contains("flow_id"));
+    }
 
     // wamn-cjv.2 — the in-band claim/role mutation guard.
     #[test]

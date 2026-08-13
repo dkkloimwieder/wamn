@@ -38,6 +38,11 @@ world causation-plugin {
   import wamn:runner/causation@0.1.0;
 }
 
+/// Host-side bindgen world for immutable claimed-run plan supply.
+world runner-plan-supply-plugin {
+  import wamn:runner/plan-supply@0.1.0;
+}
+
 /// Host-side bindgen world for the trusted one-frame HTTP effect surface.
 world runner-http-effect-plugin {
   import wamn:runner/http-effect@0.1.0;

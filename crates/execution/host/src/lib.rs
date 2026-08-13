@@ -43,12 +43,15 @@ use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
+use wamn_runtime::plugins::runner_plan_supply::{self, RUNNER_PLAN_SUPPLY_ID, RunnerPlanSupply};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres};
 
 /// Stable in-image location of the compiled flowrunner component.
 pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
+/// Hot immutable plans retained per execution host; eviction is deterministic LRU.
+pub const PLAN_CACHE_MAX_ENTRIES: usize = 256;
 
 /// Host-derived identity of the exact executable runtime loaded for execution.
 ///
@@ -445,6 +448,7 @@ impl ExecutionHost {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wamn_postgres::add_to_linker(&mut linker)?;
+        runner_plan_supply::add_to_linker(&mut linker)?;
         // fqg.11: the TRUSTED per-run egress channel — same trust argument.
         runner_egress::add_runner_to_linker(&mut linker)?;
         // l5i9.12.2: the TRUSTED per-run causation channel — same trust
@@ -477,6 +481,10 @@ impl ExecutionHost {
             project,
             connection_allowed_hosts,
         ));
+        let plan_supply = Arc::new(RunnerPlanSupply::new(
+            plugin.clone(),
+            PLAN_CACHE_MAX_ENTRIES,
+        )?);
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
@@ -485,6 +493,10 @@ impl ExecutionHost {
         plugins.insert(
             RUNNER_EGRESS_ID,
             egress_policy.clone() as Arc<dyn HostPlugin + Send + Sync>,
+        );
+        plugins.insert(
+            RUNNER_PLAN_SUPPLY_ID,
+            plan_supply as Arc<dyn HostPlugin + Send + Sync>,
         );
         plugins.insert(
             WAMN_LOGGING_ID,
