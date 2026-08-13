@@ -14,40 +14,7 @@ const TIER_MANIFEST: &str = "architecture/workspace-tiers.json";
 const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
 const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
-const SPECIALIZATION_FIXTURES: [(&str, &str); 8] = [
-    (
-        "capability-class-http",
-        "components/fixtures/capability-class-http/Cargo.toml",
-    ),
-    (
-        "capability-class-postgres",
-        "components/fixtures/capability-class-postgres/Cargo.toml",
-    ),
-    (
-        "capability-class-pure",
-        "components/fixtures/capability-class-pure/Cargo.toml",
-    ),
-    (
-        "exact-driver-alpha",
-        "components/fixtures/exact-driver-alpha/Cargo.toml",
-    ),
-    (
-        "exact-driver-alpha-beta",
-        "components/fixtures/exact-driver-alpha-beta/Cargo.toml",
-    ),
-    (
-        "exact-node-alpha",
-        "components/fixtures/exact-node-alpha/Cargo.toml",
-    ),
-    (
-        "exact-node-beta",
-        "components/fixtures/exact-node-beta/Cargo.toml",
-    ),
-    (
-        "exact-node-unused",
-        "components/fixtures/exact-node-unused/Cargo.toml",
-    ),
-];
+const SPECIALIZATION_FIXTURES: [(&str, &str); 0] = [];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -705,7 +672,7 @@ fn workspace_tier_helper_full_plans_cover_both_workspaces() {
         listed.non_cargo_inputs,
         manifest.tiers.full_ci.non_cargo_inputs
     );
-    assert_eq!(listed.non_cargo_inputs, ["components/samples/node-ts"]);
+    assert!(listed.non_cargo_inputs.is_empty());
 }
 
 #[test]
@@ -720,7 +687,6 @@ fn workspace_tier_docs_use_stable_helper_commands() {
         "./tools/workspace-tier run full_ci root test-all",
         "./tools/workspace-tier run full_ci components build-wasm",
         "./tools/workspace-tier list full_ci",
-        "jco componentize components/samples/node-ts/node.js",
     ] {
         assert!(
             docs.contains(command),

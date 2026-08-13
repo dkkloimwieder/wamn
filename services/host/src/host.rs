@@ -16,9 +16,7 @@ use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
-use wamn_runtime::plugins::{
-    WamnFlowInvocation, WamnJetstream, WamnLogging, WamnNodeControl, WamnPostgres,
-};
+use wamn_runtime::plugins::{WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres};
 use wamn_runtime::{build_engine, spawn_epoch_ticker};
 
 use crate::inline_invocation::InlineExecutionDriver;
@@ -111,10 +109,6 @@ pub struct HostArgs {
     #[arg(long, env = "WAMN_CREDENTIALS_FILE")]
     pub credentials_file: Option<PathBuf>,
 
-    /// Environment-owned mapping from admitted component digest to node-host authority.
-    #[arg(long, env = "WAMN_NODE_PLACEMENTS_FILE")]
-    pub node_placements_file: Option<PathBuf>,
-
     /// Production outbound HTTP allowlist. Empty denies all egress.
     #[arg(
         long = "allowed-hosts",
@@ -167,7 +161,6 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         postgres.clone(),
         logging.clone(),
         args.credentials_file.as_deref(),
-        args.node_placements_file.as_deref(),
         allowed_hosts,
         args.inline_lease_ttl_ms,
     )?);
@@ -208,8 +201,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         .with_plugin(Arc::new(
             WamnFlowInvocation::from_env(inline_driver)
                 .context("wamn:flow-invocation plugin init")?,
-        ))?
-        .with_plugin(Arc::new(WamnNodeControl))?;
+        ))?;
 
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
@@ -234,7 +226,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:node/control[stub])"
+        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation)"
     );
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await

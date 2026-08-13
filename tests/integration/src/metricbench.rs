@@ -45,7 +45,7 @@ use tokio::time::Instant;
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::Artifact;
 use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
+use wamn_flow::node_contract::NodeInterface;
 use wamn_run_state::queue::{enqueue_sql, write_ahead_triggered_run_sql};
 
 use crate::dispatcher_process::{DispatcherProcess, ProjectSpec};
@@ -313,19 +313,13 @@ struct FixtureArtifact {
     artifact_hash: String,
 }
 
-fn interface(node_type: &str, capability: CapabilityClass) -> ResolvedNodeInterface {
-    ResolvedNodeInterface::new(
-        node_type,
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![capability],
-        Vec::new(),
-    )
+fn interface(node_type: &str) -> anyhow::Result<NodeInterface> {
+    crate::catalog_pin::interface(node_type)
 }
 
 fn fixture_artifact(
     graph_json: &str,
-    implementations: Vec<ResolvedNodeInterface>,
+    implementations: Vec<NodeInterface>,
 ) -> anyhow::Result<FixtureArtifact> {
     let flow =
         Flow::from_json(graph_json).map_err(|error| anyhow::anyhow!("flow parse: {error}"))?;
@@ -342,7 +336,7 @@ fn fixture_artifact(
 
 fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
     // `request` and `respond` carry resolved interfaces like any other node
-    // type: the wamn-ayq7 series moved every engine node onto the node ABI and
+    // type: the wamn-ayq7 series moved every engine node onto standard-node dispatch and
     // emptied the model-owned set, so publication resolves them too. Both are
     // pure/replay with a single `main` port, exactly as the standard node
     // library describes them. Implementations stay sorted by node type.
@@ -350,19 +344,19 @@ fn fixture_artifacts() -> anyhow::Result<Vec<FixtureArtifact>> {
         fixture_artifact(
             &crate::flowbench::flow_json(1),
             vec![
-                interface("conditional", CapabilityClass::Pure),
-                interface("pg-write", CapabilityClass::Postgres),
-                interface("request", CapabilityClass::Pure),
-                interface("respond", CapabilityClass::Pure),
-                interface("transform", CapabilityClass::Pure),
+                interface("conditional")?,
+                interface("pg-write")?,
+                interface("request")?,
+                interface("respond")?,
+                interface("transform")?,
             ],
         )?,
         fixture_artifact(
             &fail_flow_json(),
             vec![
-                interface("postgres-query", CapabilityClass::Postgres),
-                interface("request", CapabilityClass::Pure),
-                interface("respond", CapabilityClass::Pure),
+                interface("postgres-query")?,
+                interface("request")?,
+                interface("respond")?,
             ],
         )?,
     ];

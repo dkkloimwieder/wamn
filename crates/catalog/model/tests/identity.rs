@@ -5,7 +5,7 @@ use wamn_catalog::{
     SourceId, SourceKind,
 };
 use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
+use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
 
 fn request_flow() -> Flow {
     Flow::from_json(
@@ -15,7 +15,7 @@ fn request_flow() -> Flow {
           "version":7,
           "nodes":[
             {"id":"request","type":"request","config":{"input-schema":true}},
-            {"id":"shape","type":"custom-node","config":{"template":"v1"}},
+            {"id":"shape","type":"custom-step","config":{"template":"v1"}},
             {"id":"response","type":"respond","config":{"status":200}}
           ],
           "edges":[
@@ -30,22 +30,10 @@ fn request_flow() -> Flow {
 fn artifact_new(
     tenant: &str,
     flow: &Flow,
-    mut implementations: Vec<ResolvedNodeInterface>,
+    mut implementations: Vec<NodeInterface>,
 ) -> Result<Artifact, CatalogIdentityError> {
-    let request = ResolvedNodeInterface::new(
-        "request",
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![CapabilityClass::Pure],
-        Vec::new(),
-    );
-    let respond = ResolvedNodeInterface::new(
-        "respond",
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![CapabilityClass::Pure],
-        Vec::new(),
-    );
+    let request = node_interface("request", Vec::new(), EffectPolicy::Pure);
+    let respond = node_interface("respond", Vec::new(), EffectPolicy::Pure);
     for implementation in [request, respond] {
         let index = implementations
             .iter()
@@ -56,17 +44,29 @@ fn artifact_new(
     Artifact::new(tenant, flow, implementations)
 }
 
-fn interface() -> ResolvedNodeInterface {
-    ResolvedNodeInterface::new(
-        "custom-node",
-        "wamn:node/node@0.1.0",
-        vec!["main".to_string()],
-        vec![CapabilityClass::Http],
-        Vec::new(),
+fn node_interface(
+    node_type: &str,
+    capabilities: Vec<Capability>,
+    effect_policy: EffectPolicy,
+) -> NodeInterface {
+    NodeInterface {
+        node_type: node_type.to_string(),
+        output_ports: vec!["main".to_string()],
+        capabilities,
+        connection_requirements: Vec::new(),
+        effect_policy,
+    }
+}
+
+fn interface() -> NodeInterface {
+    node_interface(
+        "custom-step",
+        vec![Capability::HttpEgress],
+        EffectPolicy::Effectful,
     )
 }
 
-fn supplied(_digit: char) -> ResolvedNodeInterface {
+fn supplied(_digit: char) -> NodeInterface {
     interface()
 }
 
@@ -213,7 +213,7 @@ fn definition_hash_pins_attachment_artifact_and_complete_resolved_sources() {
     }
 
     assert_eq!(
-        baseline_hash, "sha256:92a76c0504a1142aa086b0b135e611d59c036384d70064424b2994a67c564e9e",
+        baseline_hash, "sha256:1502f68feaace77d5458cb6eee75cbd806aa34e17e755a99eddb095ad2529bb9",
         "definition frame sequence changed"
     );
 }

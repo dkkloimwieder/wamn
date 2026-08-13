@@ -10,22 +10,18 @@
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 51
+      "package_count": 40
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
-      "package_count": 31
+      "package_count": 6
     },
-    "non_cargo_inputs": [
-      "components/samples/node-ts"
-    ]
+    "non_cargo_inputs": []
   },
   "tiers": {
     "fast_developer_native": {
       "root_packages": [
-        "wamn-api",
         "wamn-authoring-model",
-        "wamn-builder",
         "wamn-catalog",
         "wamn-cdc-reader",
         "wamn-component-policy",
@@ -42,12 +38,6 @@
         "wamn-flow-invocation",
         "wamn-host",
         "wamn-materializer",
-        "wamn-node-guest",
-        "wamn-node-host",
-        "wamn-node-invoke",
-        "wamn-node-manifest",
-        "wamn-node-runtime",
-        "wamn-node-sdk",
         "wamn-pg-core",
         "wamn-platform-identity",
         "wamn-project-state",
@@ -72,11 +62,9 @@
     "product_components": {
       "root_packages": [],
       "component_packages": [
-        "api-gateway",
         "flow-http",
         "flowrunner",
-        "materializer",
-        "time-shift"
+        "materializer"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Build these explicit component package selectors from components/ with --target wasm32-wasip2. Their root-workspace path dependencies are resolved by Cargo."
@@ -89,9 +77,6 @@
         "wamn-event-wire",
         "wamn-flow",
         "wamn-flow-invocation",
-        "wamn-node-invoke",
-        "wamn-node-manifest",
-        "wamn-node-sdk",
         "wamn-project-state",
         "wamn-proof-conformance",
         "wamn-scenario-model",
@@ -103,9 +88,7 @@
     },
     "full_ci": {
       "root_packages": [
-        "wamn-api",
         "wamn-authoring-model",
-        "wamn-builder",
         "wamn-catalog",
         "wamn-cdc-reader",
         "wamn-component-policy",
@@ -124,12 +107,6 @@
         "wamn-gates",
         "wamn-host",
         "wamn-materializer",
-        "wamn-node-guest",
-        "wamn-node-host",
-        "wamn-node-invoke",
-        "wamn-node-manifest",
-        "wamn-node-runtime",
-        "wamn-node-sdk",
         "wamn-pg-core",
         "wamn-platform-identity",
         "wamn-project-state",
@@ -153,39 +130,18 @@
         "wamn-waker"
       ],
       "component_packages": [
-        "api-gateway",
         "busyloop",
-        "capability-class-http",
-        "capability-class-postgres",
-        "capability-class-pure",
-        "connection-http-custom",
         "connection-http-standard",
-        "cred-probe",
-        "disposition-node",
-        "exact-driver-alpha",
-        "exact-driver-alpha-beta",
-        "exact-node-alpha",
-        "exact-node-beta",
-        "exact-node-unused",
-        "flow-driver",
         "flow-http",
         "flowrunner",
-        "js-sample",
         "materializer",
-        "node-cred",
-        "node-rs",
-        "sample-node",
-        "sockprobe",
-        "time-shift"
+        "sockprobe"
       ],
-      "non_cargo_inputs": [
-        "components/samples/node-ts"
-      ],
+      "non_cargo_inputs": [],
       "command_semantics": "Test --workspace --all-targets in the root workspace, build --workspace --target wasm32-wasip2 in components/, and run the classified non-Cargo input checks. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
-        "wamn-builder",
         "wamn-cdc-reader",
         "wamn-ctl",
         "wamn-dispatcher",
@@ -193,7 +149,6 @@
         "wamn-gate-harness",
         "wamn-gates",
         "wamn-host",
-        "wamn-node-host",
         "wamn-proof-conformance",
         "wamn-proof-integration",
         "wamn-proof-system",
@@ -203,55 +158,31 @@
         "wamn-waker"
       ],
       "component_packages": [
-        "api-gateway",
         "busyloop",
-        "capability-class-http",
-        "capability-class-postgres",
-        "capability-class-pure",
-        "connection-http-custom",
         "connection-http-standard",
-        "cred-probe",
-        "disposition-node",
-        "exact-driver-alpha",
-        "exact-driver-alpha-beta",
-        "exact-node-alpha",
-        "exact-node-beta",
-        "exact-node-unused",
-        "flow-driver",
         "flow-http",
         "flowrunner",
-        "js-sample",
         "materializer",
-        "node-cred",
-        "node-rs",
-        "sample-node",
-        "sockprobe",
-        "time-shift"
+        "sockprobe"
       ],
-      "non_cargo_inputs": [
-        "components/samples/node-ts"
-      ],
+      "non_cargo_inputs": [],
       "command_semantics": "Build deployable native and proof owners plus every guest proof input, then execute the owning deploy/gates Jobs from docs/archive/build-and-test.md. Local Cargo success never substitutes for a named in-cluster gate of record."
     },
     "release": {
       "root_packages": [
-        "wamn-builder",
         "wamn-cdc-reader",
         "wamn-ctl",
         "wamn-dispatcher",
         "wamn-executor",
         "wamn-gates",
         "wamn-host",
-        "wamn-node-host",
         "wamn-scenario-worker",
         "wamn-waker"
       ],
       "component_packages": [
-        "api-gateway",
         "flow-http",
         "flowrunner",
-        "materializer",
-        "time-shift"
+        "materializer"
       ],
       "non_cargo_inputs": [],
       "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
@@ -333,7 +264,7 @@
         "command": "cargo check --quiet --locked",
         "package_selector": "tiers.fast_developer_native.root_packages",
         "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.40,
+        "elapsed_seconds": 0.4,
         "user_seconds": 0.29,
         "sys_seconds": 0.11,
         "max_rss_kib": 130060,
@@ -359,7 +290,7 @@
         "command": "cargo check --quiet --locked",
         "package_selector": "bare-default-members",
         "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.40,
+        "elapsed_seconds": 0.4,
         "user_seconds": 0.29,
         "sys_seconds": 0.11,
         "max_rss_kib": 130652,
@@ -386,7 +317,7 @@
         "package_selector": "tiers.fast_developer_native.root_packages",
         "cache_state": "immediate-repeat",
         "elapsed_seconds": 0.43,
-        "user_seconds": 0.30,
+        "user_seconds": 0.3,
         "sys_seconds": 0.13,
         "max_rss_kib": 129820,
         "exit_status": 0
@@ -424,7 +355,7 @@
         "package_selector": "tiers.product_components.component_packages",
         "cache_state": "cold-after-cargo-clean",
         "elapsed_seconds": 22.98,
-        "user_seconds": 112.90,
+        "user_seconds": 112.9,
         "sys_seconds": 13.85,
         "max_rss_kib": 566944,
         "exit_status": 0,
@@ -477,12 +408,12 @@
         "cache_state": "cold-after-cargo-clean",
         "elapsed_seconds": 293.24,
         "user_seconds": 1681.31,
-        "sys_seconds": 186.40,
+        "sys_seconds": 186.4,
         "max_rss_kib": 3752728,
         "exit_status": 101,
         "cache_kib": 24321132,
         "cache_files": 20015,
-        "qualification": "Every target ran; only wamn-builder registry_push::push_then_read_back_pins_the_pullable_shape failed because the sandbox denied its local socket with Operation not permitted. This is retained as environment evidence and is not the accepted full-CI result."
+        "qualification": "Retained as pre-deletion environment evidence; current deleted custom-plane packages are no longer in the workspace."
       },
       {
         "id": "full-root-test-cold",

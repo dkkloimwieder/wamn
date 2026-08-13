@@ -347,7 +347,7 @@ impl Harness {
         // The whole flowrunner import set, registered once for every bench that
         // rolls its own linker. No failover fixture declares a credential or
         // makes an outbound call, so wasi:http, the vault, wasi:logging, and the
-        // trusted HTTP-connection and node-invocation frames are linked but left
+        // trusted HTTP-connection frame is linked but left
         // unbacked in `plugin_map` — they trap rather than escape if called.
         add_flowrunner_imports_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
@@ -365,14 +365,6 @@ impl Harness {
         m.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
             self.plugin.clone() as Arc<dyn HostPlugin + Send + Sync>,
-        );
-        // cjv.3: the flowrunner declares its per-run grant on every walk, so a
-        // credentials plugin must back the linked interface. No failover fixture
-        // declares a credential, so an empty unbacked vault suffices.
-        m.insert(
-            wamn_runtime::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
-            Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty())
-                as Arc<dyn HostPlugin + Send + Sync>,
         );
         // fqg.11: the flowrunner declares its per-run egress on every walk, so
         // the policy plugin must back the linked interface. Enforcement here is

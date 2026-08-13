@@ -6,15 +6,9 @@
   },
   "live_store_paths": [
     "fork: new_store_from_templates (single production site)",
-    "wamn: ExecutionHost store (crates/execution/host)",
-    "wamn: NodeRuntime store (crates/platform/node-runtime)"
+    "wamn: ExecutionHost store (crates/execution/host)"
   ],
   "consumers": [
-    {
-      "package": "wamn-builder",
-      "manifest": "services/builder/Cargo.toml",
-      "features": []
-    },
     {
       "package": "wamn-executor",
       "manifest": "services/executor/Cargo.toml",
@@ -32,11 +26,6 @@
         "wasi-otel",
         "washlet"
       ]
-    },
-    {
-      "package": "wamn-node-host",
-      "manifest": "services/node-host/Cargo.toml",
-      "features": []
     },
     {
       "package": "wamn-scenario-worker",

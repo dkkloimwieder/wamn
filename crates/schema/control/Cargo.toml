@@ -19,7 +19,6 @@ wamn-schema-compiler = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-pg-core = { workspace = true }
-wamn-node-manifest = { workspace = true }
 # EVT-REPLICA-IDENT (wamn-l5i9.31): the registration model + the SINGLE root-`old`
 # detector, so the RI-FULL derivation and the materializer's per-event old-absent
 # guard can never diverge (one parser). Light closure (catalog/event-wire/jmespath).

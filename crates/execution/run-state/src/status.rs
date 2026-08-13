@@ -276,9 +276,8 @@ impl NodeRunStatus {
     }
 }
 
-/// A completed node-run's classified failure kind — the persisted form of the
-/// `wamn:node` error taxonomy, for run history (reconstruction itself keys off
-/// the recorded emission port, not this).
+/// A completed node-run's classified failure kind, for run history
+/// (reconstruction itself keys off the recorded emission port, not this).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeErrorKind {

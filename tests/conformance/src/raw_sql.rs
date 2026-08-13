@@ -16,7 +16,7 @@ mod tests {
     #[test]
     fn node_authored_values_cannot_forge_the_grant() {
         let context_start = RUNNER
-            .find("let mut ctx = wamn_node_guest::caps::CapsCtx")
+            .find("let mut ctx = CapsCtx")
             .expect("production standard-node context");
         let context_end = RUNNER[context_start..]
             .find("let granted =")

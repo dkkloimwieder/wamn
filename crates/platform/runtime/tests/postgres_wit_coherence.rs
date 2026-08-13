@@ -1,7 +1,6 @@
 //! Drift guard tying the FROZEN `wamn:postgres@0.1.0` doc-of-record
-//! (`docs/archive/contracts/wamn-postgres.wit`) to every vendored copy of it. The `wamn:node`
-//! (`crates/node/sdk/tests/wit_coherence.rs`) and `wamn:jetstream`
-//! (`jetstream_wit_coherence.rs`) precedents: editing the contract without
+//! (`docs/archive/contracts/wamn-postgres.wit`) to every vendored copy of it. The
+//! `wamn:jetstream` (`jetstream_wit_coherence.rs`) precedent: editing the contract without
 //! re-vendoring every copy (or drifting one copy on its own) fails a NAMED test
 //! here instead of shipping skew that only surfaces as a cryptic linker error
 //! when a guest fails to INSTANTIATE.
@@ -53,20 +52,16 @@ fn code_lines(wit: &str) -> Vec<&str> {
 /// The complete, explicit set of vendored `wamn:postgres` contract copies. The
 /// walk in [`all_vendored_copies_are_registered`] must discover exactly these;
 /// adding a new guest that vendors the contract requires adding its path here.
-const EXPECTED_COPIES: [&str; 4] = [
+const EXPECTED_COPIES: [&str; 3] = [
     "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
     "components/execution/materializer/wit/deps/wamn-postgres/package.wit",
     "crates/platform/runtime/wit/deps/wamn-postgres/package.wit",
-    "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
 ];
 
 /// The two copies that are byte-identical to one another today (the fuller
 /// doc-comment revision). Byte-identity within the cluster is asserted so a
 /// comment edit to one member fails here.
-const CLUSTER_A: [&str; 2] = [
-    "components/execution/flowrunner/wit/deps/wamn-postgres/package.wit",
-    "crates/node/guest/wit-caps/deps/wamn-postgres/package.wit",
-];
+const CLUSTER_A: [&str; 1] = ["components/execution/flowrunner/wit/deps/wamn-postgres/package.wit"];
 
 /// The two copies that are byte-identical to one another today (a shorter
 /// doc-comment revision: they omit the schema-selection / freeze-status /

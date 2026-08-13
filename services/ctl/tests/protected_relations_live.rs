@@ -254,7 +254,6 @@ async fn install_scratch_database(client: &Client, url: &str, repository: &Path)
         runstate: false,
         seed_dataset: None,
         flow: Vec::new(),
-        custom_node: Vec::new(),
         exposure: None,
         skip_reconcile_replica_identity: true,
     })

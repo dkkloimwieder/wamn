@@ -12,8 +12,6 @@ wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-flow-invocation = { workspace = true }
-wamn-node-manifest = { workspace = true }
-wamn-node-invoke = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-run-state = { workspace = true }
 anyhow = { workspace = true }

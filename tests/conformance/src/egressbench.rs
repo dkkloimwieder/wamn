@@ -29,17 +29,11 @@
 //! and every P3 mirror call site on the exact linked fork revision. See
 //! docs/archive/data-path/security-db-path.md.
 //!
-//! TWO PROFILES (E17). The verdict comes from `wamn_component_policy` — the
-//! same classifier the host publish-gate uses — not a forked local rule:
-//! - **first-party flow-runner** legitimately imports `wamn:postgres` (the DB
-//!   path); it is screened by the socket denylist (`egress_guard::denied_imports`,
-//!   E13a) and must import the plugin.
-//! - **tenant / custom-node** artifacts are held to the POSITIVE allowlist v1
-//!   (`egress_guard::disallowed_tenant_imports`, docs/archive/execution/wamn-node-design-notes.md
-//!   §9): any non-allowlisted package is refused — `wamn:postgres` most of all,
-//!   since importing the plugin hands a tenant node the raw DB surface + the
-//!   `DO`/`EXECUTE` claim-mutation bypass (docs/archive/findings.md §3 E17). A denylist
-//!   cannot express this: `wamn:postgres` is the *intended* path for the runner.
+//! The verdict comes from `wamn_component_policy` — the same classifier the
+//! host publish-gate uses — not a forked local rule. The retained scope is the
+//! first-party flow-runner: it legitimately imports `wamn:postgres` (the DB
+//! path), is screened by the socket denylist
+//! (`egress_guard::denied_imports`, E13a), and must import the plugin.
 
 use std::collections::BTreeSet;
 use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
@@ -59,7 +53,7 @@ use wash_runtime::types::{
 use wash_runtime::wasmtime::Engine as RawEngine;
 use wash_runtime::wasmtime::component::Component as WasmtimeComponent;
 
-use wamn_component_policy::{denied_imports, disallowed_tenant_imports};
+use wamn_component_policy::denied_imports;
 use wamn_runtime::engine::build_engine;
 
 #[derive(Args)]
@@ -68,21 +62,6 @@ pub struct EgressBenchArgs {
     /// Must import `wamn:postgres` (the DB path) and must NOT import `wasi:sockets`.
     #[arg(long)]
     flowrunner: PathBuf,
-
-    /// Tenant / custom-node artifacts expected to CLEAR the positive allowlist
-    /// v1 — a legitimate custom node (no `wamn:postgres`, no `wasi:sockets`).
-    /// The gate fails if one is refused. Repeatable.
-    #[arg(long = "component")]
-    components: Vec<PathBuf>,
-
-    /// Tenant / custom-node artifacts that MUST be REFUSED by the allowlist v1
-    /// — the E17 negative. Each imports a non-allowlisted package (for example,
-    /// `wamn:postgres`, the raw DB surface + `DO`/`EXECUTE`
-    /// claim-mutation bypass); the gate PASSES when the classifier refuses it,
-    /// FAILS if it is admitted. This is the polarity the `--component` sweep
-    /// cannot express. Repeatable.
-    #[arg(long = "reject-tenant")]
-    reject_tenants: Vec<PathBuf>,
 
     /// The sockprobe fixture (`components/fixtures/sockprobe`). When set, the
     /// RUNTIME raw-socket phase runs: sockprobe is instantiated as a service
@@ -94,10 +73,9 @@ pub struct EgressBenchArgs {
     sockprobe: Option<PathBuf>,
 }
 
-/// Other host-plugin egress `namespace:package`s not expected in the first-party
-/// flow-runner; if one appears it is flagged as a new egress path to justify.
-/// (Tenant artifacts are held to the positive allowlist instead, which rejects
-/// these by construction.)
+/// Other host-plugin egress `namespace:package`s not expected in the
+/// first-party flow-runner; if one appears it is flagged as a new egress path
+/// to justify.
 const OTHER_EGRESS_PKGS: &[&str] = &[
     "wasi:blobstore",
     "wasi:keyvalue",
@@ -174,57 +152,6 @@ fn assert_flowrunner(label: &str, names: &[String]) -> bool {
         println!("    PASS: no raw-socket surface; wamn:postgres is the DB path");
     }
     ok
-}
-
-/// Tenant / custom-node profile: held to the positive allowlist v1
-/// (`egress_guard::disallowed_tenant_imports` — the shared classifier the host
-/// publish-gate uses). Any non-allowlisted package is refused — most of all
-/// `wamn:postgres` (raw DB surface + `DO`/`EXECUTE` claim-mutation bypass) and
-/// `wasi:sockets`. Returns whether it passed.
-fn assert_tenant(label: &str, names: &[String]) -> bool {
-    let pkgs = ns_pkgs(names);
-    let disallowed = disallowed_tenant_imports(names.iter().map(String::as_str));
-
-    println!("  {label}");
-    println!("    packages: {pkgs:?}");
-
-    if disallowed.is_empty() {
-        println!(
-            "    PASS: imports only allowlisted packages (allowlist v1; no wamn:postgres, no sockets)"
-        );
-        true
-    } else {
-        println!(
-            "    FAIL: imports non-allowlisted package(s) {disallowed:?} — tenant artifacts may \
-             import only the allowlist v1 (excludes wamn:postgres + wasi:sockets)"
-        );
-        false
-    }
-}
-
-/// E17 negative: a tenant / custom-node artifact that MUST be refused because it
-/// imports a non-allowlisted package. Passes iff the shared classifier
-/// (`egress_guard::disallowed_tenant_imports`) refuses it, naming the offense —
-/// the polarity the positive `--component` sweep cannot show, that the allowlist
-/// REJECTS (most load-bearingly) a `wamn:postgres`-importing tenant. Returns
-/// whether it passed.
-fn assert_reject_tenant(label: &str, names: &[String]) -> bool {
-    let pkgs = ns_pkgs(names);
-    let disallowed = disallowed_tenant_imports(names.iter().map(String::as_str));
-
-    println!("  {label}");
-    println!("    packages: {pkgs:?}");
-
-    if disallowed.is_empty() {
-        println!(
-            "    FAIL: ADMITTED — a tenant artifact importing {pkgs:?} cleared the allowlist v1; \
-             the wamn:postgres / raw-socket exclusion did not hold"
-        );
-        false
-    } else {
-        println!("    PASS: refused — imports non-allowlisted package(s) {disallowed:?}");
-        true
-    }
 }
 
 /// A sockprobe per-arm verdict that means the raw-egress op was PERMITTED:
@@ -420,10 +347,9 @@ async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
 pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
 
-    println!("# wamn-gates 2.6/E17 egressbench — DB-path egress review");
+    println!("# wamn-gates 2.6 egressbench — DB-path egress review");
     println!("# claim: the wamn:postgres plugin is the only DB path. The first-party");
-    println!("#        flow-runner imports it and no raw sockets; tenant / custom-node");
-    println!("#        artifacts are held to the positive allowlist v1 (no wamn:postgres).");
+    println!("#        flow-runner imports it and no raw sockets.");
     println!("#        With --sockprobe, the runtime raw-socket policy (E13/E15) is also");
     println!("#        exercised: raw TCP/UDP egress denied by default, allowed only on opt-in.");
 
@@ -436,22 +362,6 @@ pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
     let fr = import_names(raw, &args.flowrunner)?;
     pass &= assert_flowrunner(&format!("flow-runner  {}", args.flowrunner.display()), &fr);
 
-    if !args.components.is_empty() {
-        println!("\n## tenant / custom-node artifacts (allowlist v1)");
-    }
-    for path in &args.components {
-        let names = import_names(raw, path)?;
-        pass &= assert_tenant(&format!("component    {}", path.display()), &names);
-    }
-
-    if !args.reject_tenants.is_empty() {
-        println!("\n## E17 negative — tenant artifacts that MUST be refused (allowlist v1)");
-    }
-    for path in &args.reject_tenants {
-        let names = import_names(raw, path)?;
-        pass &= assert_reject_tenant(&format!("reject-tenant {}", path.display()), &names);
-    }
-
     if let Some(sockprobe) = &args.sockprobe {
         let bytes = std::fs::read(sockprobe)
             .with_context(|| format!("read sockprobe {}", sockprobe.display()))?;
@@ -460,9 +370,7 @@ pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
 
     println!("\negressbench complete — overall PASS: {pass}");
     if !pass {
-        bail!(
-            "2.6/E17 egress gate failed: a shipped workload exposes a raw-socket / non-allowlisted egress path"
-        );
+        bail!("2.6 egress gate failed: a shipped workload exposes a raw-socket egress path");
     }
     Ok(())
 }
@@ -577,57 +485,6 @@ mod tests {
         // The DB-touching workload must actually use the plugin.
         let n = names(&["wasi:cli/run@0.2.3"]);
         assert!(!assert_flowrunner("no-db", &n));
-    }
-
-    #[test]
-    fn tenant_node_shape_passes() {
-        // A standard custom node: SDK imports + determinism plumbing, no DB.
-        let n = names(&[
-            "wamn:node/credentials@0.1.0",
-            "wasi:clocks/monotonic-clock@0.2.3",
-            "wasi:io/streams@0.2.3",
-            "wasi:cli/run@0.2.3",
-        ]);
-        assert!(assert_tenant("node", &n));
-    }
-
-    /// E17 — the fix of record. A TENANT artifact importing `wamn:postgres` (the
-    /// raw DB surface + the DO/EXECUTE claim-mutation bypass) is REJECTED by the
-    /// custom-node profile. The bug was that this shape PASSED (require_postgres
-    /// was false and the socket-only classifier let `wamn:postgres` through).
-    /// Mutation (a): re-adding `wamn:postgres` to `TENANT_ALLOWED_PKGS` flips
-    /// this to a pass. Mutation (b): removing the `disallowed_tenant_imports`
-    /// call from `assert_tenant` (bypassing the chokepoint) flips it too.
-    #[test]
-    fn tenant_importing_postgres_is_rejected() {
-        let n = names(&["wamn:postgres/client@0.1.0", "wasi:io/streams@0.2.3"]);
-        assert!(!assert_tenant("evil-node", &n));
-    }
-
-    /// E13a no-regression at the tenant layer: a socket importer is still refused
-    /// (wasi:sockets is not on the allowlist).
-    #[test]
-    fn tenant_importing_sockets_is_rejected() {
-        let n = names(&["wasi:sockets/tcp@0.2.3", "wasi:io/streams@0.2.3"]);
-        assert!(!assert_tenant("socket-node", &n));
-    }
-
-    /// E17 negative — the fixture of record. A tenant importing `wamn:postgres`
-    /// (the raw DB surface + the DO/EXECUTE claim-mutation bypass) is REFUSED, so
-    /// the negative assertion PASSES. This is the polarity `--component` cannot
-    /// express: there, a postgres import is a gate FAILURE, not a proven refusal.
-    #[test]
-    fn reject_tenant_passes_when_postgres_importer_refused() {
-        let n = names(&["wamn:postgres/client@0.1.0", "wasi:io/streams@0.2.3"]);
-        assert!(assert_reject_tenant("postgres-importer", &n));
-    }
-
-    /// A legitimate node has nothing to refuse, so the E17 negative assertion
-    /// FAILS — it asserts a rejection that did not happen (no false green).
-    #[test]
-    fn reject_tenant_fails_when_admitted() {
-        let n = names(&["wamn:node/credentials@0.1.0", "wasi:io/streams@0.2.3"]);
-        assert!(!assert_reject_tenant("legit-node", &n));
     }
 
     /// The runtime-phase verdict classifier: only sockprobe's two "the op was

@@ -1,7 +1,6 @@
 //! THE mechanical purity lint (docs/archive/platform-plan.md 5.3): standard node
-//! crate depends on the flow model's pure node contract — never the runner — so no node
-//! can circumvent the `wamn:node` interface and silently break the
-//! frozen-flow composition path (5.13). Enforced over `cargo metadata`: the
+//! crate depends on the flow model's pure node contract — never the runner — so
+//! no node can circumvent the frozen-flow composition path (5.13). Enforced over `cargo metadata`: the
 //! test walks `wamn-standard-nodes`' resolved NORMAL dependency edges and fails the
 //! build the moment a forbidden crate enters the closure or an undeclared
 //! direct dependency appears.
@@ -21,16 +20,12 @@ const FORBIDDEN: &[&str] = &[
     "wamn-run-state",
     "wamn-scheduler",
     "wamn-runtime",
-    "wamn-node-runtime",
 ];
 
 /// The EXACT direct (normal) dependencies wamn-standard-nodes may have. Growing this
 /// list is a conscious, test-updating act.
 const ALLOWED_DIRECT: &[&str] = &[
     "wamn-flow",
-    // Temporary E3 compatibility descriptor surface; retained execution uses
-    // `wamn-flow::node_contract` and E3 deletes this edge with its consumers.
-    "wamn-node-manifest",
     "wamn-entity-access",
     "wamn-pg-core",
     "wamn-schema-model",

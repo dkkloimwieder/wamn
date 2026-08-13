@@ -42,11 +42,8 @@ use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
-use wamn_runtime::plugins::node_invocation::{
-    self, NODE_INVOCATION_ID, NodeInvocation, NodePlacementMap,
-};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
-use wamn_runtime::plugins::wamn_credentials::{self, WAMN_CREDENTIALS_ID, WamnCredentials};
+use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres};
 
@@ -113,7 +110,6 @@ impl TrustedExecutionRuntimeRevision {
 pub struct ExecutionCapabilities {
     mode: CapabilityMode,
     egress_policy: Arc<RunnerEgressPolicy>,
-    node_placements: NodePlacementMap,
 }
 
 impl std::fmt::Debug for ExecutionCapabilities {
@@ -126,14 +122,6 @@ impl std::fmt::Debug for ExecutionCapabilities {
             .debug_struct("ExecutionCapabilities")
             .field("mode", &mode)
             .finish()
-    }
-}
-
-impl ExecutionCapabilities {
-    /// Supply the environment-owned component-digest to node-host placement map.
-    pub fn with_node_placements(mut self, node_placements: NodePlacementMap) -> Self {
-        self.node_placements = node_placements;
-        self
     }
 }
 
@@ -156,7 +144,6 @@ pub fn production_capabilities(
     ExecutionCapabilities {
         mode: CapabilityMode::Production { allowed_hosts },
         egress_policy,
-        node_placements: NodePlacementMap::default(),
     }
 }
 
@@ -179,7 +166,6 @@ pub fn injected_capabilities(
             allowed_hosts,
         },
         egress_policy,
-        node_placements: NodePlacementMap::default(),
     }
 }
 
@@ -447,9 +433,6 @@ impl ExecutionHost {
             plugin.set_schema(owner, s)?;
         }
         plugin.set_runner(owner, owner)?;
-        // 5.9: the vault resolves per (project, name); the project is a
-        // host-injected claim like the tenant/schema/runner above.
-        vault.set_project(owner, project)?;
         // wamn-yf3: the wasi:logging tenant/project claim is host-injected too —
         // the guest's run-path log records enrich with THIS replica's identity,
         // never a guest-chosen one (the same trust boundary as the tenant above).
@@ -462,14 +445,6 @@ impl ExecutionHost {
         wasmtime_wasi::p2::add_to_linker_async(&mut linker)?;
         wasmtime_wasi_http::p2::add_only_http_to_linker_async(&mut linker)?;
         wamn_postgres::add_to_linker(&mut linker)?;
-        // The flowrunner imports wamn:node/credentials unconditionally; the
-        // linker must satisfy it even when the vault is empty.
-        wamn_credentials::add_to_linker(&mut linker)?;
-        // cjv.3: the TRUSTED per-run grant channel — the compiled-in flowrunner
-        // declares each run's grant (the flow's declared credentials) so the
-        // host can enforce the frozen `not-granted` grant. A custom node
-        // (wamn-bd5) is NOT instantiated here and never gets this channel.
-        wamn_credentials::add_runner_to_linker(&mut linker)?;
         // fqg.11: the TRUSTED per-run egress channel — same trust argument.
         runner_egress::add_runner_to_linker(&mut linker)?;
         // l5i9.12.2: the TRUSTED per-run causation channel — same trust
@@ -478,19 +453,17 @@ impl ExecutionHost {
         // run-owned txn (the CDC reader stitches it).
         wamn_postgres::add_runner_causation_to_linker(&mut linker)?;
         connection_http::add_to_linker(&mut linker)?;
-        node_invocation::add_to_linker(&mut linker)?;
         // wamn-yf3: wasi:logging — the flowrunner emits a few structured records
         // per run (node/run lifecycle) that the wamn:logging plugin enriches +
         // ships. The guest imports it unconditionally, so the linker must satisfy
-        // it (as with credentials); with OTEL unset the plugin's provider is a
-        // no-op, so this links safely with no collector.
+        // it; with OTEL unset the plugin's provider is a no-op, so this links
+        // safely with no collector.
         wamn_logging::add_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
 
         let ExecutionCapabilities {
             mode,
             egress_policy,
-            node_placements,
         } = capabilities;
         let connection_allowed_hosts = match &mode {
             CapabilityMode::Production { allowed_hosts }
@@ -504,21 +477,10 @@ impl ExecutionHost {
             project,
             connection_allowed_hosts,
         ));
-        let node_invocation = Arc::new(NodeInvocation::new(
-            plugin.clone(),
-            vault.clone(),
-            tenant,
-            project,
-            node_placements,
-        ));
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
             plugin as Arc<dyn HostPlugin + Send + Sync>,
-        );
-        plugins.insert(
-            WAMN_CREDENTIALS_ID,
-            vault as Arc<dyn HostPlugin + Send + Sync>,
         );
         plugins.insert(
             RUNNER_EGRESS_ID,
@@ -531,10 +493,6 @@ impl ExecutionHost {
         plugins.insert(
             CONNECTION_HTTP_ID,
             connection_http as Arc<dyn HostPlugin + Send + Sync>,
-        );
-        plugins.insert(
-            NODE_INVOCATION_ID,
-            node_invocation as Arc<dyn HostPlugin + Send + Sync>,
         );
         let builder = Ctx::builder(owner.to_string(), owner.to_string()).with_plugins(plugins);
         let ctx = match mode {

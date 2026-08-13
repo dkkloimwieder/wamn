@@ -57,10 +57,3 @@ spec:
               app: otel-collector
       ports:
         - { protocol: TCP, port: 4317 }
-    # Environment-owned, digest-pinned signed custom-node placements.
-    - to:
-        - podSelector:
-            matchLabels:
-              wamn.io/egress-role: signed-node
-      ports:
-        - { protocol: TCP, port: 8080 }

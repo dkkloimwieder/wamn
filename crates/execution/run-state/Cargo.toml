@@ -43,5 +43,4 @@ deadpool-postgres = { version = "0.14", optional = true }
 tokio-postgres = { workspace = true, optional = true }
 
 [dev-dependencies]
-wamn-node-manifest = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

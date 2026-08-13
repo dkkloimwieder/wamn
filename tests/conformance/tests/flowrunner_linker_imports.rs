@@ -3,9 +3,8 @@
 //! `instantiate_pre` fails outright when a world import is unlinked, so every
 //! addition to `components/execution/flowrunner/wit/world.wit` must reach
 //! `tests/integration/src/flowrunner_linker.rs`. Twice it did not: the
-//! `wamn:runner/http-effect` (9721d42) and `wamn:runner/node-invocation`
-//! (914f661) additions each broke three harnesses for 17 days because nothing
-//! asserted registration completeness. This diffs the two files.
+//! `wamn:runner/http-effect` addition broke three harnesses for 17 days because
+//! nothing asserted registration completeness. This diffs the two files.
 
 /// The `flowrunner` world's import set, source of truth.
 const WORLD_WIT: &str = include_str!("../../../components/execution/flowrunner/wit/world.wit");
@@ -35,14 +34,6 @@ const REGISTRATIONS: &[(&str, &str)] = &[
         "wasmtime_wasi_http::p2::add_only_http_to_linker_async",
     ),
     (
-        "wamn:node/credentials@0.1.0",
-        "wamn_credentials::add_to_linker",
-    ),
-    (
-        "wamn:runner/credentials@0.1.0",
-        "wamn_credentials::add_runner_to_linker",
-    ),
-    (
         "wamn:runner/egress@0.1.0",
         "runner_egress::add_runner_to_linker",
     ),
@@ -53,10 +44,6 @@ const REGISTRATIONS: &[(&str, &str)] = &[
     (
         "wamn:runner/http-effect@0.1.0",
         "connection_http::add_to_linker",
-    ),
-    (
-        "wamn:runner/node-invocation@0.1.0",
-        "node_invocation::add_to_linker",
     ),
     (
         "wasi:logging/logging@0.1.0-draft",
@@ -158,11 +145,11 @@ fn complaints(wit: &str, linker: &str) -> Vec<String> {
 fn flowrunner_world_imports_match_the_shared_linker_registrations() {
     let imports = declared_imports(WORLD_WIT);
     assert!(
-        imports.len() >= 10 && imports.iter().all(|import| import.contains(':')),
+        imports.len() >= 9 && imports.iter().all(|import| import.contains(':')),
         "world.wit import parse returned {imports:?} — the WIT layout changed under the guard"
     );
     assert!(
-        registration_calls(LINKER_SOURCE).len() >= 8,
+        registration_calls(LINKER_SOURCE).len() >= 7,
         "flowrunner_linker.rs registration parse found too few calls — the helper layout \
          changed under the guard"
     );

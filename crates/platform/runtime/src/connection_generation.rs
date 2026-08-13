@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 use sha2::{Digest as _, Sha256};
-use wamn_node_manifest::normalize_portable_http_target;
+use wamn_flow::node_contract::normalize_portable_http_target;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 use crate::connection_authority::{

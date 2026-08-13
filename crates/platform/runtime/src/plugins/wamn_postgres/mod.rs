@@ -48,9 +48,7 @@ mod pool;
 mod resources;
 mod types;
 
-pub use claims::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, NODE_INVOCATION_SNAPSHOT_SQL, WamnPostgres,
-};
+pub use claims::{ConnectionEffectLookup, ConnectionEffectSnapshot, WamnPostgres};
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
     WamnPostgresConfig,
@@ -93,7 +91,7 @@ use causation_bindings::wamn::runner::causation;
 
 /// Wire the TRUSTED `wamn:runner/causation` `set-run-context` channel into a
 /// linker (l5i9.12.2). Call this ONLY for the trusted, compiled-in flow-runner
-/// — the sole component allowed to declare the run it is driving. A custom node
+/// — the sole component allowed to declare the run it is driving. Other components
 /// must NOT get this: it never imports `wamn:runner`, and the frozen
 /// `wamn:postgres` surface rejects a raw-SQL `wamn.*` emit, so guest causation
 /// is unforgeable. The handler feeds the [`WamnPostgres`] plugin resolved from

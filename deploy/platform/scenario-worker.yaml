@@ -27,7 +27,7 @@
 #                        a mis-scoped Secret crash-loops instead of serving.
 #
 # NETWORK POSTURE: wamn-system ships egress policies only (runner-netpol.yaml,
-# builder-netpol.yaml); there is no ingress policy, so this listener adds no
+# there is no ingress policy, so this listener adds no
 # ingress exception and widens nothing. It is deliberately NOT labelled
 # `wamn.io/egress-profile: runner` — adopting the runner's egress ceiling for a
 # management workload is an owner posture decision, not this bead's.

@@ -30,7 +30,6 @@ wamn-flow = { workspace = true }
 # CF-DEF-ID: immutable flow registration uses the canonical artifact identity
 # implemented by the catalog model; the writer never re-derives that hash.
 wamn-catalog = { workspace = true }
-wamn-node-manifest = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 # 2.5 migrate-catalog: the pure migration engine — reads the current applied
 # catalog, plans the one-transaction apply (DDL + lifecycle + history).

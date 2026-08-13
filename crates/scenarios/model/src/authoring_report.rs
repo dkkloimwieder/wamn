@@ -318,7 +318,7 @@ mod tests {
             lineage(),
             None,
             Some(ScenarioRefusal::UndrivableNodes {
-                node_types: vec!["custom-node".into()],
+                node_types: vec!["custom-step".into()],
             }),
             Vec::new(),
         );

@@ -1,6 +1,6 @@
 //! Integration and measurement proofs that compose real repository adapters.
 
-pub use wamn_test_infrastructure::{ctl_process, node_host_support};
+pub use wamn_test_infrastructure::ctl_process;
 
 #[cfg(test)]
 use wamn_run_state::schema_drift;
@@ -24,14 +24,11 @@ pub mod invocationproof;
 pub mod matbench;
 pub mod materializer;
 pub mod metricbench;
-pub mod nodebench;
-pub mod nodeinvoke;
 pub mod provisionbench;
 pub mod queuebench;
 pub mod readerbench;
 pub mod rie2ebench;
 pub mod runnerbench;
-pub mod samplebench;
 pub mod streambench;
 pub mod suiteproof;
 pub mod testkitbench;

@@ -7,10 +7,10 @@
 
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
-use wamn_proof_conformance::{credprobe, socketguard};
+use wamn_proof_conformance::socketguard;
 use wamn_proof_integration::{
-    capturebench, causation_e2e, credproof, impactproof, invocationproof, nodebench, nodeinvoke,
-    readerbench, runnerbench, suiteproof, testkitbench, wakeproof,
+    capturebench, causation_e2e, credproof, impactproof, invocationproof, readerbench, runnerbench,
+    suiteproof, testkitbench, wakeproof,
 };
 use wamn_proof_system::traceproof;
 
@@ -39,13 +39,7 @@ enum Command {
     Readerbench(readerbench::ReaderBenchArgs),
     /// Prove one admitted invocation through the deployed runner, WAL reader, and R3 stream.
     CausationE2e(causation_e2e::CausationE2eArgs),
-    /// Run the 5.9 credential-vault proof (delivery to serve-echo + no-leak containment)
-    Credprobe(credprobe::CredProbeArgs),
     Credproof(credproof::CredProofArgs),
-    /// Serve a wamn:node component over HTTP (S4 hop node host)
-    ServeNode(nodebench::ServeNodeArgs),
-    /// Run the 5.6/wamn-bd5 production custom-node invocation gate (real runner -> HTTP hop -> serve-node; grant + not-granted + config memoization)
-    Nodeinvoke(nodeinvoke::NodeInvokeArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
     /// Route the temporarily retained persisted selector protocol to the product stored-test worker.
@@ -83,10 +77,7 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::CausationE2e(args) => causation_e2e::run(args).await,
-        Command::Credprobe(args) => credprobe::run(args).await,
         Command::Credproof(args) => credproof::run(args).await,
-        Command::ServeNode(args) => nodebench::serve(args).await,
-        Command::Nodeinvoke(args) => nodeinvoke::run(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Testkitbench(args) => testkitbench::run(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,

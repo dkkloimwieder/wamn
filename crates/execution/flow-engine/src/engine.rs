@@ -311,8 +311,7 @@ impl std::fmt::Display for ApplyError {
 
 impl std::error::Error for ApplyError {}
 
-/// A single node execution the driver must perform. Mirrors the runner-owned
-/// fields of `wamn:node`'s `run-context`.
+/// A single node execution the driver must perform.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dispatch {
     pub node: String,

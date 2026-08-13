@@ -1,5 +1,5 @@
 //! Executable prototype for moving the remaining reserved primitives through
-//! `wamn:node` without giving nodes authority over engine lifecycle state.
+//! node execution without giving nodes authority over engine lifecycle state.
 
 use std::collections::BTreeMap;
 

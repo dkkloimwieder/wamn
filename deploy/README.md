@@ -12,8 +12,8 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
   postgres fixture, runner NetworkPolicy + environment connection-policy example,
   `event-reader.example.yaml`.
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
-  Deployments (`serve-echo`, `egress-escape`, `serve-node-gate`). Applied per
-  gate run, deleted after.
+  Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
+  after.
 - **`sql/`** — the standalone SQL schemas (`postgres-init`, `app-schema`,
   `catalog-schema`, `system-schema`, `run-queue`, `run-state`, `flows`).
   Several are `include_str!`'d or read by tests — paths are load-bearing
@@ -22,5 +22,5 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
 
 Placement judgment calls, recorded: `postgres.yaml` is platform (the shared
 long-lived fixture ~8 gates and the dispatcher point at, despite its bench
-header); `serve-echo`/`serve-node-gate` are gates (gate support, not products);
+header); `serve-echo` is gates (gate support, not product);
 `publish-catalog-job.yaml` is gates (driven through production `wamn-ctl`).

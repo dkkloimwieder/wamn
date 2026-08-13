@@ -11,10 +11,8 @@ mod host_bindings {
     });
 }
 
-const EXPECTED_COPIES: [&str; 4] = [
-    "components/fixtures/connection-http-custom/wit/deps/wamn-connection/package.wit",
+const EXPECTED_COPIES: [&str; 2] = [
     "components/fixtures/connection-http-standard/wit/deps/wamn-connection/package.wit",
-    "crates/node/guest/wit-caps/deps/wamn-connection/package.wit",
     "crates/platform/runtime/wit/deps/wamn-connection/package.wit",
 ];
 
@@ -77,8 +75,9 @@ fn every_vendored_http_connection_contract_is_registered_and_byte_identical() {
 
 #[test]
 fn frozen_http_surface_is_relative_typed_and_extension_free() {
-    let authority = fs::read_to_string(repo_root().join("docs/archive/contracts/wamn-connection.wit"))
-        .expect("authoritative connection WIT reads");
+    let authority =
+        fs::read_to_string(repo_root().join("docs/archive/contracts/wamn-connection.wit"))
+            .expect("authoritative connection WIT reads");
     for required in [
         "package wamn:connection@0.1.0;",
         "requirement: string,",
@@ -117,13 +116,9 @@ fn host_adapter_and_trusted_runner_worlds_pin_the_authority_split() {
     let root = repo_root();
     let host = fs::read_to_string(root.join("crates/platform/runtime/wit/world.wit"))
         .expect("host world reads");
-    let custom = fs::read_to_string(root.join("crates/node/guest/wit-caps/world.wit"))
-        .expect("custom-node binding world reads");
     let portable_import = "import wamn:connection/http@0.1.0;";
     let trusted_import = "import wamn:runner/http-effect@0.1.0;";
 
     assert_eq!(host.matches(portable_import).count(), 1);
-    assert_eq!(custom.matches(portable_import).count(), 0);
     assert_eq!(host.matches(trusted_import).count(), 1);
-    assert_eq!(custom.matches(trusted_import).count(), 1);
 }

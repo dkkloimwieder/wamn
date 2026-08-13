@@ -3,7 +3,7 @@
 //!
 //! The run-worker drives a SINGLE long-lived flowrunner component; the host
 //! never sees a per-run boundary, so it cannot resolve "the current flow's
-//! allowed hosts" itself. Exactly the cjv.3 grant shape: the trusted,
+//! allowed hosts" itself. The trusted,
 //! compiled-in flow-runner declares each run's `allowed-hosts` (from the flow
 //! definition) through a channel linked ONLY into its world, and the host
 //! enforces it on the outgoing-`wasi:http` path (`RunnerEgress` in
@@ -12,8 +12,7 @@
 //! Host-enforced invariants:
 //!
 //! - **Deny-all default:** a component with NO declaration — or a declared
-//!   EMPTY list — gets no egress. Egress is opt-in by declaration, exactly
-//!   like credentials.
+//!   EMPTY list — gets no egress. Egress is opt-in by declaration.
 //! - **Intersection:** a request must pass BOTH the runner's host-level
 //!   allowlist and the declared per-flow set. Declaring a host the host-level
 //!   list refuses grants nothing.
@@ -45,8 +44,8 @@ pub const RUNNER_EGRESS_ID: &str = "wamn-runner-egress";
 
 /// Wire the TRUSTED `wamn:runner/egress` `set-allowed-hosts` channel into a
 /// linker. Call this ONLY for the trusted, compiled-in flow-runner — the sole
-/// component allowed to declare its own per-run egress (the cjv.3 trust
-/// argument; a custom node must never get this).
+/// component allowed to declare its own per-run egress; ordinary components
+/// must never get this.
 pub fn add_runner_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     egress::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }

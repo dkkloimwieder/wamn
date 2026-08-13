@@ -1,8 +1,6 @@
 //! Contract proofs for component policy, WIT behavior, schemas, and artifacts.
 
-pub mod buildproof;
 pub mod catalog;
-pub mod credprobe;
 pub mod egressbench;
 pub mod flow;
 pub mod invocation;

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["services/host", "services/node-host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/builder", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/flow-engine", "crates/execution/host", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/platform/node-runtime", "crates/scenarios/model", "crates/scenarios/catalog", "crates/scenarios/runtime", "crates/node/sdk", "crates/execution/standard-nodes", "crates/node/guest", "crates/node/manifest", "crates/node/invoke", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/flow-engine", "crates/execution/host", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/scenarios/catalog", "crates/scenarios/runtime", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
 # Guest components are built separately for wasm32-wasip2 (see components/*).
 exclude = ["components"]
 
@@ -62,7 +62,6 @@ wasm-encoder = "0.251"
 
 # Every project crate has one canonical path + version identity (M-CRATES-IN-WORKSPACE).
 wamn-authoring-model = { path = "crates/authoring/model", version = "0.1.0" }
-wamn-builder = { path = "services/builder", version = "0.1.0" }
 wamn-catalog = { path = "crates/catalog/model", version = "0.1.0" }
 wamn-cdc-reader = { path = "services/cdc-reader", version = "0.1.0" }
 wamn-component-policy = { path = "crates/platform/component-policy", version = "0.1.0" }
@@ -81,12 +80,6 @@ wamn-gate-harness = { path = "test-support/harness", version = "0.1.0" }
 wamn-gates = { path = "tests/orchestrator", version = "0.1.0" }
 wamn-host = { path = "services/host", version = "0.1.0" }
 wamn-materializer = { path = "crates/events/materializer", version = "0.1.0" }
-wamn-node-guest = { path = "crates/node/guest", version = "0.1.0" }
-wamn-node-host = { path = "services/node-host", version = "0.1.0" }
-wamn-node-invoke = { path = "crates/node/invoke", version = "0.1.0" }
-wamn-node-manifest = { path = "crates/node/manifest", version = "0.1.0" }
-wamn-node-runtime = { path = "crates/platform/node-runtime", version = "0.1.0" }
-wamn-node-sdk = { path = "crates/node/sdk", version = "0.1.0" }
 wamn-pg-core = { path = "crates/platform/pg-core", version = "0.1.0" }
 wamn-platform-identity = { path = "crates/identity/platform", version = "0.1.0" }
 wamn-project-state = { path = "crates/identity/project-state", version = "0.1.0" }

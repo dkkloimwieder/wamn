@@ -4,36 +4,12 @@ const DOCKERFILE: &str = include_str!("../../../Dockerfile");
 const DOCKERIGNORE: &str = include_str!("../../../.dockerignore");
 
 #[test]
-fn node_ts_builder_disables_unused_jco_interfaces() {
-    let dockerfile = DOCKERFILE.replace("\\\n", " ");
-    let command = dockerfile
-        .split("&&")
-        .map(str::trim)
-        .find(|segment| segment.starts_with("jco componentize samples/node-ts/node.js"))
-        .expect("Dockerfile must componentize the node-ts fixture");
-
-    assert!(command.contains("--wit samples/node-ts/wit"));
-    assert!(command.contains("--world-name node-bench"));
-    assert!(command.contains("--disable http"));
-    assert!(command.contains("--disable fetch-event"));
-    assert!(command.contains("-o /component-output/node-ts.wasm"));
-}
-
-#[test]
 fn every_embedded_component_comes_from_the_locked_builder() {
     let expected = [
-        (
-            "/component-output/api_gateway.wasm",
-            "/bench/api-gateway.wasm",
-        ),
         ("/component-output/busyloop.wasm", "/bench/busyloop.wasm"),
         (
-            "/component-output/disposition_node.wasm",
-            "/bench/disposition-node.wasm",
-        ),
-        (
-            "/component-output/flow_composed.wasm",
-            "/bench/flow-composed.wasm",
+            "/component-output/connection_http_standard.wasm",
+            "/bench/connection-http-standard.wasm",
         ),
         ("/component-output/flow_http.wasm", "/bench/flow-http.wasm"),
         (
@@ -52,16 +28,9 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/component-output/flowrunner.wasm",
             "/components/flowrunner.wasm",
         ),
-        ("/component-output/js-sample.wasm", "/bench/js-sample.wasm"),
         (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",
-        ),
-        ("/component-output/node-ts.wasm", "/bench/node-ts.wasm"),
-        ("/component-output/node_rs.wasm", "/bench/node-rs.wasm"),
-        (
-            "/component-output/sample_node.wasm",
-            "/bench/sample-node.wasm",
         ),
         ("/component-output/sockprobe.wasm", "/bench/sockprobe.wasm"),
     ];
@@ -92,20 +61,11 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     assert!(DOCKERFILE.contains("FROM component-cook AS component-builder"));
     assert!(DOCKERFILE.contains("COPY components /build/components"));
     assert!(DOCKERFILE.contains("rustup target add --toolchain 1.97.0 wasm32-wasip2"));
-    assert!(DOCKERFILE.contains("cargo +1.97.0 install wac-cli --version 0.10.1 --locked"));
     assert!(DOCKERFILE.contains("cargo +1.97.0 build --locked --release --target wasm32-wasip2"));
-    assert!(DOCKERFILE.contains("@bytecodealliance/jco@1.25.2"));
-    assert!(DOCKERFILE.contains("@bytecodealliance/componentize-js@0.21.0"));
-    assert!(DOCKERFILE.contains("@napi-rs/lzma-linux-x64-gnu@1.5.1"));
     assert!(
         DOCKERIGNORE
             .lines()
             .any(|line| line == "/components/target")
-    );
-    assert!(
-        DOCKERIGNORE
-            .lines()
-            .any(|line| line == "/components/samples/node-ts/node-ts.wasm")
     );
 }
 

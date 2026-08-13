@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use wamn_node_manifest::normalize_portable_http_target;
+use wamn_flow::node_contract::normalize_portable_http_target;
 use wamn_run_state::invocation_context::HttpEffectPrincipal;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::host::allowed_hosts::AllowedHost;

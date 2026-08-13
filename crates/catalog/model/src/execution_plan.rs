@@ -6,7 +6,7 @@ use boon::{Compiler, Draft, Schemas};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
-use wamn_node_manifest::ConnectionTypeDescriptor;
+use wamn_flow::node_contract::ConnectionTypeDescriptor;
 
 use crate::{CatalogIdentityError, ExecutionNodeId, digest, validate_digest};
 

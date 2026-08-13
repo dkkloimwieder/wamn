@@ -88,7 +88,6 @@ pub mod tests {
         assert!(child_path.contains("ChildInvocation::Released(child_outcome(outcome))"));
         assert!(!child_path.contains("dispatch_node("));
         assert!(!child_path.contains("http_get("));
-        assert!(!child_path.contains("custom_node_dispatch("));
 
         // .4.3 retains the child transition without activating execution: all
         // production entry points still refuse before they can reach it.

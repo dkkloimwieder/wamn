@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use boon::{Compiler, Draft, Schemas};
 use serde::Deserialize;
 use serde_json::Value;
-use wamn_node_manifest::{ConnectionTypeDescriptor, normalize_portable_http_target};
 
+use crate::node_contract::{ConnectionTypeDescriptor, normalize_portable_http_target};
 use crate::types::{
     CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node,
     Ordering, RequestConfig, RespondConfig, SCHEMA_VERSION,
@@ -1089,7 +1089,7 @@ mod tests {
 
     use serde_json::json;
 
-    use wamn_node_manifest::ConnectionTypeDescriptor;
+    use crate::node_contract::ConnectionTypeDescriptor;
 
     use crate::types::{Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy};
 

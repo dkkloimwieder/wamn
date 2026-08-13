@@ -1,6 +1,5 @@
 /target
 /components/target
-/components/samples/node-ts/node-ts.wasm
 .git
 .dolt
 .beads

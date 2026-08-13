@@ -14,7 +14,6 @@ wamn-materializer = { workspace = true }
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
-wamn-node-manifest = { workspace = true }
 # The write-ahead + evt-enqueue SQL builders. `default-features = false` keeps
 # Guest-safe durable enqueue and ordering SQL; schedule evaluation is separate.
 wamn-run-state = { workspace = true }

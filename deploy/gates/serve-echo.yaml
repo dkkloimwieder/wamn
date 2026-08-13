@@ -4,7 +4,7 @@
 # traceproof gate invokes each public host surface, captures only the header
 # that surface emits, and uses it for a raw call here. serve-echo reflects
 # exactly what it received so the gate can assert the host-injected trace
-# threaded the pod boundary. Runs the wamn-gates image (SR1), like serve-node.
+# threaded the pod boundary. Runs the wamn-gates image (SR1).
 #
 #   kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
 #   kubectl -n wamn-system rollout status deploy/serve-echo --timeout=120s

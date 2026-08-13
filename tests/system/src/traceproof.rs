@@ -56,7 +56,7 @@ pub struct ServeEchoArgs {
     pub port: u16,
 }
 
-/// A tiny HTTP/1.1 server (the `serve-node` hand-rolled pattern) that answers
+/// A tiny HTTP/1.1 server that answers
 /// every request 200 with `{"traceparent": <received|null>, "tracestate":
 /// <received|null>, "authorization-fnv1a": <hex-digest|null>}`. It reflects
 /// exactly the trace headers it was sent — so traceproof can read what each

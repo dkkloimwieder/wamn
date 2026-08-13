@@ -8,7 +8,7 @@ mod tests {
         CatalogHead, Release, ReleaseId, Source, SourceId, SourceKind,
     };
     use wamn_flow::Flow;
-    use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
+    use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
 
     fn flow() -> Flow {
         Flow::from_json(
@@ -18,7 +18,7 @@ mod tests {
               "version":1,
               "nodes":[
                 {"id":"request","type":"request","config":{"input-schema":true}},
-                {"id":"custom","type":"custom-node"},
+                {"id":"custom","type":"custom-step"},
                 {"id":"response","type":"respond","config":{"status":200}}
               ],
               "edges":[
@@ -31,32 +31,32 @@ mod tests {
     }
 
     fn artifact() -> Artifact {
-        let interface = ResolvedNodeInterface::new(
-            "custom-node",
-            "wamn:node/node@0.1.0",
-            vec!["main".to_string()],
-            vec![CapabilityClass::Http],
-            Vec::new(),
-        );
+        let interface = NodeInterface {
+            node_type: "custom-step".to_string(),
+            output_ports: vec!["main".to_string()],
+            capabilities: vec![Capability::HttpEgress],
+            connection_requirements: Vec::new(),
+            effect_policy: EffectPolicy::Effectful,
+        };
         Artifact::new(
             "tenant-a",
             &flow(),
             vec![
                 interface,
-                ResolvedNodeInterface::new(
-                    "request",
-                    "wamn:node/node@0.1.0",
-                    vec!["main".to_string()],
-                    vec![CapabilityClass::Pure],
-                    Vec::new(),
-                ),
-                ResolvedNodeInterface::new(
-                    "respond",
-                    "wamn:node/node@0.1.0",
-                    vec!["main".to_string()],
-                    vec![CapabilityClass::Pure],
-                    Vec::new(),
-                ),
+                NodeInterface {
+                    node_type: "request".to_string(),
+                    output_ports: vec!["main".to_string()],
+                    capabilities: Vec::new(),
+                    connection_requirements: Vec::new(),
+                    effect_policy: EffectPolicy::Pure,
+                },
+                NodeInterface {
+                    node_type: "respond".to_string(),
+                    output_ports: vec!["main".to_string()],
+                    capabilities: Vec::new(),
+                    connection_requirements: Vec::new(),
+                    effect_policy: EffectPolicy::Pure,
+                },
             ],
         )
         .expect("artifact is canonical")

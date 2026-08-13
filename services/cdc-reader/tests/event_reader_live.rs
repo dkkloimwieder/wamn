@@ -782,7 +782,6 @@ async fn reader_streams_one_project_env_to_the_evt_stream() {
         runstate: false,
         seed_dataset: None,
         flow: vec![],
-        custom_node: vec![],
         exposure: None,
         skip_reconcile_replica_identity: true,
     })

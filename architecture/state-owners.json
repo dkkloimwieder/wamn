@@ -122,10 +122,6 @@
     "materializer": {
       "path": "components/execution/materializer",
       "role": "effect"
-    },
-    "node-guest": {
-      "path": "crates/node/guest",
-      "role": "reader"
     }
   },
   "canonical_sources": [
@@ -228,11 +224,6 @@
         "kind": "path-prefix",
         "value": "components/fixtures",
         "source_class": "gate-fixture"
-      },
-      {
-        "kind": "path-prefix",
-        "value": "components/samples",
-        "source_class": "sample"
       },
       {
         "kind": "exact-file",
@@ -1644,7 +1635,6 @@
         "ctl-publish"
       ],
       "readers": [
-        "node-guest",
         "flowrunner"
       ],
       "compatibility_horizon": "one-published-catalog-generation-and-single-version-development-release",

@@ -3,10 +3,8 @@
 //! The error taxonomy ([`NodeError`] / [`ErrorDetail`] / [`RateLimitDetail`])
 //! is defined in `wamn_flow::node_contract` and consumed directly here, so the
 //! engine, the drivers, and every node crate share one definition while nodes
-//! stay authorable without the runner (the 5.13 purity rule). It retains the
-//! standard-node routing cases from the legacy `wamn:node` `node-error` WIT but
-//! omits its custom-node-only cancellation case; the owning driver translates
-//! that compatibility value once. The engine decides retry-vs-error-vs-fail
+//! stay authorable without the runner (the 5.13 purity rule). The engine decides
+//! retry-vs-error-vs-fail
 //! **mechanically from the retained variant** — never by string-matching a
 //! message (`docs/archive/execution/wamn-node-design-notes.md` §6).
 

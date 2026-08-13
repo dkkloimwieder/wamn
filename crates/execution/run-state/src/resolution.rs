@@ -296,7 +296,7 @@ mod tests {
         HOST_EFFECT_CONTRACT_VERSION, RootTerminalBehavior, entry_input_schema_hash,
         execution_bundle_hash,
     };
-    use wamn_node_manifest::ConnectionTypeDescriptor;
+    use wamn_flow::node_contract::ConnectionTypeDescriptor;
 
     use super::*;
 

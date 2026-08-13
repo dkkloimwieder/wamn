@@ -42,7 +42,6 @@ pub mod respond;
 pub use conditional::{FALSE_PORT, TRUE_PORT};
 pub use http::prepare_http_request;
 pub use policy::{GRANTS_DEFAULT, GRANTS_WITH_RAW_SQL, granted_for};
-use std::fmt;
 use std::sync::LazyLock;
 
 use serde_json::Value;
@@ -51,18 +50,6 @@ use wamn_flow::node_contract::{
     Capability, ConnectionRequirement, EffectPolicy, Emission, ErrorDetail, Node, NodeCtx,
     NodeError, NodeInterface, RunContext,
 };
-use wamn_node_manifest::{
-    CapabilityClass, ConnectionRequirement as LegacyConnectionRequirement, ExecutableIdentity,
-    NODE_WORLD_INTERFACE, ResolvedNodeContract, ResolvedNodeInterface,
-};
-
-/// Temporary shape version for the E3-owned legacy standard-node descriptor.
-pub const STANDARD_NODE_DESCRIPTOR_VERSION: &str = "1";
-
-/// Temporary executable revision used by the E3-owned legacy descriptor.
-pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";
-
-const STANDARD_NODE_INTERFACE: &str = NODE_WORLD_INTERFACE;
 
 /// Every node type this library implements (drift-guarded by docs + tests).
 pub const NODE_TYPES: [&str; 9] = [
@@ -95,7 +82,7 @@ static RESPOND: respond::Respond = respond::Respond;
 /// `node(t).run(unnarrowed_ctx, ..)` and reach a capability the node never
 /// declared. So the ONLY way out of this crate to *run* a standard node is
 /// [`dispatch`]; callers that merely need to know a type exists or what it may
-/// use take the descriptor surface ([`describe`] / [`is_standard`] /
+/// use take the interface surface ([`describe_interface`] / [`is_standard`] /
 /// [`required_capabilities`]), which cannot run anything.
 pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
     match node_type {
@@ -110,124 +97,6 @@ pub(crate) fn node(node_type: &str) -> Option<&'static dyn Node> {
         "respond" => Some(&RESPOND),
         _ => None,
     }
-}
-
-/// E3-owned compatibility descriptor for the custom publication plane.
-///
-/// Retained execution and publication code must use [`describe_interface`].
-/// This type and [`resolve_descriptor`] remain unchanged until E3 deletes
-/// their remaining consumers with the custom-node plane.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NodeDescriptor {
-    pub descriptor_version: String,
-    pub node_type: String,
-    pub interface_contract: String,
-    pub output_ports: Vec<String>,
-    pub capability_classes: Vec<CapabilityClass>,
-    pub connection_requirements: Vec<LegacyConnectionRequirement>,
-    pub platform_revision: String,
-    pub effect_policy: EffectPolicy,
-    pub dispatch_capabilities: &'static [Capability],
-}
-
-/// A legacy standard descriptor could not be converted without fallback.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DescriptorError {
-    message: String,
-}
-
-impl fmt::Display for DescriptorError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for DescriptorError {}
-
-static DESCRIPTORS: LazyLock<[NodeDescriptor; 9]> =
-    LazyLock::new(|| std::array::from_fn(|index| legacy_descriptor(&INTERFACES[index])));
-
-fn legacy_descriptor(interface: &'static NodeInterface) -> NodeDescriptor {
-    let capability_classes = match interface.effect_policy {
-        EffectPolicy::Pure => vec![CapabilityClass::Pure],
-        EffectPolicy::Effectful => capability_classes(&interface.capabilities),
-    };
-    let connection_requirements = interface
-        .connection_requirements
-        .iter()
-        .map(|requirement| LegacyConnectionRequirement {
-            requirement_type: requirement.requirement_type.clone(),
-            contract: requirement.contract.clone(),
-        })
-        .collect();
-    NodeDescriptor {
-        descriptor_version: STANDARD_NODE_DESCRIPTOR_VERSION.to_string(),
-        node_type: interface.node_type.clone(),
-        interface_contract: STANDARD_NODE_INTERFACE.to_string(),
-        output_ports: interface.output_ports.clone(),
-        capability_classes,
-        connection_requirements,
-        platform_revision: STANDARD_NODE_PLATFORM_REVISION.to_string(),
-        effect_policy: interface.effect_policy,
-        dispatch_capabilities: interface.capabilities.as_slice(),
-    }
-}
-
-fn capability_classes(capabilities: &[Capability]) -> Vec<CapabilityClass> {
-    let mut classes = capabilities
-        .iter()
-        .map(|capability| match capability {
-            Capability::HttpEgress => CapabilityClass::Http,
-            Capability::Postgres | Capability::RawSql => CapabilityClass::Postgres,
-        })
-        .collect::<Vec<_>>();
-    classes.sort();
-    classes.dedup();
-    classes
-}
-
-/// The temporary legacy descriptor for a shipped standard node.
-pub fn describe(node_type: &str) -> Option<&'static NodeDescriptor> {
-    DESCRIPTORS
-        .iter()
-        .find(|descriptor| descriptor.node_type == node_type)
-}
-
-/// Convert a temporary legacy descriptor into the custom publication contract.
-pub fn resolve_descriptor(
-    descriptor: &NodeDescriptor,
-) -> Result<ResolvedNodeContract, DescriptorError> {
-    if descriptor.descriptor_version != STANDARD_NODE_DESCRIPTOR_VERSION {
-        return Err(DescriptorError {
-            message: format!(
-                "unsupported standard-node descriptor version {:?}",
-                descriptor.descriptor_version
-            ),
-        });
-    }
-    let expected_classes = if descriptor.effect_policy == EffectPolicy::Pure {
-        vec![CapabilityClass::Pure]
-    } else {
-        capability_classes(descriptor.dispatch_capabilities)
-    };
-    if descriptor.capability_classes != expected_classes {
-        return Err(DescriptorError {
-            message: "canonical capability classes disagree with the dispatch capability row"
-                .to_string(),
-        });
-    }
-    Ok(ResolvedNodeContract {
-        interface: ResolvedNodeInterface::new(
-            descriptor.node_type.clone(),
-            descriptor.interface_contract.clone(),
-            descriptor.output_ports.clone(),
-            descriptor.capability_classes.clone(),
-            descriptor.connection_requirements.clone(),
-        ),
-        executable: ExecutableIdentity::Platform {
-            revision: descriptor.platform_revision.clone(),
-        },
-    })
 }
 
 static INTERFACES: LazyLock<[NodeInterface; 9]> = LazyLock::new(|| {
@@ -392,28 +261,6 @@ mod interface_tests {
                 interface.capabilities,
                 "interface is the retained public authority for {}",
                 interface.node_type
-            );
-        }
-    }
-
-    #[test]
-    fn temporary_legacy_descriptors_derive_their_structure_from_interfaces() {
-        for interface in INTERFACES.iter() {
-            let descriptor =
-                describe(&interface.node_type).expect("interface has a legacy descriptor");
-            assert_eq!(descriptor.node_type, interface.node_type);
-            assert_eq!(descriptor.output_ports, interface.output_ports);
-            assert_eq!(descriptor.dispatch_capabilities, interface.capabilities);
-            assert_eq!(
-                descriptor.connection_requirements,
-                interface
-                    .connection_requirements
-                    .iter()
-                    .map(|requirement| LegacyConnectionRequirement {
-                        requirement_type: requirement.requirement_type.clone(),
-                        contract: requirement.contract.clone(),
-                    })
-                    .collect::<Vec<_>>()
             );
         }
     }

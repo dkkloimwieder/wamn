@@ -76,7 +76,7 @@ pub mod tests {
     fn invalid_context_is_detected_before_mutating_payload_progress() {
         let plan = plan();
         let mut state = plan.start("run", Value::Null);
-        // Since wamn-ayq7.23 the `cron` entry executes through the node ABI:
+        // Since wamn-ayq7.23 the `cron` entry executes through standard-node dispatch:
         // it dispatches, and may only re-emit its admitted input unchanged.
         let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
             panic!("cron entry must dispatch");

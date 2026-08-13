@@ -100,27 +100,6 @@ name = "busyloop"
 version = "0.1.0"
 
 [[package]]
-name = "capability-class-http"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "capability-class-postgres"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "capability-class-pure"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -134,19 +113,6 @@ checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "num-traits",
  "serde",
-]
-
-[[package]]
-name = "cmov"
-version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
-
-[[package]]
-name = "connection-http-custom"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
 ]
 
 [[package]]
@@ -172,28 +138,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cred-probe"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "crypto-common"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
 dependencies = [
  "hybrid-array",
-]
-
-[[package]]
-name = "ctutils"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
-dependencies = [
- "cmov",
 ]
 
 [[package]]
@@ -211,7 +161,6 @@ dependencies = [
  "block-buffer",
  "const-oid",
  "crypto-common",
- "ctutils",
 ]
 
 [[package]]
@@ -226,15 +175,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "disposition-node"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-node-guest",
- "wamn-node-sdk",
-]
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -245,48 +185,6 @@ name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
-
-[[package]]
-name = "exact-driver-alpha"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "exact-driver-alpha-beta"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "exact-node-alpha"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "exact-node-beta"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "exact-node-unused"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "flow-driver"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
 
 [[package]]
 name = "flow-http"
@@ -308,9 +206,6 @@ dependencies = [
  "serde_json",
  "wamn-catalog",
  "wamn-flow",
- "wamn-node-guest",
- "wamn-node-invoke",
- "wamn-node-manifest",
  "wamn-run-state",
  "wamn-runner",
  "wamn-standard-nodes",
@@ -340,94 +235,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "futures"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a88cf1f829d945f548cf8fec32c61b1f202b6d93b45848602fc02af4b12ad218"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-executor",
- "futures-io",
- "futures-sink",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-channel"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "262590f4fe6afeb0bc83be1daa64e52657fe185690a958af7f3ad0e92085c5ae"
-dependencies = [
- "futures-core",
- "futures-sink",
-]
-
-[[package]]
-name = "futures-core"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cd50c473c80f6d7c3670a752354b8e569b1a7cbfdc0419ec88e5edad85e0dc7"
-
-[[package]]
-name = "futures-executor"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6754879cc9f2c66f88c6e5c35344bb0bdb0708b0352b1201815667c7eabc7458"
-dependencies = [
- "futures-core",
- "futures-task",
- "futures-util",
-]
-
-[[package]]
-name = "futures-io"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4577ecaa3c4f96589d473f679a71b596316f6641bc350038b962a5daf0085d7a"
-
-[[package]]
-name = "futures-macro"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d6d3cde68c518367be28956066ddfef33813991b77a55005a69dae04bf3b10b"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "futures-sink"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e34418ac499d6305c2fb5ad0ed2f6ac998c5f8ca209b4510f7f94242c647e307"
-
-[[package]]
-name = "futures-task"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b231ed28831efb4a61a08580c4bc233ec56bc009f4cd8f52da2c3cb97df0c109"
-
-[[package]]
-name = "futures-util"
-version = "0.3.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a77a90a256fce34da66415271e30f94ee91c57b04b8a2c042d9cf3220179deaa"
-dependencies = [
- "futures-channel",
- "futures-core",
- "futures-io",
- "futures-macro",
- "futures-sink",
- "futures-task",
- "memchr",
- "pin-project-lite",
- "slab",
 ]
 
 [[package]]
@@ -462,21 +269,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "hex"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
-
-[[package]]
-name = "hmac"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
-dependencies = [
- "digest",
-]
 
 [[package]]
 name = "hybrid-array"
@@ -627,13 +419,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "js-sample"
-version = "0.1.0"
-dependencies = [
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -672,7 +457,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-flow",
  "wamn-materializer",
- "wamn-node-manifest",
  "wamn-run-state",
  "wit-bindgen 0.44.0",
 ]
@@ -682,23 +466,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "node-cred"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "node-rs"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "wit-bindgen 0.44.0",
-]
 
 [[package]]
 name = "num-traits"
@@ -720,12 +487,6 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
-
-[[package]]
-name = "pin-project-lite"
-version = "0.2.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "potential_utf"
@@ -832,15 +593,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04d056b875a9d2e6cb9a61d127afee9ac5999b9f87bcb32079d1318e505be714"
 
 [[package]]
-name = "sample-node"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-node-guest",
- "wamn-node-sdk",
-]
-
-[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,12 +686,6 @@ dependencies = [
  "cpufeatures",
  "digest",
 ]
-
-[[package]]
-name = "slab"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slug"
@@ -1064,7 +810,6 @@ dependencies = [
  "sha2",
  "url",
  "wamn-flow",
- "wamn-node-manifest",
 ]
 
 [[package]]
@@ -1105,7 +850,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "wamn-node-manifest",
 ]
 
 [[package]]
@@ -1123,44 +867,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-flow",
  "wamn-run-state",
-]
-
-[[package]]
-name = "wamn-node-guest"
-version = "0.1.0"
-dependencies = [
- "serde_json",
- "wamn-flow",
- "wamn-node-sdk",
- "wit-bindgen 0.44.0",
-]
-
-[[package]]
-name = "wamn-node-invoke"
-version = "0.1.0"
-dependencies = [
- "hex",
- "hmac",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "wamn-node-manifest"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "sha2",
-]
-
-[[package]]
-name = "wamn-node-sdk"
-version = "0.1.0"
-dependencies = [
- "serde_json",
 ]
 
 [[package]]
@@ -1208,7 +914,6 @@ dependencies = [
  "serde_json",
  "wamn-entity-access",
  "wamn-flow",
- "wamn-node-manifest",
  "wamn-pg-core",
  "wamn-schema-model",
 ]
@@ -1335,8 +1040,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "653c85dd7aee6fe6f4bded0d242406deadae9819029ce6f7d258c920c384358a"
 dependencies = [
  "bitflags",
- "futures",
- "once_cell",
 ]
 
 [[package]]

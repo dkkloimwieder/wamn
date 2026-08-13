@@ -4,7 +4,7 @@ package wamn:flow-invocation@0.1.0;
 ///
 /// STATUS: FROZEN 0.1.0 (wamn-5wd1.38). This is the caller-facing flow
 /// invocation protocol from FLOW-SPEC rev18 §8, §§9.1-9.7, and §11. It is
-/// categorically separate from runner-to-custom-node `wamn:node`.
+/// categorically separate from node execution internals.
 interface invocation {
   /// A mapped, validated JSON document encoded as UTF-8 text.
   type json = string;

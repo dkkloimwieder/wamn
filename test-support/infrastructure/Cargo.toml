@@ -20,8 +20,6 @@ tokio = { workspace = true, features = ["io-util", "net", "process", "rt"] }
 tokio-postgres = { workspace = true }
 tracing = { workspace = true }
 wamn-gate-harness = { workspace = true }
-wamn-node-invoke = { workspace = true }
-wamn-node-runtime = { workspace = true }
 wamn-runtime = { workspace = true }
 wamn-scenario-catalog = { workspace = true }
 wamn-scenario-model = { workspace = true }

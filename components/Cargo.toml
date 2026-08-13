@@ -2,7 +2,7 @@
 resolver = "2"
 # Product components are grouped by runtime role. Proof fixtures and reference
 # samples remain visibly outside those product tiers.
-members = ["ingress/flow-http", "execution/flowrunner", "execution/materializer", "fixtures/busyloop", "fixtures/capability-class-http", "fixtures/capability-class-postgres", "fixtures/capability-class-pure", "fixtures/connection-http-custom", "fixtures/connection-http-standard", "fixtures/cred-probe", "fixtures/exact-driver-alpha", "fixtures/exact-driver-alpha-beta", "fixtures/exact-node-alpha", "fixtures/exact-node-beta", "fixtures/exact-node-unused", "fixtures/flow-driver", "fixtures/sockprobe", "samples/disposition-node", "samples/js-sample", "samples/node-rs", "samples/node-cred", "samples/sample-node"]
+members = ["ingress/flow-http", "execution/flowrunner", "execution/materializer", "fixtures/busyloop", "fixtures/connection-http-standard", "fixtures/sockprobe"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,7 +12,7 @@ edition = "2024"
 boon = "0.6"
 serde = "1"
 serde_json = "1"
-wit-bindgen = "0.44"
+wit-bindgen = { version = "0.44", default-features = false, features = ["macros", "realloc"] }
 
 # Guest-owned path identities are independent of the native workspace contract.
 wamn-catalog = { path = "../crates/catalog/model", version = "0.1.0" }
@@ -21,10 +21,6 @@ wamn-event-wire = { path = "../crates/events/wire", version = "0.1.0" }
 wamn-flow = { path = "../crates/execution/flow-model", version = "0.1.0" }
 wamn-flow-invocation = { path = "../crates/execution/flow-invocation", version = "0.1.0" }
 wamn-materializer = { path = "../crates/events/materializer", version = "0.1.0" }
-wamn-node-guest = { path = "../crates/node/guest", version = "0.1.0" }
-wamn-node-invoke = { path = "../crates/node/invoke", version = "0.1.0" }
-wamn-node-manifest = { path = "../crates/node/manifest", version = "0.1.0" }
-wamn-node-sdk = { path = "../crates/node/sdk", version = "0.1.0" }
 wamn-nodes = { package = "wamn-standard-nodes", path = "../crates/execution/standard-nodes", version = "0.1.0" }
 wamn-run-state = { path = "../crates/execution/run-state", version = "0.1.0" }
 wamn-runner = { path = "../crates/execution/flow-engine", version = "0.1.0" }

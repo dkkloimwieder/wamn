@@ -46,7 +46,7 @@ interface types {
     rows: list<list<sql-value>>,
   }
 
-  /// Error taxonomy mirrors the wamn:node retry semantics so SDKs can
+  /// Error taxonomy mirrors the runner retry semantics so SDKs can
   /// map mechanically: serialization-failure / connection-unavailable
   /// -> retryable; timeout -> retryable (bounded); the rest -> terminal
   /// unless the node decides otherwise.

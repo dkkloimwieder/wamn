@@ -6,8 +6,8 @@ use std::process::Command;
 
 const ROOT_WORKSPACE: &str = "root";
 const COMPONENT_WORKSPACE: &str = "components";
-const ROOT_MEMBER_COUNT: usize = 51;
-const COMPONENT_MEMBER_COUNT: usize = 31;
+const ROOT_MEMBER_COUNT: usize = 40;
+const COMPONENT_MEMBER_COUNT: usize = 6;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -577,10 +577,6 @@ fn validate_graph(
         if is_production(from) && matches!(to.role, Role::Test | Role::Poc) {
             violations.push("production-to-test-or-poc");
         }
-        if from.name == "wamn-builder" && to.name == "wamn-host" {
-            violations.push("builder-to-host");
-        }
-
         if violations.is_empty() {
             continue;
         }
@@ -772,14 +768,7 @@ fn manifest_classifies_both_workspaces_and_non_cargo_release_inputs() {
         workspace_manifest_paths(&root, &component_metadata).len(),
         COMPONENT_MEMBER_COUNT
     );
-    assert_eq!(
-        manifest
-            .non_cargo_inputs
-            .iter()
-            .map(|input| input.path.as_str())
-            .collect::<BTreeSet<_>>(),
-        BTreeSet::from(["components/samples/node-ts"])
-    );
+    assert!(manifest.non_cargo_inputs.is_empty());
 }
 
 #[test]

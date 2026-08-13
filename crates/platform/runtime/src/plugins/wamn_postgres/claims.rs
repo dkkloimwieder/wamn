@@ -17,8 +17,6 @@ use wamn_event_wire::Causation;
 
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
-use crate::plugins::node_invocation::{NodeInvocationLookup, NodeInvocationSnapshot};
-
 use super::pool::{
     CheckoutProbe, CredentialProvider, ProjectConfig, ProjectPool, StaticCredentialProvider,
     WamnPostgresConfig, destroy_connection, standard_conforming_strings_hook,
@@ -183,86 +181,6 @@ SELECT r.status, r.execution_bundle_hash = $2, \
    AND grant_row.environment = generation.environment \
    AND grant_row.instance_id = generation.instance_id \
    AND grant_row.generation = generation.generation \
- WHERE r.run_id = $1";
-
-/// The trusted node-invocation snapshot: the host-side statement of record for
-/// the run-next release-lineage join (`catalog.release_flows` ->
-/// `release_manifests` -> `flow_artifacts`, keyed on the run's principal
-/// `artifact-digest`). Public so the gate harnesses can DERIVE the catalog
-/// relations and run columns their fixtures must provide from the statement
-/// itself rather than hand-listing them (wamn-kex2).
-pub const NODE_INVOCATION_SNAPSHOT_SQL: &str = "\
-WITH admitted_artifact AS MATERIALIZED ( \
-    SELECT artifact.graph_json, artifact.interface_bundle_json, artifact.artifact_hash \
-      FROM runs AS source_run \
-      JOIN catalog.flow_artifacts AS artifact \
-        ON artifact.tenant_id = source_run.tenant_id \
-       AND artifact.flow_id = source_run.flow_id \
-       AND artifact.flow_version = source_run.flow_version \
-       AND artifact.artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
-     WHERE source_run.run_id = $1 \
-       AND source_run.trigger_source IS DISTINCT FROM 'scenario-draft' \
-       AND source_run.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
-       AND EXISTS ( \
-           SELECT 1 FROM catalog.release_flows AS rf \
-           JOIN catalog.release_manifests AS rm \
-             ON rm.tenant_id = rf.tenant_id AND rm.catalog_id = rf.catalog_id \
-            AND rm.catalog_version = rf.catalog_version \
-          WHERE rf.tenant_id = source_run.tenant_id \
-            AND rf.catalog_id = source_run.catalog_id \
-            AND rf.catalog_version = source_run.catalog_version \
-            AND rf.flow_id = source_run.flow_id \
-            AND rf.flow_version = source_run.flow_version \
-            AND EXISTS (SELECT 1 FROM jsonb_array_elements(rm.members_json) AS member \
-                         WHERE member ->> 'flow-id' = rf.flow_id \
-                           AND (member ->> 'flow-version')::int = rf.flow_version \
-                           AND member ->> 'artifact-hash' = artifact.artifact_hash) \
-       ) \
-    UNION ALL \
-    SELECT draft.graph_json, draft.interface_bundle_json::text, draft.draft_artifact_hash \
-      FROM runs AS source_run \
-      JOIN catalog.validated_flow_drafts AS draft \
-        ON draft.tenant_id = source_run.tenant_id \
-       AND draft.flow_id = source_run.flow_id \
-       AND draft.runtime_flow_version = source_run.flow_version \
-       AND draft.catalog_id = source_run.catalog_id \
-       AND draft.catalog_version = source_run.catalog_version \
-       AND draft.environment = source_run.environment \
-       AND draft.draft_artifact_hash = source_run.invocation_context #>> '{principal,artifact-digest}' \
-       AND draft.draft_id = source_run.invocation_context #>> '{principal,draft-id}' \
-       AND draft.draft_revision::text = source_run.invocation_context #>> '{principal,draft-revision}' \
-       AND draft.validated_draft_hash = source_run.invocation_context #>> '{principal,validated-draft-hash}' \
-       AND draft.execution_bundle_hash = source_run.execution_bundle_hash \
-       AND draft.binding_base_artifact_hash = source_run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
-       AND draft.suite_flow_version::text = source_run.invocation_context #>> '{principal,suite-flow-version}' \
-     WHERE source_run.run_id = $1 \
-       AND source_run.trigger_source = 'scenario-draft' \
-       AND source_run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
-       AND source_run.admission_context_version = '0.1' \
-       AND source_run.invocation_context ->> 'version' = '0.1' \
-       AND source_run.invocation_context #>> '{principal,tenant-id}' = source_run.tenant_id \
-       AND source_run.invocation_context #>> '{principal,environment}' = source_run.environment \
-       AND source_run.invocation_context #>> '{principal,catalog-id}' = source_run.catalog_id \
-       AND source_run.invocation_context #>> '{principal,catalog-version}' = source_run.catalog_version::text \
-       AND source_run.invocation_context #>> '{principal,run-id}' = source_run.run_id \
-       AND source_run.invocation_context #>> '{principal,flow-id}' = source_run.flow_id \
-       AND source_run.invocation_context #>> '{principal,flow-version}' = source_run.flow_version::text \
-) \
-SELECT r.status, r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, r.environment, \
-       r.invocation_context #>> '{principal,artifact-digest}', \
-       artifact.artifact_hash IS NOT NULL, \
-       ($3::int IS NOT NULL AND $4::int IS NOT NULL AND false), \
-       node.value ->> 'type', contract.value #>> '{executable,kind}', \
-       contract.value #>> '{executable,digest}', \
-       COALESCE(node.value -> 'config', 'null'::jsonb)::text, \
-       node.value ->> 'connection', node.value ->> 'credential', \
-       NULL::text \
-  FROM runs AS r \
-  LEFT JOIN admitted_artifact AS artifact ON true \
-  LEFT JOIN LATERAL jsonb_array_elements(artifact.graph_json -> 'nodes') AS node(value) \
-    ON node.value ->> 'id' = $2 \
-  LEFT JOIN LATERAL jsonb_array_elements(artifact.interface_bundle_json::jsonb) AS contract(value) \
-    ON contract.value #>> '{interface,node-type}' = node.value ->> 'type' \
  WHERE r.run_id = $1";
 
 /// Reject guest SQL that would set or reset a session variable or role in-band.
@@ -921,89 +839,6 @@ impl WamnPostgres {
         }
     }
 
-    /// Load the admitted release, implementation, and exact dispatched attempt
-    /// for one custom-node invocation in a single read-only transaction.
-    pub async fn node_invocation_snapshot(
-        &self,
-        component_id: &str,
-        project: &str,
-        tenant: &str,
-        lookup: &NodeInvocationLookup<'_>,
-    ) -> anyhow::Result<Option<NodeInvocationSnapshot>> {
-        let schema = self.schema_for(component_id);
-        let (conn, policy) = self
-            .checkout(project)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_claims(
-                &conn,
-                tenant,
-                schema.as_deref(),
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(conn);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-        let result: anyhow::Result<Option<NodeInvocationSnapshot>> = async {
-            let params: [&(dyn ToSql + Sync); 4] = [
-                &lookup.run_id,
-                &lookup.node_id,
-                &lookup.occurrence,
-                &lookup.attempt,
-            ];
-            let row = conn
-                .query_opt(NODE_INVOCATION_SNAPSHOT_SQL, &params)
-                .await
-                .context("query node invocation authorization snapshot")?;
-            let Some(row) = row else {
-                return Ok(None);
-            };
-            Ok(Some(NodeInvocationSnapshot {
-                run_status: row.try_get(0)?,
-                flow_id: row.try_get(1)?,
-                flow_version: row.try_get(2)?,
-                catalog_id: row.try_get(3)?,
-                catalog_version: row.try_get(4)?,
-                environment: row.try_get(5)?,
-                admitted_artifact_digest: row.try_get(6)?,
-                admitted_artifact: row.try_get(7)?,
-                attempt_matches: row.try_get::<_, Option<bool>>(8)?.unwrap_or(false),
-                node_type: row.try_get(9)?,
-                executable_kind: row.try_get(10)?,
-                admitted_implementation_digest: row.try_get(11)?,
-                admitted_config: row
-                    .try_get::<_, Option<String>>(12)?
-                    .map(|config| serde_json::from_str(&config))
-                    .transpose()
-                    .context("parse admitted node config")?,
-                admitted_connection: row.try_get(13)?,
-                admitted_credential: row.try_get(14)?,
-                attempt_input_ref: row.try_get(15)?,
-            }))
-        }
-        .await;
-        match result {
-            Ok(snapshot) => {
-                if let Err(error) = conn.batch_execute("COMMIT").await {
-                    self.destroy(conn);
-                    return Err(error).context("commit node invocation authorization snapshot");
-                }
-                Ok(snapshot)
-            }
-            Err(error) => {
-                if conn.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(conn);
-                }
-                Err(error)
-            }
-        }
-    }
-
     pub(super) fn destroy(&self, obj: Object) {
         destroy_connection(obj, &self.destroyed);
     }
@@ -1354,26 +1189,6 @@ mod tests {
         }
         for write in [" insert ", " update ", " delete "] {
             assert!(!sql.contains(write), "effect authority performs {write:?}");
-        }
-    }
-
-    #[test]
-    fn node_invocation_adapter_remains_deny_only_without_attempt_reader() {
-        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("$4::int IS NOT NULL AND false"));
-        assert!(NODE_INVOCATION_SNAPSHOT_SQL.contains("NULL::text"));
-        assert!(!NODE_INVOCATION_SNAPSHOT_SQL.contains("JOIN node_runs"));
-        for retired in [
-            "nr.attempt",
-            "nr.generation_fact_kind",
-            "nr.connection_generation",
-            "nr.credential_generation",
-            "nr.attempt_dispatched_at",
-            "nr.attempt_input_ref",
-        ] {
-            assert!(
-                !NODE_INVOCATION_SNAPSHOT_SQL.contains(retired),
-                "node invocation snapshot retains {retired}"
-            );
         }
     }
 
@@ -1779,7 +1594,7 @@ mod tests {
         let root_artifact_hash = digest(b"effect-live-root-artifact");
         let callee_artifact_hash = digest(b"effect-live-callee-artifact");
         let descriptor =
-            serde_json::to_value(wamn_node_manifest::ConnectionTypeDescriptor::http_v1())
+            serde_json::to_value(wamn_flow::node_contract::ConnectionTypeDescriptor::http_v1())
                 .expect("serialize canonical HTTP descriptor");
         let flowrunner_revision = digest(b"effect-live-flowrunner");
         let effect_provider_revision = digest(b"effect-live-effect-provider");

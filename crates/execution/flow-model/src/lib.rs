@@ -30,6 +30,11 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 pub use diff::{FlowDiff, NodeChange, diff};
+pub use node_contract::{
+    CanonicalHttpTarget, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
+    ConnectionFieldOwnership, ConnectionRequirement, ConnectionTypeDescriptor, CredentialInjection,
+    PortableHttpTargetError, normalize_portable_http_target,
+};
 pub use preimage::FlowPreimage;
 pub use types::{
     CallFlowConfig, CredentialRef, CronInput, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput,

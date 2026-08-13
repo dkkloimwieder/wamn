@@ -700,7 +700,7 @@ pub(crate) async fn save_flow_draft(
 
 fn resolve_standard_implementations(
     flow: &wamn_flow::Flow,
-) -> Result<Vec<wamn_node_manifest::ResolvedNodeInterface>, DraftRunRefusal> {
+) -> Result<Vec<wamn_flow::node_contract::NodeInterface>, DraftRunRefusal> {
     let node_types: BTreeSet<_> = flow
         .nodes
         .iter()
@@ -712,16 +712,11 @@ fn resolve_standard_implementations(
         if node_type == "call-flow" {
             continue;
         }
-        let Some(descriptor) = wamn_standard_nodes::describe(node_type) else {
+        let Some(interface) = wamn_standard_nodes::describe_interface(node_type) else {
             unresolved.push(node_type.to_string());
             continue;
         };
-        let contract = wamn_standard_nodes::resolve_descriptor(descriptor).map_err(|error| {
-            DraftRunRefusal::InvalidDraft {
-                detail: error.to_string(),
-            }
-        })?;
-        implementations.push(contract.interface);
+        implementations.push(interface.clone());
     }
     if unresolved.is_empty() {
         Ok(implementations)

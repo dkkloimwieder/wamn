@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
-use wamn_node_manifest::ConnectionTypeDescriptor;
+use wamn_flow::node_contract::ConnectionTypeDescriptor;
 
 /// Controlled lifecycle states for an environment-owned connection instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

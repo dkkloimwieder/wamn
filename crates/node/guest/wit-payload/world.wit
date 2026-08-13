@@ -1,6 +1,0 @@
-package wamn:node-payload-guest@0.1.0;
-
-/// Bindings-only world for the frozen P2 streamed-payload import.
-world payload-api {
-  import wamn:node/payloads@0.1.0;
-}

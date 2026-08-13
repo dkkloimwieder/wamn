@@ -33,8 +33,8 @@ use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 use wamn_catalog::Artifact;
-use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
+use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
+use wamn_flow::{Flow, MAIN_PORT};
 
 /// The canonical catalog storage DDL — the same standalone deploy artifact
 /// metricbench and testkitbench lay down, so no gate fixture can drift from the
@@ -62,31 +62,40 @@ struct Member {
     graph_hash: String,
 }
 
-/// The capability class each gate-fixture node type is published with.
-///
-/// Publication resolves every node type to a capability class and effect
-/// policy. The gates' fixtures draw from the standard node library, whose
-/// classification is fixed: effectful types use the immutable-attempt boundary
-/// (their outputs are recorded and skipped on resume — the property the
-/// failover phases prove), while pure types may be recomputed.
-fn node_capability(node_type: &str) -> anyhow::Result<CapabilityClass> {
-    Ok(match node_type {
-        "conditional" | "cron" | "event" | "request" | "respond" | "transform" => {
-            CapabilityClass::Pure
-        }
-        "http-call" => CapabilityClass::Http,
-        "pg-write" | "postgres-query" => CapabilityClass::Postgres,
-        other => anyhow::bail!(
-            "gate fixture node type {other:?} has no published interface: give it a \
-             capability class here, or the release cannot be published"
-        ),
+/// The current interface for a retained standard node or flowrunner-private
+/// fixture node.
+pub(crate) fn interface(node_type: &str) -> anyhow::Result<NodeInterface> {
+    if matches!(node_type, "conditional" | "cron") {
+        return Ok(NodeInterface {
+            node_type: node_type.to_string(),
+            output_ports: vec![MAIN_PORT.to_string()],
+            capabilities: Vec::new(),
+            connection_requirements: Vec::new(),
+            effect_policy: EffectPolicy::Pure,
+        });
+    }
+    if let Some(interface) = wamn_standard_nodes::describe_interface(node_type) {
+        return Ok(interface.clone());
+    }
+
+    let capabilities = match node_type {
+        "http-call" => vec![Capability::HttpEgress],
+        "pg-write" => vec![Capability::Postgres],
+        other => anyhow::bail!("gate fixture node type {other:?} has no retained interface"),
+    };
+    Ok(NodeInterface {
+        node_type: node_type.to_string(),
+        output_ports: vec![MAIN_PORT.to_string()],
+        capabilities,
+        connection_requirements: Vec::new(),
+        effect_policy: EffectPolicy::Effectful,
     })
 }
 
 /// The implementations a graph requires: exactly one per DISTINCT node type,
 /// ordered by node type (artifact identity demands both). Derived from the graph,
 /// so editing a fixture cannot leave a stale interface set behind.
-fn implementations(flow: &Flow) -> anyhow::Result<Vec<ResolvedNodeInterface>> {
+fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeInterface>> {
     let mut node_types: Vec<&str> = flow
         .nodes
         .iter()
@@ -95,19 +104,7 @@ fn implementations(flow: &Flow) -> anyhow::Result<Vec<ResolvedNodeInterface>> {
     node_types.sort_unstable();
     node_types.dedup();
 
-    node_types
-        .into_iter()
-        .map(|node_type| {
-            let capability = node_capability(node_type)?;
-            Ok(ResolvedNodeInterface::new(
-                node_type,
-                "wamn:node/node@0.1.0",
-                vec!["main".to_string()],
-                vec![capability],
-                Vec::new(),
-            ))
-        })
-        .collect()
+    node_types.into_iter().map(interface).collect()
 }
 
 /// Build the immutable artifact for one gate fixture graph.
@@ -350,67 +347,11 @@ pub(crate) fn assert_releasable(fixture: &str, flow_json: &str) {
 mod tests {
     use super::*;
 
-    /// Every `<alias>.<name>` a statement names under one alias prefix.
-    fn qualified_names(sql: &str, prefix: &str) -> std::collections::BTreeSet<String> {
-        sql.match_indices(prefix)
-            .map(|(at, _)| {
-                sql[at + prefix.len()..]
-                    .chars()
-                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                    .collect::<String>()
-            })
-            .filter(|name| !name.is_empty())
-            .collect()
-    }
-
     /// The `poc-receipt` fixtures `runnerbench`, `logbench`'s runpath leg, and
     /// `failoverbench`'s claim mode all publish through this module.
     #[test]
     fn the_shared_receipt_fixtures_are_releasable_graphs() {
         assert_releasable("flowbench::flow_json(1)", &crate::flowbench::flow_json(1));
         assert_releasable("flowbench::flow_json(2)", &crate::flowbench::flow_json(2));
-    }
-
-    /// wamn-kex2 [GATE-DRIFT]: the wamn-jflp/wamn-thvs derived-guard class reads
-    /// the `r.`-aliased run-next builders in `wamn-run-state`, so it is blind to
-    /// the CATALOG side of the run-next path — the join that made four gates die
-    /// `42P01 catalog.release_flows` with no named test to show for it.
-    /// `NODE_INVOCATION_SNAPSHOT_SQL` is the host-side statement of record for
-    /// that join (`source_run.`-aliased). Derive the relations and run columns it
-    /// demands, and hold this module's preamble and the shared run-plane stand-in
-    /// to them, so the next change there breaks a named test instead of four gates
-    /// in a cluster.
-    #[test]
-    fn preamble_satisfies_the_run_next_catalog_join() {
-        let sql = wamn_runtime::plugins::wamn_postgres::NODE_INVOCATION_SNAPSHOT_SQL;
-
-        let relations = qualified_names(sql, "catalog.");
-        assert!(
-            relations.contains("release_flows") && relations.contains("flow_artifacts"),
-            "parser sanity: the snapshot SQL names the release lineage"
-        );
-        let missing: Vec<&String> = relations
-            .iter()
-            .filter(|relation| !CATALOG_DDL.contains(&format!("CREATE TABLE catalog.{relation} (")))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "the catalog preamble omits relations the run-next join reads: {missing:?}"
-        );
-
-        let columns = qualified_names(sql, "source_run.");
-        assert!(
-            columns.contains("invocation_context") && columns.contains("catalog_id"),
-            "parser sanity: the snapshot SQL names the run's pinning columns"
-        );
-        let ddl = crate::runnerbench::runner_ddl("wamn_run");
-        let missing: Vec<&String> = columns
-            .iter()
-            .filter(|column| !ddl.contains(column.as_str()))
-            .collect();
-        assert!(
-            missing.is_empty(),
-            "the run-plane stand-in omits run columns the catalog join reads: {missing:?}"
-        );
     }
 }

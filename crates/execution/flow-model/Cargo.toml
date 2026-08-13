@@ -21,4 +21,3 @@ jmespath = { workspace = true }
 # with no network/reqwest dependency. Request-entry input contracts also use it
 # to compile JSON Schema draft 2020-12 during structural validation.
 boon = { workspace = true }
-wamn-node-manifest = { workspace = true }

@@ -15,38 +15,12 @@
   "packages": [
     {
       "workspace": "root",
-      "name": "wamn-api",
-      "manifest_path": "crates/data/api/Cargo.toml",
-      "role": "adapter",
-      "target_class": "shared",
-      "bounded_context": "data",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-authoring-model",
       "manifest_path": "crates/authoring/model/Cargo.toml",
       "role": "contract",
       "target_class": "shared",
       "bounded_context": "authoring",
       "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-builder",
-      "manifest_path": "services/builder/Cargo.toml",
-      "role": "native",
-      "target_class": "native",
-      "bounded_context": "node-supply-chain",
-      "deployable": true,
-      "native": {
-        "native_kind": "toolchain",
-        "native_reason": "Rust and JavaScript toolchains, sandboxed subprocesses, filesystem access, signing, and OCI publication require a native build boundary.",
-        "owner": "SR16 / node supply-chain owners",
-        "credential_failure_scope": "One build Job owns temporary source, toolchain, registry, and publication access; it does not import the runtime host.",
-        "tested_boundary": "Builder allowlist, golden deployment, and registry-push conformance tests exercise the one-shot artifact boundary.",
-        "exit_condition": "Replace only when a component-safe toolchain and OCI publication capability provides equivalent sandbox, signing, and provenance guarantees."
-      }
     },
     {
       "workspace": "root",
@@ -260,68 +234,6 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-node-guest",
-      "manifest_path": "crates/node/guest/Cargo.toml",
-      "role": "adapter",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-node-host",
-      "manifest_path": "services/node-host/Cargo.toml",
-      "role": "native",
-      "target_class": "native",
-      "bounded_context": "node",
-      "deployable": true,
-      "native": {
-        "native_kind": "transition-runtime",
-        "native_reason": "A dedicated native transport leaf hosts one warm custom-node component with authentication and grant isolation.",
-        "owner": "SR15 / node runtime owners",
-        "credential_failure_scope": "One node-host process confines a tenant component, invocation key, capability grant, egress, and failure domain.",
-        "tested_boundary": "Node-host HTTP authentication, grant-before-invoke, component import, and warm-runtime proofs cover the service boundary.",
-        "exit_condition": "Exit when a component-native service boundary provides equivalent warm hosting, authentication, grant, and failure isolation."
-      }
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-node-invoke",
-      "manifest_path": "crates/node/invoke/Cargo.toml",
-      "role": "contract",
-      "target_class": "shared",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-node-manifest",
-      "manifest_path": "crates/node/manifest/Cargo.toml",
-      "role": "contract",
-      "target_class": "shared",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-node-runtime",
-      "manifest_path": "crates/platform/node-runtime/Cargo.toml",
-      "role": "adapter",
-      "target_class": "native",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-node-sdk",
-      "manifest_path": "crates/node/sdk/Cargo.toml",
-      "role": "contract",
-      "target_class": "shared",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-pg-core",
       "manifest_path": "crates/platform/pg-core/Cargo.toml",
       "role": "core",
@@ -527,15 +439,6 @@
     },
     {
       "workspace": "components",
-      "name": "api-gateway",
-      "manifest_path": "components/ingress/api-gateway/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "data",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
       "name": "flow-http",
       "manifest_path": "components/ingress/flow-http/Cargo.toml",
       "role": "component",
@@ -563,53 +466,8 @@
     },
     {
       "workspace": "components",
-      "name": "time-shift",
-      "manifest_path": "components/nodes/time-shift/Cargo.toml",
-      "role": "component",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": true
-    },
-    {
-      "workspace": "components",
       "name": "busyloop",
       "manifest_path": "components/fixtures/busyloop/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "capability-class-http",
-      "manifest_path": "components/fixtures/capability-class-http/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "capability-class-postgres",
-      "manifest_path": "components/fixtures/capability-class-postgres/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "capability-class-pure",
-      "manifest_path": "components/fixtures/capability-class-pure/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "connection-http-custom",
-      "manifest_path": "components/fixtures/connection-http-custom/Cargo.toml",
       "role": "test",
       "target_class": "guest",
       "bounded_context": "proof",
@@ -626,131 +484,13 @@
     },
     {
       "workspace": "components",
-      "name": "cred-probe",
-      "manifest_path": "components/fixtures/cred-probe/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "exact-driver-alpha",
-      "manifest_path": "components/fixtures/exact-driver-alpha/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "exact-driver-alpha-beta",
-      "manifest_path": "components/fixtures/exact-driver-alpha-beta/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "exact-node-alpha",
-      "manifest_path": "components/fixtures/exact-node-alpha/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "exact-node-beta",
-      "manifest_path": "components/fixtures/exact-node-beta/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "exact-node-unused",
-      "manifest_path": "components/fixtures/exact-node-unused/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "flow-driver",
-      "manifest_path": "components/fixtures/flow-driver/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "proof",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
       "name": "sockprobe",
       "manifest_path": "components/fixtures/sockprobe/Cargo.toml",
       "role": "test",
       "target_class": "guest",
       "bounded_context": "proof",
       "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "disposition-node",
-      "manifest_path": "components/samples/disposition-node/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "js-sample",
-      "manifest_path": "components/samples/js-sample/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "events",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "node-rs",
-      "manifest_path": "components/samples/node-rs/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "node-cred",
-      "manifest_path": "components/samples/node-cred/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false
-    },
-    {
-      "workspace": "components",
-      "name": "sample-node",
-      "manifest_path": "components/samples/sample-node/Cargo.toml",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false
     }
   ],
-  "non_cargo_inputs": [
-    {
-      "name": "node-ts",
-      "path": "components/samples/node-ts",
-      "role": "test",
-      "target_class": "guest",
-      "bounded_context": "node",
-      "deployable": false,
-      "release_class": "sample-toolchain-input"
-    }
-  ]
+  "non_cargo_inputs": []
 }

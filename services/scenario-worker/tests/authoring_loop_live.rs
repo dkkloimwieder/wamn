@@ -85,10 +85,9 @@ fn release_artifact() -> anyhow::Result<(wamn_flow::Flow, Artifact)> {
     let implementations = ["request", "respond"]
         .into_iter()
         .map(|node_type| {
-            let descriptor = wamn_standard_nodes::describe(node_type)
+            let interface = wamn_standard_nodes::describe_interface(node_type)
                 .with_context(|| format!("resolve standard node {node_type}"))?;
-            let contract = wamn_standard_nodes::resolve_descriptor(descriptor)?;
-            Ok(contract.interface)
+            Ok(interface.clone())
         })
         .collect::<anyhow::Result<Vec<_>>>()?;
     let artifact = Artifact::new(TENANT, &flow, implementations)?;

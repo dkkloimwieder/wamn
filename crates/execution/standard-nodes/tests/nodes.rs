@@ -954,7 +954,7 @@ fn retained_resolution_surface_uses_the_flow_model_interface() {
     }
     assert!(
         !is_standard("custom"),
-        "a custom node is not standard-library"
+        "an unknown node is not standard-library"
     );
     for removed in ["cron", "time-shift"] {
         assert!(!is_standard(removed), "removed node {removed:?} survived");

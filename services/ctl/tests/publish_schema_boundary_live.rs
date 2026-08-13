@@ -33,7 +33,6 @@ fn publish_args(catalog: &std::path::Path, url: &str, schema: String) -> Publish
         runstate: true,
         seed_dataset: None,
         flow: vec![],
-        custom_node: vec![],
         exposure: None,
         skip_reconcile_replica_identity: false,
     }

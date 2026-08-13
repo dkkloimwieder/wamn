@@ -6,8 +6,8 @@
 //! identity from [`FlowInvocation::begin`] before a caller performs bounded
 //! [`FlowInvocation::wait`] calls.
 //!
-//! This is not the runner-to-custom-node protocol. It deliberately shares no
-//! types or dependencies with `wamn-node-invoke`.
+//! This is not a node execution protocol. It deliberately stays independent of
+//! node execution internals.
 
 /// W3C trace context propagated into an admitted run.
 #[derive(Debug, Clone, PartialEq, Eq)]

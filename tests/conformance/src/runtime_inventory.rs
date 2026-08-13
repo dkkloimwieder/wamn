@@ -233,19 +233,9 @@ fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
         .unwrap_or_else(|error| panic!("read {}: {error}", execution_path.display()));
     validate_execution_host_store_constructor(&execution).unwrap_or_else(|error| panic!("{error}"));
 
-    let node_path = root.join("crates/platform/node-runtime/src/lib.rs");
-    let node = fs::read_to_string(&node_path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", node_path.display()));
-    assert_one(
-        &node,
-        "let mut store = Store::new(raw, SharedCtx::new(context));",
-        "NodeRuntime store constructor",
-    );
-
     BTreeSet::from([
         "fork: new_store_from_templates (single production site)".to_string(),
         "wamn: ExecutionHost store (crates/execution/host)".to_string(),
-        "wamn: NodeRuntime store (crates/platform/node-runtime)".to_string(),
     ])
 }
 
@@ -459,8 +449,8 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     );
     assert_eq!(
         inventory.consumers.len(),
-        5,
-        "the inventory must retain all five production consumers"
+        3,
+        "the inventory must retain all three production consumers"
     );
 
     let recorded_manifests = inventory
@@ -515,8 +505,8 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     );
     assert_eq!(
         inventory.workload_manifests.len(),
-        5,
-        "the inventory must retain all five generated workload manifests"
+        3,
+        "the inventory must retain all three generated workload manifests"
     );
     for workload in &inventory.workload_manifests {
         let expected_state = if workload.path.contains(".example.") {

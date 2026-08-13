@@ -5,7 +5,7 @@ use wamn_catalog::{
     ValidatedDraftIdentityInput, execution_bundle_hash,
 };
 use wamn_flow::Flow;
-use wamn_node_manifest::{CapabilityClass, ResolvedNodeInterface};
+use wamn_flow::node_contract::{EffectPolicy, NodeInterface};
 
 const RUNNER: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PROVIDER: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -19,17 +19,15 @@ fn flow(version: u32) -> Flow {
     .unwrap()
 }
 
-fn implementations() -> Vec<ResolvedNodeInterface> {
+fn implementations() -> Vec<NodeInterface> {
     ["custom", "event"]
         .into_iter()
-        .map(|node_type| {
-            ResolvedNodeInterface::new(
-                node_type,
-                "wamn:node/node@0.1.0",
-                vec!["main".into()],
-                vec![CapabilityClass::Pure],
-                Vec::new(),
-            )
+        .map(|node_type| NodeInterface {
+            node_type: node_type.to_string(),
+            output_ports: vec!["main".into()],
+            capabilities: Vec::new(),
+            connection_requirements: Vec::new(),
+            effect_policy: EffectPolicy::Pure,
         })
         .collect()
 }

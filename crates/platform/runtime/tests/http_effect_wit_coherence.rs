@@ -3,8 +3,6 @@
 const FLOWRUNNER_PACKAGE: &str =
     include_str!("../../../../components/execution/flowrunner/wit/deps/wamn-runner/package.wit");
 const RUNTIME_PACKAGE: &str = include_str!("../wit/deps/wamn-runner/package.wit");
-const GUEST_PACKAGE: &str =
-    include_str!("../../../node/guest/wit-caps/deps/wamn-runner/package.wit");
 
 fn http_effect_interface(package: &str) -> &str {
     let (_, interface) = package
@@ -28,7 +26,7 @@ fn invocation_context(interface: &str) -> &str {
 
 #[test]
 fn runner_packages_keep_the_frozen_package_identity() {
-    for package in [FLOWRUNNER_PACKAGE, RUNTIME_PACKAGE, GUEST_PACKAGE] {
+    for package in [FLOWRUNNER_PACKAGE, RUNTIME_PACKAGE] {
         assert!(package.starts_with("package wamn:runner@0.1.0;\n"));
         assert!(!package.contains("run-frames"));
         assert!(!package.contains("run_frames"));
@@ -36,7 +34,7 @@ fn runner_packages_keep_the_frozen_package_identity() {
 }
 
 #[test]
-fn invocation_context_is_the_attempt_principal_in_all_copies() {
+fn invocation_context_is_the_attempt_principal_in_both_copies() {
     const CONTEXT: &str = r#"version: string,
     run-id: string,
     root-plan-hash: string,
@@ -47,7 +45,7 @@ fn invocation_context_is_the_attempt_principal_in_all_copies() {
     source-artifact-hash: string,
     requirement-name: string,"#;
 
-    for package in [FLOWRUNNER_PACKAGE, RUNTIME_PACKAGE, GUEST_PACKAGE] {
+    for package in [FLOWRUNNER_PACKAGE, RUNTIME_PACKAGE] {
         let interface = http_effect_interface(package);
         assert_eq!(invocation_context(interface), CONTEXT);
         assert!(interface.contains(

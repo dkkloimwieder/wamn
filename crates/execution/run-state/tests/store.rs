@@ -76,7 +76,7 @@ fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<Strin
 }
 
 /// The recorded row for a `cron` entry node. Since wamn-ayq7.23 cron executes
-/// through the node ABI and may only emit its scheduler-admitted input unchanged
+/// through standard-node dispatch and may only emit its scheduler-admitted input unchanged
 /// (`validate_cron_outcome`, which the driver applies before durable
 /// checkpointing), a persisted entry row's output IS the run's own input.
 fn entry_row(run: &RunRecord, node: &str) -> NodeRunRecord {

@@ -53,7 +53,7 @@ interface types {
     delivered: u64,
   }
 
-  /// Error taxonomy. Mirrors the wamn:node retry posture so a consumer can map
+  /// Error taxonomy. Mirrors the runner retry posture so a consumer can map
   /// mechanically: `connection-unavailable` is transient (retry); the rest carry
   /// a server message for diagnostics. Per-org stream isolation means there is
   /// no cross-tenant reconnaissance concern, so errors carry detail.

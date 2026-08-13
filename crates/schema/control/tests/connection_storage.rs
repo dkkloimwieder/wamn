@@ -1,4 +1,4 @@
-use wamn_node_manifest::ConnectionTypeDescriptor;
+use wamn_flow::node_contract::ConnectionTypeDescriptor;
 use wamn_schema_control::connections::{
     ArtifactConnectionRequirement, ConnectionGenerationDefinition, ConnectionInstanceStatus,
     GenerationRetentionKind, insert_connection_binding_sql, insert_connection_generation_sql,

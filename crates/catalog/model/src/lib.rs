@@ -23,8 +23,8 @@ use std::fmt;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
+use wamn_flow::node_contract::NodeInterface;
 use wamn_flow::{Flow, FlowPreimage, ResolvedInterfaces};
-use wamn_node_manifest::{RESOLVED_CONTRACT_VERSION, ResolvedNodeInterface};
 
 const HASH_PREFIX: &str = "sha256:";
 const HASH_HEX_LEN: usize = 64;
@@ -456,7 +456,7 @@ impl Artifact {
     pub fn new(
         tenant_id: impl Into<String>,
         flow: &Flow,
-        interfaces: Vec<ResolvedNodeInterface>,
+        interfaces: Vec<NodeInterface>,
     ) -> Result<Self, CatalogIdentityError> {
         let id = ArtifactId::new(tenant_id, flow.flow_id.clone(), flow.version)?;
         validate_text(&flow.schema_version, "schema-version")?;
@@ -478,15 +478,6 @@ impl Artifact {
         owned.push(("artifact-id", id_bytes));
         owned.push(("schema-version", flow.schema_version.as_bytes().to_vec()));
         owned.push(("graph", graph_bytes));
-        if !interfaces
-            .iter()
-            .all(|interface| interface.contract_version == RESOLVED_CONTRACT_VERSION)
-        {
-            return Err(CatalogIdentityError::InvalidDefinition {
-                message: "current artifact producers require the current resolved-contract version"
-                    .to_string(),
-            });
-        }
         let borrowed: Vec<_> = owned
             .iter()
             .map(|(tag, bytes)| (*tag, bytes.as_slice()))
@@ -696,7 +687,7 @@ impl DraftArtifact {
     pub fn new(
         tenant_id: impl Into<String>,
         flow: &Flow,
-        interfaces: Vec<ResolvedNodeInterface>,
+        interfaces: Vec<NodeInterface>,
         execution_plan: ExecutionPlanV2,
     ) -> Result<Self, CatalogIdentityError> {
         execution_plan.validate()?;
@@ -728,7 +719,7 @@ impl DraftArtifact {
 
 fn validate_interfaces(
     flow: &Flow,
-    interfaces: &[ResolvedNodeInterface],
+    interfaces: &[NodeInterface],
 ) -> Result<(), CatalogIdentityError> {
     let mut by_type = BTreeMap::new();
     for interface in interfaces {
@@ -751,15 +742,8 @@ fn validate_interfaces(
     Ok(())
 }
 
-fn validate_interface(interface: &ResolvedNodeInterface) -> Result<(), CatalogIdentityError> {
+fn validate_interface(interface: &NodeInterface) -> Result<(), CatalogIdentityError> {
     validate_text(&interface.node_type, "node-type")?;
-    validate_text(&interface.interface_contract, "interface-contract")?;
-    if interface.contract_version != RESOLVED_CONTRACT_VERSION {
-        return Err(CatalogIdentityError::InvalidInterface {
-            node_type: interface.node_type.clone(),
-            message: format!("resolved contract version must be {RESOLVED_CONTRACT_VERSION:?}"),
-        });
-    }
     if interface
         .output_ports
         .windows(2)

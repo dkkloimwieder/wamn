@@ -7,12 +7,11 @@
 
 use std::collections::HashMap;
 
+use crate::canonical;
+use crate::node_contract::ConnectionTypeDescriptor;
+use crate::preimage::FlowPreimage;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
-use wamn_node_manifest::ConnectionTypeDescriptor;
-
-use crate::canonical;
-use crate::preimage::FlowPreimage;
 
 /// The flow-schema **format** version this crate implements. Distinct from a
 /// flow's own [`Flow::version`]. This pre-version-alpha contract is refreshed

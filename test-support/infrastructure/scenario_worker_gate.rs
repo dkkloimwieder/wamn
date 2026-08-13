@@ -1,23 +1,20 @@
 //! Repository-only fixture and process adapter for the stored-scenario worker gate.
 
 use std::ffi::OsString;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context as _, bail};
 use serde::Deserialize;
-use sha2::{Digest as _, Sha256};
 use tokio::process::Command;
 use tokio_postgres::{Client, NoTls};
 
 use crate::ctl_process;
 use wamn_gate_harness::{seed_flow_version, seed_test_case, seed_test_suite};
-use wamn_scenario_model::{ScenarioRefusal, ScenarioReport};
+use wamn_scenario_model::ScenarioReport;
 use wamn_scenario_runtime::ScenarioSchemaName;
 
 const DEMO_FLOW_PREFIX: &str = "tk-demo-flow";
-const UNDRIVABLE_FLOW_PREFIX: &str = "tk-undrivable-flow";
-const UNDRIVABLE_NODE_TYPE: &str = "disposition-recommendation";
 const RELEASE_ENVIRONMENT: &str = "dev";
 const RELEASE_VERSION: i32 = 1;
 static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -27,7 +24,6 @@ static FIXTURE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 pub struct StoredSuiteGateArgs {
     pub worker: PathBuf,
     pub flowrunner: PathBuf,
-    pub node: PathBuf,
     pub database_url: Option<String>,
     pub admin_database_url: String,
     pub suites: Vec<String>,
@@ -58,7 +54,6 @@ struct SelectedSuite {
 enum ExpectedExit {
     Pass,
     Success,
-    Refusal(&'static str),
     Failure(&'static str),
 }
 
@@ -100,67 +95,25 @@ struct ScenarioPublication {
     _files: FixtureFiles,
     catalog_id: String,
     demo_flow_id: String,
-    undrivable_flow_id: String,
     catalog: PathBuf,
     demo_flow: PathBuf,
-    undrivable_flow: PathBuf,
-    custom_node: PathBuf,
 }
 
 impl ScenarioPublication {
-    fn create(node: &Path) -> anyhow::Result<Self> {
-        let component_bytes = std::fs::read(node)
-            .with_context(|| format!("read undrivable component fixture {}", node.display()))?;
-        let component_digest = component_digest(&component_bytes);
-        let suffix = component_digest
-            .strip_prefix("sha256:")
-            .expect("component digest has the canonical prefix")
-            .get(..12)
-            .expect("sha256 digest has at least twelve hex digits");
+    fn create() -> anyhow::Result<Self> {
+        let sequence = FIXTURE_SEQUENCE.fetch_add(1, Ordering::SeqCst);
+        let suffix = format!("{}-{sequence}", std::process::id());
         let catalog_id = format!("tk-scenario-{suffix}");
         let demo_flow_id = format!("{DEMO_FLOW_PREFIX}-{suffix}");
-        let undrivable_flow_id = format!("{UNDRIVABLE_FLOW_PREFIX}-{suffix}");
         let files = FixtureFiles::create()?;
-        let component = files.write("disposition-node.wasm", component_bytes)?;
-        let manifest = files.write(
-            "disposition-node.manifest.json",
-            serde_json::json!({
-                "schema-version": "0.1",
-                "node-type": UNDRIVABLE_NODE_TYPE,
-                "name": "Disposition Recommendation",
-                "description": "POC-F2 zero-import pure custom node: compares a deterministic quality-hold recommendation with the recorded decision and emits string confidence.",
-                "version": "0.1.0",
-                "contract": "0.1.0",
-                "ordering": ["unordered"],
-                "purity": "pure"
-            })
-            .to_string(),
-        )?;
-        let custom_node = files.write(
-            "disposition-node.component.json",
-            serde_json::json!({
-                "node-type": UNDRIVABLE_NODE_TYPE,
-                "component": component,
-                "manifest": manifest,
-                "component-digest": component_digest,
-            })
-            .to_string(),
-        )?;
         let catalog = files.write("catalog.json", demo_catalog(&catalog_id))?;
         let demo_flow = files.write("demo.flow.json", demo_graph(&demo_flow_id))?;
-        let undrivable_flow = files.write(
-            "undrivable.flow.json",
-            undrivable_graph(&undrivable_flow_id),
-        )?;
         Ok(Self {
             _files: files,
             catalog_id,
             demo_flow_id,
-            undrivable_flow_id,
             catalog,
             demo_flow,
-            undrivable_flow,
-            custom_node,
         })
     }
 
@@ -179,10 +132,6 @@ impl ScenarioPublication {
             "--runstate".into(),
             "--flow".into(),
             self.demo_flow.as_os_str().to_owned(),
-            "--flow".into(),
-            self.undrivable_flow.as_os_str().to_owned(),
-            "--custom-node".into(),
-            self.custom_node.as_os_str().to_owned(),
         ]
     }
 
@@ -192,15 +141,6 @@ impl ScenarioPublication {
             .with_context(|| format!("publish immutable scenario release into {schema}"))?;
         Ok(())
     }
-}
-
-fn component_digest(bytes: &[u8]) -> String {
-    let hash = Sha256::digest(bytes);
-    let hex = hash
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    format!("sha256:{hex}")
 }
 
 /// Provision repository fixtures, invoke the product binary, and clean every sandbox.
@@ -228,7 +168,6 @@ pub async fn run(args: StoredSuiteGateArgs) -> anyhow::Result<()> {
                     &args.admin_database_url,
                     &args.source_schema,
                     args.tenant.as_deref(),
-                    &args.node,
                 )
                 .await?,
             )
@@ -290,12 +229,6 @@ async fn select_suites(
                 &publication.demo_flow_id,
                 "malformed",
                 ExpectedExit::Failure("parse stored case"),
-            ),
-            selected(
-                &tenant,
-                &publication.undrivable_flow_id,
-                "undrivable",
-                ExpectedExit::Refusal(UNDRIVABLE_NODE_TYPE),
             ),
             selected(
                 &tenant,
@@ -401,22 +334,6 @@ fn accepted_success_label(
         } else {
             "PASS"
         }),
-        ExpectedExit::Refusal(expected_node_type) => match &report.refusal {
-            Some(ScenarioRefusal::UndrivableNodes { node_types })
-                if node_types
-                    .iter()
-                    .any(|node_type| node_type == expected_node_type) =>
-            {
-                Ok("expected refusal PASS")
-            }
-            Some(ScenarioRefusal::UndrivableNodes { node_types }) => bail!(
-                "scenario-worker refusal did not name expected node type {expected_node_type:?}: {node_types:?}"
-            ),
-            Some(other) => bail!(
-                "scenario-worker refused with {other:?} instead of an undrivable-node refusal naming {expected_node_type:?}"
-            ),
-            None => bail!("scenario-worker unexpectedly executed an undrivable suite"),
-        },
         ExpectedExit::Failure(_) => bail!("expected a scenario-worker process failure"),
     }
 }
@@ -522,7 +439,7 @@ async fn run_selected_suite(
     }
     let result = async {
         match selected.expected {
-            ExpectedExit::Pass | ExpectedExit::Success | ExpectedExit::Refusal(_) => {
+            ExpectedExit::Pass | ExpectedExit::Success => {
                 if !output.status.success() {
                     bail!(
                         "scenario-worker unexpectedly failed for {}",
@@ -615,7 +532,7 @@ fn expected_scenario_run_count(expected: ExpectedExit, case_count: usize) -> Opt
         ExpectedExit::Pass | ExpectedExit::Failure("stored scenario assertions failed") => {
             Some(case_count)
         }
-        ExpectedExit::Refusal(_) | ExpectedExit::Failure(_) => Some(0),
+        ExpectedExit::Failure(_) => Some(0),
         ExpectedExit::Success => None,
     }
 }
@@ -793,11 +710,10 @@ async fn seed_demo(
     admin_url: &str,
     schema: &str,
     tenant: Option<&str>,
-    node: &Path,
 ) -> anyhow::Result<ScenarioPublication> {
     let tenant = tenant.context("--seed-demo needs --tenant")?;
     ScenarioSchemaName::new(schema.to_owned()).context("validate source schema")?;
-    let publication = ScenarioPublication::create(node)?;
+    let publication = ScenarioPublication::create()?;
     drop_schema(client, schema).await?;
     publication.publish(admin_url, tenant, schema).await?;
     scope_session(client, tenant, schema).await?;
@@ -812,16 +728,6 @@ async fn seed_demo(
         true,
     )
     .await?;
-    seed_flow_version(
-        client,
-        tenant,
-        &publication.undrivable_flow_id,
-        1,
-        true,
-        &undrivable_graph(&publication.undrivable_flow_id),
-        true,
-    )
-    .await?;
     seed_suite_cases(
         client,
         tenant,
@@ -831,18 +737,6 @@ async fn seed_demo(
     )
     .await?;
     seed_malformed_case(client, tenant, &publication.demo_flow_id).await?;
-    seed_suite_cases(
-        client,
-        tenant,
-        &publication.undrivable_flow_id,
-        "undrivable",
-        vec![(
-            "undrivable",
-            0,
-            completion_case("undrivable", &publication.undrivable_flow_id),
-        )],
-    )
-    .await?;
     seed_suite_cases(
         client,
         tenant,
@@ -865,16 +759,12 @@ async fn seed_demo(
     let poisoned = client
         .execute(
             "UPDATE flows SET graph_json = '{}'::jsonb \
-             WHERE tenant_id = $1 AND flow_id IN ($2, $3) AND version = 1",
-            &[
-                &tenant,
-                &publication.demo_flow_id,
-                &publication.undrivable_flow_id,
-            ],
+             WHERE tenant_id = $1 AND flow_id = $2 AND version = 1",
+            &[&tenant, &publication.demo_flow_id],
         )
         .await
         .context("poison mutable scenario flow projections")?;
-    if poisoned != 2 {
+    if poisoned != 1 {
         bail!("mutable scenario projection poison affected {poisoned} rows");
     }
     Ok(publication)
@@ -1005,24 +895,6 @@ fn demo_graph(flow_id: &str) -> String {
     .to_string()
 }
 
-fn undrivable_graph(flow_id: &str) -> String {
-    serde_json::json!({
-        "schema-version": "0.1",
-        "flow-id": flow_id,
-        "version": RELEASE_VERSION,
-        "nodes": [
-            {"id": "request", "type": "request", "config": {"input-schema": true}},
-            {"id": "recommend", "type": UNDRIVABLE_NODE_TYPE},
-            {"id": "respond", "type": "respond", "config": {"status": 200}}
-        ],
-        "edges": [
-            {"from": "request", "to": "recommend"},
-            {"from": "recommend", "to": "respond"}
-        ]
-    })
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1031,32 +903,6 @@ mod tests {
     fn malformed_suite_is_an_expected_product_process_failure() {
         let selected = selected("t", "demo", "malformed", ExpectedExit::Failure("parse"));
         assert!(matches!(selected.expected, ExpectedExit::Failure("parse")));
-    }
-
-    #[test]
-    fn canonical_refusal_is_visible_and_requires_the_seeded_node_type() {
-        let report = ScenarioReport {
-            execution_id: "gate-2".into(),
-            scenario_epoch_secs: Some(1_700_000_000),
-            flow_id: "undrivable".into(),
-            flow_version: 1,
-            suite_id: "undrivable".into(),
-            refusal: Some(ScenarioRefusal::UndrivableNodes {
-                node_types: vec![UNDRIVABLE_NODE_TYPE.into()],
-            }),
-            cases: Vec::new(),
-        };
-
-        assert_eq!(
-            accepted_success_label(&report, ExpectedExit::Refusal(UNDRIVABLE_NODE_TYPE)).unwrap(),
-            "expected refusal PASS"
-        );
-        assert_eq!(
-            accepted_success_label(&report, ExpectedExit::Success).unwrap(),
-            "REFUSED"
-        );
-        assert!(accepted_success_label(&report, ExpectedExit::Pass).is_err());
-        assert!(accepted_success_label(&report, ExpectedExit::Refusal("wrong-node")).is_err());
     }
 
     #[test]
@@ -1075,29 +921,21 @@ mod tests {
     }
 
     #[test]
-    fn success_assertion_failure_and_undrivable_fixtures_are_distinct() {
-        assert_ne!(demo_graph("demo"), undrivable_graph("undrivable"));
+    fn success_and_assertion_failure_fixtures_are_distinct() {
         assert!(success_cases("demo")[0].2.contains("\"completed\""));
-        assert!(completion_case("u", "undrivable").contains("undrivable"));
     }
 
     #[test]
     fn publishable_fixture_graphs_do_not_reintroduce_retired_entry_or_trigger_fields() {
-        for graph in [demo_graph("demo"), undrivable_graph("undrivable")] {
-            let graph: serde_json::Value = serde_json::from_str(&graph).unwrap();
-            let graph = graph.as_object().unwrap();
-            assert!(!graph.contains_key("entry"));
-            assert!(!graph.contains_key("trigger"));
-        }
+        let graph: serde_json::Value = serde_json::from_str(&demo_graph("demo")).unwrap();
+        let graph = graph.as_object().unwrap();
+        assert!(!graph.contains_key("entry"));
+        assert!(!graph.contains_key("trigger"));
     }
 
     #[test]
     fn hermetic_run_count_expectations_distinguish_preflight_from_execution() {
         assert_eq!(expected_scenario_run_count(ExpectedExit::Pass, 2), Some(2));
-        assert_eq!(
-            expected_scenario_run_count(ExpectedExit::Refusal(UNDRIVABLE_NODE_TYPE), 1),
-            Some(0)
-        );
         assert_eq!(
             expected_scenario_run_count(ExpectedExit::Failure("parse stored case"), 1),
             Some(0)

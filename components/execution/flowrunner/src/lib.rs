@@ -76,12 +76,9 @@ use wamn_runner::{
     validate_event_outcome, validate_fail_outcome, validate_request_outcome,
 };
 
-#[cfg(test)]
-use wamn_node_invoke::WirePayload;
-use wamn_node_invoke::{NodeInvokeResponse, WireErrorDetail, WireNodeError};
-
 use wamn::postgres::client::{self};
 use wamn::postgres::types::{PgError, SqlValue};
+use wamn::runner::http_effect;
 
 use wasi::http::outgoing_handler;
 use wasi::http::types::{Fields, Method, OutgoingRequest, Scheme};
@@ -149,6 +146,188 @@ fn raw_sql_enabled_rows(rows: &[Vec<SqlValue>]) -> bool {
         return false;
     };
     matches!(serde_json::from_str::<Value>(value), Ok(Value::Bool(true)))
+}
+
+/// Identity claims passed with one trusted HTTP effect call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HttpEffectContext {
+    pub version: String,
+    pub run_id: String,
+    pub root_plan_hash: String,
+    pub current_plan_hash: String,
+    pub frame_id: u64,
+    pub local_node_id: String,
+    pub occurrence: u32,
+    pub source_artifact_hash: String,
+    pub requirement_name: String,
+}
+
+/// The standard-node capability facade over this component's real imports.
+#[derive(Default)]
+pub struct CapsCtx {
+    /// Whether the `RawSql` capability is granted.
+    pub raw_sql: bool,
+    /// Complete claims for this single effect attempt.
+    pub http_effect: Option<HttpEffectContext>,
+}
+
+impl sdk::NodeCtx for CapsCtx {
+    fn http(&mut self, req: &sdk::HttpRequest) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
+        trusted_http_effect(self.http_effect.as_ref(), req)
+    }
+
+    fn pg_query(
+        &mut self,
+        sql: &str,
+        params: &[sdk::PgValue],
+    ) -> Result<sdk::PgRows, sdk::PgCapError> {
+        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
+        let rs = client::query(sql, &params).map_err(wit_err_to_sdk)?;
+        Ok(sdk::PgRows {
+            columns: rs.columns.iter().map(|c| c.name.clone()).collect(),
+            rows: rs
+                .rows
+                .iter()
+                .map(|r| r.iter().map(wit_to_sdk).collect())
+                .collect(),
+        })
+    }
+
+    fn pg_execute(&mut self, sql: &str, params: &[sdk::PgValue]) -> Result<u64, sdk::PgCapError> {
+        let params: Vec<SqlValue> = params.iter().map(sdk_to_wit).collect();
+        client::execute(sql, &params).map_err(wit_err_to_sdk)
+    }
+
+    fn catalog_json(&mut self) -> Result<String, sdk::PgCapError> {
+        let rs = client::query("SELECT document::text FROM wamn_catalog LIMIT 1", &[])
+            .map_err(wit_err_to_sdk)?;
+        match rs.rows.first().and_then(|r| r.first()) {
+            Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => Ok(s.clone()),
+            _ => Err(sdk::PgCapError::QueryError {
+                code: String::new(),
+                message: "no catalog snapshot published for this project".into(),
+            }),
+        }
+    }
+
+    fn raw_sql_enabled(&self) -> bool {
+        self.raw_sql
+    }
+}
+
+fn sdk_to_wit(v: &sdk::PgValue) -> SqlValue {
+    match v {
+        sdk::PgValue::Null => SqlValue::Null,
+        sdk::PgValue::Bool(b) => SqlValue::Boolean(*b),
+        sdk::PgValue::Int32(n) => SqlValue::Int32(*n),
+        sdk::PgValue::Int64(n) => SqlValue::Int64(*n),
+        sdk::PgValue::Float64(f) => SqlValue::Float64(*f),
+        sdk::PgValue::Text(s) => SqlValue::Text(s.clone()),
+        sdk::PgValue::Bytes(b) => SqlValue::Bytes(b.clone()),
+        sdk::PgValue::Numeric(s) => SqlValue::Numeric(s.clone()),
+        sdk::PgValue::Timestamptz(s) => SqlValue::Timestamptz(s.clone()),
+        sdk::PgValue::Json(s) => SqlValue::Json(s.clone()),
+        sdk::PgValue::Uuid(s) => SqlValue::Uuid(s.clone()),
+    }
+}
+
+fn wit_to_sdk(v: &SqlValue) -> sdk::PgValue {
+    match v {
+        SqlValue::Null => sdk::PgValue::Null,
+        SqlValue::Boolean(b) => sdk::PgValue::Bool(*b),
+        SqlValue::Int32(n) => sdk::PgValue::Int32(*n),
+        SqlValue::Int64(n) => sdk::PgValue::Int64(*n),
+        SqlValue::Float64(f) => sdk::PgValue::Float64(*f),
+        SqlValue::Text(s) => sdk::PgValue::Text(s.clone()),
+        SqlValue::Bytes(b) => sdk::PgValue::Bytes(b.clone()),
+        SqlValue::Numeric(s) => sdk::PgValue::Numeric(s.clone()),
+        SqlValue::Timestamptz(s) => sdk::PgValue::Timestamptz(s.clone()),
+        SqlValue::Json(s) => sdk::PgValue::Json(s.clone()),
+        SqlValue::Uuid(s) => sdk::PgValue::Uuid(s.clone()),
+    }
+}
+
+fn wit_err_to_sdk(e: PgError) -> sdk::PgCapError {
+    match e {
+        PgError::SerializationFailure => sdk::PgCapError::SerializationFailure,
+        PgError::ConnectionUnavailable => sdk::PgCapError::ConnectionUnavailable,
+        PgError::StatementTimeout => sdk::PgCapError::StatementTimeout,
+        PgError::RowLimitExceeded(n) => sdk::PgCapError::RowLimitExceeded(n),
+        PgError::UniqueViolation(c) => sdk::PgCapError::UniqueViolation(c),
+        PgError::ForeignKeyViolation(c) => sdk::PgCapError::ForeignKeyViolation(c),
+        PgError::CheckViolation(c) => sdk::PgCapError::CheckViolation(c),
+        PgError::PermissionDenied => sdk::PgCapError::PermissionDenied,
+        PgError::QueryError((code, message)) => sdk::PgCapError::QueryError { code, message },
+    }
+}
+
+fn trusted_http_effect(
+    context: Option<&HttpEffectContext>,
+    req: &sdk::HttpRequest,
+) -> Result<sdk::HttpResponse, sdk::HttpCapError> {
+    let context = context.ok_or(sdk::HttpCapError::NotGranted)?;
+    if context.requirement_name != req.requirement {
+        return Err(sdk::HttpCapError::BadRequest(
+            "request requirement does not match the attempt context".into(),
+        ));
+    }
+    let context = http_effect_context_to_wit(context);
+    let request = http_effect::RelativeRequest {
+        method: req.method.clone(),
+        path_and_query: req.path_and_query.clone(),
+        headers: req
+            .headers
+            .iter()
+            .map(|(name, value)| http_effect::Header {
+                name: name.clone(),
+                value: value.as_bytes().to_vec(),
+            })
+            .collect(),
+        body: req.body.clone(),
+    };
+    http_effect::send(&context, &request)
+        .map(|response| sdk::HttpResponse {
+            status: response.status,
+            headers: response
+                .headers
+                .into_iter()
+                .map(|header| {
+                    (
+                        header.name,
+                        String::from_utf8_lossy(&header.value).into_owned(),
+                    )
+                })
+                .collect(),
+            body: response.body,
+        })
+        .map_err(|error| match error {
+            http_effect::EffectError::InvalidContext
+            | http_effect::EffectError::UndeclaredRequirement
+            | http_effect::EffectError::NodeNotPermitted
+            | http_effect::EffectError::Unbound
+            | http_effect::EffectError::InactiveGeneration
+            | http_effect::EffectError::Incompatible
+            | http_effect::EffectError::AuthorityDenied => sdk::HttpCapError::Denied,
+            http_effect::EffectError::CredentialUnavailable => {
+                sdk::HttpCapError::Transport("credential unavailable".into())
+            }
+            http_effect::EffectError::Timeout => sdk::HttpCapError::Transport("timeout".into()),
+            http_effect::EffectError::Transport(detail) => sdk::HttpCapError::Transport(detail),
+        })
+}
+
+fn http_effect_context_to_wit(context: &HttpEffectContext) -> http_effect::InvocationContext {
+    http_effect::InvocationContext {
+        version: context.version.clone(),
+        run_id: context.run_id.clone(),
+        root_plan_hash: context.root_plan_hash.clone(),
+        current_plan_hash: context.current_plan_hash.clone(),
+        frame_id: context.frame_id,
+        local_node_id: context.local_node_id.clone(),
+        occurrence: context.occurrence,
+        source_artifact_hash: context.source_artifact_hash.clone(),
+        requirement_name: context.requirement_name.clone(),
+    }
 }
 
 /// An already-serialized jsonb/text value or SQL NULL.
@@ -709,116 +888,10 @@ fn http_get(url: &str) -> u32 {
 }
 
 // ---------------------------------------------------------------------------
-// 5.6 / wamn-bd5: custom-node invocation (trusted platform-plane transport)
-// ---------------------------------------------------------------------------
-
-/// Dispatch a supplied component through the trusted host. The guest names only
-/// the exact release-admitted component digest; placement, signing, and network
-/// transport are environment-owned host concerns. A host refusal is an outer
-/// execution error, never a node-authored [`NodeError`].
-fn custom_node_dispatch(
-    _d: &Dispatch,
-    _run_id: &str,
-    _flow: &Flow,
-    _artifact: Option<&wamn_catalog::PinnedArtifact>,
-) -> Result<NodeOutcome, String> {
-    Err("custom node dispatch refuses without an authoritative execution-plan adapter".to_string())
-}
-
-fn node_response_to_outcome(
-    response: &[u8],
-    interface: &wamn_node_manifest::ResolvedNodeInterface,
-) -> Result<NodeOutcome, String> {
-    let response = std::str::from_utf8(response)
-        .map_err(|_| "custom node host returned a non-UTF-8 response".to_string())?;
-    let resp: NodeInvokeResponse = serde_json::from_str(response)
-        .map_err(|e| format!("custom node returned an undecodable response: {e}"))?;
-    let outcome = match resp {
-        NodeInvokeResponse::Ok(em) => {
-            let payload = match em.payload.inline() {
-                Some(s) => match serde_json::from_str(s) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        return Ok(NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
-                            "invalid-output",
-                            format!("custom node output payload is not JSON: {error}"),
-                        ))));
-                    }
-                },
-                None => Value::Null,
-            };
-            let port = em.port.unwrap_or_else(|| MAIN_PORT.to_string());
-            if !interface.permits_output_port(&port) {
-                return Ok(NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
-                    "invalid-output-port",
-                    format!("custom node emitted undeclared output port {port:?}"),
-                ))));
-            }
-            match em.ctx {
-                Some(context) => {
-                    let context: Value = match serde_json::from_str(&context) {
-                        Ok(context) => context,
-                        Err(error) => {
-                            return Ok(NodeOutcome::Error(NodeError::Terminal(
-                                ErrorDetail::coded(
-                                    "invalid-context",
-                                    format!("custom node context is not JSON: {error}"),
-                                ),
-                            )));
-                        }
-                    };
-                    if context.is_object() {
-                        NodeOutcome::ok_with_context(payload, port, context)
-                    } else {
-                        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
-                            "invalid-context",
-                            "custom node context replacement must be an object",
-                        )))
-                    }
-                }
-                None => NodeOutcome::ok_on(payload, port),
-            }
-        }
-        NodeInvokeResponse::Err(we) => NodeOutcome::Error(wire_error_to_runner(we)),
-    };
-    Ok(outcome)
-}
-
-/// Translate the frozen custom-node wire taxonomy into the reduced engine type.
-/// The four retained cases map directly; legacy `cancelled` becomes a terminal
-/// compatibility failure because standard-node cancellation was removed.
-fn wire_error_to_runner(e: WireNodeError) -> NodeError {
-    match e {
-        WireNodeError::Retryable(d) => NodeError::Retryable(wire_detail(d)),
-        WireNodeError::RateLimited(r) => NodeError::RateLimited(RateLimitDetail {
-            detail: wire_detail(r.detail),
-            retry_after_ms: r.retry_after_ms,
-            target_host: r.target_host,
-        }),
-        WireNodeError::Terminal(d) => NodeError::Terminal(wire_detail(d)),
-        WireNodeError::InvalidInput(d) => NodeError::InvalidInput(wire_detail(d)),
-        WireNodeError::Cancelled => NodeError::Terminal(ErrorDetail::coded(
-            "custom-node-cancelled",
-            "custom node returned the removed cancellation outcome",
-        )),
-    }
-}
-
-fn wire_detail(d: WireErrorDetail) -> ErrorDetail {
-    ErrorDetail {
-        message: d.message,
-        code: d.code,
-        data: d.data.and_then(|s| serde_json::from_str(&s).ok()),
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Standard node library glue (5.3): the wamn-standard-nodes vocabulary dispatches
-// through the SHARED capability facade `wamn_node_guest::caps::CapsCtx`
-// (SR2) over this component's real imports — the WIT<->SDK mirrors and the
-// full outbound-HTTP path live there, not here. Node-owned HTTP leaves through
-// the trusted `wamn:runner/http-effect` import; the separate `wasi:http` import
-// remains for the legacy S6 `http-call` fixture.
+// through the local capability facade over this component's real imports.
+// Node-owned HTTP leaves through the trusted `wamn:runner/http-effect` import;
+// the separate `wasi:http` import remains for the legacy S6 `http-call` fixture.
 // ---------------------------------------------------------------------------
 
 /// Whether the engine will ROUTE this error emission down the node's error
@@ -947,7 +1020,6 @@ enum ResolvedNode {
     LegacyConditional,
     PgWrite,
     HttpCall,
-    Custom,
     InvokeFlow,
     Standard,
 }
@@ -961,7 +1033,6 @@ fn resolve_node(node_type: &str, config: &Value) -> Option<ResolvedNode> {
         }
         "pg-write" => Some(ResolvedNode::PgWrite),
         "http-call" => Some(ResolvedNode::HttpCall),
-        "custom" => Some(ResolvedNode::Custom),
         "invoke-flow" => Some(ResolvedNode::InvokeFlow),
         node_type if wamn_nodes::is_standard(node_type) => Some(ResolvedNode::Standard),
         _ => None,
@@ -1012,12 +1083,10 @@ fn dispatch_node(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
-    artifact: Option<&wamn_catalog::PinnedArtifact>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeOutcome, String> {
-    let outcome =
-        dispatch_node_unvalidated(d, run_id, flow, artifact, kill_after_write, http_status)?;
+    let outcome = dispatch_node_unvalidated(d, run_id, flow, kill_after_write, http_status)?;
     validate_dispatched_action(d, &outcome)?;
     Ok(outcome)
 }
@@ -1034,7 +1103,6 @@ fn dispatch_node_unvalidated(
     d: &Dispatch,
     run_id: &str,
     flow: &Flow,
-    artifact: Option<&wamn_catalog::PinnedArtifact>,
     kill_after_write: bool,
     http_status: &mut u32,
 ) -> Result<NodeOutcome, String> {
@@ -1080,10 +1148,6 @@ fn dispatch_node_unvalidated(
             *http_status = http_get(url);
             Ok(NodeOutcome::ok(d.payload.clone()))
         }
-        // A supplied component is addressed only by the implementation digest
-        // pinned into this run's immutable artifact. The trusted host resolves
-        // its environment placement, signs the envelope, and owns transport.
-        ResolvedNode::Custom => custom_node_dispatch(d, run_id, flow, artifact),
         ResolvedNode::InvokeFlow => {
             Err("invoke-flow is handled by the claimed-run child runtime".to_string())
         }
@@ -1115,11 +1179,7 @@ fn dispatch_node_unvalidated(
                 config: &d.config,
                 context: &d.context,
             };
-            // 5.9: the ctx is FRESH per dispatch and carries ONLY this node's
-            // declared credential name — the vault resolves it lazily via the
-            // wamn:node credentials import, so the secret is scoped to the
-            // executing node's context structurally (siblings never see it).
-            let mut ctx = wamn_node_guest::caps::CapsCtx {
+            let mut ctx = CapsCtx {
                 raw_sql: wamn_nodes::required_capabilities(node_type)
                     .is_some_and(|capabilities| capabilities.contains(&sdk::Capability::RawSql))
                     && raw_sql_enabled(),
@@ -1143,28 +1203,8 @@ fn dispatch_node_unvalidated(
     }
 }
 
-/// Walk the active flow via the engine, resuming branch-aware from the persisted
-/// `node_runs` (5.7). `kill_after_write` makes the runner busy-loop right after
-/// `pg-write` commits and before its `node_runs` row is written (the pod-death
-/// window). Returns the version, the outcome (0 = completed, 1 = queue-waiting), and the
-/// last observed HTTP status.
-/// cjv.3: declare this run's credential grant to the host BEFORE dispatching
-/// any node, so the host can enforce the frozen `wamn:node/credentials`
-/// `not-granted` grant on this single, long-lived component (whose per-node
-/// boundary the host never sees). The grant is the flow's DECLARED credentials
-/// (`flow.credentials`); a `get` for anything else — the direct-import bypass a
-/// custom node could attempt — is refused. Per-NODE scoping still rides
-/// `CapsCtx` (a node reads only its OWN declared name), so `get` is bounded by
-/// both. Called on every walk (including a resume) since the grant lives on the
-/// long-lived instance and each run overwrites the prior declaration.
-fn declare_run_grant(flow: &Flow) {
-    let names: Vec<String> = flow.credentials.iter().map(|c| c.name.clone()).collect();
-    wamn::runner::credentials::set_granted(&names);
-}
-
 /// fqg.11: declare this run's egress allowlist (the flow's declared
-/// `allowed-hosts`) to the host BEFORE dispatching any node — the exact
-/// cjv.3 shape above, for outbound HTTP instead of credentials. The host
+/// `allowed-hosts`) to the host BEFORE dispatching any node. The host
 /// intersects it with its own host-level list; an undeclared (or empty)
 /// flow is deny-all. Called on every walk (including a resume) since the
 /// declaration lives on the long-lived instance and each run overwrites it.
@@ -1328,7 +1368,6 @@ fn execute(
             flow
         }
     };
-    declare_run_grant(&flow);
     declare_run_egress(&flow);
     let interfaces = s3_fixture_interfaces();
     let plan = Plan::compile(&flow, &interfaces).map_err(|e| e.to_string())?;
@@ -1413,8 +1452,7 @@ fn execute(
                     .map_err(|error| error.to_string())?;
             }
             Step::Dispatch(d) => {
-                let outcome =
-                    dispatch_node(&d, run_id, &flow, None, kill_after_write, &mut http_status)?;
+                let outcome = dispatch_node(&d, run_id, &flow, kill_after_write, &mut http_status)?;
                 if d.node_type == "fail" {
                     let config: FailConfig =
                         serde_json::from_value(d.config.clone()).expect("validated fail config");
@@ -3161,54 +3199,42 @@ mod tests {
     }
 
     #[test]
-    fn respond_resolves_through_the_standard_node_abi() {
+    fn respond_resolves_through_the_standard_node_interface() {
         assert_eq!(
             resolve_node("respond", &serde_json::json!({"status": 202})),
             Some(ResolvedNode::Standard)
         );
-        let contract = wamn_nodes::resolve_descriptor(
-            wamn_nodes::describe("respond").expect("respond descriptor is shipped"),
-        )
-        .expect("respond descriptor resolves");
-        assert_eq!(contract.interface.node_type, "respond");
-        assert_eq!(
-            contract.executable,
-            wamn_node_manifest::ExecutableIdentity::Platform {
-                revision: wamn_nodes::STANDARD_NODE_PLATFORM_REVISION.to_string()
-            }
-        );
+        let interface =
+            wamn_nodes::describe_interface("respond").expect("respond interface is shipped");
+        assert_eq!(interface.node_type, "respond");
     }
 
     #[test]
-    fn request_resolves_through_the_standard_node_abi() {
+    fn request_resolves_through_the_standard_node_interface() {
         assert_eq!(
             resolve_node("request", &serde_json::json!({"input-schema": {}})),
             Some(ResolvedNode::Standard)
         );
-        let contract = wamn_nodes::resolve_descriptor(
-            wamn_nodes::describe("request").expect("request descriptor is shipped"),
-        )
-        .expect("request descriptor resolves");
-        assert_eq!(contract.interface.node_type, "request");
-        assert_eq!(contract.interface.output_ports, ["main"]);
+        let interface =
+            wamn_nodes::describe_interface("request").expect("request interface is shipped");
+        assert_eq!(interface.node_type, "request");
+        assert_eq!(interface.output_ports, ["main"]);
     }
 
     #[test]
-    fn event_resolves_through_the_standard_node_abi() {
+    fn event_resolves_through_the_standard_node_interface() {
         assert_eq!(
             resolve_node("event", &serde_json::Value::Null),
             Some(ResolvedNode::Standard)
         );
-        let contract = wamn_nodes::resolve_descriptor(
-            wamn_nodes::describe("event").expect("event descriptor is shipped"),
-        )
-        .expect("event descriptor resolves");
-        assert_eq!(contract.interface.node_type, "event");
-        assert_eq!(contract.interface.output_ports, ["main"]);
+        let interface =
+            wamn_nodes::describe_interface("event").expect("event interface is shipped");
+        assert_eq!(interface.node_type, "event");
+        assert_eq!(interface.output_ports, ["main"]);
     }
 
     #[test]
-    fn fail_resolves_through_the_standard_node_abi() {
+    fn fail_resolves_through_the_standard_node_interface() {
         assert_eq!(
             resolve_node(
                 "fail",
@@ -3216,12 +3242,9 @@ mod tests {
             ),
             Some(ResolvedNode::Standard)
         );
-        let contract = wamn_nodes::resolve_descriptor(
-            wamn_nodes::describe("fail").expect("fail descriptor is shipped"),
-        )
-        .expect("fail descriptor resolves");
-        assert_eq!(contract.interface.node_type, "fail");
-        assert_eq!(contract.interface.output_ports, ["main"]);
+        let interface = wamn_nodes::describe_interface("fail").expect("fail interface is shipped");
+        assert_eq!(interface.node_type, "fail");
+        assert_eq!(interface.output_ports, ["main"]);
     }
 
     #[test]
@@ -3357,50 +3380,6 @@ mod tests {
                 )
             );
         }
-    }
-
-    #[test]
-    fn node_authored_malformed_output_is_a_terminal_node_failure() {
-        let interface = wamn_node_manifest::ResolvedNodeInterface::new(
-            "custom",
-            wamn_node_manifest::NODE_WORLD_INTERFACE,
-            vec!["main".into()],
-            Vec::new(),
-            Vec::new(),
-        );
-        for (response, code) in [
-            (
-                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
-                    payload: WirePayload::Inline("not-json".into()),
-                    port: None,
-                    ctx: None,
-                }),
-                "invalid-output",
-            ),
-            (
-                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
-                    payload: WirePayload::Inline("{}".into()),
-                    port: None,
-                    ctx: Some("not-json".into()),
-                }),
-                "invalid-context",
-            ),
-            (
-                NodeInvokeResponse::Ok(wamn_node_invoke::WireEmission {
-                    payload: WirePayload::Inline("{}".into()),
-                    port: Some("undeclared".into()),
-                    ctx: None,
-                }),
-                "invalid-output-port",
-            ),
-        ] {
-            assert!(matches!(
-                node_response_to_outcome(response.to_json().as_bytes(), &interface),
-                Ok(NodeOutcome::Error(NodeError::Terminal(ref detail)))
-                    if detail.code.as_deref() == Some(code)
-            ));
-        }
-        assert!(node_response_to_outcome(b"not-json", &interface).is_err());
     }
 
     #[test]

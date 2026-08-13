@@ -1731,9 +1731,9 @@ mod tests {
         let mut implementations = ["request", "postgres", "respond"]
             .into_iter()
             .map(|node_type| {
-                let descriptor = wamn_standard_nodes::describe(node_type).unwrap();
-                let contract = wamn_standard_nodes::resolve_descriptor(descriptor).unwrap();
-                contract.interface
+                wamn_standard_nodes::describe_interface(node_type)
+                    .expect("standard interface is shipped")
+                    .clone()
             })
             .collect::<Vec<_>>();
         implementations.sort_by(|left, right| left.node_type.cmp(&right.node_type));

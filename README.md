@@ -6,11 +6,10 @@ runtime. **`docs/` is the design source of truth** — start with
 `docs/archive/PLAN/PLAN.md` (the roadmap and decision map); `docs/archive/platform-plan.md`
 holds the D-number decision table as the archive of record.
 
-`services/host` is the production washlet host, while `services/node-host`
-serves custom nodes. Both are thin deployable leaves over reusable platform
-packages. Production queue execution and deterministic scenario execution are
-separate artifacts which share `crates/execution/host` and the same flowrunner
-component. Our wash-runtime changes are carried commits on a fork — see
+`services/host` is the production washlet host. Production queue execution and
+deterministic scenario execution are separate artifacts which share
+`crates/execution/host` and the same flowrunner component. Our wash-runtime
+changes are carried commits on a fork — see
 `docs/archive/platform/wash-runtime-fork.md`.
 
 ## Repository layout
@@ -19,7 +18,6 @@ component. Our wash-runtime changes are carried commits on a fork — see
 services/               native deployable Rust services
   host                  production host: washlet embedding + host plugins
                         (wamn:postgres, logging, jetstream) — washlet only (SR9)
-  node-host             custom-node HTTP/auth transport leaf
   ctl                   one-shot control-plane verbs (provision-*, publish/
                         migrate-catalog, dump/restore/copy-project-env,
                         enable-cdc-project-env) — SR9 split
@@ -29,7 +27,6 @@ services/               native deployable Rust services
   scenario-worker       management service + transitional stored-test executor
   cdc-reader            CDC event-reader service (SR9 split)
   waker                 scale-to-zero wake actuator
-  builder               sandboxed custom-node build service
 
 crates/                 shared Rust workspace packages
   # shared, non-deployable packages grouped by bounded context:
@@ -38,7 +35,6 @@ crates/                 shared Rust workspace packages
   platform/
     component-policy    pure component-import and grant policy
     runtime             shared engine, plugins, WIT, and metrics
-    node-runtime        transport-free warm custom-node runtime
     pg-core             wamn-pg-core: guest-safe PostgreSQL primitives
   data/
     entity-access       wamn-entity-access: transport-neutral entity planner
@@ -58,11 +54,6 @@ crates/                 shared Rust workspace packages
     wire                wamn-event-wire: event envelope contract
     registration        wamn-event-reg: event registration model
     materializer        wamn-materializer: CDC materialization decisions
-  node/
-    sdk                 wamn-node-sdk: node authoring contract
-    guest               wamn-node-guest: componentization scaffolding
-    invoke              wamn-node-invoke: node invocation wire contract
-    manifest            wamn-node-manifest: OCI annotation model
   control/
     registry            wamn-control-registry: org/project/environment model
     provision           wamn-control-provision: Postgres provisioning builders
@@ -74,11 +65,10 @@ crates/                 shared Rust workspace packages
     runtime             deterministic clocks/random/egress/credentials
 
 components/             wasm32-wasip2 guests
-  ingress/              product ingress components (api-gateway)
+  ingress/              product ingress components (flow-http)
   execution/            product execution components (flowrunner, materializer)
-  fixtures/             non-product proof fixtures (flow-driver, busyloop,
-                        sockprobe)
-  samples/              reference/sample nodes (node-rs, node-ts, sample-node)
+  fixtures/             non-product proof fixtures (busyloop,
+                        connection-http-standard, sockprobe)
 
 test-support/
   harness/              shared measurement helpers for gates
@@ -120,7 +110,7 @@ Dockerfile              shared build plus one final stage per deployable artifac
 
 ```bash
 # host + gate suite (debug by default)
-cargo build -p wamn-host -p wamn-node-host -p wamn-ctl -p wamn-dispatcher \
+cargo build -p wamn-host -p wamn-ctl -p wamn-dispatcher \
   -p wamn-executor -p wamn-scenario-worker -p wamn-cdc-reader -p wamn-gates
 
 # wasm guests
@@ -163,12 +153,10 @@ helm upgrade --install -n wamn-system wamn \
   oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
   -f deploy/infra/values-wamn.yaml
 
-# 2. build the host, node-host, and gate images and load them into kind
+# 2. build the host and gate images and load them into kind
 docker build --target host  -t wamn-host:dev  .
-docker build --target node-host -t wamn-node-host:dev .
 docker build --target gates -t wamn-gates:dev .
 kind load docker-image wamn-host:dev  --name wamn
-kind load docker-image wamn-node-host:dev --name wamn
 kind load docker-image wamn-gates:dev --name wamn
 kubectl -n wamn-system rollout status deploy/hostgroup-default
 

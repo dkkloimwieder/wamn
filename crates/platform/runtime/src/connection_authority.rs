@@ -5,7 +5,7 @@ use std::net::{IpAddr, SocketAddr};
 
 use hyper::Uri;
 use url::{Host, Url};
-use wamn_node_manifest::CanonicalHttpTarget;
+use wamn_flow::node_contract::CanonicalHttpTarget;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 
 /// Supported outbound HTTP schemes.

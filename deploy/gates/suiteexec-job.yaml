@@ -10,13 +10,12 @@
 # HERMETIC: `--seed-demo` invokes the real `wamn-ctl publish-catalog --provision
 # --runstate` boundary for its THROWAWAY source schema (wamn_suiteexec, NOT
 # poc_f1) and every execution schema. The immutable release contains a drivable
-# NO-EGRESS request -> postgres(create sink) -> respond member and an undrivable
-# request -> disposition-recommendation -> respond member pinned to the exact
-# `/bench/disposition-node.wasm` digest. Legacy `flows` rows exist only for the
-# scenario-table foreign keys and are poisoned after seeding, proving execution
-# has no mutable projection fallback. Success, malformed, preflight-refusal, and
-# assertion-failure suites run before teardown; the gate verifies every created
-# root run's exact release pin. No external fixture data or live egress target.
+# NO-EGRESS request -> postgres(create sink) -> respond member. Legacy `flows`
+# rows exist only for the scenario-table foreign keys and are poisoned after
+# seeding, proving execution has no mutable projection fallback. Success,
+# malformed, and assertion-failure suites run before teardown; the gate verifies
+# every created root run's exact release pin. No external fixture data or live
+# egress target.
 #
 # The per-case EXECUTION schemas (tk_suiteexec_<n>) are provisioned through the
 # superuser (WAMN_PG_ADMIN_URL) — wamn_app is NOSUPERUSER/NOCREATEDB and cannot
@@ -66,7 +65,6 @@ spec:
               "--tenant", "demo-tenant",
               "--source-schema", "wamn_suiteexec",
               "--exec-schema", "tk_suiteexec",
-              "--node", "/bench/disposition-node.wasm",
               "--flowrunner", "/bench/flowrunner.wasm",
             ]
           env:

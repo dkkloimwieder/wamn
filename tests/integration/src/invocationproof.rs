@@ -11,8 +11,8 @@ use tokio_postgres::{Client, Config, NoTls};
 use wamn_catalog::Artifact;
 use wamn_execution_host::{ExecutionHost, ExecutionIdentity, production_capabilities};
 use wamn_flow::Flow;
+use wamn_flow::node_contract::NodeInterface;
 use wamn_flow_invocation::{BeginResult, InvokeRequest, InvokeResult};
-use wamn_node_manifest::ResolvedNodeInterface;
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::flow_invocation::{
     InlineRunClaim, InlineRunDriver, InvocationService, InvocationServiceConfig,
@@ -117,15 +117,13 @@ fn echo_flow() -> anyhow::Result<Flow> {
     .map_err(|error| anyhow::anyhow!("parse exact-run fixture: {error}"))
 }
 
-fn echo_implementations() -> anyhow::Result<Vec<ResolvedNodeInterface>> {
+fn echo_implementations() -> anyhow::Result<Vec<NodeInterface>> {
     ["request", "respond"]
         .into_iter()
         .map(|node_type| {
-            let descriptor = wamn_standard_nodes::describe(node_type)
-                .with_context(|| format!("missing standard-node descriptor for {node_type}"))?;
-            let contract =
-                wamn_standard_nodes::resolve_descriptor(descriptor).map_err(anyhow::Error::new)?;
-            Ok(contract.interface)
+            let interface = wamn_standard_nodes::describe_interface(node_type)
+                .with_context(|| format!("missing standard-node interface for {node_type}"))?;
+            Ok(interface.clone())
         })
         .collect()
 }

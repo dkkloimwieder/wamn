@@ -18,7 +18,7 @@ mod tests {
     fn expected_connection_requirement() -> wamn_flow::FlowConnectionRequirement {
         wamn_flow::FlowConnectionRequirement {
             name: CONNECTION_NAME.to_string(),
-            requirement: wamn_node_manifest::ConnectionTypeDescriptor::http_v1(),
+            requirement: wamn_flow::node_contract::ConnectionTypeDescriptor::http_v1(),
         }
     }
 
@@ -144,20 +144,10 @@ mod tests {
             include_str!("../../../deploy/platform/runner-connection-egress.example.yaml");
         let p0 = include_str!("../../../deploy/gates/runner-connection-egress.yaml");
         let credproof = include_str!("../../../deploy/gates/credproof-job.yaml");
-        let platform_node = include_str!("../../../deploy/platform/serve-node.yaml");
-        let gate_node = include_str!("../../../deploy/gates/serve-node.yaml");
-
         for manifest in [runner, platform, external, p0, credproof] {
             assert!(manifest.contains("wamn.io/egress-profile: runner"));
         }
-        for required in [
-            "kube-dns",
-            "5432",
-            "4222",
-            "4317",
-            "wamn.io/egress-role: signed-node",
-            "8080",
-        ] {
+        for required in ["kube-dns", "5432", "4222", "4317"] {
             assert!(
                 platform.contains(required),
                 "missing platform admission {required}"
@@ -171,9 +161,6 @@ mod tests {
         assert!(runner.contains("apply -f deploy/platform/runner-netpol.yaml"));
         assert!(runner.contains("RUNNER_CONNECTION_EGRESS_POLICY=/path/to/"));
         assert!(runner.contains("omission denies all business egress"));
-        for node in [platform_node, gate_node] {
-            assert!(node.contains("wamn.io/egress-role: signed-node"));
-        }
     }
 
     #[test]

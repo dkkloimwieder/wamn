@@ -1,6 +1,6 @@
 //! Compatibility router for the temporarily retained stored-test executor.
 //!
-//! The former file-case and custom-node assertion harness used the removed
+//! The former file-case assertion harness used the removed
 //! output, port, database, and egress assertion families. The remaining path
 //! delegates only the persisted selector protocol, whose physical deletion is
 //! owned by the stored-test closing work.
@@ -19,10 +19,6 @@ pub struct TestKitBenchArgs {
     /// Product stored-test worker executable used by the compatibility adapter.
     #[arg(long, default_value = "/usr/local/bin/wamn-scenario-worker")]
     pub scenario_worker: PathBuf,
-
-    /// Exact component used by the hermetic demo publisher.
-    #[arg(long, default_value = "/bench/disposition-node.wasm")]
-    pub node: PathBuf,
 
     /// Application-role PostgreSQL URL.
     #[arg(long)]
@@ -78,7 +74,6 @@ pub async fn run(args: TestKitBenchArgs) -> anyhow::Result<()> {
         wamn_test_infrastructure::scenario_worker_gate::StoredSuiteGateArgs {
             worker: args.scenario_worker,
             flowrunner: args.flowrunner,
-            node: args.node,
             database_url: args.database_url,
             admin_database_url: args
                 .admin_database_url

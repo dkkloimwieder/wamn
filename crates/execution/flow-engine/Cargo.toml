@@ -1,6 +1,6 @@
 [package]
 name = "wamn-runner"
-description = "wamn flow-runner engine (5.2): a pure, synchronous reducer over a wamn-flow graph — ported-edge walk, branch/merge, error-path routing, and retry/backoff keyed mechanically off the wamn:node error taxonomy. Effects (node dispatch, durable state, the clock) are the driver's; the engine only decides."
+description = "wamn flow-runner engine (5.2): a pure, synchronous reducer over a wamn-flow graph — ported-edge walk, branch/merge, error-path routing, and retry/backoff keyed mechanically off node error classification. Effects (node dispatch, durable state, the clock) are the driver's; the engine only decides."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -236,7 +236,7 @@ impl Harness {
         // The whole flowrunner import set, registered once for every bench that
         // rolls its own linker. The S3 flows call none of the effectful ones
         // (wasi:http, the vault, wasi:logging, and the trusted HTTP-connection
-        // and node-invocation frames), but every import must be linkable to
+        // frame), but every import must be linkable to
         // instantiate; the ones `plugin_map` leaves unbacked trap if called.
         add_flowrunner_imports_to_linker(&mut linker)?;
         let pre = linker.instantiate_pre(&component)?;
@@ -254,14 +254,6 @@ impl Harness {
         m.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
             self.plugin.clone() as Arc<dyn HostPlugin + Send + Sync>,
-        );
-        // cjv.3: the flowrunner declares its per-run grant on every walk, so a
-        // credentials plugin must back the linked interface. No S3 fixture
-        // declares a credential, so an empty unbacked vault suffices.
-        m.insert(
-            wamn_runtime::plugins::wamn_credentials::WAMN_CREDENTIALS_ID,
-            Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty())
-                as Arc<dyn HostPlugin + Send + Sync>,
         );
         // fqg.11: the flowrunner declares its per-run egress on every walk, so
         // the policy plugin must back the linked interface. Enforcement here is
@@ -380,7 +372,7 @@ const DISPATCH_P99_NS: u64 = 50_000;
 
 /// Dispatches one walk of `flow` spends.
 ///
-/// Every node type now executes through the node ABI — the wamn-ayq7 series
+/// Every node type now executes through standard-node dispatch — the wamn-ayq7 series
 /// moved `respond` (e937df7), `request` (58c3ed3), `cron` (a30cff6), `event`
 /// (d6f8084) and `fail` (5d99ed0) off the engine-reserved path — so `Plan::next`
 /// hands the driver a `Step::Dispatch` for each of them and a linear graph spends
@@ -428,7 +420,7 @@ mod dispatch_cardinality_tests {
         assert!(dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS - 1));
         assert!(!dispatch_passes(&flow, 2, 12, DISPATCH_P99_NS - 1));
         // 3 per walk is the pre-wamn-ayq7 count (entry + respond subtracted); the
-        // verdict must reject it now that both dispatch through the node ABI.
+        // verdict must reject it now that both dispatch through standard-node execution.
         assert!(!dispatch_passes(&flow, 2, 6, DISPATCH_P99_NS - 1));
         assert!(!dispatch_passes(&flow, 2, 10, DISPATCH_P99_NS));
     }

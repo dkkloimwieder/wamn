@@ -1,5 +1,5 @@
 //! Per-node retry policy + backoff. The engine owns the backoff *curve*; the
-//! `wamn:node` contract owns only the *classification* (retryable / rate-limited /
+//! node contract owns only the *classification* (retryable / rate-limited /
 //! terminal / …) and the optional source-authoritative `retry-after` delay.
 //!
 //! The policy is read from a reserved `"retry"` object inside the node's opaque

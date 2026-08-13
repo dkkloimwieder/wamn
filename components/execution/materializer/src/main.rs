@@ -372,16 +372,11 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
         _ => return None,
     };
     let flow = Flow::from_json(graph).ok()?;
-    let interfaces: Vec<wamn_node_manifest::ResolvedNodeContract> =
+    let interfaces: Vec<wamn_flow::node_contract::NodeInterface> =
         serde_json::from_str(interfaces).ok()?;
     let resolved = interfaces
         .into_iter()
-        .map(|contract| {
-            (
-                contract.interface.node_type,
-                contract.interface.output_ports,
-            )
-        })
+        .map(|interface| (interface.node_type, interface.output_ports))
         .collect();
     flow.validate(&resolved).ok()?;
     if flow.flow_id != flow_id {

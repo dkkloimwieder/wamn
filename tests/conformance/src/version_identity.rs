@@ -188,11 +188,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/platform/runtime/src/plugins/wamn_postgres/claims.rs",
-        exact: "source_run.admission_context_version = '0.1'",
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "test-support/infrastructure/scenario_worker_gate.rs",
         exact: "r.admission_context_version = '0.1'",
         expected_count: 1,
@@ -218,16 +213,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "crates/node/guest/wit-caps/deps/wamn-runner/package.wit",
-        exact: "version: string,",
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/node/guest/src/caps.rs",
-        exact: "pub version: String,",
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/platform/runtime/src/plugins/connection_http.rs",
         exact: r#"context.version != "0.1""#,
         expected_count: 1,
@@ -240,11 +225,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     GovernedLiteral {
         path: "crates/catalog/model/src/lib.rs",
         exact: r#"const IDENTITY_FORMAT: &[u8] = b"wamn.catalog.identity.v0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
-        path: "crates/execution/standard-nodes/src/lib.rs",
-        exact: r#"pub const STANDARD_NODE_PLATFORM_REVISION: &str = "wamn-standard-nodes@0.1.0";"#,
         expected_count: 1,
     },
     GovernedLiteral {
@@ -439,6 +419,7 @@ fn tracked_wit_files(repository: &Path) -> Vec<PathBuf> {
         .filter(|path| !path.is_empty())
         .map(|path| std::str::from_utf8(path).expect("tracked WIT path must be valid UTF-8"))
         .filter(|path| !Path::new(path).starts_with("docs/archive"))
+        .filter(|path| repository.join(path).is_file())
         .map(|path| repository.join(path))
         .collect()
 }

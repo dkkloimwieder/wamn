@@ -25,7 +25,6 @@ wamn-catalog = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-flow-invocation = { workspace = true }
 wamn-gate-harness = { workspace = true }
-wamn-node-manifest = { workspace = true }
 wamn-runtime = { workspace = true }
 wash-runtime = { workspace = true }
 wasmtime-wasi = { workspace = true }

@@ -132,23 +132,17 @@ fn negative_every_post_admission_value_has_run_identity() {
 }
 
 #[test]
-fn negative_contract_does_not_alias_the_custom_node_invocation_abi() {
+fn negative_contract_does_not_alias_the_deleted_node_abi() {
     let manifest = fs::read_to_string(crate_root().join("Cargo.toml")).expect("Cargo.toml reads");
     let wit = fs::read_to_string(crate_root().join("wit/package.wit")).expect("WIT reads");
     let rust = fs::read_to_string(crate_root().join("src/lib.rs")).expect("src/lib.rs reads");
     let executable_sources = format!("{manifest}\n{wit}\n{rust}").to_ascii_lowercase();
 
-    for forbidden in [
-        "wamn-node-invoke =",
-        "wamn_node_invoke::",
-        "wamn:node/",
-        "nodeinvokerequest",
-    ] {
-        assert!(
-            !executable_sources.contains(forbidden),
-            "flow invocation must not alias custom-node ABI marker {forbidden:?}"
-        );
-    }
+    let forbidden = "wamn:node/";
+    assert!(
+        !executable_sources.contains(forbidden),
+        "flow invocation must not alias deleted node ABI marker {forbidden:?}"
+    );
 }
 
 #[test]

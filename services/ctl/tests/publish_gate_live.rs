@@ -263,7 +263,6 @@ impl World {
             runstate: true,
             seed_dataset: None,
             flow: vec![flow_path],
-            custom_node: Vec::new(),
             exposure: None,
             skip_reconcile_replica_identity: true,
         })

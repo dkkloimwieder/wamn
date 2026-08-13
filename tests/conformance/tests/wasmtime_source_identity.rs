@@ -10,17 +10,13 @@ const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-
 const WASMTIME_VERSION: &str = "47.0.1";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
-const DIRECT_CONSUMERS: [(&str, &[&str]); 7] = [
+const DIRECT_CONSUMERS: [(&str, &[&str]); 6] = [
     (
         "crates/scenarios/runtime/Cargo.toml",
         &["wasmtime-wasi", "wasmtime-wasi-http"],
     ),
     (
         "crates/execution/host/Cargo.toml",
-        &["wasmtime-wasi", "wasmtime-wasi-http"],
-    ),
-    (
-        "crates/platform/node-runtime/Cargo.toml",
         &["wasmtime-wasi", "wasmtime-wasi-http"],
     ),
     ("tests/conformance/Cargo.toml", &["wasmtime-wasi"]),
