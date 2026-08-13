@@ -5500,7 +5500,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
     --test migrate migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres \
     -- --exact --nocapture
 
-# Regenerate and verify the 74-row core+ops authority table from pg_catalog.
+# Regenerate and verify the 77-row core+ops authority table from pg_catalog.
 WAMN_UPDATE_PROTECTED_RELATIONS=1 \
 WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
@@ -5539,6 +5539,61 @@ bash -n tools/gate-mutants/migrate-catalog-additive.sh \
   tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
+
+## SR-MVP — durable test orchestration (`wamn-0h0g.8.4`)
+
+The management-owned durable substrate reserves one report and one stable run
+identity per ordinal, reconciles deadlines and effect uncertainty to immutable
+failed cases, pins one report-level resolution map, and projects frame-keyed
+node facts through that map. Sequential admission/execution and the public
+report query remain in their owning follow-up beads.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-scenario-worker \
+    store::test_orchestration --lib
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-schema-control \
+    durable_test_orchestration_is_in_the_schema_control_record --lib
+
+# PostgreSQL 18 proof over a disposable database. The same fixture may be used
+# for the pg_catalog-derived authority-table regeneration and verification.
+WAMN_TEST_ORCHESTRATION_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-scenario-worker \
+    --test test_orchestration_live -- --nocapture --test-threads=1
+WAMN_UPDATE_PROTECTED_RELATIONS=1 WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test protected_relations_live -- --nocapture --test-threads=1
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+    --test state_ownership
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-scenario-worker \
+    -p wamn-schema-control --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/test-orchestration.sh run-all
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/protected-relations.sh green-all
+
+rustfmt --edition 2024 --check \
+  crates/schema/control/src/run_plane.rs \
+  services/scenario-worker/src/authoring.rs \
+  services/scenario-worker/src/store/{mod.rs,test_orchestration.rs} \
+  services/scenario-worker/tests/test_orchestration_live.rs \
+  tests/conformance/tests/state_ownership.rs
+bash -n tools/gate-mutants/test-orchestration.sh \
+  tools/gate-mutants/protected-relations.sh
+git diff --check
+```
+
+The three test-orchestration mutants remove the plan-hash join, omit a durable
+case table from schema-control, and recreate the from-zero bug where triggers
+located after a shared helper never install. Each must fail its named owner
+test, then restore the exact source hash.
 
 ## SR-MVP — callee validation and callable eligibility (`wamn-0h0g.3.1`)
 

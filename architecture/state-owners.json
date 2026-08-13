@@ -292,16 +292,6 @@
         ]
       },
       {
-        "path": "components/execution/flowrunner/src/lib.rs",
-        "principal": "flowrunner",
-        "family": "generated-tenant-entities",
-        "marker": "\"INSERT INTO sink",
-        "operations": [
-          "insert",
-          "delete"
-        ]
-      },
-      {
         "path": "crates/execution/standard-nodes/src/postgres.rs",
         "principal": "standard-nodes-raw-sql",
         "family": "generated-tenant-entities",
@@ -1353,6 +1343,57 @@
     },
     {
       "id": "wamn_run.authoring_test_sets",
+      "plane": "project",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_test_run_reservations",
+      "plane": "project",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_test_case_runs",
+      "plane": "project",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": [
+        "schema-control"
+      ],
+      "schema_source": "deploy/sql/flow-tests.sql",
+      "writers": [
+        "scenario-worker"
+      ],
+      "readers": [
+        "scenario-worker"
+      ],
+      "compatibility_horizon": "scenario-format-and-platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "wamn_run.authoring_test_reports",
       "plane": "project",
       "semantic_owner": "scenario-worker",
       "migration_owners": [

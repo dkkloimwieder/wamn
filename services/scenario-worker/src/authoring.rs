@@ -46,6 +46,11 @@ WITH session_role AS ( \
            ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
            ('catalog', 'authoring_command_audit', 'INSERT'), \
            ('catalog', 'publish_gate_audit', 'INSERT'), \
+           ($1::text, 'authoring_test_run_reservations', 'INSERT'), \
+           ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
+           ($1::text, 'authoring_test_case_runs', 'INSERT'), \
+           ($1::text, 'authoring_test_case_runs', 'UPDATE'), \
+           ($1::text, 'authoring_test_reports', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'INSERT'), \
            ($1::text, 'authoring_report_reservations', 'UPDATE'), \
            ($1::text, 'authoring_suite_case_facts', 'INSERT'), \
@@ -2039,6 +2044,29 @@ mod tests {
                 .contains("pg_catalog.has_table_privilege(current_user, $7, 'INSERT')")
         );
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'UPDATE')"));
+        for allowed in [
+            "($1::text, 'authoring_test_run_reservations', 'INSERT')",
+            "($1::text, 'authoring_test_run_reservations', 'UPDATE')",
+            "($1::text, 'authoring_test_case_runs', 'INSERT')",
+            "($1::text, 'authoring_test_case_runs', 'UPDATE')",
+            "($1::text, 'authoring_test_reports', 'INSERT')",
+        ] {
+            assert!(
+                AUTHORING_ROLE_PROBE_SQL.contains(allowed),
+                "missing {allowed}"
+            );
+        }
+        for forbidden in [
+            "($1::text, 'authoring_test_run_reservations', 'DELETE')",
+            "($1::text, 'authoring_test_case_runs', 'DELETE')",
+            "($1::text, 'authoring_test_reports', 'UPDATE')",
+            "($1::text, 'authoring_test_reports', 'DELETE')",
+        ] {
+            assert!(
+                !AUTHORING_ROLE_PROBE_SQL.contains(forbidden),
+                "unexpected {forbidden}"
+            );
+        }
         assert!(
             !AUTHORING_ROLE_PROBE_SQL
                 .to_ascii_uppercase()

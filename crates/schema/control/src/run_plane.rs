@@ -611,6 +611,246 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Table,
     },
     CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_report_id_check",
+        definition: "CHECK (report_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_command_hash_check",
+        definition: "CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_validated_draft_id_check",
+        definition: "CHECK (validated_draft_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_catalog_id_check",
+        definition: "CHECK (catalog_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_catalog_version_check",
+        definition: "CHECK (catalog_version > 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_case_count_check",
+        definition: "CHECK (case_count >= 1 AND case_count <= 256)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_resolution_map_check",
+        definition: "CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_resolution_map_hash_check",
+        definition: "CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_state_check",
+        definition: "CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_check",
+        definition: "CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_check1",
+        definition: "CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_check2",
+        definition: "CHECK (whole_deadline_at > created_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_run_reservations",
+        name: "authoring_test_run_reservations_check3",
+        definition: "CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_report_id_check",
+        definition: "CHECK (report_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_ordinal_check",
+        definition: "CHECK (ordinal >= 0 AND ordinal <= 255)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_case_id_check",
+        definition: "CHECK (case_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_run_id_check",
+        definition: "CHECK (run_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_catalog_id_check",
+        definition: "CHECK (catalog_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_catalog_version_check",
+        definition: "CHECK (catalog_version > 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_validated_draft_id_check",
+        definition: "CHECK (validated_draft_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_state_check",
+        definition: "CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_failure_kind_check",
+        definition: "CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text, 'resolution-map-mismatch'::text]))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_resolution_map_check",
+        definition: "CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_resolution_map_hash_check",
+        definition: "CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_summary_check",
+        definition: "CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_check",
+        definition: "CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_check1",
+        definition: "CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_check2",
+        definition: "CHECK (case_deadline_at > created_at)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_case_runs",
+        name: "authoring_test_case_runs_check3",
+        definition: "CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_tenant_id_check",
+        definition: "CHECK (tenant_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_report_id_check",
+        definition: "CHECK (report_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_validated_draft_id_check",
+        definition: "CHECK (validated_draft_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_catalog_id_check",
+        definition: "CHECK (catalog_id <> ''::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_catalog_version_check",
+        definition: "CHECK (catalog_version > 0)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_resolution_map_check",
+        definition: "CHECK (jsonb_typeof(resolution_map) = 'object'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_resolution_map_hash_check",
+        definition: "CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_summary_check",
+        definition: "CHECK (jsonb_typeof(summary) = 'object'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "authoring_test_reports",
+        name: "authoring_test_reports_check",
+        definition: "CHECK (resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
         table: "authoring_report_reservations",
         name: "authoring_report_reservations_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -1415,6 +1655,40 @@ fn materialize_helper_repair_sql() -> String {
     )
 }
 
+fn flow_test_helper_sql(name: &str) -> &'static str {
+    let head = format!("CREATE OR REPLACE FUNCTION wamn_run.{name}()");
+    let start = FLOW_TESTS_SQL
+        .find(&head)
+        .unwrap_or_else(|| panic!("flow-test record must define {name}"));
+    let tail = &FLOW_TESTS_SQL[start..];
+    let function_end = tail
+        .find("\n$$;")
+        .map(|offset| offset + "\n$$;".len())
+        .unwrap_or_else(|| panic!("flow-test helper {name} must close its body"));
+    let privileges = &tail[function_end..];
+    let revoke_end = privileges
+        .find(';')
+        .map(|offset| function_end + offset + 1)
+        .unwrap_or_else(|| panic!("flow-test helper {name} must revoke PUBLIC"));
+    &tail[..revoke_end]
+}
+
+fn flow_test_helper_definition(name: &str) -> String {
+    let sql = flow_test_helper_sql(name);
+    let (header, body_and_privileges) = sql
+        .split_once("\nAS $$\n")
+        .unwrap_or_else(|| panic!("flow-test helper {name} must use its canonical delimiter"));
+    let body = body_and_privileges
+        .split_once("\n$$;")
+        .map(|(body, _)| body)
+        .unwrap_or_else(|| panic!("flow-test helper {name} must close its canonical body"));
+    let signature = header
+        .lines()
+        .next()
+        .expect("flow-test helper signature is non-empty");
+    format!("{signature}\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n{body}\n$function$\n")
+}
+
 fn helper_specs() -> Vec<HelperSpec> {
     vec![
         borrowed_helper_spec(
@@ -1452,6 +1726,24 @@ fn helper_specs() -> Vec<HelperSpec> {
             REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF,
             REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL,
         ),
+        HelperSpec {
+            name: "reject_immutable_authoring_test_orchestration_change",
+            definition: Cow::Owned(flow_test_helper_definition(
+                "reject_immutable_authoring_test_orchestration_change",
+            )),
+            sql: Cow::Borrowed(flow_test_helper_sql(
+                "reject_immutable_authoring_test_orchestration_change",
+            )),
+        },
+        HelperSpec {
+            name: "guard_authoring_test_orchestration_write",
+            definition: Cow::Owned(flow_test_helper_definition(
+                "guard_authoring_test_orchestration_write",
+            )),
+            sql: Cow::Borrowed(flow_test_helper_sql(
+                "guard_authoring_test_orchestration_write",
+            )),
+        },
         borrowed_helper_spec(
             "reject_immutable_authoring_report_change",
             REJECT_IMMUTABLE_AUTHORING_REPORT_CHANGE_DEF,
@@ -1573,6 +1865,60 @@ fn trigger_specs() -> Vec<TriggerSpec> {
             "reject_immutable_authoring_test_set_change",
         ),
         (
+            "authoring_test_run_reservations",
+            "authoring_test_run_reservations_controlled_insert",
+            "INSERT",
+            "guard_authoring_test_orchestration_write",
+        ),
+        (
+            "authoring_test_run_reservations",
+            "authoring_test_run_reservations_controlled_update",
+            "UPDATE",
+            "guard_authoring_test_orchestration_write",
+        ),
+        (
+            "authoring_test_run_reservations",
+            "authoring_test_run_reservations_delete_immutable",
+            "DELETE",
+            "reject_immutable_authoring_test_orchestration_change",
+        ),
+        (
+            "authoring_test_case_runs",
+            "authoring_test_case_runs_controlled_insert",
+            "INSERT",
+            "guard_authoring_test_orchestration_write",
+        ),
+        (
+            "authoring_test_case_runs",
+            "authoring_test_case_runs_controlled_update",
+            "UPDATE",
+            "guard_authoring_test_orchestration_write",
+        ),
+        (
+            "authoring_test_case_runs",
+            "authoring_test_case_runs_delete_immutable",
+            "DELETE",
+            "reject_immutable_authoring_test_orchestration_change",
+        ),
+        (
+            "authoring_test_reports",
+            "authoring_test_reports_controlled_insert",
+            "INSERT",
+            "guard_authoring_test_orchestration_write",
+        ),
+        (
+            "authoring_test_reports",
+            "authoring_test_reports_update_immutable",
+            "UPDATE",
+            "reject_immutable_authoring_test_orchestration_change",
+        ),
+        (
+            "authoring_test_reports",
+            "authoring_test_reports_delete_immutable",
+            "DELETE",
+            "reject_immutable_authoring_test_orchestration_change",
+        ),
+        (
             "authoring_report_reservations",
             "authoring_report_reservations_controlled_insert",
             "INSERT",
@@ -1659,6 +2005,31 @@ const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attemp
      FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
          (tenant_id, attempt_id, dispatched_at)";
+const TEST_RESERVATION_TEST_SET_FK_NAME: &str = "authoring_test_reservation_test_set_fk";
+const TEST_RESERVATION_TEST_SET_FK_DEF: &str = "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)";
+const TEST_RESERVATION_TEST_SET_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_run_reservations \
+     ADD CONSTRAINT authoring_test_reservation_test_set_fk \
+     FOREIGN KEY (tenant_id, test_set_hash) \
+     REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash)";
+const TEST_CASE_RESERVATION_FK_NAME: &str = "authoring_test_case_reservation_fk";
+const TEST_CASE_RESERVATION_FK_DEF: &str = "FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)";
+const TEST_CASE_RESERVATION_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_case_runs \
+     ADD CONSTRAINT authoring_test_case_reservation_fk \
+     FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id) \
+     REFERENCES wamn_run.authoring_test_run_reservations \
+         (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)";
+const TEST_REPORT_RESERVATION_FK_NAME: &str = "authoring_test_report_reservation_fk";
+const TEST_REPORT_RESERVATION_FK_DEF: &str = "FOREIGN KEY (tenant_id, report_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id)";
+const TEST_REPORT_RESERVATION_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_reports \
+     ADD CONSTRAINT authoring_test_report_reservation_fk \
+     FOREIGN KEY (tenant_id, report_id) \
+     REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)";
+const TEST_REPORT_TEST_SET_FK_NAME: &str = "authoring_test_report_test_set_fk";
+const TEST_REPORT_TEST_SET_FK_DEF: &str = "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)";
+const TEST_REPORT_TEST_SET_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_reports \
+     ADD CONSTRAINT authoring_test_report_test_set_fk \
+     FOREIGN KEY (tenant_id, test_set_hash) \
+     REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash)";
 
 const FLOW_AUTHOR_CHECK_NAME: &str = "flow_artifacts_verified_author_principal_check";
 const FLOW_AUTHOR_CHECK_DEF: &str =
@@ -2473,6 +2844,24 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
         table: "authoring_test_sets",
+        app: &[],
+        author: &["SELECT", "INSERT"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
+        table: "authoring_test_run_reservations",
+        app: &[],
+        author: &["SELECT", "INSERT", "UPDATE"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
+        table: "authoring_test_case_runs",
+        app: &[],
+        author: &["SELECT", "INSERT", "UPDATE"],
+    },
+    AuthoringPrivilegeSpec {
+        schema: AuthoringTableSchema::RunPlane,
+        table: "authoring_test_reports",
         app: &[],
         author: &["SELECT", "INSERT"],
     },
@@ -4048,9 +4437,34 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         }
     }
 
-    // 2d. The dispatch and outcome temporal FKs remain exact. A missing table's
-    // canonical CREATE section carries these, so repair only observed tables.
+    // 2d. The durable orchestration and effect-ledger FKs remain exact. A
+    // missing table's canonical CREATE section carries these, so repair only
+    // observed tables.
     for (table, name, definition, sql) in [
+        (
+            "authoring_test_run_reservations",
+            TEST_RESERVATION_TEST_SET_FK_NAME,
+            TEST_RESERVATION_TEST_SET_FK_DEF,
+            TEST_RESERVATION_TEST_SET_FK_SQL,
+        ),
+        (
+            "authoring_test_case_runs",
+            TEST_CASE_RESERVATION_FK_NAME,
+            TEST_CASE_RESERVATION_FK_DEF,
+            TEST_CASE_RESERVATION_FK_SQL,
+        ),
+        (
+            "authoring_test_reports",
+            TEST_REPORT_RESERVATION_FK_NAME,
+            TEST_REPORT_RESERVATION_FK_DEF,
+            TEST_REPORT_RESERVATION_FK_SQL,
+        ),
+        (
+            "authoring_test_reports",
+            TEST_REPORT_TEST_SET_FK_NAME,
+            TEST_REPORT_TEST_SET_FK_DEF,
+            TEST_REPORT_TEST_SET_FK_SQL,
+        ),
         (
             "effect_attempt_dispatches",
             EFFECT_DISPATCH_ATTEMPT_FK_NAME,
@@ -4098,16 +4512,20 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
-    // 2e. User triggers are explicit record objects. Missing-table sections
-    // carry their own triggers; present tables are repaired exactly, and the
-    // immutable-ledger triggers are never mistaken for extras.
+    // 2e. User triggers are explicit record objects. A missing table's section
+    // may carry its trigger; triggers placed after a shared helper are separate
+    // actions because the section parser deliberately stops at that helper.
+    // Present tables are repaired exactly, and immutable-ledger triggers are
+    // never mistaken for extras.
     let trigger_specs = trigger_specs();
     let expected_triggers: BTreeSet<(&str, &str)> = trigger_specs
         .iter()
         .map(|spec| (spec.table.as_str(), spec.name.as_str()))
         .collect();
     for spec in &trigger_specs {
-        if !obs.tables.contains_key(&spec.table) {
+        if !obs.tables.contains_key(&spec.table)
+            && table_section_carries_trigger(&spec.table, &spec.name)
+        {
             continue;
         }
         let key = (spec.table.clone(), spec.name.clone());
@@ -4493,6 +4911,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
           OR (table_schema = $1 AND table_name IN \
               ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
+               'authoring_test_run_reservations', 'authoring_test_case_runs', \
+               'authoring_test_reports', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', \
                'authoring_suite_reports'))) \
@@ -4524,6 +4944,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
+               'authoring_test_run_reservations', 'authoring_test_case_runs', \
+               'authoring_test_reports', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
         AND pg_catalog.has_table_privilege( \
@@ -4554,6 +4976,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
+               'authoring_test_run_reservations', 'authoring_test_case_runs', \
+               'authoring_test_reports', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
         AND pg_catalog.has_any_column_privilege( \
@@ -4581,6 +5005,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
           OR (namespace.nspname = $1 AND relation.relname IN \
               ('runs', 'run_flow_resolutions', 'test_suites', 'test_cases', \
                'authoring_test_sets', \
+               'authoring_test_run_reservations', 'authoring_test_case_runs', \
+               'authoring_test_reports', \
                'authoring_report_reservations', \
                'authoring_suite_case_facts', 'authoring_suite_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
@@ -4767,6 +5193,8 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
                          'reject_immutable_flow_resolution_change', \
                          'materialize_run_flow_resolutions', \
                          'reject_immutable_authoring_test_set_change', \
+                         'reject_immutable_authoring_test_orchestration_change', \
+                         'guard_authoring_test_orchestration_write', \
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
                          'guard_effect_disposition_append', \
@@ -4909,6 +5337,15 @@ fn table_section(src: &str, qualifier: &str, table: &str) -> String {
         "record parse: no section for {qualifier}.{table} — schema-of-record layout changed"
     );
     out.join("\n")
+}
+
+fn table_section_carries_trigger(table: &str, trigger: &str) -> bool {
+    RUN_PLANE_FILES.iter().any(|file| {
+        record_tables(file, "wamn_run")
+            .iter()
+            .any(|name| name == table)
+            && table_section(file, "wamn_run", table).contains(&format!("CREATE TRIGGER {trigger}"))
+    })
 }
 
 /// The column definitions of `CREATE TABLE <qualifier>.<table> ( … )` in `src`:
@@ -5360,6 +5797,33 @@ CREATE INDEX event_registrations_by_entity
             ("runs".to_string(), "runs_execution_bundle_fk".to_string()),
             RUNS_EXECUTION_BUNDLE_FK_DEF.to_string(),
         );
+        for (table, name, definition) in [
+            (
+                "authoring_test_run_reservations",
+                TEST_RESERVATION_TEST_SET_FK_NAME,
+                TEST_RESERVATION_TEST_SET_FK_DEF,
+            ),
+            (
+                "authoring_test_case_runs",
+                TEST_CASE_RESERVATION_FK_NAME,
+                TEST_CASE_RESERVATION_FK_DEF,
+            ),
+            (
+                "authoring_test_reports",
+                TEST_REPORT_RESERVATION_FK_NAME,
+                TEST_REPORT_RESERVATION_FK_DEF,
+            ),
+            (
+                "authoring_test_reports",
+                TEST_REPORT_TEST_SET_FK_NAME,
+                TEST_REPORT_TEST_SET_FK_DEF,
+            ),
+        ] {
+            obs.foreign_keys.insert(
+                (table.to_string(), name.to_string()),
+                definition.to_string(),
+            );
+        }
         obs.triggers.insert(
             (
                 "runs".to_string(),
@@ -5407,6 +5871,9 @@ CREATE INDEX event_registrations_by_entity
                 "test_suites",
                 "test_cases",
                 "authoring_test_sets",
+                "authoring_test_run_reservations",
+                "authoring_test_case_runs",
+                "authoring_test_reports",
                 "authoring_report_reservations",
                 "authoring_suite_case_facts",
                 "authoring_suite_reports",
@@ -5880,8 +6347,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            19,
-            "all nineteen run-plane tables at target, including resolutions, test-set inputs, and reports"
+            22,
+            "all twenty-two run-plane tables at target, including durable test orchestration"
         );
     }
 
@@ -6557,6 +7024,25 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
+    fn durable_test_report_foreign_key_drift_is_repaired() {
+        let mut obs = observation_at_record();
+        obs.foreign_keys.remove(&(
+            "authoring_test_reports".to_string(),
+            TEST_REPORT_TEST_SET_FK_NAME.to_string(),
+        ));
+
+        let repair = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RepairForeignKey
+                    && action.target == "authoring_test_reports.authoring_test_report_test_set_fk"
+            })
+            .expect("report-to-test-set FK is repaired");
+        assert!(repair.sql.contains("REFERENCES demo.authoring_test_sets"));
+    }
+
+    #[test]
     fn check_and_index_only_attempt_residue_still_retires() {
         let mut obs = observation_at_record();
         obs.checks.insert(
@@ -7185,6 +7671,9 @@ CREATE INDEX event_registrations_by_entity
                 "test_suites",
                 "test_cases",
                 "authoring_test_sets",
+                "authoring_test_run_reservations",
+                "authoring_test_case_runs",
+                "authoring_test_reports",
                 "authoring_report_reservations",
                 "authoring_suite_case_facts",
                 "authoring_suite_reports",
@@ -7238,6 +7727,46 @@ CREATE INDEX event_registrations_by_entity
             test_set_helper < test_set_table,
             "the standalone run-plane helper must exist before test-set triggers"
         );
+        let orchestration_helper = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::RepairHelperFunction
+                    && action.target == "guard_authoring_test_orchestration_write"
+            })
+            .expect("durable test orchestration helper is provisioned");
+        for (table, trigger) in [
+            (
+                "authoring_test_run_reservations",
+                "authoring_test_run_reservations_controlled_insert",
+            ),
+            (
+                "authoring_test_case_runs",
+                "authoring_test_case_runs_controlled_update",
+            ),
+            (
+                "authoring_test_reports",
+                "authoring_test_reports_update_immutable",
+            ),
+        ] {
+            let table_position = plan
+                .actions
+                .iter()
+                .position(|action| {
+                    action.kind == RunPlaneActionKind::CreateTable && action.target == table
+                })
+                .expect("durable test orchestration table is provisioned");
+            let trigger_position = plan
+                .actions
+                .iter()
+                .position(|action| {
+                    action.kind == RunPlaneActionKind::RepairTrigger
+                        && action.target == format!("{table}.{trigger}")
+                })
+                .expect("post-helper durable orchestration trigger is provisioned");
+            assert!(orchestration_helper < table_position);
+            assert!(table_position < trigger_position);
+        }
         let pin_helper = plan
             .actions
             .iter()
@@ -7560,6 +8089,60 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
+    fn durable_test_orchestration_is_in_the_schema_control_record() {
+        for (table, check_count, author_privileges) in [
+            (
+                "authoring_test_run_reservations",
+                14,
+                &["SELECT", "INSERT", "UPDATE"][..],
+            ),
+            (
+                "authoring_test_case_runs",
+                17,
+                &["SELECT", "INSERT", "UPDATE"][..],
+            ),
+            ("authoring_test_reports", 9, &["SELECT", "INSERT"][..]),
+        ] {
+            assert_eq!(
+                CHECK_SPECS
+                    .iter()
+                    .filter(|spec| spec.table == table)
+                    .count(),
+                check_count,
+                "{table} CHECK inventory drifted"
+            );
+            let privileges = AUTHORING_PRIVILEGE_SPECS
+                .iter()
+                .find(|spec| {
+                    matches!(spec.schema, AuthoringTableSchema::RunPlane) && spec.table == table
+                })
+                .unwrap_or_else(|| panic!("missing privilege record for {table}"));
+            assert!(privileges.app.is_empty());
+            assert_eq!(privileges.author, author_privileges);
+        }
+
+        let helper_names = helper_specs()
+            .into_iter()
+            .map(|spec| spec.name)
+            .collect::<BTreeSet<_>>();
+        assert!(helper_names.contains("guard_authoring_test_orchestration_write"));
+        assert!(helper_names.contains("reject_immutable_authoring_test_orchestration_change"));
+
+        let triggers = trigger_specs();
+        for name in [
+            "authoring_test_run_reservations_controlled_insert",
+            "authoring_test_case_runs_controlled_update",
+            "authoring_test_reports_update_immutable",
+        ] {
+            assert!(triggers.iter().any(|trigger| trigger.name == name));
+        }
+        assert_eq!(
+            TEST_REPORT_TEST_SET_FK_DEF,
+            "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)"
+        );
+    }
+
+    #[test]
     fn extra_record_check_is_removed_but_floor_check_is_untouched() {
         let mut obs = observation_at_record();
         obs.checks.insert(
@@ -7594,7 +8177,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            10
+            12
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairHelperFunction
@@ -7632,7 +8215,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            27
+            36
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -7985,6 +8568,14 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_authoring_test_set_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql()
+                .contains("reject_immutable_authoring_test_orchestration_change")
+        );
+        assert!(
+            select_run_plane_helper_functions_sql()
+                .contains("guard_authoring_test_orchestration_write")
         );
         assert!(
             select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append")

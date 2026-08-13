@@ -179,7 +179,7 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
         }
     }));
     relations.sort_by(|left, right| left.relation.cmp(&right.relation));
-    assert_eq!(relations.len(), 74, "protected relation count drifted");
+    assert_eq!(relations.len(), 77, "protected relation count drifted");
     relations
 }
 

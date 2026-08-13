@@ -1569,7 +1569,6 @@ fn generated_tenant_family_is_covered() {
     assert_eq!(
         dynamic_paths,
         BTreeSet::from([
-            "components/execution/flowrunner/src/lib.rs",
             "crates/data/entity-access/src/planner.rs",
             "crates/execution/standard-nodes/src/postgres.rs",
             "crates/schema/compiler/src/seed/emit.rs"

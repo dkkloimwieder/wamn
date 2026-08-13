@@ -8,8 +8,8 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 table="$repository/architecture/protected-writes.json"
 live_test="$repository/services/ctl/tests/protected_relations_live.rs"
 static_test="$repository/tests/conformance/tests/protected_relations.rs"
-expected_table_sha=83d5df4b7a48f6eed4ca02ea02b582f76658268aa43a0662a149ec7800341f59
-expected_live_sha=39b0f9a8e241c6c65f0a8406a6342f748d4fc9fb6a7bd41d9261f71747342855
+expected_table_sha=9fab0296e41b57b5720be8f6ecc33c506bf5e46a42ad8ff179bf3af6b487e847
+expected_live_sha=14f9fd9d193095c8c5ad2e2eb042bd8e1cf819a8921f9a21740f67099d94cdcd
 expected_static_sha=6ea9c6fe942ee65d51231f5fe733f9886f2a3f2f2a4ae81d6030ec9e90f44ab2
 target_dir=${CARGO_TARGET_DIR:-/tmp/wamn-target-0h0g-12-ops}
 
