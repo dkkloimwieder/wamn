@@ -18,6 +18,7 @@ use wamn_schema_control::BareSchemaName;
 const MANIFEST_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
+const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const WITNESS_SCHEMA: &str = "audit_app";
 const WITNESS_ENTITY: &str = "audit_records";
@@ -26,8 +27,17 @@ const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
 #[derive(Debug, Deserialize)]
 struct OwnershipManifest {
     schema_version: String,
+    canonical_sources: Vec<CanonicalSource>,
     objects: Vec<OwnershipEntry>,
     families: Vec<OwnershipFamily>,
+    #[serde(flatten)]
+    ignored: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CanonicalSource {
+    path: String,
+    scope: String,
     #[serde(flatten)]
     ignored: BTreeMap<String, serde_json::Value>,
 }
@@ -37,6 +47,7 @@ struct OwnershipEntry {
     id: String,
     semantic_owner: String,
     migration_owners: Vec<String>,
+    schema_source: String,
     #[serde(flatten)]
     ignored: BTreeMap<String, serde_json::Value>,
 }
@@ -46,6 +57,7 @@ struct OwnershipFamily {
     pattern: String,
     semantic_owner: String,
     migration_owners: Vec<String>,
+    schema_source: String,
     #[serde(flatten)]
     ignored: BTreeMap<String, serde_json::Value>,
 }
@@ -54,6 +66,7 @@ struct OwnershipFamily {
 struct DeclaredRelation {
     relation: String,
     physical_relation: String,
+    ops: bool,
     installer: String,
     owner: String,
 }
@@ -76,6 +89,7 @@ struct ProtectedRelationTable {
 #[serde(deny_unknown_fields)]
 struct ProtectedRelationRow {
     relation: String,
+    ops: bool,
     installer: String,
     owner: String,
     mechanisms: Vec<String>,
@@ -110,6 +124,13 @@ fn sole_installer(relation: &str, migration_owners: &[String]) -> String {
     migration_owners[0].clone()
 }
 
+fn is_ops_artifact(schema_source: &str, scopes: &BTreeMap<String, String>) -> bool {
+    scopes
+        .get(schema_source)
+        .unwrap_or_else(|| panic!("undeclared canonical source {schema_source}"))
+        == "production-control-database-ops"
+}
+
 fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
     let source = std::fs::read_to_string(repository.join(MANIFEST_PATH))
         .expect("read state ownership manifest");
@@ -120,6 +141,14 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
         !manifest.ignored.is_empty(),
         "manifest scope must be present"
     );
+    let source_scopes = manifest
+        .canonical_sources
+        .into_iter()
+        .map(|source| {
+            let _ = source.ignored;
+            (source.path, source.scope)
+        })
+        .collect::<BTreeMap<_, _>>();
 
     let mut relations = manifest
         .objects
@@ -130,6 +159,7 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
                 installer: sole_installer(&entry.id, &entry.migration_owners),
                 physical_relation: entry.id.clone(),
                 relation: entry.id,
+                ops: is_ops_artifact(&entry.schema_source, &source_scopes),
                 owner: entry.semantic_owner,
             }
         })
@@ -144,11 +174,12 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
             installer: sole_installer(&family.pattern, &family.migration_owners),
             physical_relation,
             relation: family.pattern,
+            ops: is_ops_artifact(&family.schema_source, &source_scopes),
             owner: family.semantic_owner,
         }
     }));
     relations.sort_by(|left, right| left.relation.cmp(&right.relation));
-    assert_eq!(relations.len(), 72, "protected relation count drifted");
+    assert_eq!(relations.len(), 74, "protected relation count drifted");
     relations
 }
 
@@ -193,6 +224,11 @@ async fn install_scratch_database(client: &Client, url: &str, repository: &Path)
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_ops') THEN \
+                 CREATE ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE ALTER ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
              END $$; \
              REVOKE wamn_scenario_author FROM wamn_app; \
              DO $$ BEGIN \
@@ -205,7 +241,8 @@ async fn install_scratch_database(client: &Client, url: &str, repository: &Path)
         .await
         .expect("prepare disposable database roles");
 
-    let system_install = format!("SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\nRESET ROLE;");
+    let system_install =
+        format!("SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{OPS_SCHEMA_SQL}\nRESET ROLE;");
     client
         .batch_execute(&system_install)
         .await
@@ -698,6 +735,7 @@ async fn generate_table(client: &Client, repository: &Path) -> ProtectedRelation
             };
             ProtectedRelationRow {
                 relation: declaration.relation.clone(),
+                ops: declaration.ops,
                 installer: declaration.installer,
                 owner: declaration.owner,
                 mechanisms: mechanisms

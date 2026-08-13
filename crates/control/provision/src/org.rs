@@ -13,9 +13,8 @@
 //!
 //! Each cluster is **sized by the policy of its owner env** (`instances` /
 //! `storage` / `cpu` / `memory` / `image` — fixing cjv.21: sizes are policy-driven,
-//! not hard-coded), and a policy with a non-empty `backup_cadence` carries the
-//! Barman Cloud WAL/PITR plugin + its `ObjectStore` / `ScheduledBackup` CRs (the
-//! knobs — retention window, cadence — are in [`crate::backup`]).
+//! not hard-coded). With the additive `ops` feature, a policy with a non-empty
+//! `backup_cadence` also carries the Barman Cloud WAL/PITR resources.
 //!
 //! Rendered as `serde_json::Value` CNPG `Cluster` custom resources (`kubectl apply
 //! -f` accepts JSON). This crate is pure — no K8s client. A **pooled** org owns no
@@ -64,11 +63,11 @@ pub struct OrgClusters {
     /// One CNPG `Cluster` CR per distinct recovery-domain owner (e.g. `<org>-dev`,
     /// `<org>-prod`), sized by the owner env's policy.
     pub clusters: Vec<Value>,
-    /// The `ObjectStore` CRs for the backup-enabled clusters — applied **before**
-    /// their clusters (the plugin references them).
+    /// The `ObjectStore` CRs for the backup-enabled clusters.
+    #[cfg(feature = "ops")]
     pub object_stores: Vec<Value>,
-    /// The `ScheduledBackup` CRs for the backup-enabled clusters — applied
-    /// **after** their clusters exist.
+    /// The `ScheduledBackup` CRs for the backup-enabled clusters.
+    #[cfg(feature = "ops")]
     pub scheduled_backups: Vec<Value>,
 }
 
@@ -103,7 +102,9 @@ pub fn render_org_cluster_set(
     }
 
     let mut clusters = Vec::new();
+    #[cfg(feature = "ops")]
     let mut object_stores = Vec::new();
+    #[cfg(feature = "ops")]
     let mut scheduled_backups = Vec::new();
     for owner in owners {
         // The cluster is SIZED by its owner env's own policy.
@@ -113,19 +114,30 @@ pub fn render_org_cluster_set(
             }
         })?;
         let name = format!("{}-{}", org.id, owner);
-        if policy.has_scheduled_backup() {
+        #[cfg(feature = "ops")]
+        let backup_object_store = if policy.has_scheduled_backup() {
             object_stores.push(crate::backup::render_object_store(&name, policy));
             scheduled_backups.push(crate::backup::render_scheduled_backup(&name, policy));
-            let store = crate::backup::object_store_name(&name);
-            clusters.push(render_cluster(&org.id, owner, &name, policy, Some(&store)));
+            Some(crate::backup::object_store_name(&name))
         } else {
-            clusters.push(render_cluster(&org.id, owner, &name, policy, None));
-        }
+            None
+        };
+        #[cfg(not(feature = "ops"))]
+        let backup_object_store: Option<String> = None;
+        clusters.push(render_cluster(
+            &org.id,
+            owner,
+            &name,
+            policy,
+            backup_object_store.as_deref(),
+        ));
     }
 
     Ok(OrgClusters {
         clusters,
+        #[cfg(feature = "ops")]
         object_stores,
+        #[cfg(feature = "ops")]
         scheduled_backups,
     })
 }
@@ -164,9 +176,8 @@ fn cluster_labels(org: &str, owner: &str) -> Value {
 ///
 /// `backup_object_store` (wamn-e1g): when `Some`, the cluster carries a Barman
 /// Cloud plugin ref in `.spec.plugins` naming that ObjectStore — continuous
-/// WAL/PITR. `None` for a policy with no scheduled backup (its restore path is the
-/// logical dump). We use the plugin's `.spec.plugins`, not the deprecated in-tree
-/// `.spec.backup.barmanObjectStore`.
+/// WAL/PITR. `None` for a policy with no scheduled backup. We use the plugin's
+/// `.spec.plugins`, not the deprecated in-tree `.spec.backup.barmanObjectStore`.
 fn render_cluster(
     org: &str,
     owner: &Env,
@@ -199,9 +210,12 @@ fn render_cluster(
         "bootstrap": { "initdb": { "database": "app", "owner": "app" } },
     });
     // WAL/PITR via the Barman Cloud plugin (wamn-e1g) for a backup-enabled cluster.
+    #[cfg(feature = "ops")]
     if let Some(store) = backup_object_store {
         spec["plugins"] = json!([crate::backup::cluster_backup_plugin(store)]);
     }
+    #[cfg(not(feature = "ops"))]
+    let _ = backup_object_store;
     if policy.instances >= 2 {
         spec["affinity"] = json!({
             "enablePodAntiAffinity": true,
@@ -396,6 +410,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "ops")]
     #[test]
     fn backup_enabled_clusters_carry_the_plugin_and_get_backup_crs() {
         // Default set: prod is backed (has a cadence), dev is not.

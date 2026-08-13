@@ -16,7 +16,7 @@
 //!      `E_untouched` (add a column), and assert `wamn_schema_control::impact::analyze` (through
 //!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/suite/api
 //!      resource on the destructive entity — never `E_untouched`'s (the untouched
-//!      partition) — and requires acknowledgement;
+//!      partition) — while retaining the destructive classification;
 //!
 //! Hermetic: drops+recreates the `catalog` metadata schema + the data schema.
 
@@ -284,8 +284,10 @@ async fn impact_report_names_the_affected_change() {
     assert_eq!(audit.flows_via_registration[0].flow_id, "flow-u");
     assert_eq!(audit.suites[0].suite_id, "decoy");
 
-    // Operations callers receive the typed destructive-with-dependents verdict.
-    assert!(report.requires_acknowledgement());
+    // Operations callers retain both facts without a default-command
+    // acknowledgement carrier.
+    assert!(touched.destructive);
+    assert!(touched.has_downstream_impact());
 
     su.batch_execute(&format!(
         "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"

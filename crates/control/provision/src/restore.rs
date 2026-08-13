@@ -20,7 +20,7 @@
 //! **Object store (Q2, the .10 stance):** the dump bytes live in object storage
 //! once the shared store lands (wamn-e1g); until then a dump is staged locally (the
 //! `dump-project-env --run-now --out-dir` output). The dump **catalog**
-//! (`provisioning.dumps`, [`crate::sql`] via `wamn_control_registry`) records *which* dump
+//! (`provisioning.dumps`, [`crate::state`] via `wamn_control_registry`) records *which* dump
 //! is latest so restore-to-last-dump needs no manual key; the physical bytes come
 //! from the local dump directory. The whole-cluster **PITR** carve-out (restore an
 //! org cluster to an arbitrary instant, then carve one DB out) needs WAL/PITR and

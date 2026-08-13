@@ -20,11 +20,11 @@
 //!
 //! ```
 //! use wamn_schema_model::Catalog;
-//! use wamn_schema_compiler::rls::{AccessPolicy, compile, Confirmation};
+//! use wamn_schema_compiler::rls::{AccessPolicy, compile};
 //!
 //! # fn go(catalog: &Catalog, policy: &AccessPolicy) -> Result<(), Box<dyn std::error::Error>> {
 //! let plan = compile(policy, catalog)?;   // -> a wamn-schema-compiler MigrationPlan
-//! let sql = plan.sql(Confirmation::None)?; // policy creation is all-additive
+//! let sql = plan.sql()?; // policy creation is all-additive
 //! # let _ = sql;
 //! # Ok(())
 //! # }
@@ -61,5 +61,5 @@ pub use validate::validate;
 
 // Re-exported so callers drive the (reused) 3.2 review / gate surface without a
 // direct dependency on wamn-schema-compiler.
-pub use crate::{Confirmation, MigrationPlan};
+pub use crate::MigrationPlan;
 pub use wamn_schema_model::{Issue, Severity};

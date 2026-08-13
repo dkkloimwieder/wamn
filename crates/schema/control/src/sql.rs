@@ -8,17 +8,6 @@
 //! `catalog.catalogs` `CHECK`, so the SQL cannot drift from the model.
 
 use crate::lifecycle::State;
-use wamn_schema_compiler::Confirmation;
-
-/// The value written to `schema_migrations.confirmation` — the single source the
-/// history write, the driver, and the DDL `CHECK` share.
-pub fn confirmation_sql(confirm: Confirmation) -> &'static str {
-    match confirm {
-        Confirmation::None => "none",
-        Confirmation::ConfirmedWithBackup => "confirmed-with-backup",
-    }
-}
-
 /// Read the current applied catalog for `(tenant, catalog, environment)`,
 /// locking the row for the apply transaction. Returns `version` and the stored
 /// `document` (the applied `Catalog` JSON) the engine diffs a target against.
@@ -75,8 +64,8 @@ pub fn upsert_applied_version_sql() -> String {
 /// the same `(catalog, environment, to_version)` twice — forward-only.
 pub fn record_migration_sql() -> String {
     "INSERT INTO catalog.schema_migrations \
-       (tenant_id, catalog_id, environment, from_version, to_version, confirmation, statement_count, destructive, checksum) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"
+       (tenant_id, catalog_id, environment, from_version, to_version, statement_count, destructive, checksum) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         .to_string()
 }
 
@@ -258,9 +247,9 @@ pub fn advance_catalog_head_sql() -> &'static str {
 /// Append the publication journal row, converging on an identical retry.
 pub fn record_release_publication_sql() -> &'static str {
     "INSERT INTO catalog.schema_migrations \
-       (tenant_id, catalog_id, environment, from_version, to_version, confirmation, \
-        statement_count, destructive, checksum) \
-     VALUES ($1, $2, $3, $4, $5, 'none', 0, false, $6) \
+       (tenant_id, catalog_id, environment, from_version, to_version, statement_count, \
+        destructive, checksum) \
+     VALUES ($1, $2, $3, $4, $5, 0, false, $6) \
      ON CONFLICT (tenant_id, catalog_id, environment, to_version) DO NOTHING"
 }
 
@@ -281,7 +270,8 @@ pub fn select_release_artifacts_sql() -> &'static str {
 
 // ---------------------------------------------------------------------------
 // Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the
-// `impact-report` / `migrate-catalog` shell folds through `wamn_schema_control::impact::analyze`.
+// ops `impact-report` / `copy-project-env` shells fold through
+// `wamn_schema_control::impact::analyze`.
 // All cross-tenant (the superuser driver bypasses RLS), like the D24 read above:
 // a shared entity's change hits every tenant's flow/suite, so the report must see
 // them all. SR12: the pure decision has no RLS/superuser — the throwaway-PG live
@@ -329,7 +319,7 @@ pub fn select_all_suites_sql(schema: &str) -> String {
 /// `(flow_id, suite_flow_version, suite_id, report_id, passed, lineage_json)`.
 /// Scoped to one catalog because a report about another application's release
 /// can never be evidence here; the release/version/freshness decision itself is
-/// the pure [`crate::publish_gate`]'s, not SQL's.
+/// the operations publish gate's, not SQL's.
 ///
 /// NEWEST FIRST: the gate takes the first report that proves a suite green, so
 /// a re-run after a fix is considered before the failure it replaced. Ordering

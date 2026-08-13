@@ -1,17 +1,15 @@
-//! Lifecycle + promotion tests over the canonical POC catalog (reused from
+//! Lifecycle tests over the canonical POC catalog (reused from
 //! wamn-schema-model's fixtures). Cover the state machine (legal transitions,
-//! single-applied, stale-base rebase guard) and promotion (first CREATE,
-//! additive, gated destructive, environment-aware incl. the same-application
-//! guard, promote being order-agnostic), plus the storage-literal drift guards
-//! tying State to deploy/sql/catalog-schema.sql and asserting env is an open slug.
+//! single-applied, stale-base rebase guard), plus the storage-literal drift
+//! guards tying State to deploy/sql/catalog-schema.sql and asserting env is an
+//! open slug.
 
 use std::path::{Path, PathBuf};
 
 use wamn_schema_control::lifecycle::{
-    Action, Confirmation, Environment, LifecycleError, PromoteError, State, Triple, promote,
-    promote_catalog, transition,
+    Action, Environment, LifecycleError, State, Triple, transition,
 };
-use wamn_schema_model::{Catalog, Field, FieldType, Index};
+use wamn_schema_model::Catalog;
 
 fn poc_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../model/tests/fixtures/poc-receiving.catalog.json")
@@ -33,38 +31,10 @@ fn poc(version: u32) -> Catalog {
     c
 }
 
-fn text_field(id: &str) -> Field {
-    Field {
-        id: id.into(),
-        name: id.into(),
-        field_type: FieldType::Text { max_len: None },
-        nullable: true,
-        default: None,
-        sensitive: false,
-        is_system: false,
-        label: None,
-        description: None,
-    }
-}
-
-/// POC + an added nullable column on `materials` (an additive evolution).
-fn poc_with_extra_column(version: u32) -> Catalog {
+fn poc_updated(version: u32) -> Catalog {
     let mut c = poc(version);
     let materials = c.entities.iter_mut().find(|e| e.id == "materials").unwrap();
-    materials.fields.push(text_field("grade"));
-    materials.indexes.push(Index {
-        name: "materials_grade_idx".into(),
-        fields: vec!["grade".into()],
-        unique: false,
-    });
-    c
-}
-
-/// POC minus `suppliers.contact_email` (a destructive evolution).
-fn poc_dropped_column(version: u32) -> Catalog {
-    let mut c = poc(version);
-    let suppliers = c.entities.iter_mut().find(|e| e.id == "suppliers").unwrap();
-    suppliers.fields.retain(|f| f.id != "contact_email");
+    materials.description = Some("updated".into());
     c
 }
 
@@ -92,7 +62,7 @@ fn applying_demotes_prior_applied_to_superseded() {
     env.apply(1).unwrap();
 
     // v2 branches from the applied v1.
-    env.add_draft(poc_with_extra_column(2), Some(1)).unwrap();
+    env.add_draft(poc_updated(2), Some(1)).unwrap();
     env.stage(2).unwrap();
     env.apply(2).unwrap();
 
@@ -117,8 +87,8 @@ fn stale_base_guard_refuses_a_rebased_over_candidate() {
     env.apply(1).unwrap();
 
     // Two candidates both branched from v1.
-    env.add_draft(poc_with_extra_column(2), Some(1)).unwrap();
-    env.add_draft(poc_with_extra_column(3), Some(1)).unwrap();
+    env.add_draft(poc_updated(2), Some(1)).unwrap();
+    env.add_draft(poc_updated(3), Some(1)).unwrap();
     env.stage(2).unwrap();
     env.stage(3).unwrap();
 
@@ -180,153 +150,6 @@ fn add_draft_rejects_mismatched_catalog_and_duplicates() {
     assert_eq!(
         env.add_draft(poc(1), None),
         Err(LifecycleError::DuplicateVersion(1))
-    );
-}
-
-// --- promotion -------------------------------------------------------------
-
-#[test]
-fn first_promotion_is_a_tenant_safe_create() {
-    // Target empty -> a fresh CREATE, all additive.
-    let plan = promote_catalog(&poc(1), None).expect("plan");
-    assert!(plan.is_additive());
-    assert!(!plan.requires_confirmation());
-    assert_eq!(plan.target_version, None);
-
-    let sql = plan.sql(Confirmation::None).expect("additive");
-    assert!(sql.contains("CREATE TABLE \"receipts\""));
-    assert!(sql.contains("FORCE ROW LEVEL SECURITY"));
-    assert!(sql.contains("current_setting('app.tenant', true)"));
-}
-
-#[test]
-fn additive_promotion_needs_no_confirmation() {
-    let plan = promote_catalog(&poc_with_extra_column(2), Some(&poc(1))).expect("plan");
-    assert!(plan.is_additive(), "report: {}", plan.report());
-    assert_eq!(plan.target_version, Some(1));
-    let sql = plan.sql(Confirmation::None).expect("additive");
-    assert!(sql.contains("ALTER TABLE \"materials\" ADD COLUMN \"grade\" text"));
-}
-
-#[test]
-fn destructive_promotion_is_gated() {
-    let plan = promote_catalog(&poc_dropped_column(2), Some(&poc(1))).expect("plan");
-    assert!(plan.requires_confirmation());
-    // Refused without confirmation…
-    assert!(plan.sql(Confirmation::None).is_err());
-    // …allowed with confirmation + backup, and marked.
-    let sql = plan
-        .sql(Confirmation::ConfirmedWithBackup)
-        .expect("confirmed");
-    assert!(sql.contains("BACKUP CHECKPOINT REQUIRED"));
-    assert!(sql.contains("ALTER TABLE \"suppliers\" DROP COLUMN \"contact_email\""));
-}
-
-#[test]
-fn promotion_warns_on_version_regression() {
-    // Source version <= target's applied version is a non-fatal advisory.
-    let plan = promote_catalog(&poc(1), Some(&poc(3))).expect("plan");
-    assert!(plan.warnings.iter().any(|w| w.contains("not newer")));
-}
-
-#[test]
-fn environment_aware_promote_dev_to_prod() {
-    // dev has v2 applied; prod is empty -> first CREATE.
-    let mut dev = poc_env("dev");
-    dev.add_draft(poc(1), None).unwrap();
-    dev.stage(1).unwrap();
-    dev.apply(1).unwrap();
-    dev.add_draft(poc_with_extra_column(2), Some(1)).unwrap();
-    dev.stage(2).unwrap();
-    dev.apply(2).unwrap();
-
-    let prod = poc_env("prod");
-    let plan = promote(&dev, &prod).expect("promote to empty prod");
-    assert_eq!(plan.source_version, 2);
-    assert_eq!(plan.target_version, None);
-    assert!(plan.is_additive());
-    assert!(
-        plan.sql(Confirmation::None)
-            .unwrap()
-            .contains("CREATE TABLE \"materials\"")
-    );
-}
-
-#[test]
-fn promote_refuses_when_source_has_no_applied() {
-    let dev = poc_env("dev"); // empty
-    let prod = poc_env("prod");
-    assert_eq!(promote(&dev, &prod), Err(PromoteError::NothingToPromote));
-}
-
-#[test]
-fn promote_refuses_cross_catalog() {
-    let mut dev = poc_env("dev");
-    dev.add_draft(poc(1), None).unwrap();
-    dev.stage(1).unwrap();
-    dev.apply(1).unwrap();
-    // Same application (acme/receiving), a different catalog -> CatalogIdMismatch.
-    let prod = Environment::new(Triple::new("acme", "receiving", "prod"), "other-catalog");
-    assert!(matches!(
-        promote(&dev, &prod),
-        Err(PromoteError::CatalogIdMismatch { .. })
-    ));
-}
-
-#[test]
-fn promote_refuses_across_applications() {
-    // Same catalog id, but a different (org, project) -> a different application.
-    // The application guard runs before the catalog check, so this is
-    // DifferentApplication, not CatalogIdMismatch.
-    let mut dev = poc_env("dev"); // acme/receiving
-    dev.add_draft(poc(1), None).unwrap();
-    dev.stage(1).unwrap();
-    dev.apply(1).unwrap();
-    let other = Environment::new(
-        Triple::new("globex", "receiving", "prod"),
-        "poc-material-receiving",
-    );
-    assert_eq!(
-        promote(&dev, &other),
-        Err(PromoteError::DifferentApplication {
-            source: "acme/receiving".into(),
-            target: "globex/receiving".into(),
-        })
-    );
-}
-
-#[test]
-fn canary_is_a_first_class_promotion_target() {
-    // dev -> canary is a valid promotion within one application; `canary` is just
-    // another env slug (an addable policy, D18), no longer a built-in variant.
-    let mut dev = poc_env("dev");
-    dev.add_draft(poc(1), None).unwrap();
-    dev.stage(1).unwrap();
-    dev.apply(1).unwrap();
-
-    let canary = poc_env("canary");
-    assert_eq!(canary.env().as_str(), "canary");
-    let plan = promote(&dev, &canary).expect("promote dev -> canary");
-    assert_eq!(plan.source_version, 1);
-    assert!(plan.is_additive());
-}
-
-#[test]
-fn promote_is_order_agnostic() {
-    // Environment ordering is a policy concern (env_policies.promotion_rank),
-    // enforced by a policy-aware caller — the pure crate's promote() is
-    // order-agnostic and adds no env-order warning in either direction.
-    let mut prod = poc_env("prod");
-    prod.add_draft(poc(1), None).unwrap();
-    prod.stage(1).unwrap();
-    prod.apply(1).unwrap();
-
-    let dev = poc_env("dev");
-    let plan = promote(&prod, &dev).expect("promote prod -> dev (same app, allowed)");
-    assert!(
-        !plan.warnings.iter().any(|w| w.contains("forward")),
-        "promote is order-agnostic — no env-order warning: {:?}",
-        plan.warnings
     );
 }
 

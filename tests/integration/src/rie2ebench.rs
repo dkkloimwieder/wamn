@@ -82,7 +82,7 @@ use wamn_runtime::plugins::wamn_jetstream::{
 use wamn_runtime::plugins::wamn_postgres::{
     self, WAMN_POSTGRES_ID, WamnPostgres, WamnPostgresConfig,
 };
-use wamn_schema_compiler::{Confirmation, Migration};
+use wamn_schema_compiler::Migration;
 
 #[derive(Debug, Args)]
 pub struct Rie2eBenchArgs {
@@ -464,7 +464,7 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
         .context("app schema")?;
     let floor = Migration::create(&catalog()?)
         .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql(Confirmation::None)
+        .sql()
         .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
     db.batch_execute(&format!("SET search_path TO app; {floor}"))
         .await

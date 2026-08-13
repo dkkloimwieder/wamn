@@ -1,9 +1,20 @@
 [package]
 name = "wamn-schema-compiler"
-description = "wamn DDL compiler (3.2): catalog / catalog-diff -> migration plan -> Postgres DDL. Additive by default; destructive changes gated behind explicit confirmation + a backup checkpoint."
+description = "wamn DDL compiler (3.2): catalog / catalog-diff -> migration plan -> Postgres DDL. Default emission is additive-only; destructive emission is operations-only."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[features]
+default = []
+# Destructive SQL emission is an internal operations capability. Default
+# consumers may classify a plan but can emit only additive SQL.
+ops = []
+
+[[test]]
+name = "ddl"
+path = "tests/ddl.rs"
+required-features = ["ops"]
 
 [dependencies]
 # The compiler consumes the canonical catalog model (3.1) and its diff.

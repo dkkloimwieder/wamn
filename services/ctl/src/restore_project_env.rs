@@ -223,10 +223,7 @@ async fn do_recorded_latest_dump_key(
     client: &tokio_postgres::Client,
     triple: &Triple,
 ) -> anyhow::Result<Option<String>> {
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
+    crate::ops_schema::install_and_enter(client).await?;
     let env = triple.env.as_str();
     let row = client
         .query_opt(

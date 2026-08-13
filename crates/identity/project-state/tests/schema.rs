@@ -199,12 +199,8 @@ fn app_schema_applies_and_enforces_isolation_and_claims_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_sysschema_test TO wamn_app;\n\
          SET search_path TO wamn_sysschema_test;\n",
     );
-    script.push_str(&floor.sql(wamn_schema_compiler::Confirmation::None).unwrap());
-    script.push_str(
-        &policies
-            .sql(wamn_schema_compiler::Confirmation::None)
-            .unwrap(),
-    );
+    script.push_str(&floor.sql().unwrap());
+    script.push_str(&policies.sql().unwrap());
     script.push_str("\nRESET search_path;\n");
 
     // Seed as the superuser (bypasses RLS): two tenants for the isolation proof,

@@ -164,8 +164,7 @@ impl CopyStep {
     }
 }
 
-/// The saga `kind` a copy pipeline records under (`provisioning.sagas`;
-/// admitted by the `sagas_kind_check` literal set in `deploy/sql/system-schema.sql`).
+/// The fixed saga `kind` admitted by `provisioning.copy_sagas`.
 pub const COPY_SAGA_KIND: &str = "copy";
 
 /// Derive the ordered step plan for a copy request.

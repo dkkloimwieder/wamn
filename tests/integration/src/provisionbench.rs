@@ -18,8 +18,8 @@
 //!   a provisioning **saga** in the (ephemeral) system DB.
 //! * **t3** — a **pooled** org (every env collapses onto the shared pool) with one
 //!   project-env, the same per-placement assertions.
-//! * **saga** — a focused proof of the wamn-q3n.8 saga builders: exactly-once
-//!   create, durable step advance, terminal complete + fail.
+//! * **saga** — a focused proof of the core provisioning-saga builders:
+//!   exactly-once create, durable step advance, terminal complete + fail.
 //! * **all** — legacy, then (over one ephemeral registry schema) saga, orgpair, t3.
 //!
 //! A pure host-side `tokio_postgres` gate (no wasm guest) — the queuebench /
@@ -35,7 +35,7 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_control_provision::state as provision_state;
+use wamn_control_provision::saga as provision_saga;
 use wamn_control_provision::{
     APP_ROLE, compose_url, database_name, project_env_database_name,
     render_project_env_secret_manifest, secret, sql,
@@ -75,7 +75,7 @@ pub enum Mode {
     Orgpair,
     /// A T3 trials org (one project-env on the shared pool).
     T3,
-    /// The saga builders in isolation.
+    /// The core provisioning-saga builders in isolation.
     Saga,
     /// legacy → saga → orgpair → t3.
     All,
@@ -543,7 +543,7 @@ async fn tier_scenario(
     let total_opt = Some(total);
     admin
         .execute(
-            provision_state::create_saga_sql(),
+            provision_saga::create_saga_sql(),
             &[&saga_id, &saga_kind, &org_id, &total_opt],
         )
         .await
@@ -551,18 +551,18 @@ async fn tier_scenario(
     // A redelivered create is a no-op (exactly-once via the saga_id PK).
     admin
         .execute(
-            provision_state::create_saga_sql(),
+            provision_saga::create_saga_sql(),
             &[&saga_id, &saga_kind, &org_id, &total_opt],
         )
         .await?;
     for _ in envs {
         admin
-            .execute(provision_state::advance_saga_step_sql(), &[&saga_id])
+            .execute(provision_saga::advance_saga_step_sql(), &[&saga_id])
             .await
             .context("advance saga")?;
     }
     admin
-        .execute(provision_state::complete_saga_sql(), &[&saga_id])
+        .execute(provision_saga::complete_saga_sql(), &[&saga_id])
         .await
         .context("complete saga")?;
     let saga_count: i64 = admin
@@ -708,13 +708,13 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
     let total = Some(2i32);
     client
         .execute(
-            provision_state::create_saga_sql(),
+            provision_saga::create_saga_sql(),
             &[&sid, &kind, &target, &total],
         )
         .await?;
     client
         .execute(
-            provision_state::create_saga_sql(),
+            provision_saga::create_saga_sql(),
             &[&sid, &kind, &target, &total],
         )
         .await?;
@@ -731,10 +731,10 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
 
     // Durable step checkpoint: two advances → 2.
     client
-        .execute(provision_state::advance_saga_step_sql(), &[&sid])
+        .execute(provision_saga::advance_saga_step_sql(), &[&sid])
         .await?;
     client
-        .execute(provision_state::advance_saga_step_sql(), &[&sid])
+        .execute(provision_saga::advance_saga_step_sql(), &[&sid])
         .await?;
     let step: i32 = client
         .query_one(
@@ -749,7 +749,7 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
 
     // Terminal complete.
     client
-        .execute(provision_state::complete_saga_sql(), &[&sid])
+        .execute(provision_saga::complete_saga_sql(), &[&sid])
         .await?;
     let status: String = client
         .query_one(
@@ -767,12 +767,12 @@ async fn saga_mode(admin_url: &str) -> anyhow::Result<()> {
     let none: Option<i32> = None;
     client
         .execute(
-            provision_state::create_saga_sql(),
+            provision_saga::create_saga_sql(),
             &[&sid2, &"provision-project-env", &"gate-org/app/dev", &none],
         )
         .await?;
     client
-        .execute(provision_state::fail_saga_sql(), &[&sid2, &"boom"])
+        .execute(provision_saga::fail_saga_sql(), &[&sid2, &"boom"])
         .await?;
     let (fstatus, ferr): (String, Option<String>) = {
         let r = client

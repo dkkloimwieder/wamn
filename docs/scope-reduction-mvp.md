@@ -558,8 +558,11 @@ MVP `ctl` classifies the plan **safely-additive or refuses**, applies
 atomically, and drift-verifies — nothing else. Destructive planning,
 `--confirm-with-backup`, `--acknowledge-impact`, and all impact
 analysis (`migrate_catalog.rs:73-79,139-154`; `impact_report.rs`)
-move whole to the ops feature; **no MVP impact module exists.** A
-destructive change is the proved reprovision loop.
+move whole to the ops feature; **no MVP impact module exists.** Ops
+retains destructive diff/apply only inside restore/copy reconciliation
+and impact-report planning; it exposes no destructive-migrate verb.
+Legacy rollback and default-acknowledgement APIs delete. A destructive
+MVP change is the proved reprovision loop.
 
 **Attachment removal.** No fast-disable command: an operator publishes
 a replacement catalog; removed attachment IDs are tombstoned
@@ -641,6 +644,17 @@ stored-suite deletion and inline test sets; a future
 export-run-as-test-set-file utility is noted, not retained.
 Assertions are executable: `wamn-ctl --help` shows no ops verbs;
 `cargo tree -p wamn-ctl` shows no ops-only dependencies.
+
+Ops persistence is one idempotent SQL artifact installed after the core
+system schema: `provisioning.dumps`, dedicated
+`provisioning.copy_sagas`, and append-only
+`provisioning.migration_confirmations`. Core SQL has no reference to
+those relations. A confirmation carries the project-env and catalog
+migration identity as cross-database facts, attributes the attestation
+to `session_user`, and is rechecked against the destination catalog head
+by copy-project-env before execution; it is authorization evidence, not
+live truth. The generated protected-write inventory marks these rows as
+ops scope.
 
 **Build graph.** One shared `cargo-chef` recipe; **package-scoped cook
 stages** (`cook-run-worker: cargo chef cook … -p wamn-executor`;

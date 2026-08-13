@@ -33,8 +33,8 @@ pub struct RegistrationRef {
 }
 
 /// A publish/migrate refused because it would remove entities still referenced
-/// by these registrations (D24). Mirrors [`wamn_schema_compiler::RequiresConfirmation`]: a
-/// canonical struct error carrying the offending list, surfaced by the driver.
+/// by these registrations (D24). A canonical struct error carrying the
+/// offending list, surfaced by the driver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrphaningPublish {
     /// The registrations whose referenced entity is absent from the target, in

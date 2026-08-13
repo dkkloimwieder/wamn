@@ -7,7 +7,11 @@ license.workspace = true
 
 [features]
 default = []
-ops = ["dep:wamn-run-state"]
+ops = [
+    "dep:wamn-run-state",
+    "wamn-control-provision/ops",
+    "wamn-schema-control/ops",
+]
 
 [[bin]]
 name = "wamn-ctl-ops"
@@ -17,6 +21,21 @@ required-features = ["ops"]
 [[test]]
 name = "impact_report_live"
 path = "tests/impact_report_live.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "publish_gate_live"
+path = "tests/publish_gate_live.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "protected_relations_live"
+path = "tests/protected_relations_live.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "suite_promote_live"
+path = "tests/suite_promote_live.rs"
 required-features = ["ops"]
 
 [dependencies]

@@ -148,7 +148,7 @@ mod tests {
     fn command_preserves_the_public_cli_boundary() {
         let command = ctl_command(
             OsStr::new("/proof/wamn-ctl"),
-            ["prune-run-history", "--tenant", "tenant-a"],
+            ["migrate-catalog", "--tenant", "tenant-a"],
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "/proof/wamn-ctl");
@@ -157,7 +157,7 @@ mod tests {
             [
                 "--log-level",
                 "error",
-                "prune-run-history",
+                "migrate-catalog",
                 "--tenant",
                 "tenant-a",
             ]
@@ -169,7 +169,7 @@ mod tests {
     fn command_preserves_the_ops_cli_boundary() {
         let command = ctl_command(
             OsStr::new("/proof/wamn-ctl-ops"),
-            ["impact-report", "--tenant", "tenant-a"],
+            ["prune-run-history", "--tenant", "tenant-a"],
         );
         let command = command.as_std();
         assert_eq!(command.get_program(), "/proof/wamn-ctl-ops");
@@ -178,7 +178,7 @@ mod tests {
             [
                 "--log-level",
                 "error",
-                "impact-report",
+                "prune-run-history",
                 "--tenant",
                 "tenant-a",
             ]

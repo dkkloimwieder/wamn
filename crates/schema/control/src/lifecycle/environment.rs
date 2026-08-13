@@ -17,9 +17,8 @@
 //!   is *still* the current Applied. If someone else applied a newer version in
 //!   the meantime, the stale candidate is refused until it is rebased.
 //!
-//! Version numbers are **globally unique per catalog** (not per environment):
-//! promotion mints a fresh version in the target environment, so `environment`
-//! is an attribute of each version rather than part of its identity. This mirrors
+//! Version numbers are **globally unique per catalog** (not per environment), so
+//! `environment` is an attribute of each version rather than part of its identity. This mirrors
 //! `deploy/sql/catalog-schema.sql`, where the single-applied invariant is a partial
 //! unique index on `(tenant_id, catalog_id, environment) WHERE state = 'applied'`.
 

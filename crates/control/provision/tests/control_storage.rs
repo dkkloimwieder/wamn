@@ -131,12 +131,16 @@ fn system_schema_sql_mirrors_the_model() {
     // The storage-format version is recorded (singleton meta row).
     assert!(sql.contains(&format!("'{SCHEMA_VERSION}'")));
 
-    // The saga table + its kind literals ('copy' = the wamn-8df.5 pipeline).
+    // Core provisioning sagas admit only ordinary provisioning operations.
+    // Copy has a dedicated relation in the separately installed ops artifact.
     assert!(sql.contains("CREATE TABLE provisioning.sagas"));
     assert!(sql.contains("'provision-org'") && sql.contains("'provision-project-env'"));
     assert!(
-        sql.contains("'provision-project-env', 'copy'"),
-        "the sagas kind CHECK must admit the copy pipeline (wamn-8df.5)"
+        !sql.contains("'copy'")
+            && !sql.contains("provisioning.dumps")
+            && !sql.contains("provisioning.copy_sagas")
+            && !sql.contains("provisioning.migration_confirmations"),
+        "operations-only state must not leak into the core schema"
     );
 }
 
@@ -227,76 +231,43 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
     }
 }
 
-/// The saga builders must target the `provisioning.sagas` columns and use only
-/// status literals the storage CHECK allows (the SR2 drift guard, unchanged by D18).
+/// Core provisioning-saga builders stay paired with the core relation and its
+/// admitted status literals. Operations copy state has a separate module and
+/// artifact.
 #[test]
-fn saga_sql_builders_match_the_sagas_columns_and_status_check() {
+fn saga_sql_builders_match_the_core_saga_contract() {
     let sql = code_only(&system_schema_sql());
     assert!(sql.contains("CREATE TABLE provisioning.sagas"));
 
-    let create = wamn_control_provision::state::create_saga_sql();
-    assert!(create.contains("provisioning.sagas"));
+    let create = wamn_control_provision::saga::create_saga_sql();
+    assert!(create.contains("INSERT INTO provisioning.sagas"));
     assert!(create.contains("ON CONFLICT (saga_id) DO NOTHING"));
-    for col in ["saga_id", "kind", "target", "total_steps"] {
-        assert!(sql.contains(col), "sagas table missing {col}");
-        assert!(create.contains(col), "create_saga builder missing {col}");
+    for column in ["saga_id", "kind", "target", "total_steps"] {
+        assert!(sql.contains(column), "sagas table missing {column}");
+        assert!(create.contains(column), "saga builder missing {column}");
     }
 
-    let advance = wamn_control_provision::state::advance_saga_step_sql();
+    let advance = wamn_control_provision::saga::advance_saga_step_sql();
     assert!(advance.contains("provisioning.sagas") && advance.contains("step = step + 1"));
-
     for (builder, status) in [
         (advance, "running"),
         (
-            wamn_control_provision::state::complete_saga_sql(),
+            wamn_control_provision::saga::complete_saga_sql(),
             "completed",
         ),
-        (wamn_control_provision::state::fail_saga_sql(), "failed"),
+        (wamn_control_provision::saga::fail_saga_sql(), "failed"),
     ] {
-        assert!(
-            builder.contains(&format!("'{status}'")),
-            "builder is missing the {status:?} status literal"
-        );
-        assert!(
-            sql.contains(&format!("'{status}'")),
-            "sagas status CHECK (system-schema.sql) is missing {status:?}"
-        );
+        assert!(builder.contains(&format!("'{status}'")));
+        assert!(sql.contains(&format!("'{status}'")));
     }
-}
-
-/// The dump-record builder + the dump-catalog reads must target the
-/// `provisioning.dumps` columns the storage DDL declares (unchanged by D18).
-#[test]
-fn dumps_table_and_record_builder_match_the_columns() {
-    let sql = code_only(&system_schema_sql());
-
-    assert!(sql.contains("CREATE TABLE provisioning.dumps"));
-    assert!(sql.contains("REFERENCES registry.project_envs (org, project, env)"));
-    assert!(sql.contains("dumps_format_check") && sql.contains("format IN ('directory')"));
-
-    let builder = wamn_control_provision::state::record_dump_sql();
-    assert!(builder.contains("provisioning.dumps"));
-    assert!(builder.contains("ON CONFLICT (org, project, env, object_key) DO UPDATE"));
-    for col in ["org", "project", "env", "object_key", "format", "byte_size"] {
-        assert!(sql.contains(col), "dumps table missing {col}");
-        assert!(builder.contains(col), "record_dump builder missing {col}");
-    }
-
-    for reader in [
-        wamn_control_provision::state::select_latest_dump_sql(),
-        wamn_control_provision::state::select_dumps_sql(),
-    ] {
-        assert!(reader.contains("FROM provisioning.dumps"));
-        assert!(reader.contains("object_key"));
-        assert!(reader.contains("ORDER BY taken_at DESC, object_key DESC"));
-    }
+    assert!(wamn_control_provision::saga::select_saga_sql().contains("provisioning.sagas"));
 }
 
 /// The CDC reader-registration builders (`upsert_event_reader_sql` /
 /// `select_event_reader_sql`) must target the `registry.event_readers` columns
 /// the storage DDL declares (wamn-l5i9.9, D19 v3) — and the table must carry the
 /// Secret REFERENCE shape (invariant 2), the triple key, and the project-env
-/// cascade FK (the provisioning.dumps precedent).
+/// cascade FK.
 #[test]
 fn event_readers_table_and_builders_match_the_columns() {
     let sql = code_only(&system_schema_sql());
@@ -615,73 +586,6 @@ fn system_schema_applies_and_enforces_invariants_on_postgres() {
          DROP TABLE policy_probe; DROP TABLE policy_probe_other; DEALLOCATE getpol;\n",
         get = wamn_control_registry::sql::select_env_policy_sql(),
     ));
-    // Exercise the REAL dump-record builder (unchanged by D18).
-    script.push_str(&format!(
-        "PREPARE rdump (text,text,text,text,text,bigint) AS {record};\n\
-         EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 100);\n\
-         EXECUTE rdump('demo','app','dev','dumps/demo/app/dev/1000','directory', 200);\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT byte_size FROM provisioning.dumps\n\
-                     WHERE object_key='dumps/demo/app/dev/1000')=200,\n\
-             'the second record refreshed byte_size (ON CONFLICT DO UPDATE)';\n\
-         END $$;\n\
-         DEALLOCATE rdump;\n",
-        record = wamn_control_provision::state::record_dump_sql(),
-    ));
-    // Exercise the REAL saga builders (unchanged by D18): creation exactly-once,
-    // step a durable checkpoint, complete/fail terminal.
-    script.push_str(&format!(
-        "PREPARE csaga (text,text,text,int) AS {create};\n\
-         PREPARE asaga (text) AS {advance};\n\
-         PREPARE dsaga (text) AS {complete};\n\
-         PREPARE fsaga (text,text) AS {fail};\n\
-         EXECUTE csaga('sg1','provision-org','demo', 3);\n\
-         EXECUTE csaga('sg1','provision-org','demo', 3);\n\
-         EXECUTE asaga('sg1');\n\
-         EXECUTE asaga('sg1');\n\
-         EXECUTE dsaga('sg1');\n\
-         EXECUTE csaga('sg2','provision-project-env','demo/app/dev', NULL);\n\
-         EXECUTE fsaga('sg2','boom');\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM provisioning.sagas WHERE saga_id='sg1')=1,\n\
-             'create_saga_sql is exactly-once via the saga_id PK';\n\
-           ASSERT (SELECT step FROM provisioning.sagas WHERE saga_id='sg1')=2,\n\
-             'advance_saga_step_sql advances the durable checkpoint (two advances → 2)';\n\
-           ASSERT (SELECT status FROM provisioning.sagas WHERE saga_id='sg1')='completed',\n\
-             'complete_saga_sql sets the terminal completed status';\n\
-           ASSERT (SELECT status FROM provisioning.sagas WHERE saga_id='sg2')='failed'\n\
-              AND (SELECT last_error FROM provisioning.sagas WHERE saga_id='sg2')='boom',\n\
-             'fail_saga_sql records the terminal failed status + the error';\n\
-         END $$;\n\
-         DEALLOCATE csaga; DEALLOCATE asaga; DEALLOCATE dsaga; DEALLOCATE fsaga;\n",
-        create = wamn_control_provision::state::create_saga_sql(),
-        advance = wamn_control_provision::state::advance_saga_step_sql(),
-        complete = wamn_control_provision::state::complete_saga_sql(),
-        fail = wamn_control_provision::state::fail_saga_sql(),
-    ));
-    // The copy pipeline's saga kind (wamn-8df.5) is admitted by the kind CHECK,
-    // and select_saga_sql reads back the durable state the cutover gate checks.
-    script.push_str(&format!(
-        "PREPARE csaga2 (text,text,text,int) AS {create};\n\
-         PREPARE asaga2 (text) AS {advance};\n\
-         PREPARE ssaga (text) AS {select};\n\
-         EXECUTE csaga2('sg3','copy','acme/app/dev -> acme/app/prod', 5);\n\
-         EXECUTE asaga2('sg3');\n\
-         CREATE TEMP TABLE saga_probe AS EXECUTE ssaga('sg3');\n\
-         DO $$ BEGIN\n\
-           ASSERT (SELECT count(*) FROM provisioning.sagas WHERE saga_id='sg3' AND kind='copy')=1,\n\
-             'the sagas kind CHECK admits the copy pipeline (wamn-8df.5)';\n\
-           ASSERT (SELECT status FROM saga_probe)='running'\n\
-              AND (SELECT step FROM saga_probe)=1\n\
-              AND (SELECT total_steps FROM saga_probe)=5,\n\
-             'select_saga_sql reads the durable state the cutover gate checks';\n\
-         END $$;\n\
-         DROP TABLE saga_probe;\n\
-         DEALLOCATE csaga2; DEALLOCATE asaga2; DEALLOCATE ssaga;\n",
-        create = wamn_control_provision::state::create_saga_sql(),
-        advance = wamn_control_provision::state::advance_saga_step_sql(),
-        select = wamn_control_provision::state::select_saga_sql(),
-    ));
     // Exercise the REAL CDC reader-registration builders (wamn-l5i9.9) against
     // the demo/app/dev project-env provisioned above: upsert twice (the second
     // refreshes slot/enabled — ON CONFLICT DO UPDATE), read it back via the real
@@ -818,17 +722,6 @@ EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN
   DELETE FROM registry.env_policies WHERE org='acme' AND name='prod';
   ASSERT false, 'a policy referenced by a provisioned env must not be droppable';
-EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
-
--- A dump record for that project-env — cascades with the org below, and its FK
--- requires the project-env to exist.
-INSERT INTO provisioning.dumps (org, project, env, object_key, byte_size)
-  VALUES ('acme','billing','prod','dumps/acme/billing/prod/1', 42);
--- A dump under an unregistered project-env is rejected (FK to project_envs).
-DO $$ BEGIN BEGIN
-  INSERT INTO provisioning.dumps (org, project, env, object_key)
-    VALUES ('acme','ghost','prod','dumps/acme/ghost/prod/1');
-  ASSERT false, 'a dump under an unknown project-env must be rejected';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 
 -- A project under an unregistered org is rejected (FK).
@@ -993,7 +886,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.dumps,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.project_publish_policies,registry.projects',
+  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.project_publish_policies,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
@@ -1009,14 +902,13 @@ DO $$ BEGIN BEGIN
   ASSERT false, 'an unknown saga status must be rejected';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
--- Deleting an org cascades its projects, project-envs, their dump records, AND
--- its policy rows — the whole-org delete succeeds despite the in-use-policy
+-- Deleting an org cascades its projects, project-envs, and policy rows — the
+-- whole-org delete succeeds despite the in-use-policy
 -- NO ACTION FK (checked at statement end, after the project-env cascade).
 DELETE FROM registry.orgs WHERE id='acme';
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
   ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
-  ASSERT (SELECT count(*) FROM provisioning.dumps WHERE org='acme')=0, 'dumps cascade';
   ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='acme')=0, 'env-policies cascade';
 END $$;
 "#;

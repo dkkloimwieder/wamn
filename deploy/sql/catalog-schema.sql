@@ -1581,9 +1581,10 @@ CREATE INDEX IF NOT EXISTS publish_gate_audit_recorded
 -- Migration history (2.5, crates/schema/control). One IMMUTABLE row per applied
 -- migration — the versioned, forward-only apply journal the migration engine
 -- writes inside the SAME transaction as the DDL + the lifecycle advance. A row
--- records the (from -> to) version step, whether it was destructive (so a
--- confirmed backup checkpoint was required), the operation count, and a checksum
--- of the applied DDL script (integrity/audit). `from_version` is NULL for the
+-- records the (from -> to) version step, whether it was destructive, the
+-- operation count, and a checksum of the applied DDL script (integrity/audit).
+-- Destructive authorization evidence lives only in the operations database.
+-- `from_version` is NULL for the
 -- first materialization of a catalog. Forward-only: the PK forbids recording the
 -- same (catalog, environment, to_version) twice; wamn_app is granted SELECT +
 -- INSERT only (no UPDATE/DELETE) so history is append-only.
@@ -1591,18 +1592,15 @@ CREATE INDEX IF NOT EXISTS publish_gate_audit_recorded
 CREATE TABLE catalog.schema_migrations (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
+    -- `environment` is a validated slug (D18, wamn-8df.3) — no closed CHECK.
     environment     text NOT NULL,
     from_version    int,
     to_version      int  NOT NULL,
-    confirmation    text NOT NULL,
     statement_count int  NOT NULL,
     destructive     boolean NOT NULL DEFAULT false,
     checksum        text NOT NULL,
     applied_at      timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, catalog_id, environment, to_version),
-    -- `environment` is a validated slug (D18, wamn-8df.3) — no closed CHECK.
-    CONSTRAINT schema_migrations_confirmation_check
-        CHECK (confirmation IN ('none', 'confirmed-with-backup'))
+    PRIMARY KEY (tenant_id, catalog_id, environment, to_version)
 );
 ALTER TABLE catalog.schema_migrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE catalog.schema_migrations FORCE ROW LEVEL SECURITY;

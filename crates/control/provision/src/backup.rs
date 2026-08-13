@@ -12,16 +12,15 @@
 //! (`EnvPolicy::wal_retention`) is the PITR-SLA knob — a **per-env policy** lever
 //! under D18 (cjv.21: sizing is policy-driven, not a closed tier), and the
 //! **base-backup cadence** is `EnvPolicy::backup_cadence` (empty = no scheduled
-//! backup). The *other* backup mechanism — per-project-env logical dumps
-//! (tenant-scoped restore, the 10.3 export) — is [`crate::dump`] (wamn-q3n.10/.11);
-//! the two share the object store (MinIO, deploy/infra/minio.yaml).
+//! backup). Backup objects use the shared object store (MinIO,
+//! deploy/infra/minio.yaml).
 //!
 //! **Pure** (SR3 / house rule 1): K8s manifest renderers (`serde_json::Value` —
-//! `kubectl apply -f` accepts JSON, the [`crate::org`] / [`crate::dump`]
-//! precedent) reading the env-policy knobs. No K8s client, no clock. `provision-org` emits the
-//! CRs and the runbook applies them, in order: the **ObjectStore** before the
-//! **Cluster** that references it (via `.spec.plugins`), and the **ScheduledBackup**
-//! after the cluster exists.
+//! `kubectl apply -f` accepts JSON, following the [`crate::org`] precedent)
+//! reading the env-policy knobs. No K8s client, no clock. `provision-org` emits
+//! the CRs and the runbook applies them, in order: the **ObjectStore** before the
+//! **Cluster** that references it (via `.spec.plugins`), and the
+//! **ScheduledBackup** after the cluster exists.
 
 use serde_json::{Value, json};
 use wamn_control_registry::EnvPolicy;
@@ -29,16 +28,13 @@ use wamn_control_registry::EnvPolicy;
 /// The Barman Cloud plugin name a Cluster references (`.spec.plugins[].name`) and
 /// a `Backup`/`ScheduledBackup` targets (`spec.pluginConfiguration.name`).
 pub const BACKUP_PLUGIN_NAME: &str = "barman-cloud.cloudnative-pg.io";
-/// The object-store bucket WAL + base backups are written under — distinct from
-/// the logical-dump bucket ([`crate::dump::DEFAULT_BUCKET`]), so WAL streams and
-/// dumps never collide in one prefix tree.
+/// The object-store bucket WAL + base backups are written under.
 pub const WAL_BUCKET: &str = "wamn-backups";
 /// The shared object-store credentials `Secret` (keys `ACCESS_KEY_ID` /
 /// `ACCESS_SECRET_KEY`), created by deploy/infra/minio.yaml. The ObjectStore's
-/// `s3Credentials` reference it; the dump upload ([`crate::dump`]) reads the same.
+/// `s3Credentials` reference it.
 pub const OBJECT_STORE_SECRET: &str = "wamn-object-store";
-/// The in-cluster MinIO S3 endpoint (the deploy/infra/minio.yaml `Service`). The shared
-/// object store both WAL/PITR and the logical dumps write to.
+/// The in-cluster MinIO S3 endpoint (the deploy/infra/minio.yaml `Service`).
 pub const MINIO_ENDPOINT: &str = "http://minio.wamn-system.svc:9000";
 /// The namespace backup CRs live in (alongside the clusters + object store).
 const NAMESPACE: &str = "wamn-system";
@@ -53,8 +49,8 @@ pub fn scheduled_backup_name(cluster: &str) -> String {
     format!("{cluster}-backup")
 }
 
-/// Labels stamped on a backup CR — platform ownership + the cluster it backs (so
-/// tooling never parses the name), the [`crate::dump`] precedent.
+/// Labels stamped on a backup CR — platform ownership + the cluster it backs, so
+/// tooling never parses the name.
 fn backup_labels(cluster: &str) -> Value {
     json!({
         "app.kubernetes.io/managed-by": "wamn",
@@ -142,7 +138,7 @@ mod tests {
     #[test]
     fn prod_policy_has_a_backup_dev_does_not() {
         // The base-backup + PITR knobs are per-env policy fields (D18): prod has a
-        // cadence + retention window, dev has neither (its restore path is the dump).
+        // cadence + retention window, while dev has neither.
         assert!(EnvPolicy::prod().has_scheduled_backup());
         assert!(!EnvPolicy::dev().has_scheduled_backup());
         assert_eq!(EnvPolicy::prod().wal_retention, "14d");

@@ -158,9 +158,9 @@ pub struct PublishGateReport {
 
 /// A promotion refused because its suites are not proven green.
 ///
-/// A canonical struct error mirroring [`crate::impact::ImpactNotAcknowledged`],
-/// naming every unproven suite and its defect so the operator learns the whole
-/// list from one refusal rather than one suite per re-run.
+/// A canonical struct error naming every unproven suite and its defect so the
+/// operator learns the whole list from one refusal rather than one suite per
+/// re-run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GreenSuiteNotProven {
     pub unproven: Vec<(SuiteEdge, EvidenceDefect)>,

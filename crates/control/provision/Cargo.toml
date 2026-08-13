@@ -5,6 +5,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+ops = []
+
+[[test]]
+name = "dump"
+path = "tests/dump.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "ops_storage"
+path = "tests/ops_storage.rs"
+required-features = ["ops"]
+
+[[test]]
+name = "restore"
+path = "tests/restore.rs"
+required-features = ["ops"]
+
 [dependencies]
 # The projects-file entry (the `WAMN_PG_PROJECTS_FILE` format the plugin's
 # StaticCredentialProvider parses) and the per-project credential Secret render

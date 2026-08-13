@@ -261,7 +261,7 @@ async fn publish(
         } else {
             let floor = wamn_schema_compiler::Migration::create(cat)
                 .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-                .sql(wamn_schema_compiler::Confirmation::None)
+                .sql()
                 .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
             client.batch_execute(&floor).await.context("apply floor")?;
             println!("provisioned tenant floor in schema {schema}");
@@ -962,7 +962,7 @@ async fn publish_release(
                     "SELECT EXISTS (SELECT 1 FROM catalog.schema_migrations \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
                        AND to_version = $4 \
-                       AND confirmation = 'none' AND statement_count = 0 \
+                       AND statement_count = 0 \
                        AND destructive = false AND checksum = $5)",
                     &[
                         &tenant,
@@ -995,7 +995,7 @@ async fn publish_release(
                     "SELECT EXISTS (SELECT 1 FROM catalog.schema_migrations \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
                        AND from_version IS NOT DISTINCT FROM $4 AND to_version = $5 \
-                       AND confirmation = 'none' AND statement_count = 0 \
+                       AND statement_count = 0 \
                        AND destructive = false AND checksum = $6)",
                     &[
                         &tenant,
@@ -1496,8 +1496,7 @@ pub fn seed_dataset_sql(
         .context("parse seed dataset")?;
     let plan = wamn_schema_compiler::seed::compile(&dataset, cat, tenant)
         .map_err(|e| anyhow::anyhow!("seed compile: {e}"))?;
-    plan.sql(wamn_schema_compiler::Confirmation::None)
-        .map_err(|e| anyhow::anyhow!("seed sql: {e}"))
+    plan.sql().map_err(|e| anyhow::anyhow!("seed sql: {e}"))
 }
 
 #[derive(Debug)]
@@ -1733,7 +1732,7 @@ mod tests {
                        flow_id, flow_version, execution_bundle_hash) \
                      ORDER BY flow_id)::text FROM catalog.release_flows \
                      WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), '[]'), \
-                   (SELECT jsonb_build_array(from_version, to_version, confirmation, \
+                   (SELECT jsonb_build_array(from_version, to_version, \
                      statement_count, destructive, checksum)::text \
                      FROM catalog.schema_migrations WHERE tenant_id = $1 \
                        AND catalog_id = $2 AND environment = 'dev' AND to_version = 1), \

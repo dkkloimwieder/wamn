@@ -74,7 +74,7 @@ use wamn_control_registry::sql::{
     upsert_event_reader_sql, upsert_org_sql, upsert_project_env_sql, upsert_project_sql,
 };
 use wamn_gate_harness::{check, emit_csv, percentile};
-use wamn_schema_compiler::{Confirmation, Migration};
+use wamn_schema_compiler::Migration;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum Mode {
@@ -497,7 +497,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<(Client, Client)> {
         .context("app schema usage grant")?;
     let floor = Migration::create(&catalog()?)
         .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-        .sql(Confirmation::None)
+        .sql()
         .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
     db.batch_execute(&format!("SET search_path TO app; {floor}"))
         .await
@@ -1664,10 +1664,7 @@ mod tests {
     fn catalog_matches_the_measured_shapes() {
         let cat = catalog().expect("poc-receiving catalog parses");
         assert_eq!(cat.catalog_id, CATALOG_ID);
-        let floor = Migration::create(&cat)
-            .unwrap()
-            .sql(Confirmation::None)
-            .unwrap();
+        let floor = Migration::create(&cat).unwrap().sql().unwrap();
         for t in ["suppliers", "users"] {
             assert!(
                 floor.contains(&format!("CREATE TABLE \"{t}\"")),

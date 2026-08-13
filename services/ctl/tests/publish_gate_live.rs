@@ -168,7 +168,7 @@ impl World {
         // `wamn_system`, so grant it what the T1 cluster's owner role holds.
         sys.batch_execute(
             "GRANT USAGE ON SCHEMA registry, provisioning, identity TO wamn_system; \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA registry, provisioning, \
+             GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON ALL TABLES IN SCHEMA registry, provisioning, \
                identity TO wamn_system;",
         )
         .await

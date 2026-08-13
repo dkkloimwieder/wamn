@@ -131,6 +131,11 @@
       "scope": "production-control-database"
     },
     {
+      "path": "deploy/sql/ops-schema.sql",
+      "kind": "ddl",
+      "scope": "production-control-database-ops"
+    },
+    {
       "path": "deploy/sql/catalog-schema.sql",
       "kind": "ddl",
       "scope": "production-project-database"
@@ -465,7 +470,41 @@
       "migration_owners": [
         "provision-store"
       ],
-      "schema_source": "deploy/sql/system-schema.sql",
+      "schema_source": "deploy/sql/ops-schema.sql",
+      "writers": [
+        "provision-store"
+      ],
+      "readers": [
+        "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "provisioning.copy_sagas",
+      "plane": "control",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "deploy/sql/ops-schema.sql",
+      "writers": [
+        "provision-store"
+      ],
+      "readers": [
+        "provision-store"
+      ],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "provisioning.migration_confirmations",
+      "plane": "control",
+      "semantic_owner": "provision-store",
+      "migration_owners": [
+        "provision-store"
+      ],
+      "schema_source": "deploy/sql/ops-schema.sql",
       "writers": [
         "provision-store"
       ],

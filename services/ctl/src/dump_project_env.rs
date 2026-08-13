@@ -172,8 +172,8 @@ async fn run_now(args: &DumpProjectEnvArgs, triple: &Triple) -> anyhow::Result<(
     Ok(())
 }
 
-/// Record a completed dump in the registry (idempotent — refreshes byte_size on a
-/// re-record). Connects as superuser and `SET ROLE wamn_system` (the .3 pattern).
+/// Record a completed dump in operations state (idempotent — refreshes
+/// `byte_size` on a re-record).
 async fn record_dump(
     system_url: &str,
     triple: &Triple,
@@ -196,10 +196,7 @@ async fn do_record_dump(
     object_key: &str,
     byte_size: Option<i64>,
 ) -> anyhow::Result<()> {
-    client
-        .batch_execute("SET ROLE wamn_system")
-        .await
-        .context("SET ROLE wamn_system")?;
+    crate::ops_schema::install_and_enter(client).await?;
     let env = triple.env.as_str();
     let format = wamn_control_provision::dump::DUMP_FORMAT;
     client

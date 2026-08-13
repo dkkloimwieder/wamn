@@ -16,11 +16,11 @@
 //!
 //! ```
 //! use wamn_schema_model::Catalog;
-//! use wamn_schema_compiler::seed::{Dataset, compile, Confirmation};
+//! use wamn_schema_compiler::seed::{Dataset, compile};
 //!
 //! # fn go(catalog: &Catalog, dataset: &Dataset) -> Result<(), Box<dyn std::error::Error>> {
 //! let plan = compile(dataset, catalog, "tenant-a")?; // -> a wamn-schema-compiler MigrationPlan
-//! let sql = plan.sql(Confirmation::None)?;            // a seed load is all-additive
+//! let sql = plan.sql()?;            // a seed load is all-additive
 //! # let _ = sql;
 //! # Ok(())
 //! # }
@@ -58,5 +58,5 @@ pub use validate::validate;
 
 // Re-exported so callers drive the (reused) 3.2 review / gate surface without a
 // direct dependency on wamn-schema-compiler.
-pub use crate::{Confirmation, MigrationPlan};
+pub use crate::MigrationPlan;
 pub use wamn_schema_model::{Issue, Severity};

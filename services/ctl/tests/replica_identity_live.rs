@@ -26,7 +26,7 @@
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::reconcile_replica_identity::reconcile;
-use wamn_schema_compiler::{Confirmation, Migration};
+use wamn_schema_compiler::Migration;
 use wamn_schema_control::ReplicaIdentity;
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -133,7 +133,7 @@ async fn reset(su: &Client) {
     // The real 3.2 floor for the two entities in the data schema.
     let floor = Migration::create(&catalog())
         .expect("floor compile")
-        .sql(Confirmation::None)
+        .sql()
         .expect("floor sql");
     su.batch_execute(&format!(
         "CREATE SCHEMA {DATA_SCHEMA}; SET search_path TO {DATA_SCHEMA}; {floor}"

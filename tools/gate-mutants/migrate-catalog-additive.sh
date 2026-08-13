@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly OWNER="bd:wamn-0h0g.9.5"
-readonly OUTCOME="default migrate-catalog remains additive-only with no impact or destructive override"
+readonly OWNER="bd:wamn-0h0g.12.5"
+readonly OUTCOME="default migrate-catalog stays additive-only while destructive planning remains internal to ops"
 readonly CAMPAIGN="migrate-catalog-additive"
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -23,38 +23,56 @@ declare -a TEST_ARGV
 mutation_ids() {
   printf '%s\n' \
     allow-destructive-dry-run \
-    allow-destructive-apply \
+    allow-destructive-public-plan \
+    emit-destructive-from-default-compiler \
     expose-destructive-flag \
-    expose-impact-shell-by-default
+    enable-ops-by-default \
+    skip-copy-confirmation-read \
+    drop-copy-authorization-consumption \
+    bypass-copy-locked-window
 }
 
 load_mutation() {
   case "$1" in
     allow-destructive-dry-run)
       TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="bc5eee0c591a9af6ff144f5ac05c9d5c0dd745e8e79ec61146afce34bb1207f7"
-      NEEDLE='            expected_base: args.base,
-            confirm: Confirmation::None,'
-      REPLACEMENT='            expected_base: args.base,
-            confirm: Confirmation::ConfirmedWithBackup,'
+      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
+      NEEDLE='        let plan = plan_error(plan_migration(&request))?;'
+      REPLACEMENT='        let plan = plan_error(wamn_schema_control::ops::plan_target_reconciliation(&request))?;'
       GATE="orphan_guard_refuses_then_proceeds"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --test orphan_guard_live "$GATE" -- --exact --nocapture --test-threads=1)
+      TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --features ops --test orphan_guard_live "$GATE" -- --exact --nocapture --test-threads=1)
       ;;
-    allow-destructive-apply)
-      TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="bc5eee0c591a9af6ff144f5ac05c9d5c0dd745e8e79ec61146afce34bb1207f7"
-      NEEDLE='        args.base,
-        Confirmation::None,
-        true,'
-      REPLACEMENT='        args.base,
-        Confirmation::ConfirmedWithBackup,
-        true,'
-      GATE="orphan_guard_refuses_then_proceeds"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --test orphan_guard_live "$GATE" -- --exact --nocapture --test-threads=1)
+    allow-destructive-public-plan)
+      TARGET="crates/schema/control/src/engine.rs"
+      EXPECTED_SHA="9d8299fbb55c284b74345d18f54547fa9fd944e96925f6568bce752b60cf44e6"
+      NEEDLE='    if c.destructive {
+        return Err(MigrationError::Destructive(DestructiveMigration {
+            operations: c
+                .plan
+                .destructive()
+                .map(|operation| operation.summary.clone())
+                .collect(),
+        }));
+    }
+    let ddl_sql = c
+        .plan
+        .sql()
+        .expect("the additive boundary rejected destructive operations above");'
+      REPLACEMENT='    let ddl_sql = c.plan.ops_sql();'
+      GATE="destructive_migration_is_not_a_public_capability"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-schema-control --features ops --test migrate "$GATE" -- --exact)
+      ;;
+    emit-destructive-from-default-compiler)
+      TARGET="crates/schema/compiler/src/plan.rs"
+      EXPECTED_SHA="036ea6fb3b6eeaf54e9eea09407ea0b666412674850907ccba3597293fc5465f"
+      NEEDLE='        if self.is_destructive() {'
+      REPLACEMENT='        if false {'
+      GATE="dropped_column_is_gated_destructive"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-schema-compiler --features ops --test ddl "$GATE" -- --exact)
       ;;
     expose-destructive-flag)
       TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="bc5eee0c591a9af6ff144f5ac05c9d5c0dd745e8e79ec61146afce34bb1207f7"
+      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
       NEEDLE='    #[arg(long)]
     pub skip_reconcile_replica_identity: bool,'
       REPLACEMENT='    #[arg(long, visible_alias = "confirm-with-backup")]
@@ -62,14 +80,37 @@ load_mutation() {
       GATE="mvp_migrate_catalog_has_no_destructive_override"
       TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --test verb_surface "$GATE" -- --exact)
       ;;
-    expose-impact-shell-by-default)
-      TARGET="services/ctl/src/lib.rs"
-      EXPECTED_SHA="6e336c9166276b9b7d342e571503d5728b4ca9ec0c0be9e9a2057f7f0ebe1d7a"
-      NEEDLE='#[cfg(feature = "ops")]
-pub mod impact_report;'
-      REPLACEMENT='pub mod impact_report;'
-      GATE="impact_effect_shell_is_ops_only"
+    enable-ops-by-default)
+      TARGET="services/ctl/Cargo.toml"
+      EXPECTED_SHA="7fd00fdbc3e0607af1d7af589149f090ea70e25b91ea33e81c12460b8128227c"
+      NEEDLE='default = []'
+      REPLACEMENT='default = ["ops"]'
+      GATE="mvp_dependency_tree_does_not_enable_ops"
       TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --test verb_surface "$GATE" -- --exact)
+      ;;
+    skip-copy-confirmation-read)
+      TARGET="services/ctl/src/copy_project_env.rs"
+      EXPECTED_SHA="a839a6ce764118a290bdc9d1dbd6b166f437047408e074d249710b0f384697e4"
+      NEEDLE='wamn_control_provision::state::select_migration_confirmation_sql()'
+      REPLACEMENT='"SELECT NULL::int, '\''backup-checkpoint-attested'\''::text, now(), session_user"'
+      GATE="copy_authorization_wiring"
+      TEST_ARGV=("$0" wiring-check)
+      ;;
+    drop-copy-authorization-consumption)
+      TARGET="services/ctl/src/copy_project_env.rs"
+      EXPECTED_SHA="a839a6ce764118a290bdc9d1dbd6b166f437047408e074d249710b0f384697e4"
+      NEEDLE='            authorizations.remove(&cat.catalog_id),'
+      REPLACEMENT='            None,'
+      GATE="copy_authorization_wiring"
+      TEST_ARGV=("$0" wiring-check)
+      ;;
+    bypass-copy-locked-window)
+      TARGET="services/ctl/src/migrate_catalog.rs"
+      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
+      NEEDLE='        guard_target_reconciliation_window(authorization, locked_from, target.version)?;'
+      REPLACEMENT='        let _ = (authorization, locked_from, target.version);'
+      GATE="copy_authorization_wiring"
+      TEST_ARGV=("$0" wiring-check)
       ;;
     *)
       echo "unknown mutant: $1" >&2
@@ -114,6 +155,31 @@ replace_once() {
 
 run_gate() {
   "${TEST_ARGV[@]}"
+}
+
+assert_exact_anchor() {
+  local target="$1"
+  local needle="$2"
+  local count
+  count="$(TARGET="$target" NEEDLE="$needle" perl -0ne '
+    BEGIN { $needle = $ENV{NEEDLE}; $count = 0 }
+    $count += s/\Q$needle\E//g;
+    END { print $count }
+  ' "$target")"
+  if [[ "$count" != 1 ]]; then
+    echo "$target must contain the copy-authorization link exactly once; found $count" >&2
+    return 1
+  fi
+}
+
+check_copy_authorization_wiring() {
+  assert_exact_anchor services/ctl/src/copy_project_env.rs \
+    'wamn_control_provision::state::select_migration_confirmation_sql()'
+  assert_exact_anchor services/ctl/src/copy_project_env.rs \
+    '            authorizations.remove(&cat.catalog_id),'
+  assert_exact_anchor services/ctl/src/migrate_catalog.rs \
+    '        guard_target_reconciliation_window(authorization, locked_from, target.version)?;'
+  echo "copy authorization wiring check clean"
 }
 
 run_green() {
@@ -183,6 +249,11 @@ case "${1:-}" in
     ;;
   check)
     check_campaign
+    check_copy_authorization_wiring
+    ;;
+  wiring-check)
+    [[ $# -eq 1 ]] || { usage; exit 2; }
+    check_copy_authorization_wiring
     ;;
   green)
     [[ $# -eq 2 ]] || { usage; exit 2; }

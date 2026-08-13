@@ -5,9 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use wamn_schema_compiler::rls::{
-    AccessPolicy, Command, CommandGrant, CompileError, Confirmation, Rule, compile,
-};
+use wamn_schema_compiler::rls::{AccessPolicy, Command, CommandGrant, CompileError, Rule, compile};
 use wamn_schema_model::{Catalog, Entity, Field, FieldType};
 
 fn poc_fixture() -> PathBuf {
@@ -39,12 +37,12 @@ fn row_ownership_compiles_to_restrictive_owner_policy() {
     }]);
     let plan = compile(&p, &poc()).expect("compiles");
     assert!(plan.is_additive());
-    assert!(!plan.requires_confirmation());
+    assert!(!plan.is_destructive());
     let op = &plan.operations[0];
     assert_eq!(op.entity, "dispositions");
     assert_eq!(op.field.as_deref(), Some("inspector_id"));
 
-    let sql = &op.sql;
+    let sql = op.additive_sql().expect("RLS operations are additive");
     assert!(
         sql.contains("CREATE POLICY \"dispositions_owner_0\" ON \"dispositions\" AS RESTRICTIVE")
     );
@@ -83,24 +81,32 @@ fn role_command_gates_emit_per_command_policies() {
     let insert = plan
         .operations
         .iter()
-        .find(|o| o.sql.contains("FOR INSERT"))
+        .find(|o| {
+            o.additive_sql()
+                .is_some_and(|sql| sql.contains("FOR INSERT"))
+        })
         .expect("insert policy");
     // INSERT gates via WITH CHECK only (no USING on an insert policy).
-    assert!(insert.sql.contains("WITH CHECK ("));
-    assert!(!insert.sql.contains("USING ("));
-    assert!(insert.sql.contains(
+    let insert_sql = insert.additive_sql().expect("insert policy is additive");
+    assert!(insert_sql.contains("WITH CHECK ("));
+    assert!(!insert_sql.contains("USING ("));
+    assert!(insert_sql.contains(
         "COALESCE(current_setting('app.role', true), '') IN ('inspector', 'supervisor')"
     ));
 
     let delete = plan
         .operations
         .iter()
-        .find(|o| o.sql.contains("FOR DELETE"))
+        .find(|o| {
+            o.additive_sql()
+                .is_some_and(|sql| sql.contains("FOR DELETE"))
+        })
         .expect("delete policy");
     // DELETE gates via USING only.
-    assert!(delete.sql.contains("USING ("));
-    assert!(!delete.sql.contains("WITH CHECK ("));
-    assert!(delete.sql.contains("IN ('admin')"));
+    let delete_sql = delete.additive_sql().expect("delete policy is additive");
+    assert!(delete_sql.contains("USING ("));
+    assert!(!delete_sql.contains("WITH CHECK ("));
+    assert!(delete_sql.contains("IN ('admin')"));
 }
 
 #[test]
@@ -113,7 +119,9 @@ fn custom_role_predicate_is_emitted_verbatim_and_role_scoped() {
         name: None,
     }]);
     let plan = compile(&p, &poc()).expect("compiles");
-    let sql = &plan.operations[0].sql;
+    let sql = plan.operations[0]
+        .additive_sql()
+        .expect("policy operation is additive");
     assert!(sql.contains("FOR SELECT"));
     // Only this role is constrained; others are unaffected (role <> 'inspector' OR …).
     assert!(sql.contains(
@@ -132,7 +140,7 @@ fn plan_is_additive_and_gate_free_but_notes_the_claim_dependency() {
         name: None,
     }]);
     let plan = compile(&p, &poc()).expect("compiles");
-    assert!(plan.sql(Confirmation::None).is_ok());
+    assert!(plan.sql().is_ok());
     let report = plan.report();
     assert!(report.contains("additive"));
     assert!(report.contains("app.role / app.user_id"));
@@ -150,7 +158,9 @@ fn explicit_name_is_used_and_suffixed_per_command() {
     }]);
     let plan = compile(&p, &poc()).expect("compiles");
     // UPDATE gets both USING and WITH CHECK; the name is the explicit base + cmd.
-    let sql = &plan.operations[0].sql;
+    let sql = plan.operations[0]
+        .additive_sql()
+        .expect("policy operation is additive");
     assert!(sql.contains("CREATE POLICY \"disp_write_update\""));
     assert!(sql.contains("USING (") && sql.contains("WITH CHECK ("));
 }
@@ -367,8 +377,8 @@ fn compiled_policy_filters_rows_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_rls_test TO wamn_app;\n\
          SET search_path TO wamn_rls_test;\n",
     );
-    script.push_str(&floor.sql(Confirmation::None).unwrap());
-    script.push_str(&policies.sql(Confirmation::None).unwrap());
+    script.push_str(&floor.sql().unwrap());
+    script.push_str(&policies.sql().unwrap());
     // Seed as the (superuser) owner — superusers bypass RLS.
     script.push_str(&format!(
         "INSERT INTO notes (tenant_id, owner_id, body) VALUES ('t1','{U1}','a'),('t1','{U2}','b');\n"

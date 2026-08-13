@@ -44,7 +44,7 @@ use anyhow::{Context as _, bail};
 use clap::{Args, ValueEnum};
 use tokio_postgres::{Client, NoTls};
 use wamn_gate_harness::{check, emit_csv, percentile};
-use wamn_schema_compiler::{Confirmation, Migration};
+use wamn_schema_compiler::Migration;
 
 const SCHEMA: &str = "wamn_walbench";
 const TENANT: &str = "walbench-tenant";
@@ -165,7 +165,7 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .context("create ephemeral schema")?;
         let floor = Migration::create(&catalog()?)
             .map_err(|e| anyhow::anyhow!("floor compile: {e}"))?
-            .sql(Confirmation::None)
+            .sql()
             .map_err(|e| anyhow::anyhow!("floor sql: {e}"))?;
         client
             .batch_execute(&format!("SET search_path TO {SCHEMA}; {floor}"))
@@ -917,10 +917,7 @@ mod tests {
     #[test]
     fn poc_catalog_parses_and_compiles_the_floor() {
         let cat = catalog().expect("poc-receiving catalog parses");
-        let floor = Migration::create(&cat)
-            .unwrap()
-            .sql(Confirmation::None)
-            .unwrap();
+        let floor = Migration::create(&cat).unwrap().sql().unwrap();
         // The representative app tables the baseline writes.
         for t in [
             "suppliers",

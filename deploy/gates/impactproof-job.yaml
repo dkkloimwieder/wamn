@@ -6,8 +6,8 @@
 # flow whose postgres node names entity `orders` by NAME + a version-bound suite,
 # then folds a v1->v2 (drop-column) plan through
 # wamn_schema_control::impact::analyze and asserts
-# the report names the affected flow/suite/api resource and gates a destructive
-# change with dependents behind acknowledgement (an additive change does not).
+# the report names the affected flow/suite/api resource and preserves the two
+# independent facts: destructiveness and downstream impact.
 # The event-registration edge (shared catalog.event_registrations) is proven by
 # the throwaway-PG live gate, not here. Co-located with postgres, NO cpu limit (the
 # S2 CFS lesson). Run bench/proof Jobs SEQUENTIALLY on the shared postgres.

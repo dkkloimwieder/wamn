@@ -15,6 +15,8 @@ mod env_policies;
 #[cfg(feature = "ops")]
 pub mod impact_report;
 pub mod migrate_catalog;
+#[cfg(feature = "ops")]
+mod ops_schema;
 pub mod provision;
 pub mod provision_org;
 pub mod provision_project_env;

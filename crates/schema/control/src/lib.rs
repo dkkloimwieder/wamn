@@ -3,10 +3,9 @@
 //! The **live executor** that applies a catalog to a project database. It does
 //! not re-derive migration logic — it **composes the shipped machinery**:
 //!
-//! - [`wamn_schema_compiler`] (3.2) — computes the DDL (`Migration::create` / `migrate`) and
-//!   owns the additive/destructive [`Confirmation`] gate, reused verbatim (a
-//!   destructive plan is refused without a confirmed backup, and the emitted DDL
-//!   carries the backup-checkpoint marker);
+//! - [`wamn_schema_compiler`] (3.2) — computes and classifies the DDL
+//!   (`Migration::create` / `migrate`); the public planner accepts additive
+//!   changes only;
 //! - [`crate::lifecycle`] (3.4) — the `draft → staged → applied → superseded`
 //!   lifecycle with the *single-applied* and *stale-base* guards, reused as the
 //!   validation oracle so the live engine can never diverge from them;
@@ -19,17 +18,17 @@
 //! - an [`ApplyPlan`] — the ordered `$n`-parameterized statements to run in **one
 //!   transaction**: the DDL, the lifecycle advance in `catalog.catalogs`
 //!   (demote the prior applied, promote the target, storing its `document`), and
-//!   an immutable row in `catalog.schema_migrations`;
-//! - a [`MigrationReport`] — a dry run (no gate, no mutation) with the DDL report
-//!   and the rollback plan;
-//! - a [`RollbackPlan`] — a generated inverse forward-migration plus a
-//!   restore-to-last-dump pointer.
+//!   an immutable row in `catalog.schema_migrations`.
+//!
+//! Destructive target reconciliation and read-only impact compilation are
+//! available only through the `ops` feature. Their authorization evidence lives
+//! in operations state, outside this pure planner.
 //!
 //! ## Scope (v1)
 //!
 //! The **tenant catalog** migration engine: execute wamn-schema-compiler plans over catalog
-//! versions, advance the lifecycle, record history, dry-run, and generate a
-//! rollback. Versioned + **forward-only** (a version applies only if newer than
+//! versions, advance the lifecycle, and record history. Versioned +
+//! **forward-only** (a version applies only if newer than
 //! the current applied one). The "system-schema migrations shipped with platform
 //! releases" flavor (hand-written SQL evolving `app_system` / `catalog` across
 //! every project DB on upgrade — different inputs, different trigger) is a
@@ -64,25 +63,28 @@
 pub mod connections;
 mod engine;
 pub mod exposure;
+#[cfg(feature = "ops")]
 pub mod impact;
 pub mod lifecycle;
 mod model;
+#[cfg(feature = "ops")]
+pub mod ops;
 mod orphan;
 mod publication;
+#[cfg(feature = "ops")]
 pub mod publish_gate;
 mod replica_identity;
 mod run_plane;
 pub mod sql;
 
-pub use engine::{dry_run, plan_migration, rollback_plan};
+pub use engine::plan_migration;
 pub use exposure::{
     Attachment, AttachmentKind, Cardinality, ExposureError, ExposureRelease, FlowExposure,
     HttpRoute, InputMapping, MappingSource, ResolvedAttachment, Source, SourceKind,
     resolve_exposure,
 };
 pub use model::{
-    ApplyPlan, Confirmation, Env, MigrationError, MigrationReport, MigrationRequest, RollbackPlan,
-    SqlStatement, Value,
+    ApplyPlan, DestructiveMigration, Env, MigrationError, MigrationRequest, SqlStatement, Value,
 };
 pub use orphan::{
     OrphaningPublish, OrphaningSuiteCopy, RegistrationRef, SuiteRef, check_registration_orphans,
@@ -118,7 +120,8 @@ pub use run_plane::{
 // without a direct dependency on wamn-event-reg.
 pub use wamn_event_reg::EventRegistration;
 
-// Re-exported so a driver can name the wamn-schema-compiler / wamn-schema-control types the engine
-// returns without a direct dependency on those crates.
-pub use wamn_schema_compiler::{MigrationPlan, RequiresConfirmation};
+// Re-exported so an operations impact driver can name the classified plan
+// without a direct compiler dependency.
+#[cfg(feature = "ops")]
+pub use wamn_schema_compiler::MigrationPlan;
 pub use wamn_schema_model::Catalog;

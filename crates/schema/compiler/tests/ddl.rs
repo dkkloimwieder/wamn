@@ -1,13 +1,14 @@
 //! Compiler tests over the canonical POC catalog (reused from wamn-schema-model's
 //! fixtures): the CREATE plan is all-additive and tenant-safe, diffs classify
-//! additive vs destructive, and the safety gate refuses unconfirmed destructive
-//! DDL. An optional live-apply test runs the emitted SQL against a throwaway
+//! additive vs destructive, and the default boundary refuses destructive DDL.
+//! The ops-only renderer is covered here because this test target requires the
+//! `ops` feature. An optional live-apply test runs the emitted SQL against a throwaway
 //! Postgres when `WAMN_DDL_PG_URL` is set.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use wamn_schema_compiler::{CompileError, Confirmation, Migration};
+use wamn_schema_compiler::{CompileError, Migration};
 use wamn_schema_model::{Catalog, Constraint, Entity, Field, FieldType, Index};
 
 /// The POC catalog fixture lives in the sibling wamn-schema-model crate.
@@ -97,11 +98,9 @@ fn create_plan_is_additive_and_tenant_safe() {
     let plan = Migration::create(&poc()).expect("compiles");
     assert!(!plan.is_empty());
     assert!(plan.is_additive(), "a fresh CREATE has no destructive ops");
-    assert!(!plan.requires_confirmation());
+    assert!(!plan.is_destructive());
 
-    let sql = plan
-        .sql(Confirmation::None)
-        .expect("additive needs no confirmation");
+    let sql = plan.sql().expect("additive needs no confirmation");
     // Tenant floor + managed PK.
     assert!(sql.contains("CREATE TABLE \"receipts\""));
     assert!(sql.contains("id uuid PRIMARY KEY DEFAULT gen_random_uuid()"));
@@ -165,7 +164,7 @@ fn numeric_and_timestamp_columns_exclude_special_values() {
     );
     let sql = Migration::create(&mini(1, vec![readings]))
         .expect("compiles")
-        .sql(Confirmation::None)
+        .sql()
         .expect("additive");
 
     assert!(
@@ -207,7 +206,7 @@ fn added_column_is_additive() {
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
     assert!(plan.is_additive(), "report: {}", plan.report());
-    let sql = plan.sql(Confirmation::None).expect("additive");
+    let sql = plan.sql().expect("additive");
     assert!(sql.contains("ALTER TABLE \"materials\" ADD COLUMN \"grade\" text"));
     assert!(sql.contains("CREATE INDEX \"materials_grade_idx\""));
 }
@@ -225,18 +224,20 @@ fn dropped_column_is_gated_destructive() {
     suppliers.fields.retain(|f| f.id != "contact_email");
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    assert!(plan.requires_confirmation());
+    assert!(plan.is_destructive());
     assert_eq!(plan.destructive().count(), 1);
 
-    // Refused without confirmation…
-    let err = plan.sql(Confirmation::None).unwrap_err();
+    // Refused at the default boundary…
+    let err = plan.sql().unwrap_err();
     assert!(err.destructive.iter().any(|s| s.contains("drop column")));
+    assert!(
+        !format!("{plan:?}").contains("DROP COLUMN"),
+        "default Debug output must not expose destructive SQL"
+    );
 
-    // …allowed with confirmation + backup, and marked.
-    let sql = plan
-        .sql(Confirmation::ConfirmedWithBackup)
-        .expect("confirmed");
-    assert!(sql.contains("BACKUP CHECKPOINT REQUIRED"));
+    // …and available only to an operations-enabled caller, which owns durable
+    // authorization outside the compiler.
+    let sql = plan.ops_sql();
     assert!(sql.contains("ALTER TABLE \"suppliers\" DROP COLUMN \"contact_email\""));
 }
 
@@ -259,14 +260,14 @@ fn renamed_field_is_destructive() {
         .name = "hold_status".into();
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    assert!(plan.requires_confirmation());
+    assert!(plan.is_destructive());
     let op = plan
         .operations
         .iter()
         .find(|o| o.summary.contains("rename column"))
         .expect("a rename op");
     assert!(
-        op.sql
+        op.ops_sql()
             .contains("RENAME COLUMN \"status\" TO \"hold_status\"")
     );
     assert_eq!(op.entity, "quality_holds");
@@ -287,10 +288,8 @@ fn reused_name_via_rename_is_freed_before_create() {
         ],
     );
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    assert!(plan.requires_confirmation(), "rename stays gated");
-    let sql = plan
-        .sql(Confirmation::ConfirmedWithBackup)
-        .expect("confirmed");
+    assert!(plan.is_destructive(), "rename stays gated");
+    let sql = plan.ops_sql();
     let rename = sql
         .find("ALTER TABLE \"receipts\" RENAME TO \"receipts_old\"")
         .expect("rename op");
@@ -328,9 +327,7 @@ fn reused_name_via_drop_renames_aside_and_drops_last() {
     let v2 = mini(2, vec![e, entity("y", "log", vec![text_field("msg")])]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan
-        .sql(Confirmation::ConfirmedWithBackup)
-        .expect("confirmed");
+    let sql = plan.ops_sql();
 
     let aside = sql
         .find("ALTER TABLE \"audit\" RENAME TO \"wamn_mig_drop_audit\"")
@@ -360,7 +357,7 @@ fn reused_name_via_drop_renames_aside_and_drops_last() {
     let drop_op = plan
         .operations
         .iter()
-        .find(|o| o.sql.starts_with("DROP TABLE"))
+        .find(|o| o.ops_sql().starts_with("DROP TABLE"))
         .unwrap();
     assert_eq!(drop_op.summary, "drop table audit");
     assert!(!sql.contains("DROP TABLE \"audit\""));
@@ -389,7 +386,7 @@ fn rename_chain_orders_name_freeing_first() {
         ],
     );
     let plan = Migration::migrate(&v1, &v2).expect("a chain compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let free_d = sql
         .find("ALTER TABLE \"c\" RENAME TO \"d\"")
         .expect("tail rename");
@@ -421,7 +418,7 @@ fn pkey_follows_a_table_rename() {
         ],
     );
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let rename = sql
         .find("ALTER TABLE \"receipts\" RENAME TO \"receipts_old\"")
         .expect("table rename");
@@ -450,9 +447,9 @@ fn removed_entity_drops_are_fk_ordered() {
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
     // Both table drops are destructive, so the whole plan is gated.
-    assert!(plan.requires_confirmation());
-    assert!(plan.sql(Confirmation::None).is_err());
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(plan.is_destructive());
+    assert!(plan.sql().is_err());
+    let sql = plan.ops_sql();
     let drop_books = sql.find("DROP TABLE \"books\"").expect("drop books");
     let drop_authors = sql.find("DROP TABLE \"authors\"").expect("drop authors");
     assert!(
@@ -477,7 +474,7 @@ fn removed_entity_drop_chain_orders_dependents_first() {
     let v2 = mini(2, vec![]);
 
     let plan = Migration::migrate(&v1, &v2).expect("a drop chain compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let drop_reviews = sql.find("DROP TABLE \"reviews\"").expect("drop reviews");
     let drop_books = sql.find("DROP TABLE \"books\"").expect("drop books");
     let drop_authors = sql.find("DROP TABLE \"authors\"").expect("drop authors");
@@ -531,8 +528,8 @@ fn reference_retype_to_uuid_drops_the_fk() {
     let v2 = mini(2, vec![log2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    assert!(plan.requires_confirmation());
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(plan.is_destructive());
+    let sql = plan.ops_sql();
     let drop_fk = sql
         .find("ALTER TABLE \"log\" DROP CONSTRAINT \"log_aref_fkey\"")
         .expect("stale reference FK dropped");
@@ -560,7 +557,7 @@ fn retype_into_reference_adds_the_fk() {
     let v2 = mini(2, vec![audit, log2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let retype = sql
         .find("ALTER TABLE \"log\" ALTER COLUMN \"aref\" TYPE uuid")
         .expect("retype");
@@ -595,7 +592,7 @@ fn reference_retype_repoints_the_fk() {
     let v2 = mini(2, vec![authors, books, log2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let drop_fk = sql
         .find("ALTER TABLE \"log\" DROP CONSTRAINT \"log_aref_fkey\"")
         .expect("old FK dropped");
@@ -626,7 +623,7 @@ fn reused_name_via_drop_reclaimed_by_a_rename() {
     );
     let v2 = mini(2, vec![entity("y", "n", vec![text_field("v")])]);
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let aside = sql
         .find("ALTER TABLE \"n\" RENAME TO \"wamn_mig_drop_n\"")
         .expect("doomed table moved aside");
@@ -671,7 +668,7 @@ fn doomed_table_keeping_its_name_moves_reclaimed_index_names_aside() {
     let v2 = mini(2, vec![m]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let idx_aside = sql
         .find("ALTER INDEX IF EXISTS \"hot_idx\" RENAME TO \"wamn_mig_drop_hot_idx\"")
         .expect("reclaimed index moved aside");
@@ -712,7 +709,7 @@ fn unique_constraint_name_moving_across_tables_drops_before_add() {
     let v2 = mini(2, vec![a2, b2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let drop = sql
         .find("ALTER TABLE \"alpha\" DROP CONSTRAINT \"uq_moved\"")
         .expect("freeing drop");
@@ -754,7 +751,7 @@ fn reused_column_name_frees_before_the_add() {
     });
     let v2 = mini(2, vec![t2]);
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     assert!(
         sql.find("DROP COLUMN \"amount\"").unwrap() < sql.find("ADD COLUMN \"amount\"").unwrap(),
         "same-named column redefinition must drop first:\n{sql}"
@@ -773,7 +770,7 @@ fn reused_column_name_frees_before_the_add() {
     tb4.id = "fb".into();
     let v4 = mini(4, vec![entity("t", "t", vec![ta4, tb4])]);
     let plan = Migration::migrate(&v3, &v4).expect("column chain compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let free = sql
         .find("RENAME COLUMN \"b\" TO \"c\"")
         .expect("freeing column rename");
@@ -813,7 +810,7 @@ fn implicitly_dropped_objects_hoist_with_the_column() {
     let v2 = mini(2, vec![t2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let con_drop = sql
         .find("DROP CONSTRAINT \"uq_amount\"")
         .expect("constraint drop");
@@ -886,7 +883,7 @@ fn rename_with_other_changes_renames_first() {
         )],
     );
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let rename = sql
         .find("ALTER TABLE \"receipts\" RENAME TO \"receipts2\"")
         .expect("rename");
@@ -936,7 +933,7 @@ fn constraint_and_index_redefinition_drop_before_add() {
     let v2 = mini(2, vec![e2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     assert!(
         sql.find("DROP CONSTRAINT \"u_val\"").unwrap()
             < sql.find("ADD CONSTRAINT \"u_val\"").unwrap(),
@@ -978,7 +975,7 @@ fn constraint_redefinition_on_renamed_table_drops_before_the_rename() {
     let v2 = mini(2, vec![e2]);
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let drop = sql
         .find("ALTER TABLE \"receipts\" DROP CONSTRAINT \"u_val\"")
         .expect("hoisted drop on the PRE-rename name");
@@ -1013,7 +1010,7 @@ fn rename_into_name_freed_by_a_constraint_drop_applies() {
         ],
     );
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    let sql = plan.ops_sql();
     let drop = sql
         .find("ALTER TABLE \"b\" DROP CONSTRAINT \"target\"")
         .expect("freeing constraint drop");
@@ -1048,12 +1045,10 @@ fn collision_free_plans_have_no_preamble() {
     suppliers.fields.retain(|f| f.id != "contact_email");
 
     let plan = Migration::migrate(&v1, &v2).expect("compiles");
-    assert!(
-        plan.operations
-            .iter()
-            .all(|o| !o.sql.contains("wamn_mig_drop_") && !o.sql.contains("RENAME TO"))
-    );
-    let sql = plan.sql(Confirmation::ConfirmedWithBackup).unwrap();
+    assert!(plan.operations.iter().all(|o| {
+        !o.ops_sql().contains("wamn_mig_drop_") && !o.ops_sql().contains("RENAME TO")
+    }));
+    let sql = plan.ops_sql();
     assert!(
         sql.find("ADD COLUMN \"grade\"").unwrap()
             < sql.find("DROP COLUMN \"contact_email\"").unwrap(),
@@ -1175,7 +1170,7 @@ fn emitted_sql_applies_on_postgres() {
     materials.fields.push(text_field("grade"));
     let add = Migration::migrate(&v1, &v2).unwrap();
 
-    // Destructive evolution: drop a column (confirmed + backup).
+    // Destructive evolution: drop a column through the ops-only renderer.
     let mut v3 = v2.clone();
     v3.version = 3;
     let suppliers = v3
@@ -1197,9 +1192,9 @@ fn emitted_sql_applies_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_ddl_test TO wamn_app;\n\
          SET search_path TO wamn_ddl_test;\n",
     );
-    script.push_str(&create.sql(Confirmation::None).unwrap());
-    script.push_str(&add.sql(Confirmation::None).unwrap());
-    script.push_str(&drop.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&create.sql().unwrap());
+    script.push_str(&add.sql().unwrap());
+    script.push_str(&drop.ops_sql());
     script.push_str("DROP SCHEMA wamn_ddl_test CASCADE;\n");
 
     let mut child = Command::new("psql")
@@ -1396,7 +1391,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_schema_compiler_reuse_test TO wamn_app;\n\
          SET search_path TO wamn_schema_compiler_reuse_test;\n",
     );
-    script.push_str(&create.sql(Confirmation::None).unwrap());
+    script.push_str(&create.sql().unwrap());
     // Live data: the audit row is referenced by log (a real inbound FK), and
     // receipts carries a row that must survive its rename.
     script.push_str(
@@ -1405,7 +1400,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
          INSERT INTO log (tenant_id, msg, audit_ref) SELECT 't1', 'ref', id FROM audit;\n",
     );
     // The heart of the gate: this apply hit 42P07 before the fix.
-    script.push_str(&reuse.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&reuse.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT (SELECT count(*) FROM receipts_old WHERE val = 'keep-me') = 1, 'renamed table kept its data';\n\
@@ -1421,7 +1416,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
          END $$;\n",
     );
     // Same-named constraint/index redefinition: hit 42710 / 42P07 before.
-    script.push_str(&redefine.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&redefine.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT (SELECT indexdef FROM pg_indexes WHERE schemaname = 'wamn_schema_compiler_reuse_test' AND indexname = 'audit_by_val') LIKE '%extra%', 'index redefined in place under its name';\n\
@@ -1430,11 +1425,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
     );
     // Rename + same-named constraint redefinition in ONE bump: the hoisted
     // drop references the PRE-rename table name and precedes the rename.
-    script.push_str(
-        &rename_redefine
-            .sql(Confirmation::ConfirmedWithBackup)
-            .unwrap(),
-    );
+    script.push_str(&rename_redefine.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT to_regclass('wamn_schema_compiler_reuse_test.audit_log') IS NOT NULL, 'audit renamed to audit_log';\n\
@@ -1443,7 +1434,7 @@ fn migration_with_name_reuse_applies_on_postgres() {
     );
     // Column-namespace reuse: drop field id 'val' and re-add the same column
     // name with a different type on audit_log (42701 before the fix).
-    script.push_str(&column_reuse.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&column_reuse.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT (SELECT data_type FROM information_schema.columns WHERE table_schema = 'wamn_schema_compiler_reuse_test' AND table_name = 'audit_log' AND column_name = 'val') = 'integer', 'column redefined in place under its name';\n\
@@ -1509,7 +1500,7 @@ fn removed_entity_drops_apply_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_schema_compiler_drop_order_test TO wamn_app;\n\
          SET search_path TO wamn_schema_compiler_drop_order_test;\n",
     );
-    script.push_str(&create.sql(Confirmation::None).unwrap());
+    script.push_str(&create.sql().unwrap());
     // Live rows exercising both FK edges (reviews -> books -> authors), so a
     // wrong drop order fails on a real dependency, not just an empty catalog.
     script.push_str(
@@ -1518,7 +1509,7 @@ fn removed_entity_drops_apply_on_postgres() {
          INSERT INTO reviews (tenant_id, body, book_id) SELECT 't1', 'wizardly', id FROM books;\n",
     );
     // The heart of the gate: this apply hit 2BP01 before the topological order.
-    script.push_str(&drop_all.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&drop_all.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT to_regclass('wamn_schema_compiler_drop_order_test.authors') IS NULL, 'authors dropped';\n\
@@ -1585,7 +1576,7 @@ fn empty_tenant_claim_matches_no_row_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_schema_compiler_empty_tenant_test TO wamn_app;\n\
          SET search_path TO wamn_schema_compiler_empty_tenant_test;\n",
     );
-    script.push_str(&create.sql(Confirmation::None).unwrap());
+    script.push_str(&create.sql().unwrap());
     // Seed one legitimate row (as superuser — BYPASSRLS; the CHECK still applies
     // and 't1' <> '' passes).
     script.push_str("INSERT INTO notes (tenant_id, body) VALUES ('t1', 'hello');\n");
@@ -1699,7 +1690,7 @@ fn special_values_are_rejected_on_postgres() {
          GRANT USAGE ON SCHEMA wamn_ddl_special_values_test TO wamn_app;\n\
          SET search_path TO wamn_ddl_special_values_test;\n",
     );
-    script.push_str(&create.sql(Confirmation::None).unwrap());
+    script.push_str(&create.sql().unwrap());
     // A normal decimal / date / timestamp inserts fine.
     script.push_str(
         "INSERT INTO readings (tenant_id, qty, d, ts) \
@@ -1795,13 +1786,13 @@ fn reference_retype_fk_lifecycle_applies_on_postgres() {
          SET search_path TO wamn_schema_compiler_retype_fk_test;\n",
     );
     // Scenario A: seed a real inbound FK row, then the retype-and-drop apply.
-    script.push_str(&create_a.sql(Confirmation::None).unwrap());
+    script.push_str(&create_a.sql().unwrap());
     script.push_str(
         "INSERT INTO audit (tenant_id, val) VALUES ('t1', 'keep');\n\
          INSERT INTO log (tenant_id, msg, aref) SELECT 't1', 'r', id FROM audit;\n",
     );
     // Hit 2BP01 before the fix — the FK survived the retype and blocked the drop.
-    script.push_str(&retype_drop.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&retype_drop.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT to_regclass('wamn_schema_compiler_retype_fk_test.audit') IS NULL, 'audit dropped';\n\
@@ -1811,12 +1802,12 @@ fn reference_retype_fk_lifecycle_applies_on_postgres() {
     );
     // Scenario B: seed a valid row, retype into a Reference, then prove the
     // added FK actually enforces.
-    script.push_str(&create_b.sql(Confirmation::None).unwrap());
+    script.push_str(&create_b.sql().unwrap());
     script.push_str(
         "INSERT INTO people (tenant_id, name) VALUES ('t1', 'p');\n\
          INSERT INTO tag (tenant_id, pid) SELECT 't1', id FROM people;\n",
     );
-    script.push_str(&retype_add.sql(Confirmation::ConfirmedWithBackup).unwrap());
+    script.push_str(&retype_add.ops_sql());
     script.push_str(
         "DO $$ BEGIN\n\
              ASSERT (SELECT count(*) FROM pg_constraint WHERE conname = 'tag_pid_fkey') = 1, 'FK added on entering Reference';\n\
@@ -1916,7 +1907,7 @@ fn check_constraint_with_a_chaining_expression_is_rejected_before_emission() {
 fn a_legitimate_check_constraint_still_compiles() {
     let plan =
         Migration::create(&check_catalog("gizmo", "qty >= 0")).expect("a safe Check compiles");
-    let sql = plan.sql(Confirmation::None).unwrap();
+    let sql = plan.sql().unwrap();
     assert!(
         sql.contains("ADD CONSTRAINT \"gizmo_ck\" CHECK (qty >= 0)"),
         "emitted SQL missing the Check constraint:\n{sql}"
@@ -1954,7 +1945,7 @@ fn chaining_check_expression_never_reaches_postgres() {
          INSERT INTO guard_sentinel VALUES (1);\n"
     ));
     let safe = Migration::create(&check_catalog("part", "qty >= 0")).expect("safe Check compiles");
-    setup.push_str(&safe.sql(Confirmation::None).unwrap());
+    setup.push_str(&safe.sql().unwrap());
     let out = run_psql(&url, &setup);
     assert!(
         out.status.success(),
@@ -1971,7 +1962,7 @@ fn chaining_check_expression_never_reaches_postgres() {
             "expected unsafe-check-expression, got {issues:?}"
         ),
         Ok(plan) => {
-            let sql = plan.sql(Confirmation::None).unwrap();
+            let sql = plan.sql().unwrap();
             let _ = run_psql(&url, &format!("SET search_path TO {SCHEMA};\n{sql}"));
             panic!(
                 "guard did not reject the chaining Check; the emitted plan chains a DROP:\n{sql}"
@@ -2024,7 +2015,7 @@ fn synthesized_identifiers_cover_every_emitted_relation_and_constraint() {
     let create = Migration::create(&c).expect("compiles");
     let (mut saw_table, mut saw_index, mut saw_unique, mut saw_fk) = (false, false, false, false);
     for op in &create.operations {
-        let sql = op.sql.as_str();
+        let sql = op.ops_sql();
         if sql.starts_with("CREATE TABLE ") {
             let t = quoted_after(sql, "CREATE TABLE ").expect("table name");
             assert!(is_relation(t), "table {t:?} not in synthesized relations");
@@ -2072,9 +2063,9 @@ fn synthesized_identifiers_cover_every_emitted_relation_and_constraint() {
     let pkey_op = mig
         .operations
         .iter()
-        .find(|o| o.sql.contains("RENAME TO") && o.sql.contains("_pkey"))
+        .find(|o| o.ops_sql().contains("RENAME TO") && o.ops_sql().contains("_pkey"))
         .expect("a pkey rename op");
-    let target = quoted_after(&pkey_op.sql, "RENAME TO ").expect("rename target");
+    let target = quoted_after(pkey_op.ops_sql(), "RENAME TO ").expect("rename target");
     assert_eq!(target, "locations_pkey");
     assert!(
         ids2.relation_names.iter().any(|r| r == "locations_pkey"),

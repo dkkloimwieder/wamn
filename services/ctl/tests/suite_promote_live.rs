@@ -114,7 +114,7 @@ async fn seed_registry(admin_url: &str) {
     // carry `AUTHORIZATION wamn_system`. The copy saga runs as `wamn_system`.
     sys.batch_execute(
         "GRANT USAGE ON SCHEMA registry, provisioning, identity TO wamn_system; \
-         GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA registry, provisioning, \
+         GRANT SELECT, INSERT, UPDATE, DELETE, REFERENCES ON ALL TABLES IN SCHEMA registry, provisioning, \
            identity TO wamn_system;",
     )
     .await

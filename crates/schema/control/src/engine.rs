@@ -1,18 +1,17 @@
 //! The pure engine: guards, DDL compilation (reusing wamn-schema-compiler), the lifecycle
-//! validation oracle (reusing wamn-schema-control), and the three outputs — an
-//! executable [`ApplyPlan`], a [`MigrationReport`] dry run, and a generated
-//! [`RollbackPlan`].
+//! validation oracle (reusing wamn-schema-control), and an executable
+//! [`ApplyPlan`].
 
 use crate::lifecycle::{Environment, LifecycleError, Triple};
 use wamn_schema_compiler::{Migration, MigrationPlan};
 use wamn_schema_model::Catalog;
 
 use crate::model::{
-    ApplyPlan, MigrationError, MigrationReport, MigrationRequest, RollbackPlan, SqlStatement, Value,
+    ApplyPlan, DestructiveMigration, MigrationError, MigrationRequest, SqlStatement, Value,
 };
 use crate::sql;
 
-/// The shared guard + compile step behind [`plan_migration`] and [`dry_run`]:
+/// The shared guard + compile step behind the additive and operations planners:
 /// run the forward-only / catalog-id / stale-base guards, compile the wamn-schema-compiler
 /// plan, and collect advisory warnings.
 struct Compiled {
@@ -57,7 +56,7 @@ fn compile(req: &MigrationRequest) -> Result<Compiled, MigrationError> {
         None => Migration::create(req.target)?,
         Some(cur) => Migration::migrate(cur, req.target)?,
     };
-    let destructive = plan.requires_confirmation();
+    let destructive = !plan.is_additive();
 
     let mut warnings = Vec::new();
     if plan.is_empty() {
@@ -122,16 +121,40 @@ fn validate_lifecycle(
     })
 }
 
-/// Plan an executable migration: the ordered one-transaction statements (DDL +
-/// the lifecycle advance + the history row). Refuses a destructive plan unless
-/// `confirm` is [`crate::Confirmation::ConfirmedWithBackup`] (the 3.2 gate). The driver
-/// executes the returned statements inside a single transaction.
+/// Plan an additive executable migration: the ordered one-transaction
+/// statements (DDL + lifecycle advance + history row). The default boundary
+/// always refuses destructive operations.
 pub fn plan_migration(req: &MigrationRequest) -> Result<ApplyPlan, MigrationError> {
     let c = compile(req)?;
-    // Honor the 3.2 backup gate: a destructive plan needs ConfirmedWithBackup,
-    // and the emitted DDL then carries the backup-checkpoint marker.
-    let ddl_sql = c.plan.sql(req.confirm)?;
+    if c.destructive {
+        return Err(MigrationError::Destructive(DestructiveMigration {
+            operations: c
+                .plan
+                .destructive()
+                .map(|operation| operation.summary.clone())
+                .collect(),
+        }));
+    }
+    let ddl_sql = c
+        .plan
+        .sql()
+        .expect("the additive boundary rejected destructive operations above");
+    Ok(build_apply_plan(req, c, ddl_sql))
+}
 
+/// Plan an operations target reconciliation after the caller has verified a
+/// durable backup attestation for the locked `(from_version, to_version)`
+/// window. Kept crate-private behind `ops`; default callers cannot select it.
+#[cfg(feature = "ops")]
+pub(crate) fn plan_target_reconciliation(
+    req: &MigrationRequest,
+) -> Result<ApplyPlan, MigrationError> {
+    let c = compile(req)?;
+    let ddl_sql = c.plan.ops_sql();
+    Ok(build_apply_plan(req, c, ddl_sql))
+}
+
+fn build_apply_plan(req: &MigrationRequest, c: Compiled, ddl_sql: String) -> ApplyPlan {
     let env_str = req.environment.as_str().to_string();
     let catalog_id = req.target.catalog_id.clone();
     let base_param = Value::NullableInt(c.from_version.map(|v| v as i32));
@@ -186,14 +209,13 @@ pub fn plan_migration(req: &MigrationRequest) -> Result<ApplyPlan, MigrationErro
             Value::Text(env_str.clone()),
             base_param,
             Value::Int(req.target.version as i32),
-            Value::Text(sql::confirmation_sql(req.confirm).to_string()),
             Value::Int(c.plan.operations.len() as i32),
             Value::Bool(c.destructive),
             Value::Text(sql::ddl_checksum(&ddl_sql)),
         ],
     });
 
-    Ok(ApplyPlan {
+    ApplyPlan {
         catalog_id,
         environment: env_str,
         from_version: c.from_version,
@@ -201,52 +223,5 @@ pub fn plan_migration(req: &MigrationRequest) -> Result<ApplyPlan, MigrationErro
         destructive: c.destructive,
         warnings: c.warnings,
         statements,
-    })
-}
-
-/// Report what the migration would do without touching the database. Unlike
-/// [`plan_migration`], a dry run does **not** gate on the confirmation — it
-/// reports the destructiveness so an operator can decide. Includes the generated
-/// rollback plan.
-pub fn dry_run(req: &MigrationRequest) -> Result<MigrationReport, MigrationError> {
-    let c = compile(req)?;
-    let rollback = rollback_plan(req)?;
-    Ok(MigrationReport {
-        catalog_id: req.target.catalog_id.clone(),
-        environment: req.environment.as_str().to_string(),
-        from_version: c.from_version,
-        to_version: req.target.version,
-        destructive: c.destructive,
-        warnings: c.warnings,
-        ddl_report: c.plan.report(),
-        rollback,
-    })
-}
-
-/// Generate the rollback for `req`'s migration: an inverse forward-migration back
-/// to the current applied version. For a first materialization there is no prior
-/// version, so the plan is empty and the note points at drop / restore. The
-/// inverse drops the migration's additions and so is destructive — apply it with
-/// [`RollbackPlan::sql`] under `ConfirmedWithBackup`.
-pub fn rollback_plan(req: &MigrationRequest) -> Result<RollbackPlan, MigrationError> {
-    match req.current {
-        None => Ok(RollbackPlan {
-            plan: MigrationPlan::default(),
-            note: "first materialization: there is no prior version to roll back to. \
-                   Rollback = drop the created objects, or restore-to-last-dump (wamn-q3n.11)."
-                .into(),
-        }),
-        Some(cur) => {
-            // The inverse: migrate the target back to the current applied catalog.
-            let plan = Migration::migrate(req.target, cur)?;
-            Ok(RollbackPlan {
-                plan,
-                note: "rollback = this inverse forward-migration back to the prior version \
-                       (destructive: apply with a confirmed backup). Data written under \
-                       columns/tables this drops is NOT recoverable by the forward rollback \
-                       — use restore-to-last-dump (wamn-q3n.11) for that."
-                    .into(),
-            })
-        }
     }
 }

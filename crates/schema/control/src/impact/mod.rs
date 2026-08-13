@@ -1,7 +1,7 @@
 //! wamn schema-change impact analysis (11.8).
 //!
-//! The PURE decision behind `wamn-ctl impact-report` and the `migrate-catalog`
-//! acknowledge gate: given a compiled [`MigrationPlan`]
+//! The PURE decision behind the operations-only `wamn-ctl impact-report`: given
+//! a compiled [`MigrationPlan`]
 //! and the dependency data a control-plane verb reads from the project database,
 //! enumerate — per affected entity — WHAT changes and WHAT downstream depends on
 //! it, so a schema designer sees the blast radius *before* any DDL applies.
@@ -182,35 +182,6 @@ pub struct ImpactReport {
     pub entities: Vec<EntityImpact>,
 }
 
-/// A destructive migration whose downstream impact was not acknowledged (the
-/// 11.8 gate). Mirrors [`wamn_schema_compiler::RequiresConfirmation`] /
-/// `wamn_schema_control::OrphaningPublish`: a canonical struct error the driver surfaces,
-/// naming the destructively-changed entities that carry dependent flows/suites.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImpactNotAcknowledged {
-    /// `(entity_name, entity_id)` of each destructive entity with dependents.
-    pub entities: Vec<(String, String)>,
-}
-
-impl std::fmt::Display for ImpactNotAcknowledged {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "refusing this destructive migration: {} affected entit{} carr{} dependent \
-             flows/suites — review the impact report and re-run with --acknowledge-impact:",
-            self.entities.len(),
-            if self.entities.len() == 1 { "y" } else { "ies" },
-            if self.entities.len() == 1 { "ies" } else { "y" },
-        )?;
-        for (name, id) in &self.entities {
-            write!(f, "\n  - entity {name:?} (id {id:?})")?;
-        }
-        Ok(())
-    }
-}
-
-impl std::error::Error for ImpactNotAcknowledged {}
-
 impl ImpactReport {
     pub fn is_empty(&self) -> bool {
         self.entities.is_empty()
@@ -221,33 +192,8 @@ impl ImpactReport {
         self.entities.iter().any(|e| e.destructive)
     }
 
-    /// `true` if any affected entity is BOTH destructive AND carries a dependent
-    /// flow or suite — the condition the `migrate-catalog` acknowledge gate fires
-    /// on. A destructive change with no dependents (or an additive change with
-    /// dependents) does not require acknowledgement.
-    pub fn requires_acknowledgement(&self) -> bool {
-        self.entities
-            .iter()
-            .any(|e| e.destructive && e.has_downstream_impact())
-    }
-
-    /// The typed refusal for an unacknowledged destructive-with-impact plan
-    /// ([`requires_acknowledgement`](Self::requires_acknowledgement) must be
-    /// `true`), naming the offending entities.
-    pub fn acknowledgement_refusal(&self) -> ImpactNotAcknowledged {
-        ImpactNotAcknowledged {
-            entities: self
-                .entities
-                .iter()
-                .filter(|e| e.destructive && e.has_downstream_impact())
-                .map(|e| (e.entity_name.clone(), e.entity_id.clone()))
-                .collect(),
-        }
-    }
-
-    /// A human-readable rendering — mirrors `MigrationReport::render` /
-    /// `OrphaningPublish::Display`. The single review surface a schema designer
-    /// reads before applying.
+    /// A human-readable rendering: the single review surface a schema designer
+    /// reads before operations reconciliation.
     pub fn render(&self) -> String {
         if self.entities.is_empty() {
             return "schema-change impact — no affected entities\n".to_string();
@@ -453,7 +399,7 @@ pub fn analyze(input: &ImpactInput) -> ImpactReport {
     let mut affected: BTreeMap<&str, bool> = BTreeMap::new();
     for op in &input.plan.operations {
         let d = affected.entry(op.entity.as_str()).or_insert(false);
-        *d |= op.safety.is_destructive();
+        *d |= op.safety().is_destructive();
     }
 
     let mut entities = Vec::with_capacity(affected.len());
@@ -626,13 +572,8 @@ mod tests {
         MigrationPlan {
             operations: ops
                 .iter()
-                .map(|(entity, safety)| Operation {
-                    summary: format!("op on {entity}"),
-                    sql: String::new(),
-                    safety: *safety,
-                    entity: (*entity).to_string(),
-                    field: None,
-                    note: None,
+                .map(|(entity, safety)| {
+                    Operation::classified(format!("op on {entity}"), *safety, (*entity).to_string())
                 })
                 .collect(),
         }
@@ -733,9 +674,9 @@ mod tests {
     }
 
     /// MUTANT 2 (force all ops additive): a destructive change with a dependent
-    /// flow MUST require --acknowledge-impact.
+    /// flow remains classified as destructive and retains that edge.
     #[test]
-    fn destructive_change_with_impact_requires_acknowledge() {
+    fn destructive_change_with_impact_keeps_both_facts() {
         let target = cat(&[("orders", "orders")], &[]);
         let input = ImpactInput {
             plan: &plan(&[("orders", Safety::Destructive)]),
@@ -747,22 +688,13 @@ mod tests {
         };
         let report = analyze(&input);
         assert!(report.any_destructive());
-        assert!(
-            report.requires_acknowledgement(),
-            "a destructive change with a dependent flow needs acknowledgement"
-        );
-        // The refusal names the entity.
-        let refusal = report.acknowledgement_refusal().to_string();
-        assert!(
-            refusal.contains("orders") && refusal.contains("--acknowledge-impact"),
-            "{refusal}"
-        );
+        assert!(report.entities[0].has_downstream_impact());
+        assert_eq!(report.entities[0].entity_name, "orders");
     }
 
-    /// MUTANT 2 negative: a destructive change with NO dependents does not require
-    /// acknowledgement; an additive change with dependents does not either.
+    /// MUTANT 2 negative: destructiveness and dependency edges stay independent.
     #[test]
-    fn acknowledge_is_not_required_without_a_dependent_destructive_change() {
+    fn destructiveness_and_dependencies_stay_independent() {
         let target = cat(&[("orders", "orders"), ("audit", "audit")], &[]);
         // orders: destructive but no dependents. audit: additive with a dependent.
         let input = ImpactInput {
@@ -775,7 +707,20 @@ mod tests {
         };
         let report = analyze(&input);
         assert!(report.any_destructive());
-        assert!(!report.requires_acknowledgement());
+        let orders = report
+            .entities
+            .iter()
+            .find(|e| e.entity_id == "orders")
+            .unwrap();
+        let audit = report
+            .entities
+            .iter()
+            .find(|e| e.entity_id == "audit")
+            .unwrap();
+        assert!(orders.destructive);
+        assert!(!orders.has_downstream_impact());
+        assert!(!audit.destructive);
+        assert!(audit.has_downstream_impact());
     }
 
     /// MUTANT 3 (key node-config on entity.id instead of entity.name): the config
@@ -916,7 +861,6 @@ mod tests {
         };
         let report = analyze(&input);
         assert!(report.is_empty());
-        assert!(!report.requires_acknowledgement());
         assert_eq!(
             report.render(),
             "schema-change impact — no affected entities\n"

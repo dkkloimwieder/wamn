@@ -533,7 +533,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     seed_run(admin_url, "recent-done", "completed", 1, CaptureMode::Off).await?;
     seed_run(admin_url, "old-running", "running", 40, CaptureMode::Off).await?;
 
-    let prune = ctl_process::run_checked([
+    let prune = ctl_process::run_ops_checked([
         "prune-run-history",
         "--database-url",
         app_url,

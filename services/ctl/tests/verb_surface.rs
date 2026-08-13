@@ -61,6 +61,80 @@ fn mvp_migrate_catalog_has_no_destructive_override() {
 }
 
 #[test]
+#[cfg(not(feature = "ops"))]
+fn mvp_provision_org_has_no_backup_surface() {
+    let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "provision-org");
+    for flag in ["--emit-object-store", "--emit-scheduled-backup"] {
+        assert!(!output.contains(flag), "MVP provision-org exposed {flag}");
+    }
+}
+
+#[test]
+#[cfg(feature = "ops")]
+fn ops_feature_restores_provision_org_backup_surface() {
+    let output = command_help(env!("CARGO_BIN_EXE_wamn-ctl"), "provision-org");
+    for flag in ["--emit-object-store", "--emit-scheduled-backup"] {
+        assert!(output.contains(flag), "ops provision-org omitted {flag}");
+    }
+}
+
+#[test]
+fn mvp_dependency_tree_does_not_enable_ops() {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("ctl crate is below the repository root");
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let output = Command::new(cargo)
+        .current_dir(repository)
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-ctl",
+            "--edges",
+            "features",
+        ])
+        .output()
+        .expect("run cargo tree for the default ctl package");
+    assert!(output.status.success());
+    let tree = String::from_utf8(output.stdout).expect("cargo tree output is UTF-8");
+    for feature in [
+        "wamn-control-provision feature \"ops\"",
+        "wamn-schema-compiler feature \"ops\"",
+        "wamn-schema-control feature \"ops\"",
+    ] {
+        assert!(
+            !tree.contains(feature),
+            "default ctl enabled {feature}\n{tree}"
+        );
+    }
+
+    let direct = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
+        .current_dir(repository)
+        .args([
+            "tree",
+            "--locked",
+            "--offline",
+            "-p",
+            "wamn-ctl",
+            "--edges",
+            "normal",
+            "--depth",
+            "1",
+        ])
+        .output()
+        .expect("run direct dependency tree for default ctl");
+    assert!(direct.status.success());
+    let direct = String::from_utf8(direct.stdout).expect("cargo tree output is UTF-8");
+    assert!(
+        !direct.lines().any(|line| line.contains("wamn-run-state ")),
+        "default ctl retained the direct ops-only run-state edge\n{direct}"
+    );
+}
+
+#[test]
 fn impact_effect_shell_is_ops_only() {
     let source = include_str!("../src/lib.rs");
     assert!(

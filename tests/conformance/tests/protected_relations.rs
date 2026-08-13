@@ -11,8 +11,15 @@ const NODE_ERROR_CHECK: &str = "constraint:node_runs_error_kind_check;kind=check
 #[derive(Debug, Deserialize)]
 struct OwnershipManifest {
     schema_version: String,
+    canonical_sources: Vec<CanonicalSource>,
     objects: Vec<OwnershipEntry>,
     families: Vec<OwnershipFamily>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CanonicalSource {
+    path: String,
+    scope: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +27,7 @@ struct OwnershipEntry {
     id: String,
     semantic_owner: String,
     migration_owners: Vec<String>,
+    schema_source: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -27,6 +35,7 @@ struct OwnershipFamily {
     pattern: String,
     semantic_owner: String,
     migration_owners: Vec<String>,
+    schema_source: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +49,7 @@ struct ProtectedRelationTable {
 #[serde(deny_unknown_fields)]
 struct ProtectedRelationRow {
     relation: String,
+    ops: bool,
     installer: String,
     owner: String,
     mechanisms: Vec<String>,
@@ -82,6 +92,20 @@ fn sole_installer(relation: &str, owners: &[String]) -> String {
     owners[0].clone()
 }
 
+fn source_scopes(sources: Vec<CanonicalSource>) -> BTreeMap<String, String> {
+    sources
+        .into_iter()
+        .map(|source| (source.path, source.scope))
+        .collect()
+}
+
+fn is_ops_artifact(schema_source: &str, scopes: &BTreeMap<String, String>) -> bool {
+    scopes
+        .get(schema_source)
+        .unwrap_or_else(|| panic!("undeclared canonical source {schema_source}"))
+        == "production-control-database-ops"
+}
+
 #[test]
 fn protected_relation_table_matches_declared_ownership() {
     let repository = repository();
@@ -89,6 +113,7 @@ fn protected_relation_table_matches_declared_ownership() {
     let table: ProtectedRelationTable = read_json(&repository.join(TABLE_PATH));
     assert_eq!(owners.schema_version, "0.1");
     assert_eq!(table.schema_version, "0.1");
+    let scopes = source_scopes(owners.canonical_sources);
 
     let mut declared = owners
         .objects
@@ -97,6 +122,7 @@ fn protected_relation_table_matches_declared_ownership() {
             (
                 entry.id.clone(),
                 (
+                    is_ops_artifact(&entry.schema_source, &scopes),
                     sole_installer(&entry.id, &entry.migration_owners),
                     entry.semantic_owner,
                 ),
@@ -107,6 +133,7 @@ fn protected_relation_table_matches_declared_ownership() {
         (
             family.pattern.clone(),
             (
+                is_ops_artifact(&family.schema_source, &scopes),
                 sole_installer(&family.pattern, &family.migration_owners),
                 family.semantic_owner,
             ),
@@ -126,7 +153,10 @@ fn protected_relation_table_matches_declared_ownership() {
         let expected = declared
             .get(&row.relation)
             .unwrap_or_else(|| panic!("undeclared protected relation {}", row.relation));
-        assert_eq!((&row.installer, &row.owner), (&expected.0, &expected.1));
+        assert_eq!(
+            (row.ops, &row.installer, &row.owner),
+            (expected.0, &expected.1, &expected.2)
+        );
         assert!(
             !row.mechanisms.is_empty(),
             "{} has no mechanism",
@@ -180,5 +210,18 @@ fn protected_relation_table_matches_declared_ownership() {
         .map(String::as_str)
         .collect::<Vec<_>>();
     assert_eq!(node_error_checks, [NODE_ERROR_CHECK]);
+    assert_eq!(
+        table
+            .rows
+            .iter()
+            .filter(|row| row.ops)
+            .map(|row| row.relation.as_str())
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "provisioning.copy_sagas",
+            "provisioning.dumps",
+            "provisioning.migration_confirmations",
+        ])
+    );
     assert_eq!(actual_relations, declared.into_keys().collect());
 }

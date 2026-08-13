@@ -106,11 +106,13 @@ pub struct ProvisionOrgArgs {
     /// Write the WAL/PITR `ObjectStore` CRs (a JSON `List`, wamn-e1g) here; `-` =
     /// stdout (default). Apply these **before** the clusters — the Barman plugin
     /// references them.
+    #[cfg(feature = "ops")]
     #[arg(long)]
     pub emit_object_store: Option<PathBuf>,
 
     /// Write the WAL/PITR `ScheduledBackup` CRs (a JSON `List`, wamn-e1g) here;
     /// `-` = stdout (default). Apply these **after** the clusters exist.
+    #[cfg(feature = "ops")]
     #[arg(long)]
     pub emit_scheduled_backup: Option<PathBuf>,
 }
@@ -194,6 +196,7 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 n = set.clusters.len(),
                 names = names.join(", "),
             );
+            #[cfg(feature = "ops")]
             if !set.object_stores.is_empty() {
                 println!(
                     "  WAL/PITR: {} backed cluster(s); apply the ObjectStore(s) before the clusters, the ScheduledBackup(s) after",
@@ -201,12 +204,16 @@ pub async fn run(args: ProvisionOrgArgs) -> anyhow::Result<()> {
                 );
             }
             let emit_clusters = args.emit_clusters.unwrap_or_else(|| PathBuf::from("-"));
+            #[cfg(feature = "ops")]
             let emit_os = args.emit_object_store.unwrap_or_else(|| PathBuf::from("-"));
+            #[cfg(feature = "ops")]
             let emit_sb = args
                 .emit_scheduled_backup
                 .unwrap_or_else(|| PathBuf::from("-"));
             write_json(&emit_clusters, &k8s_list(&set.clusters)).context("emit Cluster CRs")?;
+            #[cfg(feature = "ops")]
             write_json(&emit_os, &k8s_list(&set.object_stores)).context("emit ObjectStore CRs")?;
+            #[cfg(feature = "ops")]
             write_json(&emit_sb, &k8s_list(&set.scheduled_backups))
                 .context("emit ScheduledBackup CRs")?;
         }
@@ -401,6 +408,7 @@ mod tests {
 
     /// The render path emits the Cluster + WAL/PITR CRs wrapped in `List`s (wamn-e1g).
     #[test]
+    #[cfg(feature = "ops")]
     fn render_path_emits_lists() {
         let (org, _) = Template::standard().stamp("acme", "wamn-pg");
         let set = wamn_control_provision::org::render_org_cluster_set(

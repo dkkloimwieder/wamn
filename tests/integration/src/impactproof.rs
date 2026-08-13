@@ -343,10 +343,7 @@ mod tests {
         let plan =
             wamn_schema_compiler::Migration::migrate(&v1, &cat(2, &["status"], &["kind", "ts"]))
                 .expect("destructive plan compiles");
-        assert!(
-            plan.requires_confirmation(),
-            "dropping a column is destructive"
-        );
+        assert!(plan.is_destructive(), "dropping a column is destructive");
         // The seeded flow references entity `orders` by name.
         assert!(flow_graph().contains(r#""entity":"orders""#));
     }

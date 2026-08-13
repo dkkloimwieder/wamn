@@ -3,25 +3,23 @@
 //! Turns the canonical catalog model (3.1, [`wamn_schema_model`]) into Postgres DDL:
 //! a whole catalog into `CREATE` statements, or a catalog *diff* into an ordered
 //! [`MigrationPlan`] of `ALTER`s. Every operation is classified
-//! [`Safety::Additive`] or [`Safety::Destructive`]; the plan **applies additive
-//! changes freely but refuses destructive ones** unless the caller confirms them
-//! and asserts a backup checkpoint (the "additive by default; destructive needs
-//! explicit confirmation + backup" rule).
+//! [`Safety::Additive`] or [`Safety::Destructive`]. Default builds emit only
+//! additive SQL; destructive emission exists only behind the `ops` feature.
 //!
 //! Scope: this crate *emits and classifies* DDL. It does not execute it — the
-//! live transactional apply, versioned migration history, and rollback are the
-//! migration engine (2.5); the backup/PITR mechanism is hosting (2.3 / 10.3);
+//! live transactional apply and versioned migration history are the migration
+//! engine (2.5); the backup/PITR mechanism is hosting (2.3 / 10.3);
 //! the draft→staged→applied lifecycle is 3.4; per-role RLS rules are 3.5. It
 //! *does* emit the platform multi-tenancy floor (tenant column + FORCE RLS +
 //! the `app.tenant` policy) so generated tables are tenant-safe by default.
 //!
 //! ```
 //! use wamn_schema_model::Catalog;
-//! use wamn_schema_compiler::{Migration, Confirmation};
+//! use wamn_schema_compiler::Migration;
 //!
 //! # fn go(catalog: &Catalog) -> Result<(), Box<dyn std::error::Error>> {
 //! let plan = Migration::create(catalog)?;
-//! let sql = plan.sql(Confirmation::None)?; // a fresh CREATE is all-additive
+//! let sql = plan.sql()?; // a fresh CREATE is all-additive
 //! # let _ = sql;
 //! # Ok(())
 //! # }
@@ -46,7 +44,7 @@ pub mod rls;
 pub mod seed;
 pub mod sql;
 
-pub use plan::{Confirmation, MigrationPlan, Operation, RequiresConfirmation, Safety};
+pub use plan::{DestructivePlan, MigrationPlan, Operation, Safety};
 
 use wamn_schema_model::{Catalog, Issue};
 

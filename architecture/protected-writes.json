@@ -3,6 +3,7 @@
   "rows": [
     {
       "relation": "<app_schema>.<catalog_entity_name>",
+      "ops": false,
       "installer": "schema-compiler",
       "owner": "schema-model",
       "mechanisms": [
@@ -39,6 +40,7 @@
     },
     {
       "relation": "<app_schema>.wamn_catalog",
+      "ops": false,
       "installer": "ctl-publish",
       "owner": "schema-model",
       "mechanisms": [
@@ -65,6 +67,7 @@
     },
     {
       "relation": "<app_schema>.wamn_entities",
+      "ops": false,
       "installer": "provision-store",
       "owner": "provision-store",
       "mechanisms": [
@@ -90,6 +93,7 @@
     },
     {
       "relation": "app_system.api_keys",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -129,6 +133,7 @@
     },
     {
       "relation": "app_system.audit_log",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -165,6 +170,7 @@
     },
     {
       "relation": "app_system.configurations",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -201,6 +207,7 @@
     },
     {
       "relation": "app_system.permissions",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -239,6 +246,7 @@
     },
     {
       "relation": "app_system.roles",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -275,6 +283,7 @@
     },
     {
       "relation": "app_system.user_roles",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -315,6 +324,7 @@
     },
     {
       "relation": "app_system.users",
+      "ops": false,
       "installer": "project-state",
       "owner": "project-state",
       "mechanisms": [
@@ -353,6 +363,7 @@
     },
     {
       "relation": "catalog.attachment_activation",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -381,6 +392,7 @@
     },
     {
       "relation": "catalog.attachment_activation_events",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -408,6 +420,7 @@
     },
     {
       "relation": "catalog.attachment_tombstones",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -435,6 +448,7 @@
     },
     {
       "relation": "catalog.authoring_command_audit",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-worker",
       "mechanisms": [
@@ -481,6 +495,7 @@
     },
     {
       "relation": "catalog.catalog_heads",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -509,6 +524,7 @@
     },
     {
       "relation": "catalog.catalogs",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -547,6 +563,7 @@
     },
     {
       "relation": "catalog.connection_bindings",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -588,6 +605,7 @@
     },
     {
       "relation": "catalog.connection_generation_retention",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -622,6 +640,7 @@
     },
     {
       "relation": "catalog.connection_generations",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -659,6 +678,7 @@
     },
     {
       "relation": "catalog.connection_instances",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -697,6 +717,7 @@
     },
     {
       "relation": "catalog.connection_requirements",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -730,6 +751,7 @@
     },
     {
       "relation": "catalog.constraints",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -769,6 +791,7 @@
     },
     {
       "relation": "catalog.draft_safe_connection_grants",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -812,6 +835,7 @@
     },
     {
       "relation": "catalog.entities",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -851,6 +875,7 @@
     },
     {
       "relation": "catalog.event_registrations",
+      "ops": false,
       "installer": "schema-control",
       "owner": "event-registration-model",
       "mechanisms": [
@@ -887,6 +912,7 @@
     },
     {
       "relation": "catalog.execution_bundles",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -926,6 +952,7 @@
     },
     {
       "relation": "catalog.fields",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -965,6 +992,7 @@
     },
     {
       "relation": "catalog.flow_artifacts",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -996,6 +1024,7 @@
     },
     {
       "relation": "catalog.flow_drafts",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1038,6 +1067,7 @@
     },
     {
       "relation": "catalog.indexes",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -1076,6 +1106,7 @@
     },
     {
       "relation": "catalog.publish_gate_audit",
+      "ops": false,
       "installer": "ctl-publish",
       "owner": "ctl-copy",
       "mechanisms": [
@@ -1121,6 +1152,7 @@
     },
     {
       "relation": "catalog.relations",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-model",
       "mechanisms": [
@@ -1160,6 +1192,7 @@
     },
     {
       "relation": "catalog.release_attachments",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1195,6 +1228,7 @@
     },
     {
       "relation": "catalog.release_exposure_manifests",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1226,6 +1260,7 @@
     },
     {
       "relation": "catalog.release_flows",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1260,6 +1295,7 @@
     },
     {
       "relation": "catalog.release_manifests",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1293,6 +1329,7 @@
     },
     {
       "relation": "catalog.release_sources",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1325,6 +1362,7 @@
     },
     {
       "relation": "catalog.rls_policies",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-compiler",
       "mechanisms": [
@@ -1361,6 +1399,7 @@
     },
     {
       "relation": "catalog.schema_migrations",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-control",
       "mechanisms": [
@@ -1387,7 +1426,6 @@
       ],
       "author-reachable": "author SQL, RLS-bounded",
       "guards": [
-        "constraint:schema_migrations_confirmation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (confirmation = ANY (ARRAY['none'::text, 'confirmed-with-backup'::text]))",
         "constraint:schema_migrations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, catalog_id, environment, to_version)",
         "constraint:schema_migrations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:schema_migrations_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
@@ -1396,6 +1434,7 @@
     },
     {
       "relation": "catalog.seed_datasets",
+      "ops": false,
       "installer": "schema-control",
       "owner": "schema-compiler",
       "mechanisms": [
@@ -1432,6 +1471,7 @@
     },
     {
       "relation": "catalog.validated_flow_drafts",
+      "ops": false,
       "installer": "schema-control",
       "owner": "catalog-model",
       "mechanisms": [
@@ -1485,6 +1525,7 @@
     },
     {
       "relation": "identity.pats",
+      "ops": false,
       "installer": "platform-identity",
       "owner": "platform-identity",
       "mechanisms": [
@@ -1516,6 +1557,7 @@
     },
     {
       "relation": "identity.principals",
+      "ops": false,
       "installer": "platform-identity",
       "owner": "platform-identity",
       "mechanisms": [
@@ -1548,6 +1590,7 @@
     },
     {
       "relation": "identity.project_roles",
+      "ops": false,
       "installer": "platform-identity",
       "owner": "platform-identity",
       "mechanisms": [
@@ -1577,7 +1620,45 @@
       ]
     },
     {
+      "relation": "provisioning.copy_sagas",
+      "ops": true,
+      "installer": "provision-store",
+      "owner": "provision-store",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "wamn_ops",
+          "basis": "grant",
+          "operations": [
+            "insert",
+            "update"
+          ]
+        },
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:copy_sagas_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = 'copy'::text)",
+        "constraint:copy_sagas_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (saga_id)",
+        "constraint:copy_sagas_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text, 'compensating'::text, 'compensated'::text]))",
+        "constraint:copy_sagas_step_nonneg;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (step >= 0)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
       "relation": "provisioning.dumps",
+      "ops": true,
       "installer": "provision-store",
       "owner": "provision-store",
       "mechanisms": [
@@ -1585,6 +1666,14 @@
         "foreign-key:delete:cascade;from=registry.project_envs;constraint=dumps_org_project_env_fkey"
       ],
       "roles": [
+        {
+          "role": "wamn_ops",
+          "basis": "grant",
+          "operations": [
+            "insert",
+            "update"
+          ]
+        },
         {
           "role": "wamn_system",
           "basis": "owner",
@@ -1605,7 +1694,51 @@
       ]
     },
     {
+      "relation": "provisioning.migration_confirmations",
+      "ops": true,
+      "installer": "provision-store",
+      "owner": "provision-store",
+      "mechanisms": [
+        "direct-dml",
+        "foreign-key:delete:cascade;from=registry.project_envs;constraint=migration_confirmations_org_project_env_fkey"
+      ],
+      "roles": [
+        {
+          "role": "wamn_ops",
+          "basis": "grant",
+          "operations": [
+            "insert(catalog_id)",
+            "insert(env)",
+            "insert(from_version)",
+            "insert(org)",
+            "insert(project)",
+            "insert(tenant_id)",
+            "insert(to_version)"
+          ]
+        },
+        {
+          "role": "wamn_system",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:migration_confirmations_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = 'backup-checkpoint-attested'::text)",
+        "constraint:migration_confirmations_org_project_env_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, project, env) REFERENCES registry.project_envs(org, project, env) ON DELETE CASCADE",
+        "constraint:migration_confirmations_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, project, env, tenant_id, catalog_id, to_version)",
+        "constraint:migration_confirmations_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "row-security:enabled=false;forced=false"
+      ]
+    },
+    {
       "relation": "provisioning.sagas",
+      "ops": false,
       "installer": "provision-store",
       "owner": "provision-store",
       "mechanisms": [
@@ -1625,7 +1758,7 @@
       ],
       "author-reachable": "no",
       "guards": [
-        "constraint:sagas_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = ANY (ARRAY['provision-org'::text, 'provision-project-env'::text, 'copy'::text]))",
+        "constraint:sagas_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (kind = ANY (ARRAY['provision-org'::text, 'provision-project-env'::text]))",
         "constraint:sagas_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (saga_id)",
         "constraint:sagas_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['pending'::text, 'running'::text, 'completed'::text, 'failed'::text, 'compensating'::text, 'compensated'::text]))",
         "constraint:sagas_step_nonneg;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (step >= 0)",
@@ -1634,6 +1767,7 @@
     },
     {
       "relation": "registry.env_policies",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1662,6 +1796,7 @@
     },
     {
       "relation": "registry.event_readers",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1689,6 +1824,7 @@
     },
     {
       "relation": "registry.meta",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1715,6 +1851,7 @@
     },
     {
       "relation": "registry.orgs",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1744,6 +1881,7 @@
     },
     {
       "relation": "registry.project_envs",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1772,6 +1910,7 @@
     },
     {
       "relation": "registry.project_publish_policies",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1801,6 +1940,7 @@
     },
     {
       "relation": "registry.projects",
+      "ops": false,
       "installer": "registry-store",
       "owner": "registry-store",
       "mechanisms": [
@@ -1829,6 +1969,7 @@
     },
     {
       "relation": "wamn_run.authoring_report_reservations",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-catalog",
       "mechanisms": [
@@ -1880,6 +2021,7 @@
     },
     {
       "relation": "wamn_run.authoring_suite_case_facts",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-catalog",
       "mechanisms": [
@@ -1927,6 +2069,7 @@
     },
     {
       "relation": "wamn_run.authoring_suite_reports",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-catalog",
       "mechanisms": [
@@ -1975,6 +2118,7 @@
     },
     {
       "relation": "wamn_run.authoring_test_sets",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-worker",
       "mechanisms": [
@@ -2016,6 +2160,7 @@
     },
     {
       "relation": "wamn_run.effect_attempt_dispatches",
+      "ops": false,
       "installer": "schema-control",
       "owner": "run-state",
       "mechanisms": [
@@ -2059,6 +2204,7 @@
     },
     {
       "relation": "wamn_run.effect_attempt_outcomes",
+      "ops": false,
       "installer": "schema-control",
       "owner": "run-state",
       "mechanisms": [
@@ -2098,6 +2244,7 @@
     },
     {
       "relation": "wamn_run.effect_attempts",
+      "ops": false,
       "installer": "schema-control",
       "owner": "run-state",
       "mechanisms": [
@@ -2151,6 +2298,7 @@
     },
     {
       "relation": "wamn_run.effect_disposition_requests",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2193,6 +2341,7 @@
     },
     {
       "relation": "wamn_run.effect_dispositions",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2233,6 +2382,7 @@
     },
     {
       "relation": "wamn_run.flows",
+      "ops": false,
       "installer": "schema-control",
       "owner": "flow-model",
       "mechanisms": [
@@ -2270,6 +2420,7 @@
     },
     {
       "relation": "wamn_run.invocation_admissions",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2308,6 +2459,7 @@
     },
     {
       "relation": "wamn_run.node_runs",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2352,6 +2504,7 @@
     },
     {
       "relation": "wamn_run.partition_owner",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2388,6 +2541,7 @@
     },
     {
       "relation": "wamn_run.run_dead_letters",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2424,6 +2578,7 @@
     },
     {
       "relation": "wamn_run.run_flow_resolutions",
+      "ops": false,
       "installer": "schema-control",
       "owner": "run-state",
       "mechanisms": [
@@ -2465,6 +2620,7 @@
     },
     {
       "relation": "wamn_run.run_queue",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2505,6 +2661,7 @@
     },
     {
       "relation": "wamn_run.runs",
+      "ops": false,
       "installer": "run-state",
       "owner": "run-state",
       "mechanisms": [
@@ -2657,6 +2814,7 @@
     },
     {
       "relation": "wamn_run.test_cases",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-catalog",
       "mechanisms": [
@@ -2695,6 +2853,7 @@
     },
     {
       "relation": "wamn_run.test_suites",
+      "ops": false,
       "installer": "schema-control",
       "owner": "scenario-catalog",
       "mechanisms": [

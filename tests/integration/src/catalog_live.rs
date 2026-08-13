@@ -227,7 +227,7 @@ pub(crate) mod tests {
                    (SELECT members_json::text FROM catalog.release_manifests WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(flow_id, flow_version, execution_bundle_hash)::text \
                      FROM catalog.release_flows WHERE tenant_id = $1), \
-                   (SELECT jsonb_build_array(from_version, to_version, confirmation, \
+                   (SELECT jsonb_build_array(from_version, to_version, \
                      statement_count, destructive, checksum)::text \
                      FROM catalog.schema_migrations WHERE tenant_id = $1), \
                    (SELECT applied_catalog_version::text FROM catalog.catalog_heads \

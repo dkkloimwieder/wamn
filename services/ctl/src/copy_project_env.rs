@@ -25,8 +25,8 @@
 //!
 //! **The cutover gate (fixes cjv.7):** a `--cutover` copy is a *move* — the
 //! pipeline `Quiesce → Snapshot → Restore → Verify → Cutover` is mandatory,
-//! every step advances the `copy` saga in the T1 registry
-//! (`provisioning.sagas`), and the `Cutover` executor **re-reads the saga and
+//! every step advances the dedicated `copy` saga in T1 operations state
+//! (`provisioning.copy_sagas`), and the `Cutover` executor **re-reads the saga and
 //! refuses** unless every prior step — quiesce and verify included — is durably
 //! recorded. The old dump→flip write-loss window cannot be skipped silently.
 //!
@@ -58,7 +58,9 @@ use wamn_control_provision::{
 };
 use wamn_control_registry::Triple;
 
-use crate::migrate_catalog::{ApplyOutcome, apply_catalog_target_in_transaction};
+use crate::migrate_catalog::{
+    ApplyOutcome, TargetReconciliationWindow, reconcile_catalog_target_in_transaction,
+};
 use crate::publish_catalog::ensure_flow_tests;
 use crate::restore_project_env::swap_db;
 use wamn_schema_control::BareSchemaName;
@@ -136,8 +138,9 @@ pub struct CopyProjectEnvArgs {
     pub dst_admin_url: Option<String>,
 
     /// Superuser Postgres URL to the T1 system DB (`wamn_system`): the copy
-    /// saga (`provisioning.sagas`) + the dump record. Env
-    /// `WAMN_SYSTEM_ADMIN_URL`. REQUIRED for --cutover (the gate lives there).
+    /// saga (`provisioning.copy_sagas`) + the dump/confirmation records. Env
+    /// `WAMN_SYSTEM_ADMIN_URL`. Required for definition copies (publish policy
+    /// and destructive-reconciliation attestations) and for --cutover.
     #[arg(long, env = "WAMN_SYSTEM_ADMIN_URL")]
     pub system_database_url: Option<String>,
 
@@ -160,8 +163,9 @@ pub struct CopyProjectEnvArgs {
     #[arg(long, default_value = "/tmp/wamn-dump")]
     pub dump_root: PathBuf,
 
-    /// Acknowledge a destructive definition promotion (the 3.2 gate) — required
-    /// when the dst's applied catalog diverges destructively from the src's.
+    /// Record a backup-checkpoint attestation for each destructive definition
+    /// reconciliation. Requires --system-database-url; an exact durable record
+    /// may also be reused by a retry.
     #[arg(long)]
     pub confirm_with_backup: bool,
 
@@ -223,10 +227,10 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
         .as_deref()
         .context("copy needs --src-admin-url (a superuser URL to the SOURCE cluster)")?;
     let dst_admin = args.dst_admin_url.as_deref().unwrap_or(src_admin);
-    if args.cutover && args.system_database_url.is_none() {
+    if (args.cutover || include.wants_definition()) && args.system_database_url.is_none() {
         bail!(
-            "--cutover requires --system-database-url: the pipeline records quiesce + verify \
-             in the T1 registry, and the cutover gate refuses without that durable record"
+            "this copy requires --system-database-url: definition copies read operations \
+             policy/attestations, and cutover records its durable pipeline in the T1 registry"
         );
     }
 
@@ -461,7 +465,7 @@ async fn exec_snapshot(
 async fn exec_copy_definition(
     ctx: &mut ExecCtx<'_>,
     _src: &Triple,
-    _dst: &Triple,
+    dst: &Triple,
 ) -> anyhow::Result<()> {
     let tenant = ctx.args.tenant.as_deref().expect("checked upfront");
     let (src_client, src_task) = connect(&swap_db(ctx.src_admin, ctx.src_db)).await?;
@@ -517,6 +521,7 @@ async fn exec_copy_definition(
         catalogs.push(cat);
     }
     let mut destination_bases = std::collections::BTreeMap::new();
+    let mut destination_catalogs = std::collections::BTreeMap::new();
     for cat in &catalogs {
         let base = dst_client
             .query_opt(
@@ -528,15 +533,30 @@ async fn exec_copy_definition(
             .with_context(|| format!("read destination base for {:?}", cat.catalog_id))?
             .map(|row| row.get::<_, i32>(0));
         destination_bases.insert(cat.catalog_id.clone(), base);
+        let current = dst_client
+            .query_opt(
+                "SELECT document::text FROM catalog.catalogs \
+                 WHERE tenant_id = $1 AND catalog_id = $2 AND environment = $3 \
+                   AND state = 'applied'",
+                &[&tenant, &cat.catalog_id, &dst_env],
+            )
+            .await
+            .with_context(|| format!("read destination catalog {:?}", cat.catalog_id))?
+            .map(|row| {
+                let document: Option<String> = row.get(0);
+                document
+                    .context("destination applied catalog has no stored document")
+                    .and_then(|document| {
+                        wamn_schema_control::Catalog::from_json(&document)
+                            .context("parse destination applied catalog")
+                    })
+            })
+            .transpose()?;
+        destination_catalogs.insert(cat.catalog_id.clone(), current);
     }
     if catalogs.is_empty() {
         println!("  no applied catalogs for tenant {tenant:?} in the src env");
     }
-    let confirm = if ctx.args.confirm_with_backup {
-        wamn_schema_control::Confirmation::ConfirmedWithBackup
-    } else {
-        wamn_schema_control::Confirmation::None
-    };
     let source_heads = src_client
         .query(
             "SELECT catalog_id, applied_catalog_version \
@@ -557,20 +577,117 @@ async fn exec_copy_definition(
     //     suite reports could possibly be evidence.
     enforce_publish_gate(ctx, &src_client, &dst_client, &catalogs).await?;
 
+    // Destructive target reconciliation is authorized by a durable operations
+    // record, not by an invocation-local flag. The flag mints that record; a
+    // retry may consume an existing exact-window record. Planning here is
+    // read-only, and the destination transaction below rechecks the locked
+    // current-applied head against the recorded window immediately before DDL.
+    let mut destructive_windows = Vec::new();
+    for cat in &catalogs {
+        let current = destination_catalogs
+            .get(&cat.catalog_id)
+            .and_then(Option::as_ref);
+        let plan = wamn_schema_control::ops::compile_migration(current, cat)
+            .with_context(|| format!("compile destination diff for {:?}", cat.catalog_id))?;
+        if !plan.is_additive() {
+            destructive_windows.push((
+                cat.catalog_id.clone(),
+                current.map(|catalog| catalog.version),
+                cat.version,
+            ));
+        }
+    }
+    let mut authorizations = std::collections::BTreeMap::new();
+    let confirmation_connection = if destructive_windows.is_empty() {
+        None
+    } else {
+        let system_url = ctx.args.system_database_url.as_deref().context(
+            "destructive definition reconciliation needs --system-database-url to read its \
+             backup-checkpoint-attested operations record",
+        )?;
+        let (client, task) = connect(system_url)
+            .await
+            .context("system db connect (migration confirmation)")?;
+        crate::ops_schema::install_and_enter(&client).await?;
+        for (catalog_id, from_version, to_version) in &destructive_windows {
+            let from_i32 = from_version
+                .map(|version| i32::try_from(version).context("confirmation from version"))
+                .transpose()?;
+            let to_i32 = i32::try_from(*to_version).context("confirmation target version")?;
+            if ctx.args.confirm_with_backup {
+                client
+                    .execute(
+                        wamn_control_provision::state::record_migration_confirmation_sql(),
+                        &[
+                            &dst.org,
+                            &dst.project,
+                            &dst_env,
+                            &tenant,
+                            &catalog_id,
+                            &from_i32,
+                            &to_i32,
+                        ],
+                    )
+                    .await
+                    .with_context(|| format!("record migration confirmation for {catalog_id:?}"))?;
+            }
+            let row = client
+                .query_opt(
+                    wamn_control_provision::state::select_migration_confirmation_sql(),
+                    &[
+                        &dst.org,
+                        &dst.project,
+                        &dst_env,
+                        &tenant,
+                        &catalog_id,
+                        &to_i32,
+                    ],
+                )
+                .await
+                .with_context(|| format!("read migration confirmation for {catalog_id:?}"))?
+                .with_context(|| {
+                    format!(
+                        "destructive target reconciliation {from_version:?} -> {to_version} for \
+                         catalog {catalog_id:?} has no backup-checkpoint-attested operations record"
+                    )
+                })?;
+            let recorded_from: Option<i32> = row.get(0);
+            let kind: String = row.get(1);
+            let _confirmed_at: chrono::DateTime<chrono::Utc> = row.get(2);
+            let confirmed_by: String = row.get(3);
+            validate_migration_confirmation(
+                catalog_id,
+                recorded_from,
+                &kind,
+                &confirmed_by,
+                from_i32,
+                to_i32,
+            )?;
+            authorizations.insert(
+                catalog_id.clone(),
+                TargetReconciliationWindow {
+                    from_version: *from_version,
+                    to_version: *to_version,
+                },
+            );
+        }
+        Some((client, task))
+    };
+
     let tx = dst_client
         .transaction()
         .await
         .context("begin atomic definition copy")?;
     let mut deferred_journals = std::collections::BTreeMap::new();
     for cat in &catalogs {
-        match apply_catalog_target_in_transaction(
+        match reconcile_catalog_target_in_transaction(
             &tx,
             tenant,
             dst_env,
             &ctx.data_schema,
             cat,
             None,
-            confirm,
+            authorizations.remove(&cat.catalog_id),
             false,
         )
         .await
@@ -1101,8 +1218,35 @@ async fn exec_copy_definition(
 
     drop(src_client);
     drop(dst_client);
+    if let Some((client, task)) = confirmation_connection {
+        drop(client);
+        let _ = task.await;
+    }
     let _ = src_task.await;
     let _ = dst_task.await;
+    Ok(())
+}
+
+fn validate_migration_confirmation(
+    catalog_id: &str,
+    recorded_from: Option<i32>,
+    kind: &str,
+    confirmed_by: &str,
+    expected_from: Option<i32>,
+    expected_to: i32,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        recorded_from == expected_from
+            && kind == wamn_control_provision::state::MIGRATION_CONFIRMATION_KIND,
+        "migration confirmation for {catalog_id:?} does not authorize the current \
+         window: recorded {recorded_from:?} -> {expected_to} kind {kind:?}, expected \
+         {expected_from:?} -> {expected_to} kind {:?}",
+        wamn_control_provision::state::MIGRATION_CONFIRMATION_KIND,
+    );
+    anyhow::ensure!(
+        !confirmed_by.is_empty(),
+        "migration confirmation for {catalog_id:?} has no confirming principal"
+    );
     Ok(())
 }
 
@@ -1362,7 +1506,10 @@ async fn apply_rls_policies(
         let plan = wamn_schema_compiler::rls::compile(&policy, cat)
             .map_err(|e| anyhow::anyhow!("compile RLS policies for {catalog_id:?}: {e}"))?;
         for op in &plan.operations {
-            match dst.batch_execute(&op.sql).await {
+            let sql = op
+                .additive_sql()
+                .context("RLS compilation emitted a destructive operation")?;
+            match dst.batch_execute(sql).await {
                 Ok(()) => {}
                 // Already applied (a re-copy) — idempotent skip.
                 Err(e) if e.code() == Some(&SqlState::DUPLICATE_OBJECT) => {}
@@ -1556,8 +1703,8 @@ async fn exec_deprovision_old(ctx: &mut ExecCtx<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The copy saga recorder: a superuser connection to the T1 system DB acting as
-/// `wamn_system`, driving the q3n.8 saga builders.
+/// The copy saga recorder: a superuser connection installs the idempotent ops
+/// artifact as `wamn_system`, then executes through the bounded `wamn_ops` role.
 struct SagaRecorder {
     client: tokio_postgres::Client,
     saga_id: String,
@@ -1570,10 +1717,7 @@ impl SagaRecorder {
         let conn_task = tokio::spawn(async move {
             let _ = conn.await;
         });
-        client
-            .batch_execute("SET ROLE wamn_system")
-            .await
-            .context("SET ROLE wamn_system")?;
+        crate::ops_schema::install_and_enter(&client).await?;
         Ok(Self {
             client,
             saga_id: saga_id.to_string(),
@@ -1694,6 +1838,21 @@ mod tests {
         let pinned = guard_copy_destination(Some(3), Some(3), 1).unwrap_err();
         assert!(format!("{pinned:#}").contains("catalog-release-has-nonterminal-runs"));
         assert!(wamn_schema_control::sql::advance_catalog_head_sql().contains("DO UPDATE"));
+    }
+
+    #[test]
+    fn migration_confirmation_requires_the_exact_window_kind_and_actor() {
+        let kind = wamn_control_provision::state::MIGRATION_CONFIRMATION_KIND;
+        validate_migration_confirmation("orders", Some(2), kind, "operator", Some(2), 3).unwrap();
+        assert!(
+            validate_migration_confirmation("orders", Some(1), kind, "operator", Some(2), 3)
+                .is_err()
+        );
+        assert!(
+            validate_migration_confirmation("orders", Some(2), "other", "operator", Some(2), 3)
+                .is_err()
+        );
+        assert!(validate_migration_confirmation("orders", Some(2), kind, "", Some(2), 3).is_err());
     }
 
     #[test]

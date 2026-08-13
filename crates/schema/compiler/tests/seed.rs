@@ -6,9 +6,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
-use wamn_schema_compiler::seed::{
-    CompileError, Confirmation, Dataset, EntitySeed, SeedRow, compile,
-};
+use wamn_schema_compiler::seed::{CompileError, Dataset, EntitySeed, SeedRow, compile};
 use wamn_schema_model::{Catalog, Entity, Field, FieldType};
 
 fn poc_fixture() -> PathBuf {
@@ -77,7 +75,7 @@ fn poc_dataset() -> Dataset {
 fn compiles_fk_safe_idempotent_inserts() {
     let plan = compile(&poc_dataset(), &poc(), "t1").expect("compiles");
     assert!(plan.is_additive());
-    let sql = plan.sql(Confirmation::None).expect("additive");
+    let sql = plan.sql().expect("additive");
 
     // Referenced entities are emitted before the referencing one.
     let sup = sql.find("INTO \"suppliers\"").unwrap();
@@ -110,9 +108,16 @@ fn references_resolve_to_the_target_row_id() {
         .unwrap();
     // …extract the literal id the supplier INSERT sets, and assert the receipt
     // INSERT references that exact uuid for supplier_id.
-    let sup_id = first_uuid_literal(&supplier_op.sql);
+    let sup_id = first_uuid_literal(
+        supplier_op
+            .additive_sql()
+            .expect("seed operation is additive"),
+    );
     assert!(
-        receipt_op.sql.contains(&sup_id),
+        receipt_op
+            .additive_sql()
+            .expect("seed operation is additive")
+            .contains(&sup_id),
         "receipt should reference the supplier's id {sup_id}"
     );
 }
@@ -121,16 +126,10 @@ fn references_resolve_to_the_target_row_id() {
 fn ids_are_deterministic_across_compiles() {
     let a = compile(&poc_dataset(), &poc(), "t1").unwrap();
     let b = compile(&poc_dataset(), &poc(), "t1").unwrap();
-    assert_eq!(
-        a.sql(Confirmation::None).unwrap(),
-        b.sql(Confirmation::None).unwrap()
-    );
+    assert_eq!(a.sql().unwrap(), b.sql().unwrap());
     // A different tenant yields different ids.
     let c = compile(&poc_dataset(), &poc(), "t2").unwrap();
-    assert_ne!(
-        a.sql(Confirmation::None).unwrap(),
-        c.sql(Confirmation::None).unwrap()
-    );
+    assert_ne!(a.sql().unwrap(), c.sql().unwrap());
 }
 
 #[test]
@@ -406,10 +405,10 @@ fn seed_applies_and_reapply_is_idempotent() {
          GRANT USAGE ON SCHEMA wamn_seed_test TO wamn_app;\n\
          SET search_path TO wamn_seed_test;\n",
     );
-    script.push_str(&floor.sql(Confirmation::None).unwrap());
+    script.push_str(&floor.sql().unwrap());
     // Load twice — the second is a no-op thanks to ON CONFLICT DO NOTHING.
-    script.push_str(&seed.sql(Confirmation::None).unwrap());
-    script.push_str(&seed.sql(Confirmation::None).unwrap());
+    script.push_str(&seed.sql().unwrap());
+    script.push_str(&seed.sql().unwrap());
     // The FK resolved (the join finds the supplier) and each table has one row.
     script.push_str(
         "DO $$ BEGIN\n\

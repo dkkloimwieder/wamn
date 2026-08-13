@@ -48,28 +48,37 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
+#[cfg(feature = "ops")]
 pub mod backup;
+#[cfg(feature = "ops")]
 pub mod copy;
 pub mod database;
+#[cfg(feature = "ops")]
 pub mod dump;
 mod error;
 mod name;
 pub mod org;
+#[cfg(feature = "ops")]
 pub mod restore;
+pub mod saga;
 pub mod secret;
 pub mod sql;
+#[cfg(feature = "ops")]
 pub mod state;
 
+#[cfg(feature = "ops")]
 pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
 };
+#[cfg(feature = "ops")]
 pub use copy::{
     COPY_SAGA_KIND, CopyInclude, CopyMode, CopyRequest, CopyScope, CopyStep, count_rows_sql,
     list_schema_tables_sql, pg_restore_data_only_argv, plan_copy, quiesce_database_sql,
     terminate_database_backends_sql, unquiesce_database_sql,
 };
 pub use database::render_project_env_database;
+#[cfg(feature = "ops")]
 pub use dump::{
     DEFAULT_BUCKET, DEFAULT_DUMP_SCHEDULE, dump_object_key, dump_resource_name, pg_dump_argv,
     render_project_env_dump_cronjob, render_project_env_dump_job, validate_dump_resource_name,
@@ -83,6 +92,7 @@ pub use name::{
     validate_project_env, validate_project_env_cdc, validate_project_id,
 };
 pub use org::{OrgClusters, render_org_cluster_set};
+#[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::{
     render_effect_writer_secret_manifest, render_project_env_cdc_secret_manifest,
@@ -95,3 +105,7 @@ pub use wamn_run_state::{
     EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
     effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
 };
+
+/// Operations persistence extension, installed after the core system schema.
+#[cfg(feature = "ops")]
+pub const OPS_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/ops-schema.sql");

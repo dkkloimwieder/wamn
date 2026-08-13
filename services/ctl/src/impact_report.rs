@@ -24,8 +24,8 @@ use anyhow::{Context as _, bail};
 use clap::Args;
 use tokio_postgres::NoTls;
 
-use wamn_schema_compiler::{Migration, MigrationPlan};
 use wamn_schema_control::Env;
+use wamn_schema_control::MigrationPlan;
 use wamn_schema_control::impact::{
     FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, SuiteEdge, analyze,
 };
@@ -97,7 +97,11 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
     let impact = gather_impact(&client, &plan, current.as_ref(), &target, &args.schema).await?;
     conn_task.abort();
     println!("{}", impact.render());
-    if impact.requires_acknowledgement() {
+    if impact
+        .entities
+        .iter()
+        .any(|entity| entity.destructive && entity.has_downstream_impact())
+    {
         println!(
             "NOTE: this destructive change has dependent flows or suites; use this report \
              when reprovisioning the environment."
@@ -113,11 +117,8 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
 /// additive/destructive classification is the authoritative "affected entities"
 /// source (no SQL re-parse).
 pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Result<MigrationPlan> {
-    match current {
-        Some(c) => Migration::migrate(c, target),
-        None => Migration::create(target),
-    }
-    .map_err(|e| anyhow::anyhow!("compile migration for impact analysis: {e}"))
+    wamn_schema_control::ops::compile_migration(current, target)
+        .map_err(|e| anyhow::anyhow!("compile migration for impact analysis: {e}"))
 }
 
 /// Read the dependency edges for `plan` and fold them through

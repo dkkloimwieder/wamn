@@ -148,6 +148,7 @@ ENTRYPOINT ["/usr/local/bin/wamn-host"]
 FROM debian:trixie-slim AS ctl
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /native-output/wamn-ctl /usr/local/bin/wamn-ctl
+COPY --from=builder /native-output/wamn-ctl-ops /usr/local/bin/wamn-ctl-ops
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-ctl"]
 

@@ -5,11 +5,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# Destructive catalog diff/apply is an operations-only capability. Callers must
+# supply the durable backup attestation and locked migration window.
+ops = ["wamn-schema-compiler/ops"]
+
 [dependencies]
 # 2.5 COMPOSES the shipped model crates rather than re-deriving them: the
 # canonical catalog model + its JSON import/export + diff (3.1); the DDL compiler
-# + its additive/destructive confirmation gate (3.2, reused VERBATIM to compile a
-# migration and to honor the backup-checkpoint marker); and the lifecycle model
+# + its additive/destructive classifier (3.2); and the lifecycle model
 # (3.4) — the single-applied + stale-base guards, reused as the validation oracle
 # so the live engine never diverges from them. This crate stays PURE (no DB,
 # clock, or wasm — the schema compiler/control SR6 pure/effect precedent): it emits

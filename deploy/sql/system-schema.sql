@@ -347,8 +347,8 @@ CREATE TABLE registry.project_envs (
 -- adding this FK LAST means the projects → project_envs cascade clears the
 -- referencing rows BEFORE the policy rows are deleted — a plain
 -- `DELETE FROM registry.orgs WHERE id = ...` tears a whole org down in one
--- statement without tripping the in-use-policy FK above. (If a dump/restore
--- ever reorders the triggers, the DEFERRABLE escape hatch above still works.)
+-- statement without tripping the in-use-policy FK above. If a future schema
+-- restore reorders the triggers, the DEFERRABLE escape hatch above still works.
 ALTER TABLE registry.env_policies
     ADD CONSTRAINT env_policies_org_fkey
     FOREIGN KEY (org) REFERENCES registry.orgs (id) ON DELETE CASCADE;
@@ -365,7 +365,7 @@ ALTER TABLE registry.env_policies
 -- namespace) is a reference only — the replication credential is its own tier
 -- ABOVE the wamn_app query credential, and its material lives in a K8s Secret,
 -- never here. Keyed by the identity triple; FK to the project-env it captures
--- (the provisioning.dumps precedent), so a de-provisioned env (or a deleted
+-- through the same project-env identity, so a de-provisioned env (or a deleted
 -- org, cascading through project_envs) drops its registration. The reader
 -- service (l5i9.10) reads its row to learn what to stream.
 -- ---------------------------------------------------------------------------
@@ -397,8 +397,7 @@ CREATE TABLE registry.event_readers (
 -- uses for exactly-once: the orchestrator advances `step` in the SAME txn as each
 -- step's effect, so a crash-then-resume re-reads `step` and never re-applies a
 -- committed step); creating a saga is exactly-once via the `saga_id` PK
--- (INSERT … ON CONFLICT (saga_id) DO NOTHING). The per-step compensation LEDGER
--- (rollback in reverse) is 10.1's to elaborate on top of this row.
+-- (INSERT … ON CONFLICT (saga_id) DO NOTHING).
 -- ---------------------------------------------------------------------------
 CREATE TABLE provisioning.sagas (
     saga_id     text PRIMARY KEY,
@@ -411,38 +410,9 @@ CREATE TABLE provisioning.sagas (
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     CONSTRAINT sagas_kind_check
-        CHECK (kind IN ('provision-org', 'provision-project-env', 'copy')),
+        CHECK (kind IN ('provision-org', 'provision-project-env')),
     CONSTRAINT sagas_status_check
         CHECK (status IN ('pending', 'running', 'completed', 'failed',
                           'compensating', 'compensated')),
     CONSTRAINT sagas_step_nonneg CHECK (step >= 0)
-);
-
--- ---------------------------------------------------------------------------
--- Dumps — bookkeeping for the scheduled per-project-env LOGICAL DUMPS
--- (wamn-q3n.10, the second backup mechanism; docs/archive/platform/postgres-topology.md §Backup
--- architecture). One row per dump taken: the object-store `object_key`
--- (`dumps/<org>/<project>/<env>/<timestamp>` — derivable, this row is a record
--- not the source), the dump `format` (`pg_dump -Fd` = directory), the completed
--- `byte_size`, and when it was `taken_at`.
---
--- This is control-plane METADATA, not tenant data (invariant 3): no dump BYTES
--- (those live in object storage), no credentials (invariant 2). Keyed by the
--- (org, project, env) triple + object_key; FK to the project-env it dumps, so a
--- de-provisioned project-env (or a deleted org, cascading through project_envs)
--- drops its dump records. The dump CATALOG for RESTORE (find the latest dump)
--- is wamn-q3n.11's restore tooling; .10 only RECORDS what it produces.
--- ---------------------------------------------------------------------------
-CREATE TABLE provisioning.dumps (
-    org         text NOT NULL,
-    project     text NOT NULL,
-    env         text NOT NULL,
-    object_key  text NOT NULL,
-    format      text NOT NULL DEFAULT 'directory',
-    byte_size   bigint,
-    taken_at    timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (org, project, env, object_key),
-    FOREIGN KEY (org, project, env)
-        REFERENCES registry.project_envs (org, project, env) ON DELETE CASCADE,
-    CONSTRAINT dumps_format_check CHECK (format IN ('directory'))
 );

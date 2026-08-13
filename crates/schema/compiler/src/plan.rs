@@ -1,12 +1,10 @@
 //! The migration plan — an ordered list of typed DDL operations, each classified
-//! by data safety, plus the confirmation / backup-checkpoint gate.
+//! by data safety, plus an additive-only default emission boundary.
 //!
 //! A plan is *reviewed* then *applied* (3.2). This crate produces and classifies
-//! it; the live transactional apply, versioned migration history, and rollback
-//! belong to the migration engine (2.5), and the real backup mechanism to
-//! hosting (2.3 / 10.3). What lives here is the **policy**: destructive DDL is
-//! refused unless the caller confirms it *and* asserts a backup checkpoint was
-//! taken.
+//! it. The live transactional apply and versioned migration history belong to
+//! the migration engine. Destructive SQL emission exists only when the crate's
+//! `ops` feature is selected; the caller owns durable authorization.
 
 /// Data-safety classification of a single operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,8 +14,7 @@ pub enum Safety {
     /// relaxing NOT NULL.
     Additive,
     /// Data-losing or downstream-breaking — dropping a table/column, retyping or
-    /// renaming a column, tightening NOT NULL. Requires explicit confirmation
-    /// and a backup checkpoint.
+    /// renaming a column, tightening NOT NULL.
     Destructive,
 }
 
@@ -30,13 +27,13 @@ impl Safety {
 /// One DDL step. `sql` is the statement to run; `entity` / `field` name the
 /// affected catalog objects so schema-impact analysis (11.8) can attribute the
 /// change without re-parsing the SQL.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Operation {
     /// Human-readable one-line summary, e.g. `add column receipts.received_at`.
     pub summary: String,
     /// The DDL statement (no trailing semicolon).
-    pub sql: String,
-    pub safety: Safety,
+    pub(crate) sql: String,
+    pub(crate) safety: Safety,
     /// The affected entity id.
     pub entity: String,
     /// The affected field id, if the operation is field-scoped.
@@ -46,41 +43,75 @@ pub struct Operation {
     pub note: Option<String>,
 }
 
+impl std::fmt::Debug for Operation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Operation")
+            .field("summary", &self.summary)
+            .field("safety", &self.safety)
+            .field("entity", &self.entity)
+            .field("field", &self.field)
+            .field("note", &self.note)
+            .finish_non_exhaustive()
+    }
+}
+
 /// An ordered, classified migration.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MigrationPlan {
     pub operations: Vec<Operation>,
 }
 
-/// The caller's acknowledgement for a plan containing destructive operations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Confirmation {
-    /// No special acknowledgement — only an additive plan may be emitted.
-    None,
-    /// The caller has reviewed the destructive operations *and* asserts a backup
-    /// checkpoint has been taken (the mechanism is hosting's, 2.3 / 10.3).
-    ConfirmedWithBackup,
-}
-
-/// Refused because the plan is destructive and was not confirmed with a backup.
+/// Refused because the default boundary cannot emit destructive SQL.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequiresConfirmation {
+pub struct DestructivePlan {
     /// Summaries of the destructive operations that triggered the refusal.
     pub destructive: Vec<String>,
 }
 
-impl std::fmt::Display for RequiresConfirmation {
+impl std::fmt::Display for DestructivePlan {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "migration has {} destructive operation(s) requiring explicit confirmation + a backup checkpoint: {}",
+            "migration has {} destructive operation(s); default SQL emission is additive-only: {}",
             self.destructive.len(),
             self.destructive.join("; ")
         )
     }
 }
 
-impl std::error::Error for RequiresConfirmation {}
+impl std::error::Error for DestructivePlan {}
+
+impl Operation {
+    /// Return this operation's immutable safety classification.
+    pub fn safety(&self) -> Safety {
+        self.safety
+    }
+
+    /// Construct an operation for ops-only classification analysis without
+    /// publishing or carrying executable SQL.
+    #[cfg(feature = "ops")]
+    pub fn classified(summary: String, safety: Safety, entity: String) -> Self {
+        Self {
+            summary,
+            sql: String::new(),
+            safety,
+            entity,
+            field: None,
+            note: None,
+        }
+    }
+
+    /// Return this statement only when it is additive.
+    pub fn additive_sql(&self) -> Option<&str> {
+        (!self.safety.is_destructive()).then_some(self.sql.as_str())
+    }
+
+    /// Return this statement inside an operations-enabled build.
+    #[cfg(feature = "ops")]
+    pub fn ops_sql(&self) -> &str {
+        &self.sql
+    }
+}
 
 impl MigrationPlan {
     pub fn is_empty(&self) -> bool {
@@ -92,9 +123,8 @@ impl MigrationPlan {
         !self.operations.iter().any(|o| o.safety.is_destructive())
     }
 
-    /// `true` if any operation is destructive (so applying it needs confirmation
-    /// + a backup checkpoint).
-    pub fn requires_confirmation(&self) -> bool {
+    /// `true` if any operation is destructive.
+    pub fn is_destructive(&self) -> bool {
         !self.is_additive()
     }
 
@@ -103,9 +133,7 @@ impl MigrationPlan {
         self.operations.iter().filter(|o| o.safety.is_destructive())
     }
 
-    /// The full DDL script, **without** the safety gate — for preview / review /
-    /// impact analysis. Use [`MigrationPlan::sql`] to apply.
-    pub fn preview_sql(&self) -> String {
+    fn render_sql(&self) -> String {
         let mut out = String::new();
         for op in &self.operations {
             out.push_str(&op.sql);
@@ -114,25 +142,23 @@ impl MigrationPlan {
         out
     }
 
-    /// The DDL script to apply, honoring the safety gate. An additive plan needs
-    /// no confirmation; a destructive plan is refused unless `confirm` is
-    /// [`Confirmation::ConfirmedWithBackup`], in which case the script is
-    /// prefixed with a backup-checkpoint marker the executor (2.5) must honor.
-    pub fn sql(&self, confirm: Confirmation) -> Result<String, RequiresConfirmation> {
-        if self.requires_confirmation() && confirm != Confirmation::ConfirmedWithBackup {
-            return Err(RequiresConfirmation {
+    /// Emit the DDL only when every operation is additive.
+    pub fn sql(&self) -> Result<String, DestructivePlan> {
+        if self.is_destructive() {
+            return Err(DestructivePlan {
                 destructive: self.destructive().map(|o| o.summary.clone()).collect(),
             });
         }
-        let mut out = String::new();
-        if self.requires_confirmation() {
-            out.push_str(
-                "-- BACKUP CHECKPOINT REQUIRED: this migration is destructive; a backup/PITR\n\
-                 -- checkpoint must be taken before these statements run (2.3 / 10.3).\n",
-            );
-        }
-        out.push_str(&self.preview_sql());
-        Ok(out)
+        Ok(self.render_sql())
+    }
+
+    /// Emit the classified DDL inside an operations-enabled build.
+    ///
+    /// The consuming operations verb must verify its durable authorization
+    /// before executing the returned statements.
+    #[cfg(feature = "ops")]
+    pub fn ops_sql(&self) -> String {
+        self.render_sql()
     }
 
     /// A human-readable review of the plan — each operation with its safety tag

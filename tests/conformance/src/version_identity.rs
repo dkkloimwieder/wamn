@@ -103,6 +103,11 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
+        path: "deploy/sql/ops-schema.sql",
+        exact: "-- schema_version: 0.1",
+        expected_count: 1,
+    },
+    GovernedLiteral {
         path: "crates/schema/control/src/run_plane.rs",
         exact: r#"definition: "CHECK (schema_version = '0.1'::text)","#,
         expected_count: 1,
@@ -151,11 +156,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         path: "crates/execution/run-state/src/queue/sql.rs",
         exact: "'version', '0.1'",
         expected_count: 2,
-    },
-    GovernedLiteral {
-        path: "components/execution/flowrunner/src/lib.rs",
-        exact: "r.admission_context_version = '0.1'",
-        expected_count: 1,
     },
     GovernedLiteral {
         path: "test-support/infrastructure/scenario_worker_gate.rs",

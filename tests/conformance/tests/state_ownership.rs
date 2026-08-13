@@ -324,7 +324,12 @@ fn validate_sources(repository: &Path, manifest: &Manifest) -> Result<(), String
             return Err(format!("duplicate canonical source `{}`", source.path));
         }
         validate_repository_path(repository, &source.path, "canonical source")?;
-        require_nonempty("canonical source scope", &source.scope)?;
+        match source.scope.as_str() {
+            "production-control-database"
+            | "production-control-database-ops"
+            | "production-project-database" => {}
+            other => return Err(format!("unknown canonical source scope `{other}`")),
+        }
         match source.kind.as_str() {
             "ddl" => {
                 if source.marker.is_some() {

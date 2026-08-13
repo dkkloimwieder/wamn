@@ -1,19 +1,17 @@
 //! The engine's value types: the request, the executable apply plan (its
-//! `$n`-parameterized statements), the dry-run report, the generated rollback
-//! plan, and the error taxonomy.
+//! `$n`-parameterized statements), and the error taxonomy.
 
 use crate::lifecycle::LifecycleError;
-use wamn_schema_compiler::{CompileError, MigrationPlan, RequiresConfirmation};
+use wamn_schema_compiler::CompileError;
 use wamn_schema_model::Catalog;
 
 pub use crate::lifecycle::Env;
-pub use wamn_schema_compiler::Confirmation;
 
 /// A migration to plan: bring `target` live in `(tenant, environment)`, diffing
 /// it against the `current` applied catalog (`None` = a first materialization).
 /// `expected_base` is the applied version the caller asserts the target was
 /// branched from — the 3.4 stale-base guard checks it against the actual current
-/// applied version. `confirm` is the 3.2 backup gate, honored verbatim.
+/// applied version. The default planner accepts additive changes only.
 #[derive(Debug, Clone)]
 pub struct MigrationRequest<'a> {
     pub tenant: &'a str,
@@ -21,7 +19,6 @@ pub struct MigrationRequest<'a> {
     pub current: Option<&'a Catalog>,
     pub target: &'a Catalog,
     pub expected_base: Option<u32>,
-    pub confirm: Confirmation,
 }
 
 /// A positional bind value for an [`SqlStatement`]. The engine emits
@@ -59,8 +56,8 @@ pub struct ApplyPlan {
     /// `None` for a first materialization (a fresh `CREATE`).
     pub from_version: Option<u32>,
     pub to_version: u32,
-    /// `true` if the DDL contains a destructive operation (it then carries the
-    /// backup-checkpoint marker and was gated behind `ConfirmedWithBackup`).
+    /// `true` if the operations-only target-reconciliation plan contains a
+    /// destructive operation. Default plans are always `false`.
     pub destructive: bool,
     /// Advisory notes surfaced for review (a version bump with no structural
     /// change, a catalog-model version skew, …).
@@ -69,85 +66,25 @@ pub struct ApplyPlan {
     pub statements: Vec<SqlStatement>,
 }
 
-/// A dry run: what the migration **would** do, computed without touching the
-/// database. Unlike [`crate::plan_migration`], a dry run does not gate on the
-/// confirmation — it *reports* that a destructive plan would require one.
-#[derive(Debug, Clone)]
-pub struct MigrationReport {
-    pub catalog_id: String,
-    pub environment: String,
-    pub from_version: Option<u32>,
-    pub to_version: u32,
-    pub destructive: bool,
-    pub warnings: Vec<String>,
-    /// The wamn-schema-compiler operation report — each op tagged additive / DESTRUCTIVE.
-    pub ddl_report: String,
-    /// The generated rollback for this migration.
-    pub rollback: RollbackPlan,
-}
-
-impl MigrationReport {
-    /// A human-readable rendering of the whole dry run.
-    pub fn render(&self) -> String {
-        let from = self
-            .from_version
-            .map_or_else(|| "(none)".to_string(), |v| v.to_string());
-        let mut out = format!(
-            "migration {from} -> {} for catalog {:?} in environment {}\n",
-            self.to_version, self.catalog_id, self.environment
-        );
-        out.push_str(if self.destructive {
-            "  DESTRUCTIVE — requires --confirm-with-backup\n"
-        } else {
-            "  additive\n"
-        });
-        for w in &self.warnings {
-            out.push_str(&format!("  [warning] {w}\n"));
-        }
-        out.push_str("\n-- DDL --\n");
-        out.push_str(&self.ddl_report);
-        out.push_str("\n-- rollback --\n");
-        out.push_str(&self.rollback.report());
-        out
-    }
-}
-
-/// The generated rollback for a migration: an **inverse forward-migration** back
-/// to the prior version (dropping the migration's new additions is destructive,
-/// so applying it carries the 3.2 confirmation gate), plus a restore-to-last-dump
-/// pointer for data a forward rollback cannot recover.
+/// A destructive diff reached the additive-only public migration boundary.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RollbackPlan {
-    /// The inverse migration (`target -> current_applied`). Empty for a first
-    /// materialization — there is no prior version, so rollback is a drop /
-    /// restore (see [`RollbackPlan::note`]).
-    pub plan: MigrationPlan,
-    /// Human-readable guidance, including the restore-to-last-dump (wamn-q3n.11)
-    /// pointer for data the forward rollback drops.
-    pub note: String,
+pub struct DestructiveMigration {
+    /// Summaries of the destructive operations, in execution order.
+    pub operations: Vec<String>,
 }
 
-impl RollbackPlan {
-    /// `true` if the inverse migration has no operations (a first
-    /// materialization, or a metadata-only version bump).
-    pub fn is_empty(&self) -> bool {
-        self.plan.is_empty()
-    }
-
-    /// The DDL to run the rollback, honoring the 3.2 gate (the inverse is
-    /// destructive, so it needs `ConfirmedWithBackup`).
-    pub fn sql(&self, confirm: Confirmation) -> Result<String, RequiresConfirmation> {
-        self.plan.sql(confirm)
-    }
-
-    /// A human-readable review: the inverse operations, then the guidance note.
-    pub fn report(&self) -> String {
-        let mut out = self.plan.report();
-        out.push_str(&self.note);
-        out.push('\n');
-        out
+impl std::fmt::Display for DestructiveMigration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "migration has {} destructive operation(s); default catalog migration is additive-only: {}",
+            self.operations.len(),
+            self.operations.join("; ")
+        )
     }
 }
+
+impl std::error::Error for DestructiveMigration {}
 
 /// Why a migration could not be planned.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,9 +106,8 @@ pub enum MigrationError {
         expected_base: Option<u32>,
         current_applied: Option<u32>,
     },
-    /// The migration is destructive and was not confirmed with a backup
-    /// checkpoint (the 3.2 gate, honored verbatim).
-    RequiresConfirmation(RequiresConfirmation),
+    /// The public migration path accepts additive changes only.
+    Destructive(DestructiveMigration),
     /// A lifecycle transition the 3.4 model rejects (surfaced via
     /// [`crate::lifecycle::Environment`] as the validation oracle).
     Lifecycle(LifecycleError),
@@ -199,7 +135,7 @@ impl std::fmt::Display for MigrationError {
                 f,
                 "the target's base ({expected_base:?}) is not the current applied version ({current_applied:?}) — rebase before applying"
             ),
-            MigrationError::RequiresConfirmation(e) => write!(f, "{e}"),
+            MigrationError::Destructive(e) => write!(f, "{e}"),
             MigrationError::Lifecycle(e) => write!(f, "{e}"),
         }
     }
@@ -210,12 +146,6 @@ impl std::error::Error for MigrationError {}
 impl From<CompileError> for MigrationError {
     fn from(e: CompileError) -> Self {
         MigrationError::Compile(e)
-    }
-}
-
-impl From<RequiresConfirmation> for MigrationError {
-    fn from(e: RequiresConfirmation) -> Self {
-        MigrationError::RequiresConfirmation(e)
     }
 }
 
