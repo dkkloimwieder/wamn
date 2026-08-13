@@ -277,18 +277,17 @@ fn lock_catalog_head_sql() -> String {
 /// 15. principal digest (HTTP)
 /// 16. client-key digest (HTTP)
 /// 17. request fingerprint (HTTP)
-/// 18. admission expiry (HTTP)
-/// 19. inline executor identity (HTTP)
-/// 20. inline lease TTL milliseconds (HTTP)
-/// 21. registration id (event)
-/// 22. event sequence (event)
-/// 23. RFC 8785 registration JSON text (event)
-/// 24. canonical registration hash (event)
-/// 25. immediate source run id (event)
-/// 26. causal root run id (event)
-/// 27. causal depth (event)
-/// 28. resolved partition key (all producers; null means unordered)
-/// 29. resolved partition policy (all producers; `blocking | leapfrog`)
+/// 18. inline executor identity (HTTP)
+/// 19. inline lease TTL milliseconds (HTTP)
+/// 20. registration id (event)
+/// 21. event sequence (event)
+/// 22. RFC 8785 registration JSON text (event)
+/// 23. canonical registration hash (event)
+/// 24. immediate source run id (event)
+/// 25. causal root run id (event)
+/// 26. causal depth (event)
+/// 27. resolved partition key (all producers; null means unordered)
+/// 28. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -305,12 +304,12 @@ WITH input AS ( \
            $12::text AS platform_revision, $13::timestamptz AS response_deadline_at, \
            $14::timestamptz AS run_deadline_at, $15::text AS principal_digest, \
            $16::text AS client_key_digest, $17::text AS request_fingerprint, \
-           $18::timestamptz AS admission_expires_at, $19::text AS executor_id, \
-           $20::bigint AS lease_ttl_ms, $21::text AS registration_id, \
-           $22::bigint AS event_seq, $23::text::jsonb AS registration_document, \
-           $24::text AS registration_hash, $25::text AS event_source_run_id, \
-           $26::text AS event_root_run_id, $27::int AS event_depth, \
-           $28::text AS partition_key, $29::text AS partition_policy \
+           $18::text AS executor_id, $19::bigint AS lease_ttl_ms, \
+           $20::text AS registration_id, $21::bigint AS event_seq, \
+           $22::text::jsonb AS registration_document, $23::text AS registration_hash, \
+           $24::text AS event_source_run_id, $25::text AS event_root_run_id, \
+           $26::int AS event_depth, $27::text AS partition_key, \
+           $28::text AS partition_policy \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -371,6 +370,7 @@ existing_http AS MATERIALIZED ( \
        AND a.catalog_id = i.catalog_id AND a.environment = i.environment \
        AND a.attachment_id = i.attachment_id \
        AND a.principal_digest = i.principal_digest \
+       AND i.client_key_digest IS NOT NULL \
        AND a.client_key_digest = i.client_key_digest \
      FOR KEY SHARE OF a \
 ), \
@@ -414,9 +414,8 @@ classified AS ( \
       WHEN i.producer = 'http' AND (i.attachment_id IS NULL \
         OR i.attachment_id = '' OR i.expected_definition_hash IS NULL \
         OR i.expected_definition_hash = '' OR i.principal_digest IS NULL \
-        OR i.principal_digest = '' OR i.client_key_digest IS NULL \
-        OR i.client_key_digest = '' OR i.request_fingerprint IS NULL \
-        OR i.request_fingerprint = '' OR i.admission_expires_at IS NULL \
+        OR i.principal_digest = '' OR i.client_key_digest = '' \
+        OR i.request_fingerprint IS NULL OR i.request_fingerprint = '' \
         OR i.executor_id IS NULL OR i.executor_id = '' \
         OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0 \
         OR i.registration_id IS NOT NULL OR i.event_seq IS NOT NULL \
@@ -433,7 +432,7 @@ classified AS ( \
         OR i.event_depth < 0 OR i.event_depth > 16 OR i.attachment_id IS NOT NULL \
         OR i.expected_definition_hash IS NOT NULL OR i.response_deadline_at IS NOT NULL \
         OR i.principal_digest IS NOT NULL OR i.client_key_digest IS NOT NULL \
-        OR i.request_fingerprint IS NOT NULL OR i.admission_expires_at IS NOT NULL \
+        OR i.request_fingerprint IS NOT NULL \
         OR i.executor_id IS NOT NULL OR i.lease_ttl_ms IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
@@ -451,7 +450,7 @@ classified AS ( \
         THEN 'registration-drift' \
       WHEN i.producer = 'event' \
        AND i.registration_hash <> ('sha256:' || encode( \
-         sha256(convert_to($23::text, 'UTF8')), 'hex')) \
+         sha256(convert_to($22::text, 'UTF8')), 'hex')) \
         THEN 'invalid-registration-hash' \
       WHEN i.producer = 'event' AND ( \
         i.input_json ? 'causation' OR i.invocation_context ? 'causation' \
@@ -506,11 +505,11 @@ created_http AS ( \
     INSERT INTO wamn_run.invocation_admissions \
       (tenant_id, catalog_id, environment, attachment_id, definition_hash, \
        principal_digest, client_key_digest, client_request_fingerprint, \
-       admitted_catalog_version, admitted_flow_version, run_id, expires_at) \
+       admitted_catalog_version, admitted_flow_version, run_id) \
     SELECT c.tenant_id, c.catalog_id, c.environment, c.attachment_id, \
            c.expected_definition_hash, c.principal_digest, c.client_key_digest, \
            c.request_fingerprint, c.expected_catalog_version, c.flow_version, \
-           c.run_id, c.admission_expires_at \
+           c.run_id \
       FROM classified AS c \
      WHERE c.producer = 'http' AND c.result_code = 'ready' \
     ON CONFLICT ON CONSTRAINT invocation_admissions_identity DO NOTHING \
@@ -594,6 +593,19 @@ mod tests {
                 .admit()
                 .contains("producer NOT IN ('http', 'event')")
         );
+    }
+
+    #[test]
+    fn callable_admission_has_no_expiry_and_allows_an_absent_http_client_key() {
+        let sql = admission_sql().admit;
+
+        assert!(!sql.contains("admission_expires_at"));
+        assert!(!sql.contains("expires_at"));
+        assert!(!sql.contains("$29"));
+        assert!(sql.contains("$28::text AS partition_policy"));
+        assert!(sql.contains("OR i.client_key_digest = ''"));
+        assert!(!sql.contains("OR i.client_key_digest IS NULL"));
+        assert!(sql.contains("AND i.client_key_digest IS NOT NULL"));
     }
 
     #[test]

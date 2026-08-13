@@ -558,7 +558,6 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
                 executor_id: OWNER.to_string(),
                 platform_revision: "invocationproof".to_string(),
                 lease_ttl: std::time::Duration::from_secs(30),
-                admission_ttl: std::time::Duration::from_secs(60),
             },
             Arc::new(ProofInlineDriver { host }),
         );
@@ -645,7 +644,6 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
                 executor_id: OWNER.to_string(),
                 platform_revision: "invocationproof".to_string(),
                 lease_ttl: std::time::Duration::from_secs(30),
-                admission_ttl: std::time::Duration::from_secs(60),
             },
             Arc::new(ProofPausedDriver),
         );
@@ -653,14 +651,17 @@ pub async fn run(args: InvocationProofArgs) -> anyhow::Result<()> {
         in_flight.expected_catalog_version = 2;
         in_flight.expected_definition_hash = changed_definition_hash.to_string();
         in_flight.idempotency_key = Some("provider-key-in-flight".to_string());
-        let BeginResult::Admitted(_) = paused_service.begin(in_flight.clone()).await? else {
+        let BeginResult::Admitted(first_in_flight) =
+            paused_service.begin(in_flight.clone()).await?
+        else {
             bail!("provider refused the in-flight fixture");
         };
-        let BeginResult::Rejected(rejection) = paused_service.begin(in_flight).await? else {
-            bail!("provider admitted a duplicate while the first run was in flight");
+        let BeginResult::Admitted(recovered_in_flight) = paused_service.begin(in_flight).await?
+        else {
+            bail!("provider did not recover the in-flight admission");
         };
-        if rejection.code != "in-flight" {
-            bail!("provider returned the wrong in-flight duplicate refusal");
+        if recovered_in_flight.run_id != first_in_flight.run_id {
+            bail!("provider changed the durable in-flight run id");
         }
 
         ticker.abort();

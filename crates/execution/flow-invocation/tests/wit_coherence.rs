@@ -98,6 +98,23 @@ fn negative_result_and_rejection_variants_are_not_ambiguous() {
 }
 
 #[test]
+fn negative_deleted_invocation_vocabulary_cannot_reenter_the_contract() {
+    let code = wit_lines().join("\n");
+    for deleted in [
+        "cancel:",
+        "cancelled(",
+        "outcome-expired",
+        "accepted(",
+        "pending(",
+    ] {
+        assert!(
+            !code.contains(deleted),
+            "deleted invocation vocabulary returned through {deleted:?}"
+        );
+    }
+}
+
+#[test]
 fn negative_every_post_admission_value_has_run_identity() {
     let wit = wit_lines();
     let rust = rust_lines();

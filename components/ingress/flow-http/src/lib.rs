@@ -78,6 +78,26 @@ pub struct HttpResponse {
     pub body: Vec<u8>,
 }
 
+#[derive(Serialize)]
+struct ErrorEnvelope<T> {
+    error: T,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct ResponseWaitTimeout<'a> {
+    code: &'static str,
+    run_id: &'a str,
+    retry: &'static str,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
+struct EffectUncertain<'a> {
+    code: &'static str,
+    run_id: &'a str,
+}
+
 /// The caller disconnected after admission, so there is no response to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AdapterOutcome {
@@ -277,7 +297,7 @@ fn try_handle(
             return Ok(AdapterOutcome::Response(invoke_response(result)));
         }
     }
-    Err(error_response(504, "response-wait-timeout"))
+    Err(response_wait_timeout(&admitted.run_id))
 }
 
 fn normalize_method(method: &str) -> Option<String> {
@@ -643,6 +663,9 @@ fn invoke_response(result: InvokeResult) -> HttpResponse {
             status: response.status_hint.unwrap_or(200),
             body: response.body.into_bytes(),
         },
+        InvokeResult::Failed(failure) if failure.error.code == "effect-uncertain" => {
+            effect_uncertain_response(&failure.error.run_id)
+        }
         InvokeResult::Failed(failure) => HttpResponse {
             status: failure.status,
             body: serde_json::to_vec(&json!({
@@ -656,6 +679,33 @@ fn invoke_response(result: InvokeResult) -> HttpResponse {
             }))
             .unwrap_or_default(),
         },
+    }
+}
+
+fn response_wait_timeout(run_id: &str) -> HttpResponse {
+    HttpResponse {
+        status: 504,
+        body: serde_json::to_vec(&ErrorEnvelope {
+            error: ResponseWaitTimeout {
+                code: "response-wait-timeout",
+                run_id,
+                retry: "same-idempotency-key",
+            },
+        })
+        .unwrap_or_default(),
+    }
+}
+
+fn effect_uncertain_response(run_id: &str) -> HttpResponse {
+    HttpResponse {
+        status: 502,
+        body: serde_json::to_vec(&ErrorEnvelope {
+            error: EffectUncertain {
+                code: "effect-uncertain",
+                run_id,
+            },
+        })
+        .unwrap_or_default(),
     }
 }
 

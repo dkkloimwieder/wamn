@@ -28,6 +28,9 @@ mod tests {
         );
         assert!(!WIT.contains("cancel:"));
         assert!(!WIT.contains("cancelled(failure)"));
+        assert!(!code.contains("outcome-expired"));
+        assert!(!code.contains("accepted("));
+        assert!(!code.contains("pending("));
         assert!(!code.contains("wamn:node"));
     }
 

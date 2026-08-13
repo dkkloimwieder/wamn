@@ -36,6 +36,9 @@
 //!   STRICTLY read-only; then the apply provisions everything — run plane +
 //!   `catalog` schema — and a functional smoke as `wamn_app` proves the
 //!   sections' grants + RLS isolation end-to-end.
+//! - **invocation retention cutover**: the legacy admission expiry column/index
+//!   are removed and the client-key carrier becomes optional; a second pass is
+//!   a no-op.
 //! - **current = no-op**: a schema at the schema of record plans NOTHING, in
 //!   both dry-run and apply mode (the idempotence contract).
 //! - **authoring additive upgrade + authority repair**: the pre-6A catalog and
@@ -253,6 +256,7 @@ async fn run_plane_reconcile_live() {
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     capture_mode_additive_leg(&su, &url).await;
+    invocation_admission_retention_leg(&su).await;
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
@@ -1832,8 +1836,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        19,
-        "all nineteen run-plane tables at target"
+        22,
+        "all twenty-two run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -2037,6 +2041,73 @@ async fn capture_mode_additive_leg(su: &Client, url: &str) {
     assert!(
         again.is_noop(),
         "capture carrier converged: {:#?}",
+        again.actions
+    );
+}
+
+async fn invocation_admission_retention_leg(su: &Client) {
+    reset(su).await;
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply catalog-schema");
+    su.batch_execute(&rewrite_schema(RUN_STATE_SQL, &schema))
+        .await
+        .expect("apply run-state");
+    su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
+        .await
+        .expect("apply flows");
+    su.batch_execute(&rewrite_schema(FLOW_TESTS_SQL, &schema))
+        .await
+        .expect("apply flow-tests");
+    su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
+        .await
+        .expect("apply run-queue");
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.invocation_admissions \
+           ADD COLUMN expires_at timestamptz NOT NULL DEFAULT (now() + interval '1 day'), \
+           ALTER COLUMN client_key_digest SET NOT NULL; \
+         CREATE INDEX invocation_admissions_expiry \
+           ON {SCHEMA}.invocation_admissions (tenant_id, expires_at);"
+    ))
+    .await
+    .expect("build legacy invocation-retention carrier");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("invocation retention cutover applies");
+    let cutovers = plan
+        .actions
+        .iter()
+        .filter(|action| action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover)
+        .collect::<Vec<_>>();
+    assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
+    assert!(
+        !column_exists(su, "invocation_admissions", "expires_at").await,
+        "admission expiry column removed"
+    );
+    let nullable: bool = su
+        .query_one(
+            "SELECT is_nullable = 'YES' FROM information_schema.columns \
+             WHERE table_schema=$1 AND table_name='invocation_admissions' \
+               AND column_name='client_key_digest'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read invocation client-key nullability")
+        .get(0);
+    assert!(nullable, "client key is optional at the storage boundary");
+    assert!(
+        indexdef(su, "invocation_admissions_expiry").await.is_none(),
+        "admission expiry index removed"
+    );
+
+    let again = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("invocation retention second reconcile plans");
+    assert!(
+        again.is_noop(),
+        "invocation retention converged: {:#?}",
         again.actions
     );
 }

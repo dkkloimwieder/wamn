@@ -3173,6 +3173,8 @@ pub enum RunPlaneActionKind {
     FrameIdentityCutover,
     /// Preserve the output-size fact while removing retired node capture columns.
     CaptureProjectionCutover,
+    /// Remove invocation-admission expiry and make the client key optional.
+    InvocationAdmissionRetentionCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
@@ -3757,6 +3759,46 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             ),
         });
     }
+    let invocation_columns = obs.tables.get("invocation_admissions");
+    let invocation_expiry_present =
+        invocation_columns.is_some_and(|columns| columns.contains("expires_at"));
+    let invocation_key_non_null = invocation_columns
+        .is_some_and(|columns| columns.contains("client_key_digest"))
+        && obs.non_nullable_columns.contains(&(
+            "invocation_admissions".to_string(),
+            "client_key_digest".to_string(),
+        ));
+    let invocation_expiry_index_present = obs.indexes.contains_key("invocation_admissions_expiry");
+    let invocation_retention_cutover_needed =
+        invocation_expiry_present || invocation_key_non_null || invocation_expiry_index_present;
+    if invocation_retention_cutover_needed {
+        let mut statements = Vec::new();
+        if invocation_expiry_index_present {
+            statements.push(format!(
+                "DROP INDEX IF EXISTS {}.invocation_admissions_expiry",
+                schema.quoted()
+            ));
+        }
+        let mut alterations = Vec::new();
+        if invocation_expiry_present {
+            alterations.push("DROP COLUMN IF EXISTS expires_at".to_string());
+        }
+        if invocation_key_non_null {
+            alterations.push("ALTER COLUMN client_key_digest DROP NOT NULL".to_string());
+        }
+        if !alterations.is_empty() {
+            statements.push(format!(
+                "ALTER TABLE {}.invocation_admissions {}",
+                schema.quoted(),
+                alterations.join(", ")
+            ));
+        }
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::InvocationAdmissionRetentionCutover,
+            target: "invocation_admissions.retention".to_string(),
+            sql: statements.join("; "),
+        });
+    }
 
     // The standalone record files grant privileged authoring writes to this
     // role, so it must exist (and remain non-login/non-bypass) before any
@@ -4329,6 +4371,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if (capture_output_size_rename_needed || capture_output_size_conflict)
                     && table == "node_runs"
                     && col == LEGACY_OUTPUT_SIZE_COLUMN
+                {
+                    continue;
+                }
+                if invocation_retention_cutover_needed
+                    && table == "invocation_admissions"
+                    && col == "expires_at"
                 {
                     continue;
                 }
@@ -6303,7 +6351,6 @@ CREATE INDEX event_registrations_by_entity
                 "effect_dispositions_request_ordinal",
                 "flows_active",
                 "flows_active_webhook_path",
-                "invocation_admissions_expiry",
                 "invocation_admissions_run",
                 "node_runs_seq",
                 "run_flow_resolutions_execution_bundle",
@@ -6349,6 +6396,50 @@ CREATE INDEX event_registrations_by_entity
             plan.at_target.len(),
             22,
             "all twenty-two run-plane tables at target, including durable test orchestration"
+        );
+    }
+
+    #[test]
+    fn invocation_admission_retention_cutover_is_exact_and_idempotent() {
+        let mut legacy = observation_at_record();
+        legacy
+            .tables
+            .get_mut("invocation_admissions")
+            .unwrap()
+            .insert("expires_at".to_string());
+        legacy.non_nullable_columns.insert((
+            "invocation_admissions".to_string(),
+            "client_key_digest".to_string(),
+        ));
+        legacy.indexes.insert(
+            "invocation_admissions_expiry".to_string(),
+            "CREATE INDEX invocation_admissions_expiry ON wamn_run.invocation_admissions USING btree (tenant_id, expires_at)".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        let cutovers = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover)
+            .collect::<Vec<_>>();
+        assert_eq!(cutovers.len(), 1, "actions: {:#?}", plan.actions);
+        let sql = &cutovers[0].sql;
+        assert!(sql.contains("DROP INDEX IF EXISTS \"demo\".invocation_admissions_expiry"));
+        assert!(sql.contains("DROP COLUMN IF EXISTS expires_at"));
+        assert!(sql.contains("ALTER COLUMN client_key_digest DROP NOT NULL"));
+        assert!(
+            !plan.extra_columns.iter().any(|(table, column)| {
+                table == "invocation_admissions" && column == "expires_at"
+            })
+        );
+
+        let at_target = plan_run_plane(&schema("demo"), &observation_at_record());
+        assert!(
+            !at_target.actions.iter().any(|action| {
+                action.kind == RunPlaneActionKind::InvocationAdmissionRetentionCutover
+            }),
+            "at-target schema repeated retention cutover: {:#?}",
+            at_target.actions
         );
     }
 

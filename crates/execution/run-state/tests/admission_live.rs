@@ -46,7 +46,7 @@ fn prepare(sql: &str) -> String {
     format!(
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
-          timestamptz,timestamptz,text,text,text,timestamptz,text,bigint, \
+          timestamptz,timestamptz,text,text,text,text,bigint, \
           text,bigint,text,text,text,text,int,text,text) AS {sql};"
     )
 }
@@ -70,14 +70,25 @@ fn execute_http_ordered(
          'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
-         'principal','{key}','{fingerprint}',now()+interval '1 day',\
-         'inline-1',30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
+         'principal','{key}','{fingerprint}','inline-1',30000,\
+         NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
         ordering(partition_key, partition_policy)
     )
 }
 
 fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
     execute_http_ordered(run_id, key, fingerprint, None, "blocking")
+}
+
+fn execute_http_without_key(run_id: &str) -> String {
+    format!(
+        "EXECUTE admit_stmt(\
+         'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
+         '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
+         now()+interval '30 seconds',now()+interval '1 minute',\
+         'principal',NULL,'fingerprint-without-key','inline-1',30000,\
+         NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking')"
+    )
 }
 
 fn execute_event_ordered(
@@ -117,7 +128,7 @@ fn execute_event_lineage_ordered(
         "EXECUTE admit_stmt(\
          'event','c1','dev',1,NULL,NULL,'flow-event',1,\
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
-         NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,NULL,\
+         NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,\
          'reg-a',{seq},'{document}','{hash}',\
          '{source_run_id}','{root_run_id}',{depth},{})",
         ordering(partition_key, partition_policy)
@@ -290,6 +301,33 @@ fn admission_live() {
              END $$;",
             registration_digest
         ),
+    );
+
+    // Pure call-free routes may omit the key. NULL is deliberately not a
+    // reusable identity: each invocation admits a distinct run and ledger row.
+    for run_id in ["http-no-key-a", "http-no-key-b"] {
+        let result = success(
+            &url,
+            &format!(
+                "{} {} {}; COMMIT;",
+                app_preamble(),
+                prepared,
+                execute_http_without_key(run_id)
+            ),
+        );
+        assert_eq!(result.trim(), format!("admitted|{run_id}"));
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions \
+                     WHERE run_id IN ('http-no-key-a','http-no-key-b') \
+                       AND client_key_digest IS NULL) = 2; \
+           ASSERT (SELECT count(*) FROM wamn_run.runs \
+                     WHERE run_id IN ('http-no-key-a','http-no-key-b')) = 2; \
+           ASSERT (SELECT count(*) FROM wamn_run.run_queue \
+                     WHERE run_id IN ('http-no-key-a','http-no-key-b')) = 2; \
+         END $$;",
     );
 
     // Simulate a legacy/corrupt release member whose scalar hash names a plan
@@ -584,13 +622,13 @@ fn admission_live() {
            'http','c1','dev',99,'http-a','sha256:http','flow-http',1,\
            'http-stale','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-stale','key-stale','fp-stale',\
-           now()+interval '1 day','inline-stale',30000,\
+           'inline-stale',30000,\
            NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'missing','sha256:http','flow-http',1,\
            'http-inactive','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-inactive','key-inactive','fp-inactive',\
-           now()+interval '1 day','inline-inactive',30000,\
+           'inline-inactive',30000,\
            NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
@@ -611,11 +649,11 @@ fn admission_live() {
         "{} {} \
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
-           'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',now()+interval '1 day',\
+           'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',\
            NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
-           'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,NULL,\
+           'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,\
            NULL,NULL,\
            'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
          DO $$ BEGIN \

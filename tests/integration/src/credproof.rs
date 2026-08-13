@@ -627,7 +627,6 @@ pub async fn run(args: CredProofArgs) -> anyhow::Result<()> {
                 executor_id: "credproof-runner".to_string(),
                 platform_revision: "credproof".to_string(),
                 lease_ttl: std::time::Duration::from_secs(30),
-                admission_ttl: std::time::Duration::from_secs(60),
             },
             Arc::new(ProofDriver {
                 host: Arc::new(tokio::sync::Mutex::new(host)),

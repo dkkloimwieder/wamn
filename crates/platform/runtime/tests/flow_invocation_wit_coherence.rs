@@ -2,6 +2,9 @@
 
 const CONTRACT: &str = include_str!("../../../execution/flow-invocation/wit/package.wit");
 const HOST_COPY: &str = include_str!("../wit/deps/wamn-flow-invocation/package.wit");
+const HTTP_COPY: &str = include_str!(
+    "../../../../components/ingress/flow-http/wit/deps/wamn-flow-invocation/package.wit"
+);
 const WORLD: &str = include_str!("../wit/world.wit");
 const PLUGIN: &str = include_str!("../src/plugins/wamn_flow_invocation.rs");
 const HOST: &str = include_str!("../../../../services/host/src/host.rs");
@@ -18,6 +21,34 @@ fn host_copy_preserves_the_frozen_interface_surface() {
     ] {
         assert!(CONTRACT.contains(anchor), "contract missing {anchor}");
         assert!(HOST_COPY.contains(anchor), "host copy missing {anchor}");
+        assert!(HTTP_COPY.contains(anchor), "HTTP copy missing {anchor}");
+    }
+}
+
+#[test]
+fn every_vendored_contract_refuses_deleted_vocabulary() {
+    for (name, source) in [
+        ("canonical", CONTRACT),
+        ("host", HOST_COPY),
+        ("HTTP", HTTP_COPY),
+    ] {
+        let code = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("///"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for deleted in [
+            "cancel:",
+            "cancelled(",
+            "outcome-expired",
+            "accepted(",
+            "pending(",
+        ] {
+            assert!(
+                !code.contains(deleted),
+                "{name} contract restored deleted vocabulary {deleted:?}"
+            );
+        }
     }
 }
 

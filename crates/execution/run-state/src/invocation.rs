@@ -15,6 +15,7 @@ pub struct InvocationTarget {
     pub definition: Value,
     pub auth_policy: Value,
     pub enabled: bool,
+    pub idempotency_required: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -35,7 +36,6 @@ pub enum InvocationRecovery {
     Released(InvocationOutcome),
     IdempotencyKeyReused,
     IdempotencyScopeChanged,
-    OutcomeExpired,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,7 +53,8 @@ pub fn resolve_invocation_target_sql() -> &'static str {
     "\
 SELECT h.applied_catalog_version, a.definition_hash, a.flow_id, f.flow_version, \
        a.definition_json::text, s.definition_json::text, \
-       COALESCE(x.enabled AND x.confirmed_definition_hash = a.definition_hash, false) \
+       COALESCE(x.enabled AND x.confirmed_definition_hash = a.definition_hash, false), \
+       f.execution_bundle_hash, b.exact_bytes \
   FROM catalog.catalog_heads AS h \
   JOIN catalog.release_attachments AS a \
     ON a.tenant_id = h.tenant_id AND a.catalog_id = h.catalog_id \
@@ -61,6 +62,9 @@ SELECT h.applied_catalog_version, a.definition_hash, a.flow_id, f.flow_version, 
   JOIN catalog.release_flows AS f \
     ON f.tenant_id = a.tenant_id AND f.catalog_id = a.catalog_id \
    AND f.catalog_version = a.catalog_version AND f.flow_id = a.flow_id \
+  LEFT JOIN catalog.execution_bundles AS b \
+    ON b.tenant_id = f.tenant_id \
+   AND b.execution_bundle_hash = f.execution_bundle_hash \
   JOIN catalog.release_sources AS s \
     ON s.tenant_id = a.tenant_id AND s.catalog_id = a.catalog_id \
    AND s.catalog_version = a.catalog_version AND s.source_id = a.source_id \
@@ -78,6 +82,17 @@ SELECT h.applied_catalog_version, a.definition_hash, a.flow_id, f.flow_version, 
    )"
 }
 
+/// Derive the caller-key requirement from one flow's exact own plan.
+///
+/// A malformed or mismatched plan fails closed here; claim-time plan validation
+/// remains the authority that refuses execution of those bytes.
+pub fn invocation_idempotency_required(execution_bundle_hash: &str, exact_bytes: &[u8]) -> bool {
+    match wamn_catalog::read_execution_plan(execution_bundle_hash, exact_bytes) {
+        Ok(plan) => plan.requires_idempotency_key(),
+        Err(_) => true,
+    }
+}
+
 /// Look up the admissions ledger after route-policy authentication.
 ///
 /// Params: catalog id, environment, attachment id, principal digest,
@@ -88,7 +103,6 @@ SELECT CASE \
          WHEN a.run_id IS NULL THEN 'missing' \
          WHEN a.definition_hash <> $6 THEN 'idempotency-scope-changed' \
          WHEN a.client_request_fingerprint <> $7 THEN 'idempotency-key-reused' \
-         WHEN a.expires_at <= now() THEN 'outcome-expired' \
          WHEN r.caller_released_at IS NULL THEN 'in-flight' \
          ELSE 'released' \
        END AS result_code, \
@@ -119,6 +133,104 @@ SELECT CASE WHEN r.run_id IS NULL THEN 'not-found' \
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_catalog::{
+        CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling, CallableReturnContract,
+        ExecutionEffectPolicy, ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanNode,
+        ExecutionPlanV2, ExecutionRuntimeRevision, ExecutionSourceMapEntry,
+        HOST_EFFECT_CONTRACT_VERSION, RootTerminalBehavior, entry_input_schema_hash,
+        execution_bundle_hash,
+    };
+
+    const DIGEST_A: &str =
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DIGEST_B: &str =
+        "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    fn invocation_plan(extra: Option<(&str, ExecutionEffectPolicy)>) -> (String, Vec<u8>) {
+        let guard = serde_json::json!({
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object"
+        });
+        let mut nodes = vec![ExecutionPlanNode {
+            local_node_id: "request".parse().unwrap(),
+            source_node_id: "request".into(),
+            node_type: "request".into(),
+            config: serde_json::json!({"input-schema": guard}),
+            effect_policy: ExecutionEffectPolicy::Pure,
+            source_connection_requirement: None,
+        }];
+        if let Some((node_type, effect_policy)) = extra {
+            nodes.push(ExecutionPlanNode {
+                local_node_id: "work".parse().unwrap(),
+                source_node_id: "work".into(),
+                node_type: node_type.into(),
+                config: if node_type == "call-flow" {
+                    serde_json::json!({"site": "work", "flow-id": "callee"})
+                } else {
+                    serde_json::json!({})
+                },
+                effect_policy,
+                source_connection_requirement: None,
+            });
+        }
+        nodes.push(ExecutionPlanNode {
+            local_node_id: "respond".parse().unwrap(),
+            source_node_id: "respond".into(),
+            node_type: "respond".into(),
+            config: serde_json::json!({"status": 200}),
+            effect_policy: ExecutionEffectPolicy::Pure,
+            source_connection_requirement: None,
+        });
+        let path = if extra.is_some() {
+            ["request", "work", "respond"].as_slice()
+        } else {
+            ["request", "respond"].as_slice()
+        };
+        let edges = path
+            .windows(2)
+            .map(|pair| ExecutionPlanEdge {
+                source: pair[0].parse().unwrap(),
+                source_port: "main".into(),
+                destination: pair[1].parse().unwrap(),
+                destination_port: None,
+                fan_out_ordinal: 0,
+            })
+            .collect();
+        let source_map = nodes
+            .iter()
+            .map(|node| ExecutionSourceMapEntry {
+                local_node_id: node.local_node_id.clone(),
+                source_node_id: node.source_node_id.clone(),
+            })
+            .collect();
+        let plan = ExecutionPlanV2::new(
+            ExecutionRuntimeRevision {
+                flowrunner_component_digest: DIGEST_A.into(),
+                effect_provider_revision: DIGEST_B.into(),
+                host_effect_contract_version: HOST_EFFECT_CONTRACT_VERSION.into(),
+            },
+            DIGEST_A,
+            ExecutionPlanBody {
+                entry_instruction: "request".parse().unwrap(),
+                nodes,
+                edges,
+                root_terminal_behavior: RootTerminalBehavior::Respond {
+                    responders: vec!["respond".parse().unwrap()],
+                },
+                entry_input_schema_guard: guard.clone(),
+                callable_contract: Some(CallableContract {
+                    version: CALLABLE_CONTRACT_VERSION.into(),
+                    input_schema_hash: entry_input_schema_hash(&guard),
+                    return_contract: CallableReturnContract::UntypedJsonBody,
+                    effect_ceiling: CallableEffectCeiling::Effectful,
+                }),
+                source_map,
+            },
+        )
+        .unwrap();
+        let exact_bytes = serde_json::to_vec(&plan).unwrap();
+        (execution_bundle_hash(&exact_bytes), exact_bytes)
+    }
 
     #[test]
     fn lookup_order_resolves_disabled_policy_before_the_ledger() {
@@ -127,12 +239,41 @@ mod tests {
         assert!(resolve.contains("LEFT JOIN catalog.attachment_activation"));
         assert!(!resolve.contains("WHERE x.enabled"));
         assert!(resolve.contains("attachment_tombstones"));
+        assert!(resolve.contains("LEFT JOIN catalog.execution_bundles AS b"));
+        assert!(resolve.contains("f.execution_bundle_hash, b.exact_bytes"));
 
         let recovery = lookup_invocation_recovery_sql();
         let scope = recovery.find("a.definition_hash <> $6").unwrap();
         let body = recovery.find("a.client_request_fingerprint <> $7").unwrap();
         assert!(scope < body);
-        assert!(body < recovery.find("a.expires_at <= now()").unwrap());
+        assert!(!recovery.contains("expires_at"));
+        assert!(!recovery.contains("outcome-expired"));
+    }
+
+    #[test]
+    fn malformed_own_plan_requires_a_key_fail_closed() {
+        let bytes = b"{}";
+        assert!(invocation_idempotency_required(
+            &wamn_catalog::execution_bundle_hash(bytes),
+            bytes
+        ));
+    }
+
+    #[test]
+    fn own_plan_requires_a_key_for_effectful_or_call_flow_only() {
+        for (extra, expected) in [
+            (None, false),
+            (Some(("custom", ExecutionEffectPolicy::Pure)), false),
+            (Some(("custom", ExecutionEffectPolicy::Effectful)), true),
+            (Some(("call-flow", ExecutionEffectPolicy::Effectful)), true),
+        ] {
+            let (hash, bytes) = invocation_plan(extra);
+            assert_eq!(
+                invocation_idempotency_required(&hash, &bytes),
+                expected,
+                "plan extra {extra:?}"
+            );
+        }
     }
 
     #[test]

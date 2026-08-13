@@ -528,7 +528,8 @@ GRANT EXECUTE ON FUNCTION wamn_run.materialize_run_flow_resolutions(text, jsonb)
 -- definition-independent: reusing a client key after a definition change must
 -- find the old admission and return `idempotency-scope-changed`, never create a
 -- second run. The named unique constraint is mapped to the transitions module's
--- typed `duplicate-identity` refusal.
+-- typed `duplicate-identity` refusal. Pure call-free admissions may omit a
+-- client key; PostgreSQL's distinct NULLs make each such admission a new run.
 CREATE TABLE wamn_run.invocation_admissions (
     tenant_id                  text NOT NULL CHECK (tenant_id <> ''),
     catalog_id                 text NOT NULL,
@@ -536,13 +537,12 @@ CREATE TABLE wamn_run.invocation_admissions (
     attachment_id              text NOT NULL,
     definition_hash            text NOT NULL,
     principal_digest           text NOT NULL,
-    client_key_digest          text NOT NULL,
+    client_key_digest          text,
     client_request_fingerprint text NOT NULL,
     admitted_catalog_version   bigint NOT NULL,
     admitted_flow_version      int NOT NULL,
     run_id                     text NOT NULL,
     created_at                 timestamptz NOT NULL DEFAULT now(),
-    expires_at                 timestamptz NOT NULL,
     CONSTRAINT invocation_admissions_identity UNIQUE
         (tenant_id, catalog_id, environment, attachment_id,
          principal_digest, client_key_digest),
@@ -552,8 +552,6 @@ CREATE TABLE wamn_run.invocation_admissions (
 );
 CREATE INDEX invocation_admissions_run
     ON wamn_run.invocation_admissions (tenant_id, run_id);
-CREATE INDEX invocation_admissions_expiry
-    ON wamn_run.invocation_admissions (tenant_id, expires_at);
 ALTER TABLE wamn_run.invocation_admissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.invocation_admissions FORCE ROW LEVEL SECURITY;
 CREATE POLICY invocation_admissions_tenant ON wamn_run.invocation_admissions

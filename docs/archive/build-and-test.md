@@ -348,6 +348,57 @@ docker buildx build --check --progress=plain .
 git diff --check
 ```
 
+## [SR-MVP / wamn-0h0g.7.1] durable flow-invocation replay
+
+This debug-only gate proves begin/wait at identity 0.1: an identical key returns
+the same in-flight or released run without another admission or dispatch, the
+key requirement comes from the flow's own plan, admission expiry is removed,
+and timeout/effect uncertainty retain their fixed typed HTTP representations.
+The live legs require one disposable PostgreSQL 18 database.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
+export CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2
+
+cargo test --locked -p wamn-run-state -p wamn-runtime \
+  -p wamn-flow-invocation -p wamn-schema-control \
+  -p wamn-proof-integration
+cargo test --locked -p wamn-proof-conformance --lib invocation::tests::
+cargo test --locked --manifest-path components/Cargo.toml \
+  -p flow-http -p materializer
+
+docker run --rm -d --name wamn-0h0g-7-1-pg \
+  -p 127.0.0.1:15657:5432 -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-7-1-pg pg_isready -U postgres -d wamn; do sleep 1; done
+WAMN_RUN_STORE_PG_URL=postgresql://postgres:postgres@127.0.0.1:15657/wamn \
+  cargo test --locked -p wamn-run-state --test admission_live \
+  admission_live -- --ignored --exact --nocapture --test-threads=1
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15657/wamn \
+  cargo test --locked -p wamn-ctl --test run_plane_live \
+  run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+docker stop wamn-0h0g-7-1-pg
+
+cargo clippy --locked -p wamn-run-state -p wamn-runtime \
+  -p wamn-flow-invocation -p wamn-schema-control -p wamn-ctl \
+  -p wamn-proof-conformance -p wamn-proof-integration \
+  --all-targets -- -D warnings
+cargo clippy --locked --manifest-path components/Cargo.toml \
+  -p flow-http -p materializer --all-targets -- -D warnings
+
+tools/gate-mutants/flow-invocation-replay.sh check
+tools/gate-mutants/flow-invocation-replay.sh green-all
+tools/gate-mutants/flow-invocation-replay.sh run-all
+
+cargo fmt -p wamn-run-state -p wamn-runtime -p wamn-flow-invocation \
+  -p wamn-schema-control -p wamn-proof-conformance \
+  -p wamn-proof-integration --check
+cargo fmt --manifest-path components/Cargo.toml \
+  -p flow-http -p materializer --check
+bash -n tools/gate-mutants/flow-invocation-replay.sh
+git diff --check
+```
+
 Historical result: the restructure proof predates the .6.3 deletion wave and
 therefore counted deleted node/builder samples in its closure. Its old `node-ts`
 and node-manifest fixture commands are provenance only and are no longer

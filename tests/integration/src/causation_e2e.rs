@@ -1,6 +1,6 @@
 //! Deployed-runner causation proof from production invocation admission to the R3 event stream.
 
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, bail, ensure};
 use clap::Args;
@@ -509,10 +509,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
     let platform_revision = "causation-e2e";
     let response_deadline: Option<chrono::DateTime<chrono::Utc>> = None;
     let run_deadline: Option<chrono::DateTime<chrono::Utc>> = None;
-    let admission_expires_at: chrono::DateTime<chrono::Utc> = SystemTime::now()
-        .checked_add(Duration::from_secs(3_600))
-        .context("admission expiry overflows system time")?
-        .into();
     let principal_digest = "causation-e2e-principal";
     let client_key_digest = "causation-e2e-key";
     let request_fingerprint = "causation-e2e-request";
@@ -542,7 +538,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
                 &principal_digest,
                 &client_key_digest,
                 &request_fingerprint,
-                &admission_expires_at,
                 &executor_id,
                 &lease_ttl_ms,
                 &none_text,

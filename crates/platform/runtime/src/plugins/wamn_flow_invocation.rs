@@ -94,7 +94,6 @@ impl WamnFlowInvocation {
                 executor_id: inline_executor_id(component_id),
                 platform_revision: env!("CARGO_PKG_VERSION").to_string(),
                 lease_ttl: Duration::from_secs(30),
-                admission_ttl: Duration::from_secs(86_400),
             },
             self.driver.clone(),
         );

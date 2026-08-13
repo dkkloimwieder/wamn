@@ -374,7 +374,6 @@ fn every_typed_rejection_is_adapted_without_a_run() {
         (413, "payload-too-large"),
         (503, "admission-retry"),
         (409, "idempotency-scope-changed"),
-        (410, "outcome-expired"),
     ] {
         let mut backend = FakeBackend::new(route());
         backend.begin = BeginResult::Rejected(Rejection {
@@ -409,6 +408,16 @@ fn all_stored_outcomes_are_adapted_exactly() {
             400,
             Some("authored-fail"),
         ),
+        (
+            InvokeResult::Failed(failure(500, "depth-budget")),
+            500,
+            Some("depth-budget"),
+        ),
+        (
+            InvokeResult::Failed(failure(500, "dispatch-budget")),
+            500,
+            Some("dispatch-budget"),
+        ),
     ];
     for (result, status, code) in cases {
         let mut backend = FakeBackend::new(route());
@@ -429,6 +438,28 @@ fn all_stored_outcomes_are_adapted_exactly() {
             assert_eq!(error_code(&output.body), code);
         }
     }
+}
+
+#[test]
+fn effect_uncertain_has_the_fixed_non_committal_gateway_envelope() {
+    let mut backend = FakeBackend::new(route());
+    backend.waits = VecDeque::from([Some(InvokeResult::Failed(failure(500, "effect-uncertain")))]);
+    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+    let mut live = Liveness::connected();
+
+    let output = response(handle_request(
+        &mut backend,
+        &mut body,
+        &mut live,
+        &head(),
+        limits(),
+    ));
+
+    assert_eq!(output.status, 502);
+    assert_eq!(
+        output.body,
+        br#"{"error":{"code":"effect-uncertain","run-id":"run-1"}}"#
+    );
 }
 
 #[test]
@@ -522,6 +553,31 @@ fn invalid_percent_encoding_and_missing_idempotency_key_never_begin() {
 }
 
 #[test]
+fn pure_call_free_route_may_begin_without_an_idempotency_key() {
+    let mut selected = route();
+    selected.idempotency_required = false;
+    let mut backend = FakeBackend::new(selected);
+    let mut request = head();
+    request
+        .headers
+        .retain(|header| header.name != "idempotency-key");
+    let mut body = Chunks::json(&[br#"{"amount":1}"#]);
+    let mut live = Liveness::connected();
+
+    let output = response(handle_request(
+        &mut backend,
+        &mut body,
+        &mut live,
+        &request,
+        limits(),
+    ));
+
+    assert_eq!(output.status, 201);
+    assert_eq!(backend.begins.len(), 1);
+    assert_eq!(backend.begins[0].idempotency_key, None);
+}
+
+#[test]
 fn mapped_payload_ceiling_is_enforced_before_begin() {
     let mut selected = route();
     selected.mapped_limit = 8;
@@ -556,7 +612,12 @@ fn wait_is_finite_and_disconnect_detaches_without_mutating_the_run() {
         limits(),
     ));
     assert_eq!(output.status, 504);
+    assert_eq!(
+        output.body,
+        br#"{"error":{"code":"response-wait-timeout","run-id":"run-1","retry":"same-idempotency-key"}}"#
+    );
     assert_eq!(backend.wait_timeouts, [25, 25, 25]);
+    assert_eq!(backend.begins.len(), 1);
 
     let mut backend = FakeBackend::new(route());
     backend.waits = VecDeque::from([None]);
@@ -572,6 +633,7 @@ fn wait_is_finite_and_disconnect_detaches_without_mutating_the_run() {
         }
     );
     assert_eq!(backend.wait_timeouts, [25]);
+    assert_eq!(backend.begins.len(), 1);
 }
 
 #[test]

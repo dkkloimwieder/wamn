@@ -17,15 +17,18 @@ use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
 use wamn_flow_invocation::{
     Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
 };
+use wamn_run_state::EffectUncertainFailure;
 use wamn_run_state::admission::{
     AdmissionProducer, AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
 };
 use wamn_run_state::invocation::{
     InvocationOutcome, InvocationPoll, InvocationRecovery, InvocationTarget,
-    lookup_invocation_recovery_sql, poll_invocation_outcome_sql, resolve_invocation_target_sql,
+    invocation_idempotency_required, lookup_invocation_recovery_sql, poll_invocation_outcome_sql,
+    resolve_invocation_target_sql,
 };
 
 const INLINE_GENERATION: i64 = 1;
+const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 502;
 
 #[derive(Debug, Clone)]
 pub struct InvocationServiceConfig {
@@ -37,7 +40,6 @@ pub struct InvocationServiceConfig {
     pub executor_id: String,
     pub platform_revision: String,
     pub lease_ttl: Duration,
-    pub admission_ttl: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,7 +61,7 @@ pub struct HttpAdmission {
     pub target: InvocationTarget,
     pub request: InvokeRequest,
     pub principal_digest: String,
-    pub client_key_digest: String,
+    pub client_key_digest: Option<String>,
     pub input: Value,
     pub invocation_context: Value,
     pub response_deadline_at: Option<DateTime<Utc>>,
@@ -122,9 +124,6 @@ impl<B: InvocationBackend> InvocationService<B> {
     }
 
     pub async fn begin(&self, request: InvokeRequest) -> anyhow::Result<BeginResult> {
-        let Some(client_key) = request.idempotency_key.as_deref() else {
-            return Ok(rejected(400, "idempotency-key-required"));
-        };
         let Some(target) = self
             .backend
             .resolve_target(
@@ -137,37 +136,32 @@ impl<B: InvocationBackend> InvocationService<B> {
         else {
             return Ok(rejected(404, "attachment-not-found"));
         };
+        if target.idempotency_required && request.idempotency_key.is_none() {
+            return Ok(rejected(400, "idempotency-key-required"));
+        }
 
         let principal_digest = digest(request.principal.as_bytes());
-        let client_key_digest = digest(client_key.as_bytes());
-        let recovery = self
-            .backend
-            .recover(
-                &self.config.tenant_id,
-                &self.config.catalog_id,
-                &self.config.environment,
-                &request.attachment_id,
-                &principal_digest,
-                &client_key_digest,
-                &target.definition_hash,
-                &request.client_request_fingerprint,
-            )
-            .await?;
-        match recovery {
-            InvocationRecovery::Released(outcome) => {
-                return Ok(BeginResult::Admitted(Admitted {
-                    run_id: outcome.run_id,
-                }));
+        let client_key_digest = request
+            .idempotency_key
+            .as_deref()
+            .map(|client_key| digest(client_key.as_bytes()));
+        if let Some(client_key_digest) = client_key_digest.as_deref() {
+            let recovery = self
+                .backend
+                .recover(
+                    &self.config.tenant_id,
+                    &self.config.catalog_id,
+                    &self.config.environment,
+                    &request.attachment_id,
+                    &principal_digest,
+                    client_key_digest,
+                    &target.definition_hash,
+                    &request.client_request_fingerprint,
+                )
+                .await?;
+            if let Some(result) = recovered_begin(recovery) {
+                return Ok(result);
             }
-            InvocationRecovery::InFlight { .. } => return Ok(rejected(409, "in-flight")),
-            InvocationRecovery::IdempotencyKeyReused => {
-                return Ok(rejected(409, "idempotency-key-reused"));
-            }
-            InvocationRecovery::IdempotencyScopeChanged => {
-                return Ok(rejected(409, "idempotency-scope-changed"));
-            }
-            InvocationRecovery::OutcomeExpired => return Ok(rejected(409, "outcome-expired")),
-            InvocationRecovery::Missing => {}
         }
 
         if !target.enabled {
@@ -221,6 +215,26 @@ impl<B: InvocationBackend> InvocationService<B> {
                 } => {
                     return Ok(BeginResult::Admitted(Admitted { run_id }));
                 }
+                AdmissionResult::Duplicate { run_id: None } => {
+                    let Some(client_key_digest) = admission.client_key_digest.as_deref() else {
+                        return Ok(rejected(409, "admission-retry"));
+                    };
+                    let recovery = self
+                        .backend
+                        .recover(
+                            &self.config.tenant_id,
+                            &self.config.catalog_id,
+                            &self.config.environment,
+                            &admission.request.attachment_id,
+                            &admission.principal_digest,
+                            client_key_digest,
+                            &admission.target.definition_hash,
+                            &admission.request.client_request_fingerprint,
+                        )
+                        .await?;
+                    return Ok(recovered_begin(recovery)
+                        .unwrap_or_else(|| rejected(409, "admission-retry")));
+                }
                 AdmissionResult::HeadDrift | AdmissionResult::DefinitionDrift if attempt == 0 => {
                     let current = self
                         .backend
@@ -233,6 +247,11 @@ impl<B: InvocationBackend> InvocationService<B> {
                         .await?;
                     match current {
                         Some(next) if next.definition_hash == admission.target.definition_hash => {
+                            if next.idempotency_required
+                                && admission.request.idempotency_key.is_none()
+                            {
+                                return Ok(rejected(400, "idempotency-key-required"));
+                            }
                             admission.target = next;
                         }
                         _ => return Ok(rejected(409, "admission-retry")),
@@ -448,8 +467,6 @@ impl InvocationBackend for PostgresInvocationBackend {
         let flow_version = admission.target.flow_version;
         let input = serde_json::to_string(&admission.input)?;
         let context = serde_json::to_string(&admission.invocation_context)?;
-        let expires_at = Utc::now()
-            + TimeDelta::from_std(config.admission_ttl).context("admission TTL overflow")?;
         let lease_ttl = i64::try_from(config.lease_ttl.as_millis())
             .context("lease TTL exceeds i64 milliseconds")?;
         let none_text: Option<&str> = None;
@@ -476,7 +493,6 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &admission.principal_digest,
                     &admission.client_key_digest,
                     &admission.request.client_request_fingerprint,
-                    &expires_at,
                     &config.executor_id,
                     &lease_ttl,
                     &none_text,
@@ -510,6 +526,8 @@ impl InvocationBackend for PostgresInvocationBackend {
 }
 
 fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
+    let execution_bundle_hash: String = row.get(7);
+    let exact_bytes: Option<Vec<u8>> = row.get(8);
     Ok(InvocationTarget {
         catalog_version: row.get(0),
         definition_hash: row.get(1),
@@ -518,6 +536,9 @@ fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
         definition: serde_json::from_str(row.get(4))?,
         auth_policy: serde_json::from_str(row.get(5))?,
         enabled: row.get(6),
+        idempotency_required: exact_bytes.as_deref().is_none_or(|exact_bytes| {
+            invocation_idempotency_required(&execution_bundle_hash, exact_bytes)
+        }),
     })
 }
 
@@ -564,7 +585,6 @@ fn decode_recovery(row: &Row) -> anyhow::Result<InvocationRecovery> {
         "released" => InvocationRecovery::Released(decode_outcome(row)?),
         "idempotency-key-reused" => InvocationRecovery::IdempotencyKeyReused,
         "idempotency-scope-changed" => InvocationRecovery::IdempotencyScopeChanged,
-        "outcome-expired" => InvocationRecovery::OutcomeExpired,
         code => return Err(anyhow!("invalid invocation recovery result {code:?}")),
     })
 }
@@ -634,6 +654,20 @@ fn rejected(status: u16, code: &str) -> BeginResult {
     })
 }
 
+fn recovered_begin(recovery: InvocationRecovery) -> Option<BeginResult> {
+    match recovery {
+        InvocationRecovery::Released(outcome) => Some(BeginResult::Admitted(Admitted {
+            run_id: outcome.run_id,
+        })),
+        InvocationRecovery::InFlight { run_id } => Some(BeginResult::Admitted(Admitted { run_id })),
+        InvocationRecovery::IdempotencyKeyReused => Some(rejected(409, "idempotency-key-reused")),
+        InvocationRecovery::IdempotencyScopeChanged => {
+            Some(rejected(409, "idempotency-scope-changed"))
+        }
+        InvocationRecovery::Missing => None,
+    }
+}
+
 fn admission_refusal(result: AdmissionResult) -> BeginResult {
     let (status, code) = match result {
         AdmissionResult::InactiveDefinition => (404, "attachment-disabled"),
@@ -658,6 +692,24 @@ fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> 
             status_hint: outcome.http_status,
         })),
         "failed" => {
+            if outcome.body.get("code").and_then(Value::as_str) == Some("effect-uncertain") {
+                let stored = serde_json::from_value::<EffectUncertainFailure>(outcome.body)?;
+                if stored.run_id() != outcome.run_id {
+                    return Err(anyhow!(
+                        "stored effect-uncertain run id does not match outcome"
+                    ));
+                }
+                return Ok(InvokeResult::Failed(Failure {
+                    status: EFFECT_UNCERTAIN_HTTP_STATUS,
+                    error: FlowError {
+                        code: stored.code().to_string(),
+                        message: None,
+                        run_id: stored.run_id().to_string(),
+                        flow_id: outcome.flow_id,
+                        flow_version: outcome.flow_version,
+                    },
+                }));
+            }
             let error = outcome
                 .body
                 .get("error")
@@ -709,6 +761,7 @@ mod tests {
         recoveries: Arc<Mutex<VecDeque<InvocationRecovery>>>,
         admissions: Arc<Mutex<VecDeque<AdmissionResult>>>,
         admitted_versions: Arc<Mutex<Vec<i32>>>,
+        admitted_client_keys: Arc<Mutex<Vec<Option<String>>>>,
         polls: Arc<Mutex<VecDeque<InvocationPoll>>>,
     }
 
@@ -770,6 +823,10 @@ mod tests {
                 .lock()
                 .await
                 .push(admission.target.catalog_version);
+            self.admitted_client_keys
+                .lock()
+                .await
+                .push(admission.client_key_digest.clone());
             self.admissions
                 .lock()
                 .await
@@ -796,7 +853,6 @@ mod tests {
             executor_id: "invoke-1".to_string(),
             platform_revision: "rev-test".to_string(),
             lease_ttl: Duration::from_secs(30),
-            admission_ttl: Duration::from_secs(86_400),
         }
     }
 
@@ -812,6 +868,7 @@ mod tests {
             }),
             auth_policy: json!({"scheme": "bearer"}),
             enabled,
+            idempotency_required: true,
         }
     }
 
@@ -854,6 +911,18 @@ mod tests {
         }
     }
 
+    fn effect_uncertain_outcome() -> InvocationOutcome {
+        InvocationOutcome {
+            run_id: "run-1".to_string(),
+            kind: "failed".to_string(),
+            body: json!({"code": "effect-uncertain", "run_id": "run-1"}),
+            http_status: Some(500),
+            hash: "sha256:uncertain".to_string(),
+            flow_id: "flow-a".to_string(),
+            flow_version: 3,
+        }
+    }
+
     #[test]
     fn missing_root_plan_maps_to_its_frozen_http_refusal() {
         assert_eq!(
@@ -871,7 +940,8 @@ mod tests {
             .lock()
             .await
             .push_back(InvocationRecovery::Released(outcome("responded", "", 200)));
-        let service = InvocationService::new(backend.clone(), None, config(), driver());
+        let driver = driver();
+        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -880,6 +950,13 @@ mod tests {
             })
         );
         assert!(backend.admissions.lock().await.is_empty());
+        assert!(
+            driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -949,6 +1026,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn promotion_cannot_add_a_key_requirement_after_a_keyless_preflight() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.extend([
+            Some(InvocationTarget {
+                idempotency_required: false,
+                ..target(true)
+            }),
+            Some(InvocationTarget {
+                catalog_version: 9,
+                idempotency_required: true,
+                ..target(true)
+            }),
+        ]);
+        backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::HeadDrift);
+        let driver = driver();
+        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let mut without_key = request();
+        without_key.idempotency_key = None;
+
+        assert_eq!(
+            service.begin(without_key).await.unwrap(),
+            rejected(400, "idempotency-key-required")
+        );
+        assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
+        assert!(
+            driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
     async fn recovery_conflicts_are_distinct_and_never_admit() {
         for (recovery, code) in [
             (
@@ -958,13 +1073,6 @@ mod tests {
             (
                 InvocationRecovery::IdempotencyScopeChanged,
                 "idempotency-scope-changed",
-            ),
-            (InvocationRecovery::OutcomeExpired, "outcome-expired"),
-            (
-                InvocationRecovery::InFlight {
-                    run_id: "run-live".to_string(),
-                },
-                "in-flight",
             ),
         ] {
             let backend = MockBackend::default();
@@ -977,6 +1085,166 @@ mod tests {
             assert_eq!(rejection.code, code);
             assert!(backend.admissions.lock().await.is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn in_flight_recovery_returns_the_same_run_without_admission_or_dispatch() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend
+            .recoveries
+            .lock()
+            .await
+            .push_back(InvocationRecovery::InFlight {
+                run_id: "run-live".to_string(),
+            });
+        let driver = driver();
+        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+
+        assert_eq!(
+            service.begin(request()).await.unwrap(),
+            BeginResult::Admitted(Admitted {
+                run_id: "run-live".to_string()
+            })
+        );
+        assert!(backend.admissions.lock().await.is_empty());
+        assert!(
+            driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_recovers_the_winning_run_after_insert_visibility() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend.recoveries.lock().await.extend([
+            InvocationRecovery::Missing,
+            InvocationRecovery::InFlight {
+                run_id: "run-winner".to_string(),
+            },
+        ]);
+        backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::Duplicate { run_id: None });
+        let driver = driver();
+        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+
+        assert_eq!(
+            service.begin(request()).await.unwrap(),
+            BeginResult::Admitted(Admitted {
+                run_id: "run-winner".to_string()
+            })
+        );
+        assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
+        assert!(
+            driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn admission_visible_duplicate_returns_the_winning_run_without_dispatch() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend
+            .recoveries
+            .lock()
+            .await
+            .push_back(InvocationRecovery::Missing);
+        backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::Duplicate {
+                run_id: Some("run-winner".to_string()),
+            });
+        let driver = driver();
+        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+
+        assert_eq!(
+            service.begin(request()).await.unwrap(),
+            BeginResult::Admitted(Admitted {
+                run_id: "run-winner".to_string()
+            })
+        );
+        assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
+        assert!(
+            driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn own_plan_requirement_allows_only_pure_call_free_requests_without_a_key() {
+        let required_backend = MockBackend::default();
+        required_backend
+            .targets
+            .lock()
+            .await
+            .push_back(Some(target(true)));
+        let required_driver = driver();
+        let required_service = InvocationService::new(
+            required_backend.clone(),
+            None,
+            config(),
+            required_driver.clone(),
+        );
+        let mut without_key = request();
+        without_key.idempotency_key = None;
+
+        assert_eq!(
+            required_service.begin(without_key.clone()).await.unwrap(),
+            rejected(400, "idempotency-key-required")
+        );
+        assert!(required_backend.admissions.lock().await.is_empty());
+        assert!(
+            required_driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty()
+        );
+
+        let pure_backend = MockBackend::default();
+        pure_backend
+            .targets
+            .lock()
+            .await
+            .push_back(Some(InvocationTarget {
+                idempotency_required: false,
+                ..target(true)
+            }));
+        pure_backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::Admitted {
+                run_id: "run-pure".to_string(),
+            });
+        let pure_service = InvocationService::new(pure_backend.clone(), None, config(), driver());
+
+        assert_eq!(
+            pure_service.begin(without_key).await.unwrap(),
+            BeginResult::Admitted(Admitted {
+                run_id: "run-pure".to_string()
+            })
+        );
+        assert_eq!(
+            pure_backend.admitted_client_keys.lock().await.as_slice(),
+            &[None]
+        );
     }
 
     #[tokio::test]
@@ -998,7 +1266,7 @@ mod tests {
     }
 
     #[test]
-    fn all_three_release_paths_decode_the_exact_stored_winner() {
+    fn all_release_paths_decode_the_exact_stored_winner() {
         for (path, stored, expected) in [
             ("respond", outcome("responded", "", 201), ("responded", 201)),
             (
@@ -1011,6 +1279,21 @@ mod tests {
                 outcome("failed", "infrastructure-failure", 500),
                 ("failed", 500),
             ),
+            (
+                "depth-budget",
+                outcome("failed", "depth-budget", 500),
+                ("failed", 500),
+            ),
+            (
+                "dispatch-budget",
+                outcome("failed", "dispatch-budget", 500),
+                ("failed", 500),
+            ),
+            (
+                "effect-uncertain",
+                effect_uncertain_outcome(),
+                ("failed", 502),
+            ),
         ] {
             let result = to_invoke_result(stored).unwrap();
             let actual = match result {
@@ -1019,5 +1302,17 @@ mod tests {
             };
             assert_eq!(actual, expected, "{path}");
         }
+    }
+
+    #[test]
+    fn effect_uncertain_decodes_only_the_non_committal_stored_identity() {
+        let InvokeResult::Failed(failure) = to_invoke_result(effect_uncertain_outcome()).unwrap()
+        else {
+            panic!("effect uncertainty must remain a failed caller outcome");
+        };
+        assert_eq!(failure.status, 502);
+        assert_eq!(failure.error.code, "effect-uncertain");
+        assert_eq!(failure.error.run_id, "run-1");
+        assert_eq!(failure.error.message, None);
     }
 }
