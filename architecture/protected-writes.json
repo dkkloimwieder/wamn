@@ -2337,7 +2337,7 @@
       ],
       "author-reachable": "author SQL, RLS-bounded",
       "guards": [
-        "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))",
+        "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))",
         "constraint:node_runs_frame_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (frame_id >= 0)",
         "constraint:node_runs_frame_relation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (frame_id = 0 AND parent_frame_id IS NULL AND call_site_id IS NULL OR frame_id > 0 AND parent_frame_id IS NOT NULL AND parent_frame_id >= 0 AND parent_frame_id < frame_id AND call_site_id IS NOT NULL AND call_site_id ~ '^[a-z0-9-]+$'::text)",
         "constraint:node_runs_local_node_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (local_node_id ~ '^[a-z0-9-]+$'::text)",

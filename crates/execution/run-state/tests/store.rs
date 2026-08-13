@@ -481,6 +481,12 @@ fn status_sql_literals_round_trip() {
     for k in NodeErrorKind::ALL {
         assert_eq!(NodeErrorKind::from_sql(k.as_sql()), Some(k));
     }
+    assert_eq!(
+        NodeErrorKind::ALL.map(NodeErrorKind::as_sql),
+        ["retryable", "rate-limited", "terminal", "invalid-input"]
+    );
+    assert_eq!(NodeErrorKind::from_sql("cancelled"), None);
+    assert!(serde_json::from_value::<NodeErrorKind>(json!("cancelled")).is_err());
     assert_eq!(RunStatus::from_sql("nope"), None);
     assert!(serde_json::from_value::<RunStatus>(json!("nope")).is_err());
     // Spot-check the wire literals the DDL CHECK constraints pin.
@@ -759,6 +765,7 @@ fn run_state_sql_matches_the_model() {
             k.as_sql()
         );
     }
+    assert!(!sql.contains("'cancelled'"));
     for k in FailKind::ALL {
         assert!(
             sql.contains(&format!("'{}'", k.as_sql())),
@@ -768,6 +775,10 @@ fn run_state_sql_matches_the_model() {
     }
 
     let normalized = sql.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        normalized.contains("error_kind text CHECK (error_kind IN ('retryable', 'rate-limited', 'terminal', 'invalid-input')),"),
+        "node_runs.error_kind CHECK must carry exactly the frozen vocabulary"
+    );
     assert!(
         normalized.contains(
             "fail_kind text CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input', \

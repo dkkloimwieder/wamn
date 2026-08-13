@@ -592,7 +592,7 @@ CREATE TABLE wamn_run.node_runs (
     output_json   jsonb,
     input_json    jsonb,
     error_kind    text CHECK (error_kind IN ('retryable', 'rate-limited', 'terminal',
-                                            'invalid-input', 'cancelled')),
+                                            'invalid-input')),
     error_detail  jsonb,
     -- Reserved seams (5.10 payload byte store / 9.6 capture policy):
     input_ref     text,

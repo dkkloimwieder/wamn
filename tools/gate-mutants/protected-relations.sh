@@ -8,9 +8,9 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 table="$repository/architecture/protected-writes.json"
 live_test="$repository/services/ctl/tests/protected_relations_live.rs"
 static_test="$repository/tests/conformance/tests/protected_relations.rs"
-expected_table_sha=5603f40e12455e40a325ff44f9a1f46eee3ecde4b6813c3c8ecaaaae5856e4a7
+expected_table_sha=9cb8ef409fda718edd8ef69465e4c35dc4dd69d08d8650dc568eb2a87c96ba16
 expected_live_sha=57a114672b628d0f99bbd664e71f324f69ef7e5f349b5090e71cab81a951a01c
-expected_static_sha=5813f727402cd68698e97d14d28752b3797ffaded27fe49804fbe17931a97219
+expected_static_sha=4f537ae699c72225825660696bf48a03e7ce571118214f1dd274040ebefadfdc
 target_dir=${CARGO_TARGET_DIR:-/tmp/wamn-target-0h0g-13-33}
 
 sha() {
@@ -104,9 +104,11 @@ case "$mode" in
             'del(.rows[] | select(.relation == "wamn_run.run_queue") | .mechanisms[] | select(startswith("foreign-key:delete:cascade")))' live_gate
         run_mutant missing-immutability-guard \
             'del(.rows[] | select(.relation == "wamn_run.effect_attempt_dispatches") | .guards[] | select(startswith("trigger:effect_attempt_dispatches_update_immutable")))' live_gate
+        run_mutant restore-cancelled-node-error \
+            '(.rows[] | select(.relation == "wamn_run.node_runs") | .guards[] | select(startswith("constraint:node_runs_error_kind_check;"))) = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['\''retryable'\''::text, '\''rate-limited'\''::text, '\''terminal'\''::text, '\''invalid-input'\''::text, '\''cancelled'\''::text]))"' static_gate
         cp "$baseline" "$table"
         assert_baseline
-        echo "protected relation mutation campaign: 7/7 killed"
+        echo "protected relation mutation campaign: 8/8 killed"
         ;;
     *)
         echo "usage: $0 {check|green-all|run-all}" >&2

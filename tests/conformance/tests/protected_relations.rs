@@ -6,6 +6,7 @@ use serde::Deserialize;
 const OWNERS_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const AUTHOR_SQL_EXPOSURE: &str = "author SQL, RLS-bounded";
+const NODE_ERROR_CHECK: &str = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))";
 
 #[derive(Debug, Deserialize)]
 struct OwnershipManifest {
@@ -167,5 +168,17 @@ fn protected_relation_table_matches_declared_ownership() {
         }
         actual_relations.insert(row.relation.clone());
     }
+    let node_runs = table
+        .rows
+        .iter()
+        .find(|row| row.relation == "wamn_run.node_runs")
+        .expect("node_runs is protected");
+    let node_error_checks = node_runs
+        .guards
+        .iter()
+        .filter(|guard| guard.starts_with("constraint:node_runs_error_kind_check;"))
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    assert_eq!(node_error_checks, [NODE_ERROR_CHECK]);
     assert_eq!(actual_relations, declared.into_keys().collect());
 }

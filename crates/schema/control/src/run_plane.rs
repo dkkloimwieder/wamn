@@ -277,7 +277,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "node_runs",
         name: "node_runs_error_kind_check",
-        definition: "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))",
+        definition: "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))",
         origin: CheckOrigin::Inline("error_kind"),
     },
     CheckSpec {
@@ -7504,6 +7504,36 @@ CREATE INDEX event_registrations_by_entity
                     .sql
                     .contains("attempt_started_at <= attempt_deadline_at")
         }));
+    }
+
+    #[test]
+    fn cancelled_node_error_check_is_repaired() {
+        let mut obs = observation_at_record();
+        obs.checks.insert(
+            (
+                "node_runs".to_string(),
+                "node_runs_error_kind_check".to_string(),
+            ),
+            "CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text, 'cancelled'::text]))"
+                .to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let repairs = plan
+            .actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::RepairConstraint)
+            .collect::<Vec<_>>();
+        assert_eq!(repairs.len(), 1, "only the node error CHECK: {repairs:#?}");
+        let repair = repairs[0];
+        assert_eq!(repair.target, "node_runs.node_runs_error_kind_check");
+        assert!(
+            repair
+                .sql
+                .contains("DROP CONSTRAINT \"node_runs_error_kind_check\"")
+        );
+        assert!(repair.sql.contains("'invalid-input'::text"));
+        assert!(!repair.sql.contains("'cancelled'::text"));
     }
 
     #[test]

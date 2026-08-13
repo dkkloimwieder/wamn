@@ -55,7 +55,7 @@ load_mutation() {
       ;;
     default-run-column-full)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE="capture_mode    text NOT NULL DEFAULT 'off'"
       REPLACEMENT="capture_mode    text NOT NULL DEFAULT 'full'"
       GATE="run_state_sql_matches_the_model"
@@ -63,7 +63,7 @@ load_mutation() {
       ;;
     permit-full-on-nondraft-run)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE="capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
       REPLACEMENT="capture_mode <> 'full' OR true"
       GATE="run_state_sql_matches_the_model"
@@ -71,7 +71,7 @@ load_mutation() {
       ;;
     allow-post-admission-mode-change)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE='       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN'
       REPLACEMENT='       OR false THEN'
       GATE="run_state_sql_matches_the_model"
@@ -79,7 +79,7 @@ load_mutation() {
       ;;
     grant-author-capture-mode)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE='    fail_kind, fail_node, fail_reason, created_at, updated_at
 ), UPDATE ('
       REPLACEMENT='    fail_kind, fail_node, fail_reason, created_at, updated_at, capture_mode

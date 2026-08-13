@@ -257,7 +257,7 @@ async fn run_plane_reconcile_live() {
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
     effect_disposition_security_drift_leg(&su).await;
-    fail_kind_check_drift_leg(&su).await;
+    persisted_literal_check_drift_leg(&su).await;
 }
 
 #[tokio::test]
@@ -3328,12 +3328,8 @@ async fn effect_disposition_security_drift_leg(su: &Client) {
     );
 }
 
-/// wamn-fqg.16: a schema whose `runs.fail_kind` CHECK predates cjv.4's
-/// `'runaway-budget'` literal rejects a runaway `mark_failed` UPDATE — the
-/// verdict is lost from the audit row. The reconcile drops the observed CHECK
-/// and re-adds the 5-literal record form; the runaway UPDATE then succeeds, the
-/// canonical def carries `runaway-budget`, and a re-run is a no-op.
-async fn fail_kind_check_drift_leg(su: &Client) {
+/// Reconcile repairs drifted persisted vocabularies and converges in one pass.
+async fn persisted_literal_check_drift_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
     su.batch_execute(CATALOG_SCHEMA_SQL)
@@ -3349,16 +3345,19 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     su.batch_execute(&rewrite_schema(RUN_QUEUE_SQL, &schema))
         .await
         .expect("apply run-queue");
-    // …then REGRESS runs.fail_kind to the pre-cjv.4 3-literal CHECK (drop the
-    // fresh auto-named one, re-add without 'runaway-budget') — the exact state a
-    // schema provisioned from the old run-state.sql carries.
+    // Regress the run failure vocabulary and restore the retired node-error
+    // cancellation literal to model the two predecessor constraints.
     su.batch_execute(&format!(
         "ALTER TABLE {SCHEMA}.runs DROP CONSTRAINT runs_fail_kind_check; \
          ALTER TABLE {SCHEMA}.runs ADD CONSTRAINT runs_fail_kind_check \
-             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input'));"
+             CHECK (fail_kind IN ('terminal', 'retry-exhausted', 'invalid-input')); \
+         ALTER TABLE {SCHEMA}.node_runs DROP CONSTRAINT node_runs_error_kind_check; \
+         ALTER TABLE {SCHEMA}.node_runs ADD CONSTRAINT node_runs_error_kind_check \
+             CHECK (error_kind IN \
+               ('retryable','rate-limited','terminal','invalid-input','cancelled'));"
     ))
     .await
-    .expect("regress fail_kind CHECK to the legacy 3 literals");
+    .expect("regress persisted literal CHECKs");
     // A run whose runaway verdict we will try to record.
     seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.batch_execute(&format!(
@@ -3396,6 +3395,14 @@ async fn fail_kind_check_drift_leg(su: &Client) {
         "the fail_kind CHECK repair is planned: {:#?}",
         plan.actions
     );
+    assert!(
+        plan.actions
+            .iter()
+            .any(|a| a.kind == RunPlaneActionKind::RepairConstraint
+                && a.target == "node_runs.node_runs_error_kind_check"),
+        "the node error CHECK repair is planned: {:#?}",
+        plan.actions
+    );
 
     // (i) the canonical constraint def now admits 'runaway-budget'.
     let def: String = su
@@ -3413,6 +3420,29 @@ async fn fail_kind_check_drift_leg(su: &Client) {
     assert!(
         def.contains("runaway-budget"),
         "reconciled CHECK admits runaway-budget: {def}"
+    );
+
+    let node_error_def: String = su
+        .query_one(
+            "SELECT pg_get_constraintdef(con.oid) FROM pg_constraint con \
+             JOIN pg_class c ON c.oid = con.conrelid \
+             JOIN pg_namespace n ON n.oid = c.relnamespace \
+             WHERE n.nspname = $1 AND c.relname = 'node_runs' \
+               AND con.conname = 'node_runs_error_kind_check'",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read node error constraintdef")
+        .get(0);
+    for literal in ["retryable", "rate-limited", "terminal", "invalid-input"] {
+        assert!(
+            node_error_def.contains(&format!("'{literal}'::text")),
+            "reconciled node error CHECK contains {literal}: {node_error_def}"
+        );
+    }
+    assert!(
+        !node_error_def.contains("cancelled"),
+        "reconciled node error CHECK removes cancelled: {node_error_def}"
     );
 
     // (ii) the runaway `mark_failed` UPDATE now SUCCEEDS — the verdict lands.

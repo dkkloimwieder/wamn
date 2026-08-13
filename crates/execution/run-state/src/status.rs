@@ -285,16 +285,14 @@ pub enum NodeErrorKind {
     RateLimited,
     Terminal,
     InvalidInput,
-    Cancelled,
 }
 
 impl NodeErrorKind {
-    pub const ALL: [NodeErrorKind; 5] = [
+    pub const ALL: [NodeErrorKind; 4] = [
         NodeErrorKind::Retryable,
         NodeErrorKind::RateLimited,
         NodeErrorKind::Terminal,
         NodeErrorKind::InvalidInput,
-        NodeErrorKind::Cancelled,
     ];
 
     pub fn as_sql(self) -> &'static str {
@@ -303,7 +301,6 @@ impl NodeErrorKind {
             NodeErrorKind::RateLimited => "rate-limited",
             NodeErrorKind::Terminal => "terminal",
             NodeErrorKind::InvalidInput => "invalid-input",
-            NodeErrorKind::Cancelled => "cancelled",
         }
     }
 

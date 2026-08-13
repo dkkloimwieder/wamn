@@ -50,7 +50,7 @@ load_mutation() {
       ;;
     runs-execution-bundle-fk-removed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE='    CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)'
@@ -61,7 +61,7 @@ load_mutation() {
       ;;
     run-admission-pin-update-allowed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="ed139ec1c41a7dbcf9fc565ee74102d9573eac5f24d19eb51b353153972f381a"
+      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
       NEEDLE='CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash'
       REPLACEMENT='CREATE TRIGGER runs_admission_pins_immutable
