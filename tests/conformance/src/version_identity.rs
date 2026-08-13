@@ -60,6 +60,9 @@ const GOVERNED_JSON_SCHEMAS: &[GovernedJsonSchema] = &[
         path: "architecture/package-roles.json",
     },
     GovernedJsonSchema {
+        path: "architecture/protected-writes.json",
+    },
+    GovernedJsonSchema {
         path: "architecture/state-owners.json",
     },
     GovernedJsonSchema {

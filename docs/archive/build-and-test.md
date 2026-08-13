@@ -5592,6 +5592,54 @@ bash -n deploy/mvp/bootstrap.sh deploy/mvp/tests/bootstrap.sh \
 git diff --check
 ```
 
+## SR-MVP — protected-relation authority table (`wamn-0h0g.13.33`)
+
+The checked-in table is generated from a disposable PostgreSQL 18 database.
+`state-owners.json` supplies each relation's installer and lifecycle owner; the
+canonical reconciler plus the control, application, and one-entity project
+installers materialize the relations. The generator then opens a read-only
+transaction and reads `pg_catalog` for mutation grants, RLS policies, cascades,
+constraints, unique indexes, triggers, and trigger-function owners. Rust caller
+search is deliberately out of scope. A `wamn_app` mutation grant is emitted as
+`author SQL, RLS-bounded`. This audit changes no production permission and all
+schema, package, and wire identities remain `0.1`/`0.1.0`.
+
+```bash
+jq empty architecture/protected-writes.json
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+    --test protected_relations -- --nocapture
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline -p wamn-proof-conformance \
+    --test protected_relations -- -D warnings
+
+# Start a disposable postgres:18 database first. Regeneration and verification
+# use the same test; omit WAMN_UPDATE_PROTECTED_RELATIONS for the normal gate.
+WAMN_UPDATE_PROTECTED_RELATIONS=1 \
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl \
+    --test protected_relations_live -- --nocapture --test-threads=1
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl \
+    --test protected_relations_live -- --nocapture --test-threads=1
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
+  tools/gate-mutants/protected-relations.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
+  tools/gate-mutants/protected-relations.sh green-all
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-13-33 \
+WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15656/wamn \
+  tools/gate-mutants/protected-relations.sh run-all
+
+bash -n tools/gate-mutants/protected-relations.sh
+git diff --check
+```
+
 ### Runner address-level egress boundary (`wamn-4q3c.12`)
 
 `deploy/platform/runner-netpol.yaml` is the default-deny address ceiling for

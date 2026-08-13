@@ -658,6 +658,15 @@ grants and forced RLS hold the floor; the one-database-per-(org, project, env)
 split confines cross-project access, and the ACL role confines in-project
 bookkeeping. Author SQL has no outbound retry key or effect-redispatch
 upgrade in MVP.
+
+The protected-relation table is generated from two sources only:
+`state-owners.json` supplies each installer and lifecycle owner, and a disposable
+database built by the canonical reconciler supplies grants, cascades, triggers,
+trigger-function owners, RLS, and constraints through `pg_catalog`. A caller above an
+owner's API is a client, not another data owner. Any mutation grant to
+`wamn_app` is recorded as `author SQL, RLS-bounded`. The audit changes no
+production permission. All table and package identities remain `0.1`/`0.1.0`.
+
 **p0 probe set (self-contained):** the landed role/containment
 battery — effective-role identity; superuser/createdb/createrole/
 replication/bypassrls flag denial; protected-relation denial
