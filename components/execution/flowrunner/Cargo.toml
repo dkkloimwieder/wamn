@@ -5,13 +5,17 @@ edition.workspace = true
 
 [dependencies]
 wit-bindgen = { workspace = true }
+# Runtime call-enter validates the live payload against the immutable callee
+# guard already compiled into its verified execution plan.
+boon = { workspace = true }
+serde_json = { workspace = true }
 # Shared standard-node contract types used by the capability adapter.
 wamn-flow = { workspace = true }
 # Parses and hash-verifies exact immutable execution-plan bytes from the host.
 wamn-catalog = { workspace = true }
-
-[dev-dependencies]
-serde_json = { workspace = true }
+# Pure graph reducer used by the in-memory frame driver. The component keeps
+# effectful node activation hard-refused until its owning change.
+wamn-runner = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]

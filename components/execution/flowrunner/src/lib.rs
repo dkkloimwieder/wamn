@@ -1,12 +1,19 @@
 //! Single-shot flow-runner component.
 //!
-//! The public world has one product operation, `run`. Execution remains
-//! fail-closed until the frame stack, runtime budgets, and effect activation
-//! land in their owning changes. Immutable claimed-run plans already cross the
-//! trusted host supply and are hash-verified before becoming frame inputs.
+//! The public world has one product operation, `run`. Production execution
+//! remains fail-closed until runtime budgets and effect activation land in
+//! their owning changes. Immutable claimed-run plans cross the trusted host
+//! supply, are hash-verified, and feed the in-memory frame interpreter.
 //! This component retains
 //! the standard-node capability adapter, including the self-describing trusted
 //! HTTP-effect context consumed by that later execution path.
+
+mod frames;
+
+pub use frames::{
+    FrameCompletion, FrameExecutionError, FrameExecutionErrorKind, FrameFailure, FrameStack,
+    PureNodeDispatcher, TrustedFrame, TrustedFrameFacts,
+};
 
 wit_bindgen::generate!({
     world: "flowrunner",
@@ -427,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn run_refuses_before_database_mutation_until_plan_execution_lands() {
+    fn run_remains_hard_refused_before_budget_and_effect_activation() {
         assert_eq!(
             <Component as Guest>::run("run".into(), "{}".into()),
             Err(EXECUTION_INTERPRETER_REFUSAL.to_string())
