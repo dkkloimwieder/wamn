@@ -63,8 +63,8 @@ pub fn insert_node_run_error() -> Sql {
 }
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
-/// input; a resumed run is a no-op — its `node_runs` history is the durable
-/// progress. `$1` run_id, `$2` flow_id, `$3` flow_version, `$4` status,
+/// input; a duplicate open is a no-op. `$1` run_id, `$2` flow_id, `$3`
+/// flow_version, `$4` status,
 /// `$5` trigger_source (NULL for direct drivers), `$6` input_json (text the
 /// server parses into jsonb).
 pub fn insert_run_sql() -> String {
@@ -119,18 +119,13 @@ pub fn update_run_failed_sql() -> String {
     )
 }
 
-/// Read the run's durable retry/context checkpoint. `$1` run_id.
-pub fn select_run_state_sql() -> String {
-    "SELECT state_json::text FROM runs WHERE run_id = $1".to_string()
-}
-
 /// Read an already host-claimed run's dispatch inputs — the flow it runs, the **persisted**
 /// `flow_version` the run started under, and the trigger input a dispatcher
 /// persisted — so the single-shot guest drives the
 /// *recorded* flow at the *recorded* version, not a hard-coded fixture id and not
-/// whatever version is active NOW (wamn-cox: a resume pins the run's own version,
-/// so a flow edited mid-run cannot make a resume reconstruct against a divergent
-/// graph). `$1` run_id; RLS scopes the tenant (like the other read builders).
+/// whatever version is active NOW (wamn-cox: execution pins the run's own
+/// version, so a flow edited after admission cannot change its graph). `$1`
+/// run_id; RLS scopes the tenant (like the other read builders).
 /// Event runs receive an execution-only `causation` object synthesized from
 /// trusted `event_root_run_id` / `event_depth` columns. This does not update
 /// `input_json`, and the trusted object replaces any same-named input field.
@@ -237,28 +232,11 @@ pub fn materialize_run_flow_resolutions_sql() -> String {
         .to_string()
 }
 
-/// Persist the run's durable retry/context checkpoint. `$1` run_id, `$2`
-/// state_json.
-pub fn update_run_state_sql() -> String {
-    "UPDATE runs SET state_json = $2, updated_at = now() WHERE run_id = $1".to_string()
-}
-
-/// Replace the durable context document while preserving co-resident checkpoint
-/// cursors. `$1` run id, `$2` complete context JSON text.
-pub fn update_run_context_sql() -> String {
-    "UPDATE runs \
-        SET state_json = jsonb_set(COALESCE(state_json, '{}'::jsonb), \
-                                   '{context}', $2::text::jsonb, true), \
-            updated_at = now() \
-      WHERE run_id = $1"
-        .to_string()
-}
-
-/// Record a completed node execution in the root frame — the durable per-node checkpoint,
-/// written after the node's effect commits; idempotent by
+/// Record a completed node execution in the root frame for run history;
+/// idempotent by
 /// `(run_id, frame_id, local_node_id, occurrence)`. `occurrence` is the engine-computed visit
 /// number ([`Dispatch::occurrence`](wamn_runner::Dispatch)) — a merge/loop
-/// node's Nth visit is its own row, so ON CONFLICT dedupes only a REPLAY of
+/// node's Nth visit is its own row, so ON CONFLICT dedupes only a duplicate of
 /// the same visit, never a distinct one (wamn-03m / cjv.10 / R24). `$1`
 /// run_id, `$2` local_node_id, `$3` occurrence, `$4` seq, `$5` output_port,
 /// `$6` output_json, `$7` input_json, plus the 9.6 capture columns filled by
@@ -281,9 +259,8 @@ pub fn insert_node_run_success_sql() -> String {
 }
 
 /// Record an error-ROUTED node as an emission on the reserved `error` port
-/// carrying the `{"error": {...}}` payload the engine routes — exactly what
-/// 5.7 reconstruction replays (no error taxonomy needed to resume); the
-/// taxonomy lands in `error_kind`/`error_detail` for the run history.
+/// carrying the `{"error": {...}}` payload the engine routes. The taxonomy
+/// lands in `error_kind`/`error_detail` for the run history.
 /// `$1` run_id, `$2` local_node_id, `$3` occurrence (the engine-computed visit),
 /// `$4` seq, `$5` output_json (the error payload), `$6` input_json,
 /// `$7` error_kind, `$8` error_detail, plus the 9.6 capture columns filled by
@@ -306,19 +283,6 @@ pub fn insert_node_run_error_sql() -> String {
     )
 }
 
-/// Load a run's already-completed node executions in dispatch (`seq`) order —
-/// the branch-aware reconstruction source. Only `success`/`error` rows are
-/// completed steps; a `started` row is an outstanding node the walk
-/// re-dispatches. `$1` run_id.
-pub fn select_completed_node_runs_sql() -> String {
-    format!(
-        "SELECT local_node_id AS node_id, current_plan_hash, occurrence, seq, output_port, output_json::text FROM node_runs \
-         WHERE run_id = $1 AND status IN ('{success}', '{error}') ORDER BY seq",
-        success = NodeRunStatus::Success.as_sql(),
-        error = NodeRunStatus::Error.as_sql(),
-    )
-}
-
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
@@ -326,7 +290,7 @@ pub fn select_completed_node_runs_sql() -> String {
 /// `node_runs` (and any surviving `run_queue` rows) cascade
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based
-/// only in v0 — replay lineage (`replay_of`/`root_run_id`) is not consulted.
+/// only in v0; no execution-lineage metadata participates.
 /// Param: `$1` retention_days. RLS + the explicit tenant predicate scope it to
 /// the claimed tenant, exactly like the other builders.
 pub fn prune_terminal_runs_sql() -> String {
@@ -449,7 +413,7 @@ mod tests {
     fn dispatch_read_projects_flow_and_input() {
         // The claim path (fqg.4) resolves the flow + input from the recorded
         // run, not a fixture constant; the persisted `flow_version` (second
-        // column, wamn-cox) pins a resume to the version the run started under;
+        // column, wamn-cox) pins execution to the version admitted for the run;
         // fl3 extends this exact projection with `traceparent`.
         let sql = select_run_dispatch_sql();
         assert!(sql.contains("SELECT r.flow_id, r.flow_version"), "{sql}");
@@ -572,14 +536,6 @@ mod tests {
         assert!(update_run_failed_sql().contains("SET status = 'failed'"));
         assert!(insert_node_run_success_sql().contains("'success'"));
         assert!(insert_node_run_error_sql().contains("'error', 'error'"));
-        assert!(select_completed_node_runs_sql().contains("IN ('success', 'error')"));
-        assert!(select_completed_node_runs_sql().contains("ORDER BY seq"));
-        // The reconstruction read carries the per-visit occurrence so the loaded
-        // records are faithful to the rows (partial re-run selects by it).
-        assert!(
-            select_completed_node_runs_sql()
-                .contains("SELECT local_node_id AS node_id, current_plan_hash, occurrence, seq")
-        );
     }
 
     /// Every column the builders write exists in the canonical DDL — the

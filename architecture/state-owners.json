@@ -191,7 +191,6 @@
         "s2.scratch",
         "s2.fkchild",
         "s3.flows",
-        "s3.flow_runs",
         "s3.sink",
         "s3.runs",
         "s3.node_runs"

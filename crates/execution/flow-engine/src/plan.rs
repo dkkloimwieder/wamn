@@ -93,8 +93,6 @@ impl<'f> Plan<'f> {
     /// [`crate::ExecutionState`], the run fails with the terminal
     /// [`ExecutionFailureKind::RunawayBudget`](crate::ExecutionFailureKind::RunawayBudget) — never
     /// routed to an error path, which could itself be part of the loop.
-    /// Reconstruction ([`Plan::resume`]) is exempt, so a parked-and-resumed
-    /// long run never trips the budget on its recorded history.
     pub fn set_dispatch_budget(&mut self, budget: u64) {
         self.dispatch_budget = budget;
     }

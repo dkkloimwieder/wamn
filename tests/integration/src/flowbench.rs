@@ -1,12 +1,11 @@
-//! The `flowbench` subcommand: the three S3 flow-runner gates
+//! The `flowbench` subcommand: the two retained S3 flow-runner gates
 //! (docs/archive/p0-exit-criteria.md S3).
 //!
 //! Like `pgbench`, this instantiates a guest — here `flowrunner`, which embeds
 //! the standard node library as native Rust and imports `wamn:postgres/client`
 //! — into a hand-built [`SharedCtx`] store with the real plugin linked, then
 //! drives its exports. Working at the store level lets the harness time
-//! dispatch, set per-store epoch deadlines to kill a runner mid-run, and read
-//! back run state directly.
+//! dispatch and read back run state directly.
 //!
 //! Gates:
 //!   dispatch  — standard-node dispatch overhead p99 < 50us (same-binary call).
@@ -14,9 +13,6 @@
 //!   hotreload — flip the active catalog version; the new version is live in
 //!               < 1s (catalog re-read; the production doorbell is NATS,
 //!               wamn-m2z [5.14]).
-//!   resume    — epoch-kill a runner after its side effect commits but before
-//!               its checkpoint; a fresh instance resumes and the run leaves
-//!               exactly one side-effect row (idempotency via run_id+step).
 //!   all       — every gate in sequence.
 //!
 //! PoC shortcuts and where the real work is tracked: catalog re-read instead of
@@ -35,12 +31,12 @@ use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::component::{
     Component as WasmtimeComponent, InstancePre, Linker, TypedFunc,
 };
-use wash_runtime::wasmtime::{Engine as RawEngine, Store, Trap};
+use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 
 use crate::flowrunner_linker::add_flowrunner_imports_to_linker;
 use tokio_postgres::NoTls;
 use wamn_gate_harness::{percentile, scope_session, seed_flow_version, set_active_flow_version};
-use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
+use wamn_runtime::engine::build_engine;
 use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres, WamnPostgresConfig};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
@@ -49,8 +45,6 @@ pub enum Mode {
     Dispatch,
     /// Catalog version flip visible in < 1s.
     Hotreload,
-    /// Kill-mid-run resume with idempotent side effects.
-    Resume,
     /// Every gate in sequence.
     All,
 }
@@ -78,10 +72,6 @@ pub struct FlowBenchArgs {
     #[arg(long, default_value_t = 5)]
     pub hotreload_iters: usize,
 
-    /// Kill-then-resume cycles for the resume gate
-    #[arg(long, default_value_t = 10)]
-    pub resume_iters: usize,
-
     /// Pool max size (passed to the plugin)
     #[arg(long, default_value_t = 8)]
     pub pool_max: usize,
@@ -90,12 +80,6 @@ pub struct FlowBenchArgs {
 /// The single tenant identity the runner executes under; the host maps this
 /// component id to the `app.tenant` claim (see [`WamnPostgres::set_tenant`]).
 const FLOW_TENANT: &str = "flow-tenant";
-
-/// Epoch deadline for the kill-window store: generous enough that the pre-kill
-/// DB work (load graph, open run, two checkpoints, the sink write) always
-/// completes so the busy-loop is actually reached, short enough to kill it
-/// promptly. ~600 ms at the 10 ms tick, versus ~15 ms of DB round trips.
-const KILL_TICKS: u64 = 60;
 
 /// The S3 fixture flow id (the guest's `run`/`active-version` exports drive
 /// this flow; the JSON now lives HERE — a production component carries no
@@ -163,8 +147,6 @@ struct Worker {
     dispatch_bench: TypedFunc<(u32, String), (Result<DispatchRaw, String>,)>,
     active_version: TypedFunc<(), (Result<u32, String>,)>,
     run: TypedFunc<(String, String), (Result<u32, String>,)>,
-    run_until_kill: TypedFunc<(String, String), (Result<u32, String>,)>,
-    sink_count: TypedFunc<(String,), (Result<u64, String>,)>,
     reset: TypedFunc<(String,), (Result<u64, String>,)>,
 }
 
@@ -186,26 +168,6 @@ impl Worker {
             .call_async(&mut self.store, (run_id.to_string(), payload.to_string()))
             .await?;
         r.map_err(|e| anyhow::anyhow!("run: {e}"))
-    }
-    /// Returns the raw call result so the caller can distinguish an epoch trap
-    /// (expected) from an unexpected return.
-    async fn call_run_until_kill(
-        &mut self,
-        run_id: &str,
-        payload: &str,
-    ) -> anyhow::Result<Result<u32, String>> {
-        let (r,) = self
-            .run_until_kill
-            .call_async(&mut self.store, (run_id.to_string(), payload.to_string()))
-            .await?;
-        Ok(r)
-    }
-    async fn call_sink_count(&mut self, run_id: &str) -> anyhow::Result<u64> {
-        let (r,) = self
-            .sink_count
-            .call_async(&mut self.store, (run_id.to_string(),))
-            .await?;
-        r.map_err(|e| anyhow::anyhow!("sink-count: {e}"))
     }
     async fn call_reset(&mut self, run_id: &str) -> anyhow::Result<u64> {
         let (r,) = self
@@ -267,12 +229,11 @@ impl Harness {
         m
     }
 
-    async fn worker(&self, deadline: Option<u64>) -> anyhow::Result<Worker> {
+    async fn worker(&self) -> anyhow::Result<Worker> {
         let ctx = Ctx::builder(FLOW_TENANT.to_string(), FLOW_TENANT.to_string())
             .with_plugins(self.plugin_map())
             .build();
         let mut store = Store::new(self.engine.inner(), SharedCtx::new(ctx));
-        store.set_epoch_deadline(deadline.unwrap_or(u64::MAX / 2));
         let instance = self.pre.instantiate_async(&mut store).await?;
         macro_rules! f {
             ($name:literal) => {
@@ -282,16 +243,12 @@ impl Harness {
         let dispatch_bench = f!("dispatch-bench");
         let active_version = f!("active-version");
         let run = f!("run");
-        let run_until_kill = f!("run-until-kill");
-        let sink_count = f!("sink-count");
         let reset = f!("reset");
         Ok(Worker {
             store,
             dispatch_bench,
             active_version,
             run,
-            run_until_kill,
-            sink_count,
             reset,
         })
     }
@@ -304,7 +261,7 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
         .with_context(|| format!("failed to read {}", args.flowrunner.display()))?;
 
     let run_all = args.mode == Mode::All;
-    let db_needed = run_all || matches!(args.mode, Mode::Hotreload | Mode::Resume);
+    let db_needed = run_all || args.mode == Mode::Hotreload;
 
     let mut cfg = WamnPostgresConfig::from_env();
     if let Some(url) = &args.database_url {
@@ -333,7 +290,6 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
     }
 
     let engine = build_engine(&[])?;
-    let ticker = spawn_epoch_ticker(&engine, DEFAULT_EPOCH_TICK);
     let harness = Harness::new(engine, &guest, plugin.clone())?;
 
     let mut pass = true;
@@ -344,12 +300,6 @@ pub async fn run(args: FlowBenchArgs) -> anyhow::Result<()> {
         let url = db_url.as_deref().expect("db_needed guarantees a url");
         pass &= hotreload_phase(&harness, &args, url).await?;
     }
-    if run_all || args.mode == Mode::Resume {
-        let url = db_url.as_deref().expect("db_needed guarantees a url");
-        pass &= resume_phase(&harness, &args, url).await?;
-    }
-
-    ticker.abort();
     println!("\nflowbench complete — overall PASS: {pass}");
     if !pass {
         bail!("one or more S3 gates failed");
@@ -435,7 +385,7 @@ async fn dispatch_phase(harness: &Harness, args: &FlowBenchArgs) -> anyhow::Resu
         "\n## dispatch — {} standard-only graph walks (× {per_walk} dispatched nodes), same-binary",
         args.dispatch_iters,
     );
-    let mut w = harness.worker(None).await?;
+    let mut w = harness.worker().await?;
     // The bench walks the v2 fixture flow; the JSON rides in from HERE (SR2).
     let (bare_ns, mut samples) = w.dispatch(args.dispatch_iters, &definition).await?;
     let count = samples.len() as u64;
@@ -474,7 +424,7 @@ async fn hotreload_phase(
         "\n## hotreload — {} catalog version flips, new version live < 1s",
         args.hotreload_iters
     );
-    let mut w = harness.worker(None).await?;
+    let mut w = harness.worker().await?;
     let (fix, _fix_task) = fixture_client(db_url).await?;
     seed_fixture_flows(&fix).await?;
 
@@ -520,85 +470,6 @@ async fn hotreload_phase(
     println!(
         "worst flip->live = {worst:?}; PASS(hotreload < 1s, behavior changed): {pass} (time_ok={time_ok}, behavior_ok={behavior_ok})"
     );
-    Ok(pass)
-}
-
-// ---------------------------------------------------------------------------
-// resume
-// ---------------------------------------------------------------------------
-
-async fn resume_phase(
-    harness: &Harness,
-    args: &FlowBenchArgs,
-    db_url: &str,
-) -> anyhow::Result<bool> {
-    println!(
-        "\n## resume — {} kill-mid-run cycles, exactly-one side effect (idempotent)",
-        args.resume_iters
-    );
-    // Deterministic version for the resume gate (host-side fixture, SR2).
-    let (fix, fix_task) = fixture_client(db_url).await?;
-    seed_fixture_flows(&fix).await?;
-    drop(fix);
-    let _ = fix_task.await;
-    let mut setup = harness.worker(None).await?;
-
-    let mut clean_kills = 0usize; // epoch trap actually fired
-    let mut duplicate_absorbed = 0usize; // side effect committed pre-kill, then re-run absorbed
-    let mut all_single = true; // post-resume count == 1 for every cycle
-    let mut completed = 0usize;
-
-    for i in 0..args.resume_iters {
-        let run_id = format!("resume-{i}");
-        setup.call_reset(&run_id).await?;
-
-        // Attempt 1: run into the kill window, then epoch-kill the store.
-        let mut victim = harness.worker(Some(KILL_TICKS)).await?;
-        let killed = victim.call_run_until_kill(&run_id, "receipt").await;
-        let interrupted = match killed {
-            Ok(Ok(_)) | Ok(Err(_)) => false, // must never return
-            Err(e) => matches!(e.downcast_ref::<Trap>(), Some(Trap::Interrupt)),
-        };
-        drop(victim);
-        if interrupted {
-            clean_kills += 1;
-        } else {
-            tracing::error!(run_id, "run-until-kill returned instead of trapping");
-        }
-
-        // Did the side effect commit before the kill? (Proves the resume path
-        // will face a genuine duplicate.)
-        let pre = setup.call_sink_count(&run_id).await?;
-        if pre == 1 {
-            duplicate_absorbed += 1;
-        }
-
-        // Attempt 2: a fresh instance resumes from the checkpoint.
-        let mut resumer = harness.worker(None).await?;
-        let ran = resumer.call_run(&run_id, "receipt").await?;
-        let post = setup.call_sink_count(&run_id).await?;
-        if post == 1 {
-            completed += 1;
-        } else {
-            all_single = false;
-            tracing::error!(run_id, post, "resume left != 1 side-effect rows");
-        }
-        drop(resumer);
-        let _ = ran;
-    }
-
-    println!(
-        "clean kills = {clean_kills}/{n}, side effect committed pre-kill = {duplicate_absorbed}/{n}, resumed-to-single-row = {completed}/{n}",
-        n = args.resume_iters
-    );
-    // Every cycle must: trap cleanly, and end with exactly one side-effect row;
-    // and the duplicate-absorb path must be exercised (pre-kill commit) so the
-    // gate proves idempotency, not just that we never double-ran.
-    let pass = all_single
-        && clean_kills == args.resume_iters
-        && completed == args.resume_iters
-        && duplicate_absorbed == args.resume_iters;
-    println!("PASS(resume: killed mid-run, single idempotent side effect): {pass}");
     Ok(pass)
 }
 

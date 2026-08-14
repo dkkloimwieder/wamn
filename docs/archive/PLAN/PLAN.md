@@ -342,20 +342,16 @@ effect-attempt facts grow with execution history — so **item 3 measures the th
 separately**, or a healthy checkpoint benchmark will conceal seed and capture growth behind
 a claim that "durable storage is bounded by concurrency."
 
-**Durability is the minimum authoritative state needed either to resume before an effectful
-intent or to classify the run conservatively after one.** When a send may have completed but
-its outcome was not recorded, the system deliberately declines to reproduce that outcome:
-the run becomes `effect-uncertain` and no second dispatch is possible. The checkpoint is a
-resume point — frontier, the payloads in flight *on* that frontier, occurrence counters, and
-context. An effectful node's output is durable because it is the payload on the next token;
-history is discarded because nothing downstream can observe it.
+**For MVP, durability classifies a run conservatively; it does not restore a mid-run
+frontier.** An expired pre-effect claim may restart the single-shot execution from admitted
+input. When a send may have completed but its outcome was not recorded, the system
+deliberately declines to reproduce that outcome: the run becomes `effect-uncertain`, its
+queue eligibility is fenced, and no second dispatch is possible.
 
-**What is live today:** `reconstruct()` rebuilds a run by replaying every completed node's
-captured emission, and carries `ReconstructError::CaptureOff` to prove it — capture is
-load-bearing for recovery. FLOW-SPEC requires the opposite (capture-exempt attempt state;
-"capture `off` still recovers"). Boundary checkpointing is the replacement: its writers
-exist, its reader is unwired, and `state_json` is read only for the parked-wake deadline.
-This item finishes that migration.
+**What is live today:** `wamn-0h0g.4.5` deleted persisted-frontier reconstruction, rerun,
+partial-rerun, and checkpoint-restore APIs. `node_runs`, state facts, and the effect ledger
+support observation, forward fenced transitions, and conservative classification; none is
+restore authority. Capture is therefore never load-bearing for execution.
 
 ### Why bulk cannot live in Postgres
 
@@ -448,12 +444,11 @@ shared primitive gets this split**; blob is its newest instance, and the next on
 
 ### Rules this establishes
 
-- **Capture is never load-bearing.** Recovery reads the authoritative boundary checkpoint and,
-  for external effects, the immutable effect ledger. `node_runs` is a reconstruction projection;
-  it carries no attempt authority, and recovery never depends on a payload column.
-- **The completion write and the boundary checkpoint commit together.** No observable state
-  where an attempt is `success` and the checkpoint predates it — the output would exist
-  only in a column that may be absent.
+- **Capture is never load-bearing.** The immutable effect ledger supports conservative
+  classification, while `node_runs` is a fact projection with no frontier or restore
+  authority. Execution never depends on a capture payload column.
+- **The completion write and its fenced state transition commit together.** No observable
+  state may report an attempt as `success` while its authoritative run/node facts predate it.
 - **Blob first, then the reference.** Ordering, not atomicity, is the safety property: an
   orphaned blob is recoverable garbage, a dangling reference is an unrecoverable run.
   Content addressing makes retries idempotent and orphans safely collectible — an orphan
@@ -492,8 +487,8 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   upgrades, and the author-facing meaning of "Replay" from acquiring incompatible
   interpretations — a retained bundle is not executable merely because its bytes exist.
 
-  **Decided (wamn-4u7p.1): three author operations, with “Replay” reserved for controlled
-  execution.**
+  **Post-MVP decision record (wamn-4u7p.1): three future author operations, with “Replay”
+  reserved for controlled execution. None is exposed by the MVP.**
 
   | Operation | Executes? | Definition and authority | Durable result |
   |---|---|---|---|
@@ -505,8 +500,8 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   unavailable pinned executable or credential generation and never substitutes a current
   definition. It runs with an ephemeral database, deterministic clock and randomness,
   fixture-only credentials, and doubles or recorders that cannot reach live egress or emit
-  production business events. Arbitrary mid-graph seeding and partial rerun exist only in
-  that scenario boundary.
+  production business events. If promoted after MVP, arbitrary mid-graph seeding and partial
+  rerun belong only in that scenario boundary.
 
   Live re-execution always starts at the entry transition and never claims historical
   equivalence. Durable lineage records the operation kind, origin, and selected definition:
@@ -514,9 +509,10 @@ shared primitive gets this split**; blob is its newest instance, and the next on
   run, and audit reconstruction produces no run. Item 8 applies the same split to events:
   historical pinned processing is controlled Replay; processing retained input with the
   current definition is explicitly Reprocess/live re-execution.
-- **The checkpoint is unscrubbed by necessity** — scrubbing a frontier payload resumes to
-  different results. Scrubbing is a capture convenience and **not a security boundary**;
-  secrets travel by credential reference and must not ride in payloads.
+- **MVP has no resume checkpoint.** If frontier persistence is promoted after MVP, its
+  payload must be unscrubbed to preserve semantics. Scrubbing remains a capture convenience
+  and **not a security boundary**; secrets travel by credential reference and must not ride
+  in payloads.
 
 ### v1 effect posture — one attempt, one dispatch
 

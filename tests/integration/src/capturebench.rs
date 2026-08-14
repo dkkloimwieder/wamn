@@ -4,12 +4,12 @@
 //! `deploy/sql/run-state.sql` into a throwaway ephemeral schema, then exercises
 //! the SAME pure capture logic (`wamn_run_state::capture`) and the SAME `node_runs`
 //! insert builders the flowrunner guest binds — so the admitted mode's facts,
-//! the reconstruction verdict, the secret-containment property, and the
+//! the capture-mode verdict, the secret-containment property, and the
 //! retention verb all run against real Postgres over the real prepared statements
 //! (SR12b), without standing up the wasm runtime.
 //!
 //! Gate phases:
-//!   off              — `off` writes no node I/O facts and reconstructs to CaptureOff.
+//!   off              — `off` writes no node I/O facts.
 //!   output-too-large — a full-capture output over the fixed ceiling is NULL with
 //!                      its full size and content hash retained.
 //!   redaction        — full-capture success and error rows contain no known raw secret.
@@ -24,11 +24,9 @@ use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
 
-use wamn_flow::{Flow, ResolvedInterfaces};
-use wamn_run_state::{
-    CaptureMode, NodeRunRecord, ReconstructError, RunRecord, capture, reconstruct,
-};
-use wamn_runner::Plan;
+#[cfg(test)]
+use wamn_flow::Flow;
+use wamn_run_state::{CaptureMode, capture};
 
 use crate::ctl_process;
 
@@ -281,19 +279,13 @@ async fn write_error(
     Ok(())
 }
 
-/// Completion ports for the fixture's one ordinary node type. 9b7e2a7 gave
-/// validation this port map, so a plan can no longer be compiled without it; the
-/// engine owns the `event` entry's ports, which is why entry types are absent.
-fn resolved_interfaces() -> ResolvedInterfaces {
-    ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])])
-}
-
 /// A minimal linear flow `a -> b` behind a typed entry.
 ///
 /// 9b7e2a7 (wamn-5wd1.34) replaced the document's `trigger` + `entry` fields with
 /// a typed entry node. Capture is an admission fact and is deliberately absent
 /// from this authored document, so the config-free `event` entry keeps `a` as
 /// an ordinary captured work node rather than making it the entry itself.
+#[cfg(test)]
 fn linear_flow() -> Flow {
     let graph = json!({
         "schema-version": "0.1", "flow-id": "cap", "version": 1,
@@ -307,60 +299,12 @@ fn linear_flow() -> Flow {
     Flow::from_json(&graph.to_string()).expect("capture fixture flow parses")
 }
 
-/// Read a run's completed node-runs back and fold them through reconstruction —
-/// the driver's exact resume path, so a NULL `output_json` (capture off) surfaces
-/// as CaptureOff.
-fn load_node_runs(rows: &[tokio_postgres::Row], run_id: &str) -> Vec<NodeRunRecord> {
-    let mut out = Vec::with_capacity(rows.len());
-    for row in rows {
-        let node_id: String = row.get(0);
-        let current_plan_hash: String = row.get(1);
-        let occurrence: i32 = row.get(2);
-        let seq: i32 = row.get(3);
-        let port: Option<String> = row.get(4);
-        let output_text: Option<String> = row.get(5);
-        // SQL NULL output => None => CaptureOff, exactly as the guest maps it.
-        let output = output_text.map(|s| serde_json::from_str::<Value>(&s).expect("output json"));
-        let mut rec = NodeRunRecord::success(
-            run_id,
-            current_plan_hash,
-            &node_id,
-            seq as u32,
-            port.unwrap_or_else(|| "main".into()),
-            Value::Null,
-        );
-        rec.occurrence = occurrence as u32;
-        rec.output = output;
-        out.push(rec);
-    }
-    out
-}
-
-async fn reconstruct_verdict(
-    client: &Client,
-    flow: &Flow,
-    run_id: &str,
-) -> anyhow::Result<Result<(), ReconstructError>> {
-    let rows = client
-        .query(
-            &wamn_run_state::sql::select_completed_node_runs_sql(),
-            &[&run_id],
-        )
-        .await
-        .context("read completed node_runs")?;
-    let node_runs = load_node_runs(&rows, run_id);
-    let plan =
-        Plan::compile(flow, &resolved_interfaces()).map_err(|e| anyhow::anyhow!("compile: {e}"))?;
-    let run = RunRecord::new(run_id, "cap", 1, json!({ "trig": 1 }));
-    Ok(reconstruct(&plan, &run, &node_runs).map(|_| ()))
-}
-
 // ---------------------------------------------------------------------------
-// off: no I/O facts + CaptureOff replay
+// off: no I/O facts
 // ---------------------------------------------------------------------------
 
 async fn off_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
-    println!("\n## off — capture writes no I/O facts and reconstructs CaptureOff");
+    println!("\n## off — capture writes no I/O facts");
     reset(admin_url).await?;
     let (app, _h) = connect_app(app_url).await?;
 
@@ -385,10 +329,8 @@ async fn off_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         && row.get::<_, bool>(1)
         && row.get::<_, bool>(2)
         && row.get::<_, bool>(3);
-    let verdict = reconstruct_verdict(&app, &linear_flow(), run_id).await?;
-    let capture_off = matches!(verdict, Err(ReconstructError::CaptureOff { .. }));
-    let pass = no_facts && capture_off;
-    println!("PASS(off: no I/O facts + CaptureOff replay): {pass}");
+    let pass = no_facts;
+    println!("PASS(off: no I/O facts): {pass}");
     Ok(pass)
 }
 

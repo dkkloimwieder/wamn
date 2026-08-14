@@ -15,10 +15,8 @@
 //! Idempotent and safe to repeat on a cadence
 //! (`deploy/platform/run-retention.example.yaml`).
 //!
-//! **v0 is age-based only:** replay lineage (`replay_of`/`root_run_id`) is not
-//! consulted, so a retained replay whose ORIGIN aged out loses the origin's
-//! captured history. A lineage-aware retention (keep a chain while any member is
-//! in window) is a deferral.
+//! **v0 is age-based only:** every terminal run is independently eligible once
+//! it ages beyond the configured window.
 
 use anyhow::{Context as _, bail};
 use clap::Args;

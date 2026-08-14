@@ -53,7 +53,9 @@
 //! cutover requires drained leases and refuses nonempty dead-letter history;
 //! the frame/effect-writer cutovers remove retired identity/recovery columns;
 //! the capture-projection cutover removes retired non-authoritative node
-//! columns; and the stored-test cutover removes retired persistence. PostgreSQL
+//! columns; the rerun-lineage cutover removes only the two retired run columns
+//! and their canonical index while preserving every run row; and the stored-test
+//! cutover removes retired persistence. PostgreSQL
 //! validates new CHECKs against existing rows and aborts on incompatible data.
 
 use std::borrow::Cow;
@@ -79,6 +81,7 @@ const RUNS_EXECUTION_BUNDLE_FK_DEF: &str = "FOREIGN KEY (tenant_id, execution_bu
 const RELEASE_FLOWS_EXECUTION_BUNDLE_FK_DEF: &str = "FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)";
 const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs USING btree (tenant_id, catalog_id, catalog_version)";
 const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
+const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
 const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 
@@ -2912,6 +2915,8 @@ pub enum RunPlaneActionKind {
     PartitionPlaneCutover,
     /// Delete retired durable child, wait, and invoke-depth run state.
     ChildRunCutover,
+    /// Delete retired replay/root run lineage while preserving every run row.
+    RerunLineageCutover,
     /// Delete retired stored-suite tables, audit relation, and helper functions.
     StoredSuiteCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
@@ -2988,6 +2993,47 @@ pub struct RunPlanePlan {
 
 const RETIRED_CAPTURE_PROJECTION_COLUMNS: &[&str] = &["preview_head", "capture_mode", "redacted"];
 const LEGACY_OUTPUT_SIZE_COLUMN: &str = "payload_size";
+const RETIRED_RERUN_LINEAGE_COLUMNS: &[&str] = &["replay_of", "root_run_id"];
+
+fn rerun_lineage_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("runs").is_some_and(|columns| {
+        RETIRED_RERUN_LINEAGE_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+    }) || obs.indexes.contains_key("runs_root")
+}
+
+fn rerun_lineage_cutover_sql(schema: &BareSchemaName) -> String {
+    let target = schema.quoted();
+    let expected_index = rewrite_schema(RUNS_ROOT_INDEX_DEF, schema);
+    format!(
+        r#"LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE;
+DO $rerun_lineage_cutover$
+DECLARE
+    observed_definition text;
+    expected_definition constant text := '{expected_index}';
+BEGIN
+    SELECT pg_catalog.pg_get_indexdef(index_relation.oid)
+      INTO observed_definition
+      FROM pg_catalog.pg_class AS index_relation
+      JOIN pg_catalog.pg_namespace AS namespace
+        ON namespace.oid = index_relation.relnamespace
+     WHERE namespace.nspname = '{schema}'
+       AND index_relation.relname = 'runs_root';
+    IF observed_definition IS NOT NULL
+       AND observed_definition <> expected_definition THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'rerun-lineage-cutover-refuses-unknown-runs-root';
+    END IF;
+END
+$rerun_lineage_cutover$;
+DROP INDEX IF EXISTS {target}.runs_root;
+ALTER TABLE {target}.runs
+    DROP COLUMN IF EXISTS replay_of,
+    DROP COLUMN IF EXISTS root_run_id;"#
+    )
+}
 
 fn capture_output_size_rename_needed(obs: &RunPlaneObservation) -> bool {
     obs.tables.get("node_runs").is_some_and(|columns| {
@@ -3450,6 +3496,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
+    let rerun_lineage_cutover_needed = rerun_lineage_cutover_needed(obs);
+    if rerun_lineage_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RerunLineageCutover,
+            target: "runs.rerun-lineage".to_string(),
+            sql: rerun_lineage_cutover_sql(schema),
+        });
+    }
+
     if stored_suite_cutover_needed(obs) {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::StoredSuiteCutover,
@@ -3592,7 +3647,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             .expect("capture_mode is present only on a present runs table")
             .iter()
             .filter(|column| {
-                !child_run_cutover_needed || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str())
+                (!child_run_cutover_needed || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str()))
+                    && (!rerun_lineage_cutover_needed
+                        || !RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
             })
             .cloned();
         plan.actions.push(RunPlaneAction {
@@ -3891,6 +3948,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 !(table == "run_queue"
                     && partition_plane_cutover_needed
                     && RETIRED_PARTITION_COLUMNS.contains(&column.as_str()))
+                    && !(table == "runs"
+                        && rerun_lineage_cutover_needed
+                        && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&column.as_str()))
             })
             .map(|column| quote_ident(column))
             .collect::<Vec<_>>()
@@ -4258,6 +4318,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if child_run_cutover_needed
                     && table == "runs"
                     && RETIRED_CHILD_RUN_COLUMNS.contains(&col.as_str())
+                {
+                    continue;
+                }
+                if rerun_lineage_cutover_needed
+                    && table == "runs"
+                    && RETIRED_RERUN_LINEAGE_COLUMNS.contains(&col.as_str())
                 {
                     continue;
                 }
@@ -4638,7 +4704,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
 
 /// A present index is STALE when the record definition names a record column of
 /// its table that the live definition does not (word-boundary token match, so
-/// `run_id` never matches inside `root_run_id`). This is deliberately the
+/// `run_id` never matches inside `event_root_run_id`). This is deliberately the
 /// narrow, real drift class — the pre-E4 `run_queue_claimable` without
 /// `stream_seq` and the pre-hardening disposition history without
 /// `append_ordinal` — not a general definition differ.
@@ -6404,7 +6470,6 @@ CREATE INDEX event_registrations_by_entity
                 "runs_idempotency",
                 "runs_release",
                 "runs_response_deadline",
-                "runs_root",
                 "runs_run_deadline",
             ]
         );
@@ -6494,6 +6559,83 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .any(|action| action.kind == RunPlaneActionKind::ChildRunCutover)
         );
+    }
+
+    #[test]
+    fn rerun_lineage_cutover_is_row_preserving_exact_and_idempotent() {
+        let mut legacy = observation_at_record();
+        legacy.tables.get_mut("runs").expect("record runs").extend(
+            RETIRED_RERUN_LINEAGE_COLUMNS
+                .iter()
+                .map(|column| (*column).to_string()),
+        );
+        legacy.indexes.insert(
+            "runs_root".to_string(),
+            rewrite_schema(RUNS_ROOT_INDEX_DEF, &schema("demo")),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let cutover = &plan.actions[0];
+        assert_eq!(cutover.kind, RunPlaneActionKind::RerunLineageCutover);
+        assert_eq!(cutover.target, "runs.rerun-lineage");
+        assert!(
+            cutover
+                .sql
+                .starts_with("LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE;")
+        );
+        assert!(cutover.sql.contains(
+            "expected_definition constant text := 'CREATE INDEX runs_root ON demo.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)'"
+        ));
+        assert!(cutover.sql.contains(
+            "observed_definition IS NOT NULL\n       AND observed_definition <> expected_definition"
+        ));
+        let guard = cutover
+            .sql
+            .find("rerun-lineage-cutover-refuses-unknown-runs-root")
+            .expect("exact-index refusal");
+        let first_drop = cutover
+            .sql
+            .find("DROP INDEX IF EXISTS")
+            .expect("drop index");
+        assert!(guard < first_drop, "guard precedes destructive DDL");
+        assert!(cutover.sql.contains("DROP COLUMN IF EXISTS replay_of"));
+        assert!(cutover.sql.contains("DROP COLUMN IF EXISTS root_run_id"));
+        for retained in ["event_source_run_id", "event_root_run_id", "event_depth"] {
+            assert!(
+                !cutover.sql.contains(retained),
+                "cutover must not name retained event causation: {retained}"
+            );
+        }
+        assert!(!cutover.sql.contains("CASCADE"));
+        assert!(plan.extra_columns.is_empty());
+
+        assert!(
+            !plan_run_plane(&schema("demo"), &observation_at_record())
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::RerunLineageCutover)
+        );
+    }
+
+    #[test]
+    fn rerun_lineage_cutover_refuses_an_unknown_same_name_index_before_ddl() {
+        let mut legacy = observation_at_record();
+        legacy.indexes.insert(
+            "runs_root".to_string(),
+            "CREATE INDEX runs_root ON demo.runs USING btree (tenant_id, flow_id)".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        let cutover = plan
+            .actions
+            .first()
+            .expect("same-name index requires guarded cutover");
+        assert_eq!(cutover.kind, RunPlaneActionKind::RerunLineageCutover);
+        let refusal = cutover.sql.find("RAISE EXCEPTION").expect("refusal");
+        let destructive = cutover.sql.find("DROP INDEX IF EXISTS").expect("DDL");
+        assert!(refusal < destructive);
+        assert!(plan.extra_columns.is_empty());
     }
 
     #[test]
@@ -7715,7 +7857,7 @@ CREATE INDEX event_registrations_by_entity
             plan.actions[writer_position]
                 .sql
                 .contains("ADD CONSTRAINT effect_attempt_dispatches_attempt_fk"),
-            "the following writer cutover owns dispatch-coordinate and FK reconstruction"
+            "the following writer cutover owns dispatch-coordinate and FK restoration"
         );
     }
 

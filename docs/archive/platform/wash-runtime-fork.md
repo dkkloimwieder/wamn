@@ -129,7 +129,6 @@ fork-load-bearing behaviors:
   tick, so a lost commit fails loudly.
 - **S2:** the chaos gate (epoch-kill mid-transaction ×100; destroy-never-repool)
   (`pgbench`).
-- **S3:** kill/resume idempotency (`flowbench`).
 - **bench phase 5:** the ResourceLimiter differentiation gate (concurrent
   64/192 MiB budgets each trap at their own number; unbudgeted at the
   ceiling; over-ceiling never allocates) — the regression that the limiter

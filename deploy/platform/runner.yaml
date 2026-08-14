@@ -24,12 +24,13 @@
 # TWO REPLICAS, NO LEADER: the durable-queue lease + `FOR UPDATE SKIP LOCKED`
 # make replicas + scale-out safe — each replica claims distinct runs under its
 # own `app.runner` owner (the pod name, injected via WAMN_RUNNER from the
-# downward API), and a dead replica's lease ages out for another to reclaim
-# (fqg.2). Scale replicas to the project's concurrency.
+# downward API). A dead replica's expired lease is classified and fenced before
+# the queue can proceed (fqg.2). Scale replicas to the project's concurrency.
 #
-# CRASH SAFETY + SHUTDOWN: abrupt death is safe — an in-flight run's lease
-# simply expires and another replica reclaims + resumes it from `node_runs`
-# (branch-aware reconstruction, fqg.2), exactly-once via the sink idempotency.
+# CRASH SAFETY + SHUTDOWN: abrupt death releases no false completion. A
+# single-shot in-memory walk is restarted from zero only when claim-time
+# classification proves no effect attempt exists. Any abandoned effect attempt
+# is fenced and terminally effect-uncertain rather than re-dispatched.
 # The runner also handles SIGTERM explicitly (PID 1 gets no default disposition)
 # and exits in milliseconds, so a rollout never waits out the grace period.
 #

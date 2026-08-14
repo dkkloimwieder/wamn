@@ -1,11 +1,9 @@
 -- Run-state storage schema (5.7). The production tables that PERSIST flow
 -- execution: `runs` (one row per execution) and `node_runs` (one row per node
 -- execution). This is the durable, queryable record behind run history, at-
--- least-once execution, branch-aware replay, and partial re-run — the durable
--- half of what the pure engine (crates/execution/flow-engine, 5.2) left as an in-memory
--- seam. The reconstruction/partial-re-run LOGIC lives in crates/execution/run-state;
--- these tables are the shape it reads and the driver (components/execution/flowrunner)
--- writes.
+-- least-once execution and immutable run/node history. The pure engine
+-- (crates/execution/flow-engine, 5.2) is a single-shot in-memory reducer; these
+-- tables are the facts the driver (components/execution/flowrunner) writes.
 --
 -- STANDALONE ARTIFACT: deliberately NOT included by deploy/sql/postgres-init.sql, the
 -- same convention as deploy/sql/catalog-schema.sql (3.1/3.4/3.5/3.6). The S3/S6 gate
@@ -167,14 +165,12 @@ $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_flow_resolution_change() FROM PUBLIC;
 
 -- ---------------------------------------------------------------------------
--- runs: one row per flow execution. `input_json` is the trigger payload replay
--- seeds the entry node with; `result_json` is the last node's output on
+-- runs: one row per flow execution. `input_json` is the admitted trigger
+-- payload; `result_json` is the last node's output on
 -- completion; `state_json` carries transient run state such as bounded-retry
--- scheduling and execution context. A replay/partial-re-run is a NEW row (fresh run_id)
--- linked to its origin via `replay_of` + `root_run_id`, so the original run's
--- history stays immutable (audit/billing-safe lineage). `idempotency_key` dedupes
--- at-least-once REDELIVERY of the same trigger (a partial-unique index); a replay
--- mints a fresh key. `fail_kind` mirrors the engine `FailKind` so history can
+-- scheduling and execution context. `idempotency_key` dedupes at-least-once
+-- redelivery of the same trigger (a partial-unique index). `fail_kind` mirrors
+-- the engine `FailKind` so history can
 -- flag an upstream bug (`invalid-input`) apart from a terminal error or an
 -- exhausted retry budget. Status values are exactly wamn_run_store::RunStatus
 -- as_sql (tied to the crate by a drift-guard test).
@@ -190,8 +186,9 @@ CREATE TABLE wamn_run.runs (
     execution_bundle_hash text NOT NULL,
     attachment_id   text,
     registration_id text,
-    -- Trusted CDC causation is distinct from replay lineage. The immediate
-    -- source lets admission verify the carried root/depth under tenant RLS.
+    -- Trusted immutable CDC event ancestry is distinct from retired execution
+    -- lineage. The immediate source lets admission verify the carried root/depth
+    -- under tenant RLS.
     event_source_run_id text,
     event_root_run_id text,
     event_depth      int CHECK (event_depth BETWEEN 0 AND 16),
@@ -209,8 +206,6 @@ CREATE TABLE wamn_run.runs (
         CHECK (admission_context_version = '0.1'),
     platform_revision text NOT NULL DEFAULT 'legacy',
     idempotency_key text,
-    replay_of       text,
-    root_run_id     text,
     caller_outcome_kind text
         CHECK (caller_outcome_kind IN ('responded', 'failed')),
     caller_outcome_json jsonb,
@@ -271,11 +266,10 @@ CREATE TABLE wamn_run.runs (
 -- At-least-once: a redelivered trigger with the same key collapses to one run.
 CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs (tenant_id, idempotency_key)
     WHERE idempotency_key IS NOT NULL;
--- History listing / lineage traversal.
+-- History listing and trusted CDC event-causation traversal.
 CREATE INDEX runs_flow ON wamn_run.runs (tenant_id, flow_id, created_at);
 CREATE INDEX runs_release ON wamn_run.runs (tenant_id, catalog_id, catalog_version);
 CREATE INDEX runs_execution_bundle ON wamn_run.runs (tenant_id, execution_bundle_hash);
-CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
@@ -309,8 +303,8 @@ GRANT INSERT (
     environment, execution_bundle_hash, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, result_json, state_json, invocation_context,
-    admission_context_version, platform_revision, idempotency_key, replay_of,
-    root_run_id, caller_outcome_kind, caller_outcome_json,
+    admission_context_version, platform_revision, idempotency_key,
+    caller_outcome_kind, caller_outcome_json,
     caller_http_status, caller_release_node_id, caller_outcome_hash,
     caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
     fail_kind, fail_node, fail_reason, created_at, updated_at
@@ -319,8 +313,8 @@ GRANT INSERT (
     environment, execution_bundle_hash, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, result_json, state_json, invocation_context,
-    admission_context_version, platform_revision, idempotency_key, replay_of,
-    root_run_id, caller_outcome_kind, caller_outcome_json,
+    admission_context_version, platform_revision, idempotency_key,
+    caller_outcome_kind, caller_outcome_json,
     caller_http_status, caller_release_node_id, caller_outcome_hash,
     caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
     fail_kind, fail_node, fail_reason, created_at, updated_at
@@ -546,16 +540,14 @@ CREATE POLICY invocation_admissions_tenant ON wamn_run.invocation_admissions
 GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.invocation_admissions TO wamn_app;
 
 -- ---------------------------------------------------------------------------
--- node_runs: one row per framed node execution, the branch-aware reconstruction source.
+-- node_runs: one row per framed node execution.
 -- The occurrence identity is (tenant_id, run_id, frame_id, local_node_id, occurrence):
 -- `occurrence` disambiguates a node the frame LOOPS through (0 = first visit).
 -- Frameless/call-free executions use the root frame (frame_id 0, no parent or
 -- call site) with current_plan_hash = runs.execution_bundle_hash.
--- Reconstruction (crates/execution/run-state) replays only COMPLETED rows
--- (status success/error) in `seq` order, folding each as an emission on
--- `output_port` carrying `output_json`; a `started` row is an outstanding node
--- the driver re-dispatches. `input_json` is what a partial
--- re-run seeds the node with. The `*_ref` columns are RESERVED nullable seams
+-- `seq` preserves execution order for history reads. `input_json` and
+-- `output_json` carry capture facts when the run's admission mode allows them.
+-- The `*_ref` columns are RESERVED nullable seams
 -- for 5.10 (payload byte store). Capture policy belongs to the run admission
 -- row and is not duplicated per node; full capture stores only scrubbed input,
 -- output, output size, and the optional output hash.
@@ -599,7 +591,7 @@ CREATE TABLE wamn_run.node_runs (
     PRIMARY KEY (tenant_id, run_id, frame_id, local_node_id, occurrence),
     FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs (tenant_id, run_id) ON DELETE CASCADE
 );
--- Reconstruction reads a run's completed rows in dispatch order.
+-- Run history reads rows in dispatch order.
 CREATE INDEX node_runs_seq ON wamn_run.node_runs (tenant_id, run_id, seq);
 ALTER TABLE wamn_run.node_runs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.node_runs FORCE ROW LEVEL SECURITY;

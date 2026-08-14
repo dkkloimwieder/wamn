@@ -37,7 +37,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
             input_json jsonb, result_json jsonb, state_json jsonb, \
             updated_at timestamptz NOT NULL DEFAULT now(), \
-            idempotency_key text, replay_of text, root_run_id text, \
+            idempotency_key text, \
             fail_kind text, fail_node text, fail_reason text, \
             CHECK (capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'), \
             PRIMARY KEY (tenant_id, run_id));\

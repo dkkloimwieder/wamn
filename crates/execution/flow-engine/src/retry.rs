@@ -35,14 +35,14 @@ impl RetryPolicy {
     };
 
     /// Platform ceiling on the *author-supplied* backoff cap (`cap-ms`),
-    /// 3_600_000 ms (1 h). A single retry backoff must not out-park the janitor's
+    /// 3_600_000 ms (1 h). A single retry backoff must not outlast the janitor's
     /// reap grace — the longest timescale the run lifecycle acknowledges before a
     /// stuck non-terminal run is reaped as `infrastructure-failure` (the 1 h
     /// grace supplied to the host-owned exhausted-run reaper).
-    /// A retry is error *recovery*, not an intentional `delay`-node wait (which
-    /// parks unboundedly by design); an author cap past this horizon turns the
-    /// exponential backoff into an effectively-infinite park, indistinguishable
-    /// from a wedged run, so it is clamped here at parse time. The bound applies
+    /// A retry is an in-memory response to an error, not an intentional
+    /// `delay`-node wait; an author cap past this horizon turns the exponential
+    /// backoff into an effectively infinite wait, indistinguishable from a
+    /// wedged run, so it is clamped here at parse time. The bound applies
     /// only to author input — the default (30 s) is well under it and unchanged.
     const CAP_MS_CEILING: u64 = 3_600_000;
 
@@ -107,7 +107,7 @@ mod tests {
     use serde_json::json;
 
     // R20: an author cap-ms past the platform ceiling (the janitor reap grace) is
-    // clamped at parse time — a retry must not out-park the run lifecycle's own
+    // clamped at parse time — a retry must not outlast the run lifecycle's own
     // horizon. A day-long cap lands on the 1 h ceiling.
     #[test]
     fn author_cap_ms_over_ceiling_is_clamped() {

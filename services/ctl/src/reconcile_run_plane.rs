@@ -69,13 +69,14 @@ use wamn_schema_control::{
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
-const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 7] = [
+const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 8] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::ExecutionPinCutover,
     RunPlaneActionKind::FrameIdentityCutover,
     RunPlaneActionKind::EffectWriterCutover,
     RunPlaneActionKind::PartitionPlaneCutover,
     RunPlaneActionKind::ChildRunCutover,
+    RunPlaneActionKind::RerunLineageCutover,
     RunPlaneActionKind::StoredSuiteCutover,
 ];
 
@@ -569,6 +570,7 @@ mod tests {
                 RunPlaneActionKind::EffectWriterCutover,
                 RunPlaneActionKind::PartitionPlaneCutover,
                 RunPlaneActionKind::ChildRunCutover,
+                RunPlaneActionKind::RerunLineageCutover,
                 RunPlaneActionKind::StoredSuiteCutover,
             ]
         );

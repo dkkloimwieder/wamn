@@ -1,6 +1,6 @@
 //! The reducer: a pure, synchronous state machine that walks one run through the
 //! [`Plan`]. Every effect — dispatching a node, sleeping for a backoff,
-//! checkpointing to Postgres — belongs to the driver; the engine only decides the
+//! recording run history — belongs to the driver; the engine only decides the
 //! next [`Step`] and folds a [`NodeOutcome`] into [`ExecutionState`].
 //!
 //! ## Driver loop
@@ -23,9 +23,8 @@
 //! join barriers are a later item). Fan-out (several edges from one port) runs
 //! **sequentially** in frontier order; parallel frame scheduling needs a
 //! separate design.
-//! Branch-aware *durable* resume (persisting the frontier) is 5.7; v1 checkpoints
-//! only `step_seq` (completed-step count), which the driver uses for the linear
-//! resume path.
+//! The reducer is single-shot and in-memory; it does not expose a durable
+//! recovery or frontier-restoration contract.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -37,10 +36,6 @@ use crate::outcome::NodeOutcome;
 use crate::plan::Plan;
 use crate::retry::RetryPolicy;
 use crate::throttle::ThrottleKey;
-
-mod checkpoint;
-
-pub use checkpoint::{CheckpointError, restore, snapshot};
 
 /// Terminal + in-progress run status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,14 +109,13 @@ pub struct ExecutionState {
     step_seq: u64,
     /// Live dispatches [`Plan::next`] has handed out for this state — the
     /// per-invocation counter the dispatch budget (cjv.4) is checked against.
-    /// Reconstruction ([`Plan::resume`]) does not count.
     dispatched: u64,
     /// COMPLETED visits per node (a success or an error-ROUTED emission; retries
     /// of one visit do not count) — the source of [`Dispatch::occurrence`], so a
     /// merge/loop node's Nth visit persists as its own `node_runs` row instead of
     /// colliding on occurrence 0 (wamn-03m / R24).
     visits: HashMap<String, u32>,
-    /// Durable per-run document. Successful emissions may replace it; error
+    /// Per-run context document. Successful emissions may replace it; error
     /// emissions never can.
     context: Value,
     result: Value,
@@ -136,13 +130,12 @@ impl ExecutionState {
     pub fn status(&self) -> ExecutionStatus {
         self.status
     }
-    /// Count of successfully-completed node steps — the checkpoint key the driver
-    /// persists (and compares on resume).
+    /// Count of successfully-completed node steps.
     pub fn step_seq(&self) -> u64 {
         self.step_seq
     }
-    /// Live node executions dispatched for this state this invocation (the
-    /// counter the dispatch budget is checked against; reconstruction exempt).
+    /// Live node executions dispatched for this state (the counter the dispatch
+    /// budget is checked against).
     pub fn dispatched(&self) -> u64 {
         self.dispatched
     }
@@ -151,7 +144,7 @@ impl ExecutionState {
     pub fn result(&self) -> &Value {
         &self.result
     }
-    /// The durable per-run context document visible to the next dispatch.
+    /// The per-run context document visible to the next dispatch.
     pub fn context(&self) -> &Value {
         &self.context
     }
@@ -159,16 +152,9 @@ impl ExecutionState {
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
     }
-    /// Durable caller ownership as understood by the graph walk.
+    /// Caller ownership as understood by the graph walk.
     pub fn caller_state(&self) -> CallerState {
         self.caller
-    }
-    /// The shared-throttle key the currently-active node carries, if any — the
-    /// gate a `rate-limited` retry must coordinate on before its next dispatch.
-    /// Exposed so a driver (and [`Plan::restore_retry`]'s round-trip test) can
-    /// read the key restored after a reclaim (wamn-2jkm.66).
-    pub fn current_throttle(&self) -> Option<&ThrottleKey> {
-        self.current.as_ref().and_then(|a| a.throttle.as_ref())
     }
 }
 
@@ -178,20 +164,17 @@ pub enum Step {
     /// Run this node, then feed its outcome back via [`Plan::apply`].
     Dispatch(Dispatch),
     /// Apply an engine-reserved graph transition. These nodes are never handed
-    /// to the user node dispatcher. A durable driver first commits the described
-    /// boundary, then acknowledges it with [`Plan::apply_reserved`].
+    /// to the user node dispatcher. The driver applies the described boundary,
+    /// then acknowledges it with [`Plan::apply_reserved`].
     Reserved(ReservedStep),
     /// The next node is a scheduled retry not yet due: coordinate on `throttle`
     /// (if any) and sleep until `until_ms`, then call [`Plan::next`] again. A
-    /// driver that spans invocations (the durable queue) translates this into a
-    /// park for `until_ms - now` and persists `attempt`, restoring it via
-    /// [`Plan::restore_retry`] on the next claim so the retry budget survives the
-    /// park→reclaim→reconstruct cycle instead of resetting to 0 (R32).
+    /// This wait belongs to the current in-memory execution only.
     Wait {
         node: String,
         until_ms: u64,
         /// The attempt the pending retry will run as — the budget cursor a
-        /// cross-invocation driver persists so the next claim resumes it.
+        /// retry cursor for the current reducer state.
         attempt: u32,
         throttle: Option<ThrottleKey>,
     },
@@ -211,8 +194,7 @@ pub enum CallerState {
 }
 
 /// An engine-owned node transition. Repeated calls to [`Plan::next`] return the
-/// same value until the driver acknowledges it, making a crash before or after
-/// the caller CAS safe to replay.
+/// same value within this execution state until the driver acknowledges it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ReservedStep {
     /// Synthetically complete the unique entry with the admitted payload.
@@ -316,7 +298,7 @@ pub struct Dispatch {
     /// The payload entering this node — the trigger payload at `entry`, otherwise
     /// the upstream node's output (unchanged across retries of this node).
     pub payload: Value,
-    /// Snapshot of the durable run context observed by this dispatch.
+    /// Snapshot of the run context observed by this dispatch.
     pub context: Value,
     /// 0 on first execution, incremented per retry.
     pub attempt: u32,
@@ -333,8 +315,8 @@ impl Dispatch {
     /// Canonical logical input captured before an effect attempt is dispatched.
     ///
     /// The attempt protocol stores this document (or a reference to its bytes),
-    /// ensuring recovery evaluates context-dependent parameters against the
-    /// snapshot the original attempt observed.
+    /// preserving the exact context-dependent parameters observed by the
+    /// dispatched attempt.
     pub fn attempt_input(&self) -> Value {
         serde_json::json!({
             "connection": self.connection,
@@ -344,125 +326,6 @@ impl Dispatch {
         })
     }
 }
-
-/// One completed node execution, replayed to reconstruct a run's frontier on
-/// resume (5.7). A record on `MAIN_PORT` or a branch port folds as a
-/// `Success { payload, port }` through [`Plan::apply`]; an **error-routed** record
-/// (port [`ERROR_PORT`](crate::ERROR_PORT), payload the `{"error": …}` object)
-/// instead replays as the LIVE error-route transition (advance the visit,
-/// re-enter the error branch — no `step_seq`/`result` effect), matching live
-/// `error_or_fail` (R26). Either way reconstruction needs no error taxonomy, only
-/// the `(node, port, payload)` the run actually emitted, and a node with a
-/// persisted record is never re-dispatched (its effect does not repeat).
-#[derive(Debug, Clone, PartialEq)]
-pub struct Recorded {
-    /// The node that completed.
-    pub node: String,
-    /// The port it emitted on (`MAIN_PORT`, a branch port, or `ERROR_PORT`).
-    pub port: String,
-    /// The payload it emitted (the next token's payload downstream).
-    pub payload: Value,
-    /// Whole-document context replacement emitted by this completed node.
-    pub context: Option<Value>,
-}
-
-impl Recorded {
-    pub fn new(node: impl Into<String>, port: impl Into<String>, payload: Value) -> Recorded {
-        Recorded {
-            node: node.into(),
-            port: port.into(),
-            payload,
-            context: None,
-        }
-    }
-
-    /// Attach the whole-document context replacement recorded with this emission.
-    pub fn with_context(mut self, context: Value) -> Recorded {
-        self.context = Some(context);
-        self
-    }
-}
-
-/// Why a run could not be reconstructed from its recorded steps
-/// ([`Plan::resume`]).
-#[derive(Debug, Clone, PartialEq)]
-pub enum ResumeError {
-    /// A recorded step named a node the engine did not dispatch at that point:
-    /// the persisted history diverged from the flow's walk (a reconstruction bug
-    /// or a flow-version mismatch). Carries the recorded node and the node the
-    /// engine actually dispatched.
-    Mismatch {
-        recorded: String,
-        dispatched: String,
-    },
-    /// A recorded step remained after the run already reached a terminal status —
-    /// more history than the flow walks (a corrupt or duplicated record).
-    Overrun { node: String },
-    /// The engine asked to wait (a scheduled retry) mid-reconstruction; recorded
-    /// steps are terminal emissions and must never wait.
-    UnexpectedWait { node: String },
-    /// Error-port emissions are context-free by contract.
-    ErrorContext { node: String },
-    /// The engine refused the recorded emission at the node it dispatched: the
-    /// history names the right node but is not a transition this flow can take
-    /// (a corrupt or legacy row — e.g. an entry record whose captured payload is
-    /// no longer the run's admitted input). Carries the node and the refusal.
-    Apply { node: String, error: ApplyError },
-}
-
-impl std::fmt::Display for ResumeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ResumeError::Mismatch {
-                recorded,
-                dispatched,
-            } => write!(
-                f,
-                "recorded step for node {recorded:?} but the flow dispatched {dispatched:?}"
-            ),
-            ResumeError::Overrun { node } => {
-                write!(f, "recorded step for node {node:?} past the end of the run")
-            }
-            ResumeError::UnexpectedWait { node } => {
-                write!(
-                    f,
-                    "unexpected retry wait at node {node:?} during reconstruction"
-                )
-            }
-            ResumeError::ErrorContext { node } => {
-                write!(f, "error-port record for node {node:?} carries context")
-            }
-            ResumeError::Apply { node, error } => {
-                write!(
-                    f,
-                    "recorded step for node {node:?} is not applicable: {error}"
-                )
-            }
-        }
-    }
-}
-
-impl std::error::Error for ResumeError {}
-
-/// Why a partial re-run seed was rejected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SeedError {
-    UnknownNode(String),
-    ReservedNode(String),
-}
-
-impl std::fmt::Display for SeedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SeedError::UnknownNode(node) => write!(f, "unknown node {node:?}"),
-            SeedError::ReservedNode(node) => {
-                write!(f, "engine-reserved node {node:?} cannot be user-seeded")
-            }
-        }
-    }
-}
-
-impl std::error::Error for SeedError {}
 
 impl<'f> Plan<'f> {
     /// Start a run: the entry node holds the trigger payload.
@@ -502,13 +365,6 @@ impl<'f> Plan<'f> {
     /// [`ExecutionFailureKind::RunawayBudget`] — the runtime bound that keeps a permitted
     /// cycle from running forever (cjv.4).
     pub fn next(&self, state: &mut ExecutionState, now_ms: u64) -> Step {
-        self.next_counted(state, now_ms, true)
-    }
-
-    /// `next`, with the dispatch budget optionally exempted — the private
-    /// reconstruction path ([`Plan::resume`]) replays recorded steps without
-    /// counting them, so a resumed run's live walk gets the full budget.
-    fn next_counted(&self, state: &mut ExecutionState, now_ms: u64, count_budget: bool) -> Step {
         if state.status.is_terminal() {
             return Step::Done(state.status);
         }
@@ -555,28 +411,26 @@ impl<'f> Plan<'f> {
                 };
             }
         }
-        if count_budget {
-            if state.dispatched >= self.dispatch_budget {
-                // Deliberately NOT error_or_fail: an error path could itself be
-                // part of the loop, so the budget verdict is unconditionally
-                // terminal.
-                let node = state.current.take().expect("current set above").node;
-                state.status = ExecutionStatus::Failed;
-                state.failure = Some(Failure {
-                    node,
-                    kind: ExecutionFailureKind::RunawayBudget,
-                    detail: ErrorDetail::coded(
-                        "runaway-budget",
-                        format!(
-                            "node-execution budget of {} spent without terminating",
-                            self.dispatch_budget
-                        ),
+        if state.dispatched >= self.dispatch_budget {
+            // Deliberately NOT error_or_fail: an error path could itself be
+            // part of the loop, so the budget verdict is unconditionally
+            // terminal.
+            let node = state.current.take().expect("current set above").node;
+            state.status = ExecutionStatus::Failed;
+            state.failure = Some(Failure {
+                node,
+                kind: ExecutionFailureKind::RunawayBudget,
+                detail: ErrorDetail::coded(
+                    "runaway-budget",
+                    format!(
+                        "node-execution budget of {} spent without terminating",
+                        self.dispatch_budget
                     ),
-                });
-                return Step::Done(ExecutionStatus::Failed);
-            }
-            state.dispatched += 1;
+                ),
+            });
+            return Step::Done(ExecutionStatus::Failed);
         }
+        state.dispatched += 1;
         let a = state.current.as_ref().expect("current set above");
         Step::Dispatch(self.build_dispatch(state, a))
     }
@@ -769,7 +623,7 @@ impl<'f> Plan<'f> {
         Ok(())
     }
 
-    /// Acknowledge a durable engine-reserved boundary.
+    /// Acknowledge an engine-reserved boundary.
     pub fn apply_reserved(
         &self,
         state: &mut ExecutionState,
@@ -847,9 +701,8 @@ impl<'f> Plan<'f> {
         }
     }
 
-    /// The error-ROUTE transition, shared by [`error_or_fail`](Self::error_or_fail)'s
-    /// routed arm and the [`resume`](Self::resume) fold so live and replay cannot
-    /// drift: clear the active slot, count the COMPLETED visit (an error-routed
+    /// The error-ROUTE transition shared by all routed failures: clear the active
+    /// slot, count the COMPLETED visit (an error-routed
     /// emission advances the node's occurrence exactly as a success does — R24),
     /// and enqueue the [`ERROR_PORT`](crate::outcome::ERROR_PORT) successors carrying
     /// `payload`. Deliberately leaves `step_seq` and `result` untouched: an error
@@ -896,8 +749,7 @@ impl<'f> Plan<'f> {
         } else {
             // An error-ROUTED emission is a COMPLETED visit (the driver persists
             // its `node_runs` row), so it advances the node's occurrence exactly
-            // as a success does; a run-ending failure above does not. Shared with
-            // the resume fold so replay reproduces this transition exactly (R26).
+            // as a success does; a run-ending failure above does not (R26).
             self.route_error(state, node, detail.to_error_payload());
         }
     }
@@ -932,222 +784,12 @@ impl<'f> Plan<'f> {
             }
         }
     }
-
-    /// Reconstruct a run's state by replaying its `completed` node executions —
-    /// the **branch-aware durable resume** the driver uses instead of the S3
-    /// linear `step_seq` (5.7). A success/branch [`Recorded`] step folds as a
-    /// success emission through [`apply`](Self::apply); an [`ERROR_PORT`](crate::ERROR_PORT)
-    /// step replays as the LIVE error-route transition (advance the visit,
-    /// re-enter the error branch, leaving `step_seq` and `result` untouched —
-    /// R26), so the rebuilt frontier is exactly what the original walk left
-    /// outstanding: the same branch was taken, the same merges arrived,
-    /// error-routed nodes re-entered their error branch. The returned
-    /// [`ExecutionState`] is positioned to continue — the driver calls
-    /// [`next`](Self::next)/[`apply`](Self::apply) from there, re-dispatching only
-    /// nodes that have no record (so their effects run at-least-once, deduped by
-    /// the node's own idempotency).
-    ///
-    /// `completed` must be in the run's original dispatch order (persist a
-    /// monotonic sequence). A record that names a different node than the flow
-    /// dispatches is a [`ResumeError::Mismatch`] — a drift guard against a
-    /// corrupt history or a flow-version skew; one that names the RIGHT node but
-    /// carries an emission the engine refuses is a [`ResumeError::Apply`]. Every
-    /// shape of corrupt or legacy history is a typed error, never a panic.
-    pub fn resume(
-        &self,
-        run_id: impl Into<String>,
-        input: Value,
-        completed: &[Recorded],
-    ) -> Result<ExecutionState, ResumeError> {
-        let mut state = self.start(run_id, input);
-        for rec in completed {
-            // Reconstruction is exempt from the dispatch budget: recorded steps
-            // are history, not live work — the resumed walk gets the full
-            // per-invocation budget.
-            match self.next_counted(&mut state, 0, false) {
-                Step::Dispatch(d) => {
-                    if d.node != rec.node {
-                        return Err(ResumeError::Mismatch {
-                            recorded: rec.node.clone(),
-                            dispatched: d.node,
-                        });
-                    }
-                    if rec.port == crate::outcome::ERROR_PORT {
-                        if rec.context.is_some() {
-                            return Err(ResumeError::ErrorContext {
-                                node: rec.node.clone(),
-                            });
-                        }
-                        // R26: an error-ROUTED record replays as the LIVE
-                        // error-route transition, NOT a success fold. Folding it
-                        // through apply(Success) would bump `step_seq` and
-                        // overwrite `result` — neither of which live `error_or_fail`
-                        // does; only the visit/occurrence advance and the
-                        // error-branch enqueue are real. Sharing `route_error`
-                        // keeps replay == live.
-                        self.route_error(&mut state, &rec.node, rec.payload.clone());
-                    } else {
-                        // Corrupt or legacy history is DATA, not a bug in this
-                        // library: a persisted row can name the node the flow
-                        // dispatches and still carry an emission the engine
-                        // refuses. Surface the refusal typed instead of
-                        // panicking inside a pure reducer.
-                        self.apply(
-                            &mut state,
-                            &d,
-                            NodeOutcome::Success {
-                                payload: rec.payload.clone(),
-                                port: rec.port.clone(),
-                                context: rec.context.clone(),
-                            },
-                            0,
-                        )
-                        .map_err(|error| ResumeError::Apply {
-                            node: rec.node.clone(),
-                            error,
-                        })?;
-                    }
-                }
-                Step::Reserved(step) => {
-                    if step.node() != rec.node {
-                        return Err(ResumeError::Mismatch {
-                            recorded: rec.node.clone(),
-                            dispatched: step.node().to_string(),
-                        });
-                    }
-                    // Structurally unreachable today (`step` is built from this
-                    // very state), but the fold stays total: a pure library
-                    // never panics on persisted input.
-                    self.apply_reserved(&mut state, &step)
-                        .map_err(|error| ResumeError::Apply {
-                            node: rec.node.clone(),
-                            error,
-                        })?;
-                }
-                Step::Wait { node, .. } => return Err(ResumeError::UnexpectedWait { node }),
-                Step::Done(_) => {
-                    return Err(ResumeError::Overrun {
-                        node: rec.node.clone(),
-                    });
-                }
-            }
-        }
-        Ok(state)
-    }
-
-    /// Restore the durable context snapshot read from the run checkpoint.
-    ///
-    /// The driver first reconstructs the frontier from immutable node emissions,
-    /// then installs the context stored atomically with the latest boundary.
-    pub fn restore_context(
-        &self,
-        state: &mut ExecutionState,
-        context: Value,
-    ) -> Result<(), ApplyError> {
-        if !context.is_object() {
-            return Err(ApplyError::InvalidContext(context));
-        }
-        state.context = context;
-        Ok(())
-    }
-
-    /// Seed a fresh run whose frontier is a single token at `node` carrying
-    /// `payload` — the **partial re-run** entry point (5.7). Upstream nodes are
-    /// *not* re-executed; the driver walks the downstream subtree from here,
-    /// typically with a failed node's captured input so a fixed transient error
-    /// resumes without re-firing already-committed upstream effects. `run_id`
-    /// should be a fresh run (the caller links it to the original via
-    /// `replay_of`/`root_run_id`), keeping the original run's history immutable.
-    pub fn seed_at(
-        &self,
-        run_id: impl Into<String>,
-        node: &str,
-        payload: Value,
-    ) -> Result<ExecutionState, SeedError> {
-        let Some(seed) = self.node(node) else {
-            return Err(SeedError::UnknownNode(node.to_string()));
-        };
-        if matches!(
-            seed.node_type.as_str(),
-            "request" | "event" | "respond" | "fail"
-        ) {
-            return Err(SeedError::ReservedNode(node.to_string()));
-        }
-        let mut frontier = VecDeque::new();
-        frontier.push_back(Token {
-            node: node.to_string(),
-            payload,
-        });
-        Ok(ExecutionState {
-            run_id: run_id.into(),
-            status: ExecutionStatus::Running,
-            frontier,
-            current: None,
-            step_seq: 0,
-            dispatched: 0,
-            visits: HashMap::new(),
-            context: Value::Object(Default::default()),
-            result: Value::Null,
-            failure: None,
-            caller: CallerState::None,
-        })
-    }
-
-    /// Restore an in-flight retry after reconstruction (5.7 + R32). A run that
-    /// parked on a scheduled retry ([`Step::Wait`]) replays only its **completed**
-    /// nodes — the retrying node has no `node_runs` row, so [`resume`](Self::resume)
-    /// leaves it as the outstanding frontier front with an empty `current` slot and
-    /// its attempt count gone. The durable queue's park already served the backoff
-    /// (`available_at`), so this promotes that token to the active slot carrying its
-    /// persisted `attempt`, **due now** — without it the next promotion resets
-    /// `attempt` to 0, the retry budget never advances, and `RetryExhausted` never
-    /// fires (the run instead loops until it is reaped as an infra-failure).
-    ///
-    /// Promotes IFF the frontier's front token is `node` (the token
-    /// [`next`](Self::next) would promote): returns whether it did. A stale record
-    /// — the node has since completed on an earlier claim, so it is no longer the
-    /// front — is a no-op, leaving the walk to promote the true front fresh.
-    ///
-    /// `throttle` is the shared-throttle key a `rate-limited` retry carried when it
-    /// parked (wamn-2jkm.66): the per-run backoff rides the queue park
-    /// (`available_at`), but the CROSS-run gate identity would otherwise be dropped
-    /// here (`throttle: None`), so a driver coordinating the shared gate after a
-    /// reclaim would lose the key. Persisting it alongside `(node, attempt)` in
-    /// `state_json` and restoring it onto the promoted node keeps the reclaim
-    /// faithful. Nothing consumes the key across runs yet; this is restore fidelity.
-    pub fn restore_retry(
-        &self,
-        state: &mut ExecutionState,
-        node: &str,
-        attempt: u32,
-        throttle: Option<ThrottleKey>,
-    ) -> bool {
-        if state.status.is_terminal() || state.current.is_some() || self.node(node).is_none() {
-            return false;
-        }
-        match state.frontier.front() {
-            Some(tok) if tok.node == node => {
-                let tok = state.frontier.pop_front().expect("front checked present");
-                state.current = Some(Active {
-                    node: tok.node,
-                    payload: tok.payload,
-                    attempt,
-                    // Due now: the queue park (available_at) served the backoff,
-                    // so the engine must not re-wait on a stale monotonic deadline.
-                    retry_until_ms: 0,
-                    throttle,
-                });
-                true
-            }
-            _ => false,
-        }
-    }
 }
 
 /// Refuse any request emission that does not preserve the admitted input.
 ///
-/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
-/// repeats the check so direct and reconstructed engine users share the invariant.
+/// Drivers call this before recording a successful attempt; [`Plan::apply`]
+/// repeats the check so all engine users share the invariant.
 pub fn validate_request_outcome(
     dispatch: &Dispatch,
     outcome: &NodeOutcome,
@@ -1170,8 +812,8 @@ pub fn validate_request_outcome(
 
 /// Refuse any event emission that does not preserve the externally admitted input.
 ///
-/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
-/// repeats the check so direct and reconstructed engine users share the invariant.
+/// Drivers call this before recording a successful attempt; [`Plan::apply`]
+/// repeats the check so all engine users share the invariant.
 pub fn validate_event_outcome(
     dispatch: &Dispatch,
     outcome: &NodeOutcome,
@@ -1194,7 +836,7 @@ pub fn validate_event_outcome(
 
 /// Refuse any fail result other than the exact authored terminal detail.
 ///
-/// Durable drivers call this before entering the privileged transaction that
+/// Drivers call this before entering the privileged transaction that
 /// completes the attempt, releases an attached caller, and terminalizes the run.
 /// [`Plan::apply`] repeats the check for direct engine users.
 pub fn validate_fail_outcome(dispatch: &Dispatch, outcome: &NodeOutcome) -> Result<(), ApplyError> {

@@ -24,7 +24,7 @@ pub enum NodeOutcome {
     Success {
         payload: Value,
         port: String,
-        /// Whole-document durable run-context replacement. `None` leaves the
+        /// Whole-document in-memory run-context replacement. `None` leaves the
         /// current document unchanged; there are deliberately no merge semantics.
         context: Option<Value>,
     },

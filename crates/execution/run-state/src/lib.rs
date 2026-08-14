@@ -1,49 +1,16 @@
 //! # wamn-run-state — the durable execution lifecycle
 //!
 //! This crate owns the transactionally coupled `runs`, `node_runs`, `run_queue`,
-//! lease, timer, and terminal lifecycle. It contains only models,
-//! decisions, reconstruction, and parameterized SQL; Postgres, clocks, and
+//! lease, timer, and terminal lifecycle. It contains only decisions and
+//! parameterized SQL; Postgres, clocks, and
 //! doorbells remain adapter effects.
 //!
 //! Like [`wamn_runner`], this crate's default guest-safe graph is **pure**: no DB,
 //! no wasm, no clock. The non-default `native` feature contains the private
-//! effect-writer adapter. The crate maps the engine's execution taxonomy to storage literals
-//! ([`RunStatus`]) and drives the engine's [`resume`](wamn_runner::Plan::resume) /
-//! [`seed_at`](wamn_runner::Plan::seed_at) primitives; the driver
-//! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects against the
-//! schema in `deploy/sql/run-state.sql`.
-//!
-//! ```
-//! use wamn_run_state::{reconstruct, NodeRunRecord, RunRecord};
-//! use wamn_runner::{ExecutionStatus, Plan};
-//! use wamn_flow::{Flow, ResolvedInterfaces};
-//! use serde_json::json;
-//!
-//! let flow = Flow::from_json(r#"{
-//!   "schema-version": "0.1", "flow-id": "f", "version": 1,
-//!   "nodes": [{"id": "a", "type": "event"}, {"id": "b", "type": "echo"}],
-//!   "edges": [{"from": "a", "to": "b"}]
-//! }"#).unwrap();
-//! let interfaces = ResolvedInterfaces::from([
-//!     ("echo".to_string(), vec!["main".to_string()])
-//! ]);
-//! let plan = Plan::compile(&flow, &interfaces).unwrap();
-//!
-//! // The run was killed after `a` committed: only `a` is persisted. `a` is a
-//! // `event` entry, so its recorded output is the admitted input, unchanged.
-//! let run = RunRecord::new("run-1", "f", 1, json!({"n": 1}));
-//! let node_runs = [NodeRunRecord::success(
-//!     "run-1",
-//!     "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
-//!     "a",
-//!     0,
-//!     "main",
-//!     json!({"n": 1}),
-//! )];
-//! let st = reconstruct(&plan, &run, &node_runs).unwrap();
-//! assert_eq!(st.status(), ExecutionStatus::Running);
-//! assert_eq!(st.step_seq(), 1); // `a` folded; `b` is the outstanding frontier
-//! ```
+//! effect-writer adapter. The crate maps the engine's execution taxonomy to
+//! storage literals ([`RunStatus`]); the driver
+//! (`components/execution/flowrunner`) supplies the `wamn:postgres` effects
+//! against the schema in `deploy/sql/run-state.sql`.
 //!
 //! Admission and enqueue producers compose the transaction API exposed by this
 //! crate while owning their database transactions.
@@ -67,7 +34,6 @@ pub mod admission;
 pub mod attempt;
 /// Node-level I/O capture and durable output projection.
 pub mod capture;
-pub mod context;
 /// Shared strict credential document for the private native effect writer.
 #[cfg(feature = "effect-writer-credential")]
 pub mod effect_writer_credential;
@@ -79,11 +45,8 @@ mod effect_writer;
 pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
-mod model;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
-mod reconstruct;
-mod rerun;
 mod resolution;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
@@ -116,9 +79,6 @@ pub use effect_writer_credential::{
     EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
     effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
 };
-pub use model::{NodeRunRecord, RunRecord};
-pub use reconstruct::{ReconstructError, reconstruct, reconstruct_with_context};
-pub use rerun::{PartialRerun, RerunError, plan_partial_rerun, plan_replay};
 pub use resolution::{
     BoundConnectionRequirement, CandidatePlanOverride, CatalogResolutionPlan,
     FlowResolutionRefusal, PinnedRunResolution, RunFlowResolution, resolve_run_flow_resolutions,

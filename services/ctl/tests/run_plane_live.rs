@@ -43,6 +43,9 @@
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
 //!   a no-op.
+//! - **rerun-lineage cutover**: populated runs retain their payload and trusted
+//!   event causation while only `replay_of`, `root_run_id`, and the exact
+//!   `runs_root` index disappear. A same-name foreign index refuses atomically.
 //! - **stored-test cutover**: all five retired tables and both helper functions
 //!   are removed child first while the four authoring-test relations survive;
 //!   the obsolete validation dimension and command kinds converge only when
@@ -399,6 +402,7 @@ async fn run_plane_reconcile_live() {
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
     child_run_cutover_leg(&su).await;
+    rerun_lineage_cutover_leg(&su).await;
     capture_mode_additive_leg(&su, &url).await;
     invocation_admission_retention_leg(&su).await;
     stored_suite_cutover_leg(&su).await;
@@ -437,6 +441,16 @@ async fn child_run_cutover_live() {
     };
     let su = connect(&url).await;
     child_run_cutover_leg(&su).await;
+}
+
+#[tokio::test]
+async fn rerun_lineage_cutover_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the rerun-lineage cutover gate");
+        return;
+    };
+    let su = connect(&url).await;
+    rerun_lineage_cutover_leg(&su).await;
 }
 
 async fn regress_execution_pin_contract(su: &Client) {
@@ -1746,9 +1760,10 @@ async fn child_run_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-            environment,execution_bundle_hash,root_run_id) \
+            environment,execution_bundle_hash,trigger_source, \
+            event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','retained-run'); \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','event','source-run','event-root',3); \
          INSERT INTO {SCHEMA}.run_flow_resolutions \
            (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
          VALUES ('child-cutover','retained-run','f', \
@@ -1798,7 +1813,8 @@ async fn child_run_cutover_leg(su: &Client) {
     let retained = su
         .query_one(
             &format!(
-                "SELECT r.root_run_id, n.frame_id, f.source_artifact_hash \
+                "SELECT r.trigger_source, r.event_source_run_id, r.event_root_run_id, r.event_depth, \
+                        n.frame_id, f.source_artifact_hash \
                    FROM {SCHEMA}.runs AS r \
                    JOIN {SCHEMA}.node_runs AS n USING (tenant_id,run_id) \
                    JOIN {SCHEMA}.run_flow_resolutions AS f USING (tenant_id,run_id) \
@@ -1810,10 +1826,19 @@ async fn child_run_cutover_leg(su: &Client) {
         .expect("read retained root facts");
     assert_eq!(
         retained.get::<_, Option<String>>(0).as_deref(),
-        Some("retained-run")
+        Some("event")
     );
-    assert_eq!(retained.get::<_, i64>(1), 0);
-    assert_eq!(retained.get::<_, String>(2), "sha256:retained-source");
+    assert_eq!(
+        retained.get::<_, Option<String>>(1).as_deref(),
+        Some("source-run")
+    );
+    assert_eq!(
+        retained.get::<_, Option<String>>(2).as_deref(),
+        Some("event-root")
+    );
+    assert_eq!(retained.get::<_, Option<i32>>(3), Some(3));
+    assert_eq!(retained.get::<_, i64>(4), 0);
+    assert_eq!(retained.get::<_, String>(5), "sha256:retained-source");
     assert!(
         reconcile_run_plane::reconcile(su, &schema(), false)
             .await
@@ -1884,6 +1909,184 @@ async fn child_run_cutover_leg(su: &Client) {
         Some(RunPlaneActionKind::ChildRunCutover)
     );
     assert!(!column_exists(su, "runs", "waiting_child_run_id").await);
+}
+
+/// Retired execution-lineage metadata is removable on a populated schema. The
+/// exact legacy index is the only same-name object the cutover may destroy.
+async fn rerun_lineage_cutover_leg(su: &Client) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    seed_run_pin_parents(su, "rerun-cutover", "cat", 1, "dev").await;
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.runs \
+           ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
+           WHERE root_run_id IS NOT NULL; \
+         INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash,trigger_source,input_json,state_json,replay_of,root_run_id, \
+            event_source_run_id,event_root_run_id,event_depth) \
+         VALUES ('rerun-cutover','retained-run','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','event','{{\"payload\":7}}','{{\"cursor\":9}}', \
+                 'legacy-parent','legacy-root','event-source','event-root',4);"
+    ))
+    .await
+    .expect("install populated retired rerun lineage");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("populated rerun lineage cuts over without rewriting the run");
+    assert_eq!(
+        plan.actions.first().map(|action| action.kind),
+        Some(RunPlaneActionKind::RerunLineageCutover),
+        "rerun lineage deletion is leading: {:#?}",
+        plan.actions
+    );
+    assert!(!column_exists(su, "runs", "replay_of").await);
+    assert!(!column_exists(su, "runs", "root_run_id").await);
+    assert!(indexdef(su, "runs_root").await.is_none());
+    assert!(
+        indexdef(su, "runs_event_root").await.is_some(),
+        "event-causation traversal index survives"
+    );
+    let retained_row = su
+        .query_one(
+            &format!(
+                "SELECT trigger_source,event_source_run_id,event_root_run_id,event_depth, \
+                        input_json::text,state_json::text \
+                   FROM {SCHEMA}.runs \
+                  WHERE tenant_id='rerun-cutover' AND run_id='retained-run'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retained run after rerun-lineage cutover");
+    let retained = (
+        retained_row.get::<_, String>(0),
+        retained_row.get::<_, String>(1),
+        retained_row.get::<_, String>(2),
+        retained_row.get::<_, i32>(3),
+        retained_row.get::<_, String>(4),
+        retained_row.get::<_, String>(5),
+    );
+    assert_eq!(
+        retained,
+        (
+            "event".to_string(),
+            "event-source".to_string(),
+            "event-root".to_string(),
+            4,
+            "{\"payload\": 7}".to_string(),
+            "{\"cursor\": 9}".to_string(),
+        )
+    );
+    let retained_event_contract = su
+        .query_one(
+            &format!(
+                "SELECT \
+                   EXISTS (SELECT FROM pg_trigger t \
+                     JOIN pg_class c ON c.oid=t.tgrelid \
+                     JOIN pg_namespace n ON n.oid=c.relnamespace \
+                    WHERE n.nspname='{SCHEMA}' AND c.relname='runs' \
+                      AND t.tgname='runs_event_lineage_immutable' AND NOT t.tgisinternal), \
+                   EXISTS (SELECT FROM pg_constraint con \
+                     JOIN pg_class c ON c.oid=con.conrelid \
+                     JOIN pg_namespace n ON n.oid=c.relnamespace \
+                    WHERE n.nspname='{SCHEMA}' AND c.relname='runs' \
+                      AND pg_get_constraintdef(con.oid,true) LIKE '%event_source_run_id%' \
+                      AND pg_get_constraintdef(con.oid,true) LIKE '%event_root_run_id%' \
+                      AND pg_get_constraintdef(con.oid,true) LIKE '%event_depth%'), \
+                   has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','INSERT') \
+                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_source_run_id','UPDATE') \
+                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','INSERT') \
+                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_root_run_id','UPDATE') \
+                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','INSERT') \
+                     AND has_column_privilege('wamn_app','{SCHEMA}.runs','event_depth','UPDATE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retained event-lineage contract");
+    assert!(retained_event_contract.get::<_, bool>(0));
+    assert!(retained_event_contract.get::<_, bool>(1));
+    assert!(retained_event_contract.get::<_, bool>(2));
+    assert!(
+        reconcile_run_plane::reconcile(su, &schema(), false)
+            .await
+            .expect("observe converged rerun-lineage cutover")
+            .actions
+            .iter()
+            .all(|action| action.kind != RunPlaneActionKind::RerunLineageCutover)
+    );
+
+    // Restore the retired columns with a foreign same-name index. The action's
+    // lock + exact definition guard must roll back before any column or row is
+    // changed, then the canonical restored definition must cut over cleanly.
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.runs \
+           ADD COLUMN replay_of text, ADD COLUMN root_run_id text; \
+         UPDATE {SCHEMA}.runs SET replay_of='restored-parent',root_run_id='restored-root' \
+          WHERE tenant_id='rerun-cutover' AND run_id='retained-run'; \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,flow_id);"
+    ))
+    .await
+    .expect("install unknown same-name runs_root mutant");
+    let before = indexdef(su, "runs_root")
+        .await
+        .expect("mutant index exists");
+    let error = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect_err("unknown same-name runs_root must refuse");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    assert_db_code(postgres, "55000", "unknown runs_root refusal");
+    assert!(column_exists(su, "runs", "replay_of").await);
+    assert!(column_exists(su, "runs", "root_run_id").await);
+    assert_eq!(
+        indexdef(su, "runs_root").await.as_deref(),
+        Some(before.as_str())
+    );
+    let lineage_row = su
+        .query_one(
+            &format!(
+                "SELECT replay_of,root_run_id,event_root_run_id FROM {SCHEMA}.runs \
+                  WHERE tenant_id='rerun-cutover' AND run_id='retained-run'"
+            ),
+            &[],
+        )
+        .await
+        .expect("refusal preserved row");
+    let lineage = (
+        lineage_row.get::<_, Option<String>>(0),
+        lineage_row.get::<_, Option<String>>(1),
+        lineage_row.get::<_, Option<String>>(2),
+    );
+    assert_eq!(
+        lineage,
+        (
+            Some("restored-parent".to_string()),
+            Some("restored-root".to_string()),
+            Some("event-root".to_string()),
+        )
+    );
+
+    su.batch_execute(&format!(
+        "DROP INDEX {SCHEMA}.runs_root; \
+         CREATE INDEX runs_root ON {SCHEMA}.runs (tenant_id,root_run_id) \
+           WHERE root_run_id IS NOT NULL;"
+    ))
+    .await
+    .expect("restore canonical legacy index definition");
+    let restored = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("restored canonical legacy shape cuts over");
+    assert_eq!(
+        restored.actions.first().map(|action| action.kind),
+        Some(RunPlaneActionKind::RerunLineageCutover)
+    );
+    assert!(!column_exists(su, "runs", "replay_of").await);
+    assert!(!column_exists(su, "runs", "root_run_id").await);
+    assert!(indexdef(su, "runs_root").await.is_none());
+    assert!(indexdef(su, "runs_event_root").await.is_some());
 }
 
 /// A populated queue is retained when no worker holds a live lease. Only the
@@ -2534,6 +2737,8 @@ async fn from_zero_leg(su: &Client) {
         );
     }
     for column in [
+        "replay_of",
+        "root_run_id",
         "parent_run_id",
         "parent_node_id",
         "parent_occurrence",
@@ -2548,6 +2753,7 @@ async fn from_zero_leg(su: &Client) {
             "from-zero schema retains retired child-run column: {column}"
         );
     }
+    assert!(indexdef(su, "runs_root").await.is_none());
     assert!(
         table_exists(su, "catalog", "event_registrations").await,
         "catalog schema provisioned"

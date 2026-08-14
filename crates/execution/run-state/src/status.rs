@@ -242,7 +242,7 @@ impl From<wamn_runner::ExecutionFailureKind> for FailKind {
 }
 
 /// A single node execution's status. `Started` rows are outstanding; `Success`
-/// and `Error` are the completed rows reconstruction replays.
+/// and `Error` are completed history facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeRunStatus {
@@ -269,15 +269,9 @@ impl NodeRunStatus {
     pub fn from_sql(s: &str) -> Option<NodeRunStatus> {
         NodeRunStatus::ALL.into_iter().find(|v| v.as_sql() == s)
     }
-
-    /// Whether this node-run is a completed step reconstruction replays.
-    pub fn is_completed(self) -> bool {
-        matches!(self, NodeRunStatus::Success | NodeRunStatus::Error)
-    }
 }
 
-/// A completed node-run's classified failure kind, for run history
-/// (reconstruction itself keys off the recorded emission port, not this).
+/// A completed node-run's classified failure kind for run history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum NodeErrorKind {

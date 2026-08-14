@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 use wamn_flow::{Flow, ResolvedInterfaces};
-use wamn_runner::{ApplyError, NodeOutcome, Plan, Recorded, ResumeError, Step};
+use wamn_runner::{ApplyError, NodeOutcome, Plan, Step};
 
 fn plan(source: &str) -> Plan<'static> {
     let flow = Box::leak(Box::new(Flow::from_json(source).unwrap()));
@@ -78,7 +78,7 @@ fn successful_context_writes_replace_and_effects_observe_the_snapshot() {
 }
 
 #[test]
-fn pure_replay_reconstructs_context_byte_identically_through_a_loop() {
+fn context_is_byte_identical_through_a_loop() {
     let plan = plan(
         r#"{"schema-version":"0.1","flow-id":"loop-ctx","version":1,
             "nodes":[
@@ -92,18 +92,35 @@ fn pure_replay_reconstructs_context_byte_identically_through_a_loop() {
               {"from":"loop-b","to":"loop-a"},
               {"from":"loop-a","to":"effect"}]}"#,
     );
-    let input = json!({"tick": 1});
-    let history = [
-        Recorded::new("in", "main", input.clone()),
-        Recorded::new("loop-a", "again", json!({"lap": 1}))
-            .with_context(json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 1})),
-        Recorded::new("loop-b", "main", json!({"lap": 1}))
-            .with_context(json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 1})),
-        Recorded::new("loop-a", "main", json!({"lap": 2}))
-            .with_context(json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 2})),
-    ];
-    let mut recovered = plan.resume("run", input, &history).unwrap();
-    let effect = dispatch(&plan, &mut recovered);
+    let mut state = plan.start("run", json!({"tick": 1}));
+    acknowledge_entry(&plan, &mut state);
+    for (port, payload, context) in [
+        (
+            "again",
+            json!({"lap": 1}),
+            json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 1}),
+        ),
+        (
+            "main",
+            json!({"lap": 1}),
+            json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 1}),
+        ),
+        (
+            "main",
+            json!({"lap": 2}),
+            json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 2}),
+        ),
+    ] {
+        let node = dispatch(&plan, &mut state);
+        plan.apply(
+            &mut state,
+            &node,
+            NodeOutcome::ok_with_context(payload, port, context),
+            0,
+        )
+        .unwrap();
+    }
+    let effect = dispatch(&plan, &mut state);
     let expected = json!({"cutoff": "2026-01-01T00:00:00Z", "lap": 2});
     assert_eq!(effect.context, expected);
     assert_eq!(
@@ -113,7 +130,7 @@ fn pure_replay_reconstructs_context_byte_identically_through_a_loop() {
 }
 
 #[test]
-fn invalid_replacement_is_atomic_and_error_records_cannot_mutate_context() {
+fn invalid_replacement_is_atomic() {
     let plan = plan(
         r#"{"schema-version":"0.1","flow-id":"negative-ctx","version":1,
             "nodes":[{"id":"in","type":"event"},{"id":"pure","type":"pure"}],
@@ -133,14 +150,4 @@ fn invalid_replacement_is_atomic_and_error_records_cannot_mutate_context() {
     assert!(matches!(error, ApplyError::InvalidContext(_)));
     assert_eq!(state.context(), &json!({}));
     assert_eq!(dispatch(&plan, &mut state), node);
-
-    let replay = [
-        Recorded::new("in", "main", Value::Null),
-        Recorded::new("pure", "error", json!({"error": {"message": "boom"}}))
-            .with_context(json!({"forbidden": true})),
-    ];
-    assert!(matches!(
-        plan.resume("run", Value::Null, &replay),
-        Err(ResumeError::ErrorContext { .. })
-    ));
 }

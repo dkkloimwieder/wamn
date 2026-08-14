@@ -20,19 +20,18 @@ native = [
 test-util = []
 
 [dependencies]
-# The reconstruction/partial-re-run planners drive the pure engine's resume/
-# seed_at primitives; the model persists its RunStatus/FailKind/NodeError taxonomy.
+# Run-state decisions map the pure engine's execution taxonomy to persisted
+# RunStatus/FailKind/NodeError literals.
 wamn-runner = { workspace = true }
-# Canonical JSON hashing, node-error taxonomy, and reconstruction flow types.
+# Canonical JSON hashing and node-error taxonomy.
 # Capture policy itself is run-state-owned and no longer comes from `Flow`.
 wamn-flow = { workspace = true }
 # Claim-time resolution exact-byte reads the immutable execution-plan wire.
 wamn-catalog = { workspace = true }
 # Composed run and queue statements carry their positional-parameter arity.
 wamn-pg-core = { workspace = true }
-# The run/node-run records import/export as JSON (run-history read model);
-# payloads are opaque JSON. No schemars — this is a store model, not a published
-# contract (like wamn-schema-compiler / wamn-api / wamn-runner).
+# Persisted decision payloads are opaque JSON. No schemars: these are internal
+# store facts, not published contracts (like wamn-schema-compiler / wamn-api).
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 chrono = { workspace = true, features = ["std"], optional = true }

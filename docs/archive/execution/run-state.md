@@ -1,224 +1,106 @@
 # Run state persistence (5.7)
 
-Durable run state is what makes a flow run **traceable and resumable** (the P1
-exit criterion): the `runs` / `node_runs` tables, at-least-once execution keyed by
-idempotency, a queryable run history, **branch-aware replay** from captured
-inputs, and **partial re-run** from a failed node. It is the durable half of what
-the pure engine ([`wamn-runner`](flow-runner.md), 5.2) left as an in-memory seam —
-5.2 holds an `ExecutionState` with a single `step_seq` counter; 5.7 persists one row per
-node execution and rebuilds the exact frontier from those rows.
+Run state is the durable execution record: admission identity, lifecycle,
+queue authority, caller outcome, immutable effect-attempt facts, and bounded
+author-facing node history. It does **not** make the flow engine resumable. The
+engine executes one in-memory walk and exposes no reconstruction, restore,
+replay, or partial-rerun API.
 
-One guest-safe owner, `crates/execution/run-state`, holds the complete durable
-execution lifecycle: run and node-run records, reconstruction/re-run decisions,
-queue/lease/timer state, and their parameterized SQL. It contains no DB driver,
-wasm runtime, broker, or clock. The flowrunner adapter supplies `wamn:postgres`
-effects against [`deploy/sql/run-state.sql`](../../deploy/sql/run-state.sql) and
-[`deploy/sql/run-queue.sql`](../../deploy/sql/run-queue.sql). Cron parsing, due-tick
-evaluation, and adaptive cadence are separate pure decisions in
-`crates/execution/scheduler`; only their durable anchor belongs to run-state.
+`crates/execution/run-state` owns the pure decisions and parameterized SQL for
+the transactionally coupled `runs`, `node_runs`, `run_queue`, lease, caller, and
+terminal lifecycle. It contains no database driver, wasm runtime, broker, or
+clock. Host and guest adapters execute these statements against
+[`deploy/sql/run-state.sql`](../../../deploy/sql/run-state.sql) and
+[`deploy/sql/run-queue.sql`](../../../deploy/sql/run-queue.sql).
 
-## The tables
+## Durable records
 
-`runs` — one row per execution: the flow + version, the lifecycle `status`
-(`dispatched`→`running`→`completed`/`failed`/`cancelled`, plus a janitor
-`infrastructure-failure`), the trigger `input_json` (what a replay re-runs), the
-`result_json`, a transient `state_json` (e.g. a `delay` node's parked-wake), the
-`idempotency_key` (at-least-once redelivery dedupe), the lineage links
-(`replay_of` / `root_run_id`), and the `fail_kind`/`fail_node`/`fail_reason`
-mirrored from the engine `ExecutionFailureKind`.
+`runs` is one row per admitted execution. It records the pinned flow and
+execution-bundle identity, lifecycle status, trigger input, result/failure,
+caller outcome, admission context, and optional capture policy. For CDC event
+runs, `event_source_run_id`, `event_root_run_id`, and `event_depth` are retained
+causation facts protected by a constraint, immutable trigger, index, and
+column-scoped privileges. They are not execution lineage. The former
+`replay_of`, `root_run_id`, and `runs_root` objects are retired.
 
-`node_runs` — one row per node execution, the **reconstruction source**. Its key
-`(tenant_id, run_id, node_id, occurrence)` is loop-safe: `occurrence` disambiguates
-a node the flow revisits (0 = first visit), while retries of one occurrence share
-the row and bump `attempt` — they never create new rows. A completed row carries
-`status` (`success`/`error`), the emission (`output_port` + `output_json`), and the
-node `input_json` (what a partial re-run seeds). `running`/`parked` rows are
-outstanding nodes.
+`node_runs` is a bounded history and current occurrence projection. Its key
+`(tenant_id, run_id, frame_id, local_node_id, occurrence)` distinguishes loop
+visits and framed execution. `seq` preserves history order; capture-enabled runs
+may retain scrubbed input/output facts. These rows are not folded back into an
+engine frontier and never authorize another effect dispatch.
 
-Both tables sit on the house tenant floor — `FORCE ROW LEVEL SECURITY` keyed on
-`current_setting('app.tenant', true)`, granted to the non-owner `wamn_app` role —
-so a missing claim sees zero rows. `node_runs` foreign-keys `runs`
-`ON DELETE CASCADE`.
+The immutable effect-attempt ledger is the authority for whether a claimed run
+may execute. Capture is independently optional and is never recovery authority.
 
-## SQL builders (single source, SR2)
+All run-plane tables use forced tenant RLS keyed by
+`current_setting('app.tenant', true)`. The guest-safe application role receives
+only the table and column privileges required by the owned transitions.
 
-The `runs`/`node_runs` SQL is written **once**, in `wamn_run_state::sql` — pure
-`String` text builders in the house shape: values are always `$n` parameters,
-identifiers are pinned, table names are **unqualified** (the host injects the
-schema via `search_path`, the S6 schema-as-fixture pattern), the tenant comes from
-`current_setting('app.tenant', true)`, and every status literal interpolates from
-the `status` model enums so a builder cannot drift from the lifecycle it writes.
-The module carries no DB driver, clock, or `tokio` in its dependency closure, so it
-is **guest-compilable**: both wasm guests (`flowrunner`, `poc-webhook-f1`) bind
-these builders through `wamn:postgres`, while host drivers execute the identical
-text through `tokio_postgres`. Whoever holds the connection executes — there is
-never a second author of the schema's statements (docs/archive/structure-review.md SR2).
-The load-bearing shapes (`ON CONFLICT` idempotency, the `dispatched`→`running`
-guard, the deliberately unconditional completion write, the `success`/`error`
-reconstruction filter) are pinned by shape unit tests in that module; the runtime
-production-claim PostgreSQL gate proves the retained host-owned queue handoff.
+## Single-shot crash boundary
 
-## Branch-aware replay (reconstruction)
+Execution begins with a fresh `Plan::start` state. There is no `Plan::resume`,
+frontier snapshot/restore, history fold, or mid-graph seed.
 
-On every invocation the driver reconstructs the run rather than loading a linear
-checkpoint. `wamn_run_state::reconstruct` reads the completed `node_runs` in `seq`
-order and folds each — as a `Success { payload, port }` on its recorded port —
-through the engine's `Plan::resume`. Because the fold uses the same
-`apply`/`enqueue_successors` the original walk used, the rebuilt frontier is
-**exactly** what was left outstanding: the same branch was taken, the same merges
-arrived, and an **error-routed** node re-enters its error branch (it was recorded
-as an emission on the `error` port carrying the `{"error": …}` payload, so
-reconstruction needs no error taxonomy). A node with a persisted record is never
-re-dispatched — its effect does not repeat.
+When a lease expires, the production claimant classifies the durable facts
+before doing anything else:
 
-`occurrence` is engine-computed (`Dispatch::occurrence`: the count of the node's
-prior **completed** visits in the run), so any node visited more than once — a
-loop, or a **merge**, which runs once per arriving token even in an acyclic flow —
-persists one row per visit, and replay walks the history visit-by-visit. Retries
-of one visit share its row (`attempt` bumps; `occurrence` advances only on
-completion). The old v1 shortcut (`occurrence = 0` always) silently collapsed a
-revisited node's history: correct only when **no node is visited more than
-once**, a condition merges break even in acyclic flows (wamn-03m / cjv.10 / R24).
+- If no immutable effect attempt exists, the pre-effect claim path may delete
+  replaceable node projections, clear transient `state_json`, and restart the
+  single-shot walk from zero.
+- If any immutable effect attempt exists, the run becomes
+  `effect-uncertain`, loses queue eligibility, and is never dispatched again.
 
-A record whose node does not match what the flow dispatches at that point is a
-`ResumeError::Mismatch` — a drift guard against a corrupt history or a flow-version
-skew. A completed node with no captured emission (9.6 capture off) makes the run
-`ReconstructError::CaptureOff` — explicitly non-replayable rather than silently
-wrong.
+This is deliberately conservative. An outcome that may have escaped is not
+converted into an assertion of success or failure, and an idempotency hint does
+not grant permission to resend it.
 
-### Claim-time crash classification
+Some forward transitions still write `state_json` or node history while the
+current claim is live. Those writes support fenced transition composition and
+diagnostics; they are not a durable execution checkpoint and have no public
+reader/restore contract.
 
-The durable effect-attempt ledger, not a missing `node_runs` projection, decides
-whether a crashed run can execute again. When a lease expires with no immutable
-attempt, the production claimant deletes replaceable node projections, clears
-`runs.state_json`, preserves identity/evidence and the immutable resolution map,
-then restarts from zero. Any immutable attempt instead makes the run
-`effect-uncertain` and removes queue eligibility; it is never replayed through
-ordinary execution. See docs/archive/execution/run-queue.md § *One production
-claim transaction*.
+## SQL builders and transitions
 
-## Partial re-run & replay
+`wamn_run_state::sql` is the single source for the basic run/history statements.
+Values are `$n` parameters, identifiers are pinned, and run-plane table names
+are unqualified so the host-selected `search_path` supplies the project schema.
+The builders remain guest-compilable.
 
-Both mint a **new** run linked to its origin (`replay_of` + `root_run_id`), leaving
-the original run and its node-runs immutable — an audit/billing-safe lineage chain:
+`wamn_run_state::transitions` owns the queue-joined executor mutations. Every
+executor write verifies the target run, lease owner, and lease generation before
+recording a reserved boundary, completing an effect attempt, choosing a caller
+outcome, renewing a lease, or terminalizing. `FenceLost` is absolute: the caller
+must stop without another store access.
 
-- **replay** (`plan_replay`) re-runs the whole flow from the captured trigger
-  input; the driver `Plan::start`s the new run.
-- **partial re-run** (`plan_partial_rerun`) re-enters a chosen node with *its*
-  captured input via `Plan::seed_at`, walking only the downstream subtree —
-  already-committed upstream effects are not re-fired. Whether a replayed node
-  re-applies its effect is the node's own idempotency concern (5.3), so 5.7
-  recomputes from capture by default.
+The persisted `flow_version` and immutable execution-bundle identity pin the
+single-shot execution to what admission selected. A newer catalog head never
+changes an already admitted run.
 
-### Resume pins the run's persisted version
+## Node-level I/O capture (9.6)
 
-A resume reconstructs against the run's **persisted `flow_version`** — the
-version stamped on the `runs` row when the run first opened, which the dispatcher
-or admission path selected — not whatever is active now (wamn-cox). So a flow
-edited after admission cannot make a later claim fold recorded state against a
-divergent graph. The host-owned global-FIFO claimant resolves that exact pinned
-version, verifies the immutable execution bundle, and materializes the complete
-`run_flow_resolutions` map before granting a lease. A newly admitted run may
-select a newer version; an existing run never moves with the catalog head.
+Capture is immutable admission policy, carried by `runs.capture_mode` as `full`
+or `off`. Published HTTP/event runs and test-set cases are admitted `off`;
+direct draft runs may use `full`.
 
-### Occurrence-keyed child state
+`full` stores scrub-redacted bounded input/output history. Oversized output
+stores no body and retains only bounded metadata used to project
+`output-too-large`. `off` stores no per-node payload facts. The scrubber is a
+known-pattern redaction floor, not a secret-classification guarantee.
 
-The engine-reserved `invoke-flow` boundary uses two typed, generation-fenced
-statements from `wamn_run_state::child`. `create_or_recover_child_sql` resolves
-the internal attachment, caller-policy source, flow artifact, and single-hash
-activation against the parent's immutable catalog release. Activation and
-`allowed-callers` gate only first creation; occurrence recovery uses the stored
-pin even after revocation. It then creates or recovers the unique
-`(parent_run_id, parent_node_id, parent_occurrence)` child. The same statement
-enqueues that child, records the parent's child occurrence and queue generation,
-and parks the parent by releasing its lease. `environment` identifies the
-activation and service actor; `invoke_root_run_id` scopes the fanout bound.
-The child starts with empty authored context. Its size-capped, capture-exempt
-`invocation_context` separately records the effective service actor and nested
-caller lineage.
+Retention is age-based. `wamn-ctl prune-run-history` deletes old terminal runs;
+`node_runs` cascades through its foreign key. It does not consult retired rerun
+lineage and does not touch scheduler anchors.
 
-`release_child_sql` verifies the child's persisted parent tuple and the parent's
-current `wait_generation`. It stores the child caller outcome, clears the exact
-parent wait, and makes the parent queue row available in one transaction. A
-stale generation or cross-parent tuple changes neither row. Execution policy,
-authorization, actor lineage, deadline minima, and depth/fanout bounds execute
-in the production flowrunner before external dispatch. Pre-release cancellation
-either propagates into the ordinary bounded sweep or uses
-`cancel_unreleased_child_sql` to seize the exact child queue generation; both
-paths stop at `caller_released_at`.
+## Scope and gates
 
-## Node-level I/O capture (9.6; revised by SR-MVP)
+Run-state owns the run schema, history projection, effect-attempt authority, and
+fenced lifecycle statements. The durable queue and its claimant own scheduling;
+the payload store owns external bytes; the pure engine owns only the current
+in-memory graph walk.
 
-Capture is immutable run policy, not authored flow data. Its sole carrier is
-`runs.capture_mode`, admitted once as `full` or `off`; asynchronous execution reads that
-stored value. Direct draft-runs default to `full`. Published HTTP/event runs and every
-test-set case are admitted `off` and expose no mode input.
-
-`full` stores scrub-redacted input and output for the author-facing history. The writer
-always records the output's serialized byte size and may record its hash. A fixed,
-test-pinned platform ceiling is applied only while writing: an output at or below the
-ceiling stores both the scrubbed output and its size; an output above it stores NULL output
-plus its size and optional hash. `get-run` derives typed `output-too-large` metadata from
-exactly `output IS NULL AND output_size IS NOT NULL`; it never consults the current ceiling,
-so reconfiguration cannot reclassify history. `off` stores neither per-node payload nor
-size/hash. No ceiling, preview, node-level mode, or redaction discriminator is persisted.
-
-**Scrubber (v0).** Pure, guest-compilable, no regex: JSON **key-name** redaction
-(case-insensitive substring on `password`/`passwd`/`secret`/`token`/`api_key`/
-`apikey`/`authorization`/`private_key`/`credential`) replacing the whole value
-with `[redacted]`, plus **value-shape** checks on string leaves (`Bearer ` tokens,
-`-----BEGIN` PEM blocks, `AKIA` AWS key ids). Recursive over the `Value`; a secret
-key's subtree is redacted wholesale (never recursed into). Kept off the `full` hot
-path only when capture is `off`; every stored `full` payload passes through it.
-
-Capture is not recovery authority. The faithful resume checkpoint is independent of these
-author-facing rows, so scrubbing or omitting capture cannot alter recovery. The scrubber is
-only a known-pattern redaction floor, not a secret-classification guarantee.
-
-**Error rows.** The routed error payload and taxonomy detail are scrubbed under `full`; both
-are absent under `off`.
-
-**Retention.** The `wamn-ctl prune-run-history` verb (app-role, tenant-scoped)
-deletes terminal runs (completed/failed/cancelled/infrastructure-failure) older
-than `--retention-days`; `node_runs` cascade via the FK. `cron_anchor` is a
-separate table it never touches, so a pruned cron run cannot re-fire its tick
-(wamn-fqg.6). The former dispatchbench retention mode is historical. v0 is **age-based
-only** — replay lineage is not consulted (a lineage-aware policy is a deferral).
-Deploy per project-env with `deploy/platform/run-retention.example.yaml`.
-
-**Gate.** `capturebench` applies the real `run-state.sql` to a throwaway schema and
-drives the same pure capture + insert builders: `off` writes no payload facts; stored
-`full` output is scrub-redacted; over-ceiling output writes NULL payload plus size/hash and
-projects `output-too-large`; retention removes only old terminal history.
-
-## Scope (5.7) vs. siblings
-
-5.7 owns the run-state schema, at-least-once idempotency, the run-history read
-model, branch-aware replay, and partial re-run. It deliberately does **not** own:
-
-| Concern | Owner |
-|---|---|
-| The durable run queue (`FOR UPDATE SKIP LOCKED`) + leases + NATS doorbell + dispatcher | 5.14 (co-transacts with these INSERTs; owns its own queue table) |
-| The node-level I/O **capture policy** (admitted `full`/`off`, scrub, write ceiling) | 9.6 (fills bounded author-facing `input`/`output`/size/hash facts) |
-| The content-addressed **payload byte store** for streamed/large payloads | 5.10 (pointed at by the reserved `*_ref` columns) |
-| The `cancel(run, reason)` operation | 5.12 |
-
-The surviving nullable capture facts are bounded inline input/output plus output size and
-optional hash. The effective mode lives only on `runs`; node-level preview, mode, and
-redaction-marker columns are retired. Cold-path byte-store pointers remain 5.10's.
-
-## Gates
-
-- **`cargo test -p wamn-run-state`** — the model + reconstruction + re-run, pure:
-  linear resume, the **branch-aware kill-mid-branch → resume** proof, error-routed
-  reconstruction, capture-off non-replayability, drift detection, `seq`-ordering,
-  replay/partial-re-run lineage, and the status/DDL drift guards — all off-cluster.
-- **`cargo test -p wamn-runner`** — the `resume` / `seed_at` primitives (branch,
-  drift, overrun, partial-subtree).
-- **live-apply** (`WAMN_RUN_STORE_PG_URL`) — applies `deploy/sql/run-state.sql` to a
-  throwaway Postgres and asserts tenant RLS isolation, the idempotency index, and
-  the FK cascade.
-- **`flowbench`** (S3) + **`testhostbench`** (S6) — the driver's regression, now
-  resuming through reconstruction: dispatch p99 < 50 µs, hot-reload < 1 s,
-  kill-mid-run exactly-once, S6 sameness / 24 h-delay-under-virtual-time / egress
-  spy. Both pass on the rewired runner in-cluster (the gate of record) and locally.
+- `cargo test -p wamn-run-state` checks storage vocabularies, SQL shapes,
+  capture, and transition decisions off-cluster.
+- `cargo test -p wamn-runner` checks the single-shot engine walk, context,
+  branching, errors, budgets, and in-memory retries.
+- The live run-plane gate applies the schema from zero and exercises populated
+  cutovers, RLS, privileges, constraints, exact DDL guards, and rollback.

@@ -1118,7 +1118,7 @@ Docs: docs/archive/execution/run-state.md
 
 ```bash
 cargo test -p wamn-run-state
-cargo test -p wamn-runner   # the resume/seed_at primitives (regression)
+cargo test -p wamn-runner   # single-shot execution, context, retry, and budget semantics
 cargo clippy -p wamn-run-state --all-targets && cargo fmt -p wamn-run-state --check
 # optional live-apply gate (deploy/sql/run-state.sql on a throwaway PG; superuser URL
 # node_runs FK cascade; skips cleanly when unset):
@@ -1152,14 +1152,53 @@ The former occurrence-keyed child-state/runtime recipes are historical only.
 `wamn-0h0g.4.4` owns deletion of that retained pre-MVP machinery; the current
 global-FIFO gate neither revives nor claims `child_live` as runnable evidence.
 
-### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
+### [5.7-admission-pin / wamn-cox] production claim pins the admitted flow_version
 
-Docs: docs/archive/execution/run-state.md § *Resume pins the run's persisted version*
+Docs: docs/archive/execution/run-state.md
 
 ```bash
 # The host-owned production claim reads the admitted run's immutable version
 # and materializes its exact release-bound resolution map before lease grant.
 cargo test -p wamn-run-state
+```
+
+### [SR-MVP / wamn-0h0g.4.5] rerun/reconstruction deletion
+
+This debug-only gate proves that execution is single-shot, retired rerun and
+restore APIs are absent, from-zero DDL has no execution-lineage columns, and a
+populated project schema drops only the guarded legacy lineage metadata while
+preserving every run row and the trusted event-causation spine.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-5
+export CARGO_INCREMENTAL=0
+cargo test --locked --offline \
+  -p wamn-runner -p wamn-run-state -p wamn-schema-control
+cargo test --locked --offline -p wamn-proof-integration --lib \
+  contextproof::tests
+cargo test --locked --offline -p wamn-proof-integration --lib \
+  flowbench::tests
+cargo test --locked --offline -p wamn-proof-conformance --lib schema_drift
+
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    rerun_lineage_cutover_live -- --exact --nocapture --test-threads=1
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision -- --test-threads=1
+cargo test --locked --offline -p wamn-execution-host trusted_runtime_revision_
+cargo clippy --locked --offline \
+  -p wamn-runner -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
+  -p wamn-runtime -p wamn-proof-conformance -p wamn-proof-integration \
+  -p wamn-test-fixtures --all-targets -- -D warnings
+cargo fmt --all -- --check
+jq empty architecture/state-owners.json architecture/protected-writes.json \
+  crates/execution/host/effect-provider-revision.json
+bash -n tools/gate-mutants/protected-relations.sh
+git diff --check
 ```
 
 ### [5.9] credential vault (plugins/wamn_credentials)
@@ -3901,26 +3940,13 @@ nodeinvoke hardening recipes were deleted by `.6.3` with `wamn-node-invoke`,
 manifests. These entries are provenance only; there is no current runnable
 nodeinvoke recipe.
 
-### [R24 / wamn-03m + wamn-cjv.10 + wamn-2jkm.42] per-visit occurrence — merge/loop history + resume
+### Deleted R24 reconstruction and partial-rerun provenance
 
-Docs: docs/archive/execution/run-state.md (branch-aware replay — the occurrence paragraph)
-
-The engine computes `Dispatch::occurrence` (prior COMPLETED visits of the node
-in the run); both guests bind it into the `node_runs` insert builders
-(occurrence is `$3`, never a literal 0), so a merge/loop node's N visits
-persist N rows and reconstruction replays visit-by-visit.
-
-```bash
-cargo test -p wamn-runner    # occurrence semantics + diamond/loop resume (R24 VERIFY)
-cargo test -p wamn-run-state # per-visit reconstruction + legacy collapsed-history Mismatch
-cargo test -p wamn-run-state # composed-statement arity renumbering ($10/$11, $11/$12)
-# The former runnerbench merge-resume and failover regression commands are
-# historical after wamn-0h0g.4.1; use this section's pure/live run-state tests.
-# mutants (apply/test/restore, each fails a NAMED check): engine occurrence:=0 ->
-# merge_visits_carry_distinct_occurrences; builder occurrence:=literal 0 ->
-# builders_are_claim_scoped_and_parameterized; success-arm visits bump dropped ->
-# merge/diamond/loop tests. The former guest-claim runnerbench witness is archived.
-```
+Per-visit occurrence identity remains on current node facts, but the former
+`Plan::resume`, `seed_at`, persisted-frontier reconstruction, partial-rerun, and
+runnerbench resume gates were deleted by `wamn-0h0g.4.5`. There is no current
+runnable resume recipe. Forward occurrence and SQL-shape coverage remains in
+the ordinary `wamn-runner` and `wamn-run-state` suites above.
 
 ### [S2/D15-durable / wamn-dzhw] fixture pod on durable commits
 
@@ -4358,7 +4384,7 @@ executable and emits the externally admitted payload unchanged on `main`. The
 flowrunner validates that exact payload, port, and absent context replacement
 before the generic durable attempt checkpoint can advance the entry token.
 Every inbound-edge dispatch consumes one dispatch-budget unit, including
-event; admission, callerless lifecycle, reconstruction, and durable ordering
+event; admission, callerless lifecycle, and durable ordering
 remain owned by the engine and driver. The mutation bypasses event's production
 validation; the focused debug gate must fail before the source is restored.
 
@@ -4400,7 +4426,8 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
 
 Publication resolves platform and supplied nodes into the same canonical
 resolved-contract bundle. Built-in-only artifacts persist a non-empty bundle,
-and runtime reconstruction verifies those exact contracts. The model-owned
+and runtime admission verifies those exact contracts before single-shot
+execution. The model-owned
 `call-flow { flow-id }` validator is the sole current exemption from
 interface-backed standard-node resolution. Historical versions retain their
 explicit compatibility readers; unknown versions fail closed. The mutation
@@ -4620,10 +4647,7 @@ rustfmt --edition 2024 --check --config skip_children=true \
   components/execution/flowrunner/src/lib.rs \
   crates/execution/run-state/src/invocation_context.rs \
   crates/execution/run-state/src/lib.rs \
-  crates/execution/run-state/src/model.rs \
   crates/execution/run-state/src/queue/sql.rs \
-  crates/execution/run-state/src/reconstruct.rs \
-  crates/execution/run-state/src/rerun.rs \
   crates/execution/run-state/src/sql.rs \
   crates/execution/run-state/src/transitions.rs \
   crates/execution/run-state/tests/queue.rs \

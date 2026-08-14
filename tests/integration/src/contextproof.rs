@@ -1,12 +1,10 @@
-//! T-CTX package-level proofs for durable callable-flow context.
+//! T-CTX package-level proofs for single-shot callable-flow context.
 
 #[cfg(test)]
 pub mod tests {
     use serde_json::{Value, json};
     use wamn_flow::{Flow, ResolvedInterfaces};
-    use wamn_run_state::context;
-    use wamn_run_state::transitions::node_context_checkpoint_sql;
-    use wamn_runner::{NodeOutcome, Plan, Recorded, Step};
+    use wamn_runner::{NodeOutcome, Plan, Step};
 
     fn plan() -> Plan<'static> {
         let flow = Box::leak(Box::new(
@@ -30,16 +28,28 @@ pub mod tests {
     }
 
     #[test]
-    fn boundary_recovery_is_byte_identical_and_effect_input_keeps_context_snapshot() {
+    fn effect_input_keeps_the_exact_context_snapshot() {
         let plan = plan();
         let input = json!({"scheduled-at": "2026-07-27T12:00:00Z"});
         let context = json!({"cutoff": "2026-07-26T12:00:00Z", "hold": {"id": 7}});
-        let history = [
-            Recorded::new("in", "main", input.clone()),
-            Recorded::new("mark", "main", json!({"selected": 7})).with_context(context.clone()),
-        ];
-        let mut recovered = plan.resume("run", input, &history).unwrap();
-        let Step::Dispatch(effect) = plan.next(&mut recovered, 0) else {
+        let mut state = plan.start("run", input);
+        let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
+            panic!("entry must dispatch");
+        };
+        let admitted = entry.payload.clone();
+        plan.apply(&mut state, &entry, NodeOutcome::ok(admitted), 0)
+            .unwrap();
+        let Step::Dispatch(mark) = plan.next(&mut state, 0) else {
+            panic!("mark must dispatch");
+        };
+        plan.apply(
+            &mut state,
+            &mark,
+            NodeOutcome::ok_with_context(json!({"selected": 7}), "main", context.clone()),
+            0,
+        )
+        .unwrap();
+        let Step::Dispatch(effect) = plan.next(&mut state, 0) else {
             panic!("effect must remain outstanding");
         };
         assert_eq!(
@@ -47,29 +57,6 @@ pub mod tests {
             serde_json::to_vec(&context).unwrap()
         );
         assert_eq!(effect.attempt_input()["context"], context);
-    }
-
-    #[test]
-    fn later_write_replaces_without_implicit_merge() {
-        let state = context::replace(None, json!({"old": true})).unwrap();
-        let state = context::replace(Some(state), json!({"new": true})).unwrap();
-        assert_eq!(context::read(Some(&state)).unwrap(), json!({"new": true}));
-    }
-
-    #[test]
-    fn stale_fence_guards_output_and_context_in_the_same_statement() {
-        let sql = node_context_checkpoint_sql();
-        let authority = sql
-            .find("q.lease_generation IS DISTINCT FROM i.lease_generation")
-            .unwrap();
-        let output = sql.find("INSERT INTO node_runs").unwrap();
-        let context = sql.find("SET state_json = jsonb_set").unwrap();
-        assert!(authority < output);
-        assert!(output < context);
-        assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
-        assert!(sql.contains("$13::text::jsonb"));
-        assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
-        assert!(!sql.contains("UPDATE runs SET state_json = $"));
     }
 
     #[test]

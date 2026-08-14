@@ -7,7 +7,7 @@ errors, and retries with backoff. It replaces the S3 spike's ad-hoc linear walk.
 The design follows the same split as the API gateway (4.1): a **pure engine
 crate** (`crates/execution/flow-engine`) holds all the decision logic and is unit-tested
 with no cluster, no DB, no wasm; a **thin component** (`components/execution/flowrunner`)
-supplies the effects — dispatching each node, the `wamn:postgres` checkpoints,
+supplies the effects — dispatching each node, recording run history,
 the reload doorbell.
 
 ## The engine — a pure reducer
@@ -54,10 +54,9 @@ default `DEFAULT_DISPATCH_BUDGET = 10_000` — the run fails with the terminal
 `ExecutionFailureKind::RunawayBudget`. The verdict is deliberately **not** routed to the
 flow's `error` port (an error path can itself be part of the loop): it is
 unconditionally terminal, so the driver's ordinary `Done(Failed)` handling
-(mark failed + dequeue) frees the runner. Reconstruction (`Plan::resume`) is
-exempt — recorded history never counts, so a parked-and-resumed long run gets
-the full budget for its live walk each invocation. A single node that never
-*returns* is bounded by the host epoch/call deadlines and poisoned-instance
+(mark failed + dequeue) frees the runner. There is no reconstruction exemption:
+the counter belongs to the one single-shot `ExecutionState` walk. A single node
+that never *returns* is bounded by the host epoch/call deadlines and poisoned-instance
 disposal shipped in `wamn-fqg.14`; `wamn-dq5` adds durable cancellation,
 deferred live-attempt seizure, and the dispatcher deadline sweep.
 
@@ -108,20 +107,21 @@ both pure (time is a `now_ms` argument):
 now a `wamn-flow` document), compiles a `Plan`, and drives it. The native standard
 nodes are the `NodeOutcome` producers: `webhook-in` / `transform` / `conditional` /
 `respond` are pure same-binary calls; `pg-write` writes to the sink; `delay` reads
-wall-clock and parks; `http-call` makes a `wasi:http` request. `wamn:postgres` is
+wall-clock and waits within the current invocation; `http-call` makes a
+`wasi:http` request. `wamn:postgres` is
 the only durable path, under a host-injected tenant claim + `search_path`.
 
-### Checkpoint / resume
+### Single-shot execution boundary
 
-The engine re-walks from `entry` on every invocation; the DB `step_seq` (the node's
-index in the flow) is the checkpoint. An effectful node whose index is `<= step_seq`
-skips its effect on replay; `pg-write` is additionally idempotent by `(run_id, step)`,
-so a crash in the window between its commit and its checkpoint replays cleanly
-(exactly-once effect). `delay` parks by recording a wake deadline in `state_json`
-without advancing `step_seq`, so a later invocation re-enters it — the durable
-parked-wake the S6 24-hour-delay test exercises under virtual time. Branch-aware
-durable resume (persisting the frontier) is 5.7; the linear fixture flows resume
-exactly on `step_seq`.
+The engine owns one in-memory walk from `Plan::start`; it has no snapshot,
+restore, reconstruction, replay, or mid-graph seed API. `node_runs` and
+`state_json` are not folded into a new frontier.
+
+After a worker crash, the claim path may restart the walk from zero only when
+durable classification proves that no effect attempt exists. If an immutable
+effect attempt exists, the run is fenced and becomes `effect-uncertain`; the
+effect is never dispatched again. This decision belongs to the claimant and
+effect-attempt ledger, not the pure engine.
 
 ## Scope (5.2) vs. siblings
 
@@ -130,7 +130,7 @@ exactly on `step_seq`.
 | Concern | Owner |
 |---|---|
 | The `node-error` taxonomy + SDK | `wamn-node-sdk` (5.3, ahead of the 5.4 WIT freeze; re-exported here as `NodeError`) |
-| Durable `runs`/`node_runs` schema, at-least-once, branch-aware replay | 5.7 |
+| Durable `runs`/`node_runs` schema, history, and effect-attempt authority | 5.7 |
 | The `cancel(run, reason)` operation + its two enforcement layers | 5.12 |
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + NATS doorbell + dispatcher | 5.14 |
 | Payload store & byte quotas | 5.10 |
@@ -147,7 +147,6 @@ entry point, not the trigger front-end.
   walk, error-path routing, retry-then-succeed / retry-exhausted, rate-limited
   `retry-after` + throttle key, invalid-input never-retried, cancelled, the retry
   policy, the throttle table, and the scheduler — all with no cluster.
-- **`flowbench`** (S3) + **`testhostbench`** (S6) are the component's regression,
-  unchanged: dispatch p99 < 50 µs, hot-reload < 1 s, kill-mid-run exactly-once, and
-  the S6 sameness / 24 h-delay-under-virtual-time / egress-spy gates. Both pass on
-  the engine-driven runner in-cluster (the gate of record) and locally.
+- The run-plane live gate owns crash classification and proves the no-attempt
+  restart-from-zero / effect-attempt `effect-uncertain` split under the exact
+  queue fence. The engine tests make no durable-recovery claim.

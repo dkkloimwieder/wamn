@@ -283,59 +283,6 @@ pub fn reserved_checkpoint_sql() -> String {
     )
 }
 
-/// Record a successful user-node emission and its replacement context under the
-/// exact queue fence.
-///
-/// Params match [`reserved_checkpoint_sql`] through `$12`, followed by the
-/// complete context JSON document (`$13`) and lease TTL milliseconds (`$14`).
-/// The node output and context checkpoint are one statement: a stale owner or
-/// generation writes neither.
-pub fn node_context_checkpoint_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         recorded AS ( \
-             INSERT INTO node_runs \
-                    (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
-                     local_node_id, occurrence, seq, status, \
-                     output_port, output_json, input_json, output_size, payload_hash) \
-             SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
-                    $5, $6, $7, '{success}', \
-                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12 \
-               FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND jsonb_typeof($13::text::jsonb) = 'object' \
-             ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
-             RETURNING run_id \
-         ), \
-         checkpointed AS ( \
-             UPDATE runs AS r \
-                SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
-                                           '{{context}}', $13::text::jsonb, true), \
-                    updated_at = now() \
-               FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND r.tenant_id = a.tenant_id AND r.run_id = a.run_id \
-                AND (SELECT count(*) FROM recorded) = 1 \
-             RETURNING r.run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = \
-                    now() + ($14::bigint * interval '1 millisecond') \
-               FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
-                AND (SELECT count(*) FROM checkpointed) = 1 \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'recorded' ELSE a.result_code END \
-                    AS result_code, \
-                a.status AS run_status \
-           FROM authority AS a LEFT JOIN renewed AS r ON true",
-        success = NodeRunStatus::Success.as_sql(),
-    )
-}
-
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
@@ -750,30 +697,10 @@ mod tests {
     }
 
     #[test]
-    fn context_checkpoint_is_generation_fenced_and_atomic_with_output() {
-        let sql = node_context_checkpoint_sql();
-        assert!(sql.starts_with("WITH input AS"));
-        assert!(sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"));
-        assert!(sql.contains("INSERT INTO node_runs"));
-        assert!(sql.contains("a.execution_bundle_hash"));
-        assert!(sql.contains("jsonb_typeof($13::text::jsonb) = 'object'"));
-        assert!(sql.contains("SET state_json = jsonb_set"));
-        assert!(sql.contains("(SELECT count(*) FROM recorded) = 1"));
-        assert!(sql.contains("'{context}', $13::text::jsonb"));
-        assert!(sql.contains("$14::bigint * interval '1 millisecond'"));
-        assert_eq!(sql.matches("WITH input AS").count(), 1);
-    }
-
-    #[test]
     fn node_writes_carry_only_authoritative_capture_facts() {
         let reserved = reserved_checkpoint_sql();
         assert!(reserved.contains("$13::bigint * interval '1 millisecond'"));
         assert!(!reserved.contains("$14"));
-
-        let context = node_context_checkpoint_sql();
-        assert!(context.contains("'{context}', $13::text::jsonb"));
-        assert!(context.contains("$14::bigint * interval '1 millisecond'"));
-        assert!(!context.contains("$15"));
 
         let success = complete_attempt_success_sql();
         assert!(success.contains("'{context}', $12::text::jsonb"));
@@ -784,7 +711,7 @@ mod tests {
         assert!(error.contains("$13::bigint * interval '1 millisecond'"));
         assert!(!error.contains("$14"));
 
-        for sql in [reserved, context, success, error] {
+        for sql in [reserved, success, error] {
             assert!(!sql.contains("preview_head"));
             assert!(!sql.contains("capture_mode"));
             assert!(!sql.contains("redacted"));
@@ -795,7 +722,6 @@ mod tests {
     fn from_zero_schema_carries_the_callable_run_spine() {
         let run = include_str!("../../../../deploy/sql/run-state.sql");
         for field in [
-            "root_run_id",
             "catalog_id",
             "catalog_version",
             "attachment_id",
@@ -830,6 +756,9 @@ mod tests {
         ] {
             assert!(!run.contains(retired), "run-state DDL retains {retired}");
         }
+        assert!(!run.contains("\n    replay_of       text"));
+        assert!(!run.contains("\n    root_run_id     text"));
+        assert!(!run.contains("CREATE INDEX runs_root "));
         assert!(run.contains("CREATE TABLE wamn_run.invocation_admissions"));
         assert!(run.contains("CREATE TABLE wamn_run.run_flow_resolutions"));
         assert!(run.contains("frame_id bigint"));

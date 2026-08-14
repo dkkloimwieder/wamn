@@ -37,8 +37,8 @@
 //! materializer — delivers them; the outbox path was torn down at l5i9.19.)
 //! The host-only Postgres adapter composes the transaction; the flowrunner guest
 //! receives only the already-claimed `(run-id, payload)` pair.
-//! Does **not** own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
-//! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
+//! Does **not** own: the engine walk / retry (5.2 — the claimed run drives it);
+//! the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
 //! [`crate::RunStatus`]); the payload byte store (5.10).
 //!

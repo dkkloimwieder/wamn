@@ -125,7 +125,7 @@ that changes.) Likewise `respond`, `fail`, and `invoke-flow`.
 Pure pass-through body. Payload delivered through the caller CAS and recorded
 as the caller outcome, distinct from `result_json`; releases the caller;
 execution continues along its zero-or-one `main` edge — **zero → caller
-release + checkpoint + terminal `completed` in one transaction** (§9.8).
+release + terminal `completed` + queue completion in one transaction** (§9.8).
 Request entries only; always semantic success. Status from `config.status`,
 range **`200..=599`** — informational 1xx responses are non-final and cannot
 map onto a one-result invocation interface; the range is deliberately not
@@ -270,13 +270,12 @@ untouched; no input key can collide; both reads (`context()` in
 expressions) and writes (`ctx` keys in config) are **statically detectable**
 by scanning the graph JSON — ambient at runtime, explicit in the document.
 
-**Durability is the existing checkpoint.** The context lives inside
-`state_json` (§10.2): checkpointed at boundaries and size-capped. Recovery
-authorization is independent of capture and comes only from the pinned
-occurrence selection (§10.3); capture mode neither permits nor prevents a
-dispatch. Context-resolved parameters for an admitted effectful attempt are
-part of its recorded input (`attempt_input_ref`, §10.3), so recovery reasons
-about what the attempt actually saw, not what context says now.
+**Execution context is single-shot.** The context lives in the in-memory
+`ExecutionState` for one graph walk and is size-capped at the owning boundary.
+There is no durable context reader or engine restore contract. Context-resolved
+parameters for an admitted effectful attempt are part of its immutable recorded
+input (`attempt_input_ref`, §10.3), so the audit fact states what the attempt
+actually saw. Capture mode neither permits nor prevents a dispatch.
 
 **Scope rules:** per-run; born empty; child runs from `invoke-flow` start
 with fresh context (the invocation payload is the only inheritance); writes
@@ -316,7 +315,7 @@ flow_version)` FK → artifacts; one version per flow per release.
 
 Interface pin ≠ implementation pin: the bundle pins ports; component digests
 pin client-supplied executables; standard-node behavior is pinned only by
-`runs.platform_revision`; replay across platform revisions is not
+`runs.platform_revision`; executing under a different platform revision is not
 behavior-identical.
 
 **Release membership is phased (§19):** the 2A spine carries
@@ -416,7 +415,7 @@ bump.
 context carriage. Publishing an `event`-entry flow validates a registration
 exists in the live table. Event runs record `catalog_version`,
 `registration_id`, and the registration **content hash** (full row under a
-hash-schema version): trigger-definition replay is unavailable while the
+hash-schema version): historical trigger-definition reconstruction is unavailable while the
 registration is mutable, but tampering is detectable — stated, not hidden.
 **Deferred with its acceptance tests:** registration release-membership and
 version key; RI-ordering in the release transaction; the JetStream
@@ -638,16 +637,17 @@ checks — not a database guarantee; database roles or stored procedures are
 the later hardening *if required*, never adopted merely to make wording
 literally true.
 
-### 9.2 Replay equality
+### 9.2 Repeated caller-release equality
 
-A replayed `respond` is benign iff kind, canonical body hash, HTTP status,
-and release node id all match; any mismatch is `infrastructure-failure`.
+A repeated `respond` submission is benign iff kind, canonical body hash, HTTP
+status, and release node id all match; any mismatch is
+`infrastructure-failure`. This is idempotent CAS comparison, not graph replay.
 
 ### 9.3 The terminal CAS — first durable terminal wins
 
 Same queue-joined fenced form, guard `status IN ('dispatched','running')`.
 Pre-release paths take caller CAS + terminal CAS in one transaction;
-`respond` takes caller CAS + checkpoint + frontier + queue + lease in one
+`respond` takes caller CAS + current-turn state + queue + lease in one
 transaction (+ terminal when no successor); post-release terminal paths take
 the terminal CAS only — a losing post-release `fail` touches no caller state
 **and still fails the run**. Sweep and cross-run cancellations reach it after
@@ -682,7 +682,7 @@ seizure (§10.7).
 ```rust
 enum CallerReleaseResult {
     Released,
-    AlreadyReleased(StoredCallerOutcome),  // replay-compare permitted
+    AlreadyReleased(StoredCallerOutcome),  // exact duplicate comparison permitted
     RunTerminal(RunTerminalState),
     FenceLost,                              // STOP: no reads, no continuation
     NotFound,
@@ -701,7 +701,7 @@ seizes the **child's** generation first.
 
 ### 9.8 Zero-successor `respond`
 
-Caller release + checkpoint + terminal `completed` + queue-row completion in
+Caller release + terminal `completed` + queue-row completion in
 one commit — the pure request path is **two commits**; §17 measures both
 shapes.
 
@@ -714,7 +714,7 @@ end by draining. Normative rule:
 > When an executor turn ends with an **empty frontier**, **no failure**, and
 > **no caller attached or the caller already released**, the executor takes
 > the `terminalize(completed)` transition (fenced, queue-joined) in the same
-> transaction as its final checkpoint and queue-row completion.
+> transaction as queue-row completion.
 
 This is how an `event` run and a post-release continuation reach
 `completed` — including through an intentionally unwired completion port,
@@ -732,13 +732,14 @@ release through their own transitions).
 Inline (`request` runs execute in the invoking service's turn) or queued
 (`event` arrivals; any run that parks). No transient mode.
 
-### 10.2 Boundary checkpointing
+### 10.2 Single-shot execution state
 
-Checkpoints at recovery boundaries — before/after effects, park, release,
-terminal. The checkpoint is the `state_json` + frontier write; reconstruction
-reads attempts + the checkpoint through the transitions module. A checkpoint
-records progress; it never authorizes another effect send. The immutable effect
-ledger is the sole reclaim-classification authority described in §10.3.
+The graph frontier, retry cursor, visit counts, and authored context exist only
+in the current in-memory engine state. Neither `state_json` nor completed
+`node_runs` is an engine snapshot, and no transition reconstructs a frontier.
+After claim loss, the claimant may restart from zero only when no immutable
+effect attempt exists. Any immutable attempt instead yields the fenced
+`effect-uncertain` classification described in §10.3.
 
 ### 10.3 Node-attempt protocol
 
@@ -766,7 +767,7 @@ dispatch, and outcome rows are capture-exempt immutable protocol facts.
 
 The queue row exists from admission in its producer-determined initial
 state (§6.1); once claimed it is held by a real executor identity +
-generation; recovery is lease-based; the sweep-only variant is a measured
+generation; claim authority is lease-based; the sweep-only variant is a measured
 optimization.
 
 ### 10.5 Deadline/cancellation runtime work
@@ -987,7 +988,7 @@ Metrics: commits, SQL statements, rows, WAL bytes, latency percentiles,
 throughput, recovery latency. Scenarios: pure request (both respond shapes);
 one Postgres effect; one HTTP effect; a sent-without-outcome effect; a child;
 burst; post-release continuation; a cancellation race; the Appendix B
-saga; the row-fence micro-bench. Sequence: baseline → boundary checkpointing
+saga; the row-fence micro-bench. Sequence: baseline → fenced single-shot writes
 → inline-with-claimed-row → sweep variant only on a miss. Budgets
 `DEFERRED(owner)`. Exit: R6 remains the sole execution model if the budgets
 pass; a miss triggers a PostgreSQL performance investigation, never a second
@@ -1055,8 +1056,8 @@ promotion rule; dispatcher and materializer converted to `admit()`.
 | Positive | Negative |
 |---|---|
 | entry-reserved semantics; release-and-continue; pure occurrences write no effect facts; each effectful occurrence writes one attempt before send and acquires at most one dispatch; **frontier exhaustion terminalizes an event run `completed` through §9.9, including across an unwired completion port** | **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the outcome write, reclaim yields `effect-uncertain` and the sink count stays at one — the crash-before-send variant observes zero effects and still never redispatches; **this is a Phase 3 gate, not POC Wave 2** |
-| **run context**: a `ctx` write replaces the document (a later write without `merge()` provably drops prior keys); context reconstructs identically on boundary recovery; an effectful node's context-resolved params land in `attempt_input_ref` | a child run starts with **empty** context regardless of the parent's; error-port emissions never mutate context |
-| attempt intent atomic with lease renewal; `attempt_deadline_at` enforced pre-dispatch | the paused-original pair: (a) deadline lapsed → resume performs no effect; (b) cancellation during a live attempt → seizure deferred, `cancel_requested` persisted and applied at attempt end |
+| **run context**: a `ctx` write replaces the in-memory document (a later write without `merge()` provably drops prior keys); an effectful node's context-resolved params land in `attempt_input_ref` | a child run starts with **empty** context regardless of the parent's; error-port emissions never mutate context; no durable context restore API exists |
+| attempt intent atomic with lease renewal; `attempt_deadline_at` enforced pre-dispatch | the paused-original pair: (a) deadline lapsed → a new claim performs no effect; (b) cancellation during a live attempt → seizure deferred, `cancel_requested` persisted and applied at attempt end |
 | deadline cancels an executing guest within the bound; sweep cancels all five orphan scenarios within the stated bound | interrupted instance disposed, never reused; a `started` attempt never reclaimed early |
 | capture mode neither authorizes nor blocks recovery | post-cancel, the invocation-scoped credential no longer resolves |
 
@@ -1129,8 +1130,9 @@ emission becomes `{output, ctx?}` — universal context reads via the
 `context()` expression function, any node writes via its `ctx`
 expression/envelope field, a write replaces the document, merge is authored
 via the `merge()` builtin, error emissions never write; durability rides
-`state_json` with pure-node reconstruction and effectful attempts
-recording context-resolved params; the invocation handshake split into
+`state_json` with pure-node reconstruction (a historical design withdrawn by
+`wamn-0h0g.4.5`) and effectful attempts recording context-resolved params; the
+invocation handshake split into
 `begin → admitted{run-id} | rejected` then `wait`/`cancel`, with
 `invoke-request` carrying the preflight expectations and fingerprint; the
 producer admission table extended to lifecycle (definition check and initial

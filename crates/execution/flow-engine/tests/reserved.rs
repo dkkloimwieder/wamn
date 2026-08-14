@@ -4,8 +4,7 @@ use serde_json::{Value, json};
 use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{Flow, ResolvedInterfaces};
 use wamn_runner::{
-    ApplyError, CallerState, EngineError, ExecutionStatus, NodeOutcome, Plan, Recorded,
-    ReservedStep, SeedError, Step,
+    ApplyError, CallerState, EngineError, ExecutionStatus, NodeOutcome, Plan, ReservedStep, Step,
 };
 
 fn flow(source: &str) -> Flow {
@@ -146,12 +145,10 @@ fn respond_releases_and_continues_then_late_fail_leaves_caller_untouched() {
 fn zero_successor_respond_is_a_release_and_complete_boundary() {
     let flow = request_flow("");
     let plan = compile(&flow);
-    let completed = [
-        Recorded::new("in", "main", json!({"request":1})),
-        Recorded::new("work", "main", json!({"answer":42})),
-    ];
-    let mut state = plan
-        .resume("run", json!({"request": 1}), &completed)
+    let mut state = plan.start("run", json!({"request": 1}));
+    apply_request_entry(&plan, &mut state);
+    let work = dispatch(&plan, &mut state);
+    plan.apply(&mut state, &work, NodeOutcome::ok(json!({"answer":42})), 0)
         .unwrap();
     let respond = dispatch(&plan, &mut state);
     assert_eq!(respond.node_type, "respond");
@@ -277,22 +274,17 @@ fn validation_rejects_response_without_request_and_ambiguous_request_ports() {
 }
 
 #[test]
-fn reserved_user_seed_and_post_terminal_writes_are_rejected() {
+fn post_terminal_reserved_writes_are_rejected() {
     let flow = request_flow("");
     let plan = compile(&flow);
-    for node in ["in", "out"] {
-        assert_eq!(
-            plan.seed_at("rerun", node, Value::Null),
-            Err(SeedError::ReservedNode(node.to_string()))
-        );
+    let mut state = plan.start("run", Value::Null);
+    apply_request_entry(&plan, &mut state);
+    for expected in ["work", "out"] {
+        let node = dispatch(&plan, &mut state);
+        assert_eq!(node.node, expected);
+        plan.apply(&mut state, &node, NodeOutcome::ok(json!("answer")), 0)
+            .unwrap();
     }
-
-    let completed = [
-        Recorded::new("in", "main", Value::Null),
-        Recorded::new("work", "main", json!("answer")),
-        Recorded::new("out", "main", json!("answer")),
-    ];
-    let mut state = plan.resume("run", Value::Null, &completed).unwrap();
     assert_eq!(
         plan.next(&mut state, 0),
         Step::Done(ExecutionStatus::Completed)
@@ -305,154 +297,5 @@ fn reserved_user_seed_and_post_terminal_writes_are_rejected() {
     assert_eq!(
         plan.apply_reserved(&mut state, &entry),
         Err(ApplyError::Terminal(ExecutionStatus::Completed))
-    );
-}
-
-#[test]
-fn resume_rejects_history_missing_the_request_node_emission() {
-    let flow = request_flow("");
-    let plan = compile(&flow);
-    let error = plan
-        .resume(
-            "run",
-            json!({"request": 1}),
-            &[Recorded::new("work", "main", json!({"answer": 42}))],
-        )
-        .unwrap_err();
-    assert_eq!(
-        error,
-        wamn_runner::ResumeError::Mismatch {
-            recorded: "work".to_string(),
-            dispatched: "in".to_string(),
-        }
-    );
-}
-
-#[test]
-fn crash_restart_redispatches_request_until_exact_emission_commits() {
-    let flow = request_flow("");
-    let plan = compile(&flow);
-    let input = json!({"request": 1});
-    let mut first = plan.start("run", input.clone());
-    let boundary = dispatch(&plan, &mut first);
-    assert_eq!(boundary.node_type, "request");
-    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
-
-    let mut restarted = plan.start("run", input.clone());
-    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
-
-    let mut committed = plan
-        .resume(
-            "run",
-            input.clone(),
-            &[Recorded::new("in", "main", input.clone())],
-        )
-        .unwrap();
-    let next = dispatch(&plan, &mut committed);
-    assert_eq!(next.node, "work");
-    assert_eq!(next.payload, input);
-    assert_eq!(committed.caller_state(), CallerState::Attached);
-}
-
-#[test]
-fn crash_restart_redispatches_event_until_exact_emission_commits() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"event-replay","version":1,
-            "nodes":[{"id":"in","type":"event"},{"id":"work","type":"echo"}],
-            "edges":[{"from":"in","to":"work"}]}"#,
-    );
-    let plan = compile(&flow);
-    let input = json!({"topic": "orders.created", "id": 42});
-    let mut first = plan.start("run", input.clone());
-    let boundary = dispatch(&plan, &mut first);
-    assert_eq!(boundary.node_type, "event");
-    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
-
-    let mut restarted = plan.start("run", input.clone());
-    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
-
-    let mut committed = plan
-        .resume(
-            "run",
-            input.clone(),
-            &[Recorded::new("in", "main", input.clone())],
-        )
-        .unwrap();
-    let next = dispatch(&plan, &mut committed);
-    assert_eq!(next.node, "work");
-    assert_eq!(next.payload, input);
-    assert_eq!(committed.caller_state(), CallerState::None);
-}
-
-#[test]
-fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
-    let flow = request_flow("");
-    let plan = compile(&flow);
-    let before = [
-        Recorded::new("in", "main", json!({"request":1})),
-        Recorded::new("work", "main", json!({"answer":42})),
-    ];
-    let mut first = plan.resume("run", json!({"request": 1}), &before).unwrap();
-    let boundary = dispatch(&plan, &mut first);
-    assert_eq!(boundary.node_type, "respond");
-    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
-
-    let mut restarted = plan.resume("run", json!({"request": 1}), &before).unwrap();
-    assert_eq!(
-        plan.next(&mut restarted, 0),
-        Step::Dispatch(boundary.clone())
-    );
-    plan.apply(
-        &mut restarted,
-        &boundary,
-        NodeOutcome::ok(json!({"answer":42})),
-        0,
-    )
-    .unwrap();
-
-    let after = [
-        before[0].clone(),
-        before[1].clone(),
-        Recorded::new("out", "main", json!({"answer":42})),
-    ];
-    let mut committed = plan.resume("run", json!({"request": 1}), &after).unwrap();
-    assert_eq!(
-        plan.next(&mut committed, 0),
-        Step::Done(ExecutionStatus::Completed)
-    );
-    assert_eq!(committed.caller_state(), CallerState::Released);
-}
-
-#[test]
-fn crash_restart_replays_the_fail_boundary_until_its_record_commits() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"event-fail","version":1,
-            "nodes":[{"id":"in","type":"event"},{"id":"bad","type":"fail","config":{"code":"stop"}}],
-            "edges":[{"from":"in","to":"bad"}]}"#,
-    );
-    let plan = compile(&flow);
-    let input = json!({"tick": 1});
-    let before = [Recorded::new("in", "main", input.clone())];
-    let mut first = plan.resume("run", input.clone(), &before).unwrap();
-    let boundary = dispatch(&plan, &mut first);
-    assert_eq!(boundary.node_type, "fail");
-    let mut restarted = plan.resume("run", input, &before).unwrap();
-    assert_eq!(
-        plan.next(&mut restarted, 0),
-        Step::Dispatch(boundary.clone())
-    );
-    plan.apply(
-        &mut restarted,
-        &boundary,
-        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded("stop", "stop"))),
-        0,
-    )
-    .unwrap();
-    assert_eq!(restarted.status(), ExecutionStatus::Failed);
-    assert_eq!(restarted.caller_state(), CallerState::None);
-    assert_eq!(
-        restarted.dispatched(),
-        1,
-        "only the live fail dispatch counts"
     );
 }
