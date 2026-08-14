@@ -6,7 +6,6 @@
 use std::collections::HashSet;
 
 use wamn_run_state::RunStatus;
-use wamn_run_state::admission::{AdmissionTransition, admission_transaction};
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
     acquire_partitions_sql, active_flows_sql, begin_claimed_run_sql, claim_batch_sql,
@@ -1220,122 +1219,6 @@ fn dispatcher_sql_builders_are_shaped_and_tenant_scoped() {
     assert!(wake.contains("LIMIT 100"));
     assert!(!wake.contains("FOR UPDATE"));
     assert!(!wake.contains("UPDATE "));
-}
-
-#[test]
-fn public_admission_api_selects_release_and_draft_scenario_recipes() {
-    let release = admission_transaction(AdmissionTransition::PinnedScenarioRelease);
-    let draft = admission_transaction(AdmissionTransition::PinnedScenarioDraft);
-
-    assert_eq!(release.lock_head(), draft.lock_head());
-    assert!(release.admit().contains("release_member AS MATERIALIZED"));
-    assert!(release.admit().contains("'scenario'"));
-    assert!(!release.admit().contains("trigger_source, capture_mode"));
-    assert!(draft.admit().contains("draft AS MATERIALIZED"));
-    assert!(draft.admit().contains("'scenario-draft'"));
-    assert!(!draft.admit().contains("trigger_source, capture_mode"));
-    assert_ne!(release.admit(), draft.admit());
-}
-
-#[test]
-fn pinned_trigger_admission_inserts_the_run_before_its_queue_row_atomically() {
-    let admission = admission_transaction(AdmissionTransition::PinnedScenarioRelease);
-    let lock = admission.lock_head();
-    let sql = admission.admit();
-
-    assert!(lock.contains("SELECT lock_catalog_head"));
-    assert!(lock.contains("$1, $2"));
-    assert!(sql.contains("release_member AS MATERIALIZED"));
-    assert!(sql.contains("FROM catalog.catalog_heads AS h"));
-    assert!(sql.contains("JOIN catalog.release_flows AS rf"));
-    assert!(sql.contains("JOIN catalog.release_manifests AS rm"));
-    assert!(sql.contains("JOIN catalog.flow_artifacts AS a"));
-    assert!(sql.contains("a.artifact_hash = $10"));
-    assert_eq!(sql.matches("inserted_run AS").count(), 1);
-    assert_eq!(sql.matches("inserted_queue AS").count(), 1);
-    assert!(sql.contains("catalog_id, catalog_version"));
-    assert!(sql.contains("environment, execution_bundle_hash, status, trigger_source"));
-    assert!(!sql.contains("trigger_source, capture_mode"));
-    assert!(sql.contains("invocation_context"));
-    assert!(sql.contains("admission_context_version"));
-    for context_field in [
-        "'version', '0.1'",
-        "'principal'",
-        "'tenant-id', member.tenant_id",
-        "'environment', $6::text",
-        "'catalog-id', $4::text",
-        "'catalog-version', $5::int",
-        "'run-id', $1::text",
-        "'flow-id', $2::text",
-        "'flow-version', $3::int",
-        "'artifact-digest', member.artifact_hash",
-        "'source'",
-        "'producer', 'scenario'",
-        "'suite-id', $8::text",
-        "'case-id', $9::text",
-        "'report-id', $12::text",
-    ] {
-        assert!(sql.contains(context_field), "missing {context_field}");
-    }
-    assert!(!sql.contains("$8::text::jsonb"));
-    assert!(sql.contains("$11"));
-    assert!(sql.contains("SELECT tenant_id, run_id, NULL, 0, now() FROM inserted_run"));
-    assert!(sql.contains("WHEN EXISTS (SELECT 1 FROM inserted_queue) THEN 'admitted'"));
-    assert!(sql.contains("WHEN NOT EXISTS (SELECT 1 FROM release_member) THEN 'membership-drift'"));
-    assert!(sql.contains("ELSE 'duplicate'"));
-    assert!(!sql.contains("FROM flows"));
-}
-
-#[test]
-fn admission_derives_root_bundle_from_authoritative_member() {
-    let sql = admission_transaction(AdmissionTransition::PinnedScenarioRelease)
-        .admit()
-        .to_string();
-
-    assert!(sql.contains("rf.execution_bundle_hash"));
-    assert!(sql.contains("JOIN catalog.execution_bundles AS bundle"));
-    assert!(sql.contains("bundle.execution_bundle_hash = member.execution_bundle_hash"));
-    assert!(sql.contains("environment, execution_bundle_hash, status"));
-    assert!(sql.contains("member.execution_bundle_hash, 'dispatched'"));
-    assert!(sql.contains("THEN 'missing-root-plan'"));
-    assert!(sql.contains("THEN 'conflicting-run-identity'"));
-    assert!(
-        sql.contains("existing.invocation_context #>> '{principal,artifact-digest}'"),
-        "duplicate identity must include the release artifact pin"
-    );
-    let retired_json_pin = ["execution", "bundle", "hash"].join("-");
-    assert!(!sql.contains(&format!("'{retired_json_pin}'")));
-}
-
-#[test]
-fn release_duplicate_identity_covers_authoritative_pins() {
-    let sql = admission_transaction(AdmissionTransition::PinnedScenarioRelease)
-        .admit()
-        .to_string();
-
-    for predicate in [
-        "existing.flow_id IS DISTINCT FROM $2",
-        "existing.flow_version IS DISTINCT FROM $3",
-        "existing.catalog_id IS DISTINCT FROM $4",
-        "existing.catalog_version IS DISTINCT FROM $5::int",
-        "existing.environment IS DISTINCT FROM $6",
-        "existing.capture_mode IS DISTINCT FROM 'off'",
-        "existing.execution_bundle_hash \
-                           IS DISTINCT FROM member.execution_bundle_hash",
-        "existing.invocation_context #>> '{principal,artifact-digest}' \
-                           IS DISTINCT FROM member.artifact_hash",
-        "existing.invocation_context #>> '{source,suite-id}' \
-                           IS DISTINCT FROM $8::text",
-        "existing.invocation_context #>> '{source,case-id}' \
-                           IS DISTINCT FROM $9::text",
-        "existing.invocation_context #>> '{source,report-id}' \
-                           IS DISTINCT FROM $12::text",
-    ] {
-        assert!(
-            sql.contains(predicate),
-            "release duplicate omits {predicate}"
-        );
-    }
 }
 
 // [EVT-TEARDOWN l5i9.19]: the outbox table + its builders/DDL pins are gone —

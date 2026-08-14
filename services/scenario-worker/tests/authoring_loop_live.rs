@@ -237,7 +237,6 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
                 catalog_id: "authoring-loop-catalog".to_string(),
                 catalog_version: 1,
                 environment: "dev".to_string(),
-                suite_flow_version: 1,
             },
             &flowrunner_bytes,
         )

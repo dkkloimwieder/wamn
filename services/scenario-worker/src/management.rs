@@ -107,9 +107,7 @@ pub enum AuditedCommand {
     SaveFlowDraft,
     Validate,
     DraftRun,
-    SuiteRun,
     Publish,
-    SuiteProjection,
     GrantDraftSafeGeneration,
     RevokeDraftSafeGeneration,
 }
@@ -122,9 +120,7 @@ impl AuditedCommand {
             Self::SaveFlowDraft => "save-flow-draft",
             Self::Validate => "validate",
             Self::DraftRun => "draft-run",
-            Self::SuiteRun => "suite-run",
             Self::Publish => "publish",
-            Self::SuiteProjection => "suite-projection",
             Self::GrantDraftSafeGeneration => "grant-draft-safe-generation",
             Self::RevokeDraftSafeGeneration => "revoke-draft-safe-generation",
         }
@@ -465,7 +461,7 @@ pub struct ManagementServeArgs {
     #[arg(long, env = "WAMN_MANAGEMENT_TENANT")]
     pub tenant: String,
 
-    /// Schema containing the stored flow and scenario catalog.
+    /// Project schema containing authoring and run state.
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
 }
@@ -619,18 +615,8 @@ async fn authoring_command(
 ///   revision, and the applied catalog identity is absent from the contract
 ///   request. Supplying either from a transport would persist a content-addressed
 ///   pin that names no real executable.
-/// - `draft-run` has no backend: the only draft admission statement requires a
-///   suite and a case, and one arbitrary input is neither.
-/// - `suite-run` has a backend, but nothing resolves the contract's opaque
-///   validated-draft handle back to the whole [`ValidatedDraftPin`] every read of
-///   the validated-draft store requires, and this surface holds neither the
-///   distinct runtime credential nor the compiled component execution needs.
+/// - `draft-run` has no backend for admitting one arbitrary authored input.
 /// - `publish` has no backend.
-/// - `suite-projection` has its mapper in [`crate::projection`] and stays
-///   unmounted by owner ruling while `wamn-rwcw` and `wamn-o6xw` are open: its
-///   node, branch, edge, and refused-connection arrays are exhaustive
-///   enumerations on the contract with no evidence source yet, so mounting it
-///   would publish an empty enumeration as a complete one.
 async fn dispatch(
     surface: &Surface,
     author: &AuthorizedAuthor,
@@ -828,12 +814,7 @@ mod tests {
             ),
             (AuthoringCommandKind::Validate, AuditedCommand::Validate),
             (AuthoringCommandKind::DraftRun, AuditedCommand::DraftRun),
-            (AuthoringCommandKind::SuiteRun, AuditedCommand::SuiteRun),
             (AuthoringCommandKind::Publish, AuditedCommand::Publish),
-            (
-                AuthoringCommandKind::SuiteProjection,
-                AuditedCommand::SuiteProjection,
-            ),
         ] {
             let wire = serde_json::to_string(&kind).unwrap();
             assert_eq!(

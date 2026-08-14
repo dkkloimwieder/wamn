@@ -560,7 +560,6 @@ pub struct ValidatedDraftIdentityInput<'a> {
     pub catalog_id: &'a str,
     pub catalog_version: u32,
     pub environment: &'a str,
-    pub suite_flow_version: u32,
     pub binding_base_artifact_hash: &'a str,
 }
 
@@ -609,16 +608,9 @@ impl ValidatedDraftIdentity {
                 field: "catalog-version",
             });
         }
-        if input.suite_flow_version == 0 {
-            return Err(CatalogIdentityError::ZeroVersion {
-                field: "suite-flow-version",
-            });
-        }
-
         let runtime_flow_version = input.runtime_flow_version.to_be_bytes();
         let draft_revision = input.draft_revision.to_be_bytes();
         let catalog_version = input.catalog_version.to_be_bytes();
-        let suite_flow_version = input.suite_flow_version.to_be_bytes();
         Ok(Self(digest(&frames(
             "validated-flow-draft",
             [
@@ -636,7 +628,6 @@ impl ValidatedDraftIdentity {
                 ("catalog-id", input.catalog_id.as_bytes()),
                 ("catalog-version", catalog_version.as_slice()),
                 ("environment", input.environment.as_bytes()),
-                ("suite-flow-version", suite_flow_version.as_slice()),
                 (
                     "binding-base-artifact-hash",
                     input.binding_base_artifact_hash.as_bytes(),
@@ -805,7 +796,7 @@ impl PinnedArtifact {
     }
 }
 
-/// Environment and source-suite pins needed to verify a persisted validated draft row.
+/// Environment and binding-base pins needed to verify a persisted validated draft row.
 #[derive(Debug, Clone, Copy)]
 pub struct StoredValidatedDraftContext<'a> {
     pub expected_identity_hash: &'a str,
@@ -814,7 +805,6 @@ pub struct StoredValidatedDraftContext<'a> {
     pub catalog_id: &'a str,
     pub catalog_version: u32,
     pub environment: &'a str,
-    pub suite_flow_version: u32,
     pub binding_base_artifact_hash: &'a str,
 }
 
@@ -875,7 +865,6 @@ impl PinnedDraftArtifact {
                 catalog_id: context.catalog_id,
                 catalog_version: context.catalog_version,
                 environment: context.environment,
-                suite_flow_version: context.suite_flow_version,
                 binding_base_artifact_hash: context.binding_base_artifact_hash,
             },
         )?;

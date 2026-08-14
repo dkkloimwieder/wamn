@@ -11,7 +11,7 @@ use serde_json::Value;
 use tokio_postgres::{Client, GenericClient};
 use wamn_scenario_model::{NamedNodeTerminal, NodeFailureKind, NodeTerminalStatus};
 
-use crate::authoring::sha256;
+use super::sha256;
 
 /// Per-case execution horizon selected for the MVP test-set runner.
 pub const TEST_CASE_DEADLINE_SECONDS: i32 = 60;

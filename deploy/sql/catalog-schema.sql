@@ -485,7 +485,6 @@ CREATE TABLE catalog.validated_flow_drafts (
     catalog_id                text NOT NULL CHECK (catalog_id <> ''),
     catalog_version           int NOT NULL CHECK (catalog_version > 0),
     environment               text NOT NULL CHECK (environment <> ''),
-    suite_flow_version        int NOT NULL CHECK (suite_flow_version > 0),
     flow_id                   text NOT NULL CHECK (flow_id <> ''),
     runtime_flow_version      int NOT NULL CHECK (runtime_flow_version > 0),
     graph_json                jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
@@ -499,7 +498,7 @@ CREATE TABLE catalog.validated_flow_drafts (
     PRIMARY KEY (tenant_id, validated_draft_hash),
     CONSTRAINT validated_flow_drafts_exact_pin UNIQUE (
         tenant_id, draft_id, draft_revision, draft_content_hash,
-        catalog_id, catalog_version, environment, suite_flow_version,
+        catalog_id, catalog_version, environment,
         runtime_flow_version, draft_artifact_hash, execution_bundle_hash,
         binding_base_artifact_hash
     ),
@@ -1427,7 +1426,7 @@ CREATE TABLE catalog.authoring_command_audit (
     PRIMARY KEY (tenant_id, audit_id),
     CONSTRAINT authoring_command_audit_command_kind_check
         CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run',
-                                'suite-run', 'publish', 'suite-projection',
+                                'publish',
                                 'grant-draft-safe-generation',
                                 'revoke-draft-safe-generation')),
     CONSTRAINT authoring_command_audit_principal_kind_check

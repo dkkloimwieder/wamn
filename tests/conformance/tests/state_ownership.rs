@@ -1368,7 +1368,6 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
         [
             "catalog-schema-installer",
             "schema-control",
-            "scenario-catalog",
             "scenario-worker",
             "ctl-copy",
         ]
@@ -1377,7 +1376,6 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
         object.ownership.readers,
         [
             "schema-control",
-            "scenario-catalog",
             "scenario-worker",
             "run-state",
             "flowrunner",

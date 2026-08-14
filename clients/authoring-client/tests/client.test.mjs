@@ -71,7 +71,7 @@ const request = {
   },
 };
 
-function validateRequest(flowVersion) {
+function validateRequest() {
   return {
     "command-id": "validate-1",
     "schema-version": AUTHORING_SCHEMA_VERSION,
@@ -80,7 +80,6 @@ function validateRequest(flowVersion) {
       input: {
         draft: { "draft-id": "draft-1", revision: Number.MAX_SAFE_INTEGER },
         scope: { environment: "dev", "project-id": "project-1" },
-        suite: { "flow-version": flowVersion, "suite-id": "suite-1" },
       },
     },
   };
@@ -310,13 +309,8 @@ test("uint64 wire domain accepts 2^53-1 and refuses 2^53 and u64 max", async () 
   }
 });
 
-test("uint32 request format accepts its boundary and rejects canonical flow-version overflow", () => {
-  assert.doesNotThrow(() => parseAuthoringRequest(validateRequest(4_294_967_295)));
-  assert.throws(() => parseAuthoringRequest(validateRequest(4_294_967_296)), AuthoringPayloadError);
-});
-
 test("uint32 and uint64 response formats enforce exact inclusive boundaries", async () => {
-  const validationRequest = validateRequest(4_294_967_295);
+  const validationRequest = validateRequest();
   const identity = {
     "artifact-hash": "artifact-1",
     catalog: { "catalog-id": "catalog-1", version: 4_294_967_295 },

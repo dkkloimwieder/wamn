@@ -315,28 +315,10 @@
     },
     {
       "workspace": "root",
-      "name": "wamn-scenario-catalog",
-      "manifest_path": "crates/scenarios/catalog/Cargo.toml",
-      "role": "persistence",
-      "target_class": "shared",
-      "bounded_context": "scenarios",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
       "name": "wamn-scenario-model",
       "manifest_path": "crates/scenarios/model/Cargo.toml",
       "role": "contract",
       "target_class": "shared",
-      "bounded_context": "scenarios",
-      "deployable": false
-    },
-    {
-      "workspace": "root",
-      "name": "wamn-scenario-runtime",
-      "manifest_path": "crates/scenarios/runtime/Cargo.toml",
-      "role": "adapter",
-      "target_class": "native",
       "bounded_context": "scenarios",
       "deployable": false
     },

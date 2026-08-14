@@ -68,14 +68,6 @@
       "path": "crates/catalog/model",
       "role": "semantic"
     },
-    "scenario-catalog": {
-      "path": "crates/scenarios/catalog",
-      "role": "persistence"
-    },
-    "scenario-runtime": {
-      "path": "crates/scenarios/runtime",
-      "role": "persistence"
-    },
     "standard-nodes-entity": {
       "path": "crates/execution/standard-nodes/src/postgres.rs",
       "role": "effect"
@@ -239,14 +231,6 @@
     "unqualified_contexts": [
       {
         "path_prefix": "crates/execution/run-state/src",
-        "default_schema": "wamn_run"
-      },
-      {
-        "path_prefix": "crates/scenarios/catalog/src",
-        "default_schema": "wamn_run"
-      },
-      {
-        "path_prefix": "crates/scenarios/runtime/src/scheduler.rs",
         "default_schema": "wamn_run"
       },
       {
@@ -608,13 +592,11 @@
       "writers": [
         "catalog-schema-installer",
         "schema-control",
-        "scenario-catalog",
         "scenario-worker",
         "ctl-copy"
       ],
       "readers": [
         "schema-control",
-        "scenario-catalog",
         "scenario-worker",
         "run-state",
         "flowrunner",
@@ -699,11 +681,9 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "scenario-catalog",
         "scenario-worker"
       ],
       "readers": [
-        "scenario-catalog",
         "scenario-worker"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
@@ -718,11 +698,9 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "scenario-catalog",
         "scenario-worker"
       ],
       "readers": [
-        "scenario-catalog",
         "scenario-worker",
         "run-state",
         "flowrunner"
@@ -958,7 +936,6 @@
       ],
       "schema_source": "deploy/sql/catalog-schema.sql",
       "writers": [
-        "scenario-catalog",
         "scenario-worker"
       ],
       "readers": [
@@ -1529,14 +1506,12 @@
       "writers": [
         "run-state",
         "dispatcher",
-        "scenario-runtime",
         "flowrunner",
         "materializer"
       ],
       "readers": [
         "run-state",
         "dispatcher",
-        "scenario-runtime",
         "flowrunner"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",

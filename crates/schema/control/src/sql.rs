@@ -102,6 +102,17 @@ pub fn select_registration_docs_for_catalog_sql() -> String {
 // Immutable catalog releases (FLOW-SPEC rev18 §5.1–§5.4a).
 // ---------------------------------------------------------------------------
 
+/// Store one immutable canonical execution plan before a release or draft
+/// references it.
+///
+/// Params: tenant, execution-bundle hash, exact canonical bytes.
+pub fn insert_execution_bundle_sql() -> &'static str {
+    "INSERT INTO catalog.execution_bundles \
+       (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) \
+     VALUES ($1, $2, '0.1', $3, octet_length($3::bytea)) \
+     ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING"
+}
+
 /// Register one fully resolved immutable artifact. The database function makes
 /// an identical retry a no-op and raises `flow-version-content-conflict` when
 /// the identity tuple already names different content.
@@ -354,6 +365,18 @@ mod tests {
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
         assert_eq!(actual_sha256, EXPECTED_SHA256);
+    }
+
+    #[test]
+    fn execution_bundle_insert_preserves_exact_bytes_and_is_idempotent() {
+        assert!(CATALOG_SCHEMA.contains("CREATE TABLE catalog.execution_bundles"));
+        assert!(CATALOG_SCHEMA.contains("exact_bytes            bytea NOT NULL"));
+        assert!(CATALOG_SCHEMA.contains("octet_length(exact_bytes)"));
+
+        let insert = super::insert_execution_bundle_sql();
+        assert!(insert.contains("format_version, exact_bytes, byte_length"));
+        assert!(insert.contains("octet_length($3::bytea)"));
+        assert!(insert.contains("ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING"));
     }
 
     #[test]

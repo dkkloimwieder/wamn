@@ -202,50 +202,6 @@ pub fn select_release_resolution_bindings_sql() -> String {
         .to_string()
 }
 
-/// Read the already selected run's validated draft candidate override.
-///
-/// This is a trusted loader, not caller-supplied JSON authority: every draft
-/// identity value comes from the run's immutable `invocation_context` pins and
-/// the run's own catalog/environment/root-flow/execution-bundle pins. `$1` run
-/// id.
-pub fn select_run_candidate_resolution_plan_sql() -> String {
-    "SELECT draft.flow_id, draft.execution_bundle_hash, draft.draft_artifact_hash, \
-            draft.binding_base_artifact_hash, bundle.exact_bytes \
-       FROM runs AS run \
-       JOIN catalog.validated_flow_drafts AS draft \
-         ON draft.tenant_id = run.tenant_id \
-        AND draft.flow_id = run.flow_id \
-        AND draft.runtime_flow_version = run.flow_version \
-        AND draft.catalog_id = run.catalog_id \
-        AND draft.catalog_version = run.catalog_version \
-        AND draft.environment = run.environment \
-        AND draft.draft_artifact_hash = run.invocation_context #>> '{principal,artifact-digest}' \
-        AND draft.draft_id = run.invocation_context #>> '{principal,draft-id}' \
-        AND draft.draft_revision::text = run.invocation_context #>> '{principal,draft-revision}' \
-        AND draft.draft_content_hash = run.invocation_context #>> '{principal,draft-content-hash}' \
-        AND draft.validated_draft_hash = run.invocation_context #>> '{principal,validated-draft-hash}' \
-        AND draft.execution_bundle_hash = run.execution_bundle_hash \
-        AND draft.binding_base_artifact_hash = run.invocation_context #>> '{principal,binding-base-artifact-hash}' \
-        AND draft.suite_flow_version::text = run.invocation_context #>> '{principal,suite-flow-version}' \
-       JOIN catalog.execution_bundles AS bundle \
-         ON bundle.tenant_id = draft.tenant_id \
-        AND bundle.execution_bundle_hash = draft.execution_bundle_hash \
-      WHERE run.tenant_id = current_setting('app.tenant', true) \
-        AND run.run_id = $1 \
-        AND run.trigger_source = 'scenario-draft' \
-        AND run.admission_context_version = '0.1' \
-        AND run.invocation_context #>> '{source,producer}' = 'draft-scenario' \
-        AND run.invocation_context ->> 'version' = '0.1' \
-        AND run.invocation_context #>> '{principal,tenant-id}' = run.tenant_id \
-        AND run.invocation_context #>> '{principal,environment}' = run.environment \
-        AND run.invocation_context #>> '{principal,catalog-id}' = run.catalog_id \
-        AND run.invocation_context #>> '{principal,catalog-version}' = run.catalog_version::text \
-        AND run.invocation_context #>> '{principal,run-id}' = run.run_id \
-        AND run.invocation_context #>> '{principal,flow-id}' = run.flow_id \
-        AND run.invocation_context #>> '{principal,flow-version}' = run.flow_version::text"
-        .to_string()
-}
-
 /// Insert or verify one complete immutable run-flow resolution map. `$1` run id,
 /// `$2` JSON array of `{flow-id, execution-bundle-hash, source-artifact-hash}`.
 pub fn materialize_run_flow_resolutions_sql() -> String {
@@ -526,45 +482,6 @@ mod tests {
             "{bindings}"
         );
 
-        let candidate = select_run_candidate_resolution_plan_sql();
-        assert!(candidate.contains("FROM runs AS run"), "{candidate}");
-        assert!(
-            candidate.contains("catalog.validated_flow_drafts AS draft"),
-            "{candidate}"
-        );
-        assert!(
-            candidate.contains("catalog.execution_bundles AS bundle"),
-            "{candidate}"
-        );
-        assert!(
-            candidate.contains("draft.execution_bundle_hash = run.execution_bundle_hash"),
-            "{candidate}"
-        );
-        for pin in [
-            "draft-id",
-            "draft-revision",
-            "draft-content-hash",
-            "validated-draft-hash",
-            "binding-base-artifact-hash",
-            "suite-flow-version",
-            "tenant-id",
-            "catalog-id",
-            "catalog-version",
-            "run-id",
-            "flow-id",
-            "flow-version",
-            "artifact-digest",
-        ] {
-            assert!(
-                candidate.contains(pin),
-                "candidate loader omits {pin}: {candidate}"
-            );
-        }
-        assert!(candidate.contains("run.admission_context_version = '0.1'"));
-        assert!(candidate.contains("run.invocation_context ->> 'version' = '0.1'"));
-        assert!(!candidate.contains("catalog_heads"), "{candidate}");
-        assert!(!candidate.contains("$2"), "{candidate}");
-
         let materialize = materialize_run_flow_resolutions_sql();
         assert!(materialize.contains("materialize_run_flow_resolutions($1, $2::text::jsonb)"));
         for forbidden in [
@@ -581,7 +498,6 @@ mod tests {
             assert!(
                 !plans.contains(forbidden)
                     && !bindings.contains(forbidden)
-                    && !candidate.contains(forbidden)
                     && !materialize.contains(forbidden),
                 "resolution SQL must not own claim composition token {forbidden}"
             );

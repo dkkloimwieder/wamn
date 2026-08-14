@@ -453,7 +453,6 @@ mod tests {
     #[test]
     fn manifests_keep_lifecycle_dependencies_in_executor() {
         let executor_manifest = include_str!("../Cargo.toml");
-        assert!(!executor_manifest.contains("wamn-scenario-runtime"));
         assert!(!executor_manifest.contains("../scenario-worker"));
         for dependency in [
             "async-nats",

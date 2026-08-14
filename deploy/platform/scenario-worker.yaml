@@ -6,8 +6,8 @@
 #   kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=120s
 #
 # PER-PROJECT INSTANTIATION: --org / --project / --tenant and the authoring
-# Secret name below are per-(org, project, env) config, like
-# event-reader.example.yaml. One surface serves exactly one project: a token
+# Secret name below are per-(org, project, env) config. One surface serves
+# exactly one project: a token
 # whose principal holds no role in THAT project is refused, and a request naming
 # any other project is refused identically.
 #
@@ -17,7 +17,7 @@
 #                        identity.project_roles. This is control-plane tooling
 #                        reading first-party identity by ctc8.6 design, not a
 #                        data-plane request path. `wamn-system-db` is the same
-#                        operator-provided Secret event-reader.example.yaml uses.
+#                        operator-provided control-database Secret.
 #   WAMN_AUTHORING_PG_URL the project database, as the dedicated host-author
 #                        login. The adapter's startup probe REFUSES to run
 #                        unless that credential is unprivileged, a member of

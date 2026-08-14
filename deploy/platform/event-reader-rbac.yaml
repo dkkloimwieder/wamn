@@ -1,6 +1,6 @@
 # E7 (wamn-l5i9.48) — the CDC reader's own identity, applied ONCE per cluster
-# (shared by every per-env reader instantiated from event-reader.example.yaml,
-# and by the future D22 lease-sharded fleet).
+# (shared by the `wamn-cdc-reader` deployments and the future D22
+# lease-sharded fleet).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/event-reader-rbac.yaml
 #

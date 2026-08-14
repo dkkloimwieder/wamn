@@ -8,10 +8,7 @@
 use serde_json::Value;
 use wamn_pg_core::Identifier;
 
-use crate::queue::{
-    PartitionPolicy, admit_pinned_draft_scenario_run_sql, admit_pinned_triggered_run_sql,
-    lock_pinned_trigger_catalog_head_sql,
-};
+use crate::queue::PartitionPolicy;
 
 /// Validated schema containing the durable run-state tables and functions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -178,10 +175,6 @@ pub fn registration_evidence(document: &Value) -> (String, String) {
 pub enum AdmissionTransition<'a> {
     /// Shared callable-flow admission for HTTP and event producers.
     CallableFlow { schema: &'a RunStateSchema },
-    /// Management/test-set admission for one exact released suite case.
-    PinnedScenarioRelease,
-    /// Management/test-set admission for one exact validated draft suite case.
-    PinnedScenarioDraft,
 }
 
 /// The ordered statements for one admission transaction.
@@ -207,14 +200,6 @@ impl AdmissionTransaction {
 pub fn admission_transaction(transition: AdmissionTransition<'_>) -> AdmissionTransaction {
     match transition {
         AdmissionTransition::CallableFlow { schema } => admission_sql_for_schema(schema),
-        AdmissionTransition::PinnedScenarioRelease => AdmissionTransaction {
-            lock_head: lock_pinned_trigger_catalog_head_sql(),
-            admit: admit_pinned_triggered_run_sql(),
-        },
-        AdmissionTransition::PinnedScenarioDraft => AdmissionTransaction {
-            lock_head: lock_pinned_trigger_catalog_head_sql(),
-            admit: admit_pinned_draft_scenario_run_sql(),
-        },
     }
 }
 
@@ -600,7 +585,6 @@ mod tests {
         let sql = admission_sql().admit;
 
         assert!(!sql.contains("admission_expires_at"));
-        assert!(!sql.contains("expires_at"));
         assert!(!sql.contains("$29"));
         assert!(sql.contains("$28::text AS partition_policy"));
         assert!(sql.contains("OR i.client_key_digest = ''"));
@@ -717,8 +701,8 @@ mod tests {
     #[test]
     fn callable_admission_forces_capture_off_without_new_input() {
         let sql = admission_sql().admit().to_string();
-        assert!(sql.contains("$28::text AS partition_key, $29::text AS partition_policy"));
-        assert!(!sql.contains("$30"));
+        assert!(sql.contains("$27::text AS partition_key, $28::text AS partition_policy"));
+        assert!(!sql.contains("$29"));
         assert!(!sql.contains("event_source_run_id, event_root_run_id, event_depth, capture_mode"));
         assert!(
             sql.contains(

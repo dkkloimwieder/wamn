@@ -3,7 +3,7 @@
 // WHAT THIS IS. The whole authoring loop driven from a real checkout by the
 // shipped `wamn` CLI and nothing else: edit a flow file, `validate` (save the
 // exact bytes, then validate the exact saved revision), edit it again,
-// `draft-run`, `suite-run`, `runs`, `promote`. Every leg is a subprocess
+// `draft-run`, `promote`. Every leg is a subprocess
 // invocation of scripts/wamn.mjs whose stdout document is read as the result, so
 // the gate proves the CLI's public behaviour rather than its internals.
 //
@@ -31,7 +31,15 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,15 +54,13 @@ const REFUSAL_BODY = '{"kind":"authorization-denied"}';
 const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 
 const FLOW_ID = "receive-material";
-const SUITE_ID = "receiving-happy-path";
-const FLOW_VERSION = "3";
 const DEFINITION = `{"schema-version":"0.1","flow-id":"${FLOW_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
 const AUTHORED_INPUT = '{"receipt-id":"receipt-1042","material":"aluminum"}';
 
-// A validated draft and a report the cycle cannot own yet: when `validate` or
-// `suite-run` is unmounted there is no identity to carry forward, so the
-// downstream legs present a contract-shaped placeholder purely to reach the
-// transport. On a surface that mounts them, the real identity flows instead.
+// A validated draft and report the retained commands cannot always own yet.
+// When `validate` is unmounted there is no draft identity to carry forward;
+// replacement report orchestration is not part of this contract cut. The
+// downstream legs use contract-shaped placeholders purely to reach transport.
 const PLACEHOLDER_VALIDATED_DRAFT = "sha256:validated-draft-not-yet-issued";
 const PLACEHOLDER_REPORT = "report-not-yet-reserved";
 
@@ -73,9 +79,7 @@ const RESULT_KEYS = {
     "validated-draft-id",
   ],
   "draft-run": ["run-id", "validated-draft"],
-  "suite-run": ["execution-id", "report-id", "validated-draft"],
   publish: ["artifact-hash", "flow-id", "version"],
-  "suite-projection": ["state"],
 };
 
 class CheckFailure extends Error {
@@ -123,9 +127,32 @@ function parseArguments(argv) {
   return options;
 }
 
+function launchWamn(args, env = process.env) {
+  const captureDirectory = mkdtempSync(join(tmpdir(), "wamn-authoring-cycle-cli-"));
+  const stdoutPath = join(captureDirectory, "stdout");
+  const stderrPath = join(captureDirectory, "stderr");
+  const stdoutFd = openSync(stdoutPath, "w");
+  const stderrFd = openSync(stderrPath, "w");
+  try {
+    const launched = spawnSync(process.execPath, [LAUNCHER, ...args], {
+      env,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+    return {
+      ...launched,
+      stderr: readFileSync(stderrPath, "utf8"),
+      stdout: readFileSync(stdoutPath, "utf8"),
+    };
+  } finally {
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
+    rmSync(captureDirectory, { force: true, recursive: true });
+  }
+}
+
 /// Run one `wamn` verb and read its single stdout document.
 function wamn(verb, args) {
-  const launched = spawnSync(process.execPath, [LAUNCHER, verb, ...args], { encoding: "utf8" });
+  const launched = launchWamn([verb, ...args]);
   for (const line of launched.stderr.split("\n")) if (line.length > 0) emit(`    | ${line}`);
   let document;
   if (launched.stdout.length > 0) {
@@ -213,21 +240,19 @@ function stepOf(document, command) {
 async function staticHalf() {
   emit("static checks only (--check); no request is sent");
   await compiledPackage();
-  const help = spawnSync(process.execPath, [LAUNCHER, "--help"], { encoding: "utf8" });
+  const help = launchWamn(["--help"]);
   require_("cli-compiles", help.status === 0, `wamn --help exited ${help.status}`);
-  for (const verb of ["validate", "draft-run", "suite-run", "promote", "runs"]) {
+  for (const verb of ["validate", "draft-run", "promote"]) {
     require_(`cli-verb-${verb}`, help.stderr.includes(`  ${verb} `), `--help does not document ${verb}`);
   }
   // The cycle covers the whole public command inventory: every kind in the
-  // generated schema is reached by one of the five verbs.
+  // generated schema is reached by one of the three verbs.
   const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8"));
   const covered = [
     "save-flow-draft",
     "validate",
     "draft-run",
-    "suite-run",
     "publish",
-    "suite-projection",
   ];
   require_(
     "cycle-covers-the-command-inventory",
@@ -337,10 +362,6 @@ async function main() {
       draftId,
       "--flow-id",
       FLOW_ID,
-      "--suite-id",
-      SUITE_ID,
-      "--flow-version",
-      FLOW_VERSION,
     ]),
     ["save-flow-draft", "validate"],
   );
@@ -371,10 +392,6 @@ async function main() {
       draftId,
       "--flow-id",
       FLOW_ID,
-      "--suite-id",
-      SUITE_ID,
-      "--flow-version",
-      FLOW_VERSION,
     ]),
     ["save-flow-draft", "validate"],
   );
@@ -415,40 +432,7 @@ async function main() {
     ["draft-run"],
   );
 
-  // ---- leg 4: suite-run ----------------------------------------------------
-  emit("leg suite-run");
-  const suiteRun = record(
-    steps,
-    "suite-run",
-    "suite-run",
-    wamn("suite-run", [
-      ...scope,
-      "--command-id",
-      `cycle-${runId}-suite-run`,
-      "--validated-draft",
-      validatedDraftId,
-      "--suite-id",
-      SUITE_ID,
-      "--flow-version",
-      FLOW_VERSION,
-    ]),
-    ["suite-run"],
-  );
-  const suiteStep = stepOf(suiteRun, "suite-run");
-  const reportId =
-    suiteStep.status === "completed" ? suiteStep.result["report-id"] : PLACEHOLDER_REPORT;
-
-  // ---- leg 5: runs ---------------------------------------------------------
-  emit("leg runs");
-  const runs = record(
-    steps,
-    "runs",
-    "runs",
-    wamn("runs", [...scope, "--command-id", `cycle-${runId}-runs`, "--report-id", reportId]),
-    ["suite-projection"],
-  );
-
-  // ---- leg 6: promote ------------------------------------------------------
+  // ---- leg 4: promote ------------------------------------------------------
   emit("leg promote");
   const promote = record(
     steps,
@@ -461,25 +445,21 @@ async function main() {
       "--validated-draft",
       validatedDraftId,
       "--report-id",
-      reportId,
+      PLACEHOLDER_REPORT,
     ]),
     ["publish"],
   );
 
   // ---- edit-to-run latency -------------------------------------------------
-  const latency = draftRun["edit-to-run-ms"] ?? suiteRun["edit-to-run-ms"];
+  const latency = draftRun["edit-to-run-ms"];
   if (typeof latency === "number") {
     emit(`  time  edit-to-run-ms=${latency} (working-tree edit -> run receipt)`);
   } else {
     emit(
       "  time  edit-to-run-ms=unmeasurable — no run receipt was issued because the " +
-        "run commands are unmounted on this surface",
+        "draft-run is unmounted on this surface",
     );
   }
-  const serverLatency = runs["server-edit-to-run-ms"];
-  emit(
-    `  time  server-edit-to-run-ms=${serverLatency === undefined || serverLatency === null ? "absent" : serverLatency}`,
-  );
 
   // ---- shortcut probes: every one of these must fail -----------------------
   emit("probes (each of these must fail)");
@@ -557,10 +537,6 @@ async function main() {
     `${draftId}-forged`,
     "--flow-id",
     FLOW_ID,
-    "--suite-id",
-    SUITE_ID,
-    "--flow-version",
-    FLOW_VERSION,
   ]);
   rmSync(forgedPath, { force: true });
   require_(
@@ -574,19 +550,25 @@ async function main() {
   // The environment can hold every shortcut-shaped value there is; the CLI reads
   // none of them and refuses for want of the flags it actually accepts.
   const sentinel = "SENTINEL-cycle";
-  const poisoned = spawnSync(
-    process.execPath,
-    [LAUNCHER, "runs", "--project", options.project, "--environment", options.environment, "--report-id", "r"],
+  const poisoned = launchWamn(
+    [
+      "promote",
+      "--project",
+      options.project,
+      "--environment",
+      options.environment,
+      "--validated-draft",
+      PLACEHOLDER_VALIDATED_DRAFT,
+      "--report-id",
+      PLACEHOLDER_REPORT,
+    ],
     {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PGPASSWORD: sentinel,
-        WAMN_AUTHORING_BEARER_TOKEN: `wamn_pat_${sentinel}`,
-        WAMN_AUTHORING_ENDPOINT: `${baseUrl}${AUTHORING_PATH}`,
-        WAMN_AUTHORING_PG_URL: `postgres://${sentinel}@db.invalid/wamn`,
-        WAMN_SYSTEM_URL: `postgres://${sentinel}@db.invalid/wamn`,
-      },
+      ...process.env,
+      PGPASSWORD: sentinel,
+      WAMN_AUTHORING_BEARER_TOKEN: `wamn_pat_${sentinel}`,
+      WAMN_AUTHORING_ENDPOINT: `${baseUrl}${AUTHORING_PATH}`,
+      WAMN_AUTHORING_PG_URL: `postgres://${sentinel}@db.invalid/wamn`,
+      WAMN_SYSTEM_URL: `postgres://${sentinel}@db.invalid/wamn`,
     },
   );
   require_(

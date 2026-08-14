@@ -4219,7 +4219,6 @@ dependencies = [
  "wamn-flow",
  "wamn-platform-identity",
  "wamn-run-state",
- "wamn-scenario-catalog",
  "wamn-schema-compiler",
  "wamn-schema-control",
  "wamn-schema-model",
@@ -4572,32 +4571,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "wamn-scenario-catalog"
-version = "0.1.0"
-
-[[package]]
 name = "wamn-scenario-model"
 version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "wamn-scenario-runtime"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "hyper",
- "rand_core 0.10.1",
- "tokio",
- "tokio-postgres",
- "wamn-pg-core",
- "wamn-runtime",
- "wash-runtime",
- "wasmtime-wasi",
- "wasmtime-wasi-http",
 ]
 
 [[package]]
@@ -4623,9 +4601,7 @@ dependencies = [
  "wamn-flow",
  "wamn-platform-identity",
  "wamn-runtime",
- "wamn-scenario-catalog",
  "wamn-scenario-model",
- "wamn-scenario-runtime",
  "wamn-schema-control",
  "wamn-standard-nodes",
  "wash-runtime",

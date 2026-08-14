@@ -36,7 +36,7 @@ load_mutation() {
   case "$1" in
     allow-destructive-dry-run)
       TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
+      EXPECTED_SHA="bfe4431a7d7f125fe195c6654448df1fb1a6c3a06ee3f2d1bb1c8a661151ce86"
       NEEDLE='        let plan = plan_error(plan_migration(&request))?;'
       REPLACEMENT='        let plan = plan_error(wamn_schema_control::ops::plan_target_reconciliation(&request))?;'
       GATE="orphan_guard_refuses_then_proceeds"
@@ -72,7 +72,7 @@ load_mutation() {
       ;;
     expose-destructive-flag)
       TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
+      EXPECTED_SHA="bfe4431a7d7f125fe195c6654448df1fb1a6c3a06ee3f2d1bb1c8a661151ce86"
       NEEDLE='    #[arg(long)]
     pub skip_reconcile_replica_identity: bool,'
       REPLACEMENT='    #[arg(long, visible_alias = "confirm-with-backup")]
@@ -82,7 +82,7 @@ load_mutation() {
       ;;
     enable-ops-by-default)
       TARGET="services/ctl/Cargo.toml"
-      EXPECTED_SHA="81cdf5954c45936d665cbb305aaa86429468b04703e82cd49d5dbb470df6cb35"
+      EXPECTED_SHA="1b21a9e8822a482868245fda18231bfb091538135d55bb8bda59338f5034b339"
       NEEDLE='default = []'
       REPLACEMENT='default = ["ops"]'
       GATE="mvp_dependency_tree_does_not_enable_ops"
@@ -90,7 +90,7 @@ load_mutation() {
       ;;
     skip-copy-confirmation-read)
       TARGET="services/ctl/src/copy_project_env.rs"
-      EXPECTED_SHA="f1ba7686186117809bd77855fe2fc9b08b4a0c59e2186b7ff92c32f8c88c128e"
+      EXPECTED_SHA="8301b06ddfb8edb22448bf04a4037d2d82938dbb93c362846c9d28facec09ab5"
       NEEDLE='wamn_control_provision::state::select_migration_confirmation_sql()'
       REPLACEMENT='"SELECT NULL::int, '\''backup-checkpoint-attested'\''::text, now(), session_user"'
       GATE="copy_authorization_wiring"
@@ -98,7 +98,7 @@ load_mutation() {
       ;;
     drop-copy-authorization-consumption)
       TARGET="services/ctl/src/copy_project_env.rs"
-      EXPECTED_SHA="f1ba7686186117809bd77855fe2fc9b08b4a0c59e2186b7ff92c32f8c88c128e"
+      EXPECTED_SHA="8301b06ddfb8edb22448bf04a4037d2d82938dbb93c362846c9d28facec09ab5"
       NEEDLE='            authorizations.remove(&cat.catalog_id),'
       REPLACEMENT='            None,'
       GATE="copy_authorization_wiring"
@@ -106,7 +106,7 @@ load_mutation() {
       ;;
     bypass-copy-locked-window)
       TARGET="services/ctl/src/migrate_catalog.rs"
-      EXPECTED_SHA="4f4404a87ee0ab11c42ca674ac9b40328aba3a7c118269becc5719082fbbbfbd"
+      EXPECTED_SHA="bfe4431a7d7f125fe195c6654448df1fb1a6c3a06ee3f2d1bb1c8a661151ce86"
       NEEDLE='        guard_target_reconciliation_window(authorization, locked_from, target.version)?;'
       REPLACEMENT='        let _ = (authorization, locked_from, target.version);'
       GATE="copy_authorization_wiring"

@@ -3,24 +3,16 @@ use std::path::Path;
 use serde_json::{Value, json};
 use wamn_authoring_model::{
     AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringRefusal,
-    AuthoringReportQuery, AuthoringRequest, AuthoringResponse, AuthoringScope, AuthoringSuccess,
-    BranchCoverageProjection, BranchIdentity, CaseResultProjection, CatalogIdentity,
-    CommandRefusal, CommitProvenance, ContractDecodeError, CoverageState, DraftIdentity, DraftRun,
-    DraftRunCapture, DraftRunReceipt, DraftSuiteProjection, EdgeCoverageProjection, EdgeIdentity,
-    EdgeInputPort, NodeOutcome, NodeResultProjection, PassFail, PendingReportReason,
-    PendingSuiteProjection, PublishValidatedDraft, PublishedFlowIdentity, ResourceKind,
-    SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, SaveFlowDraft, SuiteExecutionRefusal,
-    SuiteOutcome, SuiteProjectionState, SuiteRef, SuiteRun, SuiteRunReceipt, ValidateDraft,
+    AuthoringRequest, AuthoringResponse, AuthoringScope, AuthoringSuccess, CatalogIdentity,
+    CommandRefusal, CommitProvenance, ContractDecodeError, DraftIdentity, DraftRun,
+    DraftRunCapture, DraftRunReceipt, PublishValidatedDraft, PublishedFlowIdentity, ResourceKind,
+    SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, SaveFlowDraft, ValidateDraft,
     ValidatedDraftIdentity, ValidatedDraftRef, ValidationIssue, ValidationSeverity,
     decode_document,
 };
 
 /// Definitions whose variants carry structured refusal fields.
-const REFUSAL_DEFINITIONS: [&str; 3] = [
-    "AuthoringRefusal",
-    "PendingReportReason",
-    "SuiteExecutionRefusal",
-];
+const REFUSAL_DEFINITIONS: [&str; 1] = ["AuthoringRefusal"];
 
 /// A literal known to sit inside the exactly representable wire domain.
 fn exact(value: u64) -> SafeUint64 {
@@ -71,49 +63,6 @@ fn request(command_id: &str, command: AuthoringCommand) -> AuthoringDocument {
     }))
 }
 
-fn projection() -> DraftSuiteProjection {
-    DraftSuiteProjection {
-        projection_version: SCHEMA_VERSION.into(),
-        report_id: "report-5".into(),
-        execution_id: "execution-5".into(),
-        draft: validated(),
-        suite: SuiteRef {
-            suite_id: "happy-and-hold".into(),
-            flow_version: 3,
-        },
-        outcome: SuiteOutcome::Failed,
-        edit_to_run_ms: Some(exact(41)),
-        cases: vec![CaseResultProjection {
-            case_id: "hold".into(),
-            run_id: "run-hold".into(),
-            outcome: PassFail::Failed,
-            failure: None,
-        }],
-        nodes: vec![NodeResultProjection {
-            node_id: "decide".into(),
-            outcome: NodeOutcome::Passed,
-            observed_case_ids: vec!["hold".into()],
-            failed_case_ids: Vec::new(),
-        }],
-        branches: vec![BranchCoverageProjection {
-            branch: BranchIdentity {
-                from_node_id: "decide".into(),
-                from_port: "hold".into(),
-            },
-            coverage: CoverageState::Covered,
-        }],
-        edges: vec![EdgeCoverageProjection {
-            edge: EdgeIdentity {
-                from_node_id: "decide".into(),
-                from_port: "hold".into(),
-                to_node_id: "create-hold".into(),
-                to_port: EdgeInputPort::Default,
-            },
-            coverage: CoverageState::NotObserved,
-        }],
-    }
-}
-
 fn refusal_response(reason: AuthoringRefusal) -> AuthoringDocument {
     AuthoringDocument::Response(Box::new(AuthoringResponse {
         schema_version: SCHEMA_VERSION.into(),
@@ -125,24 +74,12 @@ fn refusal_response(reason: AuthoringRefusal) -> AuthoringDocument {
     }))
 }
 
-fn projection_response(state: SuiteProjectionState) -> AuthoringDocument {
-    AuthoringDocument::Response(Box::new(AuthoringResponse {
-        schema_version: SCHEMA_VERSION.into(),
-        command_id: "projection-keys".into(),
-        outcome: AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SuiteProjection(
-            Box::new(state),
-        ))),
-    }))
-}
-
 /// Every field-carrying refusal variant, paired with the schema definition
 /// that publishes it and the pointer to it inside its carrier document.
 fn structured_refusal_documents() -> Vec<(&'static str, &'static str, AuthoringDocument)> {
     const REASON: &str = "/body/outcome/value/reason";
-    const PENDING_REASON: &str = "/body/outcome/value/result/report/reason";
-    const SUITE_REFUSAL: &str = "/body/outcome/value/result/report/outcome/refusal";
 
-    let mut cases: Vec<_> = [
+    [
         AuthoringRefusal::UnsupportedContractVersion {
             requested: "0.2".into(),
             supported: SCHEMA_VERSION.into(),
@@ -152,8 +89,8 @@ fn structured_refusal_documents() -> Vec<(&'static str, &'static str, AuthoringD
             actual_revision: Some(exact(3)),
         },
         AuthoringRefusal::ResourceNotFound {
-            resource: ResourceKind::Suite,
-            id: "suite-a".into(),
+            resource: ResourceKind::Report,
+            id: "report-a".into(),
         },
         AuthoringRefusal::InvalidDraft {
             issues: vec![ValidationIssue {
@@ -169,49 +106,13 @@ fn structured_refusal_documents() -> Vec<(&'static str, &'static str, AuthoringD
         AuthoringRefusal::DraftConnectionsDenied {
             connection_names: vec!["erp".into()],
         },
-        AuthoringRefusal::PublishBlockedBySuite {
-            report_id: "report-5".into(),
-        },
         AuthoringRefusal::PublishBlockedByNonterminalRuns {
             run_ids: vec!["run-parked".into()],
         },
     ]
     .into_iter()
     .map(|reason| ("AuthoringRefusal", REASON, refusal_response(reason)))
-    .collect();
-
-    cases.push((
-        "PendingReportReason",
-        PENDING_REASON,
-        projection_response(SuiteProjectionState::Pending(PendingSuiteProjection {
-            report_id: "report-5".into(),
-            execution_id: "execution-5".into(),
-            validated_draft: validated_ref(),
-            reason: PendingReportReason::CaptureInterrupted {
-                run_ids: vec!["run-hold".into()],
-            },
-            captured_case_ids: vec!["hold".into()],
-        })),
-    ));
-
-    for refusal in [
-        SuiteExecutionRefusal::UndrivableNodes {
-            node_types: vec!["custom-a".into()],
-        },
-        SuiteExecutionRefusal::DraftConnectionsDenied {
-            connection_names: vec!["erp".into()],
-        },
-    ] {
-        let mut report = projection();
-        report.outcome = SuiteOutcome::Refused(refusal);
-        cases.push((
-            "SuiteExecutionRefusal",
-            SUITE_REFUSAL,
-            projection_response(SuiteProjectionState::Finalized(Box::new(report))),
-        ));
-    }
-
-    cases
+    .collect()
 }
 
 /// Property names the schema publishes for one tagged variant.
@@ -247,10 +148,6 @@ fn published_structured_variants(schema: &Value, definition: &str) -> usize {
 
 #[test]
 fn command_inventory_is_frontend_neutral_and_round_trips() {
-    let suite = SuiteRef {
-        suite_id: "suite-a".into(),
-        flow_version: 3,
-    };
     let commands = [
         (
             "save-flow-draft",
@@ -271,7 +168,6 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
                     draft_id: "draft-7".into(),
                     revision: exact(3),
                 },
-                suite: suite.clone(),
             }),
         ),
         (
@@ -284,26 +180,11 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
             }),
         ),
         (
-            "suite-run",
-            AuthoringCommand::SuiteRun(SuiteRun {
-                scope: scope(),
-                validated_draft: validated_ref(),
-                suite: suite.clone(),
-            }),
-        ),
-        (
             "publish",
             AuthoringCommand::Publish(PublishValidatedDraft {
                 scope: scope(),
                 validated_draft: validated_ref(),
                 successful_report_id: "report-5".into(),
-            }),
-        ),
-        (
-            "suite-projection",
-            AuthoringCommand::SuiteProjection(AuthoringReportQuery {
-                scope: scope(),
-                report_id: "report-5".into(),
             }),
         ),
     ];
@@ -320,9 +201,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
         AuthoringCommandKind::SaveFlowDraft,
         AuthoringCommandKind::Validate,
         AuthoringCommandKind::DraftRun,
-        AuthoringCommandKind::SuiteRun,
         AuthoringCommandKind::Publish,
-        AuthoringCommandKind::SuiteProjection,
     ]
     .map(|kind| serde_json::to_value(kind).unwrap());
     assert_eq!(
@@ -331,9 +210,7 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
             json!("save-flow-draft"),
             json!("validate"),
             json!("draft-run"),
-            json!("suite-run"),
             json!("publish"),
-            json!("suite-projection"),
         ]
     );
 }
@@ -388,19 +265,11 @@ fn every_success_shape_and_typed_refusal_round_trips() {
             run_id: "run-1".into(),
             validated_draft: validated_ref(),
         }),
-        AuthoringSuccess::SuiteRun(SuiteRunReceipt {
-            report_id: "report-5".into(),
-            execution_id: "execution-5".into(),
-            validated_draft: validated_ref(),
-        }),
         AuthoringSuccess::Publish(PublishedFlowIdentity {
             flow_id: "receive-material".into(),
             version: 4,
             artifact_hash: "sha256:artifact".into(),
         }),
-        AuthoringSuccess::SuiteProjection(Box::new(SuiteProjectionState::Finalized(Box::new(
-            projection(),
-        )))),
     ];
 
     for (index, success) in successes.into_iter().enumerate() {
@@ -424,8 +293,8 @@ fn every_success_shape_and_typed_refusal_round_trips() {
             actual_revision: Some(exact(3)),
         },
         AuthoringRefusal::ResourceNotFound {
-            resource: ResourceKind::Suite,
-            id: "suite-a".into(),
+            resource: ResourceKind::Report,
+            id: "report-a".into(),
         },
         AuthoringRefusal::InvalidDraft {
             issues: vec![ValidationIssue {
@@ -442,9 +311,6 @@ fn every_success_shape_and_typed_refusal_round_trips() {
         AuthoringRefusal::ValidatedDraftDrift,
         AuthoringRefusal::DraftConnectionsDenied {
             connection_names: vec!["erp".into()],
-        },
-        AuthoringRefusal::PublishBlockedBySuite {
-            report_id: "report-5".into(),
         },
         AuthoringRefusal::PublishExecutableDrift,
         AuthoringRefusal::PublishBlockedByNonterminalRuns {
@@ -679,7 +545,6 @@ fn versions_and_privileged_or_frontend_fields_fail_closed() {
     for (definition, field) in [
         ("AuthoringRequest", "schema-version"),
         ("AuthoringResponse", "schema-version"),
-        ("DraftSuiteProjection", "projection-version"),
     ] {
         assert_eq!(
             schema["definitions"][definition]["properties"][field]["enum"],
@@ -695,10 +560,6 @@ fn versions_and_privileged_or_frontend_fields_fail_closed() {
             draft: wamn_authoring_model::DraftRevisionRef {
                 draft_id: "draft-7".into(),
                 revision: exact(3),
-            },
-            suite: SuiteRef {
-                suite_id: "suite-a".into(),
-                flow_version: 3,
             },
         }),
     );
@@ -740,64 +601,6 @@ fn versions_and_privileged_or_frontend_fields_fail_closed() {
             ),
             "client-controlled {field} must be rejected"
         );
-    }
-
-    let response = AuthoringDocument::Response(Box::new(AuthoringResponse {
-        schema_version: SCHEMA_VERSION.into(),
-        command_id: "projection-1".into(),
-        outcome: AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SuiteProjection(
-            Box::new(SuiteProjectionState::Finalized(Box::new(
-                DraftSuiteProjection {
-                    projection_version: "0.2".into(),
-                    ..projection()
-                },
-            ))),
-        ))),
-    }));
-    assert!(matches!(
-        decode_document(&serde_json::to_string(&response).unwrap()),
-        Err(ContractDecodeError::UnsupportedProjectionVersion { requested }) if requested == "0.2"
-    ));
-}
-
-#[test]
-fn projection_identity_and_observation_states_are_never_implicit() {
-    let value = serde_json::to_value(projection()).unwrap();
-
-    assert_eq!(value["nodes"][0]["node-id"], "decide");
-    assert_eq!(value["nodes"][0]["outcome"], "passed");
-    assert_eq!(value["branches"][0]["branch"]["from-node-id"], "decide");
-    assert_eq!(value["branches"][0]["branch"]["from-port"], "hold");
-    assert_eq!(value["branches"][0]["coverage"], "covered");
-    assert_eq!(value["edges"][0]["edge"]["from-node-id"], "decide");
-    assert_eq!(value["edges"][0]["edge"]["from-port"], "hold");
-    assert_eq!(value["edges"][0]["edge"]["to-node-id"], "create-hold");
-    assert!(value["edges"][0]["edge"].get("to-port").is_some());
-    assert!(value["edges"][0]["edge"]["to-port"].is_null());
-    assert_eq!(value["edges"][0]["coverage"], "not-observed");
-
-    let mut missing_to_port = value.clone();
-    missing_to_port["edges"][0]["edge"]
-        .as_object_mut()
-        .unwrap()
-        .remove("to-port");
-    assert!(serde_json::from_value::<DraftSuiteProjection>(missing_to_port).is_err());
-
-    for (state, wire) in [
-        (CoverageState::Covered, "covered"),
-        (CoverageState::NotCovered, "not-covered"),
-        (CoverageState::NotObserved, "not-observed"),
-        (CoverageState::Unknown, "unknown"),
-    ] {
-        assert_eq!(serde_json::to_value(state).unwrap(), wire);
-    }
-    for (state, wire) in [
-        (NodeOutcome::Passed, "passed"),
-        (NodeOutcome::Failed, "failed"),
-        (NodeOutcome::NotObserved, "not-observed"),
-        (NodeOutcome::Unknown, "unknown"),
-    ] {
-        assert_eq!(serde_json::to_value(state).unwrap(), wire);
     }
 }
 
@@ -845,8 +648,8 @@ fn every_uint64_schema_site_publishes_the_safe_integer_maximum() {
 
     assert_eq!(
         found.len(),
-        6,
-        "expected the six known uint64 sites, found {found:?}"
+        5,
+        "expected the five known uint64 sites, found {found:?}"
     );
     for (path, maximum) in &found {
         assert_eq!(
@@ -880,15 +683,6 @@ fn safe_integer_maximum_round_trips_exactly_in_both_directions() {
         decode_document(&text).expect("accept the boundary"),
         document
     );
-
-    let projection = DraftSuiteProjection {
-        edit_to_run_ms: Some(exact(SAFE_INTEGER_MAX)),
-        ..projection()
-    };
-    let text = serde_json::to_string(&projection).expect("emit the boundary latency");
-    let decoded: DraftSuiteProjection = serde_json::from_str(&text).expect("accept the boundary");
-    assert_eq!(decoded.edit_to_run_ms, Some(exact(SAFE_INTEGER_MAX)));
-    assert_eq!(u64::from(decoded.edit_to_run_ms.unwrap()), SAFE_INTEGER_MAX);
 }
 
 /// `2^53` is the first value JavaScript cannot hold exactly, so the contract
@@ -939,13 +733,6 @@ fn assert_out_of_domain_refuses(value: u64) {
             Err(ContractDecodeError::Json(_))
         ),
         "expected-revision {value} must be refused, never rounded"
-    );
-
-    let mut wire = serde_json::to_value(projection()).unwrap();
-    wire["edit-to-run-ms"] = json!(value);
-    assert!(
-        serde_json::from_value::<DraftSuiteProjection>(wire).is_err(),
-        "edit-to-run-ms {value} must be refused, never rounded"
     );
 
     let mut wire = serde_json::to_value(refusal_response(AuthoringRefusal::RevisionConflict {

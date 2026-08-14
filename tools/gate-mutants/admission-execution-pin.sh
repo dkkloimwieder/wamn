@@ -21,28 +21,18 @@ declare -a TEST_ARGV
 
 mutation_ids() {
   printf '%s\n' \
-    release-member-hash-replaced-by-caller-json \
     missing-root-plan-admits-run \
     runs-execution-bundle-fk-removed \
     run-admission-pin-update-allowed \
-    draft-json-bundle-pin-restored \
     legacy-plan-pin-fabricated-from-artifact
 }
 
 load_mutation() {
   local id="$1"
   case "$id" in
-    release-member-hash-replaced-by-caller-json)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
-      NEEDLE="                  member.execution_bundle_hash, '{dispatched}', 'scenario', \\"
-      REPLACEMENT="                  \$7::text::jsonb ->> 'execution-bundle-hash', '{dispatched}', 'scenario', \\"
-      GATE="admission_derives_root_bundle_from_authoritative_member"
-      TEST_ARGV=(cargo test --locked -p wamn-run-state --test queue "$GATE" -- --exact)
-      ;;
     missing-root-plan-admits-run)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="642d05b3b6007cba76994ebab90a55c739d1864be7aa1e87891daecac8871e2c"
+      EXPECTED_SHA="54a41d363738302c590c31db3dcc0a5cdfadb2a1fdf082a95985d594fa763266"
       NEEDLE="      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \\"
       REPLACEMENT="      WHEN rp.execution_bundle_hash IS NULL THEN 'ready' \\"
       GATE="admission::tests::admission_derives_root_bundle_from_authoritative_member"
@@ -69,18 +59,9 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment'
       GATE="run_plane::tests::execution_pin_schema_of_record_is_exact_and_complete"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control --lib "$GATE" -- --exact)
       ;;
-    draft-json-bundle-pin-restored)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
-      NEEDLE="                      'validated-draft-hash', d.validated_draft_hash, \\"
-      REPLACEMENT="                      'validated-draft-hash', d.validated_draft_hash, \\
-                      'execution-bundle-hash', d.execution_bundle_hash, \\"
-      GATE="draft_admission_persists_validated_bundle_without_json_duplicate"
-      TEST_ARGV=(cargo test --locked -p wamn-run-state --test draft_admission "$GATE" -- --exact)
-      ;;
     legacy-plan-pin-fabricated-from-artifact)
       TARGET="services/ctl/src/publish_catalog.rs"
-      EXPECTED_SHA="4a6509ad7f39d94959a9e7d578d638e532ac761432b8280fc8a5e699cf3b27ce"
+      EXPECTED_SHA="efe1a5a772e6a30d6f7064789c09d040cc603ffd1701d65bf79cd98039e589ab"
       NEEDLE='                prepared.execution_bundle_hash.as_ref().ok_or_else(|| {'
       REPLACEMENT='                Some(prepared.artifact.identity().artifact_hash().as_str()).ok_or_else(|| {'
       GATE="publish_catalog::tests::legacy_publication_without_validated_plan_returns_missing_root_plan"

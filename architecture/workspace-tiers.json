@@ -3,14 +3,14 @@
   "selection": {
     "mechanism": "named-explicit-selectors",
     "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 41-package developer loop and the seven product components explicit without hiding POCs, fixtures, samples, or proof packages from bare workspace commands.",
+    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 31-package developer loop and the six retained components explicit without hiding proof or support packages from bare workspace commands.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
   "source_inventory": {
     "root_workspace": {
       "manifest": "Cargo.toml",
-      "package_count": 40
+      "package_count": 38
     },
     "component_workspace": {
       "manifest": "components/Cargo.toml",
@@ -44,9 +44,7 @@
         "wamn-run-state",
         "wamn-runner",
         "wamn-runtime",
-        "wamn-scenario-catalog",
         "wamn-scenario-model",
-        "wamn-scenario-runtime",
         "wamn-scenario-worker",
         "wamn-scheduler",
         "wamn-schema-compiler",
@@ -116,9 +114,7 @@
         "wamn-run-state",
         "wamn-runner",
         "wamn-runtime",
-        "wamn-scenario-catalog",
         "wamn-scenario-model",
-        "wamn-scenario-runtime",
         "wamn-scenario-worker",
         "wamn-scheduler",
         "wamn-schema-compiler",
@@ -196,7 +192,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 51 root workspace members",
+      "selected_packages": "all 38 root workspace members",
       "qualification": "cargo test selects each member's default test targets; use --workspace --all-targets --no-fail-fast for full-CI target coverage"
     },
     {
@@ -206,7 +202,7 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 31 component workspace members",
+      "selected_packages": "all 6 component workspace members",
       "qualification": "production guest artifacts require build --workspace --target wasm32-wasip2; a bare host-target command is not a release or deployed-proof build"
     }
   ],

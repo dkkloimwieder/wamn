@@ -61,8 +61,6 @@ crates/                 shared Rust workspace packages
     project-state       wamn-project-state: per-project app_system model
   scenarios/
     model               wamn-scenario-model: test-set/assertion vocabulary
-    catalog             wamn-scenario-catalog: transitional stored-test persistence
-    runtime             deterministic clocks/random/egress/credentials
 
 components/             wasm32-wasip2 guests
   ingress/              product ingress components (flow-http)

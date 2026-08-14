@@ -9,7 +9,7 @@ readonly MUTATION="request-regains-model-owned-interface-exemption"
 readonly TEST="request_nodes_require_an_explicit_pinned_interface"
 readonly NEEDLE='const MODEL_OWNED_NODES: [&str; 1] = ["call-flow"];'
 readonly REPLACEMENT='const MODEL_OWNED_NODES: [&str; 2] = ["call-flow", "request"];'
-readonly EXPECTED_SHA="df6fe470d282fb42fe1f1808ac187e876c377c71d9735f4426447b4feb7cb30e"
+readonly EXPECTED_SHA="fcf17cb4ef7ea651a1a32f7f32f0f03d20d56f8f414fa7dbd1a2f75f9e3e1de8"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

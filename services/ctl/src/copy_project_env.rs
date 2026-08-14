@@ -814,7 +814,7 @@ async fn exec_copy_definition(
                 .await
                 .with_context(|| format!("copy immutable flow {flow_id} v{flow_version}"))?;
                 tx.execute(
-                    wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                    wamn_schema_control::sql::insert_execution_bundle_sql(),
                     &[&tenant, &execution_bundle_hash, &execution_bundle_bytes],
                 )
                 .await

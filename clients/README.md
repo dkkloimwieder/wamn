@@ -42,14 +42,13 @@ node clients/authoring-client/scripts/wamn.mjs validate \
   --base-url http://HOST:PORT --token-file /path/to/pat \
   --project receiving --environment dev \
   --file flows/receive-material.flow.json \
-  --draft-id draft-receiving --flow-id receive-material \
-  --suite-id receiving-happy-path --flow-version 3
-# then: draft-run --input FILE | suite-run | runs | promote
+  --draft-id draft-receiving --flow-id receive-material
+# then: draft-run --input FILE | promote --report-id ID
 ```
 
-Five verbs cover the whole public contract: `validate` sends `save-flow-draft`
-followed by `validate`, `promote` sends `publish`, and `runs` reads
-`suite-projection`. Each invocation writes exactly one JSON document to stdout —
+Three verbs cover the whole retained public contract: `validate` sends
+`save-flow-draft` followed by `validate`, `draft-run` sends `draft-run`, and
+`promote` sends `publish`. Each invocation writes exactly one JSON document to stdout —
 typed identities, a typed product refusal, a typed `unmounted` answer when the
 surface has not mounted that command kind (`501`), or a fault — and exits `0`,
 `3`, `4`, `5`, or `2` for a usage error. The human transcript, including

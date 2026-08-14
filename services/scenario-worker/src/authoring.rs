@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use anyhow::{Context as _, bail};
-use sha2::{Digest as _, Sha256};
 use tokio_postgres::{Client, NoTls};
 
 #[cfg(test)]
@@ -22,7 +21,11 @@ use wamn_catalog::{
     read_execution_plan,
 };
 use wamn_execution_host::TrustedExecutionRuntimeRevision;
-use wamn_scenario_runtime::ScenarioSchemaName;
+use wamn_schema_control::BareSchemaName;
+
+use crate::store::drafts;
+#[cfg(test)]
+use crate::store::sha256;
 
 const AUTHORING_ROLE_PROBE_SQL: &str = "\
 WITH session_role AS ( \
@@ -187,7 +190,7 @@ pub struct InternalAuthoringBackend {
     client: Client,
     connection_task: tokio::task::JoinHandle<()>,
     tenant_id: Box<str>,
-    source_schema: ScenarioSchemaName,
+    source_schema: BareSchemaName,
 }
 
 impl InternalAuthoringBackend {
@@ -205,7 +208,7 @@ impl InternalAuthoringBackend {
         if !wamn_control_registry::identifiers::valid_tenant(&tenant_id) {
             bail!("invalid fixed authoring tenant identity");
         }
-        let source_schema = ScenarioSchemaName::new(source_schema.into())
+        let source_schema = BareSchemaName::new(source_schema.into())
             .context("invalid fixed authoring run schema")?;
         let (client, connection) = tokio_postgres::connect(authoring_database_url, NoTls)
             .await
@@ -317,7 +320,7 @@ pub enum SaveFlowDraftResult {
     RevisionConflict,
 }
 
-/// Command to validate one exact saved draft revision for a stored suite.
+/// Command to validate one exact saved draft revision.
 #[derive(Clone, Debug)]
 pub struct ValidateFlowDraft {
     pub tenant_id: String,
@@ -326,7 +329,6 @@ pub struct ValidateFlowDraft {
     pub catalog_id: String,
     pub catalog_version: i32,
     pub environment: String,
-    pub suite_flow_version: i32,
 }
 
 /// Exact immutable pins produced by draft validation.
@@ -340,8 +342,6 @@ pub struct ValidatedDraftPin {
     /// Ordinary exact artifact hash, including the proposed runtime/publish version.
     pub draft_artifact_hash: String,
     pub flow_id: String,
-    /// Immutable released version that owns the selected stored suite.
-    pub suite_flow_version: i32,
     /// Proposed publish/runtime version carried by the validated draft graph.
     pub runtime_flow_version: i32,
     pub catalog_id: String,
@@ -487,17 +487,6 @@ impl InternalAuthoringBackend {
     }
 }
 
-pub(crate) fn sha256(input: &[u8]) -> String {
-    let digest = Sha256::digest(input);
-    let mut output = String::with_capacity(71);
-    output.push_str("sha256:");
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(output, "{byte:02x}").expect("writing to String cannot fail");
-    }
-    output
-}
-
 fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
     if value.is_empty() {
         bail!("{name} must not be empty");
@@ -528,7 +517,7 @@ pub(crate) async fn save_flow_draft(
     let row = if request.expected_revision == 0 {
         client
             .query_opt(
-                wamn_scenario_catalog::authoring::insert_flow_draft_sql(),
+                drafts::insert_flow_draft_sql(),
                 &[
                     &request.tenant_id,
                     &request.draft_id,
@@ -541,7 +530,7 @@ pub(crate) async fn save_flow_draft(
     } else {
         client
             .query_opt(
-                wamn_scenario_catalog::authoring::update_flow_draft_sql(),
+                drafts::update_flow_draft_sql(),
                 &[
                     &request.tenant_id,
                     &request.draft_id,
@@ -794,7 +783,7 @@ async fn validate_call_flow_callees(
         }
         let row = transaction
             .query_opt(
-                wamn_scenario_catalog::authoring::select_call_flow_callee_plan_sql(),
+                drafts::select_call_flow_callee_plan_sql(),
                 &[
                     &request.tenant_id,
                     &request.catalog_id,
@@ -879,7 +868,7 @@ pub(crate) async fn validate_flow_draft(
 ) -> anyhow::Result<Result<ValidatedDraftPin, DraftRunRefusal>> {
     let row = client
         .query_opt(
-            wamn_scenario_catalog::authoring::select_flow_draft_sql(),
+            drafts::select_flow_draft_sql(),
             &[
                 &request.tenant_id,
                 &request.draft_id,
@@ -946,7 +935,7 @@ pub(crate) async fn validate_flow_draft(
         .context("begin validated draft transaction")?;
     let locked_catalog_version: Option<i32> = transaction
         .query_one(
-            wamn_scenario_catalog::authoring::lock_draft_catalog_head_sql(),
+            drafts::lock_draft_catalog_head_sql(),
             &[
                 &request.tenant_id,
                 &request.catalog_id,
@@ -962,14 +951,13 @@ pub(crate) async fn validate_flow_draft(
     }
     let source = transaction
         .query_opt(
-            wamn_scenario_catalog::authoring::select_draft_catalog_source_member_sql(),
+            drafts::select_draft_catalog_source_member_sql(),
             &[
                 &request.tenant_id,
                 &request.catalog_id,
                 &request.environment,
                 &request.catalog_version,
                 &flow_id,
-                &request.suite_flow_version,
             ],
         )
         .await
@@ -996,8 +984,6 @@ pub(crate) async fn validate_flow_draft(
     let runtime_flow_version = i32::try_from(flow.version).context("flow version exceeds i32")?;
     let catalog_version =
         u32::try_from(request.catalog_version).context("catalog version must be a positive u32")?;
-    let suite_flow_version = u32::try_from(request.suite_flow_version)
-        .context("suite flow version must be a positive u32")?;
     let draft_revision =
         u64::try_from(request.draft_revision).context("draft revision must be a positive u64")?;
     let validated_identity = ValidatedDraftIdentity::new(ValidatedDraftIdentityInput {
@@ -1012,13 +998,12 @@ pub(crate) async fn validate_flow_draft(
         catalog_id: &request.catalog_id,
         catalog_version,
         environment: &request.environment,
-        suite_flow_version,
         binding_base_artifact_hash: &binding_base_artifact_hash,
     })?;
     let graph_json = flow.to_json();
     transaction
         .execute(
-            wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+            wamn_schema_control::sql::insert_execution_bundle_sql(),
             &[
                 &request.tenant_id,
                 &compiled_plan.execution_bundle_hash,
@@ -1029,7 +1014,7 @@ pub(crate) async fn validate_flow_draft(
         .context("persist exact execution bundle")?;
     let inserted = transaction
         .query_opt(
-            wamn_scenario_catalog::authoring::insert_validated_flow_draft_sql(),
+            drafts::insert_validated_flow_draft_sql(),
             &[
                 &request.tenant_id,
                 &request.draft_id,
@@ -1038,7 +1023,6 @@ pub(crate) async fn validate_flow_draft(
                 &request.catalog_id,
                 &request.catalog_version,
                 &request.environment,
-                &request.suite_flow_version,
                 &runtime_flow_version,
                 &graph_json,
                 &artifact.graph_hash(),
@@ -1056,7 +1040,7 @@ pub(crate) async fn validate_flow_draft(
     } else {
         let existing = transaction
             .query_opt(
-                wamn_scenario_catalog::authoring::select_validated_flow_draft_sql(),
+                drafts::select_validated_flow_draft_sql(),
                 &[
                     &request.tenant_id,
                     &request.draft_id,
@@ -1065,7 +1049,6 @@ pub(crate) async fn validate_flow_draft(
                     &request.catalog_id,
                     &request.catalog_version,
                     &request.environment,
-                    &request.suite_flow_version,
                     &runtime_flow_version,
                     &artifact.identity().artifact_hash().as_str(),
                     &compiled_plan.execution_bundle_hash,
@@ -1097,7 +1080,6 @@ pub(crate) async fn validate_flow_draft(
         draft_content_hash: draft.content_hash().as_str().to_string(),
         draft_artifact_hash: artifact.identity().artifact_hash().as_str().to_string(),
         flow_id,
-        suite_flow_version: request.suite_flow_version,
         runtime_flow_version,
         catalog_id: request.catalog_id.clone(),
         catalog_version: request.catalog_version,
@@ -1127,7 +1109,7 @@ pub(crate) async fn grant_draft_safe_generation(
     }
     client
         .execute(
-            wamn_scenario_catalog::authoring::grant_draft_safe_generation_sql(),
+            drafts::grant_draft_safe_generation_sql(),
             &[
                 &grant.tenant_id,
                 &grant.environment,
@@ -1159,7 +1141,7 @@ pub(crate) async fn revoke_draft_safe_generation(
     }
     let changed = client
         .execute(
-            wamn_scenario_catalog::authoring::revoke_draft_safe_generation_sql(),
+            drafts::revoke_draft_safe_generation_sql(),
             &[
                 &revoke.tenant_id,
                 &revoke.environment,
@@ -1274,26 +1256,6 @@ mod tests {
                 .to_ascii_uppercase()
                 .contains("SET ROLE")
         );
-    }
-
-    #[test]
-    fn stored_suite_version_is_distinct_from_the_proposed_draft_version() {
-        let proposed_v8 = wamn_flow::Flow::from_json(
-            r#"{
-              "schema-version":"0.1","flow-id":"flow-a","version":8,
-              "nodes":[
-                {"id":"request","type":"request","config":{"input-schema":true}},
-                {"id":"respond","type":"respond","config":{"status":200}}
-              ],
-              "edges":[{"from":"request","to":"respond"}]
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(proposed_v8.version, 8);
-        assert!(validate_workspace_flow_identity(&proposed_v8, "flow-a").is_ok());
-        let source_suite_version = 7;
-        assert_ne!(proposed_v8.version, source_suite_version);
     }
 
     #[test]

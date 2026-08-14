@@ -12,7 +12,7 @@ readonly OWNER="bd:wamn-ftfc.14"
 readonly OUTCOME="an unmounted authoring command cannot be reported as successful"
 
 readonly TARGET="clients/authoring-client/src/cli/cli.ts"
-readonly EXPECTED_SHA="568ee27086b29ecabaf67d1115b2f10c483b34a16150a95586886cdf3172cbb8"
+readonly EXPECTED_SHA="a23009cc4b8a06cf5f2acd4cadc12e60b2d82142851e2ff1c1d8a26c4b81d812"
 readonly NEEDLE='        return { ...base, status: "unmounted", "elapsed-ms": elapsed(), "http-status": 501 };'
 readonly REPLACEMENT='        return { ...base, status: "completed", "elapsed-ms": elapsed(), "http-status": 501 };'
 readonly GATE="an unmounted command is its own answer and never a success"

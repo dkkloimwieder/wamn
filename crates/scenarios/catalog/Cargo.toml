@@ -1,6 +1,0 @@
-[package]
-name = "wamn-scenario-catalog"
-description = "Persistence queries for the internal authoring surface."
-version.workspace = true
-edition.workspace = true
-license.workspace = true

@@ -5,7 +5,7 @@ readonly OWNER="bd:wamn-0h0g.3.2"
 readonly OUTCOME="execution-plan compilation remains deterministic and canonical"
 
 readonly TARGET="services/scenario-worker/src/authoring.rs"
-readonly EXPECTED_SHA="e8f9d0eaf59d4db775a82e72ace669ca1f8d7774518f1dc05cdc07ccca6c54df"
+readonly EXPECTED_SHA="ca3b7935fb0f54c1ce8705f3b3665eeea4cf1cd4291552519618c1f374b3e759"
 readonly GATE="deterministic_plan_compiler"
 
 ROOT="$(git rev-parse --show-toplevel)"

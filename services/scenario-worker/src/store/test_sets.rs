@@ -5,7 +5,7 @@ use tokio_postgres::GenericClient;
 use wamn_authoring_model::{TestSetIdentity, TestSetInput};
 use wamn_scenario_model::TestSetDocument;
 
-use crate::authoring::sha256;
+use super::sha256;
 
 /// Insert exact bytes once under their content identity.
 ///

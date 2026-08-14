@@ -57,12 +57,10 @@ pub fn lock_draft_catalog_head_sql() -> &'static str {
 /// Resolve one exact applied catalog plus its source release member after the
 /// caller has acquired [`lock_draft_catalog_head_sql`] in the same transaction.
 ///
-/// The stored suite remains version-bound; that released member supplies its
-/// existing connection bindings but never supplies the graph executed by the
-/// draft run.
+/// That released member supplies its existing connection bindings but never
+/// supplies the graph executed by the draft run.
 ///
-/// Params: tenant, catalog id, environment, expected catalog version, flow id,
-/// suite flow version.
+/// Params: tenant, catalog id, environment, expected catalog version, flow id.
 pub fn select_draft_catalog_source_member_sql() -> &'static str {
     "SELECT head.applied_catalog_version, artifact.artifact_hash \
        FROM catalog.catalog_heads AS head \
@@ -76,7 +74,7 @@ pub fn select_draft_catalog_source_member_sql() -> &'static str {
         AND artifact.flow_version = member.flow_version \
       WHERE head.tenant_id = $1 AND head.catalog_id = $2 \
         AND head.environment = $3 AND head.applied_catalog_version = $4 \
-        AND member.flow_id = $5 AND member.flow_version = $6"
+        AND member.flow_id = $5"
 }
 
 /// Resolve one callee name in the exact catalog version pinned by draft validation.
@@ -94,41 +92,31 @@ pub fn select_call_flow_callee_plan_sql() -> &'static str {
 
 /// Persist one immutable validation of a content-addressed draft.
 ///
-/// Store one immutable canonical execution plan before its draft references it.
-///
-/// Params: tenant, execution-bundle hash, exact canonical bytes.
-pub fn insert_execution_bundle_sql() -> &'static str {
-    "INSERT INTO catalog.execution_bundles \
-       (tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length) \
-     VALUES ($1, $2, '0.1', $3, octet_length($3::bytea)) \
-     ON CONFLICT (tenant_id, execution_bundle_hash) DO NOTHING"
-}
-
 /// `graph_json` here is the canonical re-serialization of the parsed flow, which
 /// is what an immutable validated artifact stores. The drift guard is separate
-/// and byte-exact: `$16` is the definition text the validator actually read, so
+/// and byte-exact: `$15` is the definition text the validator actually read, so
 /// a concurrent edit between read and insert cannot be validated away.
 ///
 /// Params: tenant, draft id, revision, draft-content hash, catalog id/version,
-/// environment, source-suite flow version, runtime flow version, graph JSON/hash, artifact hash,
+/// environment, runtime flow version, graph JSON/hash, artifact hash,
 /// execution-bundle hash, immutable binding-base artifact hash,
 /// validated-draft identity hash, exact source definition text.
 pub fn insert_validated_flow_draft_sql() -> &'static str {
     "INSERT INTO catalog.validated_flow_drafts \
        (tenant_id, draft_id, draft_revision, draft_edited_at, draft_content_hash, catalog_id, \
-        catalog_version, environment, suite_flow_version, flow_id, runtime_flow_version, graph_json, \
+        catalog_version, environment, flow_id, runtime_flow_version, graph_json, \
         graph_hash, draft_artifact_hash, execution_bundle_hash, binding_base_artifact_hash, \
         validated_draft_hash) \
      SELECT document.tenant_id, document.draft_id, document.revision, document.edited_at, \
-            $4, $5, $6, $7, $8, \
-            document.flow_id, $9, $10::text::jsonb, $11, $12, $13, $14, $15 \
+            $4, $5, $6, $7, \
+            document.flow_id, $8, $9::text::jsonb, $10, $11, $12, $13, $14 \
        FROM catalog.flow_drafts AS document \
       WHERE document.tenant_id = $1 AND document.draft_id = $2 \
         AND document.revision = $3 \
-        AND COALESCE(document.definition, document.graph_json::text) = $16 \
+        AND COALESCE(document.definition, document.graph_json::text) = $15 \
      ON CONFLICT (tenant_id, draft_id, draft_revision, draft_content_hash, \
                   catalog_id, catalog_version, \
-                  environment, suite_flow_version, runtime_flow_version, draft_artifact_hash, \
+                  environment, runtime_flow_version, draft_artifact_hash, \
                   execution_bundle_hash, binding_base_artifact_hash) DO NOTHING \
      RETURNING draft_edited_at"
 }
@@ -136,8 +124,7 @@ pub fn insert_validated_flow_draft_sql() -> &'static str {
 /// Read one exact immutable draft pin before admission.
 ///
 /// Params: tenant, draft id/revision, draft-content hash, catalog id/version,
-/// environment, source-suite version,
-/// runtime version, ordinary artifact hash, bundle hash, binding-base artifact hash,
+/// environment, runtime version, ordinary artifact hash, bundle hash, binding-base artifact hash,
 /// validated-draft identity hash.
 pub fn select_validated_flow_draft_sql() -> &'static str {
     "SELECT draft.draft_id, draft.draft_revision, draft.draft_edited_at, draft.environment, \
@@ -151,9 +138,9 @@ pub fn select_validated_flow_draft_sql() -> &'static str {
       WHERE draft.tenant_id = $1 AND draft.draft_id = $2 AND draft.draft_revision = $3 \
         AND draft.draft_content_hash = $4 AND draft.catalog_id = $5 \
         AND draft.catalog_version = $6 AND draft.environment = $7 \
-        AND draft.suite_flow_version = $8 AND draft.runtime_flow_version = $9 \
-        AND draft.draft_artifact_hash = $10 AND draft.execution_bundle_hash = $11 \
-        AND draft.binding_base_artifact_hash = $12 AND draft.validated_draft_hash = $13"
+        AND draft.runtime_flow_version = $8 \
+        AND draft.draft_artifact_hash = $9 AND draft.execution_bundle_hash = $10 \
+        AND draft.binding_base_artifact_hash = $11 AND draft.validated_draft_hash = $12"
 }
 
 /// Install or restore draft-safe authority on one exact immutable generation.
@@ -221,7 +208,6 @@ mod tests {
             "catalog_id",
             "catalog_version",
             "environment",
-            "suite_flow_version",
             "runtime_flow_version",
             "execution_bundle_hash",
             "binding_base_artifact_hash",
@@ -231,8 +217,8 @@ mod tests {
         }
         assert!(!insert.contains("release_manifests"));
         assert!(!insert.contains("INSERT INTO catalog.flow_artifacts"));
-        assert!(insert.contains("COALESCE(document.definition, document.graph_json::text) = $16"));
-        assert!(insert.contains("document.flow_id, $9, $10::text::jsonb"));
+        assert!(insert.contains("COALESCE(document.definition, document.graph_json::text) = $15"));
+        assert!(insert.contains("document.flow_id, $8, $9::text::jsonb"));
         assert!(
             insert.contains("ON CONFLICT (tenant_id, draft_id, draft_revision, draft_content_hash")
         );
@@ -243,12 +229,11 @@ mod tests {
             "draft_revision = $3",
             "draft_content_hash = $4",
             "environment = $7",
-            "suite_flow_version = $8",
-            "runtime_flow_version = $9",
-            "draft_artifact_hash = $10",
-            "execution_bundle_hash = $11",
-            "binding_base_artifact_hash = $12",
-            "validated_draft_hash = $13",
+            "runtime_flow_version = $8",
+            "draft_artifact_hash = $9",
+            "execution_bundle_hash = $10",
+            "binding_base_artifact_hash = $11",
+            "validated_draft_hash = $12",
         ] {
             assert!(
                 select.contains(predicate),
@@ -275,17 +260,6 @@ mod tests {
         assert!(select.contains("bundle.exact_bytes"));
         assert!(!select.contains("catalog_heads"));
         assert!(!select.contains("environment"));
-    }
-
-    #[test]
-    fn canonical_execution_plan_survives_postgres_byte_exact() {
-        let ddl = include_str!("../../../../deploy/sql/catalog-schema.sql");
-        assert!(ddl.contains("CREATE TABLE catalog.execution_bundles"));
-        assert!(ddl.contains("exact_bytes            bytea NOT NULL"));
-        assert!(ddl.contains("octet_length(exact_bytes)"));
-        let insert = insert_execution_bundle_sql();
-        assert!(insert.contains("format_version, exact_bytes, byte_length"));
-        assert!(insert.contains("octet_length($3::bytea)"));
     }
 
     #[test]

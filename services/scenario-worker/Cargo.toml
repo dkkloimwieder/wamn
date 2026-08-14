@@ -12,9 +12,8 @@ wamn-control-registry = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-scenario-runtime = { workspace = true }
 wamn-scenario-model = { workspace = true }
-wamn-scenario-catalog = { workspace = true }
+wamn-schema-control = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-standard-nodes = { workspace = true }
 wash-runtime = { workspace = true }
@@ -32,5 +31,4 @@ tokio-postgres = { workspace = true, features = ["with-serde_json-1"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-wamn-schema-control = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "time"] }

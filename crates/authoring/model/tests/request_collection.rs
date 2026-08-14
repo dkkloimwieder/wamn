@@ -7,14 +7,7 @@ use wamn_authoring_model::{
     DraftRunCapture, SCHEMA_VERSION, decode_document,
 };
 
-const COMMANDS: [&str; 6] = [
-    "save-flow-draft",
-    "validate",
-    "draft-run",
-    "suite-run",
-    "publish",
-    "suite-projection",
-];
+const COMMANDS: [&str; 4] = ["save-flow-draft", "validate", "draft-run", "publish"];
 const ENDPOINT_LINE: &str = "POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}";
 const AUTHORIZATION_LINE: &str =
     "Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}";
@@ -152,9 +145,7 @@ fn request_kind(document: &AuthoringDocument) -> &'static str {
         AuthoringCommand::SaveFlowDraft(_) => "save-flow-draft",
         AuthoringCommand::Validate(_) => "validate",
         AuthoringCommand::DraftRun(_) => "draft-run",
-        AuthoringCommand::SuiteRun(_) => "suite-run",
         AuthoringCommand::Publish(_) => "publish",
-        AuthoringCommand::SuiteProjection(_) => "suite-projection",
     }
 }
 
@@ -163,9 +154,7 @@ fn success_kind(success: &AuthoringSuccess) -> &'static str {
         AuthoringSuccess::SaveFlowDraft(_) => "save-flow-draft",
         AuthoringSuccess::Validate(_) => "validate",
         AuthoringSuccess::DraftRun(_) => "draft-run",
-        AuthoringSuccess::SuiteRun(_) => "suite-run",
         AuthoringSuccess::Publish(_) => "publish",
-        AuthoringSuccess::SuiteProjection(_) => "suite-projection",
     }
 }
 
@@ -174,9 +163,7 @@ fn refusal_kind(kind: AuthoringCommandKind) -> &'static str {
         AuthoringCommandKind::SaveFlowDraft => "save-flow-draft",
         AuthoringCommandKind::Validate => "validate",
         AuthoringCommandKind::DraftRun => "draft-run",
-        AuthoringCommandKind::SuiteRun => "suite-run",
         AuthoringCommandKind::Publish => "publish",
-        AuthoringCommandKind::SuiteProjection => "suite-projection",
     }
 }
 

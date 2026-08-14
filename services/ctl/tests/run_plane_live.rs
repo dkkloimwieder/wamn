@@ -39,9 +39,11 @@
 //! - **invocation retention cutover**: the legacy admission expiry column/index
 //!   are removed and the client-key carrier becomes optional; a second pass is
 //!   a no-op.
-//! - **stored-suite cutover**: all five retired tables and both helper functions
+//! - **stored-test cutover**: all five retired tables and both helper functions
 //!   are removed child first while the four authoring-test relations survive;
-//!   a second pass is a no-op.
+//!   the obsolete validation dimension and command kinds converge only when
+//!   no immutable legacy identity/evidence would be rewritten; a second pass is
+//!   a no-op.
 //! - **current = no-op**: a schema at the schema of record plans NOTHING, in
 //!   both dry-run and apply mode (the idempotence contract).
 //! - **authoring additive upgrade + authority repair**: the pre-6A catalog gains
@@ -78,6 +80,25 @@ const EMPTY_EXECUTION_BUNDLE_HASH: &str =
 
 fn schema() -> BareSchemaName {
     BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
+}
+
+fn grant_draft_safe_generation_sql() -> &'static str {
+    "INSERT INTO catalog.draft_safe_connection_grants \
+       (tenant_id, environment, instance_id, generation, reason) \
+     VALUES ($1, $2, $3, $4, $5) \
+     ON CONFLICT (tenant_id, environment, instance_id, generation) DO UPDATE \
+       SET revoked_at = NULL, reason = EXCLUDED.reason, \
+           granted_at = GREATEST( \
+               clock_timestamp(), \
+               draft_safe_connection_grants.granted_at + interval '1 microsecond', \
+               COALESCE(draft_safe_connection_grants.revoked_at + interval '1 microsecond', \
+                        '-infinity'::timestamptz))"
+}
+
+fn revoke_draft_safe_generation_sql() -> &'static str {
+    "UPDATE catalog.draft_safe_connection_grants SET revoked_at = clock_timestamp() \
+      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
+        AND generation = $4 AND revoked_at IS NULL"
 }
 
 async fn connect(url: &str) -> Client {
@@ -2163,6 +2184,25 @@ async fn stored_suite_cutover_leg(su: &Client) {
     ))
     .await
     .expect("install retired stored-suite persistence");
+    su.batch_execute(
+        "ALTER TABLE catalog.validated_flow_drafts \
+           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
+           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
+             CHECK (suite_flow_version > 0), \
+           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
+             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
+             catalog_version,environment,suite_flow_version,runtime_flow_version, \
+             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+         ALTER TABLE catalog.authoring_command_audit \
+           DROP CONSTRAINT authoring_command_audit_command_kind_check, \
+           ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
+             command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
+                              'publish','suite-projection', \
+                              'grant-draft-safe-generation', \
+                              'revoke-draft-safe-generation'))",
+    )
+    .await
+    .expect("restore retired persisted authoring protocol");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -2215,6 +2255,29 @@ async fn stored_suite_cutover_leg(su: &Client) {
         .expect("count retired stored-suite functions")
         .get(0);
     assert_eq!(retired_functions, 0);
+    assert!(
+        !catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
+        "retired validation dimension is absent"
+    );
+    let command_check: String = su
+        .query_one(
+            "SELECT pg_get_constraintdef(con.oid, true) \
+               FROM pg_constraint AS con \
+               JOIN pg_class AS relation ON relation.oid = con.conrelid \
+               JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+              WHERE namespace.nspname='catalog' \
+                AND relation.relname='authoring_command_audit' \
+                AND con.conname='authoring_command_audit_command_kind_check'",
+            &[],
+        )
+        .await
+        .expect("read narrowed authoring command CHECK")
+        .get(0);
+    assert!(!command_check.contains("suite-run"), "{command_check}");
+    assert!(
+        !command_check.contains("suite-projection"),
+        "{command_check}"
+    );
 
     let again = reconcile_run_plane::reconcile(su, &schema, false)
         .await
@@ -2224,6 +2287,104 @@ async fn stored_suite_cutover_leg(su: &Client) {
         "stored-suite cutover converged: {:#?}",
         again.actions
     );
+
+    su.batch_execute(
+        "ALTER TABLE catalog.validated_flow_drafts \
+           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
+           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
+             CHECK (suite_flow_version > 0), \
+           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
+             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
+             catalog_version,environment,suite_flow_version,runtime_flow_version, \
+             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+         INSERT INTO catalog.catalogs \
+           (tenant_id,catalog_id,version,environment,schema_version) \
+           VALUES ('legacy-authoring','cat',1,'dev','0.1'); \
+         INSERT INTO catalog.execution_bundles \
+           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+           VALUES ('legacy-authoring','sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855','0.1',''::bytea,0); \
+         INSERT INTO catalog.validated_flow_drafts ( \
+           tenant_id,draft_id,draft_revision,draft_edited_at,draft_content_hash, \
+           catalog_id,catalog_version,environment,suite_flow_version,flow_id, \
+           runtime_flow_version,graph_json,graph_hash,draft_artifact_hash, \
+           execution_bundle_hash,binding_base_artifact_hash,validated_draft_hash) \
+         VALUES ( \
+           'legacy-authoring','draft',1,now(),'content','cat',1,'dev',1,'flow', \
+           1,'{}'::jsonb,'graph','artifact', \
+           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
+           'base','validated')",
+    )
+    .await
+    .expect("seed populated retired validation identity");
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("populated retired validation identity must refuse");
+    assert_db_code(
+        error.downcast().expect("postgres refusal"),
+        "55000",
+        "retired validation identity cutover",
+    );
+    assert!(
+        catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
+        "refusal rolls back the catalog cutover"
+    );
+
+    reset(su).await;
+    reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("install canonical state for retired command-history refusal");
+    su.batch_execute(
+        "ALTER TABLE catalog.validated_flow_drafts \
+           DROP CONSTRAINT validated_flow_drafts_exact_pin, \
+           ADD COLUMN suite_flow_version int NOT NULL DEFAULT 1 \
+             CHECK (suite_flow_version > 0), \
+           ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
+             tenant_id,draft_id,draft_revision,draft_content_hash,catalog_id, \
+             catalog_version,environment,suite_flow_version,runtime_flow_version, \
+             draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
+         ALTER TABLE catalog.authoring_command_audit \
+           DROP CONSTRAINT authoring_command_audit_command_kind_check, \
+           ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
+             command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
+                              'publish','suite-projection', \
+                              'grant-draft-safe-generation', \
+                              'revoke-draft-safe-generation')); \
+         INSERT INTO catalog.authoring_command_audit ( \
+           tenant_id,command_id,command_kind,principal_id,principal_kind, \
+           principal_subject,effective_role,org,project,environment,target_ref) \
+         VALUES ( \
+           'legacy-authoring','legacy-suite-run','suite-run','principal','human', \
+           'author@example.com','project-author','org','project','dev','legacy')",
+    )
+    .await
+    .expect("seed retired immutable authoring command history");
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("retired immutable authoring command history must refuse");
+    assert_db_code(
+        error.downcast().expect("postgres refusal"),
+        "55000",
+        "retired authoring command history cutover",
+    );
+    assert!(
+        catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
+        "later history refusal rolls back the earlier validation-column cutover"
+    );
+    let command_check: String = su
+        .query_one(
+            "SELECT pg_get_constraintdef(con.oid, true) \
+               FROM pg_constraint AS con \
+               JOIN pg_class AS relation ON relation.oid = con.conrelid \
+               JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+              WHERE namespace.nspname='catalog' \
+                AND relation.relname='authoring_command_audit' \
+                AND con.conname='authoring_command_audit_command_kind_check'",
+            &[],
+        )
+        .await
+        .expect("read rolled-back authoring command CHECK")
+        .get(0);
+    assert!(command_check.contains("suite-run"), "{command_check}");
 }
 
 /// PLAN 6A additive storage and the host/guest authority boundary. This proves
@@ -2561,7 +2722,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     .await
     .expect("host author can write the mutable draft surface");
     su.execute(
-        wamn_scenario_catalog::authoring::grant_draft_safe_generation_sql(),
+        grant_draft_safe_generation_sql(),
         &[&"t1", &"dev", &"erp", &1_i64, &"initial review"],
     )
     .await
@@ -2577,7 +2738,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .expect("read initial grant time")
         .get(0);
     su.execute(
-        wamn_scenario_catalog::authoring::revoke_draft_safe_generation_sql(),
+        revoke_draft_safe_generation_sql(),
         &[&"t1", &"dev", &"erp", &1_i64],
     )
     .await
@@ -2594,7 +2755,7 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .get(0);
     assert!(revoked_at >= initial_granted);
     su.execute(
-        wamn_scenario_catalog::authoring::grant_draft_safe_generation_sql(),
+        grant_draft_safe_generation_sql(),
         &[&"t1", &"dev", &"erp", &1_i64, &"review renewed"],
     )
     .await

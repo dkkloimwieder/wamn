@@ -36,8 +36,8 @@ try {
       WAMN_AUTHORING_CLIENT_TEST_MODULE: pathToFileURL(join(output, "index.js")).href,
       WAMN_AUTHORING_CLI_TEST_MODULE: pathToFileURL(join(output, "cli", "cli.js")).href,
     };
-    for (const suite of ["tests/client.test.mjs", "tests/cli.test.mjs"]) {
-      const run = spawnSync("node", [suite], { env: environment, stdio: "inherit" });
+    for (const testFile of ["tests/client.test.mjs", "tests/cli.test.mjs"]) {
+      const run = spawnSync("node", [testFile], { env: environment, stdio: "inherit" });
       if (run.status !== 0) status = run.status ?? 1;
     }
   }

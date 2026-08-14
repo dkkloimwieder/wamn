@@ -50,10 +50,11 @@
 //! and preserved. The explicit frame/effect-writer cutovers physically remove
 //! only the named retired identity/recovery columns after their locked safety
 //! preflights; the capture-projection cutover drops only its three retired,
-//! non-authoritative node columns under lock; and the stored-suite cutover drops
-//! only its five retired run-plane relations, retired catalog audit relation,
-//! and two helper functions. PostgreSQL validates new CHECKs against existing
-//! rows and aborts on incompatible legacy data rather than fabricating history.
+//! non-authoritative node columns under lock; and the stored-test cutover drops
+//! only retired relations/helpers plus the obsolete validation dimension and
+//! command kinds. The latter refuses nonempty legacy identity/audit state rather
+//! than fabricating replacement hashes or deleting evidence. PostgreSQL validates
+//! new CHECKs against existing rows and aborts on incompatible legacy data.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1445,6 +1446,8 @@ const FLOW_AUTHOR_CHECK_DEF: &str =
 const RELEASE_PUBLISHER_CHECK_NAME: &str = "release_manifests_verified_publisher_principal_check";
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
+const AUTHORING_COMMAND_KIND_CHECK_NAME: &str = "authoring_command_audit_command_kind_check";
+const AUTHORING_COMMAND_KIND_CHECK_DEF: &str = "CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'publish'::text, 'grant-draft-safe-generation'::text, 'revoke-draft-safe-generation'::text]))";
 
 const RETIRED_NODE_ATTEMPT_COLUMNS: &[&str] = &[
     "current_effect_attempt_id",
@@ -2299,31 +2302,117 @@ fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
         || obs
             .catalog_tables
             .contains(RETIRED_STORED_SUITE_CATALOG_TABLE)
+        || obs
+            .catalog_columns
+            .get("validated_flow_drafts")
+            .is_some_and(|columns| columns.contains("suite_flow_version"))
+        || (obs.catalog_tables.contains("authoring_command_audit")
+            && obs
+                .catalog_checks
+                .get(&(
+                    "authoring_command_audit".to_string(),
+                    AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
+                ))
+                .is_none_or(|definition| definition != AUTHORING_COMMAND_KIND_CHECK_DEF))
 }
 
-fn stored_suite_cutover_sql(schema: &BareSchemaName) -> String {
-    RETIRED_STORED_SUITE_TABLES
-        .iter()
-        .map(|table| {
-            format!(
-                "DROP TABLE IF EXISTS {}.{}",
-                schema.quoted(),
-                quote_ident(table)
-            )
-        })
-        .chain(RETIRED_STORED_SUITE_FUNCTIONS.iter().map(|function| {
-            format!(
-                "DROP FUNCTION IF EXISTS {}.{}()",
-                schema.quoted(),
-                quote_ident(function)
-            )
-        }))
-        .chain(std::iter::once(format!(
-            "DROP TABLE IF EXISTS catalog.{}",
-            quote_ident(RETIRED_STORED_SUITE_CATALOG_TABLE)
-        )))
-        .collect::<Vec<_>>()
-        .join("; ")
+fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+    let validation_dimension_present = obs
+        .catalog_columns
+        .get("validated_flow_drafts")
+        .is_some_and(|columns| columns.contains("suite_flow_version"));
+    let audit_check_drifted = obs.catalog_tables.contains("authoring_command_audit")
+        && obs
+            .catalog_checks
+            .get(&(
+                "authoring_command_audit".to_string(),
+                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
+            ))
+            .is_none_or(|definition| definition != AUTHORING_COMMAND_KIND_CHECK_DEF);
+    let mut statements = Vec::new();
+    let mut lock_targets = Vec::new();
+    if validation_dimension_present {
+        lock_targets.push("catalog.validated_flow_drafts");
+    }
+    if audit_check_drifted {
+        lock_targets.push("catalog.authoring_command_audit");
+    }
+    if !lock_targets.is_empty() {
+        statements.push(format!(
+            "LOCK TABLE {} IN ACCESS EXCLUSIVE MODE",
+            lock_targets.join(", ")
+        ));
+    }
+    if validation_dimension_present {
+        statements.push(
+            "DO $retired_validation_dimension$ BEGIN \
+               IF EXISTS ( \
+                    SELECT 1 FROM pg_catalog.pg_attribute \
+                     WHERE attrelid = 'catalog.validated_flow_drafts'::regclass \
+                       AND attname = 'suite_flow_version' AND NOT attisdropped) \
+                  AND EXISTS (SELECT 1 FROM catalog.validated_flow_drafts) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'retired-validation-identity-requires-reprovision'; \
+               END IF; \
+             END $retired_validation_dimension$"
+                .to_string(),
+        );
+        statements.push(
+            "ALTER TABLE catalog.validated_flow_drafts \
+               DROP CONSTRAINT IF EXISTS validated_flow_drafts_exact_pin, \
+               DROP COLUMN IF EXISTS suite_flow_version, \
+               ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE ( \
+                   tenant_id, draft_id, draft_revision, draft_content_hash, \
+                   catalog_id, catalog_version, environment, runtime_flow_version, \
+                   draft_artifact_hash, execution_bundle_hash, \
+                   binding_base_artifact_hash)"
+                .to_string(),
+        );
+    }
+    if audit_check_drifted {
+        statements.push(
+            "DO $retired_authoring_commands$ BEGIN \
+               IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit \
+                           WHERE command_kind IN ('suite-run', 'suite-projection')) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'retired-authoring-command-history-requires-reprovision'; \
+               END IF; \
+             END $retired_authoring_commands$"
+                .to_string(),
+        );
+        statements.push(
+            "ALTER TABLE catalog.authoring_command_audit \
+               DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check, \
+               ADD CONSTRAINT authoring_command_audit_command_kind_check \
+               CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run', \
+                                       'publish', 'grant-draft-safe-generation', \
+                                       'revoke-draft-safe-generation'))"
+                .to_string(),
+        );
+    }
+    statements.extend(
+        RETIRED_STORED_SUITE_TABLES
+            .iter()
+            .map(|table| {
+                format!(
+                    "DROP TABLE IF EXISTS {}.{}",
+                    schema.quoted(),
+                    quote_ident(table)
+                )
+            })
+            .chain(RETIRED_STORED_SUITE_FUNCTIONS.iter().map(|function| {
+                format!(
+                    "DROP FUNCTION IF EXISTS {}.{}()",
+                    schema.quoted(),
+                    quote_ident(function)
+                )
+            }))
+            .chain(std::iter::once(format!(
+                "DROP TABLE IF EXISTS catalog.{}",
+                quote_ident(RETIRED_STORED_SUITE_CATALOG_TABLE)
+            ))),
+    );
+    statements.join("; ")
 }
 
 /// The outbox-era tables the l5i9.19 teardown retired. A pre-teardown schema
@@ -3126,6 +3215,14 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         return plan;
     }
 
+    if stored_suite_cutover_needed(obs) {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::StoredSuiteCutover,
+            target: "stored-suite-persistence".to_string(),
+            sql: stored_suite_cutover_sql(schema, obs),
+        });
+    }
+
     if obs
         .effect_writer_role
         .is_none_or(|role| !role.is_acl_only())
@@ -3230,14 +3327,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             kind: RunPlaneActionKind::InvocationAdmissionRetentionCutover,
             target: "invocation_admissions.retention".to_string(),
             sql: statements.join("; "),
-        });
-    }
-
-    if stored_suite_cutover_needed(obs) {
-        plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::StoredSuiteCutover,
-            target: "stored-suite-persistence".to_string(),
-            sql: stored_suite_cutover_sql(schema),
         });
     }
 
@@ -5169,6 +5258,13 @@ CREATE INDEX event_registrations_by_entity
             ),
             RELEASE_FLOWS_BUNDLE_CHECK_DEF.to_string(),
         );
+        obs.catalog_checks.insert(
+            (
+                "authoring_command_audit".to_string(),
+                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
+            ),
+            AUTHORING_COMMAND_KIND_CHECK_DEF.to_string(),
+        );
         obs.catalog_non_nullable_columns.insert((
             "release_flows".to_string(),
             "execution_bundle_hash".to_string(),
@@ -5909,6 +6005,100 @@ CREATE INDEX event_registrations_by_entity
             .catalog_tables
             .remove(RETIRED_STORED_SUITE_CATALOG_TABLE);
         assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
+    }
+
+    #[test]
+    fn retired_validation_dimension_is_empty_only_and_idempotent() {
+        let mut legacy = observation_at_record();
+        legacy
+            .catalog_columns
+            .get_mut("validated_flow_drafts")
+            .expect("record table exists")
+            .insert("suite_flow_version".to_string());
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let cutover = &plan.actions[0];
+        assert_eq!(cutover.kind, RunPlaneActionKind::StoredSuiteCutover);
+        for required in [
+            "LOCK TABLE catalog.validated_flow_drafts IN ACCESS EXCLUSIVE MODE",
+            "retired-validation-identity-requires-reprovision",
+            "AND EXISTS (SELECT 1 FROM catalog.validated_flow_drafts)",
+            "DROP CONSTRAINT IF EXISTS validated_flow_drafts_exact_pin",
+            "DROP COLUMN IF EXISTS suite_flow_version",
+            "ADD CONSTRAINT validated_flow_drafts_exact_pin UNIQUE",
+        ] {
+            assert!(
+                cutover.sql.contains(required),
+                "missing {required}: {}",
+                cutover.sql
+            );
+        }
+        assert!(cutover.sql.contains("pg_catalog.pg_attribute"));
+        assert!(!cutover.sql.contains("CASCADE"));
+        assert!(
+            cutover
+                .sql
+                .find("retired-validation-identity-requires-reprovision")
+                < cutover.sql.find("DROP COLUMN IF EXISTS suite_flow_version")
+        );
+
+        legacy
+            .catalog_columns
+            .get_mut("validated_flow_drafts")
+            .expect("record table exists")
+            .remove("suite_flow_version");
+        assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
+    }
+
+    #[test]
+    fn retired_command_kinds_refuse_history_before_tightening_the_check() {
+        let mut legacy = observation_at_record();
+        legacy.catalog_checks.insert(
+            (
+                "authoring_command_audit".to_string(),
+                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
+            ),
+            "legacy".to_string(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        let cutover = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
+            .expect("retired command vocabulary plans a cutover");
+        for required in [
+            "LOCK TABLE catalog.authoring_command_audit IN ACCESS EXCLUSIVE MODE",
+            "command_kind IN ('suite-run', 'suite-projection')",
+            "retired-authoring-command-history-requires-reprovision",
+            "DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check",
+            "ADD CONSTRAINT authoring_command_audit_command_kind_check",
+        ] {
+            assert!(
+                cutover.sql.contains(required),
+                "missing {required}: {}",
+                cutover.sql
+            );
+        }
+        assert!(
+            cutover
+                .sql
+                .find("retired-authoring-command-history-requires-reprovision")
+                < cutover
+                    .sql
+                    .find("DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check")
+        );
+        assert!(
+            !cutover
+                .sql
+                .contains("DELETE FROM catalog.authoring_command_audit")
+        );
+        assert!(
+            !cutover
+                .sql
+                .contains("UPDATE catalog.authoring_command_audit")
+        );
     }
 
     #[test]

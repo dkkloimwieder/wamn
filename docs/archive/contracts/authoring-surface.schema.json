@@ -65,49 +65,11 @@
           "additionalProperties": false,
           "properties": {
             "input": {
-              "$ref": "#/definitions/SuiteRun"
-            },
-            "kind": {
-              "enum": [
-                "suite-run"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "input",
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "input": {
               "$ref": "#/definitions/PublishValidatedDraft"
             },
             "kind": {
               "enum": [
                 "publish"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "input",
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "input": {
-              "$ref": "#/definitions/AuthoringReportQuery"
-            },
-            "kind": {
-              "enum": [
-                "suite-projection"
               ],
               "type": "string"
             }
@@ -126,9 +88,7 @@
         "save-flow-draft",
         "validate",
         "draft-run",
-        "suite-run",
-        "publish",
-        "suite-projection"
+        "publish"
       ],
       "type": "string"
     },
@@ -371,25 +331,6 @@
           "properties": {
             "kind": {
               "enum": [
-                "publish-blocked-by-suite"
-              ],
-              "type": "string"
-            },
-            "report-id": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind",
-            "report-id"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
                 "publish-executable-drift"
               ],
               "type": "string"
@@ -423,23 +364,6 @@
           "type": "object"
         }
       ]
-    },
-    "AuthoringReportQuery": {
-      "additionalProperties": false,
-      "description": "Query a durable suite report projection by stable identity.",
-      "properties": {
-        "report-id": {
-          "type": "string"
-        },
-        "scope": {
-          "$ref": "#/definitions/AuthoringScope"
-        }
-      },
-      "required": [
-        "report-id",
-        "scope"
-      ],
-      "type": "object"
     },
     "AuthoringRequest": {
       "additionalProperties": false,
@@ -572,25 +496,6 @@
           "properties": {
             "command": {
               "enum": [
-                "suite-run"
-              ],
-              "type": "string"
-            },
-            "result": {
-              "$ref": "#/definitions/SuiteRunReceipt"
-            }
-          },
-          "required": [
-            "command",
-            "result"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "command": {
-              "enum": [
                 "publish"
               ],
               "type": "string"
@@ -604,91 +509,8 @@
             "result"
           ],
           "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "command": {
-              "enum": [
-                "suite-projection"
-              ],
-              "type": "string"
-            },
-            "result": {
-              "$ref": "#/definitions/SuiteProjectionState"
-            }
-          },
-          "required": [
-            "command",
-            "result"
-          ],
-          "type": "object"
         }
       ]
-    },
-    "BranchCoverageProjection": {
-      "additionalProperties": false,
-      "properties": {
-        "branch": {
-          "$ref": "#/definitions/BranchIdentity"
-        },
-        "coverage": {
-          "$ref": "#/definitions/CoverageState"
-        }
-      },
-      "required": [
-        "branch",
-        "coverage"
-      ],
-      "type": "object"
-    },
-    "BranchIdentity": {
-      "additionalProperties": false,
-      "description": "Stable identity of one authored branch: source node plus emitted port.",
-      "properties": {
-        "from-node-id": {
-          "type": "string"
-        },
-        "from-port": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "from-node-id",
-        "from-port"
-      ],
-      "type": "object"
-    },
-    "CaseResultProjection": {
-      "additionalProperties": false,
-      "description": "One stored case's stable result and failure link.",
-      "properties": {
-        "case-id": {
-          "type": "string"
-        },
-        "failure": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/FailureDetail"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "outcome": {
-          "$ref": "#/definitions/PassFail"
-        },
-        "run-id": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "case-id",
-        "outcome",
-        "run-id"
-      ],
-      "type": "object"
     },
     "CatalogIdentity": {
       "additionalProperties": false,
@@ -752,16 +574,6 @@
       ],
       "type": "object"
     },
-    "CoverageState": {
-      "description": "Explicit coverage state; absence never means uncovered.",
-      "enum": [
-        "covered",
-        "not-covered",
-        "not-observed",
-        "unknown"
-      ],
-      "type": "string"
-    },
     "DraftIdentity": {
       "additionalProperties": false,
       "description": "Stable identity returned after a draft save.",
@@ -817,7 +629,7 @@
             }
           ],
           "default": "full",
-          "description": "Whether this one draft run captures node input and output. Omission is full capture; published and stored-suite runs expose no such choice."
+          "description": "Whether this one draft run captures node input and output. Omission is full capture; other admission paths expose no such choice."
         },
         "input": true,
         "scope": {
@@ -859,283 +671,9 @@
       ],
       "type": "object"
     },
-    "DraftSuiteProjection": {
-      "additionalProperties": false,
-      "description": "Final client-renderable result for one draft suite.",
-      "properties": {
-        "branches": {
-          "items": {
-            "$ref": "#/definitions/BranchCoverageProjection"
-          },
-          "type": "array"
-        },
-        "cases": {
-          "items": {
-            "$ref": "#/definitions/CaseResultProjection"
-          },
-          "type": "array"
-        },
-        "draft": {
-          "$ref": "#/definitions/ValidatedDraftIdentity"
-        },
-        "edges": {
-          "items": {
-            "$ref": "#/definitions/EdgeCoverageProjection"
-          },
-          "type": "array"
-        },
-        "edit-to-run-ms": {
-          "format": "uint64",
-          "maximum": 9007199254740991,
-          "minimum": 0.0,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "execution-id": {
-          "type": "string"
-        },
-        "nodes": {
-          "items": {
-            "$ref": "#/definitions/NodeResultProjection"
-          },
-          "type": "array"
-        },
-        "outcome": {
-          "$ref": "#/definitions/SuiteOutcome"
-        },
-        "projection-version": {
-          "enum": [
-            "0.1"
-          ],
-          "type": "string"
-        },
-        "report-id": {
-          "type": "string"
-        },
-        "suite": {
-          "$ref": "#/definitions/SuiteRef"
-        }
-      },
-      "required": [
-        "branches",
-        "cases",
-        "draft",
-        "edges",
-        "execution-id",
-        "nodes",
-        "outcome",
-        "projection-version",
-        "report-id",
-        "suite"
-      ],
-      "type": "object"
-    },
-    "EdgeCoverageProjection": {
-      "additionalProperties": false,
-      "properties": {
-        "coverage": {
-          "$ref": "#/definitions/CoverageState"
-        },
-        "edge": {
-          "$ref": "#/definitions/EdgeIdentity"
-        }
-      },
-      "required": [
-        "coverage",
-        "edge"
-      ],
-      "type": "object"
-    },
-    "EdgeIdentity": {
-      "additionalProperties": false,
-      "description": "Stable identity of one authored edge.\n\n`to_port` is required on the wire and may be null, preserving the full canonical `(from, from-port, to, to-port)` tuple without omission rules.",
-      "properties": {
-        "from-node-id": {
-          "type": "string"
-        },
-        "from-port": {
-          "type": "string"
-        },
-        "to-node-id": {
-          "type": "string"
-        },
-        "to-port": {
-          "$ref": "#/definitions/EdgeInputPort"
-        }
-      },
-      "required": [
-        "from-node-id",
-        "from-port",
-        "to-node-id",
-        "to-port"
-      ],
-      "type": "object"
-    },
-    "EdgeInputPort": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "description": "Required, nullable target-port component of an edge identity."
-    },
-    "FailureDetail": {
-      "additionalProperties": false,
-      "description": "Failure classification; clients never need to parse an error message.",
-      "properties": {
-        "kind": {
-          "$ref": "#/definitions/FailureKind"
-        },
-        "node-id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "type": "object"
-    },
-    "FailureKind": {
-      "enum": [
-        "terminal",
-        "retry-exhausted",
-        "invalid-input",
-        "runaway-budget",
-        "infrastructure-fault"
-      ],
-      "type": "string"
-    },
-    "NodeOutcome": {
-      "enum": [
-        "passed",
-        "failed",
-        "not-observed",
-        "unknown"
-      ],
-      "type": "string"
-    },
-    "NodeResultProjection": {
-      "additionalProperties": false,
-      "description": "Aggregate result for one stable node across the suite.",
-      "properties": {
-        "failed-case-ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "node-id": {
-          "type": "string"
-        },
-        "observed-case-ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "outcome": {
-          "$ref": "#/definitions/NodeOutcome"
-        }
-      },
-      "required": [
-        "failed-case-ids",
-        "node-id",
-        "observed-case-ids",
-        "outcome"
-      ],
-      "type": "object"
-    },
-    "PassFail": {
-      "enum": [
-        "passed",
-        "failed"
-      ],
-      "type": "string"
-    },
-    "PendingReportReason": {
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
-                "awaiting-admission"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
-                "capture-interrupted"
-              ],
-              "type": "string"
-            },
-            "run-ids": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "run-ids"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "PendingSuiteProjection": {
-      "additionalProperties": false,
-      "description": "A report reservation that cannot yet finalize without fabricating evidence.",
-      "properties": {
-        "captured-case-ids": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        },
-        "execution-id": {
-          "type": "string"
-        },
-        "reason": {
-          "$ref": "#/definitions/PendingReportReason"
-        },
-        "report-id": {
-          "type": "string"
-        },
-        "validated-draft": {
-          "$ref": "#/definitions/ValidatedDraftRef"
-        }
-      },
-      "required": [
-        "captured-case-ids",
-        "execution-id",
-        "reason",
-        "report-id",
-        "validated-draft"
-      ],
-      "type": "object"
-    },
     "PublishValidatedDraft": {
       "additionalProperties": false,
-      "description": "Publish exactly the executable proven by a successful suite report.",
+      "description": "Publish exactly the executable proven by a successful report.",
       "properties": {
         "scope": {
           "$ref": "#/definitions/AuthoringScope"
@@ -1183,7 +721,6 @@
         "draft",
         "draft-revision",
         "validated-draft",
-        "suite",
         "report"
       ],
       "type": "string"
@@ -1234,261 +771,20 @@
       ],
       "type": "object"
     },
-    "SuiteExecutionRefusal": {
-      "description": "Typed refusal retained in a finalized suite report.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
-                "undrivable-nodes"
-              ],
-              "type": "string"
-            },
-            "node-types": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            }
-          },
-          "required": [
-            "kind",
-            "node-types"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "kind": {
-              "enum": [
-                "validated-draft-drift"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "connection-names": {
-              "items": {
-                "type": "string"
-              },
-              "type": "array"
-            },
-            "kind": {
-              "enum": [
-                "draft-connections-denied"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "connection-names",
-            "kind"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "SuiteOutcome": {
-      "description": "Suite completion is either pass/fail or a typed refusal; contradictory `passed + refusal` documents are not representable.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "state": {
-              "enum": [
-                "passed"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "state"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "state": {
-              "enum": [
-                "failed"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "state"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "refusal": {
-              "$ref": "#/definitions/SuiteExecutionRefusal"
-            },
-            "state": {
-              "enum": [
-                "refused"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "refusal",
-            "state"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "SuiteProjectionState": {
-      "description": "Durable read state for a suite projection.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "properties": {
-            "state": {
-              "enum": [
-                "not-found"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "state"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "report": {
-              "$ref": "#/definitions/PendingSuiteProjection"
-            },
-            "state": {
-              "enum": [
-                "pending"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "report",
-            "state"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "report": {
-              "$ref": "#/definitions/DraftSuiteProjection"
-            },
-            "state": {
-              "enum": [
-                "finalized"
-              ],
-              "type": "string"
-            }
-          },
-          "required": [
-            "report",
-            "state"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "SuiteRef": {
-      "additionalProperties": false,
-      "description": "Select one stored suite without exposing its storage location.",
-      "properties": {
-        "flow-version": {
-          "format": "uint32",
-          "minimum": 0.0,
-          "type": "integer"
-        },
-        "suite-id": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "flow-version",
-        "suite-id"
-      ],
-      "type": "object"
-    },
-    "SuiteRun": {
-      "additionalProperties": false,
-      "description": "Execute a stored suite against an exact validated draft.",
-      "properties": {
-        "scope": {
-          "$ref": "#/definitions/AuthoringScope"
-        },
-        "suite": {
-          "$ref": "#/definitions/SuiteRef"
-        },
-        "validated-draft": {
-          "$ref": "#/definitions/ValidatedDraftRef"
-        }
-      },
-      "required": [
-        "scope",
-        "suite",
-        "validated-draft"
-      ],
-      "type": "object"
-    },
-    "SuiteRunReceipt": {
-      "additionalProperties": false,
-      "description": "Receipt for one durable suite command.",
-      "properties": {
-        "execution-id": {
-          "type": "string"
-        },
-        "report-id": {
-          "type": "string"
-        },
-        "validated-draft": {
-          "$ref": "#/definitions/ValidatedDraftRef"
-        }
-      },
-      "required": [
-        "execution-id",
-        "report-id",
-        "validated-draft"
-      ],
-      "type": "object"
-    },
     "ValidateDraft": {
       "additionalProperties": false,
-      "description": "Validate one exact saved revision for the selected stored suite.",
+      "description": "Validate one exact saved draft revision.",
       "properties": {
         "draft": {
           "$ref": "#/definitions/DraftRevisionRef"
         },
         "scope": {
           "$ref": "#/definitions/AuthoringScope"
-        },
-        "suite": {
-          "$ref": "#/definitions/SuiteRef"
         }
       },
       "required": [
         "draft",
-        "scope",
-        "suite"
+        "scope"
       ],
       "type": "object"
     },

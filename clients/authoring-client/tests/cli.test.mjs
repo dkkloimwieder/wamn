@@ -18,7 +18,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { closeSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -39,7 +42,7 @@ const LAUNCHER = fileURLToPath(ADAPTER_URL);
 // names, nesting, and leaf types, with the values erased. Re-pin it only in a
 // commit that reviewed a collection shape change. A value edit in the collection
 // deliberately does not move this digest; a renamed or dropped field does.
-const COLLECTION_SHAPE_DIGEST = "9d1af46366c67ed6f9f7e9679d60884472bfd4d779d10d05fdd6fc9ab71813b1";
+const COLLECTION_SHAPE_DIGEST = "0905b516c147af54e74efab932b9b0a851497dd3a5a00cfa76aff3e5de2d0a9e";
 
 // `draft-run`'s authored input is `unknown` on the contract, so its shape is
 // deliberately not comparable — the client sends whatever the author wrote.
@@ -103,10 +106,8 @@ function builtRequests() {
       cli.validateRequest({
         commandId: "validate-1",
         draftId: "draft-receiving",
-        flowVersion: 3,
         revision: 3,
         scope,
-        suiteId: "receiving-happy-path",
       }),
     ],
     [
@@ -119,16 +120,6 @@ function builtRequests() {
       }),
     ],
     [
-      "suite-run",
-      cli.suiteRunRequest({
-        commandId: "suite-1",
-        flowVersion: 3,
-        scope,
-        suiteId: "receiving-happy-path",
-        validatedDraftId: "sha256:validated-draft-v4",
-      }),
-    ],
-    [
       "publish",
       cli.promoteRequest({
         commandId: "publish-1",
@@ -136,10 +127,6 @@ function builtRequests() {
         scope,
         validatedDraftId: "sha256:validated-draft-v4",
       }),
-    ],
-    [
-      "suite-projection",
-      cli.runsRequest({ commandId: "read-1", reportId: "report-receiving-3", scope }),
     ],
   ]);
 }
@@ -295,10 +282,6 @@ const validateArguments = [
   "draft-receiving",
   "--flow-id",
   "receive-material",
-  "--suite-id",
-  "receiving-happy-path",
-  "--flow-version",
-  "3",
 ];
 
 function commandIdOf(init) {
@@ -553,73 +536,6 @@ test("capture is full or off and only belongs to draft-run", async () => {
   }
 });
 
-test("runs reports the projection's own edit-to-run latency and case runs", async () => {
-  const report = {
-    branches: [{ branch: { "from-node-id": "request", "from-port": "out" }, coverage: "covered" }],
-    cases: [{ "case-id": "happy", failure: null, outcome: "passed", "run-id": "run-1" }],
-    draft: validatedIdentity,
-    edges: [
-      {
-        coverage: "covered",
-        edge: {
-          "from-node-id": "request",
-          "from-port": "out",
-          "to-node-id": "respond",
-          "to-port": null,
-        },
-      },
-    ],
-    "edit-to-run-ms": 4321,
-    "execution-id": "execution-1",
-    nodes: [
-      {
-        "failed-case-ids": [],
-        "node-id": "request",
-        "observed-case-ids": ["happy"],
-        outcome: "passed",
-      },
-    ],
-    outcome: { state: "passed" },
-    "projection-version": "0.1",
-    "report-id": "report-receiving-3",
-    suite: { "flow-version": 3, "suite-id": "receiving-happy-path" },
-  };
-  const { io, state } = fakeIo({
-    files: baseFiles,
-    reply: (_endpoint, init) => ({
-      status: 200,
-      body: response(commandIdOf(init), {
-        status: "completed",
-        value: {
-          command: "suite-projection",
-          result: { report, state: "finalized" },
-        },
-      }),
-    }),
-  });
-
-  const code = await cli.runCli(
-    [
-      "runs",
-      "--base-url",
-      "http://surface.invalid",
-      "--token-file",
-      TOKEN_FILE,
-      "--project",
-      "receiving",
-      "--environment",
-      "dev",
-      "--no-state",
-      "--report-id",
-      "report-receiving-3",
-    ],
-    io,
-  );
-  assert.equal(code, cli.EXIT_COMPLETED);
-  assert.equal(document(state)["server-edit-to-run-ms"], 4321);
-  assert.ok(state.err.some((line) => line.includes("case-id=happy run-id=run-1 outcome=passed")));
-});
-
 test("no token material ever reaches stdout or the transcript", async () => {
   const { io, state } = fakeIo({
     files: baseFiles,
@@ -647,7 +563,7 @@ test("no option, file, or default can send an unversioned or reversioned request
   // client at all, so there is nothing for a flag or a file to select.
   const factory = source.slice(source.indexOf("function request("));
   assert.equal(factory.slice(0, factory.indexOf("\n}")).split("AUTHORING_SCHEMA_VERSION").length - 1, 1);
-  assert.equal(source.split("return request(").length - 1, 6);
+  assert.equal(source.split("return request(").length - 1, 4);
   assert.doesNotMatch(source, /"schema-version":\s*"/);
   for (const rejected of ["--schema-version", "--contract-version", "--endpoint"]) {
     assert.throws(() => cli.parseArguments([rejected, "0.2"]), /unrecognized option/);
@@ -733,13 +649,38 @@ test("the launched CLI reads no endpoint, credential, or database URL from the e
     WAMN_AUTHORING_PG_URL: `postgres://${sentinel}@db.invalid/wamn`,
     WAMN_SYSTEM_URL: `postgres://${sentinel}@db.invalid/wamn`,
   };
-  const launched = spawnSync(
-    process.execPath,
-    [LAUNCHER, "runs", "--project", "receiving", "--environment", "dev", "--report-id", "r"],
-    { encoding: "utf8", env: poisoned },
-  );
-  assert.equal(launched.status, cli.EXIT_USAGE);
-  assert.match(launched.stderr, /--base-url is required/);
-  assert.equal(launched.stdout, "");
-  assert.doesNotMatch(launched.stderr, new RegExp(sentinel));
+  const captureDirectory = mkdtempSync(join(tmpdir(), "wamn-authoring-cli-test-"));
+  const stdoutPath = join(captureDirectory, "stdout");
+  const stderrPath = join(captureDirectory, "stderr");
+  const stdoutFd = openSync(stdoutPath, "w");
+  const stderrFd = openSync(stderrPath, "w");
+  try {
+    const launched = spawnSync(
+      process.execPath,
+      [
+        LAUNCHER,
+        "promote",
+        "--project",
+        "receiving",
+        "--environment",
+        "dev",
+        "--validated-draft",
+        "validated-1",
+        "--report-id",
+        "r",
+      ],
+      { env: poisoned, stdio: ["ignore", stdoutFd, stderrFd] },
+    );
+    closeSync(stdoutFd);
+    closeSync(stderrFd);
+
+    const stdout = readFileSync(stdoutPath, "utf8");
+    const stderr = readFileSync(stderrPath, "utf8");
+    assert.equal(launched.status, cli.EXIT_USAGE);
+    assert.match(stderr, /--base-url is required/);
+    assert.equal(stdout, "");
+    assert.doesNotMatch(stderr, new RegExp(sentinel));
+  } finally {
+    rmSync(captureDirectory, { force: true, recursive: true });
+  }
 });

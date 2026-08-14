@@ -91,7 +91,3 @@ pub use sql::{
     release_partition_sql, renew_lease_sql, renew_partition_sql, write_ahead_run_sql,
     write_ahead_triggered_run_sql,
 };
-pub(crate) use sql::{
-    admit_pinned_draft_scenario_run_sql, admit_pinned_triggered_run_sql,
-    lock_pinned_trigger_catalog_head_sql,
-};

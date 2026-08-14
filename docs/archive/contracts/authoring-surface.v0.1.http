@@ -59,10 +59,6 @@ Content-Type: application/json
         "draft": {
           "draft-id": "draft-receiving",
           "revision": 3
-        },
-        "suite": {
-          "suite-id": "receiving-happy-path",
-          "flow-version": 3
         }
       }
     }
@@ -99,36 +95,6 @@ Content-Type: application/json
   }
 }
 
-### suite-run
-POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
-Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
-Accept: application/json
-Content-Type: application/json
-
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "suite-receiving-draft-3",
-    "command": {
-      "kind": "suite-run",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "validated-draft": {
-          "validated-draft-id": "sha256:validated-draft-v4"
-        },
-        "suite": {
-          "suite-id": "receiving-happy-path",
-          "flow-version": 3
-        }
-      }
-    }
-  }
-}
-
 ### publish
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
 Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
@@ -151,30 +117,6 @@ Content-Type: application/json
           "validated-draft-id": "sha256:validated-draft-v4"
         },
         "successful-report-id": "report-receiving-3"
-      }
-    }
-  }
-}
-
-### suite-projection
-POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
-Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
-Accept: application/json
-Content-Type: application/json
-
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "read-receiving-report-3",
-    "command": {
-      "kind": "suite-projection",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "report-id": "report-receiving-3"
       }
     }
   }

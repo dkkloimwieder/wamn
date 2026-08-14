@@ -22,8 +22,7 @@ declare -a TEST_ARGV
 mutation_ids() {
   printf '%s\n' \
     combined-dispatch-drops-trusted-lineage \
-    split-dispatch-drops-trusted-lineage \
-    flowrunner-ignores-dispatch-causation
+    split-dispatch-drops-trusted-lineage
 }
 
 load_mutation() {
@@ -31,7 +30,7 @@ load_mutation() {
   case "$id" in
     combined-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
+      EXPECTED_SHA="5cefe349c61339f928de464c61c3548f102db8e3d60a7b9f33e8fce5f5babd59"
       NEEDLE='execution_input = run_sql::execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="combined_claim_and_checkpoint_builders_compose_the_split_statements"
@@ -39,19 +38,11 @@ load_mutation() {
       ;;
     split-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/sql.rs"
-      EXPECTED_SHA="930dc8a47bec8c20f1877faf9c56b69a153d8aa33592fbcbe3d6fabfab587c5f"
+      EXPECTED_SHA="3d0f7264525fc38411e1f32f5137f902af60baa4a45428417c5ead4221d09d3e"
       NEEDLE='execution_input = execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="sql::tests::dispatch_read_projects_flow_and_input"
       TEST_ARGV=(cargo test --locked -p wamn-run-state --lib "$GATE" -- --exact)
-      ;;
-    flowrunner-ignores-dispatch-causation)
-      TARGET="components/execution/flowrunner/src/lib.rs"
-      EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
-      NEEDLE='let causation = input.get("causation");'
-      REPLACEMENT='let causation = input.get("retired-causation");'
-      GATE="tests::dispatch_causation_declares_trusted_root_and_depth_for_the_claimed_run"
-      TEST_ARGV=(cargo test --locked --manifest-path components/Cargo.toml -p flowrunner "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2

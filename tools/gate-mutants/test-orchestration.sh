@@ -29,7 +29,7 @@ load_mutation() {
   case "$id" in
     named-node-plan-join-bypass)
       TARGET="services/scenario-worker/src/store/test_orchestration.rs"
-      EXPECTED_SHA="295afbc6c3ad5db798ed40c65005f327db2ad417bcc6e0f55fe7b74282514e93"
+      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
       NEEDLE='AND resolution.execution_bundle_hash = node.current_plan_hash \'
       REPLACEMENT='AND true \'
       GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency_and_named_node_projection"
@@ -37,7 +37,7 @@ load_mutation() {
       ;;
     schema-control-drops-case-runs)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
+      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
       NEEDLE='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
                 "authoring_test_sets",
@@ -54,7 +54,7 @@ load_mutation() {
       ;;
     from-zero-skips-post-helper-triggers)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
+      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
       NEEDLE='        if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {'

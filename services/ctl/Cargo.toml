@@ -69,7 +69,6 @@ wamn-platform-identity = { workspace = true }
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
 wamn-run-state = { workspace = true, optional = true }
-wamn-scenario-catalog = { workspace = true }
 # 11.8 ops-only impact-report: the PURE schema-change impact analysis
 # (entities → flows via registration + node config → generated API).
 # This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

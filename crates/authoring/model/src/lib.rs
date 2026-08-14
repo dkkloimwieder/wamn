@@ -1,4 +1,4 @@
-//! Frontend-neutral authoring command and projection contracts.
+//! Frontend-neutral authoring command contracts.
 //!
 //! This crate is data only. Git, HTTP, CLI, and future visual clients adapt
 //! the same messages to the canonical application handlers. Authenticated
@@ -146,7 +146,7 @@ impl std::error::Error for SafeIntegerError {}
 )]
 pub enum AuthoringDocument {
     // Both arms are boxed: a request carries the largest command input and a
-    // response the largest projection, and neither should set the size of every
+    // response the largest result, and neither should set the size of every
     // document value in the process.
     Request(Box<AuthoringRequest>),
     Response(Box<AuthoringResponse>),
@@ -185,9 +185,7 @@ pub enum AuthoringCommand {
     SaveFlowDraft(SaveFlowDraft),
     Validate(ValidateDraft),
     DraftRun(DraftRun),
-    SuiteRun(SuiteRun),
     Publish(PublishValidatedDraft),
-    SuiteProjection(AuthoringReportQuery),
 }
 
 /// Stable command names used to attribute a refusal without parsing prose.
@@ -197,9 +195,7 @@ pub enum AuthoringCommandKind {
     SaveFlowDraft,
     Validate,
     DraftRun,
-    SuiteRun,
     Publish,
-    SuiteProjection,
 }
 
 /// A successful typed result or a typed product refusal.
@@ -227,9 +223,7 @@ pub enum AuthoringSuccess {
     SaveFlowDraft(DraftIdentity),
     Validate(ValidatedDraftIdentity),
     DraftRun(DraftRunReceipt),
-    SuiteRun(SuiteRunReceipt),
     Publish(PublishedFlowIdentity),
-    SuiteProjection(Box<SuiteProjectionState>),
 }
 
 /// Project and environment selected by a client.
@@ -295,14 +289,6 @@ pub struct DraftRevisionRef {
     pub revision: SafeUint64,
 }
 
-/// Select one stored suite without exposing its storage location.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SuiteRef {
-    pub suite_id: String,
-    pub flow_version: u32,
-}
-
 /// Inline, self-describing test-set document submitted to `test-set-run`.
 ///
 /// `definition` is exact UTF-8 text. Its bytes are the test-set identity
@@ -320,13 +306,12 @@ pub struct TestSetIdentity {
     pub hash: String,
 }
 
-/// Validate one exact saved revision for the selected stored suite.
+/// Validate one exact saved draft revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ValidateDraft {
     pub scope: AuthoringScope,
     pub draft: DraftRevisionRef,
-    pub suite: SuiteRef,
 }
 
 /// An opaque reference to the exact validated executable.
@@ -344,7 +329,7 @@ pub struct DraftRun {
     pub validated_draft: ValidatedDraftRef,
     pub input: Value,
     /// Whether this one draft run captures node input and output. Omission is
-    /// full capture; published and stored-suite runs expose no such choice.
+    /// full capture; other admission paths expose no such choice.
     #[serde(default)]
     pub capture: DraftRunCapture,
 }
@@ -358,30 +343,13 @@ pub enum DraftRunCapture {
     Off,
 }
 
-/// Execute a stored suite against an exact validated draft.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SuiteRun {
-    pub scope: AuthoringScope,
-    pub validated_draft: ValidatedDraftRef,
-    pub suite: SuiteRef,
-}
-
-/// Publish exactly the executable proven by a successful suite report.
+/// Publish exactly the executable proven by a successful report.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct PublishValidatedDraft {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
     pub successful_report_id: String,
-}
-
-/// Query a durable suite report projection by stable identity.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct AuthoringReportQuery {
-    pub scope: AuthoringScope,
-    pub report_id: String,
 }
 
 /// Stable identity returned after a draft save.
@@ -419,15 +387,6 @@ pub struct ValidatedDraftIdentity {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct DraftRunReceipt {
     pub run_id: String,
-    pub validated_draft: ValidatedDraftRef,
-}
-
-/// Receipt for one durable suite command.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct SuiteRunReceipt {
-    pub report_id: String,
-    pub execution_id: String,
     pub validated_draft: ValidatedDraftRef,
 }
 
@@ -490,10 +449,6 @@ pub enum AuthoringRefusal {
     DraftConnectionsDenied {
         connection_names: Vec<String>,
     },
-    #[schemars(rename_all = "kebab-case")]
-    PublishBlockedBySuite {
-        report_id: String,
-    },
     PublishExecutableDrift,
     #[schemars(rename_all = "kebab-case")]
     PublishBlockedByNonterminalRuns {
@@ -508,7 +463,6 @@ pub enum ResourceKind {
     Draft,
     DraftRevision,
     ValidatedDraft,
-    Suite,
     Report,
 }
 
@@ -529,208 +483,6 @@ pub enum ValidationSeverity {
     Warning,
 }
 
-/// Durable read state for a suite projection.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "state",
-    content = "report",
-    rename_all = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum SuiteProjectionState {
-    NotFound,
-    Pending(PendingSuiteProjection),
-    Finalized(Box<DraftSuiteProjection>),
-}
-
-/// A report reservation that cannot yet finalize without fabricating evidence.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct PendingSuiteProjection {
-    pub report_id: String,
-    pub execution_id: String,
-    pub validated_draft: ValidatedDraftRef,
-    pub reason: PendingReportReason,
-    pub captured_case_ids: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum PendingReportReason {
-    AwaitingAdmission,
-    // Mirrors `rename_all_fields` for the generated schema; see `AuthoringRefusal`.
-    #[schemars(rename_all = "kebab-case")]
-    CaptureInterrupted {
-        run_ids: Vec<String>,
-    },
-}
-
-/// Final client-renderable result for one draft suite.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct DraftSuiteProjection {
-    #[schemars(schema_with = "schema_version_schema")]
-    pub projection_version: String,
-    pub report_id: String,
-    pub execution_id: String,
-    pub draft: ValidatedDraftIdentity,
-    pub suite: SuiteRef,
-    pub outcome: SuiteOutcome,
-    pub edit_to_run_ms: Option<SafeUint64>,
-    pub cases: Vec<CaseResultProjection>,
-    pub nodes: Vec<NodeResultProjection>,
-    pub branches: Vec<BranchCoverageProjection>,
-    pub edges: Vec<EdgeCoverageProjection>,
-}
-
-/// Suite completion is either pass/fail or a typed refusal; contradictory
-/// `passed + refusal` documents are not representable.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "state",
-    content = "refusal",
-    rename_all = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum SuiteOutcome {
-    Passed,
-    Failed,
-    Refused(SuiteExecutionRefusal),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum PassFail {
-    Passed,
-    Failed,
-}
-
-/// One stored case's stable result and failure link.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CaseResultProjection {
-    pub case_id: String,
-    pub run_id: String,
-    pub outcome: PassFail,
-    pub failure: Option<FailureDetail>,
-}
-
-/// Failure classification; clients never need to parse an error message.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct FailureDetail {
-    pub kind: FailureKind,
-    pub node_id: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum FailureKind {
-    Terminal,
-    RetryExhausted,
-    InvalidInput,
-    RunawayBudget,
-    InfrastructureFault,
-}
-
-/// Aggregate result for one stable node across the suite.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct NodeResultProjection {
-    pub node_id: String,
-    pub outcome: NodeOutcome,
-    pub observed_case_ids: Vec<String>,
-    pub failed_case_ids: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum NodeOutcome {
-    Passed,
-    Failed,
-    NotObserved,
-    Unknown,
-}
-
-/// Stable identity of one authored branch: source node plus emitted port.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct BranchIdentity {
-    pub from_node_id: String,
-    pub from_port: String,
-}
-
-/// Required, nullable target-port component of an edge identity.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(untagged)]
-pub enum EdgeInputPort {
-    Named(String),
-    Default,
-}
-
-/// Stable identity of one authored edge.
-///
-/// `to_port` is required on the wire and may be null, preserving the full
-/// canonical `(from, from-port, to, to-port)` tuple without omission rules.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct EdgeIdentity {
-    pub from_node_id: String,
-    pub from_port: String,
-    pub to_node_id: String,
-    pub to_port: EdgeInputPort,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct BranchCoverageProjection {
-    pub branch: BranchIdentity,
-    pub coverage: CoverageState,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct EdgeCoverageProjection {
-    pub edge: EdgeIdentity,
-    pub coverage: CoverageState,
-}
-
-/// Explicit coverage state; absence never means uncovered.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum CoverageState {
-    Covered,
-    NotCovered,
-    NotObserved,
-    Unknown,
-}
-
-/// Typed refusal retained in a finalized suite report.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(
-    tag = "kind",
-    rename_all = "kebab-case",
-    rename_all_fields = "kebab-case",
-    deny_unknown_fields
-)]
-pub enum SuiteExecutionRefusal {
-    // Mirrors `rename_all_fields` for the generated schema; see `AuthoringRefusal`.
-    #[schemars(rename_all = "kebab-case")]
-    UndrivableNodes {
-        node_types: Vec<String>,
-    },
-    ValidatedDraftDrift,
-    #[schemars(rename_all = "kebab-case")]
-    DraftConnectionsDenied {
-        connection_names: Vec<String>,
-    },
-}
-
 /// Decode a contract document and reject missing, malformed, or unsupported
 /// versions before an application handler is selected.
 pub fn decode_document(input: &str) -> Result<AuthoringDocument, ContractDecodeError> {
@@ -746,31 +498,7 @@ pub fn decode_document(input: &str) -> Result<AuthoringDocument, ContractDecodeE
         });
     }
 
-    if let Some(projection) = finalized_projection(&document)
-        && projection.projection_version != SCHEMA_VERSION
-    {
-        return Err(ContractDecodeError::UnsupportedProjectionVersion {
-            requested: projection.projection_version.clone(),
-        });
-    }
-
     Ok(document)
-}
-
-fn finalized_projection(document: &AuthoringDocument) -> Option<&DraftSuiteProjection> {
-    let AuthoringDocument::Response(response) = document else {
-        return None;
-    };
-    let AuthoringOutcome::Completed(success) = &response.outcome else {
-        return None;
-    };
-    let AuthoringSuccess::SuiteProjection(state) = success.as_ref() else {
-        return None;
-    };
-    let SuiteProjectionState::Finalized(projection) = state.as_ref() else {
-        return None;
-    };
-    Some(projection)
 }
 
 /// Decode failure before application dispatch.
@@ -778,7 +506,6 @@ fn finalized_projection(document: &AuthoringDocument) -> Option<&DraftSuiteProje
 pub enum ContractDecodeError {
     Json(serde_json::Error),
     UnsupportedContractVersion { requested: String },
-    UnsupportedProjectionVersion { requested: String },
 }
 
 impl fmt::Display for ContractDecodeError {
@@ -789,10 +516,6 @@ impl fmt::Display for ContractDecodeError {
                 formatter,
                 "unsupported authoring contract version {requested}; supported version is {SCHEMA_VERSION}"
             ),
-            Self::UnsupportedProjectionVersion { requested } => write!(
-                formatter,
-                "unsupported authoring projection version {requested}; supported version is {SCHEMA_VERSION}"
-            ),
         }
     }
 }
@@ -801,15 +524,13 @@ impl std::error::Error for ContractDecodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Json(error) => Some(error),
-            Self::UnsupportedContractVersion { .. } | Self::UnsupportedProjectionVersion { .. } => {
-                None
-            }
+            Self::UnsupportedContractVersion { .. } => None,
         }
     }
 }
 
-/// Language-neutral JSON Schema for every public request, result, refusal,
-/// identity, and projection reachable from [`AuthoringDocument`].
+/// Language-neutral JSON Schema for every public request, result, refusal, and
+/// identity reachable from [`AuthoringDocument`].
 pub fn json_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(AuthoringDocument)).expect("schema serializes")
 }

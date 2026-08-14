@@ -123,11 +123,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "clients/authoring-client/src/generated/authoring.ts",
-        exact: r#""projection-version": "0.1";"#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/execution/run-state/src/invocation_context.rs",
         exact: r#"pub const INVOCATION_CONTEXT_VERSION: &str = "0.1";"#,
         expected_count: 1,
@@ -149,11 +144,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
     },
     GovernedLiteral {
         path: "crates/execution/run-state/src/admission.rs",
-        exact: "'version', '0.1'",
-        expected_count: 2,
-    },
-    GovernedLiteral {
-        path: "crates/execution/run-state/src/queue/sql.rs",
         exact: "'version', '0.1'",
         expected_count: 2,
     },

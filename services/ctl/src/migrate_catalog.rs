@@ -841,7 +841,7 @@ mod tests {
         let execution_bundle_hash = wamn_catalog::execution_bundle_hash(execution_bundle_bytes);
         client
             .execute(
-                wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                wamn_schema_control::sql::insert_execution_bundle_sql(),
                 &[
                     &tenant,
                     &execution_bundle_hash,

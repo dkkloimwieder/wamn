@@ -2,5 +2,4 @@
 
 pub mod authoring;
 pub mod management;
-pub mod projection;
 pub mod store;

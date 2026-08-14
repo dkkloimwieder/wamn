@@ -31,7 +31,7 @@ load_mutation() {
   case "$id" in
     check-catalog-is-not-planned)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
+      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
       NEEDLE='for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {'
       REPLACEMENT='for spec in &[] as &[CheckSpec] {
@@ -41,7 +41,7 @@ load_mutation() {
       ;;
     missing-helper-is-accepted)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="3f8c9af4d11b1692060b30c480bb92e3bdeb7e13fdf2debc782c5d158bd10280"
+      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
       NEEDLE='.helper_functions
             .get(spec.name)
             .is_none_or(|definition| {
@@ -57,7 +57,7 @@ load_mutation() {
       ;;
     effect-shell-does-not-apply)
       TARGET="services/ctl/src/reconcile_run_plane.rs"
-      EXPECTED_SHA="1d830da8fb767ff12f4c3fbb1228690c70ea98daf9169f4ca6ea33e8efa7de22"
+      EXPECTED_SHA="9b14a047e17a56758a5529d692fd943cd9c4b607675c20d38c4a1f5434338bd6"
       NEEDLE='for action in &plan.actions[applied..] {
             client
                 .batch_execute(&action.sql)'

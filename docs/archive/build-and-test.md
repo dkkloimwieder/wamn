@@ -215,7 +215,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 ## Workspace package tiers
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
-selection for the current **40 root + 6 component packages**. The selection
+selection for the current **38 root + 6 component packages**. The selection
 uses named explicit selectors and deliberately does not add
 `default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
 sets with live, locked Cargo metadata and `architecture/package-roles.json`.
@@ -224,10 +224,10 @@ The selected package roots are:
 
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
-| fast developer/native | 33 | 0 | every root production package; excludes proof/support packages and POCs |
+| fast developer/native | 31 | 0 | every root production package; excludes proof/support packages and POCs |
 | product components | 0 | 3 | `flow-http`, `flowrunner`, `materializer` |
 | contract/conformance | 10 | 0 | all contract packages plus `wamn-proof-conformance` |
-| full CI | 40 | 6 | every Cargo member; non-Cargo inputs: 0 |
+| full CI | 38 | 6 | every Cargo member; non-Cargo inputs: 0 |
 | deployed-system proof | 14 | 6 | deployable native/proof owners plus every retained guest proof input; non-Cargo inputs: 0 |
 | release | 8 | 3 | every package classified `deployable: true` |
 
@@ -265,7 +265,7 @@ membership never constitutes deployed proof or release admission.
 There are no `default-members` in either virtual workspace. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select all 40 root members. Bare `cargo test` uses each package's default
+  select all 38 root members. Bare `cargo test` uses each package's default
   test targets.
 - From `components/`, the same bare commands select all 6 component members.
   The production guest build remains
@@ -1572,8 +1572,8 @@ env-policy knobs) are a SIBLING bead, not this overlay.
 
 ### [EVT-READER / wamn-l5i9.10] event-reader — one project-env → the EVT_ stream
 
-Docs: docs/archive/events/event-plane-jetstream.md §4. The CDC reader MVP: `wamn-cdc-reader --org --project --env` (replicas=1 Deployment,
-deploy/platform/event-reader.example.yaml) reads its `registry.event_readers`
+Docs: docs/archive/events/event-plane-jetstream.md §4. The CDC reader MVP:
+`wamn-cdc-reader --org --project --env` reads its `registry.event_readers`
 registration, opens ONE pg_walstream session (`StreamingMode::Off` — whole
 txns, commit order), and publishes `wamn-event-wire` envelopes onto
 `evt.<org>.<project>.<env>.<entity>.<op>` with
@@ -3186,19 +3186,14 @@ Both schema changes are additive and land through the `publish_catalog.rs`
 marker-slice pattern; `run_plane_live`'s authoring leg synthesizes the
 pre-upgrade shape and re-publishes to prove the column probes converge.
 
-⚠️ The `wamn-scenario-worker` clippy leg stays RED for the six pre-existing
-`services/scenario-worker/src/lib.rs` findings described under wamn-ctc8.8.
-None is in a file this bead touched.
-
 ```bash
-cargo test --locked -p wamn-scenario-worker -p wamn-scenario-catalog \
-  -p wamn-schema-control -p wamn-ctl
+cargo test --locked -p wamn-scenario-worker -p wamn-schema-control -p wamn-ctl
 # The authoring-model tests bake CARGO_MANIFEST_DIR, so they need their own
 # target directory when a shared cache is in use.
 cargo test --locked -p wamn-authoring-model
 cargo test --locked -p wamn-proof-conformance --test state_ownership
 cargo clippy --locked -p wamn-scenario-worker -p wamn-authoring-model \
-  -p wamn-scenario-catalog --all-targets -- -D warnings
+  --all-targets -- -D warnings
 # Public contract regeneration; both must be clean.
 cargo run --locked --offline -p wamn-authoring-model \
   --example print-authoring-surface-schema > docs/archive/contracts/authoring-surface.schema.json
@@ -3254,8 +3249,8 @@ OPERATOR PRECONDITIONS — neither is self-serviceable, and the Deployment canno
 start without the first:
 
 * **`wamn-system-db` Secret** (key `url`). Recorded as operator-provided by both
-  `deploy/platform/scenario-worker.yaml` and `event-reader.example.yaml` ("no
-  chart ships it"). `serve()` connects it before the authority probe runs.
+  `deploy/platform/scenario-worker.yaml` ("no chart ships it"). `serve()`
+  connects it before the authority probe runs.
 * **The `identity` schema in the T1 system database**
   (`identity.principals` / `local_credentials` / `project_roles` / `pats`,
   `deploy/sql/system-schema.sql`). Required for `POST /login` and for the
@@ -3463,10 +3458,9 @@ before it fails, which is expected fixture residue rather than a gate result.
 
 The reference checkout client (`clients/authoring-client/scripts/wamn.mjs`, source
 in `src/cli/cli.ts`) drives the whole authoring loop over HTTP through the
-wamn-jvzx.2 generated client. Five verbs cover the six public command kinds:
-`validate` sends `save-flow-draft` then `validate`, `draft-run` and `suite-run`
-send themselves, `promote` sends `publish`, and `runs` reads `suite-projection`.
-Two gates own it.
+wamn-jvzx.2 generated client. Three verbs cover the four public command kinds:
+`validate` sends `save-flow-draft` then `validate`, `draft-run` sends itself,
+and `promote` sends `publish`. Two gates own it.
 
 **STATIC HALF — `node scripts/test.mjs`.** Network-free and credential-free, so a
 drift fails CI with no surface in the loop. It carries the wamn-jvzx.2 client
@@ -3491,10 +3485,10 @@ can select another; and a launch with `WAMN_AUTHORING_ENDPOINT`,
 `--base-url` and echoes none of them.
 
 **LIVE HALF — `node scripts/cycle.mjs`.** Edit a flow file in a real checkout,
-`validate`, edit it again, `validate`, then `draft-run`, `suite-run`, `runs`, and
-`promote`, each one a subprocess invocation of the shipped CLI whose stdout
-document is the result. Like the wamn-jvzx.4 smoke it is PURE HTTP: its whole
-input surface is `--base-url`, ONE `--credential` file, `--project`,
+`validate`, edit it again, `validate`, then `draft-run` and `promote`, each one
+a subprocess invocation of the shipped CLI whose stdout document is the result.
+Like the wamn-jvzx.4 smoke it is PURE HTTP: its whole input surface is
+`--base-url`, ONE `--credential` file, `--project`,
 `--environment`, and an optional `--checkout`. It holds no database URL, no
 platform-admin impersonation, and no test-only trusted context, so it cannot read
 the ledger it is proving — it prints one `VERIFY-MANIFEST` line instead and the
@@ -3502,27 +3496,26 @@ runner does that read below.
 
 **HONEST 501s, AND WHY THE GATE STILL PASSES.** The management surface mounts the
 command kinds whose handlers have landed and answers a bare `501` for the rest
-(the per-kind mount beads wamn-ftfc.30–.34 own mounting the remainder;
-wamn-ftfc.22 closed having proven every remaining backend absent). Each cycle step therefore asserts the
-CONTRACT shape of whatever answer it gets — `completed` must carry that command's
-required identity fields, `refused` must carry a typed reason, `unmounted` must be
-a bare `501` with no document — and a `fault` fails the gate. The two saves are
+(the per-kind mount work owns mounting the remainder; wamn-ftfc.22 closed
+having proven every remaining backend absent). Each cycle step therefore
+asserts the CONTRACT shape of whatever answer it gets — `completed` must carry
+that command's required identity fields, `refused` must carry a typed reason,
+`unmounted` must be a bare `501` with no document — and a `fault` fails the
+gate. The two saves are
 required to complete at revisions 1 and 2, because that is what proves
 working-tree content reaching the canonical save handler through optimistic
 concurrency. The run then prints `CYCLE-COMPLETED` and `CYCLE-UNMOUNTED-501`, so
 the record says exactly which steps a surface answered and which it did not.
-While `validate` and `suite-run` are unmounted there is no validated-draft or
+While `validate` or `draft-run` is unmounted there is no validated-draft or
 report identity to carry forward, so the downstream legs present a
 contract-shaped placeholder purely to reach the transport; on a surface that
-mounts them the real identity flows instead, and `runs`/`promote` then answer
+mounts them the real identity flows instead, and `promote` then answers
 `completed` or a typed refusal.
 
 **EDIT-TO-RUN LATENCY.** The CLI measures it where a checkout client can: from the
 modification time of the definition file it submitted to the arrival of a run
 receipt, printed as `edit-to-run-ms` on stderr and carried in the stdout
-document. When a report finalizes, `runs` also reports the platform's own
-`DraftSuiteProjection.edit-to-run-ms` as `server-edit-to-run-ms`. Until
-`draft-run`/`suite-run` are mounted no receipt exists, and the gate prints
+document. Until `draft-run` is mounted no receipt exists, and the gate prints
 `edit-to-run-ms=unmeasurable` with the reason rather than a number it did not
 measure; the exact-value assertion lives in the static half.
 
@@ -3561,7 +3554,7 @@ cargo run --locked -p wamn-scenario-worker -- serve \
   --source-schema management_live_source
 
 # 4. The gates. The credential file is mode-600 `subject=`/`secret=` lines.
-(cd clients/authoring-client && node scripts/test.mjs)
+(cd clients/authoring-client && node scripts/generate.mjs --check && node scripts/test.mjs)
 (cd clients/authoring-client && node scripts/cycle.mjs \
   --base-url http://127.0.0.1:18188 \
   --credential <mode-600 subject=/secret= file> \
@@ -3604,27 +3597,12 @@ tools/gate-mutants/authoring-cli-collection-drift.sh run
 tools/gate-mutants/authoring-cli-unmounted-green.sh run
 ```
 
-**RESULT OF RECORD (2026-08-08, integrated tree, local `serve` at
-`127.0.0.1:18188`, run-id `mskcytxp-4f16`).** `node scripts/test.mjs` 14/14 + 16/16 plus `cycle --check`.
-`node scripts/cycle.mjs` CYCLE PASS with
-`CYCLE-COMPLETED ["save-flow-draft"]` and
-`CYCLE-UNMOUNTED-501 ["validate","draft-run","suite-run","suite-projection","publish"]`
-— on that surface `save-flow-draft` is the only mounted kind, so five of the six
-cycle steps honestly answer `501` and the run receipt that carries edit-to-run
-latency does not exist yet. Runner-side ledger read: exactly the two
-`must-appear` command-ids, one row each, both `alice@example.com` /
-`project-author` on the same `target_ref`, with provenance recorded verbatim
-(the fixture checkout's commit, `refs/heads/main`, `dirty=f` for the committed
-tree and `t` for the edited one); the forged attempt counted `0` rows; the
-stored draft sat at revision 2 with `sha256(definition) = 303b8fb7…` and length
-242, byte-identical to the working-tree file the client submitted; and no
-`wamn_pat_` or secret material in the rows. Both mutants KILLED.
-wamn-ftfc.22 landed mounting NOTHING (every remaining backend is genuinely
-absent — see its close), so this five-501 record remains current. RE-RUN THE
-LIVE HALF AS EACH MOUNT BEAD (wamn-ftfc.30–.34) LANDS: the same command must
-then report the newly mounted kind as `completed` (or a typed refusal), print a
-real `edit-to-run-ms`, and — once wamn-ma5's projection field exists —
-`server-edit-to-run-ms`.
+The result of record must enumerate exactly the four retained command kinds.
+The management surface currently mounts `save-flow-draft`; every other leg must
+either return its typed result/refusal or the honest bare `501` documented by
+the cycle. The runner-side ledger read must still find exactly the two
+authorized saves, no refused command ids, byte-identical revision 2 content,
+and no credential material. Both mutants must print `KILLED`.
 
 `authoring-cli-collection-drift` makes `save-flow-draft` drop the caller's
 optional `provenance` claim and must die on the request-shape drift check before
@@ -5240,7 +5218,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
     --test state_ownership --test protected_relations --test gate_registry
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-schema-control -p wamn-ctl \
-    -p wamn-scenario-worker -p wamn-scenario-catalog \
+    -p wamn-scenario-worker \
     -p wamn-proof-integration -p wamn-proof-conformance \
     --features wamn-ctl/ops --all-targets -- -D warnings
 WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
@@ -5249,6 +5227,56 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
 
 cargo fmt --all -- --check
 bash -n tools/gate-mutants/protected-relations.sh
+git diff --check
+```
+
+## SR-MVP — authoring store fold (`wamn-0h0g.8.11`)
+
+The management service now owns the draft, test-set, and report store directly;
+the standalone scenario catalog and runtime packages no longer exist. The
+public authoring inventory is exactly `save-flow-draft`, `validate`,
+`draft-run`, and `publish`, exposed by the CLI verbs `validate`, `draft-run`,
+and `promote`. The populated-schema cutover removes the retired validation
+dimension only from an empty legacy table and refuses stale retired command
+history rather than silently changing its identity.
+
+```bash
+# Regenerate both published client artifacts before running their drift checks.
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo run --locked --offline -p wamn-authoring-model \
+    --example print-authoring-surface-schema \
+    > docs/archive/contracts/authoring-surface.schema.json
+(cd clients/authoring-client && node scripts/generate.mjs)
+
+# One shared-cache debug pass over every affected Rust package.
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+CARGO_BUILD_JOBS=2 \
+  cargo test --locked --offline \
+    -p wamn-authoring-model -p wamn-catalog -p wamn-run-state \
+    -p wamn-schema-control -p wamn-scenario-model \
+    -p wamn-scenario-worker -p wamn-ctl -p wamn-proof-conformance
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+CARGO_BUILD_JOBS=2 \
+  cargo clippy --locked --offline \
+    -p wamn-authoring-model -p wamn-catalog -p wamn-run-state \
+    -p wamn-schema-control -p wamn-scenario-model \
+    -p wamn-scenario-worker -p wamn-ctl -p wamn-proof-conformance \
+    --all-targets -- -D warnings
+
+# PostgreSQL 18 proof: empty legacy state converges, both immutable legacy
+# identity/history shapes refuse with SQLSTATE 55000, and every refusal rolls
+# back the batch.
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    stored_suite_cutover_live -- --exact --nocapture --test-threads=1
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/authoring-store-cutover.sh run-all
+
+(cd clients/authoring-client && \
+  node scripts/generate.mjs --check && node scripts/test.mjs && npm run build)
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/authoring-store-cutover.sh
 git diff --check
 ```
 
@@ -5263,15 +5291,15 @@ the future frame interpreter or claim-time resolution map.
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
   cargo test --locked --offline -p wamn-flow -p wamn-catalog \
-  -p wamn-scenario-catalog -p wamn-scenario-worker
+  -p wamn-scenario-worker
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3 CARGO_INCREMENTAL=0 \
   cargo clippy --locked --offline -p wamn-flow -p wamn-catalog \
-  -p wamn-scenario-catalog -p wamn-scenario-worker \
+  -p wamn-scenario-worker \
   --all-targets -- -D warnings
 rustfmt --edition 2024 --check \
   crates/catalog/model/src/{execution_plan.rs,lib.rs} \
   crates/execution/flow-model/src/{lib.rs,types.rs,validate.rs} \
-  crates/scenarios/catalog/src/authoring.rs \
+  services/scenario-worker/src/store/drafts.rs \
   services/scenario-worker/src/authoring.rs
 git diff --check
 ```

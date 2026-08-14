@@ -117,7 +117,6 @@ fn persisted_draft_reverifies_exact_plan_bytes_hash_and_composite_identity() {
         catalog_id: "catalog-a",
         catalog_version: 4,
         environment: "dev",
-        suite_flow_version: 2,
         binding_base_artifact_hash: BINDING_BASE,
     };
     let identity = ValidatedDraftIdentity::new(identity_input).unwrap();
@@ -128,7 +127,6 @@ fn persisted_draft_reverifies_exact_plan_bytes_hash_and_composite_identity() {
         catalog_id: "catalog-a",
         catalog_version: 4,
         environment: "dev",
-        suite_flow_version: 2,
         binding_base_artifact_hash: BINDING_BASE,
     };
     let pinned = PinnedDraftArtifact::from_storage(

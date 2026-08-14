@@ -34,8 +34,7 @@ mutation_ids() {
     retain-over-ceiling-output \
     omit-output-too-large-projection \
     skip-full-output-redaction \
-    rederive-async-capture-off \
-    retain-capture-off-error-detail
+    rederive-async-capture-off
 }
 
 load_mutation() {
@@ -43,7 +42,7 @@ load_mutation() {
   case "$id" in
     default-draft-capture-off)
       TARGET="crates/authoring/model/src/lib.rs"
-      EXPECTED_SHA="d60a5396b2f80aa4ff87656867bf263fff98e8d3c075ae3eb2ecc0f07d550990"
+      EXPECTED_SHA="e061bff2ad1a49e1e23df8e643c6b9aff1451af5c1bcf6c3ddff70639c6c8722"
       NEEDLE='    #[default]
     Full,
     Off,'
@@ -55,7 +54,7 @@ load_mutation() {
       ;;
     default-run-column-full)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE="capture_mode    text NOT NULL DEFAULT 'off'"
       REPLACEMENT="capture_mode    text NOT NULL DEFAULT 'full'"
       GATE="run_state_sql_matches_the_model"
@@ -63,7 +62,7 @@ load_mutation() {
       ;;
     permit-full-on-nondraft-run)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE="capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'"
       REPLACEMENT="capture_mode <> 'full' OR true"
       GATE="run_state_sql_matches_the_model"
@@ -71,7 +70,7 @@ load_mutation() {
       ;;
     allow-post-admission-mode-change)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN'
       REPLACEMENT='       OR false THEN'
       GATE="run_state_sql_matches_the_model"
@@ -79,7 +78,7 @@ load_mutation() {
       ;;
     grant-author-capture-mode)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="1300a64cfed20306a857e262af50b418132ab60a1915d9620f435d050fbd6e13"
+      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
       NEEDLE='    fail_kind, fail_node, fail_reason, created_at, updated_at
 ), UPDATE ('
       REPLACEMENT='    fail_kind, fail_node, fail_reason, created_at, updated_at, capture_mode
@@ -125,31 +124,13 @@ load_mutation() {
       ;;
     rederive-async-capture-off)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="acfe9ad630d6e9bf7857408a9fa442451e284f99c1589145d04c5bd20d3e21ca"
+      EXPECTED_SHA="5cefe349c61339f928de464c61c3548f102db8e3d60a7b9f33e8fce5f5babd59"
       NEEDLE='                r.capture_mode AS capture_mode, \
 '
       REPLACEMENT="                'off'::text AS capture_mode, \\
 "
       GATE="combined_claim_and_checkpoint_builders_compose_the_split_statements"
       TEST_ARGV=(cargo test --locked --offline -p wamn-run-state --test queue "$GATE" -- --exact)
-      ;;
-    retain-capture-off-error-detail)
-      TARGET="components/execution/flowrunner/src/lib.rs"
-      EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
-      NEEDLE='    let detail = if capture_detail {
-        wamn_run_state::capture::scrub(&mut detail);
-        jsonb(&detail)
-    } else {
-        SqlValue::Null
-    };'
-      REPLACEMENT='    let detail = if capture_detail {
-        wamn_run_state::capture::scrub(&mut detail);
-        jsonb(&detail)
-    } else {
-        jsonb(&detail)
-    };'
-      GATE="tests::capture_off_error_binds_retain_only_the_typed_kind"
-      TEST_ARGV=(cargo test --locked --offline --manifest-path components/Cargo.toml -p flowrunner "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2

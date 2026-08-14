@@ -3,9 +3,8 @@
 // WHAT THIS IS. A checkout client. It reads working-tree flow definitions and
 // drives the public versioned authoring commands over HTTP through the
 // wamn-jvzx.2 generated client: `validate` (save the working tree, then validate
-// the exact revision it saved), `draft-run`, `suite-run`, `promote` (the public
-// `publish` command), and `runs` (the public `suite-projection` command). It
-// composes nothing the contract does not define and invents no route.
+// the exact revision it saved), `draft-run`, and `promote` (the public `publish`
+// command). It composes nothing the contract does not define and invents no route.
 //
 // WHAT THIS IS NOT. It has no in-process handler, no database URL, no operator
 // recovery path, and no frontend. Its whole capability surface is the injected
@@ -35,8 +34,6 @@ import {
   type CommandRefusal,
   type CommitProvenance,
   type DraftRunCapture,
-  type DraftSuiteProjection,
-  type SuiteProjectionState,
 } from "../generated/authoring.js";
 
 /// The route the management surface reserves. The contract defines no route,
@@ -108,7 +105,6 @@ export interface CliDocument {
   readonly status: StepStatus;
   readonly steps: ReadonlyArray<StepRecord>;
   readonly "edit-to-run-ms": number | null;
-  readonly "server-edit-to-run-ms"?: number | null;
   readonly "elapsed-ms": number;
 }
 
@@ -122,10 +118,7 @@ export interface CliState {
   readonly revision?: number;
   readonly "edit-at"?: number;
   readonly "validated-draft-id"?: string;
-  readonly "suite-id"?: string;
-  readonly "flow-version"?: number;
   readonly "report-id"?: string;
-  readonly "execution-id"?: string;
   readonly "run-id"?: string;
 }
 
@@ -170,8 +163,6 @@ export interface ValidateOptions {
   readonly scope: AuthoringScope;
   readonly draftId: string;
   readonly revision: number;
-  readonly suiteId: string;
-  readonly flowVersion: number;
 }
 
 export function validateRequest(options: ValidateOptions): AuthoringRequest {
@@ -180,7 +171,6 @@ export function validateRequest(options: ValidateOptions): AuthoringRequest {
     input: {
       draft: { "draft-id": options.draftId, revision: options.revision },
       scope: options.scope,
-      suite: { "flow-version": options.flowVersion, "suite-id": options.suiteId },
     },
   });
 }
@@ -200,25 +190,6 @@ export function draftRunRequest(options: DraftRunOptions): AuthoringRequest {
       ...(options.capture === undefined ? {} : { capture: options.capture }),
       input: options.input,
       scope: options.scope,
-      "validated-draft": { "validated-draft-id": options.validatedDraftId },
-    },
-  });
-}
-
-export interface SuiteRunOptions {
-  readonly commandId: string;
-  readonly scope: AuthoringScope;
-  readonly validatedDraftId: string;
-  readonly suiteId: string;
-  readonly flowVersion: number;
-}
-
-export function suiteRunRequest(options: SuiteRunOptions): AuthoringRequest {
-  return request(options.commandId, {
-    kind: "suite-run",
-    input: {
-      scope: options.scope,
-      suite: { "flow-version": options.flowVersion, "suite-id": options.suiteId },
       "validated-draft": { "validated-draft-id": options.validatedDraftId },
     },
   });
@@ -244,22 +215,6 @@ export function promoteRequest(options: PromoteOptions): AuthoringRequest {
   });
 }
 
-export interface RunsOptions {
-  readonly commandId: string;
-  readonly scope: AuthoringScope;
-  readonly reportId: string;
-}
-
-/// `runs` reads the durable report through the public `suite-projection`
-/// command. There is no generic runs route on the contract (wamn-jvzx.13 owns
-/// one if it ever lands), and this client does not invent one.
-export function runsRequest(options: RunsOptions): AuthoringRequest {
-  return request(options.commandId, {
-    kind: "suite-projection",
-    input: { "report-id": options.reportId, scope: options.scope },
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -277,15 +232,13 @@ const OPTIONS = new Set([
   "--draft-id",
   "--flow-id",
   "--expected-revision",
-  "--suite-id",
-  "--flow-version",
   "--validated-draft",
   "--input",
   "--capture",
   "--report-id",
 ]);
 
-export const VERBS = ["validate", "draft-run", "suite-run", "promote", "runs"] as const;
+export const VERBS = ["validate", "draft-run", "promote"] as const;
 
 export type Verb = (typeof VERBS)[number];
 
@@ -343,9 +296,7 @@ export const USAGE = `usage: wamn <command> [options]
 commands:
   validate     save the working-tree definition, then validate the exact saved revision
   draft-run    run one authored input against a validated draft
-  suite-run    run a stored suite against a validated draft
   promote      publish a validated draft proven by a successful report
-  runs         read the durable suite projection for a report
 
 authentication (always from a file so no token reaches argv):
   --token-file FILE   an already-issued personal access token (required)
@@ -358,12 +309,9 @@ common options:
   --state FILE             client-local identity cache (default ${DEFAULT_STATE_PATH})
   --no-state               neither read nor write the state file
 
-validate:  --file PATH --draft-id ID --flow-id ID --suite-id ID --flow-version N
-           [--expected-revision N] [--no-provenance]
+validate:  --file PATH --draft-id ID --flow-id ID [--expected-revision N] [--no-provenance]
 draft-run: --input PATH [--validated-draft ID] [--capture full|off]
-suite-run: [--validated-draft ID] [--suite-id ID] [--flow-version N]
 promote:   [--validated-draft ID] [--report-id ID]
-runs:      [--report-id ID]
 
 stdout carries exactly one JSON document; exit 0 completed, 3 refused,
 4 unmounted (the surface answers 501), 5 fault, 2 usage.`;
@@ -589,20 +537,10 @@ function stateOrRequired(session: Session, option: string, key: keyof CliState):
   throw new UsageError(`--${option} is required (no ${String(key)} in the state file)`);
 }
 
-function stateNumberOrRequired(session: Session, option: string, key: keyof CliState): number {
-  const supplied = session.parsed.values[option];
-  if (supplied !== undefined) return integer(supplied, option);
-  const remembered = session.state[key];
-  if (typeof remembered === "number") return remembered;
-  throw new UsageError(`--${option} is required (no ${String(key)} in the state file)`);
-}
-
 async function runValidate(session: Session): Promise<StepRecord[]> {
   const file = required(session.parsed, "file");
   const draftId = required(session.parsed, "draft-id");
   const flowId = required(session.parsed, "flow-id");
-  const suiteId = required(session.parsed, "suite-id");
-  const flowVersion = integer(required(session.parsed, "flow-version"), "flow-version");
   const suppliedRevision = session.parsed.values["expected-revision"];
   const expectedRevision =
     suppliedRevision !== undefined
@@ -643,21 +581,17 @@ async function runValidate(session: Session): Promise<StepRecord[]> {
     "draft-id": draftId,
     "edit-at": editedAt,
     "flow-id": flowId,
-    "flow-version": flowVersion,
     revision,
-    "suite-id": suiteId,
   });
 
-  session.transcript.note(`validate draft-id=${draftId} revision=${revision} suite-id=${suiteId}`);
+  session.transcript.note(`validate draft-id=${draftId} revision=${revision}`);
   const validated = await execute(
     session.client,
     validateRequest({
       commandId: commandId(session, "validate", 1),
       draftId,
-      flowVersion,
       revision,
       scope: session.scope,
-      suiteId,
     }),
     session.io,
     session.transcript,
@@ -669,9 +603,7 @@ async function runValidate(session: Session): Promise<StepRecord[]> {
       "draft-id": draftId,
       "edit-at": editedAt,
       "flow-id": flowId,
-      "flow-version": flowVersion,
       revision,
-      "suite-id": suiteId,
       "validated-draft-id": identity["validated-draft-id"],
     });
   }
@@ -715,35 +647,6 @@ async function runDraftRun(session: Session): Promise<StepRecord[]> {
   return [step];
 }
 
-async function runSuiteRun(session: Session): Promise<StepRecord[]> {
-  const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
-  const suiteId = stateOrRequired(session, "suite-id", "suite-id");
-  const flowVersion = stateNumberOrRequired(session, "flow-version", "flow-version");
-  session.transcript.note(
-    `suite-run validated-draft=${validatedDraftId} suite-id=${suiteId} flow-version=${flowVersion}`,
-  );
-  const step = await execute(
-    session.client,
-    suiteRunRequest({
-      commandId: commandId(session, "suite-run", 0),
-      flowVersion,
-      scope: session.scope,
-      suiteId,
-      validatedDraftId,
-    }),
-    session.io,
-    session.transcript,
-  );
-  if (step.status === "completed") {
-    const receipt = step.result as { "execution-id": string; "report-id": string };
-    await writeState(session.io, session.statePath, session.state, {
-      "execution-id": receipt["execution-id"],
-      "report-id": receipt["report-id"],
-    });
-  }
-  return [step];
-}
-
 async function runPromote(session: Session): Promise<StepRecord[]> {
   const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
   const reportId = stateOrRequired(session, "report-id", "report-id");
@@ -761,47 +664,6 @@ async function runPromote(session: Session): Promise<StepRecord[]> {
       session.transcript,
     ),
   ];
-}
-
-async function runRuns(session: Session): Promise<StepRecord[]> {
-  const reportId = stateOrRequired(session, "report-id", "report-id");
-  session.transcript.note(`runs report-id=${reportId}`);
-  return [
-    await execute(
-      session.client,
-      runsRequest({ commandId: commandId(session, "suite-projection", 0), reportId, scope: session.scope }),
-      session.io,
-      session.transcript,
-    ),
-  ];
-}
-
-/// Summarize a finalized projection for a human, keying every row by the
-/// contract's stable identities rather than by prose.
-function describeProjection(transcript: Transcript, state: SuiteProjectionState): number | null {
-  if (state.state === "not-found") {
-    transcript.note("  info  report state=not-found");
-    return null;
-  }
-  if (state.state === "pending") {
-    transcript.note(`  info  report state=pending reason=${state.report.reason.kind}`);
-    return null;
-  }
-  const report: DraftSuiteProjection = state.report;
-  const failed = report.cases.filter((entry) => entry.outcome === "failed").length;
-  transcript.note(
-    `  info  report state=finalized outcome=${report.outcome.state} cases=${report.cases.length} ` +
-      `failed=${failed} nodes=${report.nodes.length} branches=${report.branches.length} edges=${report.edges.length}`,
-  );
-  for (const entry of report.cases) {
-    transcript.note(
-      `  case  case-id=${entry["case-id"]} run-id=${entry["run-id"]} outcome=${entry.outcome}` +
-        (entry.failure === undefined || entry.failure === null
-          ? ""
-          : ` failure=${entry.failure.kind} node=${entry.failure["node-id"] ?? "-"}`),
-    );
-  }
-  return report["edit-to-run-ms"] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -860,31 +722,19 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
       case "draft-run":
         steps = await runDraftRun(session);
         break;
-      case "suite-run":
-        steps = await runSuiteRun(session);
-        break;
       case "promote":
         steps = await runPromote(session);
-        break;
-      case "runs":
-        steps = await runRuns(session);
         break;
     }
 
     // Edit-to-run latency, measured where a checkout client can actually
     // measure it: from the modification time of the definition file it
-    // submitted to the moment a run receipt came back. `runs` additionally
-    // reports the platform's own `edit-to-run-ms` when a report is finalized.
-    const producesRun = parsed.verb === "draft-run" || parsed.verb === "suite-run";
+    // submitted to the moment a run receipt came back.
+    const producesRun = parsed.verb === "draft-run";
     const completedRun = producesRun && steps[0]?.status === "completed";
     const editedAt = state["edit-at"];
     const editToRun =
       completedRun && typeof editedAt === "number" ? io.now() - editedAt : null;
-    let serverEditToRun: number | null | undefined;
-    if (parsed.verb === "runs" && steps[0]?.status === "completed") {
-      serverEditToRun = describeProjection(transcript, steps[0].result as SuiteProjectionState);
-    }
-
     const status = overall(steps);
     const document: CliDocument = {
       client: "wamn",
@@ -894,12 +744,8 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
       status,
       steps,
       verb: parsed.verb,
-      ...(serverEditToRun === undefined ? {} : { "server-edit-to-run-ms": serverEditToRun }),
     };
     if (editToRun !== null) transcript.note(`  time  edit-to-run-ms=${editToRun}`);
-    if (serverEditToRun !== undefined && serverEditToRun !== null) {
-      transcript.note(`  time  server-edit-to-run-ms=${serverEditToRun}`);
-    }
     transcript.document(document);
     transcript.note(`${status.toUpperCase()} verb=${parsed.verb}`);
     if (transcript.leaked) {

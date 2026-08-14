@@ -9,8 +9,7 @@ the top level. When in doubt, ask which lifecycle owns the file's create/delete.
 - **`platform/`** — long-lived production/platform manifests the control plane
   or an operator owns: dispatcher, production executor (`runner`), registry, wamn-sysdb,
   api-gateway workloads, credential `*.example` Secrets, the shared
-  postgres fixture, runner NetworkPolicy + environment connection-policy example,
-  `event-reader.example.yaml`.
+  postgres fixture, and runner NetworkPolicy + environment connection-policy example.
 - **`gates/`** — gate/bench Job manifests (`*-job.yaml`) and their support
   Deployments (`serve-echo`, `egress-escape`). Applied per gate run, deleted
   after.

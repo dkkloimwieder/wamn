@@ -184,14 +184,12 @@ fn save_command(
 fn unmounted_commands() -> Vec<(&'static str, String)> {
     let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
     let validated = serde_json::json!({"validated-draft-id": "validated-draft-1"});
-    let suite = serde_json::json!({"suite-id": "suite-1", "flow-version": 1});
     [
         (
             "validate",
             serde_json::json!({
                 "scope": scope.clone(),
                 "draft": {"draft-id": "draft-unmounted", "revision": 1},
-                "suite": suite.clone(),
             }),
         ),
         (
@@ -203,24 +201,12 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
             }),
         ),
         (
-            "suite-run",
-            serde_json::json!({
-                "scope": scope.clone(),
-                "validated-draft": validated.clone(),
-                "suite": suite,
-            }),
-        ),
-        (
             "publish",
             serde_json::json!({
                 "scope": scope.clone(),
                 "validated-draft": validated,
                 "successful-report-id": "report-1",
             }),
-        ),
-        (
-            "suite-projection",
-            serde_json::json!({"scope": scope, "report-id": "report-1"}),
         ),
     ]
     .into_iter()
@@ -424,13 +410,13 @@ async fn draft_count(admin: &Client) -> i64 {
 /// `validate_flow_draft` selects with, so this gate cannot agree with the
 /// canonical read by accident.
 ///
-/// `validate` is the only command that resolves a mutable revision; `draft-run`,
-/// `suite-run`, and `promote` consume the immutable pin `validate` produces, so
-/// they inherit exactly whatever this returns.
+/// `validate` is the only command that resolves a mutable revision; `draft-run`
+/// and `promote` consume the immutable pin it produces, so they inherit exactly
+/// whatever this returns.
 async fn draft_at_revision(admin: &Client, draft: &str, revision: i64) -> Option<(String, String)> {
     admin
         .query_opt(
-            wamn_scenario_catalog::authoring::select_flow_draft_sql(),
+            wamn_scenario_worker::store::drafts::select_flow_draft_sql(),
             &[&TENANT, &draft, &revision],
         )
         .await
@@ -607,10 +593,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(elsewhere.body, AUTHORIZATION_DENIED);
 
     // ---- the unmounted kinds are an absent route, not a product refusal -----
-    // `wamn-ftfc.22` re-checked validate, draft-run, suite-run, publish, and
-    // suite-projection against this tree and mounted none of them: each either
-    // has no backend or has one whose trusted inputs no in-process producer
-    // supplies. Two properties have to hold while that is true.
+    // `wamn-ftfc.22` re-checked validate, draft-run, and publish against this
+    // tree and mounted none of them: each either has no backend or has one whose
+    // trusted inputs no in-process producer supplies. Two properties have to
+    // hold while that is true.
     //
     // First, route selection happens after authorization, so naming an
     // unmounted kind is not a way to ask whether a route exists. Every

@@ -133,6 +133,7 @@ pub async fn reconcile(
                     | wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
                     | wamn_schema_control::RunPlaneActionKind::FrameIdentityCutover
                     | wamn_schema_control::RunPlaneActionKind::EffectWriterCutover
+                    | wamn_schema_control::RunPlaneActionKind::StoredSuiteCutover
             )
         }) {
             let action = &plan.actions[applied];

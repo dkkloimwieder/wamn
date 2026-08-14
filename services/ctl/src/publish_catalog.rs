@@ -1596,7 +1596,7 @@ mod tests {
         let hash = wamn_catalog::execution_bundle_hash(TEST_EXECUTION_BUNDLE_BYTES);
         client
             .execute(
-                wamn_scenario_catalog::authoring::insert_execution_bundle_sql(),
+                wamn_schema_control::sql::insert_execution_bundle_sql(),
                 &[&tenant, &hash, &TEST_EXECUTION_BUNDLE_BYTES],
             )
             .await

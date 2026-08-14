@@ -5,7 +5,7 @@ readonly OWNER="bd:wamn-99wl"
 readonly OUTCOME="admission rejects malformed trusted invocation context"
 
 readonly TARGET="crates/execution/run-state/src/admission.rs"
-readonly EXPECTED_SHA="2e310f048ff77f8e569447769d909ace5047d246225db3078e769119ae7fcb72"
+readonly EXPECTED_SHA="54a41d363738302c590c31db3dcc0a5cdfadb2a1fdf082a95985d594fa763266"
 readonly NEEDLE='OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM '\''object'\'' \'
 readonly REPLACEMENT='OR false \'
 readonly GATE="admission::tests::admission_persists_the_versioned_release_artifact_principal"
