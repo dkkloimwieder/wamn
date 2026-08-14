@@ -21,10 +21,6 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/components/flowrunner.wasm",
         ),
         (
-            "/component-output/flowrunner.wasm",
-            "/components/flowrunner.wasm",
-        ),
-        (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",
         ),
@@ -53,6 +49,37 @@ fn every_embedded_component_comes_from_the_locked_builder() {
     let mut expected = expected.to_vec();
     expected.sort_unstable();
     assert_eq!(actual, expected, "embedded component inventory drifted");
+
+    let host_stage = DOCKERFILE
+        .split_once("FROM debian:trixie-slim AS host")
+        .expect("host stage exists")
+        .1
+        .split_once("FROM debian:trixie-slim AS ctl")
+        .expect("ctl follows host")
+        .0;
+    assert!(
+        !host_stage.contains("flowrunner.wasm"),
+        "admission-only host image must not carry execution bytes"
+    );
+
+    let run_worker_stage = DOCKERFILE
+        .split_once("FROM debian:trixie-slim AS run-worker")
+        .expect("run-worker stage exists")
+        .1
+        .split_once("FROM debian:trixie-slim AS scenario-worker")
+        .expect("scenario-worker follows run-worker")
+        .0;
+    assert!(run_worker_stage.contains(
+        "COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm"
+    ));
+
+    let gates_stage = DOCKERFILE
+        .split_once("FROM host AS gates")
+        .expect("gates stage exists")
+        .1;
+    assert!(gates_stage.contains(
+        "COPY --from=component-builder /component-output/flowrunner.wasm /bench/flowrunner.wasm"
+    ));
 
     assert!(DOCKERFILE.contains("FROM component-cook AS component-builder"));
     assert!(DOCKERFILE.contains("COPY components /build/components"));

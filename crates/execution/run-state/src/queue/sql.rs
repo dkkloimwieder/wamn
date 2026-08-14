@@ -248,68 +248,6 @@ pub fn claim_dispatch_sql() -> String {
     )
 }
 
-/// Begin driving one HTTP run already claimed by final admission.
-///
-/// Params: `$1` run id, `$2` lease owner, `$3` lease generation, `$4` lease
-/// TTL milliseconds. The host-injected tenant remains authoritative. The
-/// statement locks the exact run/queue pair before classification, so two
-/// callers presenting the same tuple cannot both become drivers. A fresh
-/// `dispatched` run is accepted immediately; a `running` run is recoverable
-/// only after its prior lease expires, preserving the same owner and
-/// generation. No generic availability scan or generation bump occurs.
-///
-/// The returned row is `(result_code, flow_id, input_json, flow_version,
-/// capture_mode)`.
-/// `result_code` is `claimed`, `not-found`, `fence-lost`, `not-inline`,
-/// `already-driven`, or `not-claimed`.
-pub fn begin_claimed_run_sql() -> String {
-    format!(
-        "WITH authority AS MATERIALIZED ( \
-             SELECT q.tenant_id, q.run_id, q.lease_owner, q.lease_generation, \
-                    q.lease_expires_at, q.partition_key, r.status, r.flow_id, \
-                    r.input_json::text AS input_json, r.flow_version, r.capture_mode \
-               FROM run_queue AS q \
-               JOIN runs AS r USING (tenant_id, run_id) \
-              WHERE q.tenant_id = current_setting('app.tenant', true) \
-                AND q.run_id = $1 \
-              FOR UPDATE OF q, r \
-         ), classified AS ( \
-             SELECT CASE \
-                      WHEN a.lease_owner IS DISTINCT FROM $2 \
-                        OR a.lease_generation <> $3 THEN 'fence-lost' \
-                      WHEN a.partition_key IS NOT NULL THEN 'not-inline' \
-                      WHEN a.status = '{dispatched}' THEN 'ready' \
-                      WHEN a.status = '{running}' AND a.lease_expires_at <= now() \
-                        THEN 'ready' \
-                      WHEN a.status = '{running}' THEN 'already-driven' \
-                      ELSE 'not-claimed' \
-                    END AS result_code, a.* \
-               FROM authority AS a \
-         ), marked AS ( \
-             UPDATE runs AS r SET status = '{running}', updated_at = now() \
-               FROM classified AS c \
-              WHERE c.result_code = 'ready' \
-                AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-             RETURNING r.tenant_id, r.run_id \
-         ), renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($4::bigint * interval '1 millisecond') \
-               FROM marked AS m \
-              WHERE q.tenant_id = m.tenant_id AND q.run_id = m.run_id \
-                AND q.lease_owner = $2 AND q.lease_generation = $3 \
-             RETURNING q.tenant_id, q.run_id \
-         ) \
-         SELECT CASE WHEN n.run_id IS NOT NULL THEN 'claimed' ELSE c.result_code END, \
-                c.flow_id, c.input_json, c.flow_version, c.capture_mode \
-           FROM classified AS c LEFT JOIN renewed AS n USING (tenant_id, run_id) \
-         UNION ALL \
-         SELECT 'not-found', NULL::text, NULL::text, NULL::integer, NULL::text \
-          WHERE NOT EXISTS (SELECT FROM authority)",
-        dispatched = RunStatus::Dispatched.as_sql(),
-        running = RunStatus::Running.as_sql(),
-    )
-}
-
 /// Completion + dequeue as ONE statement (fqg.18): composes the 5.7
 /// [`run_sql::update_run_completed`] (deliberately UNCONDITIONAL —
 /// the fqg.2 reverse-race override) with [`dequeue_sql`], sharing `$1` run_id

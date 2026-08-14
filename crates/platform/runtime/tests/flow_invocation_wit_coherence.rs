@@ -6,8 +6,10 @@ const HTTP_COPY: &str = include_str!(
     "../../../../components/ingress/flow-http/wit/deps/wamn-flow-invocation/package.wit"
 );
 const WORLD: &str = include_str!("../wit/world.wit");
+const SERVICE: &str = include_str!("../src/flow_invocation.rs");
 const PLUGIN: &str = include_str!("../src/plugins/wamn_flow_invocation.rs");
 const HOST: &str = include_str!("../../../../services/host/src/host.rs");
+const HOST_MANIFEST: &str = include_str!("../../../../services/host/Cargo.toml");
 
 #[test]
 fn host_copy_preserves_the_frozen_interface_surface() {
@@ -61,8 +63,47 @@ fn runtime_world_and_plugin_register_the_exact_import() {
 }
 
 #[test]
-fn production_host_constructs_the_provider() {
-    assert!(HOST.contains("WamnFlowInvocation::from_env(inline_driver)"));
+fn production_host_constructs_the_provider_without_inline_execution() {
+    assert!(HOST.contains("WamnFlowInvocation::from_env()"));
     assert!(HOST.contains(".with_plugin(Arc::new("));
     assert!(HOST.contains("wamn:flow-invocation plugin init"));
+    for deleted in [
+        "InlineExecutionDriver",
+        "inline_driver",
+        "flowrunner",
+        "credentials_file",
+        "allowed_hosts",
+        "inline_lease_ttl_ms",
+    ] {
+        assert!(
+            !HOST.contains(deleted),
+            "production host restored deleted inline execution surface {deleted:?}"
+        );
+    }
+    assert!(!HOST_MANIFEST.contains("wamn-execution-host"));
+
+    for deleted in [
+        "InlineRunDriver",
+        "InlineRunClaim",
+        "pub project:",
+        "pub schema:",
+        "pub executor_id:",
+        "pub lease_ttl:",
+    ] {
+        assert!(
+            !SERVICE.contains(deleted),
+            "flow-invocation service restored deleted inline execution surface {deleted:?}"
+        );
+    }
+    for deleted in [
+        "InlineRunDriver",
+        "inline_executor_id",
+        "PROJECT_CONFIG_KEY",
+        "SCHEMA_CONFIG_KEY",
+    ] {
+        assert!(
+            !PLUGIN.contains(deleted),
+            "flow-invocation plugin restored deleted inline execution surface {deleted:?}"
+        );
+    }
 }

@@ -112,7 +112,7 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 - `tests/{orchestrator,conformance,integration,system}` — proof owners, from orchestration helpers and static conformance through integration and system gates.
 - `test-support/{harness,fixtures,infrastructure}` — shared proof support that is not itself a deployable or proof owner.
 - `poc/{f1,dm1,cdc1}` — current POC integration crates.
-- `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, `poc/` POC assets, `sql/` standalone SQL schemas, and `cred/` credentials.
+- `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, `poc/` POC assets, and `sql/` standalone SQL schemas.
 - `docs/` — **design source of truth**. Start with `docs/archive/PLAN/PLAN.md` — the authoritative roadmap and decision map; `platform-plan.md` holds the D-number decision table (archive of record); plus WIT contracts and per-subsystem specs.
 - Root `Cargo.toml` pins the `wash-runtime` fork rev in one place (`workspace.dependencies.wash-runtime.rev`).
 

@@ -36,7 +36,6 @@ use opentelemetry::trace::{
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
-use wamn_test_fixtures::runner::fnv1a_64;
 use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{DevRouter, HostHandler as _, Ingress, OutgoingHandler};
 use wash_runtime::host::http_p3::{P3Body, P3RequestErrorFuture, P3SendFuture};
@@ -58,14 +57,8 @@ pub struct ServeEchoArgs {
 
 /// A tiny HTTP/1.1 server that answers
 /// every request 200 with `{"traceparent": <received|null>, "tracestate":
-/// <received|null>, "authorization-fnv1a": <hex-digest|null>}`. It reflects
-/// exactly the trace headers it was sent — so traceproof can read what each
-/// host surface injected — plus a ONE-WAY FNV-1a
-/// digest of the `authorization` header, which credproof (5.9) uses as the
-/// delivery witness for a vault-resolved credential. A digest (never the raw
-/// value) keeps the secret out of the flow's recorded payloads, so the
-/// credproof containment scan can be TOTAL — the secret must appear in no
-/// recorded row at all.
+/// <received|null>}`. It reflects exactly the trace headers it was sent, so
+/// traceproof can read what each host surface injected.
 pub async fn serve_echo(args: ServeEchoArgs) -> anyhow::Result<()> {
     let listener = TcpListener::bind(("0.0.0.0", args.port)).await?;
     println!(
@@ -91,12 +84,9 @@ async fn echo_connection(sock: TcpStream) -> anyhow::Result<()> {
         };
         let tp = header_of(&headers, "traceparent");
         let ts = header_of(&headers, "tracestate");
-        let auth_digest = header_of(&headers, "authorization")
-            .map(|a| format!("{:016x}", fnv1a_64(a.as_bytes())));
         let body = serde_json::json!({
             "traceparent": tp,
             "tracestate": ts,
-            "authorization-fnv1a": auth_digest,
         })
         .to_string();
         let resp = format!(

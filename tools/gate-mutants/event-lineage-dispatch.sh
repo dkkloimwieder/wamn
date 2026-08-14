@@ -30,7 +30,7 @@ load_mutation() {
   case "$id" in
     combined-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="5cefe349c61339f928de464c61c3548f102db8e3d60a7b9f33e8fce5f5babd59"
+      EXPECTED_SHA="7ae81ca5b9da9b29d2c0ef6a1fe8be0598687389ac7c6f4f1e831fbb3abe55c4"
       NEEDLE='execution_input = run_sql::execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="combined_claim_and_checkpoint_builders_compose_the_split_statements"

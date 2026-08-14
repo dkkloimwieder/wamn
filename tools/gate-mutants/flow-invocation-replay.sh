@@ -40,15 +40,15 @@ load_mutation() {
   case "$id" in
     in-flight-recovery-becomes-refusal)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
+      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
       NEEDLE='        InvocationRecovery::InFlight { run_id } => Some(BeginResult::Admitted(Admitted { run_id })),'
       REPLACEMENT='        InvocationRecovery::InFlight { run_id: _ } => Some(rejected(409, "in-flight")),'
-      GATE="flow_invocation::tests::in_flight_recovery_returns_the_same_run_without_admission_or_dispatch"
+      GATE="flow_invocation::tests::in_flight_recovery_returns_the_same_run_without_admission"
       TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --exact)
       ;;
     promotion-derived-key-recheck-bypass)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
+      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
       NEEDLE='                            if next.idempotency_required
                                 && admission.request.idempotency_key.is_none()
                             {'
@@ -58,7 +58,7 @@ load_mutation() {
       ;;
     visible-duplicate-winner-becomes-refusal)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
+      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
       NEEDLE='                AdmissionResult::Duplicate {
                     run_id: Some(run_id),
                 } => {
@@ -69,12 +69,12 @@ load_mutation() {
                 } => {
                     return Ok(rejected(409, "admission-retry"));
                 }'
-      GATE="flow_invocation::tests::admission_visible_duplicate_returns_the_winning_run_without_dispatch"
+      GATE="flow_invocation::tests::admission_visible_duplicate_returns_the_winning_run"
       TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --exact)
       ;;
     duplicate-winner-recovery-bypass)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
+      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
       NEEDLE='                    return Ok(recovered_begin(recovery)
                         .unwrap_or_else(|| rejected(409, "admission-retry")));'
       REPLACEMENT='                    let _ = recovery;
@@ -108,7 +108,7 @@ load_mutation() {
       ;;
     effect-uncertain-status-changed)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
+      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
       NEEDLE='const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 502;'
       REPLACEMENT='const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 500;'
       GATE="flow_invocation::tests::effect_uncertain_decodes_only_the_non_committal_stored_identity"

@@ -8,11 +8,11 @@ use std::collections::HashSet;
 use wamn_run_state::RunStatus;
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, PartitionOwner, PartitionPolicy, QueueEntry,
-    acquire_partitions_sql, active_flows_sql, begin_claimed_run_sql, claim_batch_sql,
-    claim_dispatch_sql, claim_partition_head_sql, claim_state, complete_dequeue_sql,
-    dead_letter_dequeue_sql, dead_letters_on_terminal, dequeue_sql, enqueue_evt_sql,
-    enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql,
-    is_claimable, janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
+    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
+    claim_partition_head_sql, claim_state, complete_dequeue_sql, dead_letter_dequeue_sql,
+    dead_letters_on_terminal, dequeue_sql, enqueue_evt_sql, enqueue_evt_with_policy_sql,
+    enqueue_sql, enqueue_with_policy_sql, gc_orphan_partitions_sql, is_claimable,
+    janitor_sweep_sql, janitor_verdict, lease_deadline, lease_live, mark_running_sql,
     mint_evt_run_id, orphans, park_sql, parked_due_sql, partition_lease_live, plan_acquire,
     plan_claim, plan_partition_claim, record_error_and_renew_sql, record_success_and_renew_sql,
     release_partition_sql, renew_lease_sql, renew_partition_sql, should_renew, write_ahead_run_sql,
@@ -27,19 +27,6 @@ const RECORD_ERROR_RENEW_PARAM_TYPES: [&str; 12] = [
     "text",
 ];
 
-#[test]
-fn exact_claimed_run_builder_is_single_driver_and_generation_fenced() {
-    let sql = begin_claimed_run_sql();
-    assert!(sql.contains("FOR UPDATE OF q, r"));
-    assert!(sql.contains("q.run_id = $1"));
-    assert!(sql.contains("a.lease_owner IS DISTINCT FROM $2"));
-    assert!(sql.contains("a.lease_generation <> $3"));
-    assert!(sql.contains("a.lease_expires_at <= now()"));
-    assert!(sql.contains("q.lease_generation = $3"));
-    assert!(sql.contains("$4::bigint * interval '1 millisecond'"));
-    assert!(!sql.contains("SKIP LOCKED"));
-    assert!(!sql.contains("lease_generation = q.lease_generation + 1"));
-}
 // ---- claim eligibility -----------------------------------------------------
 
 #[test]

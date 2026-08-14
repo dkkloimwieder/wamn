@@ -1200,7 +1200,7 @@ async fn heartbeat_phase(
 // `run-next` export now, when the global (unpartitioned) claim is empty, leases
 // a partition (`acquire_partitions_sql`), claims its HEAD in stream order
 // (`claim_partition_head_sql` — one in flight per key, D20 policy on the row),
-// drives it via the shared `execute_claimed` path (renewing the partition lease
+// drives it via the shared claimed-run path (renewing the partition lease
 // per node), and steps down (`release_partition_sql`) when the partition drains.
 // These phases drive that export against the SAME ephemeral schema the failover
 // phases use (now carrying `partition_owner` + the partition index).

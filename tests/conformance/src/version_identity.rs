@@ -153,11 +153,6 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "tests/integration/src/invocationproof.rs",
-        exact: r#""version": "0.1","#,
-        expected_count: 1,
-    },
-    GovernedLiteral {
         path: "crates/platform/runtime/wit/deps/wamn-runner/package.wit",
         exact: "version: string,",
         expected_count: 1,

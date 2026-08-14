@@ -4,7 +4,6 @@
 //! adaptation, authentication, mapping, and flow graph execution remain outside
 //! this module.
 
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow};
@@ -34,25 +33,7 @@ pub struct InvocationServiceConfig {
     pub tenant_id: String,
     pub catalog_id: String,
     pub environment: String,
-    pub project: String,
-    pub schema: Option<String>,
-    pub executor_id: String,
     pub platform_revision: String,
-    pub lease_ttl: Duration,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InlineRunClaim {
-    pub run_id: String,
-    pub lease_owner: String,
-    pub lease_generation: i64,
-    pub tenant: String,
-    pub project: String,
-    pub schema: Option<String>,
-}
-
-pub trait InlineRunDriver: Send + Sync + 'static {
-    fn start(&self, claim: InlineRunClaim) -> anyhow::Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -104,7 +85,6 @@ pub struct InvocationService<B> {
     backend: B,
     notification_database_url: Option<String>,
     config: InvocationServiceConfig,
-    _driver: Arc<dyn InlineRunDriver>,
 }
 
 impl<B: InvocationBackend> InvocationService<B> {
@@ -112,13 +92,11 @@ impl<B: InvocationBackend> InvocationService<B> {
         backend: B,
         notification_database_url: Option<String>,
         config: InvocationServiceConfig,
-        driver: Arc<dyn InlineRunDriver>,
     ) -> Self {
         Self {
             backend,
             notification_database_url,
             config,
-            _driver: driver,
         }
     }
 
@@ -737,6 +715,7 @@ fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::Arc;
 
     use super::*;
     use tokio::sync::Mutex;
@@ -750,25 +729,6 @@ mod tests {
         admitted_versions: Arc<Mutex<Vec<i32>>>,
         admitted_client_keys: Arc<Mutex<Vec<Option<String>>>>,
         polls: Arc<Mutex<VecDeque<InvocationPoll>>>,
-    }
-
-    #[derive(Default)]
-    struct RecordingDriver {
-        claims: std::sync::Mutex<Vec<InlineRunClaim>>,
-    }
-
-    impl InlineRunDriver for RecordingDriver {
-        fn start(&self, claim: InlineRunClaim) -> anyhow::Result<()> {
-            self.claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .push(claim);
-            Ok(())
-        }
-    }
-
-    fn driver() -> Arc<RecordingDriver> {
-        Arc::new(RecordingDriver::default())
     }
 
     #[async_trait]
@@ -835,11 +795,7 @@ mod tests {
             tenant_id: "tenant-a".to_string(),
             catalog_id: "catalog-a".to_string(),
             environment: "prod".to_string(),
-            project: "project-a".to_string(),
-            schema: Some("tenant_a".to_string()),
-            executor_id: "invoke-1".to_string(),
             platform_revision: "rev-test".to_string(),
-            lease_ttl: Duration::from_secs(30),
         }
     }
 
@@ -927,8 +883,7 @@ mod tests {
             .lock()
             .await
             .push_back(InvocationRecovery::Released(outcome("responded", "", 200)));
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -937,13 +892,6 @@ mod tests {
             })
         );
         assert!(backend.admissions.lock().await.is_empty());
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
     }
 
     #[tokio::test]
@@ -955,7 +903,7 @@ mod tests {
             .lock()
             .await
             .push_back(InvocationRecovery::Missing);
-        let service = InvocationService::new(backend.clone(), None, config(), driver());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -965,7 +913,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unchanged_promotion_retries_admission_without_starting_inline_execution() {
+    async fn unchanged_promotion_retries_admission() {
         let backend = MockBackend::default();
         backend.targets.lock().await.extend([
             Some(target(true)),
@@ -985,8 +933,7 @@ mod tests {
                 run_id: "run-promoted".to_string(),
             },
         ]);
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -995,14 +942,6 @@ mod tests {
             })
         );
         assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8, 9]);
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty(),
-            "begin only admits; the warm worker owns execution"
-        );
     }
 
     #[tokio::test]
@@ -1024,8 +963,7 @@ mod tests {
             .lock()
             .await
             .push_back(AdmissionResult::HeadDrift);
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
         let mut without_key = request();
         without_key.idempotency_key = None;
 
@@ -1034,13 +972,6 @@ mod tests {
             rejected(400, "idempotency-key-required")
         );
         assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
     }
 
     #[tokio::test]
@@ -1058,7 +989,7 @@ mod tests {
             let backend = MockBackend::default();
             backend.targets.lock().await.push_back(Some(target(true)));
             backend.recoveries.lock().await.push_back(recovery);
-            let service = InvocationService::new(backend.clone(), None, config(), driver());
+            let service = InvocationService::new(backend.clone(), None, config());
             let BeginResult::Rejected(rejection) = service.begin(request()).await.unwrap() else {
                 panic!("conflict must reject before admission");
             };
@@ -1068,7 +999,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn in_flight_recovery_returns_the_same_run_without_admission_or_dispatch() {
+    async fn in_flight_recovery_returns_the_same_run_without_admission() {
         let backend = MockBackend::default();
         backend.targets.lock().await.push_back(Some(target(true)));
         backend
@@ -1078,8 +1009,7 @@ mod tests {
             .push_back(InvocationRecovery::InFlight {
                 run_id: "run-live".to_string(),
             });
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1088,13 +1018,6 @@ mod tests {
             })
         );
         assert!(backend.admissions.lock().await.is_empty());
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
     }
 
     #[tokio::test]
@@ -1112,8 +1035,7 @@ mod tests {
             .lock()
             .await
             .push_back(AdmissionResult::Duplicate { run_id: None });
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1122,17 +1044,10 @@ mod tests {
             })
         );
         assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
     }
 
     #[tokio::test]
-    async fn admission_visible_duplicate_returns_the_winning_run_without_dispatch() {
+    async fn admission_visible_duplicate_returns_the_winning_run() {
         let backend = MockBackend::default();
         backend.targets.lock().await.push_back(Some(target(true)));
         backend
@@ -1147,8 +1062,7 @@ mod tests {
             .push_back(AdmissionResult::Duplicate {
                 run_id: Some("run-winner".to_string()),
             });
-        let driver = driver();
-        let service = InvocationService::new(backend.clone(), None, config(), driver.clone());
+        let service = InvocationService::new(backend.clone(), None, config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1157,13 +1071,6 @@ mod tests {
             })
         );
         assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
-        assert!(
-            driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
     }
 
     #[tokio::test]
@@ -1174,13 +1081,7 @@ mod tests {
             .lock()
             .await
             .push_back(Some(target(true)));
-        let required_driver = driver();
-        let required_service = InvocationService::new(
-            required_backend.clone(),
-            None,
-            config(),
-            required_driver.clone(),
-        );
+        let required_service = InvocationService::new(required_backend.clone(), None, config());
         let mut without_key = request();
         without_key.idempotency_key = None;
 
@@ -1189,13 +1090,6 @@ mod tests {
             rejected(400, "idempotency-key-required")
         );
         assert!(required_backend.admissions.lock().await.is_empty());
-        assert!(
-            required_driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty()
-        );
 
         let pure_backend = MockBackend::default();
         pure_backend
@@ -1213,9 +1107,7 @@ mod tests {
             .push_back(AdmissionResult::Admitted {
                 run_id: "run-pure".to_string(),
             });
-        let pure_driver = driver();
-        let pure_service =
-            InvocationService::new(pure_backend.clone(), None, config(), pure_driver.clone());
+        let pure_service = InvocationService::new(pure_backend.clone(), None, config());
 
         assert_eq!(
             pure_service.begin(without_key).await.unwrap(),
@@ -1227,14 +1119,6 @@ mod tests {
             pure_backend.admitted_client_keys.lock().await.as_slice(),
             &[None]
         );
-        assert!(
-            pure_driver
-                .claims
-                .lock()
-                .expect("recording driver lock poisoned")
-                .is_empty(),
-            "a fresh admission must not start inline execution"
-        );
     }
 
     #[tokio::test]
@@ -1244,7 +1128,7 @@ mod tests {
             InvocationPoll::Running,
             InvocationPoll::Released(outcome("responded", "", 202)),
         ]);
-        let service = InvocationService::new(backend, None, config(), driver());
+        let service = InvocationService::new(backend, None, config());
 
         assert!(matches!(
             service.wait("run-1".to_string(), 0).await.unwrap(),

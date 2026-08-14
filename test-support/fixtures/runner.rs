@@ -166,13 +166,3 @@ pub async fn poll_to_terminal(
     }
     Ok(status)
 }
-
-/// FNV-1a 64 used as a one-way credential-delivery witness.
-pub fn fnv1a_64(bytes: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in bytes {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}

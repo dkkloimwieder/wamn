@@ -535,8 +535,8 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
 
         // Build the PRODUCTION runner struct (not a gate-local worker): this is the
         // exact instantiate + claim loop the `run-worker` binary runs. The vault
-        // is EMPTY (no fixture here declares a credential; credproof gates the
-        // vault path) but must be present — the guest imports it unconditionally.
+        // is EMPTY because no fixture here declares a credential, but must be
+        // present — the guest imports it unconditionally.
         let vault = Arc::new(wamn_runtime::plugins::wamn_credentials::WamnCredentials::empty());
         let logging = Arc::new(wamn_runtime::plugins::wamn_logging::WamnLogging::from_env()?);
         let mut worker = ExecutionHost::instantiate(

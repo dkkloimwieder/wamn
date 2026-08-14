@@ -175,8 +175,6 @@ pub fn injected_capabilities(
 /// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
 /// outcome)`.
 type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String>,)>;
-/// The exact claimed-run export's typed signature.
-type ExecuteClaimedFunc = TypedFunc<(String, String, i64, u64), (Result<u32, String>,)>;
 /// The side-effect-free `check-flow` export's typed signature.
 type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
 
@@ -374,7 +372,6 @@ struct LiveExecution {
     store: Store<SharedCtx>,
     check_flow: CheckFlowFunc,
     run_next: RunNextFunc,
-    execute_claimed: ExecuteClaimedFunc,
 }
 
 pub struct ExecutionHost {
@@ -534,14 +531,12 @@ impl ExecutionHost {
         let instance = pre.instantiate_async(&mut store).await?;
         let check_flow = instance.get_typed_func(&mut store, "check-flow")?;
         let run_next = instance.get_typed_func(&mut store, "run-next")?;
-        let execute_claimed = instance.get_typed_func(&mut store, "execute-claimed")?;
 
         Ok(Self {
             live: Some(LiveExecution {
                 store,
                 check_flow,
                 run_next,
-                execute_claimed,
             }),
             runtime_revision,
             effect_writer,
@@ -607,47 +602,6 @@ impl ExecutionHost {
             }
         };
         r.map_err(|e| anyhow::anyhow!("run-next: {e}"))
-    }
-
-    /// Drive exactly one run already claimed by HTTP admission.
-    ///
-    /// This invokes the versioned `execute-claimed` guest export directly; it
-    /// never calls `run-next` and therefore cannot scan or claim generic queue
-    /// work. A trap disposes the Wasmtime instance before the error is returned.
-    pub async fn execute_claimed(
-        &mut self,
-        run_id: &str,
-        lease_owner: &str,
-        lease_generation: i64,
-    ) -> anyhow::Result<u32> {
-        let call = {
-            let live = self
-                .live
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
-            live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
-            live.execute_claimed
-                .call_async(
-                    &mut live.store,
-                    (
-                        run_id.to_owned(),
-                        lease_owner.to_owned(),
-                        lease_generation,
-                        self.ttl_ms,
-                    ),
-                )
-                .await
-        };
-        let (result,) = match call {
-            Ok(result) => result,
-            Err(error) => {
-                self.live.take();
-                return Err(anyhow::anyhow!(
-                    "execute-claimed trapped; execution instance disposed: {error}"
-                ));
-            }
-        };
-        result.map_err(|error| anyhow::anyhow!("execute-claimed: {error}"))
     }
 
     /// Drain every currently-claimable run. Each `run-next` claims one run and
@@ -783,21 +737,6 @@ mod tests {
                         i32.const 84
                         i32.const 0
                         i32.store
-                        i32.const 64)
-                    (func (export "execute-claimed")
-                        (param i32 i32 i32 i32 i64 i64)
-                        (result i32)
-                        call $tick
-                        call $epoch-checkpoint
-                        i32.const 64
-                        i32.const 0
-                        i32.store
-                        i32.const 68
-                        i32.const 0
-                        i32.store
-                        i32.const 72
-                        i32.const 0
-                        i32.store
                         i32.const 64))
                 (core instance $guest
                     (instantiate $guest
@@ -815,16 +754,6 @@ mod tests {
                     (result (result (tuple bool (option string) u32) (error string)))
                     (canon lift
                         (core func $guest "run-next")
-                        (memory $guest "memory")
-                        (realloc (func $guest "realloc"))))
-                (func (export "execute-claimed")
-                    (param "run-id" string)
-                    (param "lease-owner" string)
-                    (param "lease-generation" s64)
-                    (param "ttl-ms" u64)
-                    (result (result u32 (error string)))
-                    (canon lift
-                        (core func $guest "execute-claimed")
                         (memory $guest "memory")
                         (realloc (func $guest "realloc"))))
             )
@@ -865,17 +794,12 @@ mod tests {
         let run_next = instance
             .get_typed_func(&mut store, "run-next")
             .expect("typed run-next gate");
-        let execute_claimed = instance
-            .get_typed_func(&mut store, "execute-claimed")
-            .expect("typed execute-claimed gate");
-
         (
             ExecutionHost {
                 live: Some(LiveExecution {
                     store,
                     check_flow,
                     run_next,
-                    execute_claimed,
                 }),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
                 effect_writer: None,
@@ -971,18 +895,7 @@ mod tests {
     #[test]
     fn run_next_rearms_before_calling_the_guest() {
         let source = include_str!("lib.rs");
-        let method = method_source(
-            source,
-            "async fn call_run_next",
-            "pub async fn execute_claimed",
-        );
-        assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
-    }
-
-    #[test]
-    fn execute_claimed_rearms_before_calling_the_guest() {
-        let source = include_str!("lib.rs");
-        let method = method_source(source, "pub async fn execute_claimed", "pub async fn drain");
+        let method = method_source(source, "async fn call_run_next", "pub async fn drain");
         assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
     }
 

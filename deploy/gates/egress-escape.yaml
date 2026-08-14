@@ -1,5 +1,4 @@
-# Reachable control target for the runner address-ceiling negative. The
-# credproof environment binds a portable flow requirement to this Service, but
+# Reachable control target for the retained M0 runner address-ceiling negative.
 # runner-connection-egress.yaml deliberately does not admit its pod address.
 apiVersion: apps/v1
 kind: Deployment

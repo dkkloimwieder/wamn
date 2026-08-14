@@ -4364,7 +4364,6 @@ dependencies = [
  "clap",
  "tokio",
  "tracing",
- "wamn-execution-host",
  "wamn-runtime",
  "wash-runtime",
 ]
@@ -4451,7 +4450,6 @@ dependencies = [
  "clap",
  "futures-util",
  "hex",
- "hyper",
  "libc",
  "pg_walstream",
  "reqwest",
@@ -4467,7 +4465,6 @@ dependencies = [
  "wamn-event-wire",
  "wamn-execution-host",
  "wamn-flow",
- "wamn-flow-invocation",
  "wamn-gate-harness",
  "wamn-run-state",
  "wamn-runner",
@@ -4498,9 +4495,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
- "wamn-flow",
  "wamn-run-state",
- "wamn-test-fixtures",
  "wash-runtime",
  "wasmtime-wasi-http",
 ]

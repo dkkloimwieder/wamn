@@ -138,7 +138,7 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
 
     let decision = resolve_http_request(
         &connection,
-        &target("/credproof"),
+        &target("/hook"),
         &[allowed("serve-echo:8091")],
         &ExactNetwork(vec![selected]),
         &dns,
@@ -146,10 +146,7 @@ async fn exact_http_service_authority_with_non_default_port_reaches_the_resolver
     .await
     .expect("service authority resolves");
 
-    assert_eq!(
-        decision.logical_url.as_ref(),
-        "http://serve-echo:8091/credproof"
-    );
+    assert_eq!(decision.logical_url.as_ref(), "http://serve-echo:8091/hook");
     assert_eq!(decision.host_header.as_ref(), "serve-echo:8091");
     assert_eq!(
         decision.transport,

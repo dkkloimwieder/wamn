@@ -174,7 +174,7 @@ mod tests {
     fn empty_declaration_does_not_narrow_a_portable_connection() {
         let policy = RunnerEgressPolicy::default();
         policy.set_declared("runner", &[]);
-        let target = "http://serve-echo:8091/credproof"
+        let target = "http://serve-echo:8091/hook"
             .parse()
             .expect("logical connection URL");
 

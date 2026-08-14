@@ -9,8 +9,7 @@
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
 use wamn_proof_integration::{
-    capturebench, causation_e2e, credproof, impactproof, invocationproof, readerbench, runnerbench,
-    wakeproof,
+    capturebench, causation_e2e, impactproof, readerbench, runnerbench, wakeproof,
 };
 use wamn_proof_system::traceproof;
 
@@ -39,7 +38,6 @@ enum Command {
     Readerbench(readerbench::ReaderBenchArgs),
     /// Prove one admitted invocation through the deployed runner, WAL reader, and R3 stream.
     CausationE2e(causation_e2e::CausationE2eArgs),
-    Credproof(credproof::CredProofArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
@@ -48,8 +46,6 @@ enum Command {
     Wakeproof(wakeproof::WakeProofArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow in an ephemeral schema, then assert `wamn-ctl-ops impact-report` names the affected flow/API resource and carries reprovision guidance for a destructive change with dependents
     Impactproof(impactproof::ImpactProofArgs),
-    /// Prove exact claimed-run execution through the production host and baked flowrunner image.
-    Invocationproof(invocationproof::InvocationProofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -73,12 +69,10 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
         Command::CausationE2e(args) => causation_e2e::run(args).await,
-        Command::Credproof(args) => credproof::run(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
-        Command::Invocationproof(args) => invocationproof::run(args).await,
     };
 
     shutdown_observability();

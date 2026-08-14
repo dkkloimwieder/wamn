@@ -25,9 +25,7 @@ declare TARGET EXPECTED_SHA NEEDLE REPLACEMENT GATE
 declare -a TEST_ARGV
 
 mutation_ids() {
-  printf '%s\n' \
-    http-queue-preclaim-restored \
-    begin-starts-inline-driver
+  printf '%s\n' http-queue-preclaim-restored
 }
 
 load_mutation() {
@@ -40,14 +38,6 @@ load_mutation() {
       REPLACEMENT=$'      (tenant_id, run_id, partition_key, partition_policy, available_at, \\\n       lease_owner, lease_expires_at, lease_generation, stream_seq) \\\n    SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \\\n           CASE WHEN c.producer = \'http\' THEN \'inline-mutant\' END, \\\n           CASE WHEN c.producer = \'http\' THEN now() + interval \'30 seconds\' END, \\\n           CASE WHEN c.producer = \'http\' THEN 1 ELSE 0 END, \\\n           CASE WHEN c.producer = \'event\' THEN c.event_seq ELSE 0 END \\'
       GATE="admission::tests::producer_specific_checks_and_unleased_queue_state_are_pinned"
       TEST_ARGV=(cargo test --locked --offline -p wamn-run-state --lib "$GATE" -- --exact)
-      ;;
-    begin-starts-inline-driver)
-      TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="7bab1ff9c3f961c5028f6502ae32e7145329f84dafde900a05bfb0ccd4f92c66"
-      NEEDLE=$'                AdmissionResult::Admitted { run_id } => {\n                    return Ok(BeginResult::Admitted(Admitted { run_id }));\n                }'
-      REPLACEMENT=$'                AdmissionResult::Admitted { run_id } => {\n                    self._driver.start(InlineRunClaim {\n                        run_id: run_id.clone(),\n                        lease_owner: self.config.executor_id.clone(),\n                        lease_generation: 1,\n                        tenant: self.config.tenant_id.clone(),\n                        project: self.config.project.clone(),\n                        schema: self.config.schema.clone(),\n                    })?;\n                    return Ok(BeginResult::Admitted(Admitted { run_id }));\n                }'
-      GATE="flow_invocation::tests::own_plan_requirement_allows_only_pure_call_free_requests_without_a_key"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --lib "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2

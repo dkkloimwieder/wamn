@@ -134,11 +134,10 @@ RUN --mount=type=cache,id=wamn-component-cargo-registry,target=/usr/local/cargo/
         "/component-output/${artifact}.wasm"; \
     done
 
-# ---- washlet image: host + locked inline flowrunner -------------------------
+# ---- washlet image: host only ----------------------------------------------
 FROM debian:trixie-slim AS host
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /native-output/wamn-host /usr/local/bin/wamn-host
-COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-host"]
 

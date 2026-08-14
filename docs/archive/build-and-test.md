@@ -1045,49 +1045,15 @@ cargo test --locked -p wamn-proof-conformance --lib invocation
 cargo clippy --locked -p wamn-flow-invocation --all-targets -- -D warnings
 ```
 
-### [CALLABLE-FLOWS-P4] exact claimed-run driver
-
-Docs: `docs/archive/execution/FLOW-SPEC.md` §§9.1–9.7, §10, §11, Phase 4.
-
-```bash
-cargo test --locked -p wamn-runner -p wamn-runtime -p wamn-run-state
-cargo test --locked -p wamn-proof-system --lib invocationproof::tests::
-cargo test --locked -p wamn-proof-conformance --lib invocation
-cargo check --locked --manifest-path components/execution/flowrunner/Cargo.toml
-
-# PostgreSQL live race/fault proof (throwaway PostgreSQL 18):
-WAMN_RUN_QUEUE_PG_URL=postgresql://postgres:postgres@127.0.0.1:55472/postgres \
-  cargo test --locked -p wamn-run-state --test claimed_inline_live -- --ignored --nocapture
-
-# Gate of record: build the canonical two-stage exact image, load it into kind,
-# then drive the baked /bench/flowrunner.wasm through the production host seam.
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job invocationproof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/invocationproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/invocationproof --timeout=300s
-kubectl -n wamn-system logs job/invocationproof
-```
-
 ### [CALLABLE-FLOWS-P4] production invocation provider
 
 Docs: `docs/archive/execution/FLOW-SPEC.md` §§6.1–6.2, §§9.4–9.7, §§10–11, Phase 4.
 
 ```bash
 cargo test --locked -p wamn-runtime -p wamn-run-state -p wamn-flow-invocation
-cargo test --locked -p wamn-proof-system --lib invocationproof::tests::
-cargo test --locked -p wamn-proof-integration --lib invocationproof::tests::
+cargo test --locked -p wamn-proof-conformance --lib invocation
 cargo test --locked -p wamn-proof-conformance docker_component_provenance
 cargo check --locked -p wamn-host
-
-# Gate of record: the exact image composes admission, inline fenced execution,
-# bounded wait, stored-outcome recovery, conflicts, and disabled recovery.
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system delete job invocationproof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/invocationproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/invocationproof --timeout=300s
-kubectl -n wamn-system logs job/invocationproof
 ```
 
 ### [5.2] production flow-runner engine (crates/execution/flow-engine)
@@ -1203,47 +1169,16 @@ cargo test -p wamn-run-state   # pure text pins + queue.rs live
 # are no longer a current mutation command or required evidence record.
 ```
 
-### [5.9] credential vault (plugins/wamn_credentials + credproof)
+### [5.9] credential vault (plugins/wamn_credentials)
 
 Docs: docs/archive/data-path/credential-vault.md
 
 ```bash
-# Pure units: http-request injection/classification + host vault resolution +
-# credential fixture pins.
+# Pure units: http-request injection/classification and host vault resolution.
 cargo test -p wamn-standard-nodes
-# Unit boundary: the credential plugin moved to wamn-runtime. The deployed
-# fixture contract is owned by the system-proof library.
+# Unit boundary: the credential plugin moved to wamn-runtime.
 # recipe-test: H5-CREDENTIALS | unit | wamn-runtime | lib | - | plugins::wamn_credentials::tests:: | 3 | crates/platform/runtime/src/plugins/wamn_credentials.rs native vault parsing and project-scoped lookup
 cargo test -p wamn-runtime --lib plugins::wamn_credentials::tests::
-# recipe-test: H5-CREDPROOF | system | wamn-proof-system | lib | - | credproof::tests:: | 4 | tests/system/src/credproof.rs credential and deny deployment fixtures
-cargo test -p wamn-proof-system --lib credproof::tests::
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-23 \
-  tools/gate-mutants/credential-proof-fixtures.sh green-all
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-23 \
-  tools/gate-mutants/credential-proof-fixtures.sh run-all
-
-# The former direct-import cred-probe fixture was deleted by `.6.3`; there is no
-# current runnable credprobe command.
-
-# Local end-to-end (throwaway PG + local serve-echo; credproof creates a fresh
-# database, admits both fixtures through the production transaction, and drives
-# the exact flowrunner through ExecutionHost):
-docker run -d --name wamn-cred-pg -p 5493:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-./target/debug/wamn-gates --log-level error serve-echo --port 8093 &
-./target/debug/wamn-gates credproof \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5493/wamn \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5493/wamn \
-  --echo-url http://127.0.0.1:8093
-# In-cluster gate of record (kind 'wamn'; exact gates image carries both the
-# production ExecutionHost and the baked flowrunner):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
-kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=300s
-kubectl -n wamn-system logs job/credproof   # overall PASS: true
 ```
 
 ### [5.14] durable run queue & runner scaling (crates/execution/run-state)
@@ -1699,8 +1634,8 @@ gate rebakes the host image + rebuilds the flowrunner wasm.
 # recipe-test: H5-CAUSATION | unit | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests:: | 15 | crates/platform/runtime/src/plugins/wamn_postgres/claims.rs claims, causation emit, forgery guard, and current-run map
 cargo test -p wamn-runtime --lib plugins::wamn_postgres::claims::tests::
 (cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)  # guest declares the channel
-# Local live proof — the REAL plugin emit through the REAL runner (both drive
-# paths: run/run_s6/run_until_kill via execute(), run_next via execute_claimed()):
+# Local live proof — the REAL plugin emit through the REAL runner (both direct
+# and queue-claim drive paths):
 docker run -d --name caus-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres postgres:18 -c wal_level=logical
 docker exec caus-pg psql -U postgres -c "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER;"
 docker exec caus-pg psql -U postgres -tAc "SELECT pg_create_logical_replication_slot('caus','test_decoding')"
@@ -2138,7 +2073,7 @@ The guest `run-next` export now also serves `partitioned(key)` runs: when the
 global (unpartitioned) `claim_dispatch_sql` is empty it leases a partition
 (`acquire_partitions_sql(1)`), claims the earliest HEAD across the partitions it
 owns in stream order (`claim_partition_head_sql(1)` — one in flight per key, D20
-policy on the row), drives it via the SHARED `execute_claimed` path (renewing the
+policy on the row), drives it through the shared claimed-run path (renewing the
 partition lease per node alongside the run lease), and STEPS DOWN
 (`release_partition_sql`) from a just-acquired partition that yields no head. The
 WIT is unchanged (`run-next` signature identical) and `ExecutionHost.drain` loops it
@@ -4567,68 +4502,6 @@ bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
 
-### Runner address-level egress boundary (`wamn-4q3c.12`)
-
-`deploy/platform/runner-netpol.yaml` is the default-deny address ceiling for
-runner pods. It admits DNS, project PostgreSQL, control NATS, OTLP, and signed
-custom-node transport. Business connection destinations are not part of that
-platform list: each environment adds only its approved CIDRs/ports using the
-shape in `runner-connection-egress.example.yaml`. The P0 environment uses
-`deploy/gates/runner-connection-egress.yaml` to admit `serve-echo` and keeps the
-reachable `egress-escape` control target outside the union.
-Per-project policy rendering/provisioning replaces the hand-maintained
-environment manifest under existing bead `wamn-ou1`.
-
-The gate requires kindnet's `kube-network-policies` controller to be active,
-not merely an accepted NetworkPolicy API object. The mutation tool refuses to
-run unless the kind node has the `inet kindnet-network-policies` nftables table.
-
-```bash
-cargo test --locked -p wamn-proof-system --lib credproof::tests::
-cargo clippy --locked -p wamn-proof-integration -p wamn-proof-system \
-  --all-targets -- -D warnings
-rustfmt --edition 2024 --check \
-  tests/integration/src/credproof.rs tests/system/src/credproof.rs
-
-# Exact deployed connection_http proof. The positive environment binding reaches
-# serve-echo; the equally hostname-authorized escape binding resolves but its
-# address cannot reach egress-escape. Apply both policy owners before the Job.
-docker build --target host -t wamn-host:dev .
-docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn
-kind load docker-image wamn-gates:dev --name wamn
-# The control NATS selector in the platform policy must resolve to a live pod.
-kubectl -n wamn-system wait --for=condition=Ready pod \
-  -l wasmcloud.com/name=nats --timeout=120s
-kubectl -n wamn-system apply -f deploy/platform/runner-netpol.yaml
-kubectl -n wamn-system apply -f deploy/gates/runner-connection-egress.yaml
-kubectl -n wamn-system apply -f deploy/platform/runner.yaml
-kubectl -n wamn-system rollout status deploy/runner --timeout=180s
-kubectl -n wamn-system apply -f deploy/gates/serve-echo.yaml
-kubectl -n wamn-system apply -f deploy/gates/egress-escape.yaml
-docker exec "$(kind get nodes --name wamn | head -n 1)" \
-  nft list table inet kindnet-network-policies >/dev/null
-kubectl -n wamn-system delete job credproof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/credproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/credproof --timeout=300s
-kubectl -n wamn-system logs job/credproof
-
-# Mutation: add app=egress-escape:8091 to the P0 connection policy. The same
-# credproof turns red because the address escape reaches its target. The tool
-# restores byte-exactly and reapplies; require the clean Job to pass again.
-tools/gate-mutants/runner-egress-address.sh green
-tools/gate-mutants/runner-egress-address.sh run
-tools/gate-mutants/runner-egress-address.sh green
-
-# Real production Deployment regression: the normal F3 flow must still reach
-# its environment-admitted serve-echo connection through the policy floor.
-kubectl -n wamn-system delete job f3proof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/f3proof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/f3proof --timeout=300s
-kubectl -n wamn-system logs job/f3proof
-
-```
-
 ## PLAN-2A — respond standard-node dispatch (`wamn-ayq7.20`)
 
 `respond` resolves to the pinned platform standard-node executable, dispatches
@@ -4971,7 +4844,6 @@ rustfmt --edition 2024 --check --config skip_children=true \
   services/ctl/tests/run_plane_live.rs \
   test-support/fixtures/runner.rs \
   tests/integration/src/capturebench.rs \
-  tests/integration/src/credproof.rs \
   tests/integration/src/failoverbench.rs \
   tests/integration/src/runnerbench.rs
 git diff --check
@@ -5318,8 +5190,7 @@ git diff --check
 `flow-http` final admission commits one `dispatched` run and one immediately
 available queue row with owner/expiry `NULL` and generation zero before `begin`
 returns. Duplicate admission retains the winning run identity, and `begin`
-never calls the retained inline driver. The host-inline types and configuration
-remain inert for deletion by `.5.2`.
+never enters guest execution.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
@@ -5357,6 +5228,37 @@ bash -n tools/gate-mutants/http-ordinary-admission.sh
 git diff --check
 ```
 
-The legacy `invocationproof`, `credproof`, and `runner-egress-address` runtime
-jobs still exercise host-inline dispatch. They are intentionally deferred to
-the immediately following `.5.2` deletion rather than adapted in this bead.
+## SR-MVP — host-inline execution deletion (`wamn-0h0g.5.2`)
+
+The HTTP host is admission-only: it carries no flowrunner bytes, executor
+configuration, exact-claim API, or inline-driver seam. The production
+`run-worker` remains the sole execution owner and both its image and the gates
+image retain the flowrunner component. The obsolete invocation and credential
+proof programs and Jobs are physically absent; their registry records are
+retired while the ordinary-admission and credential-unit proofs remain live.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline \
+    -p wamn-run-state -p wamn-execution-host -p wamn-runtime -p wamn-host \
+    -p wamn-proof-integration -p wamn-proof-system -p wamn-proof-conformance \
+    -p wamn-gates
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline \
+    -p wamn-run-state -p wamn-execution-host -p wamn-runtime -p wamn-host \
+    -p wamn-proof-integration -p wamn-proof-system -p wamn-proof-conformance \
+    -p wamn-gates --all-targets -- -D warnings
+
+if cargo tree --locked --offline -p wamn-host --depth 1 --prefix none | \
+  rg -q '^wamn-execution-host '; then
+  echo 'wamn-host still depends on wamn-execution-host' >&2
+  exit 1
+fi
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/http-ordinary-admission.sh check
+
+jq empty architecture/gate-registry.json
+bash -n tools/gate-mutants/http-ordinary-admission.sh
+cargo fmt --all -- --check
+git diff --check
+```

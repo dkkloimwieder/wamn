@@ -2,11 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr as _;
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
+use std::sync::RwLock;
 
 use deadpool_postgres::{Manager, Pool};
-use sha2::{Digest as _, Sha256};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
@@ -14,7 +12,7 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::flow_invocation::{
-    InlineRunDriver, InvocationService, InvocationServiceConfig, PostgresInvocationBackend,
+    InvocationService, InvocationServiceConfig, PostgresInvocationBackend,
 };
 
 mod bindings {
@@ -31,13 +29,6 @@ pub const WAMN_FLOW_INVOCATION_ID: &str = "wamn-flow-invocation";
 const TENANT_CONFIG_KEY: &str = "wamn.tenant";
 const CATALOG_CONFIG_KEY: &str = "wamn.catalog";
 const ENVIRONMENT_CONFIG_KEY: &str = "wamn.environment";
-const PROJECT_CONFIG_KEY: &str = "wamn.project";
-const SCHEMA_CONFIG_KEY: &str = "wamn.schema";
-
-fn inline_executor_id(component_id: &str) -> String {
-    let digest = hex::encode(Sha256::digest(component_id.as_bytes()));
-    format!("flow-invocation-{}", &digest[..32])
-}
 
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     invocation::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
@@ -46,12 +37,11 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 pub struct WamnFlowInvocation {
     backend: Option<PostgresInvocationBackend>,
     database_url: Option<String>,
-    driver: Arc<dyn InlineRunDriver>,
     services: RwLock<HashMap<String, InvocationService<PostgresInvocationBackend>>>,
 }
 
 impl WamnFlowInvocation {
-    pub fn from_env(driver: Arc<dyn InlineRunDriver>) -> anyhow::Result<Self> {
+    pub fn from_env() -> anyhow::Result<Self> {
         let database_url = std::env::var("WAMN_RUN_STORE_PG_URL")
             .or_else(|_| std::env::var("DATABASE_URL"))
             .or_else(|_| std::env::var("WAMN_PG_URL"))
@@ -64,7 +54,6 @@ impl WamnFlowInvocation {
         Ok(Self {
             backend,
             database_url,
-            driver,
             services: RwLock::new(HashMap::new()),
         })
     }
@@ -75,8 +64,6 @@ impl WamnFlowInvocation {
         tenant: &str,
         catalog: &str,
         environment: &str,
-        project: &str,
-        schema: Option<&str>,
     ) -> anyhow::Result<()> {
         let backend = self
             .backend
@@ -89,13 +76,8 @@ impl WamnFlowInvocation {
                 tenant_id: tenant.to_string(),
                 catalog_id: catalog.to_string(),
                 environment: environment.to_string(),
-                project: project.to_string(),
-                schema: schema.map(str::to_string),
-                executor_id: inline_executor_id(component_id),
                 platform_revision: env!("CARGO_PKG_VERSION").to_string(),
-                lease_ttl: Duration::from_secs(30),
             },
-            self.driver.clone(),
         );
         self.services
             .write()
@@ -157,11 +139,7 @@ impl HostPlugin for WamnFlowInvocation {
         let environment = config
             .get(ENVIRONMENT_CONFIG_KEY)
             .ok_or_else(|| anyhow::anyhow!("missing {ENVIRONMENT_CONFIG_KEY}"))?;
-        let project = config
-            .get(PROJECT_CONFIG_KEY)
-            .map_or("default", String::as_str);
-        let schema = config.get(SCHEMA_CONFIG_KEY).map(String::as_str);
-        self.register(item.id(), tenant, catalog, environment, project, schema)?;
+        self.register(item.id(), tenant, catalog, environment)?;
         invocation::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
@@ -267,22 +245,5 @@ fn map_failure(failure: wamn_flow_invocation::Failure) -> invocation::Failure {
             flow_id: failure.error.flow_id,
             flow_version: failure.error.flow_version,
         },
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::inline_executor_id;
-
-    #[test]
-    fn inline_executor_id_is_stable_and_runner_safe() {
-        let id = inline_executor_id("workload/component:replica");
-        assert_eq!(id, inline_executor_id("workload/component:replica"));
-        assert_ne!(id, inline_executor_id("workload/component:other"));
-        assert!(id.len() <= 128);
-        assert!(
-            id.bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-        );
     }
 }
