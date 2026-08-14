@@ -490,10 +490,9 @@ generations** }; run-history pruning cannot orphan publish evidence;
 credential revocation stays independent — a retained definition keeps
 no secret usable. The `replay-seed` reference kind deletes;
 `audit-seed` deletes; no execution consumer exists;
-`active-attempt` stays. **The gate is unconditional:**
-`requires_green_suite` and its project override delete
-(`system-schema:172,221`; `catalog-schema:1574`); no flag, no
-exemption. All new durable vocabulary is `test_*`.
+`active-attempt` stays. **The gate is unconditional:** publication always
+requires the green finalized report; the configurable registry publication
+gate deletes. All new durable vocabulary is `test_*`.
 
 **Fixtures and seeds.** The platform does not provision, reset, or
 manage test fixtures at runtime. Baseline data is the landed
@@ -1067,8 +1066,7 @@ terminalize transaction.
 with the platform byte ceiling; the "always-secretless" claim retired.
 **Identity/local:** `authenticate_local` · `identity.local_credentials`
 · `identity.sessions` · session/CSRF code.
-**Policy switches:** `requires_green_suite` + project override ·
-publish-policy resolution in the registry.
+**Policy switches:** configurable publication policy in the registry.
 **Provisioning ops state:** `provisioning.dumps` · copy-saga state →
 ops feature schema.
 **Impact/backup:** destructive planner branches ·

@@ -216,6 +216,33 @@ fn command_inventory_is_frontend_neutral_and_round_trips() {
 }
 
 #[test]
+fn publish_requires_a_successful_report_unconditionally() {
+    let document = request(
+        "publish",
+        AuthoringCommand::Publish(PublishValidatedDraft {
+            scope: scope(),
+            validated_draft: validated_ref(),
+            successful_report_id: "report-5".into(),
+        }),
+    );
+    let mut wire = serde_json::to_value(document).expect("publish command serializes");
+    let input = wire["body"]["command"]["input"]
+        .as_object_mut()
+        .expect("publish command has an input object");
+    assert_eq!(
+        input.remove("successful-report-id"),
+        Some(json!("report-5"))
+    );
+    assert!(
+        matches!(
+            decode_document(&wire.to_string()),
+            Err(ContractDecodeError::Json(_))
+        ),
+        "publish without a successful report must be refused"
+    );
+}
+
+#[test]
 fn draft_run_capture_defaults_to_full_and_accepts_only_full_or_off() {
     let omitted = json!({
         "scope": {"project-id": "receiving", "environment": "test"},

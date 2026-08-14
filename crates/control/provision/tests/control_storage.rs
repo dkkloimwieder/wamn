@@ -38,6 +38,28 @@ fn code_only(sql: &str) -> String {
         .join("\n")
 }
 
+fn repository_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .expect("repository root")
+}
+
+fn collect_source_text(path: &Path, text: &mut String) {
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path).expect("read source directory") {
+            collect_source_text(&entry.expect("source directory entry").path(), text);
+        }
+        return;
+    }
+
+    text.push_str(
+        &std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display())),
+    );
+    text.push('\n');
+}
+
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
 /// `deploy/sql/system-schema.sql` must mirror the `wamn-control-registry` model: the two
@@ -142,6 +164,39 @@ fn system_schema_sql_mirrors_the_model() {
             && !sql.contains("provisioning.migration_confirmations"),
         "operations-only state must not leak into the core schema"
     );
+}
+
+/// Configurable publication was deleted before the control portable store was
+/// defined. Keep the registry, from-zero DDL, contract sources, generated
+/// client, and active amendments free of every retired switch and resolver.
+#[test]
+fn retired_configurable_publish_policy_stays_deleted() {
+    let root = repository_root();
+    let mut text = String::new();
+    for path in [
+        "crates/control/registry/src",
+        "deploy/sql/system-schema.sql",
+        "crates/authoring/model/src",
+        "docs/archive/contracts/authoring-surface.schema.json",
+        "clients/authoring-client/src/generated/authoring.ts",
+        "docs/plane-amendment.md",
+        "docs/scope-reduction-mvp.md",
+    ] {
+        collect_source_text(&root.join(path), &mut text);
+    }
+
+    let retired = [
+        ["requires", "green", "suite"].join("_"),
+        ["project", "publish", "policies"].join("_"),
+        ["resolve", "publish", "policy"].join("_"),
+        ["Publish", "Policy", "Source"].join(""),
+    ];
+    for name in retired {
+        assert!(
+            !text.contains(&name),
+            "retired configurable publication surface returned: {name}"
+        );
+    }
 }
 
 /// The org-row builder (`wamn_control_registry::sql::upsert_org_sql`) must target exactly
@@ -886,7 +941,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.project_publish_policies,registry.projects',
+  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 

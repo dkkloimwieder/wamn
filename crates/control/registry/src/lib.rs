@@ -31,14 +31,12 @@
 //! JSON-Schema file.
 
 pub mod identifiers;
-mod publish_policy;
 mod resolve;
 pub mod sql;
 mod template;
 mod types;
 mod validate;
 
-pub use publish_policy::{PublishPolicy, PublishPolicySource, resolve_publish_policy};
 pub use resolve::{RegistryError, Resolution};
 pub use template::Template;
 pub use types::{

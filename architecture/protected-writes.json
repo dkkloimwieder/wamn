@@ -1862,36 +1862,6 @@
       ]
     },
     {
-      "relation": "registry.project_publish_policies",
-      "ops": false,
-      "installer": "registry-store",
-      "owner": "registry-store",
-      "mechanisms": [
-        "direct-dml",
-        "foreign-key:delete:cascade;from=registry.env_policies;constraint=project_publish_policies_org_env_fkey",
-        "foreign-key:delete:cascade;from=registry.projects;constraint=project_publish_policies_org_project_fkey"
-      ],
-      "roles": [
-        {
-          "role": "wamn_system",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:project_publish_policies_org_env_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, env) REFERENCES registry.env_policies(org, name) ON DELETE CASCADE",
-        "constraint:project_publish_policies_org_project_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (org, project) REFERENCES registry.projects(org, id) ON DELETE CASCADE",
-        "constraint:project_publish_policies_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (org, project, env)",
-        "row-security:enabled=false;forced=false"
-      ]
-    },
-    {
       "relation": "registry.projects",
       "ops": false,
       "installer": "registry-store",

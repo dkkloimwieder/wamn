@@ -246,8 +246,8 @@ This ruling supersedes the project-local portable store and
 project-local `execution_bundles` as the runtime artifact source; the
 single-project-transaction publication description; project
 `release-evidence`, `replay-seed`, and `audit-seed` generation
-retention; `requires_green_suite`, its project override, and publish
-policy resolution; deployment lifecycle/saga/reconciler machinery;
+retention; the configurable registry publication gate; deployment
+lifecycle/saga/reconciler machinery;
 artifact preflight before claim; and every dual-read, dual-write,
 mixed-version, or compatibility cutover path. The convergent A/B/C
 transactions, project-local claim followed by post-lease verified

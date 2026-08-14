@@ -4747,7 +4747,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
     --test migrate migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres \
     -- --exact --nocapture
 
-# Regenerate and verify the 69-row core+ops authority table from pg_catalog.
+# Regenerate and verify the 68-row core+ops authority table from pg_catalog.
 WAMN_UPDATE_PROTECTED_RELATIONS=1 \
 WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
@@ -4842,12 +4842,55 @@ case table from schema-control, and recreate the from-zero bug where triggers
 located after a shared helper never install. Each must fail its named owner
 test, then restore the exact source hash.
 
+## SR-MVP — unconditional publish gate (`wamn-0h0g.8.8`)
+
+The T1 schema and registry expose no configurable publish switch, project
+override, exemption, or resolver. The authoring contract has exactly one gate:
+`publish` requires the successful green finalized report identity. This gate
+does not run control-store migration or any publication transaction.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave1-8-8
+export CARGO_INCREMENTAL=0
+
+cargo test --locked --offline -p wamn-control-registry
+cargo test --locked --offline -p wamn-control-provision --test control_storage \
+  retired_configurable_publish_policy_stays_deleted -- --exact
+cargo test --locked --offline -p wamn-authoring-model --test contract \
+  publish_requires_a_successful_report_unconditionally -- --exact
+
+# From-zero schema proof on the lane's disposable PostgreSQL 18 instance.
+docker run --rm -d --name wamn-0h0g-8-8-pg -p 127.0.0.1:15663:5432 \
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
+until docker exec wamn-0h0g-8-8-pg pg_isready -U postgres -d wamn; do sleep 1; done
+WAMN_REGISTRY_PG_URL=postgres://postgres:postgres@127.0.0.1:15663/wamn \
+  cargo test --locked --offline -p wamn-control-provision --test control_storage \
+    system_schema_applies_and_enforces_invariants_on_postgres \
+    -- --exact --nocapture --test-threads=1
+docker rm -f wamn-0h0g-8-8-pg
+
+cargo clippy --locked --offline -p wamn-authoring-model \
+  -p wamn-control-registry -p wamn-control-provision --all-targets -- -D warnings
+tools/gate-mutants/unconditional-publish-gate.sh check
+tools/gate-mutants/unconditional-publish-gate.sh green
+tools/gate-mutants/unconditional-publish-gate.sh run
+
+rustfmt --edition 2024 --check \
+  crates/authoring/model/tests/contract.rs \
+  crates/control/provision/tests/control_storage.rs
+bash -n tools/gate-mutants/unconditional-publish-gate.sh
+git diff --check
+```
+
+The exact mutant makes the report identity defaultable. The named contract
+test must fail, and the script must restore the exact source hash.
+
 ## SR-MVP — stored-suite persistence deletion (`wamn-0h0g.8.10`)
 
 The populated-schema cutover deletes the five legacy stored-suite/report
 tables, their two helpers, and `catalog.publish_gate_audit`, while preserving
 all four management-owned `authoring_test_*` relations. The generated authority
-table proves the deleted objects are absent and the remaining 69 relations have
+table proves the deleted objects are absent and the remaining 68 relations have
 complete ownership and grant-derived exposure records.
 
 ```bash
