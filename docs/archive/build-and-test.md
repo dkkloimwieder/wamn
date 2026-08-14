@@ -5312,3 +5312,51 @@ rustfmt --edition 2024 --check \
   services/scenario-worker/src/authoring.rs
 git diff --check
 ```
+
+## SR-MVP — ordinary HTTP admission (`wamn-0h0g.5.1`)
+
+`flow-http` final admission commits one `dispatched` run and one immediately
+available queue row with owner/expiry `NULL` and generation zero before `begin`
+returns. Duplicate admission retains the winning run identity, and `begin`
+never calls the retained inline driver. The host-inline types and configuration
+remain inert for deletion by `.5.2`.
+
+```bash
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline \
+    -p wamn-run-state -p wamn-runtime -p wamn-proof-integration
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline --manifest-path components/Cargo.toml -p materializer
+
+WAMN_RUN_STORE_PG_URL="$THROWAWAY_PG_URL" \
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-run-state --test admission_live \
+    admission_live -- --ignored --exact --nocapture --test-threads=1
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/http-ordinary-admission.sh run-all
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/admission-execution-pin.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/materializer-run-schema.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/flow-invocation-replay.sh check
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next \
+  tools/gate-mutants/causation-e2e.sh check
+tools/gate-mutants/trusted-invocation-context.sh check
+
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline \
+    -p wamn-run-state -p wamn-runtime -p wamn-proof-integration \
+    --all-targets -- -D warnings
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+    -p materializer --all-targets -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/http-ordinary-admission.sh
+git diff --check
+```
+
+The legacy `invocationproof`, `credproof`, and `runner-egress-address` runtime
+jobs still exercise host-inline dispatch. They are intentionally deferred to
+the immediately following `.5.2` deletion rather than adapted in this bead.

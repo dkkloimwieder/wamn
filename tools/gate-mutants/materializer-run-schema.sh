@@ -31,7 +31,7 @@ load_mutation() {
   case "$id" in
     materializer-default-bypasses-canonical-schema)
       TARGET="components/execution/materializer/src/main.rs"
-      EXPECTED_SHA="8c6d659e073f5862744b0ae2333976c14cc1a861c1a6b1a95b1b951c16598cdb"
+      EXPECTED_SHA="e465079a1e20f9c4b96b72ca4b2c6e0e789630beaf2714d153a5462209583682"
       NEEDLE='env_or("WAMN_MAT_RUN_SCHEMA", "wamn_run")'
       REPLACEMENT='env_or("WAMN_MAT_RUN_SCHEMA", "mutant_run")'
       GATE="materializer::tests::admission_scopes_dedup_and_records_registration_evidence"
@@ -39,7 +39,7 @@ load_mutation() {
       ;;
     custom-schema-leaves-admission-boundaries-canonical)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="54a41d363738302c590c31db3dcc0a5cdfadb2a1fdf082a95985d594fa763266"
+      EXPECTED_SHA="4537be786450218be3403e625b4c7c0afe36ed4bc7c532f4f6ea36966e1b9712"
       NEEDLE='admit: canonical.admit.replace("wamn_run.", &qualifier),'
       REPLACEMENT='admit: canonical.admit,'
       GATE="admission::tests::custom_admission_schema_qualifies_every_run_state_reference"
@@ -47,7 +47,7 @@ load_mutation() {
       ;;
     invalid-schema-bypasses-identifier-validation)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="54a41d363738302c590c31db3dcc0a5cdfadb2a1fdf082a95985d594fa763266"
+      EXPECTED_SHA="4537be786450218be3403e625b4c7c0afe36ed4bc7c532f4f6ea36966e1b9712"
       NEEDLE='Identifier::new(value).map(Self)'
       REPLACEMENT='Identifier::new("mutant_run").map(Self)'
       GATE="admission::tests::run_state_schema_rejects_invalid_postgresql_identifiers"

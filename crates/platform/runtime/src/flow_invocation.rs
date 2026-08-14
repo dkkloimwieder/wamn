@@ -27,7 +27,6 @@ use wamn_run_state::invocation::{
     resolve_invocation_target_sql,
 };
 
-const INLINE_GENERATION: i64 = 1;
 const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 502;
 
 #[derive(Debug, Clone)]
@@ -105,7 +104,7 @@ pub struct InvocationService<B> {
     backend: B,
     notification_database_url: Option<String>,
     config: InvocationServiceConfig,
-    driver: Arc<dyn InlineRunDriver>,
+    _driver: Arc<dyn InlineRunDriver>,
 }
 
 impl<B: InvocationBackend> InvocationService<B> {
@@ -119,7 +118,7 @@ impl<B: InvocationBackend> InvocationService<B> {
             backend,
             notification_database_url,
             config,
-            driver,
+            _driver: driver,
         }
     }
 
@@ -200,14 +199,6 @@ impl<B: InvocationBackend> InvocationService<B> {
         for attempt in 0..=1 {
             match self.backend.admit(&self.config, &admission).await? {
                 AdmissionResult::Admitted { run_id } => {
-                    self.driver.start(InlineRunClaim {
-                        run_id: run_id.clone(),
-                        lease_owner: self.config.executor_id.clone(),
-                        lease_generation: INLINE_GENERATION,
-                        tenant: self.config.tenant_id.clone(),
-                        project: self.config.project.clone(),
-                        schema: self.config.schema.clone(),
-                    })?;
                     return Ok(BeginResult::Admitted(Admitted { run_id }));
                 }
                 AdmissionResult::Duplicate {
@@ -467,8 +458,6 @@ impl InvocationBackend for PostgresInvocationBackend {
         let flow_version = admission.target.flow_version;
         let input = serde_json::to_string(&admission.input)?;
         let context = serde_json::to_string(&admission.invocation_context)?;
-        let lease_ttl = i64::try_from(config.lease_ttl.as_millis())
-            .context("lease TTL exceeds i64 milliseconds")?;
         let none_text: Option<&str> = None;
         let none_i64: Option<i64> = None;
         let none_i32: Option<i32> = None;
@@ -493,8 +482,6 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &admission.principal_digest,
                     &admission.client_key_digest,
                     &admission.request.client_request_fingerprint,
-                    &config.executor_id,
-                    &lease_ttl,
                     &none_text,
                     &none_i64,
                     &none_text,
@@ -978,7 +965,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unchanged_promotion_retries_final_admission_once() {
+    async fn unchanged_promotion_retries_admission_without_starting_inline_execution() {
         let backend = MockBackend::default();
         backend.targets.lock().await.extend([
             Some(target(true)),
@@ -1008,20 +995,13 @@ mod tests {
             })
         );
         assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8, 9]);
-        assert_eq!(
+        assert!(
             driver
                 .claims
                 .lock()
                 .expect("recording driver lock poisoned")
-                .as_slice(),
-            &[InlineRunClaim {
-                run_id: "run-promoted".to_string(),
-                lease_owner: "invoke-1".to_string(),
-                lease_generation: 1,
-                tenant: "tenant-a".to_string(),
-                project: "project-a".to_string(),
-                schema: Some("tenant_a".to_string()),
-            }]
+                .is_empty(),
+            "begin only admits; the warm worker owns execution"
         );
     }
 
@@ -1233,7 +1213,9 @@ mod tests {
             .push_back(AdmissionResult::Admitted {
                 run_id: "run-pure".to_string(),
             });
-        let pure_service = InvocationService::new(pure_backend.clone(), None, config(), driver());
+        let pure_driver = driver();
+        let pure_service =
+            InvocationService::new(pure_backend.clone(), None, config(), pure_driver.clone());
 
         assert_eq!(
             pure_service.begin(without_key).await.unwrap(),
@@ -1244,6 +1226,14 @@ mod tests {
         assert_eq!(
             pure_backend.admitted_client_keys.lock().await.as_slice(),
             &[None]
+        );
+        assert!(
+            pure_driver
+                .claims
+                .lock()
+                .expect("recording driver lock poisoned")
+                .is_empty(),
+            "a fresh admission must not start inline execution"
         );
     }
 

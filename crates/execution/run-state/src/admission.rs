@@ -262,17 +262,15 @@ fn lock_catalog_head_sql() -> String {
 /// 15. principal digest (HTTP)
 /// 16. client-key digest (HTTP)
 /// 17. request fingerprint (HTTP)
-/// 18. inline executor identity (HTTP)
-/// 19. inline lease TTL milliseconds (HTTP)
-/// 20. registration id (event)
-/// 21. event sequence (event)
-/// 22. RFC 8785 registration JSON text (event)
-/// 23. canonical registration hash (event)
-/// 24. immediate source run id (event)
-/// 25. causal root run id (event)
-/// 26. causal depth (event)
-/// 27. resolved partition key (all producers; null means unordered)
-/// 28. resolved partition policy (all producers; `blocking | leapfrog`)
+/// 18. registration id (event)
+/// 19. event sequence (event)
+/// 20. RFC 8785 registration JSON text (event)
+/// 21. canonical registration hash (event)
+/// 22. immediate source run id (event)
+/// 23. causal root run id (event)
+/// 24. causal depth (event)
+/// 25. resolved partition key (all producers; null means unordered)
+/// 26. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -289,12 +287,11 @@ WITH input AS ( \
            $12::text AS platform_revision, $13::timestamptz AS response_deadline_at, \
            $14::timestamptz AS run_deadline_at, $15::text AS principal_digest, \
            $16::text AS client_key_digest, $17::text AS request_fingerprint, \
-           $18::text AS executor_id, $19::bigint AS lease_ttl_ms, \
-           $20::text AS registration_id, $21::bigint AS event_seq, \
-           $22::text::jsonb AS registration_document, $23::text AS registration_hash, \
-           $24::text AS event_source_run_id, $25::text AS event_root_run_id, \
-           $26::int AS event_depth, $27::text AS partition_key, \
-           $28::text AS partition_policy \
+           $18::text AS registration_id, $19::bigint AS event_seq, \
+           $20::text::jsonb AS registration_document, $21::text AS registration_hash, \
+           $22::text AS event_source_run_id, $23::text AS event_root_run_id, \
+           $24::int AS event_depth, $25::text AS partition_key, \
+           $26::text AS partition_policy \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -401,8 +398,6 @@ classified AS ( \
         OR i.expected_definition_hash = '' OR i.principal_digest IS NULL \
         OR i.principal_digest = '' OR i.client_key_digest = '' \
         OR i.request_fingerprint IS NULL OR i.request_fingerprint = '' \
-        OR i.executor_id IS NULL OR i.executor_id = '' \
-        OR i.lease_ttl_ms IS NULL OR i.lease_ttl_ms <= 0 \
         OR i.registration_id IS NOT NULL OR i.event_seq IS NOT NULL \
         OR i.registration_document IS NOT NULL OR i.registration_hash IS NOT NULL \
         OR i.event_source_run_id IS NOT NULL OR i.event_root_run_id IS NOT NULL \
@@ -417,8 +412,7 @@ classified AS ( \
         OR i.event_depth < 0 OR i.event_depth > 16 OR i.attachment_id IS NOT NULL \
         OR i.expected_definition_hash IS NOT NULL OR i.response_deadline_at IS NOT NULL \
         OR i.principal_digest IS NOT NULL OR i.client_key_digest IS NOT NULL \
-        OR i.request_fingerprint IS NOT NULL \
-        OR i.executor_id IS NOT NULL OR i.lease_ttl_ms IS NOT NULL) \
+        OR i.request_fingerprint IS NOT NULL) \
         THEN 'invalid-input' \
       WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
       WHEN h.applied_catalog_version <> i.expected_catalog_version THEN 'head-drift' \
@@ -435,7 +429,7 @@ classified AS ( \
         THEN 'registration-drift' \
       WHEN i.producer = 'event' \
        AND i.registration_hash <> ('sha256:' || encode( \
-         sha256(convert_to($22::text, 'UTF8')), 'hex')) \
+         sha256(convert_to($20::text, 'UTF8')), 'hex')) \
         THEN 'invalid-registration-hash' \
       WHEN i.producer = 'event' AND ( \
         i.input_json ? 'causation' OR i.invocation_context ? 'causation' \
@@ -539,13 +533,8 @@ created_run AS ( \
 ), \
 created_queue AS ( \
     INSERT INTO wamn_run.run_queue \
-      (tenant_id, run_id, partition_key, partition_policy, available_at, \
-       lease_owner, lease_expires_at, lease_generation, stream_seq) \
+      (tenant_id, run_id, partition_key, partition_policy, available_at, stream_seq) \
     SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \
-           CASE WHEN c.producer = 'http' THEN c.executor_id END, \
-           CASE WHEN c.producer = 'http' \
-             THEN now() + (c.lease_ttl_ms * interval '1 millisecond') END, \
-           CASE WHEN c.producer = 'http' THEN 1 ELSE 0 END, \
            CASE WHEN c.producer = 'event' THEN c.event_seq ELSE 0 END \
       FROM created_run AS r JOIN classified AS c USING (tenant_id, run_id) \
     RETURNING tenant_id, run_id \
@@ -585,8 +574,10 @@ mod tests {
         let sql = admission_sql().admit;
 
         assert!(!sql.contains("admission_expires_at"));
-        assert!(!sql.contains("$29"));
-        assert!(sql.contains("$28::text AS partition_policy"));
+        assert!(!sql.contains("$27"));
+        assert!(sql.contains("$26::text AS partition_policy"));
+        assert!(!sql.contains("executor_id"));
+        assert!(!sql.contains("lease_ttl_ms"));
         assert!(sql.contains("OR i.client_key_digest = ''"));
         assert!(!sql.contains("OR i.client_key_digest IS NULL"));
         assert!(sql.contains("AND i.client_key_digest IS NOT NULL"));
@@ -701,8 +692,8 @@ mod tests {
     #[test]
     fn callable_admission_forces_capture_off_without_new_input() {
         let sql = admission_sql().admit().to_string();
-        assert!(sql.contains("$27::text AS partition_key, $28::text AS partition_policy"));
-        assert!(!sql.contains("$29"));
+        assert!(sql.contains("$25::text AS partition_key, $26::text AS partition_policy"));
+        assert!(!sql.contains("$27"));
         assert!(!sql.contains("event_source_run_id, event_root_run_id, event_depth, capture_mode"));
         assert!(
             sql.contains(
@@ -750,7 +741,7 @@ mod tests {
     }
 
     #[test]
-    fn producer_specific_checks_and_queue_states_are_pinned() {
+    fn producer_specific_checks_and_unleased_queue_state_are_pinned() {
         let sql = admission_sql().admit().to_string();
         for refusal in [
             "head-drift",
@@ -766,8 +757,12 @@ mod tests {
         ] {
             assert!(sql.contains(refusal), "missing {refusal}");
         }
-        assert!(sql.contains("THEN 1 ELSE 0 END"));
-        assert!(sql.contains("THEN c.executor_id END"));
+        assert!(sql.contains(
+            "(tenant_id, run_id, partition_key, partition_policy, available_at, stream_seq)"
+        ));
+        assert!(!sql.contains("lease_owner"));
+        assert!(!sql.contains("lease_expires_at"));
+        assert!(!sql.contains("lease_generation"));
         assert!(sql.contains("THEN c.event_seq ELSE 0 END"));
         assert!(sql.contains("'evt:' || c.registration_id"));
         assert!(sql.contains("i.partition_policy NOT IN ('blocking', 'leapfrog')"));

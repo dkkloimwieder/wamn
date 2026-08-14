@@ -512,8 +512,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
     let principal_digest = "causation-e2e-principal";
     let client_key_digest = "causation-e2e-key";
     let request_fingerprint = "causation-e2e-request";
-    let executor_id = "causation-e2e-inline";
-    let lease_ttl_ms = 1i64;
     let none_i64: Option<i64> = None;
     let none_i32: Option<i32> = None;
     let none_text: Option<&str> = None;
@@ -538,8 +536,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
                 &principal_digest,
                 &client_key_digest,
                 &request_fingerprint,
-                &executor_id,
-                &lease_ttl_ms,
                 &none_text,
                 &none_i64,
                 &none_text,

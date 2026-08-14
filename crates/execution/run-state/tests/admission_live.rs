@@ -46,7 +46,7 @@ fn prepare(sql: &str) -> String {
     format!(
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
-          timestamptz,timestamptz,text,text,text,text,bigint, \
+          timestamptz,timestamptz,text,text,text, \
           text,bigint,text,text,text,text,int,text,text) AS {sql};"
     )
 }
@@ -70,7 +70,7 @@ fn execute_http_ordered(
          'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
-         'principal','{key}','{fingerprint}','inline-1',30000,\
+         'principal','{key}','{fingerprint}',\
          NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
         ordering(partition_key, partition_policy)
     )
@@ -86,7 +86,7 @@ fn execute_http_without_key(run_id: &str) -> String {
          'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
-         'principal',NULL,'fingerprint-without-key','inline-1',30000,\
+         'principal',NULL,'fingerprint-without-key',\
          NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking')"
     )
 }
@@ -128,7 +128,7 @@ fn execute_event_lineage_ordered(
         "EXECUTE admit_stmt(\
          'event','c1','dev',1,NULL,NULL,'flow-event',1,\
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
-         NULL,now()+interval '1 minute',NULL,NULL,NULL,NULL,NULL,\
+         NULL,now()+interval '1 minute',NULL,NULL,NULL,\
          'reg-a',{seq},'{document}','{hash}',\
          '{source_run_id}','{root_run_id}',{depth},{})",
         ordering(partition_key, partition_policy)
@@ -258,8 +258,8 @@ fn admission_live() {
     let admit = recipe.admit().to_string();
     let prepared = prepare(&admit);
 
-    // Both producer variants use the same statement, while their initial queue
-    // state stays producer-shaped.
+    // Both producer variants use the same statement and enter the ordinary
+    // unleased queue. Event admission additionally carries its stream position.
     for (execution, expected) in [
         (execute_http("http-1", "key-1", "fp-1"), "admitted|http-1"),
         (
@@ -277,8 +277,11 @@ fn admission_live() {
         &url,
         &format!(
             "DO $$ BEGIN \
-               ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='http-1') = 'inline-1'; \
-               ASSERT (SELECT lease_generation FROM wamn_run.run_queue WHERE run_id='http-1') = 1; \
+               ASSERT (SELECT status FROM wamn_run.runs WHERE run_id='http-1') = 'dispatched'; \
+               ASSERT (SELECT available_at <= now() FROM wamn_run.run_queue WHERE run_id='http-1'); \
+               ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='http-1') IS NULL; \
+               ASSERT (SELECT lease_expires_at FROM wamn_run.run_queue WHERE run_id='http-1') IS NULL; \
+               ASSERT (SELECT lease_generation FROM wamn_run.run_queue WHERE run_id='http-1') = 0; \
                ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions WHERE run_id='http-1') = 1; \
                ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='event-1') IS NULL; \
                ASSERT (SELECT stream_seq FROM wamn_run.run_queue WHERE run_id='event-1') = 41; \
@@ -622,13 +625,11 @@ fn admission_live() {
            'http','c1','dev',99,'http-a','sha256:http','flow-http',1,\
            'http-stale','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-stale','key-stale','fp-stale',\
-           'inline-stale',30000,\
            NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'missing','sha256:http','flow-http',1,\
            'http-inactive','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-inactive','key-inactive','fp-inactive',\
-           'inline-inactive',30000,\
            NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
@@ -649,12 +650,11 @@ fn admission_live() {
         "{} {} \
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
-           'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','f',\
-           NULL,30000,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','',\
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
            'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,\
-           NULL,NULL,\
            'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
@@ -852,8 +852,9 @@ fn admission_live() {
          END $$;",
     );
 
-    // A failure at every run -> queue -> HTTP-ledger seam rolls back every
-    // preceding CTE.
+    // A failure at every run, queue, and HTTP-ledger seam rolls back every
+    // preceding CTE. The queue fault is HTTP-specific so it proves that both
+    // its earlier ledger reservation and run insert are atomic with enqueue.
     for (name, target, execution, run_id) in [
         (
             "run",
@@ -869,15 +870,14 @@ fn admission_live() {
         (
             "queue",
             "wamn_run.run_queue",
-            execute_event_ordered(
-                "event-fault",
-                &registration_document,
-                &registration_digest,
-                53,
+            execute_http_ordered(
+                "http-queue-fault",
+                "key-queue-fault",
+                "fp-queue-fault",
                 Some("fault-key"),
                 "leapfrog",
             ),
-            "event-fault",
+            "http-queue-fault",
         ),
         (
             "ledger",
@@ -895,16 +895,19 @@ fn admission_live() {
         let output = psql(
             &url,
             &format!(
-                "{} {} {} {}; COMMIT;",
-                app_preamble(),
-                prepared,
-                trigger,
-                execution
+                "BEGIN; {} {} SET LOCAL ROLE wamn_app; \
+                 SET LOCAL app.tenant = 't1'; {}; COMMIT;",
+                trigger, prepared, execution
             ),
         );
         assert!(
             !output.status.success(),
             "{name} fault must abort admission"
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(&format!("injected-{name}-fault")),
+            "{name} fault must reach the injected admission trigger; stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
         );
         success(
             &url,

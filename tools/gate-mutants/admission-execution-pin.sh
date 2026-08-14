@@ -32,7 +32,7 @@ load_mutation() {
   case "$id" in
     missing-root-plan-admits-run)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="54a41d363738302c590c31db3dcc0a5cdfadb2a1fdf082a95985d594fa763266"
+      EXPECTED_SHA="4537be786450218be3403e625b4c7c0afe36ed4bc7c532f4f6ea36966e1b9712"
       NEEDLE="      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \\"
       REPLACEMENT="      WHEN rp.execution_bundle_hash IS NULL THEN 'ready' \\"
       GATE="admission::tests::admission_derives_root_bundle_from_authoritative_member"
@@ -61,7 +61,7 @@ BEFORE UPDATE OF catalog_id, catalog_version, environment'
       ;;
     legacy-plan-pin-fabricated-from-artifact)
       TARGET="services/ctl/src/publish_catalog.rs"
-      EXPECTED_SHA="efe1a5a772e6a30d6f7064789c09d040cc603ffd1701d65bf79cd98039e589ab"
+      EXPECTED_SHA="2b139e4501ebff8f2c74ca894c30b8f18d2ede536bd1213e6152e9fbee5d0b2b"
       NEEDLE='                prepared.execution_bundle_hash.as_ref().ok_or_else(|| {'
       REPLACEMENT='                Some(prepared.artifact.identity().artifact_hash().as_str()).ok_or_else(|| {'
       GATE="publish_catalog::tests::legacy_publication_without_validated_plan_returns_missing_root_plan"
