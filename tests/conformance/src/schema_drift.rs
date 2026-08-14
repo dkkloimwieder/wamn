@@ -92,10 +92,7 @@ fn runs_stand_in() -> String {
         admission_context_version text NOT NULL DEFAULT '0.1', \
         platform_revision text NOT NULL DEFAULT 'legacy', \
         idempotency_key text, replay_of text, root_run_id text, \
-        parent_run_id text, parent_node_id text, parent_occurrence int, \
-        invoke_depth int NOT NULL DEFAULT 0, invoke_root_run_id text, \
-        waiting_child_run_id text, waiting_child_occurrence int, \
-        wait_generation bigint, caller_outcome_kind text, caller_outcome_json jsonb, \
+        caller_outcome_kind text, caller_outcome_json jsonb, \
         caller_http_status int, caller_release_node_id text, caller_outcome_hash text, \
         caller_released_at timestamptz, response_deadline_at timestamptz, \
         run_deadline_at timestamptz, terminal_reason text, \
@@ -127,10 +124,10 @@ fn run_state_guard_rejects_a_dropped_column_a_longer_name_would_mask() {
     let column = "run_id text NOT NULL, ";
     let stand_in = runs_stand_in();
     assert_eq!(stand_in.matches(column).count(), 1);
-    // `parent_run_id`, `root_run_id`, and the PRIMARY KEY still name `run_id`, so
+    // `root_run_id` and the PRIMARY KEY still name `run_id`, so
     // only a by-NAME column comparison catches the drop.
     let mutant = stand_in.replacen(column, "", 1);
-    assert!(mutant.contains("parent_run_id") && mutant.contains("PRIMARY KEY (tenant_id, run_id)"));
+    assert!(mutant.contains("root_run_id") && mutant.contains("PRIMARY KEY (tenant_id, run_id)"));
 
     assert_run_state_stand_in("missing-run-id-mutant", &mutant, &runs_only_spec());
 }

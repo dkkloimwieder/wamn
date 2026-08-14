@@ -52,9 +52,9 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
-    BareSchemaName, EffectWriterRoleObservation, RunPlaneObservation, RunPlanePlan,
-    ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
-    count_retired_authored_ordering_rows_sql, count_run_rows_sql,
+    BareSchemaName, EffectWriterRoleObservation, RunPlaneActionKind, RunPlaneObservation,
+    RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
+    count_release_flow_rows_sql, count_retired_authored_ordering_rows_sql, count_run_rows_sql,
     count_stale_registration_keys_sql, plan_run_plane, select_app_scenario_author_membership_sql,
     select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
@@ -68,6 +68,16 @@ use wamn_schema_control::{
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
+
+const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 7] = [
+    RunPlaneActionKind::VerifyEffectWriterRole,
+    RunPlaneActionKind::ExecutionPinCutover,
+    RunPlaneActionKind::FrameIdentityCutover,
+    RunPlaneActionKind::EffectWriterCutover,
+    RunPlaneActionKind::PartitionPlaneCutover,
+    RunPlaneActionKind::ChildRunCutover,
+    RunPlaneActionKind::StoredSuiteCutover,
+];
 
 #[derive(Debug, Args)]
 pub struct ReconcileRunPlaneArgs {
@@ -129,17 +139,11 @@ pub async fn reconcile(
     let plan = plan_run_plane(schema, &obs);
     if apply {
         let mut applied = 0;
-        while plan.actions.get(applied).is_some_and(|action| {
-            matches!(
-                action.kind,
-                wamn_schema_control::RunPlaneActionKind::VerifyEffectWriterRole
-                    | wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
-                    | wamn_schema_control::RunPlaneActionKind::FrameIdentityCutover
-                    | wamn_schema_control::RunPlaneActionKind::EffectWriterCutover
-                    | wamn_schema_control::RunPlaneActionKind::PartitionPlaneCutover
-                    | wamn_schema_control::RunPlaneActionKind::StoredSuiteCutover
-            )
-        }) {
+        while plan
+            .actions
+            .get(applied)
+            .is_some_and(|action| LEADING_CUTOVER_ACTIONS.contains(&action.kind))
+        {
             let action = &plan.actions[applied];
             client
                 .batch_execute(&action.sql)
@@ -547,5 +551,27 @@ fn print_plan(plan: &RunPlanePlan, dry_run: bool) {
     }
     for (table, col) in &plan.extra_columns {
         println!("  [extra] {table}.{col} is not in the schema of record — left untouched");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leading_cutover_allowlist_is_exact() {
+        assert_eq!(
+            LEADING_CUTOVER_ACTIONS,
+            [
+                RunPlaneActionKind::VerifyEffectWriterRole,
+                RunPlaneActionKind::ExecutionPinCutover,
+                RunPlaneActionKind::FrameIdentityCutover,
+                RunPlaneActionKind::EffectWriterCutover,
+                RunPlaneActionKind::PartitionPlaneCutover,
+                RunPlaneActionKind::ChildRunCutover,
+                RunPlaneActionKind::StoredSuiteCutover,
+            ]
+        );
+        assert!(!LEADING_CUTOVER_ACTIONS.contains(&RunPlaneActionKind::EnsureSchema));
     }
 }

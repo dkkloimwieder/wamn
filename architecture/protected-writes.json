@@ -2566,11 +2566,6 @@
             "insert(idempotency_key)",
             "insert(input_json)",
             "insert(invocation_context)",
-            "insert(invoke_depth)",
-            "insert(invoke_root_run_id)",
-            "insert(parent_node_id)",
-            "insert(parent_occurrence)",
-            "insert(parent_run_id)",
             "insert(platform_revision)",
             "insert(registration_id)",
             "insert(replay_of)",
@@ -2585,9 +2580,6 @@
             "insert(terminal_reason)",
             "insert(trigger_source)",
             "insert(updated_at)",
-            "insert(wait_generation)",
-            "insert(waiting_child_occurrence)",
-            "insert(waiting_child_run_id)",
             "update(admission_context_version)",
             "update(attachment_id)",
             "update(caller_http_status)",
@@ -2612,11 +2604,6 @@
             "update(idempotency_key)",
             "update(input_json)",
             "update(invocation_context)",
-            "update(invoke_depth)",
-            "update(invoke_root_run_id)",
-            "update(parent_node_id)",
-            "update(parent_occurrence)",
-            "update(parent_run_id)",
             "update(platform_revision)",
             "update(registration_id)",
             "update(replay_of)",
@@ -2630,10 +2617,7 @@
             "update(tenant_id)",
             "update(terminal_reason)",
             "update(trigger_source)",
-            "update(updated_at)",
-            "update(wait_generation)",
-            "update(waiting_child_occurrence)",
-            "update(waiting_child_run_id)"
+            "update(updated_at)"
           ]
         }
       ],
@@ -2646,9 +2630,6 @@
         "constraint:runs_capture_mode_source_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (capture_mode <> 'full'::text OR NOT trigger_source IS DISTINCT FROM 'scenario-draft'::text)",
         "constraint:runs_check1;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (event_source_run_id IS NULL AND event_root_run_id IS NULL AND event_depth IS NULL OR trigger_source = 'event'::text AND event_source_run_id IS NOT NULL AND event_source_run_id <> ''::text AND event_root_run_id IS NOT NULL AND event_root_run_id <> ''::text AND event_depth IS NOT NULL)",
         "constraint:runs_check2;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (event_depth IS DISTINCT FROM 0 OR event_source_run_id = run_id AND event_root_run_id = run_id)",
-        "constraint:runs_check3;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL) AND (parent_run_id IS NULL) = (parent_occurrence IS NULL))",
-        "constraint:runs_check4;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL))",
-        "constraint:runs_check5;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL))",
         "constraint:runs_check6;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL))",
         "constraint:runs_check7;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL)",
         "constraint:runs_check8;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (caller_outcome_kind <> 'responded'::text OR caller_release_node_id IS NOT NULL)",
@@ -2658,7 +2639,6 @@
         "constraint:runs_execution_bundle_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, execution_bundle_hash) REFERENCES catalog.execution_bundles(tenant_id, execution_bundle_hash)",
         "constraint:runs_fail_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (fail_kind = ANY (ARRAY['terminal'::text, 'retry-exhausted'::text, 'invalid-input'::text, 'runaway-budget'::text, 'effect-uncertain'::text, 'depth-budget'::text, 'dispatch-budget'::text, 'unresolvable-name'::text, 'hash-invalid-bytes'::text, 'foreign-revision'::text, 'incompatible-contract'::text, 'unbound-requirement'::text]))",
         "constraint:runs_invocation_context_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (jsonb_typeof(invocation_context) = 'object'::text AND octet_length(invocation_context::text) <= 16384)",
-        "constraint:runs_invoke_depth_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (invoke_depth >= 0)",
         "constraint:runs_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, run_id)",
         "constraint:runs_release_fk;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, catalog_id, catalog_version) REFERENCES catalog.release_manifests(tenant_id, catalog_id, catalog_version)",
         "constraint:runs_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (status = ANY (ARRAY['dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'infrastructure-failure'::text, 'effect-uncertain'::text]))",
@@ -2667,8 +2647,7 @@
         "row-security:enabled=true;forced=true",
         "trigger:runs_admission_pins_immutable;mode=origin;function=wamn_run.guard_run_admission_pins_immutable();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()",
         "trigger:runs_event_lineage_immutable;mode=origin;function=wamn_run.guard_event_lineage_immutable();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()",
-        "unique-index:runs_idempotency;valid=true;ready=true;definition=CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs USING btree (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL",
-        "unique-index:runs_parent_occurrence;valid=true;ready=true;definition=CREATE UNIQUE INDEX runs_parent_occurrence ON wamn_run.runs USING btree (tenant_id, parent_run_id, parent_node_id, parent_occurrence) WHERE parent_run_id IS NOT NULL"
+        "unique-index:runs_idempotency;valid=true;ready=true;definition=CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs USING btree (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL"
       ]
     }
   ]

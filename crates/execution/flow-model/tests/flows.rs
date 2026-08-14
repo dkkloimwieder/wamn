@@ -34,7 +34,6 @@ fn interfaces() -> ResolvedInterfaces {
         ("disposition-recommendation".into(), vec!["main".into()]),
         ("custom".into(), vec!["main".into()]),
         ("http-request".into(), vec!["main".into()]),
-        ("invoke-flow".into(), vec!["main".into()]),
         ("pg-write".into(), vec!["main".into()]),
         ("postgres".into(), vec!["main".into()]),
         ("postgres-query".into(), vec!["main".into()]),

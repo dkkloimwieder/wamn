@@ -67,8 +67,6 @@ pub mod admission;
 pub mod attempt;
 /// Node-level I/O capture and durable output projection.
 pub mod capture;
-/// Occurrence-keyed child creation, parent parking, and atomic child release.
-pub mod child;
 pub mod context;
 /// Shared strict credential document for the private native effect writer.
 #[cfg(feature = "effect-writer-credential")]

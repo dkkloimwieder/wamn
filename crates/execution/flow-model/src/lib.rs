@@ -38,8 +38,8 @@ pub use node_contract::{
 pub use preimage::FlowPreimage;
 pub use types::{
     CallFlowConfig, CredentialRef, CronInput, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput,
-    FailConfig, Flow, FlowConnectionRequirement, InvokeActorMode, InvokeFlowConfig, MAIN_PORT,
-    Node, NodeId, RequestConfig, RespondConfig, RowEvent, SCHEMA_VERSION,
+    FailConfig, Flow, FlowConnectionRequirement, MAIN_PORT, Node, NodeId, RequestConfig,
+    RespondConfig, RowEvent, SCHEMA_VERSION,
 };
 pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 

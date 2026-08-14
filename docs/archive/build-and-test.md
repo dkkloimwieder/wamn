@@ -5067,3 +5067,57 @@ bash -n tools/gate-mutants/http-ordinary-admission.sh
 cargo fmt --all -- --check
 git diff --check
 ```
+
+## SR-MVP — durable child-run deletion (`wamn-0h0g.4.4`)
+
+This debug-only gate proves that `call-flow` is the sole retained inter-flow
+declaration, fresh schemas contain no durable child/wait/depth state, and the
+leading `ChildRunCutover` either removes empty legacy state atomically or
+refuses populated state with SQLSTATE `55000` before any DDL. The live proof
+also pins ordinary-run, release-resolution, root-lineage, and frame-fact
+retention. Use a disposable PostgreSQL 18 database for the run-plane tests.
+Start the protected-relation block on a separate fresh PostgreSQL 18 cluster:
+its role evidence is cluster-global and must not inherit objects from another
+live gate.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
+export CARGO_INCREMENTAL=0
+
+cargo test --locked --offline \
+  -p wamn-flow -p wamn-run-state -p wamn-schema-control
+cargo test --locked --offline -p wamn-ctl \
+  reconcile_run_plane::tests::leading_cutover_allowlist_is_exact -- --exact
+cargo test --locked --offline -p wamn-proof-conformance
+cargo test --locked --offline -p wamn-proof-system --lib --no-run
+cargo test --locked --offline -p wamn-runtime \
+  --test production_claim_live --no-run
+
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    child_run_cutover_live -- --exact --nocapture --test-threads=1
+WAMN_CTL_PG_URL="$THROWAWAY_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+
+# Intentional inventory regeneration after a protected-schema change.
+WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
+WAMN_UPDATE_PROTECTED_RELATIONS=1 \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test protected_relations_live -- --nocapture --test-threads=1
+tools/gate-mutants/protected-relations.sh check
+WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
+  tools/gate-mutants/protected-relations.sh green-all
+WAMN_CTL_PG_URL="$PROTECTED_RELATIONS_PG_URL" \
+  tools/gate-mutants/protected-relations.sh run-all
+
+cargo clippy --locked --offline \
+  -p wamn-flow -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
+  -p wamn-proof-conformance --all-targets -- -D warnings
+cargo clippy --locked --offline -p wamn-proof-system --lib -- -D warnings
+cargo clippy --locked --offline -p wamn-runtime \
+  --test production_claim_live -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/protected-relations.sh
+git diff --check
+```

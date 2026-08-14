@@ -291,6 +291,38 @@ async fn install_legacy_partition_plane(su: &Client) {
     .expect("install retired partition plane");
 }
 
+async fn install_legacy_child_run_state(su: &Client) {
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.runs \
+           ADD COLUMN parent_run_id text, \
+           ADD COLUMN parent_node_id text, \
+           ADD COLUMN parent_occurrence int, \
+           ADD COLUMN invoke_depth int NOT NULL DEFAULT 0, \
+           ADD COLUMN invoke_root_run_id text, \
+           ADD COLUMN waiting_child_run_id text, \
+           ADD COLUMN waiting_child_occurrence int, \
+           ADD COLUMN wait_generation bigint, \
+           ADD CONSTRAINT runs_invoke_depth_check CHECK (invoke_depth >= 0), \
+           ADD CONSTRAINT runs_check3 CHECK ( \
+             (parent_run_id IS NULL) = (parent_node_id IS NULL) AND \
+             (parent_run_id IS NULL) = (parent_occurrence IS NULL)), \
+           ADD CONSTRAINT runs_check4 CHECK ( \
+             (parent_run_id IS NULL) = (invoke_root_run_id IS NULL)), \
+           ADD CONSTRAINT runs_check5 CHECK ( \
+             (waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND \
+             (waiting_child_run_id IS NULL) = (wait_generation IS NULL)); \
+         CREATE UNIQUE INDEX runs_parent_occurrence ON {SCHEMA}.runs \
+           (tenant_id,parent_run_id,parent_node_id,parent_occurrence) \
+           WHERE parent_run_id IS NOT NULL; \
+         CREATE INDEX runs_invoke_root ON {SCHEMA}.runs \
+           (tenant_id,invoke_root_run_id) WHERE invoke_root_run_id IS NOT NULL; \
+         CREATE INDEX runs_waiting_child ON {SCHEMA}.runs \
+           (tenant_id,waiting_child_run_id) WHERE waiting_child_run_id IS NOT NULL;"
+    ))
+    .await
+    .expect("install retired child-run state");
+}
+
 async fn partition_plane_schema_snapshot(su: &Client) -> String {
     su.query_one(
         "SELECT jsonb_build_object( \
@@ -366,6 +398,7 @@ async fn run_plane_reconcile_live() {
     v1_era_drifted_leg(&su, &url).await;
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
+    child_run_cutover_leg(&su).await;
     capture_mode_additive_leg(&su, &url).await;
     invocation_admission_retention_leg(&su).await;
     stored_suite_cutover_leg(&su).await;
@@ -394,6 +427,16 @@ async fn stored_suite_cutover_live() {
     };
     let su = connect(&url).await;
     stored_suite_cutover_leg(&su).await;
+}
+
+#[tokio::test]
+async fn child_run_cutover_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the child-run cutover gate");
+        return;
+    };
+    let su = connect(&url).await;
+    child_run_cutover_leg(&su).await;
 }
 
 async fn regress_execution_pin_contract(su: &Client) {
@@ -1694,6 +1737,155 @@ async fn shared_runner_legacy_leg(su: &Client) {
     );
 }
 
+/// Retired child/wait state is removed only when every durable row is ordinary.
+async fn child_run_cutover_leg(su: &Client) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    install_legacy_child_run_state(su).await;
+    seed_run_pin_parents(su, "child-cutover", "cat", 1, "dev").await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash,root_run_id) \
+         VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','retained-run'); \
+         INSERT INTO {SCHEMA}.run_flow_resolutions \
+           (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
+         VALUES ('child-cutover','retained-run','f', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','sha256:retained-source'); \
+         INSERT INTO {SCHEMA}.node_runs \
+           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,seq,status) \
+         VALUES ('child-cutover','retained-run',0, \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}','root-node',0,'success');"
+    ))
+    .await
+    .expect("seed retained ordinary run and frame facts");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("empty child state cuts over around retained ordinary facts");
+    assert_eq!(
+        plan.actions.first().map(|action| action.kind),
+        Some(RunPlaneActionKind::ChildRunCutover),
+        "child deletion is the leading action: {:#?}",
+        plan.actions
+    );
+    for column in [
+        "parent_run_id",
+        "parent_node_id",
+        "parent_occurrence",
+        "waiting_child_run_id",
+        "waiting_child_occurrence",
+        "wait_generation",
+        "invoke_depth",
+        "invoke_root_run_id",
+    ] {
+        assert!(
+            !column_exists(su, "runs", column).await,
+            "retired child-run column remains: {column}"
+        );
+    }
+    for index in [
+        "runs_parent_occurrence",
+        "runs_invoke_root",
+        "runs_waiting_child",
+    ] {
+        assert!(
+            indexdef(su, index).await.is_none(),
+            "retired index remains: {index}"
+        );
+    }
+    let retained = su
+        .query_one(
+            &format!(
+                "SELECT r.root_run_id, n.frame_id, f.source_artifact_hash \
+                   FROM {SCHEMA}.runs AS r \
+                   JOIN {SCHEMA}.node_runs AS n USING (tenant_id,run_id) \
+                   JOIN {SCHEMA}.run_flow_resolutions AS f USING (tenant_id,run_id) \
+                  WHERE r.tenant_id='child-cutover' AND r.run_id='retained-run'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retained root facts");
+    assert_eq!(
+        retained.get::<_, Option<String>>(0).as_deref(),
+        Some("retained-run")
+    );
+    assert_eq!(retained.get::<_, i64>(1), 0);
+    assert_eq!(retained.get::<_, String>(2), "sha256:retained-source");
+    assert!(
+        reconcile_run_plane::reconcile(su, &schema(), false)
+            .await
+            .expect("observe converged child cutover")
+            .actions
+            .iter()
+            .all(|action| action.kind != RunPlaneActionKind::ChildRunCutover),
+        "child cutover is idempotent"
+    );
+
+    install_legacy_child_run_state(su).await;
+    su.execute(
+        &format!(
+            "UPDATE {SCHEMA}.runs \
+                SET waiting_child_run_id='child',waiting_child_occurrence=2,wait_generation=7 \
+              WHERE tenant_id='child-cutover' AND run_id='retained-run'"
+        ),
+        &[],
+    )
+    .await
+    .expect("restore a populated legacy wait fact");
+    let error = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect_err("populated child state must refuse cutover");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    assert_db_code(postgres, "55000", "populated child state refusal");
+    for column in [
+        "parent_run_id",
+        "parent_node_id",
+        "parent_occurrence",
+        "waiting_child_run_id",
+        "waiting_child_occurrence",
+        "wait_generation",
+        "invoke_depth",
+        "invoke_root_run_id",
+    ] {
+        assert!(
+            column_exists(su, "runs", column).await,
+            "refusal atomically preserves legacy column: {column}"
+        );
+    }
+    for index in [
+        "runs_parent_occurrence",
+        "runs_invoke_root",
+        "runs_waiting_child",
+    ] {
+        assert!(
+            indexdef(su, index).await.is_some(),
+            "refusal atomically preserves legacy index: {index}"
+        );
+    }
+
+    su.execute(
+        &format!(
+            "UPDATE {SCHEMA}.runs \
+                SET waiting_child_run_id=NULL,waiting_child_occurrence=NULL,wait_generation=NULL \
+              WHERE tenant_id='child-cutover' AND run_id='retained-run'"
+        ),
+        &[],
+    )
+    .await
+    .expect("restore the refused mutation to ordinary state");
+    let restored = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("restored ordinary state cuts over");
+    assert_eq!(
+        restored.actions.first().map(|action| action.kind),
+        Some(RunPlaneActionKind::ChildRunCutover)
+    );
+    assert!(!column_exists(su, "runs", "waiting_child_run_id").await);
+}
+
 /// A populated queue is retained when no worker holds a live lease. Only the
 /// retired partition state is removed, and the global FIFO claim index lands
 /// in its exact record shape.
@@ -2339,6 +2531,21 @@ async fn from_zero_leg(su: &Client) {
         assert!(
             table_exists(su, SCHEMA, t).await,
             "run-plane table {t} provisioned"
+        );
+    }
+    for column in [
+        "parent_run_id",
+        "parent_node_id",
+        "parent_occurrence",
+        "waiting_child_run_id",
+        "waiting_child_occurrence",
+        "wait_generation",
+        "invoke_depth",
+        "invoke_root_run_id",
+    ] {
+        assert!(
+            !column_exists(su, "runs", column).await,
+            "from-zero schema retains retired child-run column: {column}"
         );
     }
     assert!(

@@ -121,8 +121,6 @@ fn pre_effect_reset_deletes_only_node_projection_and_nulls_only_state_json() {
         "input_json =",
         "invocation_context =",
         "catalog_id =",
-        "parent_run_id =",
-        "waiting_child_run_id =",
         "updated_at =",
         "DELETE FROM run_flow_resolutions",
         "DELETE FROM effect_attempts",

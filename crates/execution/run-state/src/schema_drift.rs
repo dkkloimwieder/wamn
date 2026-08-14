@@ -20,7 +20,7 @@
 //! gate. [`assert_run_state_stand_in`] is the run-state entry point; both share
 //! one parenthesis-aware parse of the schema of record and of the stand-in, so
 //! full column parity is compared by NAME (a stand-in that keeps
-//! `parent_run_id` no longer masks a dropped `run_id`).
+//! `root_run_id` no longer masks a dropped `run_id`).
 //!
 //! This module is available only through the `test-util` feature. It lives with
 //! the run-state contract so conformance, integration, and system proofs consume

@@ -133,12 +133,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "runs",
-        name: "runs_invoke_depth_check",
-        definition: "CHECK (invoke_depth >= 0)",
-        origin: CheckOrigin::Inline("invoke_depth"),
-    },
-    CheckSpec {
-        table: "runs",
         name: "runs_caller_outcome_kind_check",
         definition: "CHECK (caller_outcome_kind = ANY (ARRAY['responded'::text, 'failed'::text]))",
         origin: CheckOrigin::Inline("caller_outcome_kind"),
@@ -177,24 +171,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         table: "runs",
         name: "runs_check2",
         definition: "CHECK (event_depth IS DISTINCT FROM 0 OR event_source_run_id = run_id AND event_root_run_id = run_id)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "runs",
-        name: "runs_check3",
-        definition: "CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL) AND (parent_run_id IS NULL) = (parent_occurrence IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "runs",
-        name: "runs_check4",
-        definition: "CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "runs",
-        name: "runs_check5",
-        definition: "CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -2275,6 +2251,88 @@ const RUN_QUEUE_CLAIMABLE_COLUMNS: [&str; 5] = [
     "lease_expires_at",
 ];
 
+const RETIRED_CHILD_RUN_COLUMNS: [&str; 8] = [
+    "parent_run_id",
+    "parent_node_id",
+    "parent_occurrence",
+    "waiting_child_run_id",
+    "waiting_child_occurrence",
+    "wait_generation",
+    "invoke_depth",
+    "invoke_root_run_id",
+];
+const RETIRED_CHILD_RUN_INDEXES: [&str; 3] = [
+    "runs_parent_occurrence",
+    "runs_invoke_root",
+    "runs_waiting_child",
+];
+
+fn child_run_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("runs").is_some_and(|columns| {
+        RETIRED_CHILD_RUN_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+    }) || RETIRED_CHILD_RUN_INDEXES
+        .iter()
+        .any(|index| obs.indexes.contains_key(*index))
+        || obs
+            .checks
+            .iter()
+            .any(|((table, _), definition)| table == "runs" && retired_child_run_check(definition))
+}
+
+fn retired_child_run_check(definition: &str) -> bool {
+    RETIRED_CHILD_RUN_COLUMNS
+        .iter()
+        .any(|column| definition.contains(column))
+}
+
+fn child_run_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+    let target = schema.quoted();
+    let columns = obs
+        .tables
+        .get("runs")
+        .expect("a child-run column, check, or index requires the runs table");
+    let populated_refusals = RETIRED_CHILD_RUN_COLUMNS
+        .iter()
+        .filter(|column| columns.contains::<str>(column))
+        .map(|column| {
+            if *column == "invoke_depth" {
+                format!("{} IS DISTINCT FROM 0", quote_ident(column))
+            } else {
+                format!("{} IS NOT NULL", quote_ident(column))
+            }
+        })
+        .collect::<Vec<_>>();
+    let drops = RETIRED_CHILD_RUN_COLUMNS
+        .iter()
+        .filter(|column| columns.contains::<str>(column))
+        .map(|column| format!("DROP COLUMN IF EXISTS {}", quote_ident(column)))
+        .collect::<Vec<_>>();
+
+    let mut statements = vec![format!("LOCK TABLE {target}.runs IN ACCESS EXCLUSIVE MODE")];
+    if !populated_refusals.is_empty() {
+        statements.push(format!(
+            "DO $child_run_cutover$ BEGIN \
+               IF EXISTS (SELECT 1 FROM {target}.runs WHERE {}) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'durable-child-run-cutover-requires-no-child-or-wait-state'; \
+               END IF; \
+             END $child_run_cutover$",
+            populated_refusals.join(" OR "),
+        ));
+    }
+    statements.extend(
+        RETIRED_CHILD_RUN_INDEXES
+            .iter()
+            .map(|index| format!("DROP INDEX IF EXISTS {target}.{}", quote_ident(index))),
+    );
+    if !drops.is_empty() {
+        statements.push(format!("ALTER TABLE {target}.runs {}", drops.join(", ")));
+    }
+    statements.join("; ")
+}
+
 fn partition_plane_cutover_needed(obs: &RunPlaneObservation) -> bool {
     obs.tables.get("run_queue").is_some_and(|columns| {
         RETIRED_PARTITION_COLUMNS
@@ -2852,6 +2910,8 @@ pub enum RunPlaneActionKind {
     InvocationAdmissionRetentionCutover,
     /// Delete the retired partition plane after a locked drain/evidence preflight.
     PartitionPlaneCutover,
+    /// Delete retired durable child, wait, and invoke-depth run state.
+    ChildRunCutover,
     /// Delete retired stored-suite tables, audit relation, and helper functions.
     StoredSuiteCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
@@ -3381,6 +3441,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
+    let child_run_cutover_needed = child_run_cutover_needed(obs);
+    if child_run_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::ChildRunCutover,
+            target: "runs.durable-child-state".to_string(),
+            sql: child_run_cutover_sql(schema, obs),
+        });
+    }
+
     if stored_suite_cutover_needed(obs) {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::StoredSuiteCutover,
@@ -3522,6 +3591,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             .get("runs")
             .expect("capture_mode is present only on a present runs table")
             .iter()
+            .filter(|column| {
+                !child_run_cutover_needed || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str())
+            })
             .cloned();
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::RepairRunCapturePrivilege,
@@ -4098,11 +4170,18 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                         && col == "capture_mode"
                         && obs.app_run_capture_privileges.0
                     {
-                        let available_columns = live_cols.iter().cloned().chain(
-                            record_cols[..=record_column_index]
-                                .iter()
-                                .map(|(column, _)| column.clone()),
-                        );
+                        let available_columns = live_cols
+                            .iter()
+                            .cloned()
+                            .chain(
+                                record_cols[..=record_column_index]
+                                    .iter()
+                                    .map(|(column, _)| column.clone()),
+                            )
+                            .filter(|column| {
+                                !child_run_cutover_needed
+                                    || !RETIRED_CHILD_RUN_COLUMNS.contains(&column.as_str())
+                            });
                         format!(
                             "LOCK TABLE {}.runs IN ACCESS EXCLUSIVE MODE; {add_column_sql}; {}",
                             schema.quoted(),
@@ -4173,6 +4252,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 if invocation_retention_cutover_needed
                     && table == "invocation_admissions"
                     && col == "expires_at"
+                {
+                    continue;
+                }
+                if child_run_cutover_needed
+                    && table == "runs"
+                    && RETIRED_CHILD_RUN_COLUMNS.contains(&col.as_str())
                 {
                     continue;
                 }
@@ -4273,6 +4358,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !(partition_plane_cutover_needed
                 && table == "run_queue"
                 && name == RETIRED_PARTITION_CHECK)
+            && !(child_run_cutover_needed && table == "runs" && retired_child_run_check(definition))
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
@@ -5796,6 +5882,41 @@ CREATE INDEX event_registrations_by_entity
         );
     }
 
+    fn add_legacy_child_run_state(obs: &mut RunPlaneObservation) {
+        obs.tables
+            .get_mut("runs")
+            .expect("record runs")
+            .extend(RETIRED_CHILD_RUN_COLUMNS.map(str::to_string));
+        for (name, definition) in [
+            (
+                "runs_check3",
+                "CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL) AND \
+                 (parent_run_id IS NULL) = (parent_occurrence IS NULL))",
+            ),
+            (
+                "runs_check4",
+                "CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL))",
+            ),
+            (
+                "runs_check5",
+                "CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL) AND \
+                 (waiting_child_run_id IS NULL) = (wait_generation IS NULL))",
+            ),
+            ("runs_invoke_depth_check", "CHECK (invoke_depth >= 0)"),
+        ] {
+            obs.checks.insert(
+                ("runs".to_string(), name.to_string()),
+                definition.to_string(),
+            );
+        }
+        for index in RETIRED_CHILD_RUN_INDEXES {
+            obs.indexes.insert(
+                index.to_string(),
+                format!("CREATE INDEX {index} ON demo.runs"),
+            );
+        }
+    }
+
     #[test]
     fn record_tables_are_pinned() {
         assert_eq!(
@@ -6281,13 +6402,10 @@ CREATE INDEX event_registrations_by_entity
                 "runs_execution_bundle",
                 "runs_flow",
                 "runs_idempotency",
-                "runs_invoke_root",
-                "runs_parent_occurrence",
                 "runs_release",
                 "runs_response_deadline",
                 "runs_root",
                 "runs_run_deadline",
-                "runs_waiting_child",
             ]
         );
         let (_, table, stmt) = index_statements(RUN_QUEUE_SQL, "wamn_run")
@@ -6321,6 +6439,60 @@ CREATE INDEX event_registrations_by_entity
             plan.at_target.len(),
             15,
             "all fifteen retained run-plane tables are at target"
+        );
+    }
+
+    #[test]
+    fn child_run_cutover_is_atomic_exact_and_idempotent() {
+        let mut legacy = observation_at_record();
+        add_legacy_child_run_state(&mut legacy);
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        assert_eq!(plan.actions.len(), 1, "actions: {:#?}", plan.actions);
+        let cutover = &plan.actions[0];
+        assert_eq!(cutover.kind, RunPlaneActionKind::ChildRunCutover);
+        assert_eq!(cutover.target, "runs.durable-child-state");
+        assert!(cutover.sql.starts_with(
+            "LOCK TABLE \"demo\".runs IN ACCESS EXCLUSIVE MODE; DO $child_run_cutover$"
+        ));
+        let refusal = cutover.sql.find("RAISE EXCEPTION").expect("refusal");
+        let first_drop = cutover.sql.find("DROP INDEX").expect("first DDL");
+        assert!(refusal < first_drop, "refusal must precede every DDL");
+        assert!(
+            cutover
+                .sql
+                .contains("durable-child-run-cutover-requires-no-child-or-wait-state")
+        );
+        for column in RETIRED_CHILD_RUN_COLUMNS {
+            assert!(
+                cutover
+                    .sql
+                    .contains(&format!("DROP COLUMN IF EXISTS \"{column}\"")),
+                "missing retired column drop: {column}"
+            );
+        }
+        for index in RETIRED_CHILD_RUN_INDEXES {
+            assert!(
+                cutover
+                    .sql
+                    .contains(&format!("DROP INDEX IF EXISTS \"demo\".\"{index}\"")),
+                "missing retired index drop: {index}"
+            );
+        }
+        for forbidden in ["CASCADE", "BEGIN;", "COMMIT;"] {
+            assert!(
+                !cutover.sql.contains(forbidden),
+                "unsafe cutover SQL: {forbidden}"
+            );
+        }
+        assert!(plan.extra_columns.is_empty());
+
+        let current = observation_at_record();
+        assert!(
+            !plan_run_plane(&schema("demo"), &current)
+                .actions
+                .iter()
+                .any(|action| action.kind == RunPlaneActionKind::ChildRunCutover)
         );
     }
 

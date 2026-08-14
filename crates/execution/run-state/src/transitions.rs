@@ -795,6 +795,7 @@ mod tests {
     fn from_zero_schema_carries_the_callable_run_spine() {
         let run = include_str!("../../../../deploy/sql/run-state.sql");
         for field in [
+            "root_run_id",
             "catalog_id",
             "catalog_version",
             "attachment_id",
@@ -802,13 +803,6 @@ mod tests {
             "event_source_run_id",
             "event_root_run_id",
             "event_depth",
-            "parent_run_id",
-            "parent_node_id",
-            "parent_occurrence",
-            "invoke_depth",
-            "waiting_child_run_id",
-            "waiting_child_occurrence",
-            "wait_generation",
             "caller_outcome_kind",
             "caller_outcome_json",
             "caller_http_status",
@@ -824,7 +818,21 @@ mod tests {
         ] {
             assert!(run.contains(field), "run-state DDL missing {field}");
         }
+        for retired in [
+            "parent_run_id",
+            "parent_node_id",
+            "parent_occurrence",
+            "waiting_child_run_id",
+            "waiting_child_occurrence",
+            "wait_generation",
+            "invoke_depth",
+            "invoke_root_run_id",
+        ] {
+            assert!(!run.contains(retired), "run-state DDL retains {retired}");
+        }
         assert!(run.contains("CREATE TABLE wamn_run.invocation_admissions"));
+        assert!(run.contains("CREATE TABLE wamn_run.run_flow_resolutions"));
+        assert!(run.contains("frame_id bigint"));
         assert!(run.contains("CREATE TRIGGER runs_event_lineage_immutable"));
         assert!(run.contains("'effect-uncertain'"));
 

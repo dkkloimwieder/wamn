@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::node_contract::{ConnectionTypeDescriptor, normalize_portable_http_target};
 use crate::types::{
-    CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node,
-    RequestConfig, RespondConfig, SCHEMA_VERSION,
+    CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, MAIN_PORT, Node, RequestConfig,
+    RespondConfig, SCHEMA_VERSION,
 };
 
 /// Completion ports keyed by resolved node type.
@@ -341,7 +341,7 @@ fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
             }
             if matches!(
                 node.node_type.as_str(),
-                "request" | "cron" | "event" | "respond" | "fail" | "call-flow" | "invoke-flow"
+                "request" | "cron" | "event" | "respond" | "fail" | "call-flow"
             ) {
                 issues.push(Issue::error(
                     "control-node-has-connection",
@@ -581,9 +581,7 @@ fn owned_completion_ports<'a>(
     resolved_interfaces: &'a ResolvedInterfaces,
 ) -> Option<Vec<&'a str>> {
     match node.node_type.as_str() {
-        "request" | "cron" | "event" | "respond" | "call-flow" | "invoke-flow" => {
-            Some(vec![MAIN_PORT])
-        }
+        "request" | "cron" | "event" | "respond" | "call-flow" => Some(vec![MAIN_PORT]),
         "fail" => Some(Vec::new()),
         node_type => resolved_interfaces
             .get(node_type)
@@ -671,38 +669,6 @@ fn validate_reserved_nodes(flow: &Flow, issues: &mut Vec<Issue>) {
                         "call-flow-has-credential",
                         format!("nodes[{index}].credential"),
                         "call-flow is internal invocation, not credentialed egress",
-                    ));
-                }
-            }
-            "invoke-flow" => {
-                match serde_json::from_value::<InvokeFlowConfig>(node.config.clone()) {
-                    Ok(config) => {
-                        if config.flow_id.trim().is_empty() {
-                            issues.push(Issue::error(
-                                "empty-invoke-flow-id",
-                                format!("nodes[{index}].config.flow-id"),
-                                "invoke-flow flow-id is required",
-                            ));
-                        }
-                        if config.attachment_id.trim().is_empty() {
-                            issues.push(Issue::error(
-                                "empty-invoke-attachment-id",
-                                format!("nodes[{index}].config.attachment-id"),
-                                "invoke-flow attachment-id is required",
-                            ));
-                        }
-                    }
-                    Err(error) => issues.push(Issue::error(
-                        "invalid-invoke-flow-config",
-                        format!("nodes[{index}].config"),
-                        error.to_string(),
-                    )),
-                }
-                if node.credential.is_some() {
-                    issues.push(Issue::error(
-                        "invoke-flow-has-credential",
-                        format!("nodes[{index}].credential"),
-                        "invoke-flow is internal invocation, not credentialed egress",
                     ));
                 }
             }
@@ -1482,19 +1448,6 @@ mod tests {
         let call_codes = codes(&flow);
         assert!(call_codes.contains(&"empty-call-flow-id"));
         assert!(call_codes.contains(&"call-flow-has-credential"));
-
-        let mut invoke = node("child", "invoke-flow");
-        invoke.config = json!({
-            "flow-id": "",
-            "attachment-id": "",
-            "actor-mode": "service"
-        });
-        invoke.credential = Some("secret".into());
-        flow.nodes.push(invoke);
-        let invoke_codes = codes(&flow);
-        assert!(invoke_codes.contains(&"empty-invoke-flow-id"));
-        assert!(invoke_codes.contains(&"empty-invoke-attachment-id"));
-        assert!(invoke_codes.contains(&"invoke-flow-has-credential"));
     }
 
     #[test]
@@ -1506,16 +1459,6 @@ mod tests {
         let mut respond = request_flow();
         respond.nodes[2].config["body"] = json!("configured");
         assert!(codes(&respond).contains(&"invalid-respond-config"));
-
-        let mut invoke = request_flow();
-        let mut child = node("child", "invoke-flow");
-        child.config = json!({
-            "flow-id": "callee",
-            "attachment-id": "callee-internal",
-            "actor-mode": "root"
-        });
-        invoke.nodes.push(child);
-        assert!(codes(&invoke).contains(&"invalid-invoke-flow-config"));
 
         let mut call_flow = request_flow();
         let mut child = node("child", "call-flow");

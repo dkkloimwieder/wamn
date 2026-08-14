@@ -211,14 +211,6 @@ CREATE TABLE wamn_run.runs (
     idempotency_key text,
     replay_of       text,
     root_run_id     text,
-    parent_run_id   text,
-    parent_node_id  text,
-    parent_occurrence int,
-    invoke_depth    int NOT NULL DEFAULT 0 CHECK (invoke_depth >= 0),
-    invoke_root_run_id text,
-    waiting_child_run_id text,
-    waiting_child_occurrence int,
-    wait_generation bigint,
     caller_outcome_kind text
         CHECK (caller_outcome_kind IN ('responded', 'failed')),
     caller_outcome_json jsonb,
@@ -256,16 +248,15 @@ CREATE TABLE wamn_run.runs (
       event_depth IS DISTINCT FROM 0
       OR (event_source_run_id = run_id AND event_root_run_id = run_id)
     ),
-    CHECK ((parent_run_id IS NULL) = (parent_node_id IS NULL)
-       AND (parent_run_id IS NULL) = (parent_occurrence IS NULL)),
-    CHECK ((parent_run_id IS NULL) = (invoke_root_run_id IS NULL)),
-    CHECK ((waiting_child_run_id IS NULL) = (waiting_child_occurrence IS NULL)
-       AND (waiting_child_run_id IS NULL) = (wait_generation IS NULL)),
-    CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL)),
-    CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL),
-    CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
-    CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
-           OR response_deadline_at <= run_deadline_at),
+    CONSTRAINT runs_check6
+        CHECK ((caller_released_at IS NULL) = (caller_outcome_kind IS NULL)),
+    CONSTRAINT runs_check7
+        CHECK (caller_outcome_kind IS NULL OR caller_outcome_json IS NOT NULL),
+    CONSTRAINT runs_check8
+        CHECK (caller_outcome_kind <> 'responded' OR caller_release_node_id IS NOT NULL),
+    CONSTRAINT runs_check9
+        CHECK (response_deadline_at IS NULL OR run_deadline_at IS NULL
+               OR response_deadline_at <= run_deadline_at),
     CONSTRAINT runs_capture_mode_source_check CHECK (
       capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
     ),
@@ -287,13 +278,6 @@ CREATE INDEX runs_execution_bundle ON wamn_run.runs (tenant_id, execution_bundle
 CREATE INDEX runs_root ON wamn_run.runs (tenant_id, root_run_id) WHERE root_run_id IS NOT NULL;
 CREATE INDEX runs_event_root ON wamn_run.runs (tenant_id, event_root_run_id)
     WHERE event_root_run_id IS NOT NULL;
-CREATE UNIQUE INDEX runs_parent_occurrence ON wamn_run.runs
-    (tenant_id, parent_run_id, parent_node_id, parent_occurrence)
-    WHERE parent_run_id IS NOT NULL;
-CREATE INDEX runs_invoke_root ON wamn_run.runs (tenant_id, invoke_root_run_id)
-    WHERE invoke_root_run_id IS NOT NULL;
-CREATE INDEX runs_waiting_child ON wamn_run.runs (tenant_id, waiting_child_run_id)
-    WHERE waiting_child_run_id IS NOT NULL;
 CREATE INDEX runs_response_deadline ON wamn_run.runs (tenant_id, response_deadline_at)
     WHERE caller_released_at IS NULL
       AND response_deadline_at IS NOT NULL
@@ -326,9 +310,7 @@ GRANT INSERT (
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, result_json, state_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key, replay_of,
-    root_run_id, parent_run_id, parent_node_id, parent_occurrence, invoke_depth,
-    invoke_root_run_id, waiting_child_run_id, waiting_child_occurrence,
-    wait_generation, caller_outcome_kind, caller_outcome_json,
+    root_run_id, caller_outcome_kind, caller_outcome_json,
     caller_http_status, caller_release_node_id, caller_outcome_hash,
     caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
     fail_kind, fail_node, fail_reason, created_at, updated_at
@@ -338,9 +320,7 @@ GRANT INSERT (
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
     input_json, result_json, state_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key, replay_of,
-    root_run_id, parent_run_id, parent_node_id, parent_occurrence, invoke_depth,
-    invoke_root_run_id, waiting_child_run_id, waiting_child_occurrence,
-    wait_generation, caller_outcome_kind, caller_outcome_json,
+    root_run_id, caller_outcome_kind, caller_outcome_json,
     caller_http_status, caller_release_node_id, caller_outcome_hash,
     caller_released_at, response_deadline_at, run_deadline_at, terminal_reason,
     fail_kind, fail_node, fail_reason, created_at, updated_at

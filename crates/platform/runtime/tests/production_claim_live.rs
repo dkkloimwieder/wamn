@@ -165,10 +165,7 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                trigger_source text, event_source_run_id text, event_root_run_id text, \
                event_depth int, admission_context_version text, platform_revision text, \
                capture_mode text, idempotency_key text, response_deadline_at timestamptz, \
-               run_deadline_at timestamptz, root_run_id text, parent_run_id text, \
-               parent_node_id text, parent_occurrence bigint, invoke_depth int, \
-               invoke_root_run_id text, waiting_child_run_id text, \
-               waiting_child_occurrence bigint, wait_generation bigint, \
+               run_deadline_at timestamptz, root_run_id text, \
                fail_kind text, fail_node text, fail_reason text, \
                caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
                caller_release_node_id text, caller_outcome_hash text, \
@@ -677,7 +674,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
 
     // Expired pre-effect recovery deletes only node projections and NULLs only
-    // state_json; every other admitted/lineage/child column and an existing
+    // state_json; every other admitted or lineage column and an existing
     // immutable resolution row survives the retry.
     admin
         .execute(
@@ -687,14 +684,11 @@ async fn production_claim_live() -> anyhow::Result<()> {
                     environment,execution_bundle_hash,input_json,state_json,invocation_context, \
                     trigger_source,event_source_run_id,event_root_run_id,event_depth, \
                     admission_context_version,platform_revision,capture_mode,idempotency_key, \
-                    response_deadline_at,run_deadline_at,root_run_id,parent_run_id,parent_node_id, \
-                    parent_occurrence,invoke_depth,invoke_root_run_id,waiting_child_run_id, \
-                    waiting_child_occurrence,wait_generation) \
+                    response_deadline_at,run_deadline_at,root_run_id) \
                  VALUES ($1,'pre-effect','root',1,'running','cat-main',1,'test',$2, \
                     '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
                     'event','source-run','root-run',3,'0.1','platform-a','full','idem-a', \
-                    '2030-01-01','2030-01-02','root-run','parent-run','call',4,2,'root-run', \
-                    'child-run',5,6)"
+                    '2030-01-01','2030-01-02','root-run')"
             ),
             &[&TENANT, &release_hash],
         )

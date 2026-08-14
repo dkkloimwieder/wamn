@@ -61,11 +61,9 @@
     },
     {
       "id": "invoke-recommendation",
-      "type": "invoke-flow",
+      "type": "call-flow",
       "config": {
-        "flow-id": "disposition-recommendation",
-        "attachment-id": "disposition-recommendation-internal",
-        "actor-mode": "service"
+        "flow-id": "disposition-recommendation"
       }
     },
     {
