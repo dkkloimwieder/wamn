@@ -631,7 +631,7 @@
         "constraint:connection_generation_retention_instance_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (instance_id <> ''::text)",
         "constraint:connection_generation_retention_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, environment, instance_id, generation, reference_kind, reference_id)",
         "constraint:connection_generation_retention_reference_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reference_id <> ''::text)",
-        "constraint:connection_generation_retention_reference_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reference_kind = ANY (ARRAY['active-attempt'::text, 'replay-seed'::text, 'audit-seed'::text]))",
+        "constraint:connection_generation_retention_reference_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (reference_kind = ANY (ARRAY['active-attempt'::text, 'deployed-release'::text]))",
         "constraint:connection_generation_retention_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:connection_generation_retention_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true",

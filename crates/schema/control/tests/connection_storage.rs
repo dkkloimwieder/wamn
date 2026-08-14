@@ -140,6 +140,48 @@ fn sql_builders_pin_values_and_keep_owners_separate() {
         GenerationRetentionKind::ActiveAttempt.as_sql(),
         "active-attempt"
     );
-    assert_eq!(GenerationRetentionKind::ReplaySeed.as_sql(), "replay-seed");
-    assert_eq!(GenerationRetentionKind::AuditSeed.as_sql(), "audit-seed");
+    assert_eq!(
+        GenerationRetentionKind::DeployedRelease.as_sql(),
+        "deployed-release"
+    );
+}
+
+#[test]
+fn project_generation_retention_kinds_are_plane_local_and_exact() {
+    fn asserted_sql(kind: GenerationRetentionKind) -> &'static str {
+        match kind {
+            GenerationRetentionKind::ActiveAttempt => "active-attempt",
+            GenerationRetentionKind::DeployedRelease => "deployed-release",
+        }
+    }
+
+    for kind in [
+        GenerationRetentionKind::ActiveAttempt,
+        GenerationRetentionKind::DeployedRelease,
+    ] {
+        assert_eq!(kind.as_sql(), asserted_sql(kind));
+        assert_eq!(
+            serde_json::to_string(&kind).expect("serialize retention kind"),
+            format!("\"{}\"", asserted_sql(kind))
+        );
+    }
+
+    let retention_table = CATALOG_SCHEMA
+        .split_once("CREATE TABLE catalog.connection_generation_retention (")
+        .expect("connection generation retention table")
+        .1
+        .split_once("ALTER TABLE catalog.connection_generation_retention")
+        .expect("end of connection generation retention table")
+        .0;
+    assert!(
+        retention_table
+            .contains("CHECK (reference_kind IN ('active-attempt', 'deployed-release'))")
+    );
+    assert_eq!(retention_table.matches("REFERENCES catalog.").count(), 1);
+    assert!(retention_table.contains("REFERENCES catalog.connection_generations"));
+    assert!(!retention_table.contains("credential_set_handle"));
+
+    for retired_kind in ["replay-seed", "audit-seed", "release-evidence"] {
+        assert!(!retention_table.contains(retired_kind));
+    }
 }

@@ -1229,7 +1229,7 @@ CREATE TABLE catalog.connection_generation_retention (
     instance_id     text NOT NULL CHECK (instance_id <> ''),
     generation      bigint NOT NULL CHECK (generation > 0),
     reference_kind  text NOT NULL
-        CHECK (reference_kind IN ('active-attempt', 'replay-seed', 'audit-seed')),
+        CHECK (reference_kind IN ('active-attempt', 'deployed-release')),
     reference_id    text NOT NULL CHECK (reference_id <> ''),
     retained_until  timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),

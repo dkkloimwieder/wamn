@@ -147,16 +147,14 @@ pub enum ConnectionBindingValidation {
 #[serde(rename_all = "kebab-case")]
 pub enum GenerationRetentionKind {
     ActiveAttempt,
-    ReplaySeed,
-    AuditSeed,
+    DeployedRelease,
 }
 
 impl GenerationRetentionKind {
     pub fn as_sql(self) -> &'static str {
         match self {
             Self::ActiveAttempt => "active-attempt",
-            Self::ReplaySeed => "replay-seed",
-            Self::AuditSeed => "audit-seed",
+            Self::DeployedRelease => "deployed-release",
         }
     }
 }
@@ -192,7 +190,7 @@ pub fn insert_connection_binding_sql() -> &'static str {
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
 }
 
-/// Retain a generation for one active attempt or replay/audit seed.
+/// Retain a generation for one active attempt or deployed release.
 pub fn insert_generation_retention_sql() -> &'static str {
     "INSERT INTO catalog.connection_generation_retention \
        (tenant_id, environment, instance_id, generation, reference_kind, \
