@@ -1056,7 +1056,7 @@ in the same change as the reclaim classifier (one claim-path rewrite).
 `cron_anchor` + the `runs_cron_anchor` index
 (`run-state.sql:286-291,343`) · cron builders/tests · guest
 cron/time-shift/delay.
-**Stored suites:** `test_suites`/`test_cases` · the `FLOW_TESTS_SQL`
+**Stored suites:** `test_suites`/`test_cases` · the `AUTHORING_TESTS_SQL`
 reconciler embed (`run_plane.rs:64-67,1689`) · `authoring_suite_*`
 (replaced by the `test_*` set) · copy-env suite blocks (ops).
 **Effect-disposition breadth:** requests/outcomes tables

@@ -17,7 +17,7 @@
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
 //! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs),
 //! the flow registry (`deploy/sql/flows.sql`), and the authoring test
-//! orchestration tables (`deploy/sql/flow-tests.sql`) into the project schema —
+//! orchestration tables (`deploy/sql/authoring-tests.sql`) into the project schema —
 //! the canonical deploy files, embedded at compile time and rewritten
 //! from `wamn_run` to the target schema — when their tables are absent;
 //! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
@@ -1323,7 +1323,10 @@ pub async fn ensure_flow_tests(
             authoring_objects.iter().all(|present| !*present),
             "authoring test orchestration is partially installed; reconcile it before publication"
         );
-        let ddl = rewrite_schema(include_str!("../../../deploy/sql/flow-tests.sql"), schema);
+        let ddl = rewrite_schema(
+            include_str!("../../../deploy/sql/authoring-tests.sql"),
+            schema,
+        );
         client
             .batch_execute(&ddl)
             .await

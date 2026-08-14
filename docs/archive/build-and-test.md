@@ -5158,3 +5158,51 @@ rustfmt --edition 2024 --check \
 bash -n tools/gate-mutants/docker-package-cooks.sh
 git diff --check
 ```
+
+## SR-MVP — retained authoring-test DDL rename (`wamn-0h0g.8.23`)
+
+This mechanical gate pins the retained authoring-test DDL bytes while moving
+their path and direct Rust constants away from the deleted stored-suite name.
+The SQL payload SHA-256 remains
+`ba26e29941d5f45ef8d29117abd6a623e9cd7fa04fc7bb858f2672ebe360362c`.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
+export CARGO_INCREMENTAL=0
+
+echo 'ba26e29941d5f45ef8d29117abd6a623e9cd7fa04fc7bb858f2672ebe360362c  deploy/sql/authoring-tests.sql' \
+  | sha256sum --check
+jq empty architecture/state-owners.json
+
+cargo test --locked --offline -p wamn-proof-conformance --lib \
+  version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity \
+  -- --exact
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test state_ownership repository_state_ownership_manifest_is_complete -- --exact
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test state_ownership row_lock_clause_is_not_an_update -- --exact
+cargo test --locked --offline -p wamn-scenario-worker \
+  store::test_orchestration::tests::
+cargo test --locked --offline -p wamn-scenario-worker \
+  store::test_sets::tests::
+cargo test --locked --offline -p wamn-ctl \
+  publish_catalog::tests::authoring_test_set_provisioning_is_fresh_and_privilege_closed \
+  -- --exact
+
+cargo clippy --locked --offline \
+  -p wamn-scenario-worker -p wamn-ctl -p wamn-proof-conformance \
+  --all-targets -- -D warnings
+rustfmt --edition 2024 --check \
+  crates/schema/control/src/run_plane.rs \
+  services/ctl/src/publish_catalog.rs \
+  services/ctl/tests/run_plane_live.rs \
+  services/scenario-worker/src/store/test_orchestration.rs \
+  services/scenario-worker/src/store/test_sets.rs \
+  tests/conformance/src/version_identity.rs \
+  tests/conformance/tests/state_ownership.rs
+if rg -n --hidden --glob '!.git/**' --glob '!.beads/**' \
+  'flow-tests''\.sql|FLOW_''TESTS_SQL' .; then
+  exit 1
+fi
+git diff --check
+```

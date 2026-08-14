@@ -10,7 +10,7 @@ use wamn_scenario_worker::store::test_sets::store_test_set;
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 const SCHEMA: &str = "test_set_store_live";
 const TENANT: &str = "test-set-store-tenant";
 
@@ -96,7 +96,7 @@ async fn authoring_test_set_store_enforces_exact_immutable_bytes_on_postgres() {
         .await
         .expect("apply flow registry prerequisite");
     client
-        .batch_execute(&schema_sql(FLOW_TESTS_SQL))
+        .batch_execute(&schema_sql(AUTHORING_TESTS_SQL))
         .await
         .expect("apply authoring test-set DDL");
     client

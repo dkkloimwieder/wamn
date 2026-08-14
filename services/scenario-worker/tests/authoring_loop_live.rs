@@ -21,7 +21,7 @@ const DRAFT_ID: &str = "authoring-loop-draft";
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 
 const RELEASE_GRAPH: &str = r#"{
   "schema-version":"0.1",
@@ -103,7 +103,7 @@ async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
         .batch_execute(CATALOG_SQL)
         .await
         .context("provision catalog schema")?;
-    for record in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL] {
+    for record in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL] {
         admin
             .batch_execute(&schema_sql(record))
             .await

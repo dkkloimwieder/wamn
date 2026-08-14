@@ -106,7 +106,7 @@ mod tests {
 
     use super::{insert_test_set_sql, prepare_test_set, select_test_set_sql};
 
-    const AUTHORING_DDL: &str = include_str!("../../../../deploy/sql/flow-tests.sql");
+    const AUTHORING_DDL: &str = include_str!("../../../../deploy/sql/authoring-tests.sql");
 
     fn input() -> TestSetInput {
         TestSetInput {

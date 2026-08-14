@@ -93,7 +93,7 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         expected_count: 1,
     },
     GovernedLiteral {
-        path: "deploy/sql/flow-tests.sql",
+        path: "deploy/sql/authoring-tests.sql",
         exact: "schema_version text NOT NULL CHECK (schema_version = '0.1'),",
         expected_count: 1,
     },

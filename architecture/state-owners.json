@@ -147,7 +147,7 @@
       "scope": "production-project-database"
     },
     {
-      "path": "deploy/sql/flow-tests.sql",
+      "path": "deploy/sql/authoring-tests.sql",
       "kind": "ddl",
       "scope": "production-project-database"
     },
@@ -1258,7 +1258,7 @@
       "migration_owners": [
         "schema-control"
       ],
-      "schema_source": "deploy/sql/flow-tests.sql",
+      "schema_source": "deploy/sql/authoring-tests.sql",
       "writers": [
         "scenario-worker"
       ],
@@ -1275,7 +1275,7 @@
       "migration_owners": [
         "schema-control"
       ],
-      "schema_source": "deploy/sql/flow-tests.sql",
+      "schema_source": "deploy/sql/authoring-tests.sql",
       "writers": [
         "scenario-worker"
       ],
@@ -1292,7 +1292,7 @@
       "migration_owners": [
         "schema-control"
       ],
-      "schema_source": "deploy/sql/flow-tests.sql",
+      "schema_source": "deploy/sql/authoring-tests.sql",
       "writers": [
         "scenario-worker"
       ],
@@ -1309,7 +1309,7 @@
       "migration_owners": [
         "schema-control"
       ],
-      "schema_source": "deploy/sql/flow-tests.sql",
+      "schema_source": "deploy/sql/authoring-tests.sql",
       "writers": [
         "scenario-worker"
       ],

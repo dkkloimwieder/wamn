@@ -6,7 +6,7 @@ same `copy-project-env --include definition` path that carries catalogs,
 immutable release artifacts, RLS policies, and event registrations — onto a
 destination that already holds the flow version the suite pins.
 
-## Storage (`deploy/sql/flow-tests.sql`)
+## Storage (`deploy/sql/authoring-tests.sql`)
 
 Two tables in the `wamn_run` schema (rewritten to the project schema on
 provisioning, the `publish-catalog --runstate` convention), additive to

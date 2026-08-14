@@ -44,7 +44,7 @@ const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 
 const TENANT: &str = "management-live-tenant";
 const SOURCE_SCHEMA: &str = "management_live_source";
@@ -352,7 +352,7 @@ async fn provision(admin: &mut Client) -> anyhow::Result<()> {
         .await
         .context("apply deploy/sql/catalog-schema.sql")?;
     let schema = BareSchemaName::new(SOURCE_SCHEMA).expect("a valid bare schema");
-    for record in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL] {
+    for record in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL] {
         admin
             .batch_execute(&rewrite_schema(record, &schema))
             .await

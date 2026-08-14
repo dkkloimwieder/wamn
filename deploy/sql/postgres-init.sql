@@ -14,7 +14,7 @@ CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOCREATERO
 
 -- The host-only scenario-author group role (11.2/12g). Roles are CLUSTER-global,
 -- so creating it here is what makes the canonical run-plane DDL
--- (deploy/sql/{run-state,flow-tests,catalog-schema}.sql, which GRANT to it)
+-- (deploy/sql/{run-state,authoring-tests,catalog-schema}.sql, which GRANT to it)
 -- appliable out of the box — without it every such apply dies with
 -- `role "wamn_scenario_author" does not exist`. Same advisory-locked,
 -- idempotent shape as `wamn_schema_control::ensure_scenario_author_role_sql`

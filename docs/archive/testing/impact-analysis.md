@@ -124,4 +124,4 @@ executes stored `test_cases` today.
 - Plan: `docs/archive/platform-plan.md` §Epic 11 (11.8).
 - The plan model (the input): `docs/archive/schema/ddl-compiler.md`, `crates/schema/compiler`.
 - The registration edge: `crates/events/registration`, `docs/archive/build-and-test.md` [EVT-REG/D24].
-- The suite storage: `docs/archive/testing/scenario-catalog.md`, `deploy/sql/flow-tests.sql`.
+- The suite storage: `docs/archive/testing/scenario-catalog.md`, `deploy/sql/authoring-tests.sql`.

@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn canonical_ddl_owns_only_test_named_replacement_tables() {
-        let ddl = include_str!("../../../../deploy/sql/flow-tests.sql");
+        let ddl = include_str!("../../../../deploy/sql/authoring-tests.sql");
         for table in [
             "authoring_test_run_reservations",
             "authoring_test_case_runs",

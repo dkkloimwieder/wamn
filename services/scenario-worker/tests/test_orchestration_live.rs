@@ -17,7 +17,7 @@ use wamn_schema_control::{BareSchemaName, rewrite_schema};
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const FLOW_TESTS_SQL: &str = include_str!("../../../deploy/sql/flow-tests.sql");
+const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 const SCHEMA: &str = "test_orchestration_live";
 const TENANT: &str = "test-orchestration-tenant";
 
@@ -95,7 +95,7 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .batch_execute(CATALOG_SQL)
         .await
         .expect("apply catalog prerequisite");
-    for record in [RUN_STATE_SQL, FLOWS_SQL, FLOW_TESTS_SQL] {
+    for record in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL] {
         client
             .batch_execute(&schema_sql(record))
             .await
