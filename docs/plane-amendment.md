@@ -145,6 +145,38 @@ asserted result fact into control-plane evidence; a project `run_id`
 is a diagnostic coordinate, never a foreign-key or retention
 dependency.
 
+### Private management admission authority
+
+Owner-ratified by `wamn-0h0g.7.5`: the project database has one stable
+host-only ACL role for this seam,
+`wamn_management_admitter`, with exactly `NOLOGIN NOSUPERUSER
+NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`.
+Authentication uses project-environment-scoped LOGIN generations named
+`wamn_management_admitter_<scope-hash>_{a|b}`. Each generation is a
+member of this ACL role only and may connect only to its target project
+database. Issuance and rotation reuse the existing issue → authenticate
+→ Secret → verify → revoke A/B lifecycle; the stable ACL role never
+becomes LOGIN-capable.
+
+The management process uses that credential to extend the existing
+`wamn-run-state` native admission API inside one project-database
+transaction. This is not a separate admission RPC or a `SECURITY DEFINER`
+path. The API inserts the same ordinary run and queue
+facts as every other producer, with the stable management producer
+identity above: draft-run admits `capture_mode = 'full'`; a test-set
+case admits `capture_mode = 'off'`. An exact retry returns the existing
+run. Reusing the producer coordinate with any different admitted fact
+refuses before mutation.
+
+The role receives only the relation and column reads needed to classify
+that retry and the inserts needed for the ordinary run-plus-queue
+admission. It cannot update, delete, or truncate an admitted row after
+creation; claim or lease work; write effect-attempt or operator-action
+facts; or access unrelated project, application, catalog, or control
+surfaces. `wamn_app`, every guest, author SQL,
+`wamn_scenario_author`, and `wamn_effect_writer` remain denied this
+authority. The role is an admission capability, not another data owner.
+
 ## Executor ↔ artifact store boundary
 
 **A digest is an integrity identity, not read authorization.**
@@ -256,7 +288,6 @@ with the cold-fetch leg.
 5. Customer-hosted run-plane trust and signed manifests are not an
    MVP choice and remain explicitly deferred to `wamn-0h0g.13.42`.
 
-The dedicated management admission authority is a separate decision
-owned by `wamn-0h0g.7.5`. Verified disk caching is held by
-`wamn-0h0g.13.41`, and cross-plane plan garbage collection by
-`wamn-0h0g.13.22`.
+The dedicated management admission authority is ratified above by
+`wamn-0h0g.7.5`. Verified disk caching is held by `wamn-0h0g.13.41`,
+and cross-plane plan garbage collection by `wamn-0h0g.13.22`.

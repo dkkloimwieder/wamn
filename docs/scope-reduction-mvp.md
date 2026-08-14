@@ -389,8 +389,14 @@ admission API; raw builders `pub(crate)`; each producer composes it in
 its own transaction — flow-http via the invocation provider, the
 materializer inside its exactly-once event+run transaction
 (`materializer/src/main.rs:49,406-408`), management via the queue
-admit builders (`scenario-worker/src/lib.rs:20-23`). Per-producer live
-proofs ride the slices. No admission RPC; no source-string invariant.
+admit builders (`scenario-worker/src/lib.rs:20-23`). Management uses
+the private `wamn_management_admitter` authority ratified by
+`wamn-0h0g.7.5` and specified in `docs/plane-amendment.md`; it extends
+this native API for stable producer identity plus draft-run `full` or
+test-case `off` capture and still inserts ordinary run + queue facts
+atomically. Exact retries return the existing run and different facts
+refuse. Per-producer live proofs ride the slices. No admission RPC,
+`SECURITY DEFINER` path, or source-string invariant.
 
 ### 5 · Publish gate
 
@@ -692,6 +698,13 @@ disposable; dump/restore/copy are ops verbs.
 `wamn_app` (LOGIN, NOSUPERUSER, NOBYPASSRLS) executes author SQL —
 the raw-SQL node **is** `postgres-query` (D8 flag, default OFF).
 Platform bookkeeping authority is held by stable host-only NOLOGIN ACL roles.
+The private management admission role is `wamn_management_admitter`
+(`NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION
+NOBYPASSRLS`); its scoped A/B LOGIN generations use the existing
+issue-authenticate-Secret-verify-revoke lifecycle and may exercise only the
+native ordinary-admission seam. It cannot mutate admitted rows afterward or
+access unrelated surfaces; `wamn_app`, guests, author SQL,
+`wamn_scenario_author`, and `wamn_effect_writer` remain denied.
 Where PostgreSQL authentication requires LOGIN, per-environment A/B credential
 generations inherit exactly one ACL role and connect only to their project
 database; at steady state at most one generation is LOGIN-capable. Effective
