@@ -93,34 +93,6 @@
       ],
       "type": "string"
     },
-    "CredentialRef": {
-      "additionalProperties": false,
-      "description": "A credential the flow references by logical name; the vault (5.9) resolves it to a lazy handle at run time. No secret material is ever stored in flow data.",
-      "properties": {
-        "description": {
-          "description": "Human-readable description (editor).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "kind": {
-          "description": "Optional hint for the editor's credential picker (e.g. `http-basic`, `api-key`).",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "name": {
-          "description": "Logical name referenced by [`Node::credential`].",
-          "type": "string"
-        }
-      },
-      "required": [
-        "name"
-      ],
-      "type": "object"
-    },
     "Edge": {
       "additionalProperties": false,
       "description": "A wire from one node's output port to a downstream node. Branch = several edges from distinct ports of one node; merge = several edges into one node.",
@@ -197,13 +169,6 @@
             "null"
           ]
         },
-        "credential": {
-          "description": "Optional reference to a declared credential by [`CredentialRef::name`].",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "id": {
           "description": "Unique within the flow.",
           "type": "string"
@@ -229,24 +194,10 @@
   },
   "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
   "properties": {
-    "allowed-hosts": {
-      "description": "Hosts this flow's outbound HTTP may reach (fqg.11). Entries use the host allowlist grammar: `host[:port]`, `scheme://host[:port]`, or a `*.suffix` subdomain wildcard. Egress is opt-in and fail-closed — undeclared (or empty) means DENY-ALL for the flow, and a declared host is still bounded by the runner's host-level allowlist (both must allow). Mirrors [`Flow::credentials`]: capability by declaration.",
-      "items": {
-        "type": "string"
-      },
-      "type": "array"
-    },
     "connection-requirements": {
       "description": "Portable connection requirements named by this artifact. Environment bindings, instances, generations, authorities, and secrets never enter this declaration or the artifact identity derived from it.",
       "items": {
         "$ref": "#/definitions/FlowConnectionRequirement"
-      },
-      "type": "array"
-    },
-    "credentials": {
-      "description": "Credentials the flow needs, declared by logical name and resolved by the vault (5.9) at run time. Nodes reference these by [`Node::credential`]; secrets never appear in flow data.",
-      "items": {
-        "$ref": "#/definitions/CredentialRef"
       },
       "type": "array"
     },

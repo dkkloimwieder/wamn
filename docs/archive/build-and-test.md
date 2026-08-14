@@ -869,6 +869,33 @@ cargo fmt -p wamn-flow --check
 cargo run -p wamn-flow --example print-flow-schema > docs/archive/contracts/flow-schema.schema.json
 ```
 
+### [SR-MVP / wamn-0h0g.7.2] flow-schema MVP cut
+
+This debug-only gate proves the request/event entry set, exact node-id charset,
+retired-field refusal, compiled-plan agreement, regenerated schema, and every
+retained runtime fixture that consumes the authored graph.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-7-2
+export CARGO_INCREMENTAL=0
+cargo test --locked --offline -p wamn-flow -p wamn-runner -p wamn-catalog
+cargo test --locked --offline -p wamn-run-state --test store
+cargo test --locked --offline -p wamn-schema-control exposure::tests::
+cargo test --locked --offline -p wamn-scenario-worker authoring::tests::
+cargo test --locked --offline -p wamn-proof-integration --lib
+cargo test --locked --offline -p wamn-proof-conformance --lib flow::tests::
+cargo test --locked --offline -p wamn-proof-conformance --lib \
+  version_identity::governed_wire_schema_and_artifact_versions_stay_at_mvp_identity
+cargo clippy --locked --offline -p wamn-flow -p wamn-runner -p wamn-catalog \
+  -p wamn-run-state -p wamn-schema-control -p wamn-scenario-worker \
+  -p wamn-proof-integration -p wamn-execution-host -p wamn-runtime \
+  --all-targets -- -D warnings
+cargo fmt -p wamn-flow -p wamn-runner -p wamn-catalog -p wamn-run-state \
+  -p wamn-schema-control -p wamn-scenario-worker -p wamn-proof-integration \
+  -p wamn-execution-host -p wamn-runtime --check
+jq empty docs/archive/contracts/flow-schema.schema.json
+```
+
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.44] immutable catalog definition identity
 
 Docs: `docs/archive/execution/FLOW-SPEC.md` §§5.1–5.4 and Phase 2A.

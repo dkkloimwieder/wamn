@@ -37,7 +37,7 @@ translations to durable run-state and node-invoke types live in
   in its own caller-provisioned execution schema with virtual clock, seeded
   random, and recording/deny egress adapters and captures the run outcome,
   egress log, and database reads. Its trusted `--allowed-hosts` configuration
-  (absent = deny all) is intersected with the flow's declared policy;
+  (absent = deny all) is intersected with connection-derived authority;
   assertions only observe the resulting records and never authorize a
   destination.
 

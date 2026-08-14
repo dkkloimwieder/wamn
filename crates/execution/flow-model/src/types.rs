@@ -1,9 +1,8 @@
 //! Canonical flow-graph types (5.1).
 //!
 //! A flow is **data, not code**: a versioned directed graph of typed nodes
-//! wired by ported edges, starting at one typed entry node, and referencing
-//! credentials by name. Ordinary node `type` values are open strings resolved
-//! by the runner's node library (5.3).
+//! wired by ported edges, starting at one typed entry node. Ordinary node
+//! `type` values are open strings resolved by the runner's node library (5.3).
 
 use std::collections::HashMap;
 
@@ -24,7 +23,7 @@ pub const MAIN_PORT: &str = "main";
 /// (5.2). Edges from this port route failures without aborting the run.
 pub const ERROR_PORT: &str = "error";
 /// Node types which identify the graph's unique entry.
-pub const ENTRY_TYPES: [&str; 3] = ["request", "cron", "event"];
+pub const ENTRY_TYPES: [&str; 2] = ["request", "event"];
 
 /// A stable node identifier, unique within a flow.
 pub type NodeId = String;
@@ -54,19 +53,6 @@ pub struct Flow {
     /// this declaration or the artifact identity derived from it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_requirements: Vec<FlowConnectionRequirement>,
-    /// Credentials the flow needs, declared by logical name and resolved by the
-    /// vault (5.9) at run time. Nodes reference these by [`Node::credential`];
-    /// secrets never appear in flow data.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub credentials: Vec<CredentialRef>,
-    /// Hosts this flow's outbound HTTP may reach (fqg.11). Entries use the
-    /// host allowlist grammar: `host[:port]`, `scheme://host[:port]`, or a
-    /// `*.suffix` subdomain wildcard. Egress is opt-in and fail-closed —
-    /// undeclared (or empty) means DENY-ALL for the flow, and a declared host
-    /// is still bounded by the runner's host-level allowlist (both must
-    /// allow). Mirrors [`Flow::credentials`]: capability by declaration.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub allowed_hosts: Vec<String>,
 }
 
 /// A single graph step.
@@ -90,9 +76,6 @@ pub struct Node {
     /// node. Pure and control nodes do not carry a connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
-    /// Optional reference to a declared credential by [`CredentialRef::name`].
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub credential: Option<String>,
 }
 
 /// One artifact-local name bound to a portable connection requirement.
@@ -112,7 +95,6 @@ impl Node {
     pub fn entry_kind(&self) -> Option<EntryKind> {
         match self.node_type.as_str() {
             "request" => Some(EntryKind::Request),
-            "cron" => Some(EntryKind::Cron),
             "event" => Some(EntryKind::Event),
             _ => None,
         }
@@ -160,7 +142,6 @@ pub struct Edge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntryKind {
     Request,
-    Cron,
     Event,
 }
 
@@ -203,16 +184,6 @@ pub struct CallFlowConfig {
     pub flow_id: String,
 }
 
-/// Input synthesized for a `cron` entry.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CronInput {
-    /// The schedule anchor, as RFC 3339 UTC.
-    pub scheduled_at: String,
-    /// The actual firing time, as RFC 3339 UTC.
-    pub fired_at: String,
-}
-
 /// Input synthesized for an `event` entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -252,22 +223,6 @@ pub enum RowEvent {
     Insert,
     Update,
     Delete,
-}
-
-/// A credential the flow references by logical name; the vault (5.9) resolves it
-/// to a lazy handle at run time. No secret material is ever stored in flow data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CredentialRef {
-    /// Logical name referenced by [`Node::credential`].
-    pub name: String,
-    /// Optional hint for the editor's credential picker (e.g. `http-basic`,
-    /// `api-key`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub kind: Option<String>,
-    /// Human-readable description (editor).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
 }
 
 impl Flow {

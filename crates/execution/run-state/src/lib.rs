@@ -21,7 +21,7 @@
 //!
 //! let flow = Flow::from_json(r#"{
 //!   "schema-version": "0.1", "flow-id": "f", "version": 1,
-//!   "nodes": [{"id": "a", "type": "cron"}, {"id": "b", "type": "echo"}],
+//!   "nodes": [{"id": "a", "type": "event"}, {"id": "b", "type": "echo"}],
 //!   "edges": [{"from": "a", "to": "b"}]
 //! }"#).unwrap();
 //! let interfaces = ResolvedInterfaces::from([
@@ -30,7 +30,7 @@
 //! let plan = Plan::compile(&flow, &interfaces).unwrap();
 //!
 //! // The run was killed after `a` committed: only `a` is persisted. `a` is a
-//! // `cron` entry, so its recorded output is the admitted input, unchanged.
+//! // `event` entry, so its recorded output is the admitted input, unchanged.
 //! let run = RunRecord::new("run-1", "f", 1, json!({"n": 1}));
 //! let node_runs = [NodeRunRecord::success(
 //!     "run-1",

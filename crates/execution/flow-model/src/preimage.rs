@@ -18,12 +18,10 @@
 //!   [`Edge::ordinal`] and hashed; the array position that used to imply it is
 //!   not. `Flow::validate`'s `duplicate-edge` refusal is what makes the key
 //!   total;
-//! - **display text is absent.** [`Flow::name`], [`Node::label`],
-//!   [`crate::CredentialRef::description`], and [`crate::CredentialRef::kind`] are editor
-//!   text with no reader anywhere in the platform — the vault resolves a
-//!   credential by [`crate::CredentialRef::name`] and `diff` compares credentials by
-//!   name alone — so renaming does not mint a new artifact identity. They stay
-//!   in the document; they simply never enter a digest.
+//! - **display text is absent.** [`Flow::name`] and [`Node::label`] are editor
+//!   text with no reader anywhere in the platform, so renaming does not mint a
+//!   new artifact identity. They stay in the document; they simply never enter
+//!   a digest.
 //!
 //! Object-key order and whitespace never reach a digest at all: the projection
 //! is serialized through [`crate::canonical`] (RFC 8785).
@@ -72,10 +70,6 @@ pub struct FlowPreimage<'a> {
     edges: Vec<&'a Edge>,
     #[serde(skip_serializing_if = "is_empty")]
     connection_requirements: &'a [FlowConnectionRequirement],
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    credentials: Vec<CredentialPreimage<'a>>,
-    #[serde(skip_serializing_if = "is_empty")]
-    allowed_hosts: &'a [String],
 }
 
 /// A graph node's identity: [`Node`] without its editor [`Node::label`].
@@ -89,17 +83,6 @@ struct NodePreimage<'a> {
     config: &'a Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     connection: Option<&'a str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    credential: Option<&'a str>,
-}
-
-/// A credential declaration's identity: the logical name the vault resolves and
-/// [`Node::credential`] points at. `kind` is an editor picker hint and
-/// `description` is prose; neither is read by anything, so neither is identity.
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "kebab-case")]
-struct CredentialPreimage<'a> {
-    name: &'a str,
 }
 
 impl<'a> FlowPreimage<'a> {
@@ -141,14 +124,6 @@ impl<'a> FlowPreimage<'a> {
             nodes,
             edges,
             connection_requirements: &flow.connection_requirements,
-            credentials: flow
-                .credentials
-                .iter()
-                .map(|credential| CredentialPreimage {
-                    name: &credential.name,
-                })
-                .collect(),
-            allowed_hosts: &flow.allowed_hosts,
         }
     }
 }
@@ -159,7 +134,6 @@ fn node_preimage(node: &Node) -> NodePreimage<'_> {
         node_type: &node.node_type,
         config: &node.config,
         connection: node.connection.as_deref(),
-        credential: node.credential.as_deref(),
     }
 }
 

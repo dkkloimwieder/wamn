@@ -17,7 +17,7 @@ the first callable flow needs it.**
 **Owner decisions in force:** the event input contract changes freely (its
 golden test documents the *current* shape — no freeze language); `fail` is
 universal hard failure; disconnect cancellation best-effort with the honest
-orphan bound (§10.6); cron anchors reset by activation generation (§7.5);
+orphan bound (§10.6);
 durability uniform, cost measured (§17); sagas a capability requirement on
 primitives (§12.7); exposure versions inside the catalog release; catalog and
 run plane share one PostgreSQL database per project environment; single-hash
@@ -88,7 +88,6 @@ dispatch.
 | Type | Starts on | Caller | Input |
 |---|---|---|---|
 | `request` | invocation (HTTP, internal, studio) | **yes** | author-declared (§4.1) |
-| `cron` | a schedule | no | §4.2 |
 | `event` | a durable row event | no | §4.3 |
 
 `message` and `blob` are expected extensions. `manual` is not an entry type:
@@ -98,16 +97,15 @@ the studio test-run is a `request` entry behind a `studio` attachment.
 
 `count(nodes where type ∈ ENTRY_TYPES) == 1` (`no-entry-node`,
 `multiple-entry-nodes`). One input contract, one response rule, one compiled
-signature per artifact. "Runs nightly *and* callable" is a `request` flow
-plus a thin `cron` wrapper invoking it (Appendix A). `Flow::entry` does not
-exist; the entry is the unique entry node.
+signature per artifact. Scheduled flow entry is unavailable in the MVP and
+cannot be encoded as a wrapper node. `Flow::entry` does not exist; the entry is
+the unique entry node.
 
 ### 1.3 No source configuration in the artifact
 
 ```json
 { "id": "in",   "type": "request",
   "config": { "input-schema": { "type": "object", "required": ["po-number"] } } }
-{ "id": "tick", "type": "cron" }
 { "id": "on-disposition", "type": "event" }
 ```
 
@@ -194,7 +192,7 @@ succeed and is an authoring error; the error name and the set now agree
 (previously P6 tested R, so an all-`fail` flow passed a check named
 `no-response-node`). Runtime dispatch budgets remain necessary.
 
-### 3.4 `cron` / `event` entries
+### 3.4 `event` entries
 
 No `respond` node (`respond-without-request-entry`); `fail` permitted; **the
 request predicates P1/P3–P6 are inapplicable** — S is still well-defined by
@@ -207,8 +205,7 @@ Exactly one entry; entry has no incoming edges; every node reachable — **an
 error** (the existing warning-level test flips); at most one `error` edge per
 node (`multiple-error-edges`); `fail` edge-free; no `delay` in S — **request
 entries only** (`delay-before-release`): the rationale is a caller waiting,
-so with S now correctly nonempty for cron/event flows the rule must not bind
-them — a callerless flow may delay freely.
+so with S now correctly nonempty for event flows the rule must not bind them.
 
 ---
 
@@ -222,10 +219,10 @@ context (§12.6).
 `config.input-schema`: JSON Schema draft 2020-12, no remote `$ref`, validated
 before run creation (400, no run row). Limits `DEFERRED(impl)`.
 
-### 4.2 `cron` — normative
+### 4.2 Scheduled entry — unavailable
 
-`{ "scheduled-at": …, "fired-at": … }`, RFC 3339 UTC; the two differ under
-anchor recovery.
+The MVP has no scheduled flow-entry contract. A document containing a `cron`
+entry node is refused as retired vocabulary.
 
 ### 4.3 `event` — normative
 
@@ -323,8 +320,8 @@ pin client-supplied executables; standard-node behavior is pinned only by
 behavior-identical.
 
 **Release membership is phased (§19):** the 2A spine carries
-`release_flows` + `http`/`internal` attachments + their sources + minimal
-cron; RLS and seed re-versioning join in 2B; event registrations in their
+`release_flows` + `http`/`internal` attachments + their sources; RLS and seed
+re-versioning join in 2B; event registrations in their
 own tranche (§5.7).
 
 ### 5.3 Release application — preflight, then one transaction
@@ -433,8 +430,8 @@ durable-consumer reconciler; event activation.
 
 **A** — candidate resolution (reads only) — **producer-shaped**: HTTP
 resolves a route against the applied release + activation overlay
-(**including disabled definitions, for recovery lookup**, §6.2); cron
-resolves its attachment; events resolve the **live registration** (§5.7) —
+(**including disabled definitions, for recovery lookup**, §6.2); events
+resolve the **live registration** (§5.7) —
 there is no route. **B** — bounded external work (own timeout, no writes) —
 **HTTP-specific in its full form**: authenticate under the route-selected
 policy, read bounded body, map (§7.3), validate, fingerprint. Cron's B is
@@ -443,11 +440,11 @@ tick synthesis (§4.2); the materializer's B is event-input synthesis
 `admit` transition in the `run-state` transitions module**: `FOR KEY SHARE`
 on `catalog_heads`, verify expected version, **perform the
 producer-specific definition check** (the §6.1 table: attachment activation
-for HTTP/internal/cron; the current registration content hash, recorded, for
+for HTTP/internal; the current registration content hash, recorded, for
 events — which have no attachment to check), idempotency check-and-insert,
 run row + queue row **in its
 producer-determined initial state** (the §6.1 table: claimed for inline
-HTTP; available for cron/event). Changed between A
+HTTP; available for event). Changed between A
 and C → retry once, then `admission-retry`.
 
 **All run producers use the same transition and the same lock** — but each
@@ -457,7 +454,6 @@ onto producers that have no principal or client key:
 | Producer | Dedup identity (enforced by) | Definition check | Initial queue state |
 |---|---|---|---|
 | HTTP invocation service | `(attachment, principal, client key, fingerprint)` — `invocation_admissions` (§6.2) | attachment activation (§5.4) | **claimed** to the invocation service's executor identity (inline execution) |
-| cron dispatcher | the deterministic run id `{flow}:cron:{generation}:{tick}` — `runs` primary identity | attachment activation (§5.4) | **available** — unclaimed; a worker claims it |
 | event materializer | `(tenant, registration_id, event seq)` — the existing `runs.idempotency_key` unique partial index, key shape `evt:{registration}:{seq}`: the **event dedup scope**, exactly one run per registration per event sequence | **live registration content hash, recorded** (event activation is deferred, §5.7 — there is no attachment to check) | **available** — unclaimed |
 
 The producer variant therefore determines **identity, definition check, and
@@ -468,7 +464,7 @@ the run+queue insert. None may bypass it. `flow-http` preflights only.
 
 **The queue row is always created at admission, in its producer-determined
 initial state** — claimed to the invocation service's executor identity for
-inline HTTP; available (unclaimed) for cron/event, where a worker claims it.
+inline HTTP; available (unclaimed) for an event, where a worker claims it.
 A different executor taking a claimed run is an ordinary queue handoff.
 
 ### 6.2 The admissions ledger
@@ -538,12 +534,12 @@ outcome remains retrievable for the promised window.
 
 ### 7.1 Definitions
 
-No `enabled` in definitions; kinds `http | internal | studio | cron`;
+No `enabled` in definitions; kinds `http | internal | studio`;
 entry-kind matching (`attachment-entry-kind-mismatch`); route uniqueness
 `(host, path, method)` over normalized templates within the release (one row
 per method, wildcard-host sentinel); `deadline-inversion`.
 Activation-transition rules (serialized per environment): one enabled
-`internal` per flow; one enabled `cron` per flow; no invocation cycle among
+`internal` per flow; no invocation cycle among
 enabled attachments of the active release; route unambiguity; env policy.
 **Auth sources define policy, never material** — rotation never requires a
 release; the context records the key-generation ID only.
@@ -582,14 +578,8 @@ needed.
 
 ### 7.5 Cron
 
-`cron_anchor` keeps `(tenant_id, flow_id)`, gains `definition_hash` +
-`generation`. Generation increments on definition-hash change,
-disabled → enabled, and explicit reset; catch-up applies within a generation.
-Firing identity `{flow}:cron:{generation}:{tick}` everywhere it can collide.
-The runs table audits firings; the activation events table audits
-transitions that fired nothing. The 2A spine carries the minimal shape — a
-schedule source, a cron attachment, and the dispatcher reading the
-attachment (§19); refinements are 2B.
+Scheduled attachments, anchors, catch-up, and firing identity are outside the
+MVP. They do not supply a hidden third flow entry type.
 
 ---
 
@@ -718,7 +708,7 @@ shapes.
 ### 9.9 Natural completion — frontier exhaustion
 
 The rule finding-of-record: zero-successor `respond` was the only defined
-successful terminal, while cron/event flows and post-release continuations
+successful terminal, while event flows and post-release continuations
 end by draining. Normative rule:
 
 > When an executor turn ends with an **empty frontier**, **no failure**, and
@@ -726,7 +716,7 @@ end by draining. Normative rule:
 > the `terminalize(completed)` transition (fenced, queue-joined) in the same
 > transaction as its final checkpoint and queue-row completion.
 
-This is how a `cron`/`event` run and a post-release continuation reach
+This is how an `event` run and a post-release continuation reach
 `completed` — including through an intentionally unwired completion port,
 whose token is simply dropped from the frontier. A request-entry run with an
 empty frontier and an **unreleased** caller is unreachable by construction
@@ -740,7 +730,7 @@ release through their own transitions).
 ### 10.1 Placement
 
 Inline (`request` runs execute in the invoking service's turn) or queued
-(`cron`/`event` arrivals; any run that parks). No transient mode.
+(`event` arrivals; any run that parks). No transient mode.
 
 ### 10.2 Boundary checkpointing
 
@@ -984,8 +974,7 @@ resistance is a stated cryptographic assumption.
 ## 16. Fixture refresh (there is no migration)
 
 One flow schema, one struct, `deny_unknown_fields`. By hand, in the same
-change series: F1–F4 fixtures edited to the entry-node shape (**F3's terminal
-`respond` deleted** — a cron flow keeps no response); stored scenarios and
+change series: retained fixtures edited to the entry-node shape; stored scenarios and
 the event-input golden test updated with the shape; dev databases dropped and
 reprovisioned from `deploy/sql`; `register_flow`/copy-env rewritten against
 `flow_artifacts`.
@@ -1042,15 +1031,12 @@ Nothing gates that milestone except what it exercises.
 | the flow schema (entry nodes, `fail`) parses and validates; F1–F4 fixtures in the new shape pass; F1's plan matches f1proof **business-result parity** — the old proof's malformed-request audit assertions are rewritten, since malformed input is now a 400 with **no run** | every P-predicate counterexample rejected with its named error; the unreachable-node test flipped to error; **an all-`fail` request flow rejected (`no-response-node`)** |
 | the work-list drain graph passes | unknown fields rejected (`deny_unknown_fields`) |
 | canonical bytes stable across key order/whitespace/platform; SHA-256 digests of property-generated unequal fixtures unequal | collision resistance stated as an assumption, never a tested claim |
-| cron/event input structs round-trip; the golden test documents the current shape in the same commit | absent event images omitted, never `null` |
+| request/event input structs round-trip; the golden test documents the current shape in the same commit | absent event images omitted, never `null`; a retired cron entry is refused |
 
 ### Phase 2A — the minimum callable-flow spine
 
 `flow_artifacts`; `release_flows`; `catalog_heads`; `http`/`internal`
-attachment definitions + auth/caller-policy sources; **minimal cron** (a
-schedule source, a cron attachment, the dispatcher reading the attachment —
-carved in because Phase 1's schema deletes `Trigger`, leaving the schedule no
-other home, and stranding the dispatcher and the F3/F4 gates otherwise);
+attachment definitions + auth/caller-policy sources;
 attachment activation + events; `invocation_admissions`;
 `run_queue.lease_generation`; the run-state transitions module; the coarse
 promotion rule; dispatcher and materializer converted to `admit()`.
@@ -1062,13 +1048,13 @@ promotion rule; dispatcher and materializer converted to `admit()`.
 | carry-forward + tombstones + activation events proven | tombstoned ID reuse rejected; stale base rejected; non-transactional DDL rejected at preflight |
 | §5.4a: publication refused while a nonterminal run is pinned; succeeds after wait or cancel | no impact-classification path exists to bypass the block |
 | fence + typed results proven at the SQL level (race harness on the module) | `FenceLost` → zero subsequent reads/writes |
-| F3 fires on schedule from its cron attachment | — |
+| event admission uses the retained event entry shape | a retired cron entry is refused |
 
 ### Phase 3 — engine and runtime
 
 | Positive | Negative |
 |---|---|
-| entry-reserved semantics; release-and-continue; pure occurrences write no effect facts; each effectful occurrence writes one attempt before send and acquires at most one dispatch; **frontier exhaustion terminalizes a cron run `completed` through §9.9, including across an unwired completion port** | **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the outcome write, reclaim yields `effect-uncertain` and the sink count stays at one — the crash-before-send variant observes zero effects and still never redispatches; **this is a Phase 3 gate, not POC Wave 2** |
+| entry-reserved semantics; release-and-continue; pure occurrences write no effect facts; each effectful occurrence writes one attempt before send and acquires at most one dispatch; **frontier exhaustion terminalizes an event run `completed` through §9.9, including across an unwired completion port** | **sent-but-lost**: the sink observes exactly **one** effect, the worker crashes before the outcome write, reclaim yields `effect-uncertain` and the sink count stays at one — the crash-before-send variant observes zero effects and still never redispatches; **this is a Phase 3 gate, not POC Wave 2** |
 | **run context**: a `ctx` write replaces the document (a later write without `merge()` provably drops prior keys); context reconstructs identically on boundary recovery; an effectful node's context-resolved params land in `attempt_input_ref` | a child run starts with **empty** context regardless of the parent's; error-port emissions never mutate context |
 | attempt intent atomic with lease renewal; `attempt_deadline_at` enforced pre-dispatch | the paused-original pair: (a) deadline lapsed → resume performs no effect; (b) cancellation during a live attempt → seizure deferred, `cancel_requested` persisted and applied at attempt end |
 | deadline cancels an executing guest within the bound; sweep cancels all five orphan scenarios within the stated bound | interrupted instance disposed, never reused; a `started` attempt never reclaimed early |
@@ -1118,8 +1104,7 @@ the vertical-slice cut** — the §6.2 lookup order corrected (route selects
 the attachment which supplies the auth policy; disabled definitions
 resolvable for recovery; disablement never blocks outcome retrieval); the
 coarse promotion rule replaces the impact engine (no nonterminal pinned
-runs — wait or cancel); Phase 2 split into 2A (spine, with minimal cron
-carved in because the schema change strands the dispatcher otherwise) and 2B
+runs — wait or cancel); Phase 2 split into 2A (spine) and 2B
 (normalization, after the slice); idempotency recovery narrowed to an
 unchanged `(attachment_id, definition_hash)` with `idempotency-scope-changed`
 (deleting the preimage spec and `auth_source_hash`); caches pay their own
@@ -1133,7 +1118,7 @@ restored (default 400, range 400..=599 — lost in the rev-10 flattening);
 §9.9 natural completion defined (empty frontier + no failure +
 no-caller-or-released → fenced `terminalize(completed)`); P6 re-based on
 Resp (respond nodes in S) so an all-`fail` request flow is rejected, and
-cron/event predicates declared inapplicable rather than S "empty";
+event predicates declared inapplicable rather than S "empty";
 `admit()` given producer-specific identities with the event dedup scope
 defined as `(tenant, registration, seq)` via the existing idempotency-key
 index; the invocation interface completed with `invoke-request`, a typed
@@ -1185,8 +1170,8 @@ accepted, not-found}`; release at `accepted` (`202`); caller-gone
 post-release exhausted retry ends the run `failed` after the caller saw
 `202` — visible only through the run-status surface (§18.3). Attachments
 (partner / UI / internal) are release members with activation rows; the
-nightly variant is a second flow (`cron` entry → `invoke-flow` →
-`error → fail`), never a second entry.
+nightly variants are unavailable in the MVP; scheduling cannot be smuggled in
+as a second or wrapper entry.
 
 ## Appendix B — saga acceptance (after the slice)
 

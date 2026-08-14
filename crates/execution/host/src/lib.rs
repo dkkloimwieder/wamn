@@ -254,9 +254,9 @@ where
 
 /// The runner's outbound-`wasi:http` egress handler: enforce the host
 /// allowlist (the fork's [`check_allowed_hosts`] — EMPTY = DENY-ALL, the
-/// production fail-closed posture) AND the current flow's declared
-/// `allowed-hosts` (fqg.11 — the trusted `wamn:runner/egress` declaration,
-/// see [`RunnerEgressPolicy`]; never-declared or declared-empty = deny-all,
+/// production fail-closed posture) AND the active connection's resolved hosts
+/// (fqg.11 — supplied through trusted `wamn:runner/egress`, see
+/// [`RunnerEgressPolicy`]; never-supplied or supplied-empty = deny-all,
 /// both checks must pass = intersection), then delegate transport to
 /// [`DefaultOutgoingHandler`] (which also stamps the 9.2 trace context).
 /// Without a handler on the store's `Ctx`, an outbound call TRAPS ("http
@@ -265,8 +265,8 @@ where
 /// classifies as `egress-denied` (terminal).
 struct RunnerEgress {
     inner: DefaultOutgoingHandler,
-    /// The per-component declared flow allowlists, written through the trusted
-    /// `wamn:runner/egress` channel by the flowrunner before each run.
+    /// Per-component connection-derived authority, written through the trusted
+    /// `wamn:runner/egress` channel before each run.
     policy: Arc<RunnerEgressPolicy>,
 }
 
@@ -318,16 +318,16 @@ impl HostHandler for RunnerEgress {
                 ErrorCode::HttpRequestDenied,
             ))));
         }
-        // fqg.11: the flow-level check. Undeclared and declared-empty are the
-        // same deny-all `&[]` (egress is opt-in per flow); a declared set must
-        // ALSO pass — the host list above stays the outer bound.
+        // fqg.11: the connection-derived check. Absent and empty are the same
+        // deny-all `&[]`; a resolved set must ALSO pass, while the host list
+        // above stays the outer bound.
         let declared = self.policy.declared(workload_id);
         if let Err(e) = check_allowed_hosts(&request, declared.as_deref().unwrap_or(&[])) {
             tracing::warn!(
                 workload_id,
                 error = %e,
                 declared = declared.is_some(),
-                "run-worker outbound request denied by the flow's allowed-hosts"
+                "run-worker outbound request denied by connection-derived authority"
             );
             return Ok(HostFutureIncomingResponse::ready(Ok(Err(
                 ErrorCode::HttpRequestDenied,
@@ -340,8 +340,9 @@ impl HostHandler for RunnerEgress {
 
 /// The host-injected, non-spoofable identity one runner replica carries: the
 /// lease owner (== the component id), the tenant claim, the session
-/// search_path, and — 5.9 — the project whose vault credentials its flows may
-/// read. The guest reads these from its session; it never chooses them.
+/// search_path, and — 5.9 — the project whose environment connection
+/// credentials may be resolved. The guest reads these from its session; it
+/// never chooses them.
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionIdentity<'a> {
     pub owner: &'a str,

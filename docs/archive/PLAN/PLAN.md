@@ -1007,8 +1007,7 @@ from the admitted run and catalog state.
 **Plane boundary (settled 2026-08-05).** Node placement and execution
 transport are platform-plane: a flow references pinned implementation
 identities, never endpoints — node configuration cannot carry an endpoint
-or any absolute URL — and connection-backed HTTP and flow-level
-`allowed-hosts` are mutually exclusive. Business egress is a portable
+or any absolute URL. Business egress is a portable
 connection resolved through an environment binding; invoking a custom node
 is internal execution transport through the trusted host runtime, with
 placement and signing host-owned.

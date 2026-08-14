@@ -1,25 +1,23 @@
-//! The trusted `wamn:runner/egress` channel — per-flow outbound allowlists
-//! (fqg.11).
+//! The trusted `wamn:runner/egress` channel for connection-derived outbound
+//! authority (fqg.11).
 //!
 //! The run-worker drives a SINGLE long-lived flowrunner component; the host
-//! never sees a per-run boundary, so it cannot resolve "the current flow's
-//! allowed hosts" itself. The trusted,
-//! compiled-in flow-runner declares each run's `allowed-hosts` (from the flow
-//! definition) through a channel linked ONLY into its world, and the host
-//! enforces it on the outgoing-`wasi:http` path (`RunnerEgress` in
-//! `crates/execution/host/src/lib.rs`).
+//! never sees a per-run boundary on the generic outgoing-handler path. The
+//! trusted, compiled-in flowrunner therefore supplies the hosts resolved from
+//! the active connection instance through a channel linked ONLY into its world,
+//! and the host enforces them on the outgoing-`wasi:http` path (`RunnerEgress`
+//! in `crates/execution/host/src/lib.rs`).
 //!
 //! Host-enforced invariants:
 //!
 //! - **Deny-all default:** a component with NO declaration — or a declared
-//!   EMPTY list — gets no egress. Egress is opt-in by declaration.
+//!   EMPTY list — gets no egress. Egress is opt-in by resolved authority.
 //! - **Intersection:** a request must pass BOTH the runner's host-level
-//!   allowlist and the declared per-flow set. Declaring a host the host-level
-//!   list refuses grants nothing.
+//!   allowlist and the resolved connection set. A connection cannot widen the
+//!   host-level list.
 //! - **Fail-closed parsing:** a declared entry the [`AllowedHost`] grammar
 //!   rejects is dropped (warned, target `wamn::egress`) — a typo narrows
-//!   access, never widens it. Structural validation at flow registration
-//!   (`wamn-flow` `invalid-allowed-host`) catches the grossly malformed.
+//!   access, never widens it.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -43,15 +41,15 @@ use bindings::wamn::runner::egress;
 pub const RUNNER_EGRESS_ID: &str = "wamn-runner-egress";
 
 /// Wire the TRUSTED `wamn:runner/egress` `set-allowed-hosts` channel into a
-/// linker. Call this ONLY for the trusted, compiled-in flow-runner — the sole
-/// component allowed to declare its own per-run egress; ordinary components
-/// must never get this.
+/// linker. Call this ONLY for the trusted, compiled-in flowrunner — the sole
+/// component allowed to supply resolved per-run egress authority; ordinary
+/// components must never get this.
 pub fn add_runner_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     egress::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
 
-/// The per-component declared egress sets: component id → the parsed
-/// `allowed-hosts` of the flow it is currently running. Registered as a host
+/// The per-component resolved egress sets: component id → the parsed hosts of
+/// the active connection instance. Registered as a host
 /// plugin so the guest-facing declaration channel can reach it through
 /// [`ActiveCtx`]; the run-worker's outgoing handler holds its own [`Arc`] and
 /// reads [`declared`](Self::declared) per request.
@@ -61,7 +59,7 @@ pub struct RunnerEgressPolicy {
 }
 
 impl RunnerEgressPolicy {
-    /// Register (or replace) `component_id`'s declared egress set. Entries the
+    /// Register (or replace) `component_id`'s resolved egress set. Entries the
     /// [`AllowedHost`] grammar rejects are dropped with a warning —
     /// fail-closed, the run proceeds with the narrower set.
     pub fn set_declared(&self, component_id: &str, hosts: &[String]) {
@@ -87,7 +85,7 @@ impl RunnerEgressPolicy {
             .insert(component_id.to_string(), parsed);
     }
 
-    /// The component's declared egress set. `None` (never declared) and
+    /// The component's resolved egress set. `None` (never supplied) and
     /// `Some(empty)` both mean deny-all to the caller — the distinction only
     /// matters for logging.
     pub fn declared(&self, component_id: &str) -> Option<Arc<[AllowedHost]>> {

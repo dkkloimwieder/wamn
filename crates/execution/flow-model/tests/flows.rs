@@ -8,13 +8,12 @@ use std::path::{Path, PathBuf};
 
 use boon::{Compiler, Schemas};
 use serde_json::json;
-use wamn_flow::{CronInput, EventInput, Flow, ResolvedInterfaces, RowEvent};
+use wamn_flow::{EventInput, Flow, ResolvedInterfaces, RowEvent};
 
 const FIXTURES: &[&str] = &[
     "f0-echo.flow.json",
     "s3-demo.flow.json",
     "f2-disposition-recommendation.flow.json",
-    "f3-escalate-stale-holds.flow.json",
     "f4-disposition-recorded.flow.json",
 ];
 
@@ -37,7 +36,6 @@ fn interfaces() -> ResolvedInterfaces {
         ("pg-write".into(), vec!["main".into()]),
         ("postgres".into(), vec!["main".into()]),
         ("postgres-query".into(), vec!["main".into()]),
-        ("time-shift".into(), vec!["main".into()]),
         ("transform".into(), vec!["main".into()]),
     ])
 }
@@ -126,7 +124,6 @@ fn diff_detects_changes() {
         label: None,
         config: serde_json::json!({}),
         connection: None,
-        credential: None,
     });
     v2.edges.push(wamn_flow::Edge {
         from: "shape".into(),
@@ -152,7 +149,7 @@ fn diff_detects_changes() {
 
 #[test]
 fn diff_detects_connection_reference_and_requirement_changes() {
-    let (_, old) = load("f3-escalate-stale-holds.flow.json");
+    let (_, old) = load("f4-disposition-recorded.flow.json");
     let mut changed_reference = old.clone();
     changed_reference
         .nodes
@@ -164,10 +161,7 @@ fn diff_detects_connection_reference_and_requirement_changes() {
     assert!(
         reference_diff.nodes_changed.iter().any(|change| {
             change.connection_changed
-                == Some((
-                    Some("manager-notifications".into()),
-                    Some("replacement".into()),
-                ))
+                == Some((Some("erp-callback".into()), Some("replacement".into())))
         }),
         "a logical connection reference is a visible node change"
     );
@@ -179,87 +173,6 @@ fn diff_detects_connection_reference_and_requirement_changes() {
     let requirement_diff = wamn_flow::diff(&old, &changed_requirement);
     assert_eq!(requirement_diff.connection_requirements_added.len(), 1);
     assert_eq!(requirement_diff.connection_requirements_removed.len(), 1);
-}
-
-/// F3 keeps the scheduled anchor and selected hold in durable context while it
-/// drains one row at a time. The false port is deliberately unwired: frontier
-/// exhaustion is the callerless flow's successful completion.
-#[test]
-fn f3_escalate_stale_holds_shape() {
-    let (_, f) = load("f3-escalate-stale-holds.flow.json");
-
-    assert!(
-        f.nodes
-            .iter()
-            .any(|node| node.id == "cron" && node.node_type == "cron"),
-        "F3 has a cron entry"
-    );
-    assert!(
-        f.edges
-            .iter()
-            .any(|edge| edge.from == "cron" && edge.to == "cutoff-at-48h"),
-        "the cron payload enters the cutoff computation first"
-    );
-    assert!(
-        !f.nodes.iter().any(|node| node.node_type == "respond"),
-        "callerless F3 has no response node"
-    );
-
-    // The artifact declares a portable logical requirement, never environment
-    // authority or credential selection.
-    assert!(f.allowed_hosts.is_empty());
-    assert!(f.credentials.is_empty());
-    assert_eq!(
-        f.nodes
-            .iter()
-            .find(|n| n.id == "notify-manager")
-            .and_then(|n| n.connection.as_deref()),
-        Some("manager-notifications"),
-        "notify references the portable connection requirement"
-    );
-    assert_eq!(
-        f.nodes
-            .iter()
-            .find(|n| n.id == "notify-manager")
-            .and_then(|n| n.config.get("path-and-query")),
-        Some(&serde_json::json!("/holds")),
-        "notify carries only a connection-relative target"
-    );
-
-    assert!(
-        f.edges
-            .iter()
-            .any(|e| e.from == "escalate-head" && e.to == "next-stale-hold"),
-        "escalation loops to the next one-row selection"
-    );
-    assert!(
-        !f.edges
-            .iter()
-            .any(|edge| edge.from == "found" && edge.from_port == "false"),
-        "found.false completes naturally"
-    );
-    let cutoff = f
-        .nodes
-        .iter()
-        .find(|node| node.id == "cutoff-at-48h")
-        .expect("cutoff node");
-    let base = cutoff.config["base"].as_str().expect("base expression");
-    assert_eq!(base, "\"scheduled-at\"");
-    let selected = jmespath::compile(base)
-        .expect("quoted identifier compiles")
-        .search(json!({"scheduled-at": 42}))
-        .expect("quoted identifier evaluates");
-    assert_eq!(serde_json::to_value(selected).unwrap(), json!(42));
-    assert_eq!(cutoff.config["ctx"], "@");
-    let mark = f
-        .nodes
-        .iter()
-        .find(|node| node.id == "mark")
-        .expect("mark node");
-    assert_eq!(
-        mark.config["ctx"], "merge(context(), {hold: rows[0]})",
-        "mark explicitly preserves the cutoff while storing the selected hold"
-    );
 }
 
 #[test]
@@ -284,14 +197,7 @@ fn f2_disposition_recommendation_shape() {
 }
 
 #[test]
-fn t0_cron_and_event_inputs_round_trip_and_omit_absent_images() {
-    let cron = CronInput {
-        scheduled_at: "2026-07-27T02:00:00Z".into(),
-        fired_at: "2026-07-27T02:00:03Z".into(),
-    };
-    let cron_json = serde_json::to_string(&cron).unwrap();
-    assert_eq!(serde_json::from_str::<CronInput>(&cron_json).unwrap(), cron);
-
+fn t0_event_inputs_round_trip_and_omit_absent_images() {
     let event = EventInput {
         event: RowEvent::Insert,
         new: Some(
@@ -335,7 +241,6 @@ fn retained_f0_f2_through_f4_use_typed_entries_and_no_legacy_definition_fields()
     let expected = [
         ("f0-echo.flow.json", "request"),
         ("f2-disposition-recommendation.flow.json", "request"),
-        ("f3-escalate-stale-holds.flow.json", "cron"),
         ("f4-disposition-recorded.flow.json", "event"),
     ];
     for (name, entry_type) in expected {
@@ -370,16 +275,12 @@ fn t0_event_entry_has_no_attachment_lookup_and_callerless_flows_have_no_response
                 .is_some_and(serde_json::Map::is_empty),
         "event registration resolution stays outside the graph"
     );
-    for name in [
-        "f3-escalate-stale-holds.flow.json",
-        "f4-disposition-recorded.flow.json",
-    ] {
-        let (_, flow) = load(name);
-        assert!(
-            flow.nodes.iter().all(|node| node.node_type != "respond"),
-            "{name} must complete naturally or fail"
-        );
-    }
+    let name = "f4-disposition-recorded.flow.json";
+    let (_, flow) = load(name);
+    assert!(
+        flow.nodes.iter().all(|node| node.node_type != "respond"),
+        "{name} must complete naturally or fail"
+    );
 }
 
 #[test]
@@ -399,43 +300,30 @@ fn mutant_event_attachment_lookup_is_rejected_at_the_entry_field_home() {
 }
 
 #[test]
-fn mutant_f3_or_f4_terminal_response_is_rejected() {
-    for name in [
-        "f3-escalate-stale-holds.flow.json",
-        "f4-disposition-recorded.flow.json",
-    ] {
-        let (_, mut flow) = load(name);
-        flow.nodes.push(wamn_flow::Node {
-            id: "legacy-response".into(),
-            node_type: "respond".into(),
-            label: None,
-            config: json!({"status": 200}),
-            connection: None,
-            credential: None,
-        });
-        let from = if name.starts_with("f3") {
-            "found"
-        } else {
-            "notify-erp"
-        };
-        flow.edges.push(wamn_flow::Edge {
-            from: from.into(),
-            from_port: if name.starts_with("f3") {
-                "false".into()
-            } else {
-                "main".into()
-            },
-            to: "legacy-response".into(),
-            to_port: None,
-            ordinal: None,
-        });
-        assert!(
-            flow.issues(&interfaces())
-                .iter()
-                .any(|issue| issue.code == "respond-without-request-entry"),
-            "{name} accepted a response node"
-        );
-    }
+fn mutant_f4_terminal_response_is_rejected() {
+    let name = "f4-disposition-recorded.flow.json";
+    let (_, mut flow) = load(name);
+    flow.nodes.push(wamn_flow::Node {
+        id: "legacy-response".into(),
+        node_type: "respond".into(),
+        label: None,
+        config: json!({"status": 200}),
+        connection: None,
+    });
+    let from = "notify-erp";
+    flow.edges.push(wamn_flow::Edge {
+        from: from.into(),
+        from_port: "main".into(),
+        to: "legacy-response".into(),
+        to_port: None,
+        ordinal: None,
+    });
+    assert!(
+        flow.issues(&interfaces())
+            .iter()
+            .any(|issue| issue.code == "respond-without-request-entry"),
+        "{name} accepted a response node"
+    );
 }
 
 #[test]
@@ -445,13 +333,13 @@ fn t0_canonical_graph_bytes_and_hash_ignore_json_key_order_and_whitespace() {
       "flow-id": "canonical",
       "version": 1,
       "nodes": [
-        {"id": "tick", "type": "cron"},
+        {"id": "tick", "type": "event"},
         {"id": "work", "type": "custom", "config": {"z": 2, "a": 1}}
       ],
       "edges": [{"from": "tick", "to": "work"}]
     }"#;
     let raw_b = r#"{"edges":[{"to":"work","from":"tick"}],"nodes":[
-      {"type":"cron","id":"tick"},
+      {"type":"event","id":"tick"},
       {"config":{"a":1,"z":2},"type":"custom","id":"work"}
     ],"version":1,"flow-id":"canonical","schema-version":"0.1"}"#;
     let a = Flow::from_json(raw_a).unwrap();

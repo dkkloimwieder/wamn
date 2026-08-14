@@ -13,7 +13,7 @@ pub mod tests {
             Flow::from_json(
                 r#"{"schema-version":"0.1","flow-id":"t-ctx","version":1,
                     "nodes":[
-                      {"id":"in","type":"cron"},
+                      {"id":"in","type":"event"},
                       {"id":"mark","type":"pure"},
                       {"id":"effect","type":"effect"}],
                     "edges":[
@@ -76,10 +76,10 @@ pub mod tests {
     fn invalid_context_is_detected_before_mutating_payload_progress() {
         let plan = plan();
         let mut state = plan.start("run", Value::Null);
-        // Since wamn-ayq7.23 the `cron` entry executes through standard-node dispatch:
+        // The `event` entry executes through standard-node dispatch:
         // it dispatches, and may only re-emit its admitted input unchanged.
         let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
-            panic!("cron entry must dispatch");
+            panic!("event entry must dispatch");
         };
         let admitted = entry.payload.clone();
         plan.apply(&mut state, &entry, NodeOutcome::ok(admitted), 0)

@@ -86,11 +86,11 @@ fn flow(json_str: &str) -> Flow {
                 node["type"] = json!("echo");
             }
         }
-        nodes.insert(0, json!({"id":"__entry","type":"cron"}));
+        nodes.insert(0, json!({"id":"entry","type":"event"}));
         object["edges"]
             .as_array_mut()
             .expect("edges array")
-            .insert(0, json!({"from":"__entry","to":entry}));
+            .insert(0, json!({"from":"entry","to":entry}));
     }
     serde_json::from_value(value).expect("fixture flow parses")
 }
@@ -117,9 +117,9 @@ fn compile(flow: &Flow) -> Result<Plan<'_>, EngineError> {
 fn started(plan: &Plan<'_>, run_id: impl Into<String>, input: Value) -> ExecutionState {
     let mut state = plan.start(run_id, input);
     let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
-        panic!("fresh run must dispatch its cron entry");
+        panic!("fresh run must dispatch its event entry");
     };
-    assert_eq!(entry.node_type, "cron");
+    assert_eq!(entry.node_type, "event");
     let payload = entry.payload.clone();
     plan.apply(&mut state, &entry, NodeOutcome::ok(payload), 0)
         .unwrap();
@@ -135,9 +135,9 @@ fn resumed(
     if completed.is_empty() {
         let mut state = plan.resume(run_id, input, completed)?;
         let Step::Dispatch(entry) = plan.next(&mut state, 0) else {
-            panic!("empty history must begin at its cron Node-ABI entry");
+            panic!("empty history must begin at its event Node-ABI entry");
         };
-        assert_eq!(entry.node_type, "cron");
+        assert_eq!(entry.node_type, "event");
         let payload = entry.payload.clone();
         plan.apply(&mut state, &entry, NodeOutcome::ok(payload), 0)
             .unwrap();
@@ -176,7 +176,7 @@ fn linear_walk_completes_in_order() {
     });
     assert_eq!(t.status, ExecutionStatus::Completed);
     assert_eq!(t.nodes(), ["a", "b", "c"]);
-    assert_eq!(t.state.step_seq(), 4); // cron entry + three downstream nodes
+    assert_eq!(t.state.step_seq(), 4); // event entry + three downstream nodes
     assert_eq!(t.state.result(), &json!({ "at": "c" }));
     // Each node's input payload is the upstream node's output.
     assert_eq!(t.visited[0].payload, json!({ "seen": [] })); // entry gets the trigger payload
@@ -220,7 +220,7 @@ fn fan_out_and_merge_without_a_join_barrier() {
     assert_eq!(t.status, ExecutionStatus::Completed);
     // BFS order: s, then a, b, then m (from a), m (from b).
     assert_eq!(t.nodes(), ["s", "a", "b", "m", "m"]);
-    assert_eq!(t.state.step_seq(), 6); // cron entry + five downstream visits
+    assert_eq!(t.state.step_seq(), 6); // event entry + five downstream visits
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn retryable_retries_then_succeeds() {
     assert_eq!(t.waits[1].1, 300); // now(100) + backoff(1)=200
     assert!(t.waits.iter().all(|(_, _, thr)| thr.is_none())); // plain retryable, no throttle
     // step_seq counts only the one successful completion.
-    assert_eq!(t.state.step_seq(), 2); // cron entry + successful node
+    assert_eq!(t.state.step_seq(), 2); // event entry + successful node
 }
 
 #[test]
@@ -481,8 +481,8 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"rl","version":1,
             "trigger":{"type":"manual"},"entry":"call",
-            "nodes":[{"id":"call","type":"http-call","credential":"erp"}],
-            "edges":[],"credentials":[{"name":"erp"}]}"#,
+            "nodes":[{"id":"call","type":"http-call"}],
+            "edges":[]}"#,
     );
     let plan = compile(&f).unwrap();
     let first = Cell::new(true);
@@ -504,7 +504,7 @@ fn rate_limited_honors_retry_after_and_emits_the_shared_throttle_key() {
     assert_eq!(*until, 5000); // source-authoritative retry-after, not the backoff curve
     assert_eq!(
         throttle.as_ref().unwrap(),
-        &ThrottleKey::new("http-call", Some("erp".into()), Some("erp.example".into()))
+        &ThrottleKey::new("http-call", None, Some("erp.example".into()))
     );
 }
 
@@ -533,19 +533,19 @@ fn invalid_input_is_never_retried() {
 // ---- dispatch context -----------------------------------------------------
 
 #[test]
-fn dispatch_carries_type_config_credential_and_deadline() {
+fn dispatch_carries_type_config_and_deadline_without_flow_credentials() {
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"ctx","version":1,
             "trigger":{"type":"manual"},"entry":"n",
-            "nodes":[{"id":"n","type":"http-call","credential":"c",
+            "nodes":[{"id":"n","type":"http-call",
                       "config":{"url":"https://x","deadline-ms":5000}}],
-            "edges":[],"credentials":[{"name":"c"}]}"#,
+            "edges":[]}"#,
     );
     let plan = compile(&f).unwrap();
     let t = run(&plan, "r1", json!({}), |_| NodeOutcome::ok(json!({})));
     let d = &t.visited[0];
     assert_eq!(d.node_type, "http-call");
-    assert_eq!(d.credential.as_deref(), Some("c"));
+    assert_eq!(d.credential, None);
     assert_eq!(d.deadline_ms, Some(5000));
     assert_eq!(d.config["url"], json!("https://x"));
 }
@@ -675,7 +675,7 @@ fn resume_reconstructs_a_linear_frontier_and_continues() {
     ];
     let mut st = resumed(&plan, "r1", json!({ "trigger": 1 }), &completed).unwrap();
     assert_eq!(st.status(), ExecutionStatus::Running);
-    assert_eq!(st.step_seq(), 3); // cron entry + two recorded downstream steps
+    assert_eq!(st.step_seq(), 3); // event entry + two recorded downstream steps
 
     // The driver continues: the very next dispatch is c (not a re-run of a/b),
     // and c sees b's recorded output as its input.
@@ -970,7 +970,7 @@ fn resumed_error_routed_run_matches_live_step_seq_and_result() {
     });
     assert_eq!(live.status, ExecutionStatus::Completed);
     assert_eq!(live.nodes(), ["a", "h"]); // ok skipped
-    assert_eq!(live.state.step_seq(), 2); // cron entry + h's success
+    assert_eq!(live.state.step_seq(), 2); // event entry + h's success
     // The error payload a actually emitted (h's live input) — reuse it verbatim
     // so the record matches what the run emitted.
     let error_payload = live
@@ -1026,12 +1026,12 @@ fn resume_partial_after_error_route_leaves_step_seq_zero_and_null_result() {
     assert_eq!(
         st.step_seq(),
         1,
-        "only the cron entry is completed; an error route is not"
+        "only the event entry is completed; an error route is not"
     );
     assert_eq!(
         st.result(),
         &json!({}),
-        "the cron entry retains the scheduler-admitted payload"
+        "the event entry retains the scheduler-admitted payload"
     );
 
     // The live remainder: h runs with the error payload as its input, then done.
@@ -1262,7 +1262,7 @@ fn a_runaway_cycle_fails_at_exactly_the_budget() {
     plan.set_dispatch_budget(5);
     let mut st = started(&plan, "r1", json!("go"));
     let (dispatched, status) = run_bounded(&plan, &mut st, 20);
-    // The cron entry consumes one unit, then four downstream executions are
+    // The event entry consumes one unit, then four downstream executions are
     // allowed before the run fails terminally at the configured total of five.
     assert_eq!(dispatched.len(), 4);
     assert_eq!(st.dispatched(), 5);
@@ -1276,7 +1276,7 @@ fn a_runaway_cycle_fails_at_exactly_the_budget() {
 
 #[test]
 fn a_flow_that_uses_exactly_the_budget_completes() {
-    // The cron entry plus linear4 dispatch exactly 5 nodes; budget 5 must let
+    // The event entry plus linear4 dispatch exactly 5 nodes; budget 5 must let
     // the run complete (the budget is "may execute N nodes", not "fails at N").
     let f = linear4();
     let mut plan = compile(&f).unwrap();

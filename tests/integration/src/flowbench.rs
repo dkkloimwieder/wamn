@@ -373,8 +373,8 @@ const DISPATCH_P99_NS: u64 = 50_000;
 /// Dispatches one walk of `flow` spends.
 ///
 /// Every node type now executes through standard-node dispatch — the wamn-ayq7 series
-/// moved `respond` (e937df7), `request` (58c3ed3), `cron` (a30cff6), `event`
-/// (d6f8084) and `fail` (5d99ed0) off the engine-reserved path — so `Plan::next`
+/// moved `respond` (e937df7), `request` (58c3ed3), `event` (d6f8084), and
+/// `fail` (5d99ed0) off the engine-reserved path — so `Plan::next`
 /// hands the driver a `Step::Dispatch` for each of them and a linear graph spends
 /// exactly one dispatch per node. Until that series the typed entry and the
 /// `respond`/`fail` terminals came back as `Step::Reserved` transitions the

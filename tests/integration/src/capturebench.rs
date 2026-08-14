@@ -283,7 +283,7 @@ async fn write_error(
 
 /// Completion ports for the fixture's one ordinary node type. 9b7e2a7 gave
 /// validation this port map, so a plan can no longer be compiled without it; the
-/// engine owns the `cron` entry's ports, which is why entry types are absent.
+/// engine owns the `event` entry's ports, which is why entry types are absent.
 fn resolved_interfaces() -> ResolvedInterfaces {
     ResolvedInterfaces::from([("echo".to_string(), vec!["main".to_string()])])
 }
@@ -291,16 +291,14 @@ fn resolved_interfaces() -> ResolvedInterfaces {
 /// A minimal linear flow `a -> b` behind a typed entry.
 ///
 /// 9b7e2a7 (wamn-5wd1.34) replaced the document's `trigger` + `entry` fields with
-/// a typed entry NODE (`request`/`cron`/`event`). Capture is an admission fact and
-/// is deliberately absent from this authored document, so
-/// `cron`, the config-free entry that imposes no `respond` discipline, stands in
-/// for the old `{"type": "manual"}` trigger, and `a` stays an ordinary captured
-/// work node rather than becoming the entry itself.
+/// a typed entry node. Capture is an admission fact and is deliberately absent
+/// from this authored document, so the config-free `event` entry keeps `a` as
+/// an ordinary captured work node rather than making it the entry itself.
 fn linear_flow() -> Flow {
     let graph = json!({
         "schema-version": "0.1", "flow-id": "cap", "version": 1,
         "nodes": [
-            {"id": "in", "type": "cron"},
+            {"id": "in", "type": "event"},
             {"id": "a", "type": "echo"},
             {"id": "b", "type": "echo"}
         ],
@@ -612,4 +610,16 @@ pub async fn run(args: CaptureBenchArgs) -> anyhow::Result<()> {
         bail!("one or more 9.6 capture gates failed");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn fixture_uses_the_retained_event_entry() {
+        let flow = super::linear_flow();
+        assert_eq!(
+            flow.entry_node().map(|node| node.node_type.as_str()),
+            Some("event")
+        );
+    }
 }

@@ -617,7 +617,7 @@ fn compile_root_execution_plan(
                 .context("validated request entry config is invalid")?
                 .input_schema
         }
-        wamn_flow::EntryKind::Cron | wamn_flow::EntryKind::Event => serde_json::Value::Bool(true),
+        wamn_flow::EntryKind::Event => serde_json::Value::Bool(true),
     };
     let mut semantic_requirements = flow.connection_requirements.iter().collect::<Vec<_>>();
     semantic_requirements.sort_by(|left, right| left.name.cmp(&right.name));

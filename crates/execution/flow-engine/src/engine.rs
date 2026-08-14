@@ -202,7 +202,7 @@ pub enum Step {
 /// Caller ownership tracked independently from run terminality.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallerState {
-    /// Cron/event runs have no attached synchronous caller.
+    /// Event runs have no attached synchronous caller.
     None,
     /// A request caller is attached and has not received an outcome.
     Attached,
@@ -265,7 +265,6 @@ pub enum ApplyError {
     CallerAlreadyReleased,
     RespondWithoutCaller,
     InvalidRequestEmission,
-    InvalidCronEmission,
     InvalidEventEmission,
     InvalidFailOutcome,
     InvalidContext(Value),
@@ -286,12 +285,6 @@ impl std::fmt::Display for ApplyError {
                 write!(
                     f,
                     "request must emit its admitted input unchanged on main without context"
-                )
-            }
-            ApplyError::InvalidCronEmission => {
-                write!(
-                    f,
-                    "cron must emit its scheduler-admitted input unchanged on main without context"
                 )
             }
             ApplyError::InvalidEventEmission => {
@@ -496,7 +489,7 @@ impl<'f> Plan<'f> {
                 .expect("validated entry has a reserved kind")
             {
                 EntryKind::Request => CallerState::Attached,
-                EntryKind::Cron | EntryKind::Event => CallerState::None,
+                EntryKind::Event => CallerState::None,
             },
         }
     }
@@ -598,7 +591,7 @@ impl<'f> Plan<'f> {
             node_type: node.node_type.clone(),
             config: node.config.clone(),
             connection: node.connection.clone(),
-            credential: node.credential.clone(),
+            credential: None,
             payload: a.payload.clone(),
             context: state.context.clone(),
             attempt: a.attempt,
@@ -657,7 +650,6 @@ impl<'f> Plan<'f> {
             return Err(ApplyError::NotReserved(dispatch.node.clone()));
         }
         validate_request_outcome(dispatch, &outcome)?;
-        validate_cron_outcome(dispatch, &outcome)?;
         validate_event_outcome(dispatch, &outcome)?;
         validate_fail_outcome(dispatch, &outcome)?;
         if dispatch.node_type == "fail" {
@@ -1077,7 +1069,7 @@ impl<'f> Plan<'f> {
         };
         if matches!(
             seed.node_type.as_str(),
-            "request" | "cron" | "event" | "respond" | "fail"
+            "request" | "event" | "respond" | "fail"
         ) {
             return Err(SeedError::ReservedNode(node.to_string()));
         }
@@ -1173,27 +1165,6 @@ pub fn validate_request_outcome(
         }
         NodeOutcome::Error(_) => Ok(()),
         NodeOutcome::Success { .. } => Err(ApplyError::InvalidRequestEmission),
-    }
-}
-
-/// Refuse any cron emission that does not preserve the scheduler-admitted input.
-///
-/// Durable drivers call this before recording a successful attempt; [`Plan::apply`]
-/// repeats the check so direct and reconstructed engine users share the invariant.
-pub fn validate_cron_outcome(dispatch: &Dispatch, outcome: &NodeOutcome) -> Result<(), ApplyError> {
-    if dispatch.node_type != "cron" {
-        return Ok(());
-    }
-    match outcome {
-        NodeOutcome::Success {
-            payload,
-            port,
-            context,
-        } if port == crate::MAIN_PORT && payload == &dispatch.payload && context.is_none() => {
-            Ok(())
-        }
-        NodeOutcome::Error(_) => Ok(()),
-        NodeOutcome::Success { .. } => Err(ApplyError::InvalidCronEmission),
     }
 }
 

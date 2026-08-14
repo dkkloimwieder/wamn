@@ -63,7 +63,7 @@ struct Member {
 /// The current interface for a retained standard node or flowrunner-private
 /// fixture node.
 pub(crate) fn interface(node_type: &str) -> anyhow::Result<NodeInterface> {
-    if matches!(node_type, "conditional" | "cron") {
+    if node_type == "conditional" {
         return Ok(NodeInterface {
             node_type: node_type.to_string(),
             output_ports: vec![MAIN_PORT.to_string()],
@@ -123,7 +123,7 @@ fn compile_execution_plan(
                 .context("validated request entry config is invalid")?
                 .input_schema
         }
-        Some(EntryKind::Cron | EntryKind::Event) => Value::Bool(true),
+        Some(EntryKind::Event) => Value::Bool(true),
         None => unreachable!("entry node selected by entry-kind membership"),
     };
 

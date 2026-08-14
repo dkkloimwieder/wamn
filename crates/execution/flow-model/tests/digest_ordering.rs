@@ -24,21 +24,16 @@ const GRAPH: &str = r#"{
   "version": 3,
   "name": "Digest ordering fixture",
   "nodes": [
-    {"id": "zeta", "type": "custom", "label": "Zeta step", "credential": "beta-key"},
+    {"id": "zeta", "type": "custom", "label": "Zeta step"},
     {"id": "entry", "type": "request", "config": {"input-schema": true}},
-    {"id": "alpha", "type": "custom", "label": "Alpha step", "credential": "alpha-key"},
+    {"id": "alpha", "type": "custom", "label": "Alpha step"},
     {"id": "done", "type": "respond", "config": {"status": 200}}
   ],
   "edges": [
     {"from": "entry", "to": "alpha"},
     {"from": "alpha", "to": "zeta"},
     {"from": "zeta", "to": "done"}
-  ],
-  "credentials": [
-    {"name": "alpha-key", "description": "Alpha credential"},
-    {"name": "beta-key", "description": "Beta credential"}
-  ],
-  "allowed-hosts": ["a.example.com", "b.example.com"]
+  ]
 }"#;
 
 fn flow() -> Flow {
@@ -65,15 +60,8 @@ fn non_semantic_collection_permutation_is_refused_at_validation() {
         baseline.issues(&interfaces())
     );
 
-    let mut credentials = flow();
-    credentials.credentials.swap(0, 1);
-    assert!(codes(&credentials).contains(&"unsorted-credentials"));
-
-    let mut hosts = flow();
-    hosts.allowed_hosts.swap(0, 1);
-    assert!(codes(&hosts).contains(&"unsorted-allowed-hosts"));
-
-    // `connection-requirements` carries the same refusal; it is proved by
+    // `connection-requirements` carries the retained sorted-collection refusal;
+    // it is proved by
     // `connection_references_are_declared_sorted_and_absent_from_control_nodes`
     // in `src/validate.rs`, which owns the portable-requirement fixture.
 }
@@ -190,10 +178,10 @@ fn explicit_edge_ordinals_are_materialized_at_parse_and_do_change_the_digest() {
     );
 }
 
-/// `Flow::name`, `Node::label`, `CredentialRef::description`, and
-/// `CredentialRef::kind` are editor display text with no reader anywhere in the
-/// platform, so `FlowPreimage` omits all four and relabelling a graph does not
-/// mint a new artifact identity (wamn-jvzx.16). They stay in the document.
+/// `Flow::name` and `Node::label` are editor display text with no reader
+/// anywhere in the platform, so `FlowPreimage` omits both and relabelling a
+/// graph does not mint a new artifact identity (wamn-jvzx.16). They stay in
+/// the document.
 #[test]
 fn editor_labels_must_not_enter_the_graph_preimage() {
     let baseline = flow();
@@ -204,10 +192,6 @@ fn editor_labels_must_not_enter_the_graph_preimage() {
             .label
             .as_ref()
             .map(|label| format!("{label} (renamed)"));
-    }
-    for credential in &mut relabelled.credentials {
-        credential.kind = Some("renamed-kind".to_string());
-        credential.description = Some("renamed".to_string());
     }
 
     assert_eq!(baseline.graph_hash(), relabelled.graph_hash());
@@ -229,16 +213,14 @@ fn graph_preimage_bytes_are_pinned() {
     assert_eq!(
         String::from_utf8(flow().canonical_bytes()).expect("the preimage is UTF-8"),
         concat!(
-            r#"{"allowed-hosts":["a.example.com","b.example.com"],"#,
-            r#""credentials":[{"name":"alpha-key"},{"name":"beta-key"}],"#,
-            r#""edges":[{"from":"alpha","ordinal":0,"to":"zeta"},"#,
+            r#"{"edges":[{"from":"alpha","ordinal":0,"to":"zeta"},"#,
             r#"{"from":"entry","ordinal":0,"to":"alpha"},"#,
             r#"{"from":"zeta","ordinal":0,"to":"done"}],"#,
             r#""flow-id":"digest-ordering","#,
-            r#""nodes":[{"credential":"alpha-key","id":"alpha","type":"custom"},"#,
+            r#""nodes":[{"id":"alpha","type":"custom"},"#,
             r#"{"config":{"status":200},"id":"done","type":"respond"},"#,
             r#"{"config":{"input-schema":true},"id":"entry","type":"request"},"#,
-            r#"{"credential":"beta-key","id":"zeta","type":"custom"}],"#,
+            r#"{"id":"zeta","type":"custom"}],"#,
             r#""schema-version":"0.1","version":3}"#,
         ),
         "node frames are ordered by node id and display text is absent"
@@ -254,12 +236,10 @@ const MAXIMAL_GRAPH: &str = r#"{
   "nodes": [
     {"id": "entry", "type": "request", "label": "Entry", "config": {"input-schema": true}},
     {"id": "call", "type": "custom", "label": "Call", "config": {"k": 1},
-     "connection": "erp-callback", "credential": "api-key"}
+     "connection": "erp-callback"}
   ],
   "edges": [{"from": "entry", "from-port": "alt", "to": "call", "to-port": "in"}],
-  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}],
-  "credentials": [{"name": "api-key", "kind": "api-key", "description": "The key"}],
-  "allowed-hosts": ["a.example.com"]
+  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}]
 }"#;
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -278,7 +258,7 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 /// reaching no digest — this test is what makes that a decision rather than an
 /// omission. `MAXIMAL_GRAPH` populates every optional field so nothing is
 /// skipped, and the pinned key sets then state exactly which document fields are
-/// identity and which are display, at the flow, node, and credential level.
+/// identity and which are display, at the flow and node levels.
 #[test]
 fn every_flow_field_is_classified_as_identity_or_display() {
     let flow = Flow::from_json(MAXIMAL_GRAPH).expect("maximal fixture parses");
@@ -288,9 +268,7 @@ fn every_flow_field_is_classified_as_identity_or_display() {
     assert_eq!(
         sorted_keys(&document),
         [
-            "allowed-hosts",
             "connection-requirements",
-            "credentials",
             "edges",
             "flow-id",
             "name",
@@ -314,13 +292,8 @@ fn every_flow_field_is_classified_as_identity_or_display() {
     );
     assert_eq!(
         sorted_keys(&preimage["nodes"][0]),
-        ["config", "connection", "credential", "id", "type"],
+        ["config", "connection", "id", "type"],
         "`label` is the only display field at the node level"
-    );
-    assert_eq!(
-        sorted_keys(&preimage["credentials"][0]),
-        ["name"],
-        "a credential is identified by its logical name alone"
     );
     assert_eq!(
         sorted_keys(&document["nodes"][0]),

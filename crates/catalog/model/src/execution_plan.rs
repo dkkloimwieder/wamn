@@ -196,8 +196,8 @@ impl ExecutionPlanV2 {
         let entry = self
             .node_for(&self.body.entry_instruction)
             .expect("execution plan entry membership checked");
-        if !matches!(entry.node_type.as_str(), "request" | "cron" | "event") {
-            return invalid("execution plan entry must be request, cron, or event");
+        if !matches!(entry.node_type.as_str(), "request" | "event") {
+            return invalid("execution plan entry must be request or event");
         }
 
         for node in &self.body.nodes {
@@ -412,7 +412,7 @@ impl ExecutionPlanV2 {
                     .iter()
                     .any(|node| node.node_type == "respond")
                 {
-                    return invalid("event and cron plans cannot contain respond nodes");
+                    return invalid("event plans cannot contain respond nodes");
                 }
             }
         }
@@ -430,7 +430,7 @@ impl ExecutionPlanV2 {
                 return invalid("entry input-schema guard must match request config");
             }
         } else if self.body.entry_input_schema_guard != Value::Bool(true) {
-            return invalid("event and cron entry input-schema guard must be true");
+            return invalid("event entry input-schema guard must be true");
         }
         validate_entry_schema(&self.body.entry_input_schema_guard)
     }
@@ -1042,6 +1042,13 @@ mod tests {
         let mut mismatch = request_plan();
         mismatch.body.source_map[0].source_node_id = "other".into();
         assert!(mismatch.validate().is_err());
+    }
+
+    #[test]
+    fn retired_cron_entry_is_rejected() {
+        let mut plan = event_plan();
+        plan.body.nodes[0].node_type = "cron".into();
+        assert!(plan.validate().is_err());
     }
 
     #[test]

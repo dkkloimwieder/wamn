@@ -15,7 +15,7 @@ fn flow(source: &str) -> Flow {
 fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
-        ("cron".to_string(), vec!["main".to_string()]),
+        ("event".to_string(), vec!["main".to_string()]),
         ("event".to_string(), vec!["main".to_string()]),
         ("fail".to_string(), vec!["main".to_string()]),
         ("request".to_string(), vec!["main".to_string()]),
@@ -67,17 +67,17 @@ fn request_flow(respond_successor: &str) -> Flow {
 }
 
 #[test]
-fn cron_node_emission_and_unwired_completion_port_exhaust_the_frontier() {
+fn event_node_emission_and_unwired_completion_port_exhaust_the_frontier() {
     let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"choice"}],
+        r#"{"schema-version":"0.1","flow-id":"event","version":1,
+            "nodes":[{"id":"in","type":"event"},{"id":"work","type":"choice"}],
             "edges":[{"from":"in","to":"work"}]}"#,
     );
     let plan = compile(&flow);
     let input = json!({"scheduled-at":"2026-01-01T00:00:00Z"});
     let mut state = plan.start("run", input.clone());
     let entry = dispatch(&plan, &mut state);
-    assert_eq!(entry.node_type, "cron");
+    assert_eq!(entry.node_type, "event");
     assert_eq!(entry.payload, input);
     assert_eq!(plan.next(&mut state, 0), Step::Dispatch(entry.clone()));
     let payload = entry.payload.clone();
@@ -214,7 +214,7 @@ fn fail_releases_an_attached_request_caller() {
 fn fail_refuses_non_terminal_or_mismatched_results_without_lifecycle_mutation() {
     let flow = flow(
         r#"{"schema-version":"0.1","flow-id":"guarded-fail","version":1,
-            "nodes":[{"id":"in","type":"cron"},
+            "nodes":[{"id":"in","type":"event"},
                      {"id":"bad","type":"fail",
                       "config":{"code":"denied","message":"not allowed","status":403}}],
             "edges":[{"from":"in","to":"bad"}]}"#,
@@ -249,13 +249,13 @@ fn fail_refuses_non_terminal_or_mismatched_results_without_lifecycle_mutation() 
 
 #[test]
 fn validation_rejects_response_without_request_and_ambiguous_request_ports() {
-    let cron_respond = flow(
+    let event_respond = flow(
         r#"{"schema-version":"0.1","flow-id":"bad-response","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"out","type":"respond","config":{"status":200}}],
+            "nodes":[{"id":"in","type":"event"},{"id":"out","type":"respond","config":{"status":200}}],
             "edges":[{"from":"in","to":"out"}]}"#,
     );
     assert!(matches!(
-        Plan::compile(&cron_respond, &interfaces()),
+        Plan::compile(&event_respond, &interfaces()),
         Err(EngineError::Invalid(issues))
             if issues.iter().any(|issue| issue.code == "respond-without-request-entry")
     ));
@@ -355,36 +355,6 @@ fn crash_restart_redispatches_request_until_exact_emission_commits() {
 }
 
 #[test]
-fn crash_restart_redispatches_cron_until_exact_emission_commits() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron-replay","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"echo"}],
-            "edges":[{"from":"in","to":"work"}]}"#,
-    );
-    let plan = compile(&flow);
-    let input = json!({"scheduled-at": 42});
-    let mut first = plan.start("run", input.clone());
-    let boundary = dispatch(&plan, &mut first);
-    assert_eq!(boundary.node_type, "cron");
-    assert_eq!(plan.next(&mut first, 0), Step::Dispatch(boundary.clone()));
-
-    let mut restarted = plan.start("run", input.clone());
-    assert_eq!(plan.next(&mut restarted, 0), Step::Dispatch(boundary));
-
-    let mut committed = plan
-        .resume(
-            "run",
-            input.clone(),
-            &[Recorded::new("in", "main", input.clone())],
-        )
-        .unwrap();
-    let next = dispatch(&plan, &mut committed);
-    assert_eq!(next.node, "work");
-    assert_eq!(next.payload, input);
-    assert_eq!(committed.caller_state(), CallerState::None);
-}
-
-#[test]
 fn crash_restart_redispatches_event_until_exact_emission_commits() {
     let flow = flow(
         r#"{"schema-version":"0.1","flow-id":"event-replay","version":1,
@@ -456,8 +426,8 @@ fn crash_restart_redispatches_respond_until_its_typed_emission_commits() {
 #[test]
 fn crash_restart_replays_the_fail_boundary_until_its_record_commits() {
     let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron-fail","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"bad","type":"fail","config":{"code":"stop"}}],
+        r#"{"schema-version":"0.1","flow-id":"event-fail","version":1,
+            "nodes":[{"id":"in","type":"event"},{"id":"bad","type":"fail","config":{"code":"stop"}}],
             "edges":[{"from":"in","to":"bad"}]}"#,
     );
     let plan = compile(&flow);

@@ -18,7 +18,7 @@
 //! let flow = Flow::from_json(r#"{
 //!   "schema-version": "0.1", "flow-id": "f", "version": 1,
 //!   "nodes": [
-//!     {"id": "entry", "type": "cron"},
+//!     {"id": "entry", "type": "event"},
 //!     {"id": "a", "type": "echo"},
 //!     {"id": "b", "type": "echo"}
 //!   ],
@@ -63,8 +63,7 @@ mod throttle;
 pub use engine::{
     ApplyError, CallerState, CheckpointError, Dispatch, ExecutionFailureKind, ExecutionState,
     ExecutionStatus, Failure, Recorded, ReservedStep, ResumeError, SeedError, Step, restore,
-    snapshot, validate_cron_outcome, validate_event_outcome, validate_fail_outcome,
-    validate_request_outcome,
+    snapshot, validate_event_outcome, validate_fail_outcome, validate_request_outcome,
 };
 pub use outcome::{ERROR_PORT, MAIN_PORT, NodeOutcome};
 pub use plan::{DEFAULT_DISPATCH_BUDGET, EngineError, Plan};

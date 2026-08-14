@@ -9,7 +9,7 @@ fn plan(source: &str) -> Plan<'static> {
             "pure".to_string(),
             vec!["main".to_string(), "again".to_string()],
         ),
-        ("cron".to_string(), vec!["main".to_string()]),
+        ("event".to_string(), vec!["main".to_string()]),
         ("effect".to_string(), vec!["main".to_string()]),
     ])));
     Plan::compile(flow, interfaces).unwrap()
@@ -17,9 +17,9 @@ fn plan(source: &str) -> Plan<'static> {
 
 fn acknowledge_entry(plan: &Plan<'_>, state: &mut wamn_runner::ExecutionState) {
     let Step::Dispatch(entry) = plan.next(state, 0) else {
-        panic!("cron entry must dispatch");
+        panic!("event entry must dispatch");
     };
-    assert_eq!(entry.node_type, "cron");
+    assert_eq!(entry.node_type, "event");
     let payload = entry.payload.clone();
     plan.apply(state, &entry, NodeOutcome::ok(payload), 0)
         .unwrap();
@@ -37,7 +37,7 @@ fn successful_context_writes_replace_and_effects_observe_the_snapshot() {
     let plan = plan(
         r#"{"schema-version":"0.1","flow-id":"ctx","version":1,
             "nodes":[
-              {"id":"in","type":"cron"},
+              {"id":"in","type":"event"},
               {"id":"first","type":"pure"},
               {"id":"second","type":"pure"},
               {"id":"effect","type":"effect"}],
@@ -82,7 +82,7 @@ fn pure_replay_reconstructs_context_byte_identically_through_a_loop() {
     let plan = plan(
         r#"{"schema-version":"0.1","flow-id":"loop-ctx","version":1,
             "nodes":[
-              {"id":"in","type":"cron"},
+              {"id":"in","type":"event"},
               {"id":"loop-a","type":"pure"},
               {"id":"loop-b","type":"pure"},
               {"id":"effect","type":"effect"}],
@@ -116,7 +116,7 @@ fn pure_replay_reconstructs_context_byte_identically_through_a_loop() {
 fn invalid_replacement_is_atomic_and_error_records_cannot_mutate_context() {
     let plan = plan(
         r#"{"schema-version":"0.1","flow-id":"negative-ctx","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"pure","type":"pure"}],
+            "nodes":[{"id":"in","type":"event"},{"id":"pure","type":"pure"}],
             "edges":[{"from":"in","to":"pure"}]}"#,
     );
     let mut state = plan.start("run", Value::Null);

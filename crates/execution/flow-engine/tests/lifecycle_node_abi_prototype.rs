@@ -79,7 +79,7 @@ fn compile(flow: &Flow) -> Plan<'_> {
             "choice".to_string(),
             vec![MAIN_PORT.to_string(), "drop".to_string()],
         ),
-        ("cron".to_string(), vec![MAIN_PORT.to_string()]),
+        ("event".to_string(), vec![MAIN_PORT.to_string()]),
         ("event".to_string(), vec![MAIN_PORT.to_string()]),
         ("fail".to_string(), vec![MAIN_PORT.to_string()]),
         ("request".to_string(), vec![MAIN_PORT.to_string()]),
@@ -172,93 +172,6 @@ fn failed_request_node_result_does_not_advance_the_entry_token_or_release_the_ca
     assert_eq!(state.step_seq(), 0);
     assert_eq!(state.caller_state(), CallerState::Attached);
     assert_eq!(state.status(), ExecutionStatus::Failed);
-}
-
-#[test]
-fn cron_data_crosses_node_abi_before_engine_completes_callerless_run() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
-    );
-    let plan = compile(&flow);
-    let input = json!({"scheduled-at": "2026-08-03T12:00:00Z"});
-    let mut state = plan.start("cron-run", input.clone());
-    let dispatch = match plan.next(&mut state, 0) {
-        Step::Dispatch(dispatch) => dispatch,
-        other => panic!("expected cron dispatch, got {other:?}"),
-    };
-    let mut ctx = NoEffects;
-    let run = run_context(&state, &dispatch.node, &dispatch.config);
-    let emission = EntryNode.run(&mut ctx, &run, &dispatch.payload).unwrap();
-    plan.apply(
-        &mut state,
-        &dispatch,
-        NodeOutcome::ok_on(emission.payload, emission.port),
-        0,
-    )
-    .unwrap();
-
-    assert_eq!(state.result(), &input);
-    assert_eq!(state.caller_state(), CallerState::None);
-    assert_eq!(
-        plan.next(&mut state, 0),
-        Step::Done(ExecutionStatus::Completed)
-    );
-}
-
-#[test]
-fn failed_cron_node_result_does_not_advance_the_entry_token() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron-failure","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
-    );
-    let plan = compile(&flow);
-    let mut state = plan.start("cron-failure-run", json!({"scheduled-at": 42}));
-    let dispatch = match plan.next(&mut state, 0) {
-        Step::Dispatch(dispatch) => dispatch,
-        other => panic!("expected cron dispatch, got {other:?}"),
-    };
-
-    plan.apply(
-        &mut state,
-        &dispatch,
-        NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
-            "cron-failed",
-            "cron node failed",
-        ))),
-        0,
-    )
-    .unwrap();
-
-    assert_eq!(state.step_seq(), 0);
-    assert_eq!(state.caller_state(), CallerState::None);
-    assert_eq!(state.status(), ExecutionStatus::Failed);
-}
-
-#[test]
-fn malformed_cron_emission_cannot_advance_the_entry_token() {
-    let flow = flow(
-        r#"{"schema-version":"0.1","flow-id":"cron-guard","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
-    );
-    let plan = compile(&flow);
-    let mut state = plan.start("cron-guard-run", json!({"scheduled-at": 42}));
-    let dispatch = match plan.next(&mut state, 0) {
-        Step::Dispatch(dispatch) => dispatch,
-        other => panic!("expected cron dispatch, got {other:?}"),
-    };
-
-    assert_eq!(
-        plan.apply(
-            &mut state,
-            &dispatch,
-            NodeOutcome::ok(json!({"changed": true})),
-            0,
-        ),
-        Err(wamn_runner::ApplyError::InvalidCronEmission)
-    );
-    assert_eq!(state.step_seq(), 0);
-    assert_eq!(plan.next(&mut state, 0), Step::Dispatch(dispatch));
 }
 
 #[test]

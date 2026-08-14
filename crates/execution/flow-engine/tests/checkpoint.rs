@@ -31,9 +31,7 @@ fn apply_entry(plan: &Plan<'_>, state: &mut ExecutionState) {
         Step::Reserved(entry @ ReservedStep::Entry { .. }) => {
             plan.apply_reserved(state, &entry).expect("entry applies");
         }
-        Step::Dispatch(entry)
-            if matches!(entry.node_type.as_str(), "request" | "cron" | "event") =>
-        {
+        Step::Dispatch(entry) if matches!(entry.node_type.as_str(), "request" | "event") => {
             let payload = entry.payload.clone();
             plan.apply(state, &entry, NodeOutcome::ok(payload), 0)
                 .expect("Node-ABI entry applies");
@@ -53,7 +51,7 @@ fn dispatch(plan: &Plan<'_>, state: &mut ExecutionState, now_ms: u64) -> Dispatc
 fn checkpoint_round_trips_multitoken_merge_and_occurrences() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"fan","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"s","type":"echo"},
+            "nodes":[{"id":"in","type":"event"},{"id":"s","type":"echo"},
                      {"id":"a","type":"echo"},{"id":"b","type":"echo"},
                      {"id":"m","type":"echo"}],
             "edges":[{"from":"in","to":"s"},{"from":"s","to":"a"},
@@ -106,7 +104,7 @@ fn checkpoint_round_trips_multitoken_merge_and_occurrences() {
 fn checkpoint_round_trips_loop_after_error_route() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"error-loop","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"call"},
+            "nodes":[{"id":"in","type":"event"},{"id":"work","type":"call"},
                      {"id":"handle","type":"handler"}],
             "edges":[{"from":"in","to":"work"},
                      {"from":"work","from-port":"error","to":"handle"},
@@ -146,10 +144,8 @@ fn checkpoint_round_trips_loop_after_error_route() {
 fn checkpoint_round_trips_parked_retry_state() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"parked","version":1,
-            "nodes":[{"id":"in","type":"cron"},
-                     {"id":"call","type":"http-call","credential":"erp"}],
-            "edges":[{"from":"in","to":"call"}],
-            "credentials":[{"name":"erp"}]}"#,
+            "nodes":[{"id":"in","type":"event"},{"id":"call","type":"http-call"}],
+            "edges":[{"from":"in","to":"call"}]}"#,
     );
     let plan = plan(&flow, &interfaces);
     let mut state = plan.start("run-parked", json!({"request": 7}));
@@ -172,7 +168,7 @@ fn checkpoint_round_trips_parked_retry_state() {
         attempt: 1,
         throttle: Some(ThrottleKey::new(
             "http-call",
-            Some("erp".to_string()),
+            None,
             Some("erp.example".to_string()),
         )),
     };
@@ -229,7 +225,7 @@ fn checkpoint_round_trips_released_caller_context_and_last_result() {
 fn checkpoint_rejects_unknown_versions_without_fallback() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"version","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
     );
     let plan = plan(&flow, &interfaces);
     let state = plan.start("run-version", Value::Null);
@@ -246,7 +242,7 @@ fn checkpoint_rejects_unknown_versions_without_fallback() {
 fn checkpoint_v1_encoding_is_exact_and_environment_independent() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"golden","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
     );
     let plan = plan(&flow, &interfaces);
     let state = plan.start("run-golden", json!({"input": 1}));
@@ -261,7 +257,7 @@ fn checkpoint_v1_encoding_is_exact_and_environment_independent() {
 fn checkpoint_rejects_invalid_shape_context_and_nodes() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"invalid","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"work","type":"echo"}],
+            "nodes":[{"id":"in","type":"event"},{"id":"work","type":"echo"}],
             "edges":[{"from":"in","to":"work"}]}"#,
     );
     let plan = plan(&flow, &interfaces);
@@ -296,7 +292,7 @@ fn checkpoint_rejects_invalid_shape_context_and_nodes() {
 fn checkpoint_rejects_terminal_state() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"terminal","version":1,
-            "nodes":[{"id":"in","type":"cron"}],"edges":[]}"#,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
     );
     let plan = plan(&flow, &interfaces);
     let mut state = plan.start("run-terminal", Value::Null);
@@ -317,7 +313,7 @@ fn checkpoint_rejects_terminal_state() {
 fn checkpoint_visit_map_is_encoded_in_stable_key_order() {
     let (flow, interfaces) = compile(
         r#"{"schema-version":"0.1","flow-id":"stable","version":1,
-            "nodes":[{"id":"in","type":"cron"},{"id":"z","type":"echo"},
+            "nodes":[{"id":"in","type":"event"},{"id":"z","type":"echo"},
                      {"id":"a","type":"echo"}],
             "edges":[{"from":"in","to":"z"},{"from":"z","to":"a"}]}"#,
     );

@@ -2,8 +2,8 @@
 //!
 //! A flow is **data, not code**: a versioned directed graph of typed nodes
 //! ([`Node`]) wired by ported edges ([`Edge`]), starting at one typed entry,
-//! referencing credentials by name ([`CredentialRef`]). Deploying a flow flips
-//! an active-version pointer (5.14); the graph itself is this crate's [`Flow`].
+//! and declaring portable connection requirements. Deploying a flow flips an
+//! active-version pointer (5.14); the graph itself is this crate's [`Flow`].
 //!
 //! This crate is the shared foundation the production runner (5.2) and the
 //! editor build on. It provides:
@@ -37,9 +37,9 @@ pub use node_contract::{
 };
 pub use preimage::FlowPreimage;
 pub use types::{
-    CallFlowConfig, CredentialRef, CronInput, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput,
-    FailConfig, Flow, FlowConnectionRequirement, MAIN_PORT, Node, NodeId, RequestConfig,
-    RespondConfig, RowEvent, SCHEMA_VERSION,
+    CallFlowConfig, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow,
+    FlowConnectionRequirement, MAIN_PORT, Node, NodeId, RequestConfig, RespondConfig, RowEvent,
+    SCHEMA_VERSION,
 };
 pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 

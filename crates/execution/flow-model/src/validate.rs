@@ -31,7 +31,7 @@ pub struct Issue {
     pub severity: Severity,
     /// Stable machine code, e.g. `duplicate-node-id`.
     pub code: &'static str,
-    /// JSON-ish path to the offending element, e.g. `nodes[2].credential`.
+    /// JSON-ish path to the offending element, e.g. `nodes[2].connection`.
     pub path: String,
     pub message: String,
 }
@@ -75,6 +75,15 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
                 format!("nodes[{index}].id"),
                 "node id is required",
             ));
+        } else if !is_node_id(&node.id) {
+            issues.push(Issue::error(
+                "invalid-node-id",
+                format!("nodes[{index}].id"),
+                format!(
+                    "node id {:?} must contain only lowercase ASCII letters, digits, and hyphens",
+                    node.id
+                ),
+            ));
         } else if !node_ids.insert(node.id.as_str()) {
             issues.push(Issue::error(
                 "duplicate-node-id",
@@ -100,8 +109,6 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
         ));
     }
 
-    validate_credentials(flow, &mut issues);
-    validate_allowed_hosts(flow, &mut issues);
     validate_connections(flow, &mut issues);
 
     let entries: Vec<(usize, &Node, EntryKind)> = flow
@@ -114,7 +121,7 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
         0 => issues.push(Issue::error(
             "no-entry-node",
             "nodes",
-            "a flow needs exactly one request, cron, or event entry node",
+            "a flow needs exactly one request or event entry node",
         )),
         1 => {}
         _ => issues.push(Issue::error(
@@ -156,7 +163,7 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
             EntryKind::Request => {
                 validate_request_graph(flow, entry, resolved_interfaces, &nodes_by_id, &mut issues)
             }
-            EntryKind::Cron | EntryKind::Event => {
+            EntryKind::Event => {
                 for (index, node) in flow.nodes.iter().enumerate() {
                     if node.node_type == "respond" {
                         issues.push(Issue::error(
@@ -215,69 +222,6 @@ fn validate_identity(flow: &Flow, issues: &mut Vec<Issue>) {
     }
 }
 
-fn validate_credentials(flow: &Flow, issues: &mut Vec<Issue>) {
-    let mut names = HashSet::new();
-    for (index, credential) in flow.credentials.iter().enumerate() {
-        if !names.insert(credential.name.as_str()) {
-            issues.push(Issue::error(
-                "duplicate-credential",
-                format!("credentials[{index}].name"),
-                format!("credential name {:?} is not unique", credential.name),
-            ));
-        }
-    }
-    for (index, node) in flow.nodes.iter().enumerate() {
-        if let Some(credential) = &node.credential
-            && !names.contains(credential.as_str())
-        {
-            issues.push(Issue::error(
-                "unknown-credential",
-                format!("nodes[{index}].credential"),
-                format!("references undeclared credential {credential:?}"),
-            ));
-        }
-    }
-
-    if flow
-        .credentials
-        .windows(2)
-        .any(|pair| pair[0].name >= pair[1].name)
-    {
-        issues.push(Issue::error(
-            "unsorted-credentials",
-            "credentials",
-            "credentials must be sorted by unique logical name",
-        ));
-    }
-}
-
-fn validate_allowed_hosts(flow: &Flow, issues: &mut Vec<Issue>) {
-    let mut hosts = HashSet::new();
-    for (index, host) in flow.allowed_hosts.iter().enumerate() {
-        if host.is_empty() || host.chars().any(char::is_whitespace) {
-            issues.push(Issue::error(
-                "invalid-allowed-host",
-                format!("allowed-hosts[{index}]"),
-                format!("allowed host {host:?} is empty or contains whitespace"),
-            ));
-        } else if !hosts.insert(host.as_str()) {
-            issues.push(Issue::error(
-                "duplicate-allowed-host",
-                format!("allowed-hosts[{index}]"),
-                format!("allowed host {host:?} is not unique"),
-            ));
-        }
-    }
-
-    if flow.allowed_hosts.windows(2).any(|pair| pair[0] >= pair[1]) {
-        issues.push(Issue::error(
-            "unsorted-allowed-hosts",
-            "allowed-hosts",
-            "allowed hosts must be sorted and unique",
-        ));
-    }
-}
-
 fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
     let mut names = HashSet::new();
     for (index, named) in flow.connection_requirements.iter().enumerate() {
@@ -318,18 +262,6 @@ fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
         ));
     }
 
-    let connection_backed_http = flow
-        .nodes
-        .iter()
-        .any(|node| node.node_type == "http-request" && node.connection.is_some());
-    if connection_backed_http && !flow.allowed_hosts.is_empty() {
-        issues.push(Issue::error(
-            "connection-http-has-allowed-hosts",
-            "allowed-hosts",
-            "connection-backed HTTP authority comes from the environment binding, not allowed-hosts",
-        ));
-    }
-
     for (index, node) in flow.nodes.iter().enumerate() {
         if let Some(connection) = node.connection.as_deref() {
             if !names.contains(connection) {
@@ -341,7 +273,7 @@ fn validate_connections(flow: &Flow, issues: &mut Vec<Issue>) {
             }
             if matches!(
                 node.node_type.as_str(),
-                "request" | "cron" | "event" | "respond" | "fail" | "call-flow"
+                "request" | "event" | "respond" | "fail" | "call-flow"
             ) {
                 issues.push(Issue::error(
                     "control-node-has-connection",
@@ -389,14 +321,6 @@ fn validate_http_request_connection(
             None
         }
     };
-    if node.credential.is_some() {
-        issues.push(Issue::error(
-            "connection-http-has-credential",
-            format!("nodes[{index}].credential"),
-            "connection-backed HTTP credentials come from the environment binding",
-        ));
-    }
-
     if let Some(named) = connection.and_then(|connection| {
         flow.connection_requirements
             .iter()
@@ -581,7 +505,7 @@ fn owned_completion_ports<'a>(
     resolved_interfaces: &'a ResolvedInterfaces,
 ) -> Option<Vec<&'a str>> {
     match node.node_type.as_str() {
-        "request" | "cron" | "event" | "respond" | "call-flow" => Some(vec![MAIN_PORT]),
+        "request" | "event" | "respond" | "call-flow" => Some(vec![MAIN_PORT]),
         "fail" => Some(Vec::new()),
         node_type => resolved_interfaces
             .get(node_type)
@@ -593,7 +517,7 @@ fn validate_reserved_nodes(flow: &Flow, issues: &mut Vec<Issue>) {
     for (index, node) in flow.nodes.iter().enumerate() {
         match node.node_type.as_str() {
             "request" => validate_request_config(index, &node.config, issues),
-            "cron" | "event" => {
+            "event" => {
                 if !is_empty_config(&node.config) {
                     issues.push(Issue::error(
                         "entry-has-source-config",
@@ -638,40 +562,31 @@ fn validate_reserved_nodes(flow: &Flow, issues: &mut Vec<Issue>) {
                     ));
                 }
             }
-            "call-flow" => {
-                match serde_json::from_value::<CallFlowConfig>(node.config.clone()) {
-                    Ok(config) => {
-                        if config.flow_id.trim().is_empty() {
-                            issues.push(Issue::error(
-                                "empty-call-flow-id",
-                                format!("nodes[{index}].config.flow-id"),
-                                "call-flow flow-id is required",
-                            ));
-                        } else if !is_slug(&config.flow_id) {
-                            issues.push(Issue::error(
-                                "invalid-call-flow-id",
-                                format!("nodes[{index}].config.flow-id"),
-                                format!(
-                                    "call-flow flow-id {:?} must be a lowercase slug",
-                                    config.flow_id
-                                ),
-                            ));
-                        }
+            "call-flow" => match serde_json::from_value::<CallFlowConfig>(node.config.clone()) {
+                Ok(config) => {
+                    if config.flow_id.trim().is_empty() {
+                        issues.push(Issue::error(
+                            "empty-call-flow-id",
+                            format!("nodes[{index}].config.flow-id"),
+                            "call-flow flow-id is required",
+                        ));
+                    } else if !is_slug(&config.flow_id) {
+                        issues.push(Issue::error(
+                            "invalid-call-flow-id",
+                            format!("nodes[{index}].config.flow-id"),
+                            format!(
+                                "call-flow flow-id {:?} must be a lowercase slug",
+                                config.flow_id
+                            ),
+                        ));
                     }
-                    Err(error) => issues.push(Issue::error(
-                        "invalid-call-flow-config",
-                        format!("nodes[{index}].config"),
-                        error.to_string(),
-                    )),
                 }
-                if node.credential.is_some() {
-                    issues.push(Issue::error(
-                        "call-flow-has-credential",
-                        format!("nodes[{index}].credential"),
-                        "call-flow is internal invocation, not credentialed egress",
-                    ));
-                }
-            }
+                Err(error) => issues.push(Issue::error(
+                    "invalid-call-flow-config",
+                    format!("nodes[{index}].config"),
+                    error.to_string(),
+                )),
+            },
             "fail" => {
                 match serde_json::from_value::<FailConfig>(node.config.clone()) {
                     Ok(config) => {
@@ -1002,6 +917,13 @@ fn is_slug(id: &str) -> bool {
         && bytes.last().copied().is_some_and(alphanumeric)
 }
 
+fn is_node_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 impl Flow {
     /// All validation issues against the resolved public interfaces.
     pub fn issues(&self, resolved_interfaces: &ResolvedInterfaces) -> Vec<Issue> {
@@ -1048,7 +970,6 @@ mod tests {
             label: None,
             config: json!({}),
             connection: None,
-            credential: None,
         }
     }
 
@@ -1088,8 +1009,6 @@ mod tests {
             nodes: vec![request, node("work", "step"), respond],
             edges: vec![edge("in", "main", "work"), edge("work", "main", "out")],
             connection_requirements: vec![],
-            credentials: vec![],
-            allowed_hosts: vec![],
         }
     }
 
@@ -1261,21 +1180,6 @@ mod tests {
     }
 
     #[test]
-    fn connection_backed_http_rejects_legacy_credential_and_allowed_hosts() {
-        let mut flow = connection_http_flow();
-        flow.nodes[1].credential = Some("erp-secret".into());
-        flow.credentials.push(crate::CredentialRef {
-            name: "erp-secret".into(),
-            kind: Some("api-key".into()),
-            description: None,
-        });
-        flow.allowed_hosts.push("erp.example".into());
-        let codes = codes(&flow);
-        assert!(codes.contains(&"connection-http-has-credential"));
-        assert!(codes.contains(&"connection-http-has-allowed-hosts"));
-    }
-
-    #[test]
     fn t0_request_entry_respond_and_resolved_ports_are_valid() {
         let flow = request_flow();
         assert_eq!(flow.entry_node().map(|node| node.id.as_str()), Some("in"));
@@ -1293,7 +1197,7 @@ mod tests {
         assert!(codes(&none).contains(&"no-entry-node"));
 
         let mut multiple = request_flow();
-        multiple.nodes.push(node("tick", "cron"));
+        multiple.nodes.push(node("tick", "event"));
         multiple.edges.push(edge("in", "main", "tick"));
         assert!(codes(&multiple).contains(&"multiple-entry-nodes"));
         assert!(multiple.entry_node().is_none());
@@ -1352,25 +1256,53 @@ mod tests {
     }
 
     #[test]
-    fn t0_cron_event_reject_respond_but_allow_work_and_fail() {
-        for entry_type in ["cron", "event"] {
-            let mut flow = request_flow();
-            flow.nodes[0].node_type = entry_type.into();
-            flow.nodes[0].config = json!({});
-            flow.nodes[1].node_type = "step".into();
-            let mut fail = node("out", "fail");
-            fail.config = json!({"code": "stopped", "status": 503});
-            flow.nodes[2] = fail;
-            assert!(
-                flow.is_valid(&interfaces()),
-                "{entry_type}: {:?}",
-                flow.issues(&interfaces())
-            );
+    fn t0_event_rejects_respond_but_allows_work_and_fail() {
+        let mut flow = request_flow();
+        flow.nodes[0].node_type = "event".into();
+        flow.nodes[0].config = json!({});
+        flow.nodes[1].node_type = "step".into();
+        let mut fail = node("out", "fail");
+        fail.config = json!({"code": "stopped", "status": 503});
+        flow.nodes[2] = fail;
+        assert!(
+            flow.is_valid(&interfaces()),
+            "{:?}",
+            flow.issues(&interfaces())
+        );
 
-            let mut with_response = flow;
-            with_response.nodes[2].node_type = "respond".into();
-            with_response.nodes[2].config = json!({"status": 200});
-            assert!(codes(&with_response).contains(&"respond-without-request-entry"));
+        let mut with_response = flow;
+        with_response.nodes[2].node_type = "respond".into();
+        with_response.nodes[2].config = json!({"status": 200});
+        assert!(codes(&with_response).contains(&"respond-without-request-entry"));
+    }
+
+    #[test]
+    fn node_ids_accept_only_lowercase_ascii_digits_and_hyphens() {
+        for accepted in ["a", "z9", "a-b", "-", "9"] {
+            let mut flow = request_flow();
+            flow.nodes[1].id = accepted.into();
+            flow.edges[0].to = accepted.into();
+            flow.edges[1].from = accepted.into();
+            assert!(
+                !codes(&flow).contains(&"invalid-node-id"),
+                "node id {accepted:?} should be accepted"
+            );
+        }
+
+        for (rejected, expected_code) in [
+            ("", "empty-node-id"),
+            ("A", "invalid-node-id"),
+            ("a_b", "invalid-node-id"),
+            ("a:b", "invalid-node-id"),
+            ("with space", "invalid-node-id"),
+            ("é", "invalid-node-id"),
+        ] {
+            let mut flow = request_flow();
+            flow.nodes[1].id = rejected.into();
+            assert!(
+                codes(&flow).contains(&expected_code),
+                "node id {rejected:?} should be rejected"
+            );
         }
     }
 
@@ -1443,11 +1375,9 @@ mod tests {
 
         let mut call_flow = node("callee", "call-flow");
         call_flow.config = json!({"flow-id": ""});
-        call_flow.credential = Some("secret".into());
         flow.nodes.push(call_flow);
         let call_codes = codes(&flow);
         assert!(call_codes.contains(&"empty-call-flow-id"));
-        assert!(call_codes.contains(&"call-flow-has-credential"));
     }
 
     #[test]
@@ -1485,5 +1415,40 @@ mod tests {
             Flow::from_json(&retired_capture).is_err(),
             "capture is selected per draft-run operation, never authored into a flow"
         );
+
+        for (field, value) in [
+            ("credentials", json!([{"name": "api-key"}])),
+            ("allowed-hosts", json!(["api.example"])),
+        ] {
+            let mut document = serde_json::to_value(request_flow()).expect("flow serializes");
+            document
+                .as_object_mut()
+                .expect("flow document is an object")
+                .insert(field.to_string(), value);
+            assert!(
+                serde_json::from_value::<Flow>(document).is_err(),
+                "retired flow field {field:?} must fail closed"
+            );
+        }
+
+        let mut node_credential = serde_json::to_value(request_flow()).expect("flow serializes");
+        node_credential["nodes"][1]["credential"] = json!("api-key");
+        assert!(
+            serde_json::from_value::<Flow>(node_credential).is_err(),
+            "retired node credential field must fail closed"
+        );
+    }
+
+    #[test]
+    fn retired_cron_entry_is_not_a_flow_entry() {
+        let mut flow = request_flow();
+        flow.nodes[0].node_type = "cron".into();
+        flow.nodes[0].config = json!({});
+        let issues = flow.issues(&interfaces());
+        assert!(
+            issues.iter().any(|issue| issue.code == "no-entry-node"),
+            "cron must not be accepted as a retained entry type: {issues:?}"
+        );
+        assert_eq!(flow.entry_node(), None);
     }
 }

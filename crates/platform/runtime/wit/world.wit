@@ -19,10 +19,10 @@ world flow-invocation-plugin {
 }
 
 /// Host-side bindgen world for the trusted `wamn:runner/egress` channel
-/// (fqg.11): the compiled-in flow-runner declares each run's `allowed-hosts`
-/// so the run-worker's outgoing handler can enforce the per-flow outbound
-/// allowlist (never-declared / declared-empty = deny-all, intersected with
-/// the host-level list). See plugins/runner_egress.rs.
+/// (fqg.11): the compiled-in flowrunner supplies each run's resolved
+/// connection authority so the run-worker's outgoing handler can enforce it
+/// (never-supplied / supplied-empty = deny-all, intersected with the host-level
+/// list). See plugins/runner_egress.rs.
 world egress-plugin {
   import wamn:runner/egress@0.1.0;
 }

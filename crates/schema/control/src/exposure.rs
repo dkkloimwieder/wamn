@@ -77,7 +77,6 @@ pub enum AttachmentKind {
     Http,
     Internal,
     Studio,
-    Cron,
 }
 
 impl AttachmentKind {
@@ -86,14 +85,12 @@ impl AttachmentKind {
             Self::Http => "http",
             Self::Internal => "internal",
             Self::Studio => "studio",
-            Self::Cron => "cron",
         }
     }
 
     fn entry_kind(self) -> EntryKind {
         match self {
             Self::Http | Self::Internal | Self::Studio => EntryKind::Request,
-            Self::Cron => EntryKind::Cron,
         }
     }
 
@@ -101,7 +98,6 @@ impl AttachmentKind {
         match self {
             Self::Http | Self::Studio => SourceKind::Auth,
             Self::Internal => SourceKind::CallerPolicy,
-            Self::Cron => SourceKind::Schedule,
         }
     }
 }
@@ -461,14 +457,6 @@ mod tests {
         }
     }
 
-    fn cron_flow() -> FlowExposure<'static> {
-        FlowExposure {
-            flow_id: "f3",
-            entry_kind: EntryKind::Cron,
-            artifact_hash: "artifact-f3",
-        }
-    }
-
     fn release() -> ExposureRelease {
         ExposureRelease {
             sources: vec![Source {
@@ -509,24 +497,13 @@ mod tests {
     }
 
     #[test]
-    fn resolves_http_internal_studio_and_minimal_cron_definitions() {
+    fn resolves_http_internal_and_studio_definitions() {
         let mut authored = release();
-        authored.sources.extend([
-            Source {
-                id: "callers".into(),
-                kind: SourceKind::CallerPolicy,
-                definition: serde_json::json!({"allowed-callers": ["f4"]}),
-            },
-            Source {
-                id: "schedule".into(),
-                kind: SourceKind::Schedule,
-                definition: serde_json::json!({
-                    "schedule": "0 2 * * *",
-                    "timezone": "America/New_York",
-                    "catch-up": "skip"
-                }),
-            },
-        ]);
+        authored.sources.push(Source {
+            id: "callers".into(),
+            kind: SourceKind::CallerPolicy,
+            definition: serde_json::json!({"allowed-callers": ["f4"]}),
+        });
         let mut internal = authored.attachments[0].clone();
         internal.id = "recommend".into();
         internal.kind = AttachmentKind::Internal;
@@ -536,22 +513,9 @@ mod tests {
         studio.id = "studio-receive".into();
         studio.kind = AttachmentKind::Studio;
         studio.route.as_mut().unwrap().path = "/studio/receipts".into();
-        let mut cron = authored.attachments[0].clone();
-        cron.id = "stale-holds".into();
-        cron.kind = AttachmentKind::Cron;
-        cron.flow_id = "f3".into();
-        cron.source_id = "schedule".into();
-        cron.route = None;
-        cron.mappings.clear();
-        cron.response_deadline_ms = None;
-        authored.attachments.extend([internal, studio, cron]);
-        let resolved = resolve_exposure(&authored, &[request_flow(), cron_flow()]).unwrap();
-        assert_eq!(resolved.len(), 4);
-        assert!(resolved.iter().any(|item| {
-            item.attachment.kind == AttachmentKind::Cron
-                && item.normalized_host.is_none()
-                && item.normalized_path.is_none()
-        }));
+        authored.attachments.extend([internal, studio]);
+        let resolved = resolve_exposure(&authored, &[request_flow()]).unwrap();
+        assert_eq!(resolved.len(), 3);
     }
 
     #[test]
@@ -638,7 +602,7 @@ mod tests {
         let authored = release();
         let wrong_entry = FlowExposure {
             flow_id: "f1",
-            entry_kind: EntryKind::Cron,
+            entry_kind: EntryKind::Event,
             artifact_hash: "artifact-f1",
         };
         assert_eq!(

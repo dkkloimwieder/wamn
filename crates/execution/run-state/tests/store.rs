@@ -38,7 +38,7 @@ fn compile(flow: &Flow) -> Plan<'_> {
 fn linear4() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"lin4","version":1,
-            "nodes":[{"id":"a","type":"cron"},{"id":"b","type":"echo"},
+            "nodes":[{"id":"a","type":"event"},{"id":"b","type":"echo"},
                      {"id":"c","type":"echo"},{"id":"d","type":"echo"}],
             "edges":[{"from":"a","to":"b"},{"from":"b","to":"c"},{"from":"c","to":"d"}]}"#,
     )
@@ -48,7 +48,7 @@ fn linear4() -> Flow {
 fn branchy() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"brc","version":1,
-            "nodes":[{"id":"start","type":"cron"},{"id":"cond","type":"conditional"},
+            "nodes":[{"id":"start","type":"event"},{"id":"cond","type":"conditional"},
                      {"id":"y1","type":"pg-write"},{"id":"y2","type":"echo"},
                      {"id":"n1","type":"pg-write"},{"id":"n2","type":"echo"}],
             "edges":[{"from":"start","to":"cond"},
@@ -75,10 +75,9 @@ fn drive_collect(plan: &Plan, st: &mut wamn_runner::ExecutionState) -> Vec<Strin
     seen
 }
 
-/// The recorded row for a `cron` entry node. Since wamn-ayq7.23 cron executes
-/// through standard-node dispatch and may only emit its scheduler-admitted input unchanged
-/// (`validate_cron_outcome`, which the driver applies before durable
-/// checkpointing), a persisted entry row's output IS the run's own input.
+/// The recorded row for an `event` entry node. The entry executes through
+/// standard-node dispatch and may only emit its admitted input unchanged, so a
+/// persisted entry row's output is the run's own input.
 fn entry_row(run: &RunRecord, node: &str) -> NodeRunRecord {
     NodeRunRecord::success(
         run.run_id.clone(),
@@ -158,7 +157,7 @@ fn reconstruct_replays_an_error_routed_node() {
     // output_port is `error` and whose output is the `{"error": …}` payload.
     let f = flow(
         r#"{"schema-version":"0.1","flow-id":"err","version":1,
-            "nodes":[{"id":"a","type":"cron"},{"id":"work","type":"http-call"},
+            "nodes":[{"id":"a","type":"event"},{"id":"work","type":"http-call"},
                      {"id":"h","type":"notify"},{"id":"ok","type":"echo"}],
             "edges":[{"from":"a","to":"work"},{"from":"work","to":"ok"},
                      {"from":"work","from-port":"error","to":"h"}]}"#,
@@ -184,7 +183,7 @@ fn reconstruct_replays_an_error_routed_node() {
 fn diamond_e() -> Flow {
     flow(
         r#"{"schema-version":"0.1","flow-id":"dia","version":1,
-            "nodes":[{"id":"a","type":"cron"},{"id":"b","type":"echo"},
+            "nodes":[{"id":"a","type":"event"},{"id":"b","type":"echo"},
                      {"id":"c","type":"echo"},{"id":"d","type":"echo"},
                      {"id":"e","type":"echo"}],
             "edges":[{"from":"a","to":"b"},{"from":"a","to":"c"},
