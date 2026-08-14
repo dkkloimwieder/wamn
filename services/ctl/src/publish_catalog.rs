@@ -1,21 +1,18 @@
-//! The `publish-catalog` subcommand: write a project's catalog snapshot into the
-//! `wamn_catalog` table the api-gateway component (4.1) reads at startup.
+//! Publishes a project's canonical applied catalog snapshot into the `wamn_catalog` table.
 //!
-//! In production the schema-designer→gateway seam writes this row whenever a
-//! catalog version is applied/promoted (3.4); 4.1b provides the mechanism as a
-//! reusable, idempotent host subcommand so a per-project gateway has a snapshot
-//! to serve. It reads a catalog JSON (the applied catalog for a project),
+//! This reusable, idempotent host subcommand writes or replaces the canonical
+//! snapshot while publishing an applied release. It reads a catalog JSON,
 //! `Catalog::to_json`s the canonical document, and UPSERTs it under the project's
 //! tenant — connecting as a **superuser** so it bypasses the snapshot table's RLS
 //! `WITH CHECK` and the runtime role's SELECT-only grant.
 //!
 //! `--provision` additionally stands up the schema and the 3.2 tenant floor (the
-//! entity tables) when they are absent — used by the in-cluster `apiproof` gate
-//! to give the deployed gateway real data to serve (the demo-row seeding rides
-//! the gates-side `wamn-gates publish-catalog --seed` wrapper; the prod tool
-//! carries no fixture content). Everything is **additive**: the schema is created
-//! `IF NOT EXISTS`, the floor is applied only when missing, and no existing object
-//! is ever dropped or altered (the shared-cluster guardrail).
+//! entity tables) when they are absent — used by the in-cluster catalog-publication
+//! gate to exercise real data (the demo-row seeding rides the gates-side
+//! `wamn-gates publish-catalog --seed` wrapper; the prod tool carries no fixture
+//! content). Everything is **additive**: the schema is created `IF NOT EXISTS`,
+//! the floor is applied only when missing, and no existing object is ever dropped
+//! or altered (the shared-cluster guardrail).
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
 //! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs),
@@ -54,7 +51,7 @@ pub struct PublishCatalogArgs {
     #[arg(long, env = "WAMN_PG_ADMIN_URL")]
     pub admin_database_url: Option<String>,
 
-    /// Tenant the snapshot is published under (the gateway's `app.tenant` claim).
+    /// Tenant stored with the RLS-scoped snapshot.
     #[arg(long)]
     pub tenant: String,
 
@@ -65,8 +62,7 @@ pub struct PublishCatalogArgs {
     pub project_config: Option<PathBuf>,
 
     /// Schema the `wamn_catalog` table (and, with `--provision`, the entity
-    /// tables) live in; the gateway reaches them via the host-injected
-    /// `search_path`.
+    /// tables) live in.
     #[arg(long, default_value = "public")]
     pub schema: String,
 

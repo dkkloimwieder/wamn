@@ -326,8 +326,8 @@ async fn registration_change_scenario(su: &Client, url: &str) {
         "the API-path write cannot ALTER — the old-image gap is open"
     );
 
-    // The pure detect surface names the open gap — the read half the CronJob and
-    // wamn-l5i9.66's api-gateway warning both key on.
+    // The pure detect surface names the open gap — the read half the periodic
+    // reconcile path keys on.
     let before = reconcile_replica_identity::reconcile(su, &catalog, DATA_SCHEMA, false)
         .await
         .expect("dry-run reconcile reads the live gap");

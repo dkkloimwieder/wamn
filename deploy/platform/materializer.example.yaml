@@ -6,7 +6,7 @@
 #
 #   # after: provision-project-env + enable-cdc-project-env + the event reader
 #   # is publishing that env's EVT_ stream, and materializer.wasm is pushed to
-#   # the in-cluster registry (the api-gateway push recipe):
+#   # the in-cluster registry (using the registry push workflow):
 #   kubectl -n wamn-system apply -f <instantiated copy of this file>
 #
 # SERVICE-FIRST (E11/D21 + E12): this is a wasmCloud SERVICE workload —

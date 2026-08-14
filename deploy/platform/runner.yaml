@@ -14,8 +14,8 @@
 #   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   kubectl -n wamn-system logs -l app=runner --tail=20
 #
-# SINGLE-PROJECT (one Deployment per project — the api-gateway analog): the
-# project's DB URL + tenant + schema are this Deployment's config. Real per-
+# SINGLE-PROJECT (one Deployment per project): the project's DB URL + tenant +
+# schema are this Deployment's config. Real per-
 # project entries land with hosting/2.3 provisioning; the wamn-runner-db Secret
 # is a SEPARATE manifest (runner-db.example.yaml) so re-applying this file never
 # clobbers a customized Secret back to demo values. A multi-project runner (a

@@ -18,9 +18,8 @@
 # CronJob is the automatic caller for that path: the verb connects as the
 # superuser the `ALTER` needs and is idempotent (a reconcile at target flips
 # nothing), so a periodic run is safe to repeat. The gap closes within one
-# cadence (≤5 min); wamn-l5i9.66 surfaces a pending-reconcile warning in the
-# api-gateway registration response so a caller sees the gap immediately,
-# covering the window.
+# cadence (≤5 min); an operator can use the verb's dry-run output to diagnose
+# the pending gap on demand while the periodic reconcile remains authoritative.
 #
 # OWNER DECISION (2026-07-20, recorded on wamn-l5i9.65): mechanism = periodic
 # CronJob over the existing verb. REJECTED: a dispatcher-drained reconcile

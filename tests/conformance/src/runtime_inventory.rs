@@ -505,8 +505,8 @@ fn resolved_feature_and_deployed_workload_inventory_is_current() {
     );
     assert_eq!(
         inventory.workload_manifests.len(),
-        3,
-        "the inventory must retain all three generated workload manifests"
+        2,
+        "the inventory must retain both generated workload manifests"
     );
     for workload in &inventory.workload_manifests {
         let expected_state = if workload.path.contains(".example.") {

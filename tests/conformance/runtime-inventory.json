@@ -35,11 +35,6 @@
   ],
   "workload_manifests": [
     {
-      "path": "deploy/platform/api-gateway-workload.yaml",
-      "deployment_state": "active",
-      "abi": "p2-components"
-    },
-    {
       "path": "deploy/platform/flow-http-workload.example.yaml",
       "deployment_state": "template",
       "abi": "p2-components"
