@@ -5121,3 +5121,40 @@ cargo fmt --all -- --check
 bash -n tools/gate-mutants/protected-relations.sh
 git diff --check
 ```
+
+## SR-MVP — package-scoped Docker cook/build graph (`wamn-0h0g.10.4`)
+
+This gate is structural and debug-only. It pins one shared native planner
+recipe, seven retained package-scoped `cook-*`/`build-*` pairs, locked shared
+cache mounts, and exact binary provenance. Buildx runs in `--check` mode only;
+clean/warm image builds and timing belong exclusively to `wamn-0h0g.10.6`.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next
+export CARGO_INCREMENTAL=0
+
+cargo test --locked --offline -p wamn-proof-conformance --lib \
+  docker_component_provenance::
+cargo test --locked --offline -p wamn-proof-integration --lib \
+  metricbench::tests::executor_command_preserves_the_production_metric_boundary \
+  -- --exact
+
+tools/gate-mutants/docker-package-cooks.sh check
+tools/gate-mutants/docker-package-cooks.sh green
+tools/gate-mutants/docker-package-cooks.sh run
+
+# Parse/lint representative leaves of the same complete stage graph. These
+# commands do not build an image.
+docker buildx build --check --target gates .
+docker buildx build --check --target scenario-worker .
+docker buildx build --check --target waker .
+
+cargo clippy --locked --offline \
+  -p wamn-proof-conformance -p wamn-proof-integration \
+  --all-targets -- -D warnings
+rustfmt --edition 2024 --check \
+  tests/conformance/src/docker_component_provenance.rs \
+  tests/integration/src/metricbench.rs
+bash -n tools/gate-mutants/docker-package-cooks.sh
+git diff --check
+```
