@@ -9,10 +9,12 @@ horizon: post-POC (assumes FLOW-SPEC rev18 + POC-PLAN r6 land)
 
 # Wamn — the plan
 
-> **Archive notice for MVP scope-reduction work.** `docs/scope-reduction-mvp.md`
-> is the only live MVP charter after `wamn-0h0g.12.9`. Later rulings recorded
-> here, including `runs.capture_mode`, are historical fold-back/provenance only;
-> the charter governs.
+> **Archive notice for MVP scope-reduction work.**
+> `docs/scope-reduction-mvp.md` is the base live MVP charter after
+> `wamn-0h0g.12.9`; read it through the owner-ratified
+> `docs/flow-execution-amendment.md` and `docs/plane-amendment.md`.
+> Later rulings recorded here, including `runs.capture_mode`, are historical
+> fold-back/provenance only; the live charter set governs.
 
 An opinionated low-code platform for industrial clients: visual dataflows, built-in
 Postgres, schema designer, generated APIs, hosted frontends — WASI components on
@@ -2603,6 +2605,7 @@ Each blocks something. An entry leaves by becoming a decision with an artifact.
 | Question | Blocks | Item |
 |---|---|---|
 | ~~How does the tenant key relate to `(org, project, env)`?~~ | **Settled (item 5):** registry-minted `<org-abbrev>_<project-abbrev>_<8 random>`, ≤34 chars, never changes; abbreviations are the machine-facing id, names are labels. D6's one-database-per-`(org, project, env)` confirmed on isolation and operational merits — *not*, as previously recorded, because logical replication forecloses sharing | — |
+| ~~Where do portable gate artifacts and runtime projections reside?~~ | **Settled (`wamn-0h0g.13.39`, `docs/plane-amendment.md`):** the control database owns portable authoring, test/report, release/evidence, identity, attestation, and immutable execution-plan objects; each project database owns only its deployed runtime manifest/projections, environment bindings and activation, local generation retention, run state, and application data. Publish is convergent A/B/C without saga or reconciler; claim resolves project-local facts, acquires, then fetches verified plan bytes from control under the lease. Control retention is local and append-only; project generation kinds are exactly `active-attempt|deployed-release`. Customer-hosted run-plane trust remains deferred to `wamn-0h0g.13.42`. | — |
 | ~~Abbreviation charset, length, and who picks it~~ | **Answered in item 5's body:** `[a-z0-9]`, bounded, org globally unique and project unique within org, slugified default at creation with client override. It also collapses the registry/provisioning validator divergence | — |
 | **Revocation scope** | "Prevents further execution" is ambiguous across new admissions, resumed parked runs, in-flight attempts, and tested-but-unpublished drafts | 2D |
 | ~~Effect retry across a connection-instance change~~ | **Settled (wamn-ko5r.1, narrowed by wamn-0h0g.4.9):** an effect attempt never dispatches twice, so it never retargets. The attempt retains its immutable connection and credential generation facts for audit; a later distinct occurrence resolves the then-active compatible generation. | — |

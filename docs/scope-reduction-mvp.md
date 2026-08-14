@@ -13,10 +13,22 @@ errata folded through round 10
 > refused", read: the prior contract surface is deleted wholesale in
 > the same change — no prior-version acceptance path exists and no
 > version numeral ever bumps. Pin issue: `wamn-0h0g.10.7`. Further:
-> all other docs are archived under `docs/archive/` (this charter is
-> the only live document, `wamn-0h0g.12.9`); all build artifacts were
+> all other docs are archived under `docs/archive/` except the
+> owner-ratified root amendments named here (this charter remains the
+> base live document, `wamn-0h0g.12.9`); all build artifacts were
 > purged from the repo and host Docker (`wamn-0h0g.1.5`); the full
 > execution rulings (1–8) live in the tracker notes.
+
+> **Plane-residency amendment (owner-ratified by
+> `wamn-0h0g.13.39`, 2026-08-14).** Read cut 5's ownership,
+> publication, and retention rules and cut 4's execution-plan storage
+> through `docs/plane-amendment.md`. Portable authoring, report,
+> evidence, release, and execution-plan objects live in the control
+> database; a project database retains only the deployed runtime
+> projection, environment bindings and activation, run state, and
+> application data. The amendment's convergent A/B/C publication and
+> post-lease verified plan fetch supersede this document's historical
+> one-project-transaction publication description.
 
 > **Capture carrier amendment (owner-ratified by `wamn-0h0g.8.14`,
 > implemented by `wamn-0h0g.8.3`).** Effective run capture has exactly
