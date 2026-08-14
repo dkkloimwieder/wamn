@@ -14,7 +14,7 @@ pub const EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION: &str = "0.1";
 pub const EFFECT_WRITER_CREDENTIAL_KEY: &str = "credential.json";
 /// Stable absolute path read by the executor's private loader.
 pub const EFFECT_WRITER_CREDENTIAL_PATH: &str = "/etc/wamn/effect-writer/credential.json";
-/// Stable cluster-global NOLOGIN role carrying only effect-ledger ACLs.
+/// Stable NOLOGIN role carrying ledger authority and narrow fenced-run reads.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
 
 const EFFECT_WRITER_SCOPE_DOMAIN: &[u8] = b"wamn.effect-writer.scope.v0.1";

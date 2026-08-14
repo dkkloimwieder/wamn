@@ -20,9 +20,9 @@
 //! | `respond`        | —                       | webhook-response terminal (status via [`respond::status_for`]) |
 //!
 //! Event and request admission remain outside their capability-free node data
-//! paths. Loops are STRUCTURAL (cycles + `conditional`
-//! express them; dedicated split/merge nodes land with the 5.11 ordering
-//! semantics); `email`/`notify` wait for an email egress capability decision.
+//! paths. Loops are STRUCTURAL (cycles + `conditional` express them); dedicated
+//! split/merge nodes require a separate frame/join design. `email`/`notify`
+//! wait for an email egress capability decision.
 //! Expression power is the JMESPath spec plus the single `context()` reader;
 //! standard nodes may attach a whole context replacement with config `ctx`.
 

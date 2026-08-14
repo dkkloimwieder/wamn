@@ -38,7 +38,7 @@ impl RetryPolicy {
     /// 3_600_000 ms (1 h). A single retry backoff must not out-park the janitor's
     /// reap grace — the longest timescale the run lifecycle acknowledges before a
     /// stuck non-terminal run is reaped as `infrastructure-failure` (the 1 h
-    /// grace the janitor sweep is invoked with, run-queue `janitor_sweep_sql`).
+    /// grace supplied to the host-owned exhausted-run reaper).
     /// A retry is error *recovery*, not an intentional `delay`-node wait (which
     /// parks unboundedly by design); an author cap past this horizon turns the
     /// exponential backoff into an effectively-infinite park, indistinguishable

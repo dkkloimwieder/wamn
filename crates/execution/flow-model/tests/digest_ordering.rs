@@ -259,9 +259,7 @@ const MAXIMAL_GRAPH: &str = r#"{
   "edges": [{"from": "entry", "from-port": "alt", "to": "call", "to-port": "in"}],
   "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}],
   "credentials": [{"name": "api-key", "kind": "api-key", "description": "The key"}],
-  "allowed-hosts": ["a.example.com"],
-  "partition-policy": "leapfrog",
-  "ordering": {"mode": "partitioned", "partition-key": "id"}
+  "allowed-hosts": ["a.example.com"]
 }"#;
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -297,8 +295,6 @@ fn every_flow_field_is_classified_as_identity_or_display() {
             "flow-id",
             "name",
             "nodes",
-            "ordering",
-            "partition-policy",
             "schema-version",
             "version",
         ],
@@ -331,4 +327,26 @@ fn every_flow_field_is_classified_as_identity_or_display() {
         ["config", "id", "label", "type"],
         "the document keeps the display text the preimage drops"
     );
+}
+
+#[test]
+fn retired_ordering_fields_are_refused_instead_of_compatibly_ignored() {
+    let base: Value = serde_json::from_str(MAXIMAL_GRAPH).expect("maximal fixture parses as JSON");
+    for (key, value) in [
+        ("partition-policy", serde_json::json!("leapfrog")),
+        (
+            "ordering",
+            serde_json::json!({"mode": "partitioned", "partition-key": "id"}),
+        ),
+    ] {
+        let mut document = base.clone();
+        document
+            .as_object_mut()
+            .expect("flow document is an object")
+            .insert(key.to_string(), value);
+        assert!(
+            Flow::from_json(&document.to_string()).is_err(),
+            "retired field {key} must fail closed; immutable old artifacts are reprovisioned"
+        );
+    }
 }

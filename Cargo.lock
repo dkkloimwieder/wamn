@@ -4670,8 +4670,6 @@ name = "wamn-test-infrastructure"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "reqwest",
- "serde_json",
  "tokio",
  "wamn-schema-model",
 ]

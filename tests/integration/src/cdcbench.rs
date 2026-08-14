@@ -184,7 +184,6 @@ fn registration_json(reg_id: &str, entity: &str) -> String {
         "entity": entity,
         "ops": ["delete"],
         "condition": null,
-        "partition-key": null,
     })
     .to_string()
 }

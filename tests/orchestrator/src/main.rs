@@ -8,9 +8,7 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{
-    capturebench, causation_e2e, impactproof, readerbench, runnerbench, wakeproof,
-};
+use wamn_proof_integration::{capturebench, causation_e2e, impactproof, readerbench, runnerbench};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -32,7 +30,7 @@ struct Cli {
 enum Command {
     /// Prove admitted full/off node I/O capture, oversized-output metadata, redaction, and retention.
     Capturebench(capturebench::CaptureBenchArgs),
-    /// Run the fqg.8 production runner gate (ExecutionHost drains run_queue to completion; drive+reuse+empty)
+    /// Prove host-owned global-FIFO claim handoff without invoking the fail-closed guest interpreter.
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
@@ -42,8 +40,6 @@ enum Command {
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
     Socketguard(socketguard::SocketGuardArgs),
-    /// Run the POC-F3 scale-to-zero wake proof (park the runner at 0; a LIVE dispatcher cron fire wakes it via the waker and it completes)
-    Wakeproof(wakeproof::WakeProofArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow in an ephemeral schema, then assert `wamn-ctl-ops impact-report` names the affected flow/API resource and carries reprovision guidance for a destructive change with dependents
     Impactproof(impactproof::ImpactProofArgs),
 }
@@ -71,7 +67,6 @@ async fn async_main() -> anyhow::Result<()> {
         Command::CausationE2e(args) => causation_e2e::run(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
-        Command::Wakeproof(args) => wakeproof::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
     };
 

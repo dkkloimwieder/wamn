@@ -1,6 +1,6 @@
 [package]
 name = "wamn-event-reg"
-description = "wamn event registration model (EVT-REG, D19 v3 §5): a subscribing flow's declaration — entity id, ops, condition, partition-key expr — that the materializer (l5i9.17) consumes. Rename-proof by entity-id keying (EVT-OIDMAP). Stored as jsonb in catalog.event_registrations."
+description = "wamn event registration model (EVT-REG, D19 v3 §5): a subscribing flow's declaration — entity id, ops, and condition — that the materializer consumes. Rename-proof by entity-id keying. Stored as jsonb in catalog.event_registrations."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,7 +16,6 @@ wamn-event-wire = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # Import/export-able (EventRegistration::from_json/to_json) and stored as jsonb.
 serde_json = { workspace = true }
-# Condition + partition-key expressions are JMESPath (the codebase's one
-# expression language, wamn-standard-nodes/wamn-3xa) — compiled at write time to reject
-# bad syntax; the materializer (l5i9.17) owns evaluation.
+# Conditions use JMESPath (the codebase's one expression language) and compile
+# at write time to reject bad syntax; the materializer owns evaluation.
 jmespath = { workspace = true }

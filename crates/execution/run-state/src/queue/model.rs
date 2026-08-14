@@ -12,70 +12,17 @@ use serde::{Deserialize, Serialize};
 /// same instants as `timestamptz` and compares with server-side `now()`.
 pub type Millis = i64;
 
-/// The `partitioned(key)` head-unavailability policy (5.11 / D20), materialized
-/// onto each queue row at enqueue so the claim SQL is self-contained. Mirrors
-/// the `wamn-flow` contract enum (the flow declares it; the enqueue writer
-/// stamps it) — the serde/SQL literals are drift-guarded against each other and
-/// against the `deploy/sql/run-queue.sql` CHECK. Inert on unpartitioned rows.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PartitionPolicy {
-    /// The default: an unavailable head — backed off, parked, or
-    /// budget-exhausted — still **blocks** its key. The per-key stream order is
-    /// `(enqueued_at, stream_seq, run_id)` (stamped at enqueue, never moved by a
-    /// park/backoff), and a head that exhausts its redelivery budget **wedges**
-    /// the key: the janitor leaves it for an operator, later runs wait.
-    #[default]
-    Blocking,
-    /// Opt-in: a later ready run may overtake an unavailable head (the
-    /// `(available_at, stream_seq, run_id)` order among currently-ready
-    /// siblings), and the janitor's `infrastructure-failure` verdict on an
-    /// exhausted head releases the key.
-    Leapfrog,
-}
-
-impl PartitionPolicy {
-    /// Every policy, for drift guards over the storage CHECK.
-    pub const ALL: [PartitionPolicy; 2] = [PartitionPolicy::Blocking, PartitionPolicy::Leapfrog];
-
-    /// The storage literal — equals the serde kebab-case wire form and the
-    /// `run_queue.partition_policy` CHECK literals.
-    pub fn as_sql(self) -> &'static str {
-        match self {
-            PartitionPolicy::Blocking => "blocking",
-            PartitionPolicy::Leapfrog => "leapfrog",
-        }
-    }
-
-    /// Parse a storage literal.
-    pub fn from_sql(s: &str) -> Option<PartitionPolicy> {
-        PartitionPolicy::ALL.into_iter().find(|p| p.as_sql() == s)
-    }
-}
-
 /// One row of `run_queue`: a run waiting to be (or being) dispatched. `available_at`
 /// is when the row becomes claimable — future for a queue-parked/backed-off run;
 /// a live lease (`lease_expires_at` in the future) marks a row a runner currently
 /// owns. `attempts` counts crash evidence — it bumps only when a claim reclaims an
 /// expired lease (redelivery budget vs `max_attempts`); queue parks/wakes are free.
-/// `partition_key` is reserved for the per-partition ownership follow-up (5.14
-/// scaling); the walking skeleton leaves it null.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct QueueEntry {
     pub tenant_id: String,
     pub run_id: String,
-    /// Per-partition ownership key (`partitioned(key)`, 5.11 semantics / 5.14
-    /// ownership). Null = unpartitioned (claimed by the global claim). A non-null
-    /// key is dispatched only through the per-partition ownership path
-    /// ([`crate::queue::plan_partition_claim`]) so the key's runs stay in order.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partition_key: Option<String>,
-    /// The head-unavailability policy for this row's key (D20), stamped at
-    /// enqueue from the flow's declaration. Inert when `partition_key` is null.
-    #[serde(default)]
-    pub partition_policy: PartitionPolicy,
-    /// Dispatch priority tiebreaker (claim orders by `available_at` first).
+    /// Persisted compatibility field; the global FIFO does not order by it.
     #[serde(default)]
     pub priority: i32,
     /// When this row becomes claimable. Future = queue-parked (for example,
@@ -83,9 +30,7 @@ pub struct QueueEntry {
     pub available_at: Millis,
     /// When this row was enqueued — stamped **once** and never updated, unlike
     /// `available_at` which a queue park/backoff pushes into the future. This is the
-    /// stable per-key stream order (`(enqueued_at, stream_seq, run_id)`) the
-    /// `blocking` policy ranks by: a parked head sorts *later* than its ready
-    /// sibling on `available_at`, so blocking order cannot be expressed over it.
+    /// stable admission timestamp retained independently of a later queue wait.
     #[serde(default)]
     pub enqueued_at: Millis,
     /// The per-flow monotone CDC stream position (D19 §5 / E4): the JetStream
@@ -125,8 +70,6 @@ impl QueueEntry {
         QueueEntry {
             tenant_id: tenant_id.into(),
             run_id: run_id.into(),
-            partition_key: None,
-            partition_policy: PartitionPolicy::default(),
             priority: 0,
             available_at,
             // An immediately-claimable row was enqueued when it became
@@ -141,67 +84,10 @@ impl QueueEntry {
         }
     }
 
-    /// The same entry under an explicit head-unavailability policy (D20).
-    pub fn with_policy(mut self, policy: PartitionPolicy) -> QueueEntry {
-        self.partition_policy = policy;
-        self
-    }
-
     /// The same entry carrying a real CDC stream position (E4) — what the
     /// materializer's evt enqueue stamps; every other writer leaves the 0 default.
     pub fn with_stream_seq(mut self, stream_seq: i64) -> QueueEntry {
         self.stream_seq = stream_seq;
         self
-    }
-
-    /// A fresh, immediately-claimable entry bound to a partition (`partitioned(key)`
-    /// dispatch — claimed only through the per-partition ownership path, never the
-    /// global claim).
-    pub fn ready_partition(
-        tenant_id: impl Into<String>,
-        run_id: impl Into<String>,
-        partition_key: impl Into<String>,
-        available_at: Millis,
-        max_attempts: i32,
-    ) -> QueueEntry {
-        QueueEntry {
-            partition_key: Some(partition_key.into()),
-            ..QueueEntry::ready(tenant_id, run_id, available_at, max_attempts)
-        }
-    }
-}
-
-/// A partition lease: the row of `partition_owner` that grants a replica exclusive
-/// dispatch rights over one `(tenant_id, partition_key)` stream. While a replica
-/// holds a live lease it is the *only* replica that claims the partition's runs, so
-/// ordering within the key is preserved; when the lease expires (the owner died or
-/// stepped down) another replica reacquires the whole key and continues in order.
-/// This is the *decision view* the pure acquire/claim logic reasons over — the DB
-/// row (`deploy/sql/run-queue.sql`) also carries `acquired_at`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub struct PartitionOwner {
-    pub tenant_id: String,
-    pub partition_key: String,
-    /// The replica holding the partition lease.
-    pub lease_owner: String,
-    /// The partition-lease visibility timeout. Past it, the partition is reacquirable.
-    pub lease_expires_at: Millis,
-}
-
-impl PartitionOwner {
-    /// A partition leased to `owner` until `lease_expires_at`.
-    pub fn new(
-        tenant_id: impl Into<String>,
-        partition_key: impl Into<String>,
-        lease_owner: impl Into<String>,
-        lease_expires_at: Millis,
-    ) -> PartitionOwner {
-        PartitionOwner {
-            tenant_id: tenant_id.into(),
-            partition_key: partition_key.into(),
-            lease_owner: lease_owner.into(),
-            lease_expires_at,
-        }
     }
 }

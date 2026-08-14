@@ -40,7 +40,7 @@ load_mutation() {
   case "$id" in
     in-flight-recovery-becomes-refusal)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
+      EXPECTED_SHA="8b946fb23587b2c45acc29f7d4d394c3e83eb22349895ae39e41256816efb7e3"
       NEEDLE='        InvocationRecovery::InFlight { run_id } => Some(BeginResult::Admitted(Admitted { run_id })),'
       REPLACEMENT='        InvocationRecovery::InFlight { run_id: _ } => Some(rejected(409, "in-flight")),'
       GATE="flow_invocation::tests::in_flight_recovery_returns_the_same_run_without_admission"
@@ -48,7 +48,7 @@ load_mutation() {
       ;;
     promotion-derived-key-recheck-bypass)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
+      EXPECTED_SHA="8b946fb23587b2c45acc29f7d4d394c3e83eb22349895ae39e41256816efb7e3"
       NEEDLE='                            if next.idempotency_required
                                 && admission.request.idempotency_key.is_none()
                             {'
@@ -58,7 +58,7 @@ load_mutation() {
       ;;
     visible-duplicate-winner-becomes-refusal)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
+      EXPECTED_SHA="8b946fb23587b2c45acc29f7d4d394c3e83eb22349895ae39e41256816efb7e3"
       NEEDLE='                AdmissionResult::Duplicate {
                     run_id: Some(run_id),
                 } => {
@@ -74,7 +74,7 @@ load_mutation() {
       ;;
     duplicate-winner-recovery-bypass)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
+      EXPECTED_SHA="8b946fb23587b2c45acc29f7d4d394c3e83eb22349895ae39e41256816efb7e3"
       NEEDLE='                    return Ok(recovered_begin(recovery)
                         .unwrap_or_else(|| rejected(409, "admission-retry")));'
       REPLACEMENT='                    let _ = recovery;
@@ -92,7 +92,7 @@ load_mutation() {
       ;;
     storage-client-key-restores-not-null)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='            alterations.push("ALTER COLUMN client_key_digest DROP NOT NULL".to_string());'
       REPLACEMENT='            alterations.push("ALTER COLUMN client_key_digest SET NOT NULL".to_string());'
       GATE="run_plane::tests::invocation_admission_retention_cutover_is_exact_and_idempotent"
@@ -108,7 +108,7 @@ load_mutation() {
       ;;
     effect-uncertain-status-changed)
       TARGET="crates/platform/runtime/src/flow_invocation.rs"
-      EXPECTED_SHA="b2a7955ec4301689f4732e25c362f8f8d7caf2c6e9268187ad557ee25c1e239f"
+      EXPECTED_SHA="8b946fb23587b2c45acc29f7d4d394c3e83eb22349895ae39e41256816efb7e3"
       NEEDLE='const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 502;'
       REPLACEMENT='const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 500;'
       GATE="flow_invocation::tests::effect_uncertain_decodes_only_the_non_committal_stored_identity"

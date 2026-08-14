@@ -2,13 +2,12 @@
 //!
 //! The **pure per-event pipeline** the Service-first materializer guest
 //! (`components/execution/materializer`) drives: given a subscribing flow's declaration
-//! (an [`EventRegistration`] + the flow's [`Ordering`]/policy) and one
+//! (an [`EventRegistration`] + its subscribed flow identity) and one
 //! delivered CDC envelope with its JetStream `stream_seq`, decide — fire a
 //! run, skip, or refuse — and, for a fire, mint everything the enqueue needs:
 //! the deterministic zero-padded run id ([`wamn_run_state::queue::mint_evt_run_id`]),
 //! the author-visible event business input, the child lineage stamp, the
-//! trusted invocation context, partition key + policy (kq0z-coherent), and the
-//! numeric stream position.
+//! trusted invocation context, and the numeric global-FIFO stream position.
 //!
 //! Like `wamn-run-state` / `wamn-runner`, this crate is **pure**: no DB, no
 //! NATS, no clock. The guest supplies the `wamn:postgres` transaction
@@ -39,14 +38,6 @@
 //!   `parent.depth + 1` (0 for an organic write); over-budget is a distinct,
 //!   alertable refusal. Child causation is separate from the author-visible
 //!   input and belongs to trusted lineage persistence.
-//! - **Ordering** (fqg.20/D20/kq0z): the FLOW's `ordering` declaration is
-//!   authoritative. `partitioned` keys come from the registration's
-//!   `partition-key` extractor over the EVENT context when declared, else the
-//!   flow's own expression over the run input — both folded by
-//!   [`Ordering::partition_key_for`]'s rules (a null/missing/non-scalar key
-//!   degrades to the flow-wide stream, never NULL). Policy stamps only on
-//!   keyed rows.
-
 mod condition;
 mod context;
 mod decide;
@@ -59,14 +50,13 @@ pub use condition::{CompiledCondition, ConditionOutcome, compile_condition};
 pub use context::{event_context, tenant_of};
 pub use decide::{
     DecideError, FirePlan, FlowDeclaration, RefuseReason, SkipReason, Verdict, child_causation,
-    decide, event_invocation_context_json, mint_registered_evt_run_id, rq_policy, serviceable,
+    decide, event_invocation_context_json, mint_registered_evt_run_id, serviceable,
 };
 pub use input::evt_input_json;
 pub use wamn_event_reg::{condition_references_old, references_old};
 
 pub use wamn_event_reg::EventRegistration;
 pub use wamn_event_wire::{Causation, Envelope, Op};
-pub use wamn_flow::Ordering;
 
 /// The causation depth ceiling (l5i9.1 sign-off: owner set 16, overriding the
 /// doc's proposed ~8). A child at depth > this is refused, alertably.

@@ -5,12 +5,8 @@ use wamn_run_state::schema_drift::{Need, assert_run_state_stand_in, assert_stand
 const RUN_QUEUE_SQL: &str = include_str!("../../../deploy/sql/run-queue.sql");
 const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
 
-fn all_required() -> [(&'static str, Need); 3] {
-    [
-        ("run_queue", Need::Required),
-        ("partition_owner", Need::Required),
-        ("run_dead_letters", Need::Required),
-    ]
+fn all_required() -> [(&'static str, Need); 1] {
+    [("run_queue", Need::Required)]
 }
 
 fn uncommented(sql: &str) -> String {

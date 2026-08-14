@@ -45,6 +45,7 @@ use wash_runtime::wit::{WitInterface, WitWorld};
 
 mod claims;
 mod pool;
+mod production_claim;
 mod resources;
 mod types;
 
@@ -55,6 +56,9 @@ pub use claims::{
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
     WamnPostgresConfig,
+};
+pub use production_claim::{
+    ProductionClaimError, ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult,
 };
 pub use resources::{PgCursor, PgTransaction};
 
@@ -122,12 +126,10 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 
 /// Per-workload config key carrying the runner's durable-queue LEASE OWNER
 /// identity (fqg.4). Optional: absent leaves `app.runner` unset (the S2..S6 and
-/// gateway paths never claim from the queue). When set, the plugin injects
-/// `SET LOCAL app.runner` alongside the tenant claim, so a flowrunner replica
-/// that claims its own work reads a stable, non-spoofable owner
-/// (`current_setting('app.runner', true)`) to lease/renew queue rows under —
-/// the per-replica identity the reclaim + owner-guarded heartbeat need. Set by
-/// the platform (the workload instance id), not the guest.
+/// gateway paths never claim from the queue). When set, the host-only
+/// production composer injects it alongside the tenant claim as the stable,
+/// non-spoofable lease owner used for claim/reclaim and owner-guarded renewal.
+/// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
 /// The project id used when a component names none — the single database a

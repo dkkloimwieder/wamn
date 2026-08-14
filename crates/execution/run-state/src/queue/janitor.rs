@@ -1,10 +1,10 @@
-//! The janitor — the pure orphan-detection behind the `janitor_sweep_sql` sweep.
+//! The janitor — pure classification for the host-owned exhausted-run reaper.
 //! A run whose runner died mid-dispatch leaves a `dispatched`/`running` run with
 //! an expired lease. If retries remain it is simply reclaimable; once the
 //! redelivery budget is spent and a grace period has elapsed, the janitor gives
 //! up and the run becomes `infrastructure-failure` (its queue row removed).
 
-use super::model::{Millis, PartitionPolicy, QueueEntry};
+use super::model::{Millis, QueueEntry};
 
 /// What the janitor should do with a queue row at `now`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,35 +17,41 @@ pub enum JanitorVerdict {
     /// The lease expired more than `grace` ago and the redelivery budget is spent
     /// — give up: the run is `infrastructure-failure`, the queue row removed.
     Orphaned,
-    /// Orphan-shaped, but the row belongs to a `blocking`-policy partition (D20):
-    /// the janitor must NOT reap it — the row is the only record that later runs
-    /// of the key must wait, so it stays and **wedges** the key until an operator
-    /// intervenes. The run's status is left untouched.
-    Wedged,
+    /// An immutable effect attempt exists, so reclaim must classify the run as
+    /// `effect-uncertain`; the janitor must not win that race.
+    EffectAttempt,
 }
 
 /// Classify a queue row for the janitor. `grace` is how long past lease expiry to
 /// wait before declaring an exhausted row orphaned (absorbs clock skew / a late
-/// heartbeat). Mirrors the `janitor_sweep_sql` predicate, including its D20
-/// exemption: an orphan-shaped row of a `blocking`-policy partition is
-/// [`JanitorVerdict::Wedged`], never reaped.
+/// heartbeat). A row with immutable effect-attempt evidence is never reaped;
+/// the production claim classifier owns its `effect-uncertain` transition.
 pub fn janitor_verdict(entry: &QueueEntry, now: Millis, grace: Millis) -> JanitorVerdict {
+    janitor_verdict_with_attempt(entry, false, now, grace)
+}
+
+/// Classify a queue row with its separate immutable-ledger evidence.
+pub fn janitor_verdict_with_attempt(
+    entry: &QueueEntry,
+    has_effect_attempt: bool,
+    now: Millis,
+    grace: Millis,
+) -> JanitorVerdict {
+    if has_effect_attempt {
+        return JanitorVerdict::EffectAttempt;
+    }
     match entry.lease_expires_at {
         Some(t) if t > now => JanitorVerdict::Live,
         Some(t) if t + grace <= now && entry.attempts >= entry.max_attempts => {
-            if entry.partition_key.is_some() && entry.partition_policy == PartitionPolicy::Blocking
-            {
-                JanitorVerdict::Wedged
-            } else {
-                JanitorVerdict::Orphaned
-            }
+            JanitorVerdict::Orphaned
         }
         _ => JanitorVerdict::Reclaimable,
     }
 }
 
-/// The orphaned rows in a set — exactly the rows `janitor_sweep_sql` marks
-/// `infrastructure-failure` and dequeues.
+/// The orphaned rows in a set — the class selected by
+/// `select_exhausted_production_sql` and committed by
+/// `terminalize_exhausted_production_sql`.
 pub fn orphans(rows: &[QueueEntry], now: Millis, grace: Millis) -> Vec<&QueueEntry> {
     rows.iter()
         .filter(|e| matches!(janitor_verdict(e, now, grace), JanitorVerdict::Orphaned))

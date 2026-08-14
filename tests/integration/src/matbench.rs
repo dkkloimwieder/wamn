@@ -11,15 +11,15 @@
 //! rings the harness observes on a `wamn.doorbell.t1` subscription).
 //!
 //! Phases:
-//!   1. decide  — seed 4 flows + 4 registrations (unconditional / conditional /
-//!      partitioned-with-extractor / old-value SERVED, l5i9.31), publish a
+//!   1. decide  — seed 4 flows + 4 registrations (two unconditional /
+//!      conditional / old-value SERVED, l5i9.31), publish a
 //!      fixture tape of 8 envelopes (fires, condition-false, foreign tenant,
 //!      unscopable table, unscopable DELETE, durable causation depth 3,
 //!      causation depth
 //!      16, and an UPDATE carrying a FULL old image → the changed-to eval fires),
 //!      run the
 //!      guest, and assert: the run/queue rows (padded run ids, REAL
-//!      `stream_seq`, kq0z-coherent key+policy), trusted invocation metadata,
+//!      `stream_seq`, global FIFO queue rows), trusted invocation metadata,
 //!      causation-budget refusals, the doorbell rings, and the
 //!      DISTINCT refusal counters (the guest's report file).
 //!   2. burst   — publish `--burst` more matching inserts and time the drain:
@@ -103,18 +103,12 @@ const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql")
 // Fixtures
 // ---------------------------------------------------------------------------
 
-fn flow_json(flow_id: &str, ordering: serde_json::Value, policy: Option<&str>) -> String {
-    let mut flow = serde_json::json!({
+fn flow_json(flow_id: &str) -> String {
+    serde_json::json!({
         "schema-version": "0.1", "flow-id": flow_id, "version": 1,
         "nodes": [{"id": "event", "type": "event"}],
-    });
-    if !ordering.is_null() {
-        flow["ordering"] = ordering;
-    }
-    if let Some(p) = policy {
-        flow["partition-policy"] = serde_json::Value::String(p.into());
-    }
-    flow.to_string()
+    })
+    .to_string()
 }
 
 fn registration_json(
@@ -122,7 +116,6 @@ fn registration_json(
     flow_id: &str,
     ops: Vec<Op>,
     condition: Option<&str>,
-    partition_key: Option<&str>,
 ) -> String {
     // The frozen EVT-REG builder — no hand-built JSON copy (wamn-idx3). The guest
     // reads this back through the same `EventRegistration` type, so the tape's
@@ -135,7 +128,6 @@ fn registration_json(
         entity: wamn_schema_model::EntityId::from(ENTITY),
         ops,
         condition: condition.map(str::to_string),
-        partition_key: partition_key.map(str::to_string),
     }
     .to_json()
 }
@@ -327,18 +319,9 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
 
     // Seed immutable flow artifacts and the applied release.
     let mut members = Vec::new();
-    for (flow_id, ordering, policy) in [
-        ("f-plain", serde_json::Value::Null, None),
-        ("f-cond", serde_json::Value::Null, None),
-        (
-            "f-key",
-            serde_json::json!({"mode": "partitioned", "partition-key": "payload.site"}),
-            Some("leapfrog"),
-        ),
-        ("f-old", serde_json::Value::Null, None),
-    ] {
+    for flow_id in ["f-plain", "f-cond", "f-extra", "f-old"] {
         let artifact_hash = format!("artifact-{flow_id}");
-        let graph = flow_json(flow_id, ordering, policy);
+        let graph = flow_json(flow_id);
         admin
             .execute(
                 "INSERT INTO catalog.flow_artifacts \
@@ -384,7 +367,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
                ('t1','matcat',1,'f-cond',1, \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
-               ('t1','matcat',1,'f-key',1, \
+               ('t1','matcat',1,'f-extra',1, \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'), \
                ('t1','matcat',1,'f-old',1, \
                 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'); \
@@ -399,22 +382,15 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await
         .context("commit release seed")?;
     // Registrations (superuser bypasses the tenant-FORCE RLS for seeding).
-    for (rid, flow_id, ops, condition, extractor) in [
-        (
-            "r-plain",
-            "f-plain",
-            vec![Op::Insert, Op::Delete],
-            None,
-            None,
-        ),
+    for (rid, flow_id, ops, condition) in [
+        ("r-plain", "f-plain", vec![Op::Insert, Op::Delete], None),
         (
             "r-cond",
             "f-cond",
             vec![Op::Insert],
             Some("new.status == 'received'"),
-            None,
         ),
-        ("r-key", "f-key", vec![Op::Insert], None, Some("new.site")),
+        ("r-extra", "f-extra", vec![Op::Insert], None),
         (
             // l5i9.31: a root-`old` condition is SERVED now (no longer held). It
             // refuses old-image-absent on the inserts (old absent under RI
@@ -424,7 +400,6 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             "f-old",
             vec![Op::Insert, Op::Update],
             Some("new.status != old.status"),
-            None,
         ),
     ] {
         admin
@@ -437,7 +412,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
                     &rid,
                     &flow_id,
                     &ENTITY,
-                    &registration_json(rid, flow_id, ops, condition, extractor),
+                    &registration_json(rid, flow_id, ops, condition),
                 ],
             )
             .await
@@ -712,43 +687,39 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .await?
         .get(0);
     check(
-        "9 runs written ahead (3 f-plain + 2 f-cond + 3 f-key + 1 f-old update)",
+        "9 runs written ahead (3 f-plain + 2 f-cond + 3 f-extra + 1 f-old update)",
         runs == 9,
     );
     check("9 queue rows co-transacted", queued == 9);
 
-    // E1 through f-plain: unkeyed, blocking default, REAL stream_seq, padded id.
+    // E1 through f-plain: global FIFO, real stream_seq, padded id.
     let plain_e1 = registered_evt_run_id("f-plain", "r-plain", 1);
     let row = admin
         .query_one(
-            "SELECT partition_key, partition_policy, stream_seq::bigint FROM wamn_run.run_queue \
+            "SELECT stream_seq::bigint FROM wamn_run.run_queue \
              WHERE tenant_id = $1 AND run_id = $2",
             &[&TENANT, &plain_e1],
         )
         .await
         .with_context(|| format!("queue row {plain_e1}"))?;
     check(
-        "unkeyed evt row: NULL key, default policy, stream_seq 1",
-        row.get::<_, Option<String>>(0).is_none()
-            && row.get::<_, String>(1) == "blocking"
-            && row.get::<_, i64>(2) == 1,
+        "global FIFO event row preserves stream_seq 1",
+        row.get::<_, i64>(0) == 1,
     );
 
-    // E1 through f-key: the registration extractor key + declared leapfrog.
-    let key_e1 = registered_evt_run_id("f-key", "r-key", 1);
+    // Every registration enters the same global FIFO queue shape.
+    let extra_e1 = registered_evt_run_id("f-extra", "r-extra", 1);
     let row = admin
         .query_one(
-            "SELECT partition_key, partition_policy, stream_seq::bigint FROM wamn_run.run_queue \
+            "SELECT stream_seq::bigint FROM wamn_run.run_queue \
              WHERE tenant_id = $1 AND run_id = $2",
-            &[&TENANT, &key_e1],
+            &[&TENANT, &extra_e1],
         )
         .await
-        .with_context(|| format!("queue row {key_e1}"))?;
+        .with_context(|| format!("queue row {extra_e1}"))?;
     check(
-        "keyed evt row: extractor key s-1 + declared leapfrog + stream_seq 1 (kq0z coherence)",
-        row.get::<_, Option<String>>(0).as_deref() == Some("s-1")
-            && row.get::<_, String>(1) == "leapfrog"
-            && row.get::<_, i64>(2) == 1,
+        "second registration uses the global FIFO queue shape with stream_seq 1",
+        row.get::<_, i64>(0) == 1,
     );
 
     // E6: trusted event metadata stays outside the business input.
@@ -856,7 +827,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     );
     check(
         "doorbell payloads are the minted run ids",
-        rings.contains(&plain_e1) && rings.contains(&key_e1),
+        rings.contains(&plain_e1) && rings.contains(&extra_e1),
     );
 
     // --- Phase 2: burst (the first C-MAT number; measured, not gated) --------
@@ -924,7 +895,7 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
 
     // --- Phase 3: redeliver (exactly-once past the dedupe window) ------------
     let stream = js.get_stream(STREAM).await.context("get stream")?;
-    for rid in ["r-plain", "r-cond", "r-key", "r-old"] {
+    for rid in ["r-plain", "r-cond", "r-extra", "r-old"] {
         // The guest's durable grammar: mat_<tenant>_<catalog>_<registration>
         // ('-' is NATS-legal and survives the guest's sanitize).
         let name = format!("mat_{TENANT}_matcat_{rid}");

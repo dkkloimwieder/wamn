@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::node_contract::{ConnectionTypeDescriptor, normalize_portable_http_target};
 use crate::types::{
     CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, InvokeFlowConfig, MAIN_PORT, Node,
-    Ordering, RequestConfig, RespondConfig, SCHEMA_VERSION,
+    RequestConfig, RespondConfig, SCHEMA_VERSION,
 };
 
 /// Completion ports keyed by resolved node type.
@@ -129,8 +129,6 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
 
     validate_edges(flow, &node_ids, resolved_interfaces, &mut issues);
     validate_reserved_nodes(flow, &mut issues);
-    validate_ordering(flow, &mut issues);
-
     if let Some((_, entry, entry_kind)) = entries.first().copied() {
         if flow.edges.iter().any(|edge| edge.to == entry.id) {
             issues.push(Issue::error(
@@ -816,24 +814,6 @@ fn is_empty_config(config: &Value) -> bool {
     config.is_null() || config.as_object().is_some_and(serde_json::Map::is_empty)
 }
 
-fn validate_ordering(flow: &Flow, issues: &mut Vec<Issue>) {
-    if let Ordering::Partitioned { partition_key } = &flow.ordering {
-        if partition_key.trim().is_empty() {
-            issues.push(Issue::error(
-                "empty-partition-key",
-                "ordering.partition-key",
-                "partitioned ordering needs a partition-key expression",
-            ));
-        } else if let Err(error) = jmespath::compile(partition_key) {
-            issues.push(Issue::error(
-                "invalid-partition-key",
-                "ordering.partition-key",
-                format!("partition-key {partition_key:?} is not valid JMESPath: {error}"),
-            ));
-        }
-    }
-}
-
 fn validate_request_graph(
     flow: &Flow,
     entry: &Node,
@@ -1091,7 +1071,7 @@ mod tests {
 
     use crate::node_contract::ConnectionTypeDescriptor;
 
-    use crate::types::{Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy};
+    use crate::types::{Edge, Flow, FlowConnectionRequirement, Node};
 
     use super::ResolvedInterfaces;
 
@@ -1144,8 +1124,6 @@ mod tests {
             connection_requirements: vec![],
             credentials: vec![],
             allowed_hosts: vec![],
-            partition_policy: PartitionPolicy::default(),
-            ordering: Ordering::default(),
         }
     }
 
@@ -1564,14 +1542,5 @@ mod tests {
             Flow::from_json(&retired_capture).is_err(),
             "capture is selected per draft-run operation, never authored into a flow"
         );
-    }
-
-    #[test]
-    fn partitioned_requires_a_compilable_jmespath_key() {
-        let mut flow = request_flow();
-        flow.ordering = Ordering::Partitioned {
-            partition_key: "payload.[".into(),
-        };
-        assert!(codes(&flow).contains(&"invalid-partition-key"));
     }
 }

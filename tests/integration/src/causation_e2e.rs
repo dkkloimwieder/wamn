@@ -543,8 +543,6 @@ async fn admit_run(args: &CausationE2eArgs) -> anyhow::Result<String> {
                 &none_text,
                 &none_text,
                 &none_i32,
-                &none_text,
-                &"blocking",
             ],
         )
         .await?;

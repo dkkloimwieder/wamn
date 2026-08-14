@@ -96,7 +96,8 @@ pub enum WakeAction {
 /// A wake fires only for a MAPPED target whose Deployment sits at exactly 0
 /// replicas (parked). A Deployment already running (`replicas > 0`) is a no-op —
 /// the runner is up and drains the hint itself. This is the load-bearing
-/// decision the `wakeproof` gate and the fqg.12 mutation loop pin.
+/// decision retained for the wake-from-zero attestation owned by
+/// `wamn-0h0g.5.8` and pinned by the fqg.12 mutation loop.
 pub fn decide(
     execution_target_id: &ExecutionTargetId,
     mappings: &[WakeMapping],

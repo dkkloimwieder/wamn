@@ -156,7 +156,7 @@ fn flow_json() -> String {
     .to_string()
 }
 
-/// A delete-only registration on `evt_disp`, no condition, no partition key.
+/// A delete-only registration on `evt_disp` with no condition.
 /// State omitted → the served (live) path (matbench proves a stateless doc
 /// fires); the RI reconcile derives FULL from the `delete` op subscription.
 fn registration_json() -> String {
@@ -168,7 +168,6 @@ fn registration_json() -> String {
         "entity": ENTITY_ID,
         "ops": ["delete"],
         "condition": null,
-        "partition-key": null,
     })
     .to_string()
 }

@@ -2467,80 +2467,6 @@
       ]
     },
     {
-      "relation": "wamn_run.partition_owner",
-      "ops": false,
-      "installer": "run-state",
-      "owner": "run-state",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "delete",
-            "insert",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "author SQL, RLS-bounded",
-      "guards": [
-        "constraint:partition_owner_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, partition_key)",
-        "constraint:partition_owner_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "policy:partition_owner_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true"
-      ]
-    },
-    {
-      "relation": "wamn_run.run_dead_letters",
-      "ops": false,
-      "installer": "run-state",
-      "owner": "run-state",
-      "mechanisms": [
-        "direct-dml",
-        "foreign-key:delete:cascade;from=wamn_run.runs;constraint=run_dead_letters_tenant_id_run_id_fkey"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_app",
-          "basis": "grant",
-          "operations": [
-            "insert"
-          ]
-        }
-      ],
-      "author-reachable": "author SQL, RLS-bounded",
-      "guards": [
-        "constraint:run_dead_letters_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, run_id)",
-        "constraint:run_dead_letters_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "constraint:run_dead_letters_tenant_id_run_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs(tenant_id, run_id) ON DELETE CASCADE",
-        "policy:run_dead_letters_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true"
-      ]
-    },
-    {
       "relation": "wamn_run.run_flow_resolutions",
       "ops": false,
       "installer": "schema-control",
@@ -2615,7 +2541,6 @@
       "author-reachable": "author SQL, RLS-bounded",
       "guards": [
         "constraint:run_queue_lease_generation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (lease_generation >= 0)",
-        "constraint:run_queue_partition_policy_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))",
         "constraint:run_queue_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, run_id)",
         "constraint:run_queue_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "constraint:run_queue_tenant_id_run_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs(tenant_id, run_id) ON DELETE CASCADE",

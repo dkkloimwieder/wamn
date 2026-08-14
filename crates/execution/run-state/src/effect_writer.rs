@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use crate::effect_writer_credential::{
     EffectWriterCredentialScope, parse_effect_writer_credential, validate_effect_writer_credential,
 };
+use crate::queue::serialize_effect_intent_sql;
 use deadpool_postgres::{Manager, Pool};
 use tokio_postgres::NoTls;
 use wamn_pg_core::Sql;
@@ -62,13 +63,14 @@ pub struct RecordEffectOutcome<'a> {
     pub outcome_status: &'a str,
 }
 
-/// Stable internal failure categories for the future native adapter boundary.
+/// Stable internal failure categories for the private native adapter boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectWriterErrorKind {
     Credential,
     DivergentRetry,
     MissingAttempt,
     MissingDispatch,
+    RunNotRunnable,
     Storage,
 }
 
@@ -280,31 +282,102 @@ impl EffectWriterClient {
             &attempt.attempt_deadline_at,
             &attempt.attempt_input_ref,
         ];
-        let inserted = transaction
-            .query_opt(begin_effect_attempt().text(), &params)
+        transaction
+            .query_one(serialize_effect_intent_sql().as_str(), &[&attempt.run_id])
             .await
             .map_err(|source| {
-                EffectWriterError::new(EffectWriterErrorKind::Storage, "insert effect attempt")
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "fence effect attempt")
                     .with_source(source)
             })?;
-        let row = match inserted {
+        let existing = transaction
+            .query_opt(verify_effect_attempt().text(), &params)
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(
+                    EffectWriterErrorKind::Storage,
+                    "verify existing effect attempt",
+                )
+                .with_source(source)
+            })?;
+        let row = match existing {
             Some(row) => row,
-            None => transaction
-                .query_opt(verify_effect_attempt().text(), &params)
-                .await
-                .map_err(|source| {
-                    EffectWriterError::new(
-                        EffectWriterErrorKind::Storage,
-                        "verify effect-attempt retry",
+            None => {
+                let coordinate_params: [&(dyn tokio_postgres::types::ToSql + Sync); 5] = [
+                    &self.tenant_id,
+                    &attempt.run_id,
+                    &attempt.frame_id,
+                    &attempt.local_node_id,
+                    &attempt.occurrence,
+                ];
+                let coordinate_exists: bool = transaction
+                    .query_one(
+                        effect_attempt_coordinate_exists().text(),
+                        &coordinate_params,
                     )
-                    .with_source(source)
-                })?
-                .ok_or_else(|| {
-                    EffectWriterError::new(
+                    .await
+                    .map_err(|source| {
+                        EffectWriterError::new(
+                            EffectWriterErrorKind::Storage,
+                            "classify existing effect coordinate",
+                        )
+                        .with_source(source)
+                    })?
+                    .get(0);
+                if coordinate_exists {
+                    return Err(EffectWriterError::new(
                         EffectWriterErrorKind::DivergentRetry,
                         "verify effect-attempt retry",
-                    )
-                })?,
+                    ));
+                }
+
+                let runnable: bool = transaction
+                    .query_one(effect_run_is_runnable().text(), &[&attempt.run_id])
+                    .await
+                    .map_err(|source| {
+                        EffectWriterError::new(
+                            EffectWriterErrorKind::Storage,
+                            "validate runnable effect run",
+                        )
+                        .with_source(source)
+                    })?
+                    .get(0);
+                if !runnable {
+                    return Err(EffectWriterError::new(
+                        EffectWriterErrorKind::RunNotRunnable,
+                        "validate runnable effect run",
+                    ));
+                }
+
+                let inserted = transaction
+                    .query_opt(begin_effect_attempt().text(), &params)
+                    .await
+                    .map_err(|source| {
+                        EffectWriterError::new(
+                            EffectWriterErrorKind::Storage,
+                            "insert effect attempt",
+                        )
+                        .with_source(source)
+                    })?;
+                match inserted {
+                    Some(row) => row,
+                    None => transaction
+                        .query_opt(verify_effect_attempt().text(), &params)
+                        .await
+                        .map_err(|source| {
+                            EffectWriterError::new(
+                                EffectWriterErrorKind::Storage,
+                                "verify effect-attempt retry",
+                            )
+                            .with_source(source)
+                        })?
+                        .ok_or_else(|| {
+                            EffectWriterError::new(
+                                EffectWriterErrorKind::DivergentRetry,
+                                "verify effect-attempt retry",
+                            )
+                        })?,
+                }
+            }
         };
         let result = EffectAttempt {
             attempt_id: row.get(0),
@@ -549,6 +622,29 @@ fn bind_writer_authority() -> Sql {
     )
 }
 
+/// Recheck runnable queue authority after the shared effect-intent fence.
+///
+/// Lease-owner/generation matching remains the activation boundary owned by
+/// `.5.4`; this prevents creation after claim-time terminalization and rejects
+/// runs without a currently live execution lease.
+fn effect_run_is_runnable() -> Sql {
+    Sql::new(
+        r#"SELECT EXISTS (
+    SELECT 1
+      FROM runs AS runnable_run
+      JOIN run_queue AS queue
+        ON queue.tenant_id = runnable_run.tenant_id
+       AND queue.run_id = runnable_run.run_id
+     WHERE runnable_run.tenant_id = current_setting('app.tenant', true)
+       AND runnable_run.run_id = $1::text
+       AND runnable_run.status = 'running'
+       AND queue.lease_owner IS NOT NULL
+       AND queue.lease_expires_at > statement_timestamp()
+)"#,
+        1,
+    )
+}
+
 /// Begin one immutable attempt, or classify a retry against every caller fact.
 ///
 /// A newly inserted row returns its server-minted attempt id and timestamps. An
@@ -598,6 +694,17 @@ pub(crate) fn verify_effect_attempt() -> Sql {
            $16::text, $17::text, $18::text,
            $19::text::timestamptz, $20::text)"#,
         20,
+    )
+}
+
+/// Distinguish a divergent retry from a new coordinate before authorization.
+fn effect_attempt_coordinate_exists() -> Sql {
+    Sql::new(
+        "SELECT EXISTS (SELECT 1 FROM effect_attempts \
+          WHERE tenant_id = $1::text AND run_id = $2::text \
+            AND frame_id = $3::bigint AND local_node_id = $4::text \
+            AND occurrence = $5::int)",
+        5,
     )
 }
 
@@ -677,8 +784,9 @@ pub(crate) fn effect_dispatch_exists() -> Sql {
 mod tests {
     use super::{
         acquire_effect_dispatch, begin_effect_attempt, bind_writer_authority,
-        effect_attempt_exists, effect_dispatch_exists, record_effect_outcome, valid_schema,
-        verify_effect_attempt, verify_effect_outcome,
+        effect_attempt_coordinate_exists, effect_attempt_exists, effect_dispatch_exists,
+        effect_run_is_runnable, record_effect_outcome, valid_schema, verify_effect_attempt,
+        verify_effect_outcome,
     };
 
     #[test]
@@ -703,6 +811,39 @@ mod tests {
         assert!(verify.text().contains("attempt_deadline_at"));
         assert!(verify.text().contains("attempt_input_ref"));
         assert!(!verify.text().contains("wamn_run."));
+    }
+
+    #[test]
+    fn attempt_writer_rechecks_a_live_running_queue_row_after_the_fence() {
+        let statement = effect_run_is_runnable();
+        assert_eq!(statement.arity(), 1);
+        assert!(statement.text().contains("JOIN run_queue AS queue"));
+        assert!(statement.text().contains("runnable_run.status = 'running'"));
+        assert!(statement.text().contains("queue.lease_owner IS NOT NULL"));
+        assert!(
+            statement
+                .text()
+                .contains("queue.lease_expires_at > statement_timestamp()")
+        );
+
+        let source = include_str!("effect_writer.rs");
+        let fence = source
+            .find("query_one(serialize_effect_intent_sql()")
+            .expect("effect writer acquires the shared fence");
+        let retry = source
+            .find("query_opt(verify_effect_attempt()")
+            .expect("effect writer verifies an existing retry");
+        let coordinate = source
+            .find("effect_attempt_coordinate_exists().text()")
+            .expect("effect writer classifies a divergent coordinate");
+        let recheck = source
+            .find("query_one(effect_run_is_runnable()")
+            .expect("effect writer rechecks runnable authority");
+        let insert = source
+            .find("query_opt(begin_effect_attempt()")
+            .expect("effect writer inserts the attempt");
+        assert!(fence < retry && retry < coordinate && coordinate < recheck && recheck < insert);
+        assert_eq!(effect_attempt_coordinate_exists().arity(), 5);
     }
 
     #[test]
@@ -754,6 +895,8 @@ mod tests {
         for statement in [
             begin_effect_attempt(),
             verify_effect_attempt(),
+            effect_attempt_coordinate_exists(),
+            effect_run_is_runnable(),
             acquire_effect_dispatch(),
             effect_attempt_exists(),
             record_effect_outcome(),

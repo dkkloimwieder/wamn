@@ -9,7 +9,7 @@ single node to branching logic. Each rung is a small, repeatable, mutation-teste
 conformance proof that the next rung extends.
 
 The rungs are gated on the live runner (`deploy/platform/runner.yaml`, wamn-fqg.8 — see
-[run-queue.md](../execution/run-queue.md) § *Production runner*): the same `run-worker` service
+[run-queue.md](../execution/run-queue.md) § *One production claim transaction*): the same `run-worker` service
 that closes the `dispatcher → run_queue → runner` chain.
 
 | Rung | Flow | Proves |

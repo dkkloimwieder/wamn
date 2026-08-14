@@ -33,9 +33,9 @@ load_mutation() {
   case "$id" in
     http-queue-preclaim-restored)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="4537be786450218be3403e625b4c7c0afe36ed4bc7c532f4f6ea36966e1b9712"
-      NEEDLE=$'      (tenant_id, run_id, partition_key, partition_policy, available_at, stream_seq) \\\n    SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \\\n           CASE WHEN c.producer = \'event\' THEN c.event_seq ELSE 0 END \\'
-      REPLACEMENT=$'      (tenant_id, run_id, partition_key, partition_policy, available_at, \\\n       lease_owner, lease_expires_at, lease_generation, stream_seq) \\\n    SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \\\n           CASE WHEN c.producer = \'http\' THEN \'inline-mutant\' END, \\\n           CASE WHEN c.producer = \'http\' THEN now() + interval \'30 seconds\' END, \\\n           CASE WHEN c.producer = \'http\' THEN 1 ELSE 0 END, \\\n           CASE WHEN c.producer = \'event\' THEN c.event_seq ELSE 0 END \\'
+      EXPECTED_SHA="0defa0c2c92d760ad606980acbb98805096e79235b79d0ad2805d43b8d55071a"
+      NEEDLE=$'      (tenant_id, run_id, available_at, stream_seq) \\\n    SELECT r.tenant_id, r.run_id, now(), \\\n           CASE WHEN c.producer = \'event\' THEN c.event_seq ELSE 0 END \\'
+      REPLACEMENT=$'      (tenant_id, run_id, available_at, lease_owner, \\\n       lease_expires_at, lease_generation, stream_seq) \\\n    SELECT r.tenant_id, r.run_id, now(), \'inline-mutant\', \\\n           now() + interval \'30 seconds\', 1, \\\n           CASE WHEN c.producer = \'event\' THEN c.event_seq ELSE 0 END \\'
       GATE="admission::tests::producer_specific_checks_and_unleased_queue_state_are_pinned"
       TEST_ARGV=(cargo test --locked --offline -p wamn-run-state --lib "$GATE" -- --exact)
       ;;

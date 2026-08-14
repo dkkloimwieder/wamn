@@ -5,7 +5,7 @@
 //! History this closes: dispatchbench's stand-in silently dropped `stream_seq`
 //! and every live mode broke against a throwaway PG (c32ffaf); wamn-9cn6 found
 //! the same drift in four more gates; wamn-nhjg pinned runnerbench's stand-in
-//! with an `include_str!` guard and wamn-v8cv extended it for `run_dead_letters`.
+//! with an `include_str!` guard.
 //! Each gate carries its OWN, schema-qualified, joined-to-the-flow-tables
 //! stand-in (so it can never touch a shared schema), so none can be
 //! `include_str!`'d verbatim. This generalizes the single-gate guard into one
@@ -26,7 +26,6 @@
 //! the run-state contract so conformance, integration, and system proofs consume
 //! one implementation without depending on one another.
 
-use crate::queue::PartitionPolicy;
 use crate::status::RunStatus;
 
 /// The schemas of record, compiled in — the guard reads the SHIPPED column set
@@ -212,10 +211,7 @@ fn record_columns(schema: SchemaOfRecord, table: &str) -> Vec<String> {
 ///
 /// - `Required`: the stand-in must CREATE the table and declare every shipped
 ///   column by name, checked within the table body so a same-named index column
-///   can't mask a dropped definition. When `run_queue` is Required, both
-///   `PartitionPolicy` literals must appear (the CHECK must accept what the
-///   enqueue writers materialize); when `partition_owner` is Required, the
-///   `run_queue_partition` index the claim path scans must be present.
+///   can't mask a dropped definition.
 /// - `AbsentByDesign`: the stand-in must NOT create the table.
 pub fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
     assert_stand_in_against(SchemaOfRecord::RunQueue, gate, standin, spec);
@@ -225,8 +221,7 @@ pub fn assert_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
 /// the run plane, plus the invocation and effect ledgers.
 ///
 /// When `runs` is Required, every `RunStatus` literal must appear, for the same
-/// reason `run_queue`'s partition-policy literals must: the stand-in's CHECK has
-/// to accept what the run writers materialize.
+/// reason all persisted status literals must remain visible to stand-ins.
 pub fn assert_run_state_stand_in(gate: &str, standin: &str, spec: &[(&str, Need)]) {
     assert_stand_in_against(SchemaOfRecord::RunState, gate, standin, spec);
 }
@@ -282,17 +277,7 @@ fn assert_stand_in_against(
                     );
                 }
                 // A CHECK'd status enum must accept every literal its writers
-                // materialize: run_queue's partition_policy (D20) and runs' status.
-                if schema == SchemaOfRecord::RunQueue && *table == "run_queue" {
-                    for p in PartitionPolicy::ALL {
-                        assert!(
-                            standin.contains(&format!("'{}'", p.as_sql())),
-                            "{gate}: run_queue stand-in partition_policy CHECK missing \
-                             literal `{}`",
-                            p.as_sql()
-                        );
-                    }
-                }
+                // materialize.
                 if schema == SchemaOfRecord::RunState && *table == "runs" {
                     for status in RunStatus::ALL {
                         assert!(
@@ -301,16 +286,6 @@ fn assert_stand_in_against(
                             status.as_sql()
                         );
                     }
-                }
-                // The per-partition claim path (acquire/claim head) scans the
-                // run_queue_partition index and leases against partition_owner, so a
-                // gate that Requires partition_owner needs that index too.
-                if schema == SchemaOfRecord::RunQueue && *table == "partition_owner" {
-                    assert!(
-                        standin.contains("run_queue_partition"),
-                        "{gate}: stand-in Requires partition_owner but is missing the \
-                         run_queue_partition index the claim path scans"
-                    );
                 }
             }
         }

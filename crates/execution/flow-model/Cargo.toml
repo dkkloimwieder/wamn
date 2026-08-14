@@ -11,13 +11,13 @@ serde_json = { workspace = true }
 # The published JSON Schema contract (docs/archive/contracts/flow-schema.schema.json) is GENERATED
 # from these types (single source of truth); a drift test keeps them in lockstep.
 schemars = { workspace = true }
-# The `partitioned(key)` ordering key (5.11) is a JMESPath over the run input —
-# the SAME expression surface (crate + version) the node library evaluates
-# (wamn-standard-nodes), so validation and the dispatcher/materializer key stamping share
-# one grammar.
-jmespath = { workspace = true }
 # tests validate each fixture flow against the generated JSON Schema, tying the
 # language-neutral contract to the Rust types. boon is a pure-Rust validator
 # with no network/reqwest dependency. Request-entry input contracts also use it
 # to compile JSON Schema draft 2020-12 during structural validation.
 boon = { workspace = true }
+
+[dev-dependencies]
+# Flow fixtures exercise the same JMESPath grammar as standard-node expression
+# fields; production flow parsing no longer evaluates an ordering expression.
+jmespath = { workspace = true }

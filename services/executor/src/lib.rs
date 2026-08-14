@@ -21,7 +21,8 @@ use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
 };
 use wamn_execution_host::{
-    DEFAULT_FLOWRUNNER_PATH, ExecutionHost, ExecutionIdentity, production_capabilities,
+    DEFAULT_FLOWRUNNER_PATH, DriveOutcome, ExecutionHost, ExecutionIdentity,
+    production_capabilities,
 };
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, build_engine, spawn_epoch_ticker};
 use wamn_runtime::plugins::runner_egress::RunnerEgressPolicy;
@@ -131,12 +132,14 @@ fn resolve_execution_target_id(
     }
 }
 
-/// Map a guest drive outcome code to its bounded metric attribute.
-fn outcome_label(outcome: u32) -> &'static str {
+/// Map a guest or host terminalization to its bounded metric attribute.
+fn outcome_label(outcome: DriveOutcome) -> &'static str {
     match outcome {
-        0 => "completed",
-        1 => "parked",
-        _ => "failed",
+        DriveOutcome::Guest(0) => "completed",
+        DriveOutcome::Guest(1) => "parked",
+        DriveOutcome::Guest(_) => "failed",
+        DriveOutcome::ClaimTerminalized { fail_kind, .. } => fail_kind.as_sql(),
+        DriveOutcome::InfrastructureFailure => "infrastructure-failure",
     }
 }
 
@@ -161,8 +164,8 @@ impl RunMetrics {
             drive_ms: meter
                 .f64_histogram("wamn.run.drive.duration_ms")
                 .with_description(
-                    "wall time to drive one claimed run through run-next, in ms \
-                     (whole-run drive; true per-node duration is guest-side — deferred)",
+                    "wall time to claim and handle one run, including host-owned \
+                     non-execution terminalization",
                 )
                 .build(),
             tenant: tenant.to_string(),
@@ -170,7 +173,7 @@ impl RunMetrics {
         }
     }
 
-    fn record_drive(&self, elapsed: Duration, outcome: u32) {
+    fn record_drive(&self, elapsed: Duration, outcome: DriveOutcome) {
         let base = [
             KeyValue::new("wamn.tenant", self.tenant.clone()),
             KeyValue::new("wamn.project", self.project.clone()),
@@ -210,9 +213,9 @@ async fn serve(
             .drain_observing(|observation| {
                 metrics.record_drive(observation.elapsed, observation.outcome);
                 tracing::info!(
-                    run_id = observation.run_id.unwrap_or("?"),
-                    outcome = observation.outcome,
-                    "run-worker: drove a claimed run"
+                    run_id = observation.run_id,
+                    outcome = ?observation.outcome,
+                    "run-worker: handled a queue run"
                 );
             })
             .await
@@ -443,11 +446,14 @@ mod tests {
     }
 
     #[test]
-    fn outcome_label_maps_codes_to_bounded_buckets() {
-        assert_eq!(outcome_label(0), "completed");
-        assert_eq!(outcome_label(1), "parked");
-        assert_eq!(outcome_label(2), "failed");
-        assert_eq!(outcome_label(99), "failed");
+    fn outcome_label_maps_guest_and_host_terminalization_to_bounded_buckets() {
+        assert_eq!(outcome_label(DriveOutcome::Guest(0)), "completed");
+        assert_eq!(outcome_label(DriveOutcome::Guest(1)), "parked");
+        assert_eq!(outcome_label(DriveOutcome::Guest(99)), "failed");
+        assert_eq!(
+            outcome_label(DriveOutcome::InfrastructureFailure),
+            "infrastructure-failure"
+        );
     }
 
     #[test]

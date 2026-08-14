@@ -37,7 +37,7 @@ load_mutation() {
       ;;
     schema-control-drops-case-runs)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
                 "authoring_test_sets",
@@ -54,7 +54,7 @@ load_mutation() {
       ;;
     from-zero-skips-post-helper-triggers)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='        if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {'

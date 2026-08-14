@@ -39,8 +39,7 @@ pub use preimage::FlowPreimage;
 pub use types::{
     CallFlowConfig, CredentialRef, CronInput, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput,
     FailConfig, Flow, FlowConnectionRequirement, InvokeActorMode, InvokeFlowConfig, MAIN_PORT,
-    Node, NodeId, Ordering, PartitionPolicy, RequestConfig, RespondConfig, RowEvent,
-    SCHEMA_VERSION,
+    Node, NodeId, RequestConfig, RespondConfig, RowEvent, SCHEMA_VERSION,
 };
 pub use validate::{Issue, ResolvedInterfaces, Severity, validate};
 

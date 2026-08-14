@@ -285,6 +285,11 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
              CREATE TABLE wamn_runner_demo.effect_attempts (id bigint); \
              CREATE TABLE wamn_runner_demo.effect_attempt_dispatches (id bigint); \
              CREATE TABLE wamn_runner_demo.effect_attempt_outcomes (id bigint); \
+             CREATE TABLE wamn_runner_demo.runs ( \
+               tenant_id text, run_id text, status text, flow_id text); \
+             CREATE TABLE wamn_runner_demo.run_queue ( \
+               tenant_id text, run_id text, lease_owner text, \
+               lease_expires_at timestamptz, lease_generation bigint); \
              CREATE TABLE wamn_system.probe (id bigint); CREATE TABLE catalog.probe (id bigint); \
              CREATE TABLE app.probe (id bigint); CREATE TABLE unrelated.probe (id bigint);",
         )
@@ -319,7 +324,11 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
              GRANT SELECT, INSERT ON wamn_runner_demo.effect_attempts, \
                wamn_runner_demo.effect_attempt_dispatches, \
                wamn_runner_demo.effect_attempt_outcomes \
-               TO wamn_effect_writer;",
+               TO wamn_effect_writer; \
+             GRANT SELECT (tenant_id,run_id,status) \
+               ON wamn_runner_demo.runs TO wamn_effect_writer; \
+             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at) \
+               ON wamn_runner_demo.run_queue TO wamn_effect_writer;",
         )
         .await
         .expect("apply schema-control-owned ledger grants");
@@ -367,7 +376,41 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
             expected_stable.insert(format!("relation:{LEDGER_SCHEMA}:{table}:{privilege}"));
         }
     }
+    for (table, columns) in [
+        ("runs", &["tenant_id", "run_id", "status"][..]),
+        (
+            "run_queue",
+            &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+        ),
+    ] {
+        for column in columns {
+            expected_stable.insert(format!("column:{LEDGER_SCHEMA}:{table}.{column}:SELECT"));
+        }
+    }
     assert_eq!(stable_acl, expected_stable);
+    let exact_run_reads = client_a
+        .query_one(
+            "SELECT \
+               NOT has_table_privilege(current_user,'wamn_runner_demo.runs','SELECT'), \
+               has_column_privilege(current_user,'wamn_runner_demo.runs','status','SELECT'), \
+               NOT has_column_privilege(current_user,'wamn_runner_demo.runs','flow_id','SELECT'), \
+               NOT has_table_privilege(current_user,'wamn_runner_demo.run_queue','SELECT'), \
+               has_column_privilege(current_user,'wamn_runner_demo.run_queue', \
+                                    'lease_expires_at','SELECT'), \
+               NOT has_column_privilege(current_user,'wamn_runner_demo.run_queue', \
+                                        'lease_generation','SELECT'), \
+               NOT has_any_column_privilege(current_user,'wamn_runner_demo.run_queue', \
+                                            'INSERT,UPDATE,REFERENCES')",
+            &[],
+        )
+        .await
+        .expect("probe exact inherited writer run-read boundary");
+    for index in 0..7 {
+        assert!(
+            exact_run_reads.get::<_, bool>(index),
+            "run-read ACL probe {index}"
+        );
+    }
     let unrelated_connect: bool = target
         .query_one(
             "SELECT has_database_privilege($1, 'postgres', 'CONNECT')",

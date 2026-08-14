@@ -1,0 +1,1208 @@
+use std::collections::BTreeSet;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+
+use anyhow::Context as _;
+use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
+use tokio_postgres::{Client, NoTls};
+use url::Url;
+use wamn_run_state::{
+    BeginEffectAttempt, CredentialGeneration, EffectAttempt, EffectWriterClient,
+    EffectWriterCredentialScope, EffectWriterCredentialValidity, EffectWriterErrorKind,
+    EffectWriterScope, FailKind, RunStatus, effect_writer_credential,
+    effect_writer_generation_role, queue::select_production_claim_sql,
+};
+use wamn_runtime::plugins::wamn_postgres::{
+    ProductionClaimResult, ProductionReapResult, WamnPostgres, WamnPostgresConfig,
+};
+
+const TENANT: &str = "claim-live";
+const COMPONENT: &str = "claim-live-runner";
+const SCHEMA: &str = "wamn_claim_live";
+const RELEASE_ARTIFACT: &str =
+    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+const DRAFT_ARTIFACT: &str =
+    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const EMPTY_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+const WRITER_PASSWORD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const WRITER_LATCH: i64 = 7_141_013;
+const PRIOR_WINNER_HASH: &str = "sha256:prior-caller-winner";
+
+async fn connect(url: &str) -> anyhow::Result<Client> {
+    let (client, connection) = tokio_postgres::connect(url, NoTls).await?;
+    tokio::spawn(async move {
+        if let Err(error) = connection.await {
+            eprintln!("production-claim live connection failed: {error}");
+        }
+    });
+    Ok(client)
+}
+
+fn digest(bytes: &[u8]) -> String {
+    format!("sha256:{}", hex::encode(Sha256::digest(bytes)))
+}
+
+fn quote_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn quote_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn effect_attempt(
+    run_id: &'static str,
+    local_node_id: &'static str,
+) -> BeginEffectAttempt<'static> {
+    BeginEffectAttempt {
+        run_id,
+        root_plan_hash: EMPTY_HASH,
+        current_plan_hash: EMPTY_HASH,
+        frame_id: 0,
+        parent_frame_id: None,
+        call_site_id: None,
+        local_node_id,
+        source_artifact_hash: EMPTY_HASH,
+        requirement_name: "manager",
+        occurrence: 0,
+        seq: 1,
+        generation_fact_kind: "not-required",
+        connection_name: None,
+        connection_generation: None,
+        credential_generation: None,
+        verified_author_principal: None,
+        verified_publisher_principal: None,
+        attempt_deadline_at: "2099-01-01T00:00:00Z",
+        attempt_input_ref: "sha256:claim-live-effect-input",
+    }
+}
+
+fn plan_bytes(root_artifact_hash: &str) -> (String, Vec<u8>) {
+    let guard = json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object"
+    });
+    let body = json!({
+        "header": {
+            "format-version": "0.1",
+            "plan-compiler-revision": "0.1",
+            "runtime-revision": {
+                "flowrunner-component-digest": format!("sha256:{}", "c".repeat(64)),
+                "effect-provider-revision": format!("sha256:{}", "d".repeat(64)),
+                "host-effect-contract-version": "0.1"
+            },
+            "root-artifact-hash": root_artifact_hash
+        },
+        "body": {
+            "entry-instruction": "request",
+            "nodes": [
+                {
+                    "local-node-id": "request",
+                    "source-node-id": "request",
+                    "type": "request",
+                    "config": {"input-schema": guard.clone()},
+                    "effect-policy": "pure"
+                },
+                {
+                    "local-node-id": "respond",
+                    "source-node-id": "respond",
+                    "type": "respond",
+                    "config": {"status": 200},
+                    "effect-policy": "pure"
+                }
+            ],
+            "edges": [{
+                "source": "request",
+                "source-port": "main",
+                "destination": "respond",
+                "fan-out-ordinal": 0
+            }],
+            "root-terminal-behavior": {"kind": "respond", "responders": ["respond"]},
+            "entry-input-schema-guard": guard.clone(),
+            "callable-contract": {
+                "version": "0.1",
+                "input-schema-hash": wamn_flow::canonical_json_sha256(&guard),
+                "return-contract": "untyped-json-body",
+                "effect-ceiling": "effectful"
+            },
+            "source-map": [
+                {"local-node-id": "request", "source-node-id": "request"},
+                {"local-node-id": "respond", "source-node-id": "respond"}
+            ]
+        }
+    });
+    let bytes = serde_json::to_vec(&body).expect("plan fixture serializes");
+    (digest(&bytes), bytes)
+}
+
+fn canonical_materializer_sql() -> String {
+    let source = include_str!("../../../../deploy/sql/run-state.sql");
+    let start = source
+        .find("CREATE FUNCTION wamn_run.materialize_run_flow_resolutions(")
+        .expect("canonical resolution materializer start");
+    let tail = &source[start..];
+    let end = tail
+        .find("\n$$;")
+        .expect("canonical resolution materializer end")
+        + "\n$$;".len();
+    tail[..end].replace("wamn_run.", &format!("{SCHEMA}."))
+}
+
+async fn install_schema(client: &Client) -> anyhow::Result<()> {
+    client
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS {SCHEMA} CASCADE; \
+             DROP SCHEMA IF EXISTS catalog CASCADE; \
+             CREATE SCHEMA {SCHEMA}; \
+             CREATE SCHEMA catalog; \
+             CREATE TABLE {SCHEMA}.runs ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
+               flow_version int NOT NULL, status text NOT NULL, catalog_id text NOT NULL, \
+               catalog_version int NOT NULL, environment text NOT NULL, \
+               execution_bundle_hash text NOT NULL, input_json jsonb NOT NULL DEFAULT '{{}}', \
+               state_json jsonb, invocation_context jsonb NOT NULL DEFAULT '{{}}', \
+               trigger_source text, event_source_run_id text, event_root_run_id text, \
+               event_depth int, admission_context_version text, platform_revision text, \
+               capture_mode text, idempotency_key text, response_deadline_at timestamptz, \
+               run_deadline_at timestamptz, root_run_id text, parent_run_id text, \
+               parent_node_id text, parent_occurrence bigint, invoke_depth int, \
+               invoke_root_run_id text, waiting_child_run_id text, \
+               waiting_child_occurrence bigint, wait_generation bigint, \
+               fail_kind text, fail_node text, fail_reason text, \
+               caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
+               caller_release_node_id text, caller_outcome_hash text, \
+               caller_released_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), \
+               PRIMARY KEY (tenant_id, run_id)); \
+             CREATE TABLE {SCHEMA}.run_queue ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, priority int NOT NULL DEFAULT 0, \
+               available_at timestamptz NOT NULL DEFAULT now(), stream_seq bigint NOT NULL DEFAULT 0, \
+               lease_owner text, lease_expires_at timestamptz, \
+               lease_generation bigint NOT NULL DEFAULT 0, attempts int NOT NULL DEFAULT 0, \
+               max_attempts int NOT NULL DEFAULT 3, enqueued_at timestamptz NOT NULL DEFAULT now(), \
+               PRIMARY KEY (tenant_id, run_id), \
+               FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
+             CREATE TABLE {SCHEMA}.node_runs ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, local_node_id text NOT NULL, \
+               PRIMARY KEY (tenant_id, run_id, local_node_id)); \
+             CREATE TABLE {SCHEMA}.effect_attempts ( \
+               tenant_id text NOT NULL, attempt_id uuid NOT NULL DEFAULT gen_random_uuid(), \
+               run_id text NOT NULL, root_plan_hash text NOT NULL, current_plan_hash text NOT NULL, \
+               frame_id bigint NOT NULL, parent_frame_id bigint, call_site_id text, \
+               local_node_id text NOT NULL, source_artifact_hash text NOT NULL, \
+               requirement_name text NOT NULL, occurrence int NOT NULL, seq int NOT NULL, \
+               generation_fact_kind text NOT NULL, connection_name text, \
+               connection_generation text, credential_generation text, \
+               verified_author_principal text, verified_publisher_principal text, \
+               attempt_started_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+               attempt_deadline_at timestamptz NOT NULL, attempt_input_ref text NOT NULL, \
+               created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
+               PRIMARY KEY (tenant_id, attempt_id), \
+               UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
+             CREATE TABLE {SCHEMA}.run_flow_resolutions ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
+               execution_bundle_hash text NOT NULL, source_artifact_hash text NOT NULL, \
+               PRIMARY KEY (tenant_id, run_id, flow_id)); \
+             CREATE TABLE catalog.execution_bundles ( \
+               tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, exact_bytes bytea NOT NULL, \
+               PRIMARY KEY (tenant_id, execution_bundle_hash)); \
+             CREATE TABLE catalog.release_flows ( \
+               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+               flow_id text NOT NULL, flow_version int NOT NULL, execution_bundle_hash text NOT NULL, \
+               PRIMARY KEY (tenant_id, catalog_id, catalog_version, flow_id)); \
+             CREATE TABLE catalog.flow_artifacts ( \
+               tenant_id text NOT NULL, flow_id text NOT NULL, flow_version int NOT NULL, \
+               artifact_hash text NOT NULL, PRIMARY KEY (tenant_id, flow_id, flow_version)); \
+             CREATE TABLE catalog.validated_flow_drafts ( \
+               tenant_id text NOT NULL, validated_draft_hash text NOT NULL, catalog_id text NOT NULL, \
+               catalog_version int NOT NULL, environment text NOT NULL, flow_id text NOT NULL, \
+               runtime_flow_version int NOT NULL, execution_bundle_hash text NOT NULL, \
+               draft_artifact_hash text NOT NULL, binding_base_artifact_hash text NOT NULL, \
+               PRIMARY KEY (tenant_id, validated_draft_hash)); \
+             CREATE TABLE catalog.connection_bindings ( \
+               tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
+               environment text NOT NULL, artifact_hash text NOT NULL, requirement_name text NOT NULL, \
+               binding_status text NOT NULL, validation_status text NOT NULL, instance_id text NOT NULL); \
+             CREATE TABLE catalog.connection_instances ( \
+               tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
+               requirement_type text NOT NULL, contract text NOT NULL, lifecycle_status text NOT NULL, \
+               active_generation bigint NOT NULL, PRIMARY KEY (tenant_id, environment, instance_id)); \
+             CREATE TABLE catalog.connection_generations ( \
+               tenant_id text NOT NULL, environment text NOT NULL, instance_id text NOT NULL, \
+               generation bigint NOT NULL, PRIMARY KEY (tenant_id, environment, instance_id, generation));"
+        ))
+        .await?;
+    client.batch_execute(&canonical_materializer_sql()).await?;
+    Ok(())
+}
+
+async fn install_effect_writer(
+    client: &Client,
+    admin_url: &str,
+) -> anyhow::Result<(EffectWriterClient, String)> {
+    let database: String = client
+        .query_one("SELECT current_database()::text", &[])
+        .await?
+        .get(0);
+    let scope = EffectWriterCredentialScope {
+        org: "claim-live-org".to_string(),
+        project: "claim-live-project".to_string(),
+        environment: "claim-live-env".to_string(),
+        database: database.clone(),
+    };
+    let role = effect_writer_generation_role(
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.database,
+        CredentialGeneration::A,
+    );
+    let role_identifier = quote_identifier(&role);
+    let role_literal = quote_literal(&role);
+    let password_literal = quote_literal(WRITER_PASSWORD);
+    client
+        .batch_execute(&format!(
+            "DO $roles$ BEGIN \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer') THEN \
+                 CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname={role_literal}) THEN \
+                 CREATE ROLE {role_identifier} LOGIN PASSWORD {password_literal} \
+                   NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE \
+                 ALTER ROLE {role_identifier} LOGIN PASSWORD {password_literal} \
+                   NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+             END $roles$; \
+             GRANT wamn_effect_writer TO {role_identifier}; \
+             GRANT CONNECT ON DATABASE {} TO {role_identifier}; \
+             GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
+             GRANT SELECT (tenant_id,run_id,status) \
+               ON {SCHEMA}.runs TO wamn_effect_writer; \
+             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at) \
+               ON {SCHEMA}.run_queue TO wamn_effect_writer; \
+             GRANT SELECT,INSERT ON {SCHEMA}.effect_attempts TO wamn_effect_writer; \
+             ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
+             CREATE POLICY runs_tenant ON {SCHEMA}.runs \
+               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
+             ALTER TABLE {SCHEMA}.run_queue ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE {SCHEMA}.run_queue FORCE ROW LEVEL SECURITY; \
+             CREATE POLICY run_queue_tenant ON {SCHEMA}.run_queue \
+               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
+             ALTER TABLE {SCHEMA}.effect_attempts ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE {SCHEMA}.effect_attempts FORCE ROW LEVEL SECURITY; \
+             CREATE POLICY effect_attempts_tenant ON {SCHEMA}.effect_attempts \
+               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')) \
+               WITH CHECK (tenant_id=NULLIF(current_setting('app.tenant',true),''));",
+            quote_identifier(&database),
+        ))
+        .await?;
+
+    let mut writer_url = Url::parse(admin_url)?;
+    writer_url
+        .set_username(&role)
+        .map_err(|()| anyhow::anyhow!("set writer username"))?;
+    writer_url
+        .set_password(Some(WRITER_PASSWORD))
+        .map_err(|()| anyhow::anyhow!("set writer password"))?;
+    writer_url.set_fragment(None);
+    let validity = EffectWriterCredentialValidity {
+        issued_at: "2020-01-01T00:00:00Z".to_string(),
+        not_before: "2020-01-01T00:00:00Z".to_string(),
+        expires_at: "2099-01-01T00:00:00Z".to_string(),
+        revoked_at: None,
+    };
+    let credential = effect_writer_credential(
+        &scope,
+        "0123456789abcdef0123456789abcdef",
+        CredentialGeneration::A,
+        &validity,
+        writer_url.as_str(),
+    );
+    let document = serde_json::to_vec(&credential)?;
+    let writer = EffectWriterClient::from_secret_document(
+        &document,
+        EffectWriterScope {
+            tenant_id: TENANT,
+            org: &scope.org,
+            project: &scope.project,
+            environment: &scope.environment,
+            database: &scope.database,
+            schema: SCHEMA,
+        },
+        SystemTime::now(),
+    )
+    .await
+    .map_err(anyhow::Error::new)?;
+    Ok((writer, role))
+}
+
+fn url_with_application_name(url: &str, name: &str) -> anyhow::Result<String> {
+    let mut parsed = Url::parse(url)?;
+    parsed
+        .query_pairs_mut()
+        .append_pair("application_name", name);
+    Ok(parsed.into())
+}
+
+async fn wait_for_advisory_wait(
+    client: &Client,
+    application_name: Option<&str>,
+    role: Option<&str>,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        application_name.is_some() ^ role.is_some(),
+        "select exactly one blocked backend identity"
+    );
+    for _ in 0..1_000 {
+        let waiting: bool = client
+            .query_one(
+                "SELECT EXISTS ( \
+                    SELECT 1 FROM pg_stat_activity \
+                     WHERE datname=current_database() \
+                       AND ($1::text IS NULL OR application_name=$1) \
+                       AND ($2::text IS NULL OR usename=$2) \
+                       AND wait_event_type='Lock' AND wait_event='advisory')",
+                &[&application_name, &role],
+            )
+            .await?
+            .get(0);
+        if waiting {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    anyhow::bail!(
+        "backend application={application_name:?} role={role:?} never waited on the advisory lock"
+    )
+}
+
+async fn seed_release(
+    client: &Client,
+    catalog_id: &str,
+    bundle_hash: &str,
+    exact_bytes: &[u8],
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,exact_bytes) VALUES ($1,$2,$3) \
+             ON CONFLICT DO NOTHING",
+            &[&TENANT, &bundle_hash, &exact_bytes],
+        )
+        .await?;
+    client
+        .execute(
+            "INSERT INTO catalog.flow_artifacts \
+               (tenant_id,flow_id,flow_version,artifact_hash) VALUES ($1,'root',1,$2) \
+             ON CONFLICT DO NOTHING",
+            &[&TENANT, &RELEASE_ARTIFACT],
+        )
+        .await?;
+    client
+        .execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
+             VALUES ($1,$2,1,'root',1,$3)",
+            &[&TENANT, &catalog_id, &bundle_hash],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn seed_run(
+    client: &Client,
+    run_id: &str,
+    catalog_id: &str,
+    bundle_hash: &str,
+    stream_seq: i64,
+) -> anyhow::Result<()> {
+    client
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,input_json,trigger_source) \
+                 VALUES ($1,$2,'root',1,'dispatched',$3,1,'test',$4,'{{\"input\":true}}','http')"
+            ),
+            &[&TENANT, &run_id, &catalog_id, &bundle_hash],
+        )
+        .await?;
+    client
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_queue \
+                   (tenant_id,run_id,available_at,stream_seq) \
+                 VALUES ($1,$2,'2000-01-01 00:00:00+00',$3)"
+            ),
+            &[&TENANT, &run_id, &stream_seq],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn seed_live_effect_run(
+    client: &Client,
+    run_id: &str,
+    bundle_hash: &str,
+    stream_seq: i64,
+) -> anyhow::Result<()> {
+    seed_run(client, run_id, "cat-main", bundle_hash, stream_seq).await?;
+    client
+        .execute(
+            &format!(
+                "WITH running AS ( \
+                    UPDATE {SCHEMA}.runs SET status='running' \
+                     WHERE tenant_id=$1 AND run_id=$2 \
+                     RETURNING tenant_id,run_id) \
+                 UPDATE {SCHEMA}.run_queue AS q \
+                    SET lease_owner='runner-a', lease_expires_at='2099-01-01' \
+                   FROM running \
+                  WHERE q.tenant_id=running.tenant_id AND q.run_id=running.run_id"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn expire_effect_run(client: &Client, run_id: &str) -> anyhow::Result<()> {
+    client
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue SET lease_expires_at='2000-01-01' \
+                  WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn seed_exhausted_run(
+    client: &Client,
+    run_id: &str,
+    bundle_hash: &str,
+    stream_seq: i64,
+) -> anyhow::Result<()> {
+    seed_run(client, run_id, "cat-main", bundle_hash, stream_seq).await?;
+    client
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue \
+                    SET lease_owner='dead', lease_expires_at='2000-01-01', \
+                        attempts=max_attempts \
+                  WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn make_callerless(client: &Client, run_id: &str) -> anyhow::Result<()> {
+    client
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET trigger_source=NULL \
+                  WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    Ok(())
+}
+
+async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyhow::Result<Value> {
+    client
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs \
+                    SET trigger_source='http', caller_outcome_kind='responded', \
+                        caller_outcome_json='{{\"winner\":\"prior\"}}', \
+                        caller_http_status=207, caller_release_node_id='prior-node', \
+                        caller_outcome_hash=$3, \
+                        caller_released_at='2025-01-02T03:04:05.123456Z' \
+                  WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id, &PRIOR_WINNER_HASH],
+        )
+        .await?;
+    caller_fields(client, run_id).await
+}
+
+async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Value> {
+    let encoded: String = client
+        .query_one(
+            &format!(
+                "SELECT jsonb_build_object( \
+                    'kind',caller_outcome_kind, 'body',caller_outcome_json, \
+                    'status',caller_http_status, 'node',caller_release_node_id, \
+                    'hash',caller_outcome_hash, 'released-at',caller_released_at)::text \
+                   FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?
+        .get(0);
+    Ok(serde_json::from_str(&encoded)?)
+}
+
+async fn assert_callerless_terminal(
+    client: &Client,
+    run_id: &str,
+    status: &str,
+) -> anyhow::Result<()> {
+    assert_eq!(
+        caller_fields(client, run_id).await?,
+        json!({
+            "kind": null,
+            "body": null,
+            "status": null,
+            "node": null,
+            "hash": null,
+            "released-at": null
+        })
+    );
+    assert_terminal_status_dequeued(client, run_id, status).await
+}
+
+async fn assert_prior_winner_terminal(
+    client: &Client,
+    run_id: &str,
+    status: &str,
+    winner: &Value,
+) -> anyhow::Result<()> {
+    assert_eq!(caller_fields(client, run_id).await?, *winner);
+    assert_eq!(winner["kind"], "responded");
+    assert_eq!(winner["body"], json!({"winner": "prior"}));
+    assert_eq!(winner["status"], 207);
+    assert_eq!(winner["node"], "prior-node");
+    assert_eq!(winner["hash"], PRIOR_WINNER_HASH);
+    assert!(winner["released-at"].as_str().is_some());
+    assert_terminal_status_dequeued(client, run_id, status).await
+}
+
+async fn assert_terminal_status_dequeued(
+    client: &Client,
+    run_id: &str,
+    status: &str,
+) -> anyhow::Result<()> {
+    let row = client
+        .query_one(
+            &format!(
+                "SELECT status, NOT EXISTS ( \
+                    SELECT 1 FROM {SCHEMA}.run_queue q \
+                     WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    assert_eq!(row.get::<_, String>(0), status);
+    assert!(row.get::<_, bool>(1));
+    Ok(())
+}
+
+fn ready_run(result: ProductionClaimResult) -> String {
+    match result {
+        ProductionClaimResult::Ready { run_id, .. } => run_id,
+        other => panic!("expected ready claim, got {other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires a disposable PostgreSQL 18 URL in WAMN_PRODUCTION_CLAIM_PG_URL"]
+async fn production_claim_live() -> anyhow::Result<()> {
+    let url = std::env::var("WAMN_PRODUCTION_CLAIM_PG_URL")
+        .context("set WAMN_PRODUCTION_CLAIM_PG_URL to a disposable PostgreSQL database")?;
+    let admin = connect(&url).await?;
+    install_schema(&admin).await?;
+    let (writer, writer_role) = install_effect_writer(&admin, &url).await?;
+    let runtime_url = url_with_application_name(&url, "production-claim-live-runtime")?;
+
+    let plugin = Arc::new(WamnPostgres::new(WamnPostgresConfig {
+        database_url: Some(runtime_url),
+        pool_max_size: 8,
+        wait_timeout_ms: 5_000,
+        statement_timeout_ms: 10_000,
+        row_limit: 10_000,
+    })?);
+    plugin.set_tenant(COMPONENT, TENANT)?;
+    plugin.set_schema(COMPONENT, SCHEMA)?;
+    plugin.set_runner(COMPONENT, COMPONENT)?;
+
+    let (release_hash, release_bytes) = plan_bytes(RELEASE_ARTIFACT);
+    seed_release(&admin, "cat-main", &release_hash, &release_bytes).await?;
+
+    // Exact global FIFO: stream sequence, then run id, breaks equal timestamps.
+    for (run_id, stream_seq) in [("fifo-c", 2), ("fifo-b", 1), ("fifo-a", 1)] {
+        seed_run(&admin, run_id, "cat-main", &release_hash, stream_seq).await?;
+    }
+    let mut fifo = Vec::new();
+    for _ in 0..3 {
+        fifo.push(ready_run(
+            plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ));
+    }
+    assert_eq!(fifo, ["fifo-a", "fifo-b", "fifo-c"]);
+
+    // A second claimer skips the exact FIFO head while the first claimer holds
+    // its production row locks, then the rolled-back head remains claimable.
+    seed_run(&admin, "double-a", "cat-main", &release_hash, 10).await?;
+    seed_run(&admin, "double-b", "cat-main", &release_hash, 11).await?;
+    let first_claimer = connect(&url).await?;
+    first_claimer
+        .batch_execute(&format!(
+            "BEGIN; SET LOCAL search_path TO {SCHEMA}, pg_catalog"
+        ))
+        .await?;
+    first_claimer
+        .execute("SELECT set_config('app.tenant', $1, true)", &[&TENANT])
+        .await?;
+    let locked = first_claimer
+        .query_one(&select_production_claim_sql(), &[])
+        .await?;
+    assert_eq!(locked.get::<_, String>(1), "double-a");
+    let skipped = ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?);
+    assert_eq!(skipped, "double-b");
+    first_claimer.batch_execute("ROLLBACK").await?;
+    let released = ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?);
+    let claimed = BTreeSet::from([skipped, released]);
+    assert_eq!(
+        claimed,
+        BTreeSet::from(["double-a".into(), "double-b".into()])
+    );
+
+    // Expired pre-effect recovery deletes only node projections and NULLs only
+    // state_json; every other admitted/lineage/child column and an existing
+    // immutable resolution row survives the retry.
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,input_json,state_json,invocation_context, \
+                    trigger_source,event_source_run_id,event_root_run_id,event_depth, \
+                    admission_context_version,platform_revision,capture_mode,idempotency_key, \
+                    response_deadline_at,run_deadline_at,root_run_id,parent_run_id,parent_node_id, \
+                    parent_occurrence,invoke_depth,invoke_root_run_id,waiting_child_run_id, \
+                    waiting_child_occurrence,wait_generation) \
+                 VALUES ($1,'pre-effect','root',1,'running','cat-main',1,'test',$2, \
+                    '{{\"input\":7}}','{{\"cursor\":9}}','{{\"source\":{{\"case\":\"a\"}}}}', \
+                    'event','source-run','root-run',3,'0.1','platform-a','full','idem-a', \
+                    '2030-01-01','2030-01-02','root-run','parent-run','call',4,2,'root-run', \
+                    'child-run',5,6)"
+            ),
+            &[&TENANT, &release_hash],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_queue \
+                   (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                    lease_generation,attempts,max_attempts) \
+                 VALUES ($1,'pre-effect','2000-01-01',20,'dead','2000-01-01',4,1,3)"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'pre-effect','old-node')"),
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_flow_resolutions \
+                   VALUES ($1,'pre-effect','root',$2,$3)"
+            ),
+            &[&TENANT, &release_hash, &RELEASE_ARTIFACT],
+        )
+        .await?;
+    let before: Value = serde_json::from_str(
+        &admin
+        .query_one(
+            &format!(
+                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at']::text[])::text \
+                   FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
+            ),
+            &[&TENANT],
+        )
+        .await?
+        .get::<_, String>(0),
+    )?;
+    let pre_effect = plugin.claim_next_production(COMPONENT, 30_000).await?;
+    let (run_id, payload, lease_generation) = match pre_effect {
+        ProductionClaimResult::Ready {
+            run_id,
+            payload,
+            lease_generation,
+        } => (run_id, payload, lease_generation),
+        other => panic!("expected pre-effect retry to execute, got {other:?}"),
+    };
+    assert_eq!(run_id, "pre-effect");
+    assert_eq!(lease_generation, 5);
+    assert_eq!(
+        serde_json::from_str::<Value>(&payload)?,
+        json!({
+            "input": 7,
+            "causation": {"run": "pre-effect", "root": "root-run", "depth": 3}
+        })
+    );
+    let after: Value = serde_json::from_str(
+        &admin
+        .query_one(
+            &format!(
+                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at']::text[])::text \
+                   FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
+            ),
+            &[&TENANT],
+        )
+        .await?
+        .get::<_, String>(0),
+    )?;
+    assert_eq!(after, before);
+    let (state, nodes, resolutions): (Option<String>, i64, i64) = {
+        let row = admin
+            .query_one(
+                &format!(
+                    "SELECT r.state_json::text, \
+                            (SELECT count(*) FROM {SCHEMA}.node_runs n \
+                              WHERE n.tenant_id=r.tenant_id AND n.run_id=r.run_id), \
+                            (SELECT count(*) FROM {SCHEMA}.run_flow_resolutions m \
+                              WHERE m.tenant_id=r.tenant_id AND m.run_id=r.run_id) \
+                       FROM {SCHEMA}.runs r WHERE r.tenant_id=$1 AND r.run_id='pre-effect'"
+                ),
+                &[&TENANT],
+            )
+            .await?;
+        (row.get(0), row.get(1), row.get(2))
+    };
+    assert_eq!((state, nodes, resolutions), (None, 0, 1));
+
+    // Canonical materialization is verification-only when any immutable row
+    // already exists. A mixed prior map refuses and remains unchanged.
+    seed_run(&admin, "mixed-map", "cat-main", &release_hash, 25).await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_flow_resolutions \
+                   VALUES ($1,'mixed-map','root',$2,'foreign-artifact')"
+            ),
+            &[&TENANT, &release_hash],
+        )
+        .await?;
+    make_callerless(&admin, "mixed-map").await?;
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "mixed-map".into(),
+            status: RunStatus::Failed,
+            fail_kind: FailKind::ForeignRevision,
+        }
+    );
+    let mixed = admin
+        .query_one(
+            &format!(
+                "SELECT map.execution_bundle_hash,map.source_artifact_hash, \
+                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
+                                 WHERE q.tenant_id=map.tenant_id AND q.run_id=map.run_id) \
+                   FROM {SCHEMA}.run_flow_resolutions map \
+                  WHERE map.tenant_id=$1 AND map.run_id='mixed-map'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(mixed.get::<_, String>(0), release_hash);
+    assert_eq!(mixed.get::<_, String>(1), "foreign-artifact");
+    assert!(!mixed.get::<_, bool>(2));
+    assert_callerless_terminal(&admin, "mixed-map", "failed").await?;
+
+    // A malformed exact release is a typed refusal before lease grant.
+    let invalid_hash = format!("sha256:{}", "e".repeat(64));
+    seed_release(&admin, "cat-invalid", &invalid_hash, b"not-that-hash").await?;
+    seed_run(&admin, "refused", "cat-invalid", &invalid_hash, 30).await?;
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "refused".into(),
+            status: RunStatus::Failed,
+            fail_kind: FailKind::HashInvalidBytes,
+        }
+    );
+    let refused = admin
+        .query_one(
+            &format!(
+                "SELECT status,fail_kind,caller_outcome_json::text,caller_http_status, \
+                        caller_release_node_id,caller_outcome_hash, \
+                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
+                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='refused'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let expected_refusal = json!({"error": {
+        "code": "hash-invalid-bytes", "flow-id": "root", "flow-version": 1,
+        "run-id": "refused"
+    }});
+    assert_eq!(refused.get::<_, String>(0), "failed");
+    assert_eq!(refused.get::<_, String>(1), "hash-invalid-bytes");
+    assert_eq!(
+        serde_json::from_str::<Value>(&refused.get::<_, String>(2))?,
+        expected_refusal
+    );
+    assert_eq!(refused.get::<_, i32>(3), 500);
+    assert_eq!(refused.get::<_, Option<String>>(4), None);
+    assert_eq!(
+        refused.get::<_, String>(5),
+        wamn_flow::canonical_json_sha256(&expected_refusal)
+    );
+    assert!(!refused.get::<_, bool>(6));
+
+    seed_run(&admin, "refused-winner", "cat-invalid", &invalid_hash, 31).await?;
+    let refused_winner = install_prior_caller_winner(&admin, "refused-winner").await?;
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "refused-winner".into(),
+            status: RunStatus::Failed,
+            fail_kind: FailKind::HashInvalidBytes,
+        }
+    );
+    assert_prior_winner_terminal(&admin, "refused-winner", "failed", &refused_winner).await?;
+
+    // The exact draft root overrides the differing release root; the immutable
+    // map records the draft bundle plus release binding-base artifact and an
+    // expired retry verifies the same map rather than replacing it.
+    let (draft_hash, draft_bytes) = plan_bytes(DRAFT_ARTIFACT);
+    admin
+        .execute(
+            "INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,exact_bytes) VALUES ($1,$2,$3)",
+            &[&TENANT, &draft_hash, &draft_bytes],
+        )
+        .await?;
+    admin
+        .execute(
+            "INSERT INTO catalog.validated_flow_drafts \
+               (tenant_id,validated_draft_hash,catalog_id,catalog_version,environment,flow_id, \
+                runtime_flow_version,execution_bundle_hash,draft_artifact_hash, \
+                binding_base_artifact_hash) \
+             VALUES ($1,'validated-a','cat-main',1,'test','root',1,$2,$3,$4)",
+            &[&TENANT, &draft_hash, &DRAFT_ARTIFACT, &RELEASE_ARTIFACT],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,input_json,invocation_context) \
+                 VALUES ($1,'candidate','root',1,'dispatched','cat-main',1,'test',$2,'{{}}', \
+                    '{{\"principal\":{{\"validated-draft-hash\":\"validated-a\"}}}}')"
+            ),
+            &[&TENANT, &draft_hash],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_queue \
+                   (tenant_id,run_id,available_at,stream_seq) \
+                 VALUES ($1,'candidate','2000-01-01',40)"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "candidate"
+    );
+    let candidate_map = admin
+        .query_one(
+            &format!(
+                "SELECT execution_bundle_hash,source_artifact_hash \
+                   FROM {SCHEMA}.run_flow_resolutions \
+                  WHERE tenant_id=$1 AND run_id='candidate' AND flow_id='root'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(candidate_map.get::<_, String>(0), draft_hash);
+    assert_eq!(candidate_map.get::<_, String>(1), RELEASE_ARTIFACT);
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue \
+                    SET lease_expires_at='2000-01-01', lease_owner='dead' \
+                  WHERE tenant_id=$1 AND run_id='candidate'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "candidate"
+    );
+    let map_count: i64 = admin
+        .query_one(
+            &format!(
+                "SELECT count(*) FROM {SCHEMA}.run_flow_resolutions \
+                  WHERE tenant_id=$1 AND run_id='candidate'"
+            ),
+            &[&TENANT],
+        )
+        .await?
+        .get(0);
+    assert_eq!(map_count, 1);
+
+    // A writer that fenced and validated while the lease was live may commit
+    // after the lease expires. The reaper holds the row lock, waits on the same
+    // tenant/run fence, then uses a fresh snapshot and must observe the attempt.
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,trigger_source) \
+                 VALUES ($1,'effect-race','root',1,'running','cat-main',1,'test',$2,'http')"
+            ),
+            &[&TENANT, &release_hash],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_queue \
+                   (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                    attempts,max_attempts) \
+                 VALUES ($1,'effect-race','2000-01-01',50,'runner-a','2099-01-01',2,3)"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .batch_execute(&format!(
+            "CREATE FUNCTION {SCHEMA}.hold_effect_insert() RETURNS trigger \
+               LANGUAGE plpgsql AS $hold$ BEGIN \
+                 PERFORM pg_advisory_xact_lock({WRITER_LATCH}); RETURN NEW; \
+               END $hold$; \
+             CREATE TRIGGER hold_effect_insert BEFORE INSERT ON {SCHEMA}.effect_attempts \
+               FOR EACH ROW EXECUTE FUNCTION {SCHEMA}.hold_effect_insert();"
+        ))
+        .await?;
+    admin
+        .query_one("SELECT pg_advisory_lock($1)", &[&WRITER_LATCH])
+        .await?;
+    let writer_task = {
+        let writer = writer.clone();
+        tokio::spawn(async move {
+            writer
+                .begin_attempt(effect_attempt("effect-race", "effect-node"))
+                .await
+        })
+    };
+    wait_for_advisory_wait(&admin, None, Some(&writer_role)).await?;
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue \
+                    SET lease_expires_at='2000-01-01', attempts=max_attempts \
+                  WHERE tenant_id=$1 AND run_id='effect-race'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let reaper = {
+        let plugin = Arc::clone(&plugin);
+        tokio::spawn(async move { plugin.reap_one_exhausted_production(COMPONENT, 0).await })
+    };
+    wait_for_advisory_wait(&admin, Some("production-claim-live-runtime"), None).await?;
+    let unlocked: bool = admin
+        .query_one("SELECT pg_advisory_unlock($1)", &[&WRITER_LATCH])
+        .await?
+        .get(0);
+    assert!(unlocked);
+    let inserted_effect: EffectAttempt = writer_task.await??;
+    assert_eq!(
+        reaper.await??,
+        ProductionReapResult::EffectAttempt {
+            run_id: "effect-race".into()
+        }
+    );
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "effect-race".into(),
+            status: RunStatus::EffectUncertain,
+            fail_kind: FailKind::EffectUncertain,
+        }
+    );
+    let effect = admin
+        .query_one(
+            &format!(
+                "SELECT caller_outcome_json::text,caller_http_status,caller_outcome_hash, \
+                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
+                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='effect-race'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let effect_body = json!({"code": "effect-uncertain", "run_id": "effect-race"});
+    assert_eq!(
+        serde_json::from_str::<Value>(&effect.get::<_, String>(0))?,
+        effect_body
+    );
+    assert_eq!(effect.get::<_, i32>(1), 500);
+    assert_eq!(
+        effect.get::<_, String>(2),
+        wamn_flow::canonical_json_sha256(&effect_body)
+    );
+    assert!(!effect.get::<_, bool>(3));
+    assert_eq!(
+        writer
+            .begin_attempt(effect_attempt("effect-race", "effect-node"))
+            .await?,
+        inserted_effect,
+        "an exact immutable retry survives later terminalization"
+    );
+    let inactive_new = writer
+        .begin_attempt(effect_attempt("effect-race", "second-effect-node"))
+        .await
+        .expect_err("a new coordinate cannot begin after terminalization");
+    assert_eq!(inactive_new.kind(), EffectWriterErrorKind::RunNotRunnable);
+
+    seed_live_effect_run(&admin, "effect-callerless", &release_hash, 51).await?;
+    make_callerless(&admin, "effect-callerless").await?;
+    writer
+        .begin_attempt(effect_attempt("effect-callerless", "effect-node"))
+        .await?;
+    expire_effect_run(&admin, "effect-callerless").await?;
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "effect-callerless".into(),
+            status: RunStatus::EffectUncertain,
+            fail_kind: FailKind::EffectUncertain,
+        }
+    );
+    assert_callerless_terminal(&admin, "effect-callerless", "effect-uncertain").await?;
+
+    seed_live_effect_run(&admin, "effect-winner", &release_hash, 52).await?;
+    let effect_winner = install_prior_caller_winner(&admin, "effect-winner").await?;
+    writer
+        .begin_attempt(effect_attempt("effect-winner", "effect-node"))
+        .await?;
+    expire_effect_run(&admin, "effect-winner").await?;
+    assert_eq!(
+        plugin.claim_next_production(COMPONENT, 30_000).await?,
+        ProductionClaimResult::Terminalized {
+            run_id: "effect-winner".into(),
+            status: RunStatus::EffectUncertain,
+            fail_kind: FailKind::EffectUncertain,
+        }
+    );
+    assert_prior_winner_terminal(&admin, "effect-winner", "effect-uncertain", &effect_winner)
+        .await?;
+
+    // The effect-free exhausted path computes the generic outcome and hash in
+    // the host, atomically releases an attached caller, and dequeues.
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.runs \
+                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
+                    environment,execution_bundle_hash,trigger_source) \
+                 VALUES ($1,'janitor','root',1,'running','cat-main',1,'test',$2,'http')"
+            ),
+            &[&TENANT, &release_hash],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.run_queue \
+                   (tenant_id,run_id,available_at,stream_seq,lease_owner,lease_expires_at, \
+                    attempts,max_attempts) \
+                 VALUES ($1,'janitor','2000-01-01',60,'dead','2000-01-01',3,3)"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    assert_eq!(
+        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        ProductionReapResult::Reaped {
+            run_id: "janitor".into()
+        }
+    );
+    let janitor = admin
+        .query_one(
+            &format!(
+                "SELECT status,caller_outcome_json::text,caller_http_status,caller_release_node_id, \
+                        caller_outcome_hash,caller_released_at IS NOT NULL, \
+                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
+                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
+                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='janitor'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let janitor_body = json!({"error": {
+        "code": "infrastructure-failure", "flow-id": "root", "flow-version": 1,
+        "run-id": "janitor"
+    }});
+    assert_eq!(janitor.get::<_, String>(0), "infrastructure-failure");
+    assert_eq!(
+        serde_json::from_str::<Value>(&janitor.get::<_, String>(1))?,
+        janitor_body
+    );
+    assert_eq!(janitor.get::<_, i32>(2), 500);
+    assert_eq!(janitor.get::<_, Option<String>>(3), None);
+    assert_eq!(
+        janitor.get::<_, String>(4),
+        wamn_flow::canonical_json_sha256(&janitor_body)
+    );
+    assert!(janitor.get::<_, bool>(5));
+    assert!(!janitor.get::<_, bool>(6));
+
+    seed_exhausted_run(&admin, "janitor-callerless", &release_hash, 61).await?;
+    make_callerless(&admin, "janitor-callerless").await?;
+    assert_eq!(
+        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        ProductionReapResult::Reaped {
+            run_id: "janitor-callerless".into()
+        }
+    );
+    assert_callerless_terminal(&admin, "janitor-callerless", "infrastructure-failure").await?;
+
+    seed_exhausted_run(&admin, "janitor-winner", &release_hash, 62).await?;
+    let janitor_winner = install_prior_caller_winner(&admin, "janitor-winner").await?;
+    assert_eq!(
+        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        ProductionReapResult::Reaped {
+            run_id: "janitor-winner".into()
+        }
+    );
+    assert_prior_winner_terminal(
+        &admin,
+        "janitor-winner",
+        "infrastructure-failure",
+        &janitor_winner,
+    )
+    .await?;
+
+    admin
+        .batch_execute(&format!(
+            "DROP SCHEMA {SCHEMA} CASCADE; DROP SCHEMA catalog CASCADE"
+        ))
+        .await?;
+    Ok(())
+}

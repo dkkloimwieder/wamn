@@ -21,7 +21,8 @@
 //! the edges leaving that port. Branch = several ports; merge = several edges into
 //! one node (no join *barrier* in v1 — a merged node runs once per arriving token;
 //! join barriers are a later item). Fan-out (several edges from one port) runs
-//! **sequentially** in frontier order (true per-node parallelism is 5.11).
+//! **sequentially** in frontier order; parallel frame scheduling needs a
+//! separate design.
 //! Branch-aware *durable* resume (persisting the frontier) is 5.7; v1 checkpoints
 //! only `step_seq` (completed-step count), which the driver uses for the linear
 //! resume path.

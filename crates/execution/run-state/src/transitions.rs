@@ -364,26 +364,11 @@ pub fn terminalize_sql() -> String {
                FROM classified AS c \
               WHERE c.result_code = 'ready' \
                 AND r.tenant_id = c.tenant_id AND r.run_id = c.run_id \
-             RETURNING r.tenant_id, r.run_id, r.flow_id, r.status \
-         ), \
-         dead_lettered AS ( \
-             INSERT INTO run_dead_letters \
-                    (tenant_id, run_id, partition_key, flow_id, reason) \
-             SELECT t.tenant_id, t.run_id, q.partition_key, t.flow_id, \
-                    COALESCE($6::text, 'failed') \
-               FROM terminalized AS t \
-               JOIN run_queue AS q \
-                 ON q.tenant_id = t.tenant_id AND q.run_id = t.run_id \
-              WHERE t.status = 'failed' \
-                AND q.partition_key IS NOT NULL \
-                AND q.partition_policy = 'blocking' \
-             ON CONFLICT (tenant_id, run_id) DO NOTHING \
-             RETURNING run_id \
+             RETURNING r.tenant_id, r.run_id, r.status \
          ), \
          dequeued AS ( \
              DELETE FROM run_queue AS q USING terminalized AS t \
               WHERE q.tenant_id = t.tenant_id AND q.run_id = t.run_id \
-                AND (SELECT count(*) FROM dead_lettered) >= 0 \
              RETURNING q.run_id \
          ) \
          SELECT CASE WHEN t.run_id IS NOT NULL THEN 'terminalized' ELSE c.result_code END \
@@ -732,16 +717,10 @@ mod tests {
         assert!(terminal.contains("trigger_source IN ('http','internal','studio')"));
         assert!(!terminal.contains("attachment_id IS NOT NULL"));
         assert!(terminal.contains("terminalized AS"));
-        assert!(terminal.contains("dead_lettered AS"));
-        assert!(terminal.contains("INSERT INTO run_dead_letters"));
-        assert!(terminal.contains("t.status = 'failed'"));
-        assert!(terminal.contains("q.partition_policy = 'blocking'"));
-        assert!(terminal.contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
-        assert!(
-            terminal.find("dead_lettered AS").expect("ledger CTE")
-                < terminal.find("dequeued AS").expect("dequeue CTE")
-        );
         assert!(terminal.contains("dequeued AS"));
+        assert!(!terminal.contains("run_dead_letters"));
+        assert!(!terminal.contains("partition_key"));
+        assert!(!terminal.contains("partition_policy"));
 
         let complete = complete_sql();
         assert!(complete.contains("completed_attempt AS"));

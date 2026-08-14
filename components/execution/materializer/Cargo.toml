@@ -7,15 +7,15 @@ edition.workspace = true
 wit-bindgen = { workspace = true }
 serde_json = { workspace = true }
 # The PURE per-event pipeline (decide/skip/refuse, condition eval under the
-# REPLICA IDENTITY DEFAULT contract, causation budget, key/policy resolution,
-# run-id + input mint) — this shell only performs the effects.
+# REPLICA IDENTITY DEFAULT contract, causation budget, and run-id + input mint)
+# — this shell only performs the effects.
 wamn-materializer = { workspace = true }
 # The declaration surfaces the sweep reads: registrations + the flow graph.
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
 # The write-ahead + evt-enqueue SQL builders. `default-features = false` keeps
-# Guest-safe durable enqueue and ordering SQL; schedule evaluation is separate.
+# Guest-safe durable admission SQL; schedule evaluation is separate.
 wamn-run-state = { workspace = true }
 
 # A COMMAND component (wasi:cli/run via `main`), not a cdylib: the Service

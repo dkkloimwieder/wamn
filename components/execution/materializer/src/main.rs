@@ -2,7 +2,7 @@
 //! effect shell over the PURE `wamn-materializer` decision pipeline.
 //!
 //! One sweep: read the tenant's registrations + each subscribed flow's ACTIVE
-//! graph (ordering/policy) through `wamn:postgres`; per serviceable
+//! graph identity through `wamn:postgres`; per serviceable
 //! registration bind a durable pull consumer on the org/env `EVT_` stream
 //! (subject-filtered to the registration's entity) and fetch a bounded batch;
 //! per delivered event run [`wamn_materializer::decide`] and map the verdict:
@@ -389,8 +389,6 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
         FlowDeclaration {
             flow_id: flow.flow_id.clone(),
             flow_version,
-            ordering: flow.ordering.clone(),
-            partition_policy: flow.partition_policy,
         },
     ))
 }
@@ -438,8 +436,6 @@ fn fire_txn(cfg: &Config, serving: &Serving, plan: &FirePlan) -> Result<bool, St
                 text(&plan.source_run_id),
                 text(&plan.causation.root),
                 int32(i32::try_from(plan.causation.depth).expect("causation depth is bounded")),
-                plan.partition_key.as_ref().map_or_else(null, text),
-                text(plan.policy.as_sql()),
             ],
         )
         .map_err(|e| pg_name(&e))?;

@@ -31,7 +31,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::types::{Edge, Flow, FlowConnectionRequirement, Node, Ordering, PartitionPolicy};
+use crate::types::{Edge, Flow, FlowConnectionRequirement, Node};
 
 /// The canonical digest preimage of a [`Flow`].
 ///
@@ -76,10 +76,6 @@ pub struct FlowPreimage<'a> {
     credentials: Vec<CredentialPreimage<'a>>,
     #[serde(skip_serializing_if = "is_empty")]
     allowed_hosts: &'a [String],
-    #[serde(skip_serializing_if = "PartitionPolicy::is_default")]
-    partition_policy: PartitionPolicy,
-    #[serde(skip_serializing_if = "is_default_ordering")]
-    ordering: &'a Ordering,
 }
 
 /// A graph node's identity: [`Node`] without its editor [`Node::label`].
@@ -153,8 +149,6 @@ impl<'a> FlowPreimage<'a> {
                 })
                 .collect(),
             allowed_hosts: &flow.allowed_hosts,
-            partition_policy: flow.partition_policy,
-            ordering: &flow.ordering,
         }
     }
 }
@@ -195,8 +189,4 @@ fn edge_key(edge: &Edge) -> (&str, &str, u32, &str, Option<&str>) {
 
 fn is_empty<T>(items: &&[T]) -> bool {
     items.is_empty()
-}
-
-fn is_default_ordering(ordering: &&Ordering) -> bool {
-    ordering.is_default()
 }

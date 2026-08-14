@@ -1176,40 +1176,67 @@ fn verify_effect_writer_acl_role_inventory(
     database: &str,
     inventory: &[RoleAcl],
 ) -> anyhow::Result<()> {
-    let mut by_schema: BTreeMap<&str, BTreeSet<(&str, &str, &str)>> = BTreeMap::new();
+    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
     for acl in inventory {
         anyhow::ensure!(
-            matches!(acl.object_kind.as_str(), "schema" | "relation"),
-            "stable role {role:?} carries non-ledger {} ACL in database {database:?}",
+            matches!(acl.object_kind.as_str(), "schema" | "relation" | "column"),
+            "stable role {role:?} carries non-writer {} ACL in database {database:?}",
             acl.object_kind
         );
-        by_schema.entry(&acl.schema_name).or_default().insert((
-            &acl.object_kind,
-            &acl.object_name,
-            &acl.privilege,
-        ));
+        by_schema
+            .entry(acl.schema_name.clone())
+            .or_default()
+            .insert((
+                acl.object_kind.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            ));
     }
     for (schema, actual) in by_schema {
         anyhow::ensure!(
             !schema.starts_with("pg_")
                 && !matches!(
-                    schema,
+                    schema.as_str(),
                     "public" | "information_schema" | "wamn_system" | "catalog" | "app"
                 ),
-            "stable role {role:?} carries effect-ledger ACLs in reserved schema {schema:?} in database {database:?}"
+            "stable role {role:?} carries effect-writer ACLs in reserved schema {schema:?} in database {database:?}"
         );
-        let mut expected = BTreeSet::from([("schema", schema, "USAGE")]);
+        let mut expected =
+            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
         for table in [
             "effect_attempts",
             "effect_attempt_dispatches",
             "effect_attempt_outcomes",
         ] {
-            expected.insert(("relation", table, "SELECT"));
-            expected.insert(("relation", table, "INSERT"));
+            expected.insert((
+                "relation".to_string(),
+                table.to_string(),
+                "SELECT".to_string(),
+            ));
+            expected.insert((
+                "relation".to_string(),
+                table.to_string(),
+                "INSERT".to_string(),
+            ));
+        }
+        for (table, columns) in [
+            ("runs", &["tenant_id", "run_id", "status"][..]),
+            (
+                "run_queue",
+                &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+            ),
+        ] {
+            for column in columns {
+                expected.insert((
+                    "column".to_string(),
+                    format!("{table}.{column}"),
+                    "SELECT".to_string(),
+                ));
+            }
         }
         anyhow::ensure!(
             actual == expected,
-            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact effect-ledger grant set"
+            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact effect-writer grant set"
         );
     }
     Ok(())
@@ -2121,7 +2148,7 @@ mod tests {
     }
 
     #[test]
-    fn stable_acl_inventory_accepts_only_a_complete_host_schema_ledger_set() {
+    fn stable_acl_inventory_accepts_only_the_complete_writer_schema_set() {
         let schema = "wamn_runner_demo";
         let mut exact = vec![role_acl("schema", schema, schema, "USAGE")];
         for table in [
@@ -2131,6 +2158,22 @@ mod tests {
         ] {
             exact.push(role_acl("relation", schema, table, "SELECT"));
             exact.push(role_acl("relation", schema, table, "INSERT"));
+        }
+        for (table, columns) in [
+            ("runs", &["tenant_id", "run_id", "status"][..]),
+            (
+                "run_queue",
+                &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+            ),
+        ] {
+            for column in columns {
+                exact.push(role_acl(
+                    "column",
+                    schema,
+                    &format!("{table}.{column}"),
+                    "SELECT",
+                ));
+            }
         }
         verify_effect_writer_acl_role_inventory(EFFECT_WRITER_ROLE, "project_db", &exact).unwrap();
 

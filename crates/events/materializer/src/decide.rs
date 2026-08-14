@@ -7,12 +7,9 @@
 //! for replay regardless of ack). Refusals are counted + warned DISTINCTLY
 //! (v3 §4: "refusals are a distinct, alertable outcome").
 
-use serde_json::Value;
-
 use wamn_event_reg::EventRegistration;
 use wamn_event_wire::{Causation, Envelope};
-use wamn_flow::Ordering;
-use wamn_run_state::queue::{PartitionPolicy, mint_evt_run_id};
+use wamn_run_state::queue::mint_evt_run_id;
 
 use crate::condition::{CompiledCondition, ConditionOutcome, compile_condition};
 use crate::context::{event_context, tenant_of};
@@ -24,12 +21,6 @@ use crate::input::evt_input_json;
 pub struct FlowDeclaration {
     pub flow_id: String,
     pub flow_version: i32,
-    /// The 5.11 ordering declaration (fqg.20) — authoritative for WHETHER the
-    /// flow is ordered and how the key folds.
-    pub ordering: Ordering,
-    /// The D20 head-unavailability policy, materialized onto keyed rows only
-    /// (kq0z coherence).
-    pub partition_policy: wamn_flow::PartitionPolicy,
 }
 
 /// Everything the guest's fire transaction needs for one won firing.
@@ -43,11 +34,6 @@ pub struct FirePlan {
     pub input_json: String,
     /// Trusted producer metadata, separate from the author-visible input.
     pub invocation_context_json: String,
-    /// The stamped key (`None` = unordered → the global claim).
-    pub partition_key: Option<String>,
-    /// The policy carried to centralized admission; unused when
-    /// `partition_key` is `None` except for the required blocking default.
-    pub policy: PartitionPolicy,
     /// The numeric stream position carried as the event admission sequence.
     pub stream_seq: i64,
     /// The child causation for trusted lineage persistence and logging.
@@ -184,44 +170,6 @@ pub fn child_causation(
     }
 }
 
-/// Bridge the `wamn-flow` policy contract enum to the `wamn-run-state` storage
-/// enum (whose `as_sql` owns the single storage literal) — the same one
-/// crossing point the dispatcher keeps (kq0z).
-pub fn rq_policy(p: wamn_flow::PartitionPolicy) -> PartitionPolicy {
-    match p {
-        wamn_flow::PartitionPolicy::Blocking => PartitionPolicy::Blocking,
-        wamn_flow::PartitionPolicy::Leapfrog => PartitionPolicy::Leapfrog,
-    }
-}
-
-/// The `run_queue.partition_key` an evt firing carries. The FLOW's ordering
-/// declaration is authoritative (fqg.20): unordered → `None` (a declared
-/// registration extractor is inert), strict → the flow id, partitioned → the
-/// registration's `partition-key` extractor over the EVENT context when
-/// declared (§5: "extracts the key from the payload"), else the flow's own
-/// expression over the RUN INPUT (dispatcher parity). Both paths fold through
-/// [`Ordering::partition_key_for`]'s rules — null/missing/non-scalar degrades
-/// to the flow-wide stream, NEVER a NULL key (a NULL key would route an
-/// ordered flow to the unordered global claim, the D20 corruption).
-fn partition_key(
-    flow: &FlowDeclaration,
-    reg: &EventRegistration,
-    event_ctx: &Value,
-    run_input: &Value,
-) -> Option<String> {
-    match &flow.ordering {
-        Ordering::Unordered => None,
-        Ordering::Strict => Some(flow.flow_id.clone()),
-        Ordering::Partitioned { .. } => match &reg.partition_key {
-            Some(extractor) => Ordering::Partitioned {
-                partition_key: extractor.clone(),
-            }
-            .partition_key_for(&flow.flow_id, event_ctx),
-            None => flow.ordering.partition_key_for(&flow.flow_id, run_input),
-        },
-    }
-}
-
 /// Decide one delivered event against one registration. `tenant` is the
 /// workload's own bound tenant (host-injected claim; the guest reads its copy
 /// from config/env — the DB claims stay host-enforced regardless).
@@ -280,7 +228,7 @@ pub fn decide(
     let Ok(seq_i64) = i64::try_from(stream_seq) else {
         return Verdict::Refuse(RefuseReason::SeqOverflow(stream_seq));
     };
-    // 6. Mint: run id, causation chain, input, key + policy.
+    // 6. Mint: run id, causation chain, input, and global-FIFO stream position.
     let run_id = mint_registered_evt_run_id(&flow.flow_id, &reg.registration_id, stream_seq);
     let child = match child_causation(envelope, &run_id, max_depth) {
         Ok(c) => c,
@@ -292,16 +240,12 @@ pub fn decide(
         .map_or_else(|| run_id.clone(), |parent| parent.run.clone());
     let input_json = evt_input_json(envelope, stream_seq, &child);
     let invocation_context_json = event_invocation_context_json(envelope, stream_seq);
-    let run_input: Value = serde_json::from_str(&input_json).expect("minted input parses");
-    let key = partition_key(flow, reg, &event_ctx, &run_input);
     Verdict::Fire(Box::new(FirePlan {
         run_id,
         flow_id: flow.flow_id.clone(),
         flow_version: flow.flow_version,
         input_json,
         invocation_context_json,
-        partition_key: key,
-        policy: rq_policy(flow.partition_policy),
         stream_seq: seq_i64,
         causation: child,
         source_run_id,
@@ -311,7 +255,7 @@ pub fn decide(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
     use wamn_event_wire::Op;
 
     fn envelope(op: Op, new: Value) -> Envelope {
@@ -330,7 +274,7 @@ mod tests {
         }
     }
 
-    fn registration(condition: Option<&str>, partition_key: Option<&str>) -> EventRegistration {
+    fn registration(condition: Option<&str>) -> EventRegistration {
         EventRegistration::from_json(
             &json!({
                 "schema-version": "0.1",
@@ -340,19 +284,16 @@ mod tests {
                 "entity": "receipts",
                 "ops": ["insert", "update"],
                 "condition": condition,
-                "partition-key": partition_key,
             })
             .to_string(),
         )
         .expect("registration parses")
     }
 
-    fn flow(ordering: Ordering, policy: wamn_flow::PartitionPolicy) -> FlowDeclaration {
+    fn flow() -> FlowDeclaration {
         FlowDeclaration {
             flow_id: "f1".into(),
             flow_version: 3,
-            ordering,
-            partition_policy: policy,
         }
     }
 
@@ -365,13 +306,12 @@ mod tests {
 
     #[test]
     fn a_matching_insert_fires_with_the_e4_mint() {
-        let reg = registration(None, None);
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let reg = registration(None);
+        let f = flow();
         let env = envelope(Op::Insert, json!({"id": "7", "tenant_id": "t1"}));
         let plan = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
         assert_eq!(plan.run_id, "f1:r1:evt:00000000000000000009");
         assert_eq!(plan.stream_seq, 9);
-        assert_eq!(plan.partition_key, None, "unordered flow → global claim");
         // Organic write → fresh root at depth 0.
         assert_eq!(plan.causation.depth, 0);
         assert_eq!(plan.causation.root, plan.run_id);
@@ -401,8 +341,8 @@ mod tests {
 
     #[test]
     fn entity_op_and_tenant_guards_skip() {
-        let reg = registration(None, None);
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let reg = registration(None);
+        let f = flow();
 
         let mut wrong_entity = envelope(Op::Insert, json!({"tenant_id": "t1"}));
         wrong_entity.entity = Some("orders".into());
@@ -445,7 +385,7 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let f = flow();
         let del = Envelope {
             op: Op::Delete,
             old: Some(json!({"id": "7"}).as_object().unwrap().clone()),
@@ -465,7 +405,7 @@ mod tests {
         );
         // Same refusal for a table with no tenant_id column.
         let no_tenant = envelope(Op::Insert, json!({"id": "7"}));
-        let reg2 = registration(None, None);
+        let reg2 = registration(None);
         assert_eq!(
             decide(&reg2, &f, None, &no_tenant, 1, "t1", 16),
             Verdict::Refuse(RefuseReason::TenantUnscopable)
@@ -474,9 +414,9 @@ mod tests {
 
     #[test]
     fn condition_gates_the_fire_and_stays_replayable() {
-        let reg = registration(Some("new.status == 'received'"), None);
+        let reg = registration(Some("new.status == 'received'"));
         let cond = serviceable(&reg).unwrap();
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let f = flow();
         let hit = envelope(Op::Insert, json!({"tenant_id": "t1", "status": "received"}));
         let miss = envelope(Op::Insert, json!({"tenant_id": "t1", "status": "draft"}));
         assert!(matches!(
@@ -492,10 +432,10 @@ mod tests {
     #[test]
     fn old_value_conditions_are_serviceable_and_guarded_per_event() {
         // l5i9.31: a changed-to condition is now SERVICEABLE (no longer held).
-        let reg = registration(Some("new.status != old.status"), None);
+        let reg = registration(Some("new.status != old.status"));
         let cond = serviceable(&reg).expect("old-ref is serviceable");
         assert!(cond.is_some(), "condition compiles to Some");
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let f = flow();
 
         // Old image ABSENT (RI DEFAULT / an op with no prior row) → an alertable
         // cannot-evaluate refusal, NOT condition-false, NOT a hold.
@@ -551,7 +491,7 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let f = flow();
         let full_del = Envelope {
             op: Op::Delete,
             old: Some(
@@ -590,8 +530,8 @@ mod tests {
 
     #[test]
     fn causation_chain_extends_and_refuses_over_budget() {
-        let reg = registration(None, None);
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let reg = registration(None);
+        let f = flow();
         let mut env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
         env.causation = Some(Causation {
             run: "f0:evt:00000000000000000001".into(),
@@ -621,53 +561,11 @@ mod tests {
     }
 
     #[test]
-    fn ordering_resolves_key_and_policy_kq0z_coherently() {
-        let env = envelope(Op::Insert, json!({"tenant_id": "t1", "site": "s-9"}));
-
-        // Strict → the flow id, policy = the flow's declaration.
-        let reg = registration(None, None);
-        let strict = flow(Ordering::Strict, wamn_flow::PartitionPolicy::Leapfrog);
-        let plan = fire(decide(&reg, &strict, None, &env, 1, "t1", 16));
-        assert_eq!(plan.partition_key.as_deref(), Some("f1"));
-        assert_eq!(plan.policy, PartitionPolicy::Leapfrog);
-
-        // Partitioned + registration extractor: over the EVENT context.
-        let reg_extract = registration(None, Some("new.site"));
-        let part = flow(
-            Ordering::Partitioned {
-                partition_key: "new.site".into(),
-            },
-            wamn_flow::PartitionPolicy::Blocking,
-        );
-        let plan = fire(decide(&reg_extract, &part, None, &env, 2, "t1", 16));
-        assert_eq!(plan.partition_key.as_deref(), Some("s-9"));
-
-        // Partitioned, NO extractor: the flow's own expression over the RUN
-        // INPUT (whose insert row image is `new` in the §4.3 grammar).
-        let plan = fire(decide(&reg, &part, None, &env, 3, "t1", 16));
-        assert_eq!(plan.partition_key.as_deref(), Some("s-9"));
-
-        // A missing key folds to the flow-wide stream — never NULL.
-        let reg_missing = registration(None, Some("new.absent_column"));
-        let plan = fire(decide(&reg_missing, &part, None, &env, 4, "t1", 16));
-        assert_eq!(
-            plan.partition_key.as_deref(),
-            Some("f1"),
-            "null/missing key degrades to the flow-wide stream (fqg.20 rule)"
-        );
-
-        // Unordered: NO key even when the registration declares an extractor.
-        let unordered = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
-        let plan = fire(decide(&reg_extract, &unordered, None, &env, 5, "t1", 16));
-        assert_eq!(plan.partition_key, None);
-    }
-
-    #[test]
     fn redelivery_is_deterministic() {
         // Same event, same registration → byte-identical plan (the ON CONFLICT
         // dedupe upstream depends on the run_id; determinism is the property).
-        let reg = registration(None, None);
-        let f = flow(Ordering::Unordered, wamn_flow::PartitionPolicy::Blocking);
+        let reg = registration(None);
+        let f = flow();
         let env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
         let a = fire(decide(&reg, &f, None, &env, 9, "t1", 16));
         let b = fire(decide(&reg, &f, None, &env, 9, "t1", 16));

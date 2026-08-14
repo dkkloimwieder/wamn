@@ -19,13 +19,11 @@
 ///
 /// The sequence is **zero-padded to 20 digits** (the full `u64` width) so the
 /// id's LEXICAL order equals the numeric stream order — the E4 belt. The
-/// braces: `run_id` is a TEXT column and rides claim `ORDER BY`s wherever the
-/// numeric `stream_seq` column isn't in play (partition stream order pre-dated
-/// it; external consumers key on `${run.id}`); without padding `f1:evt:10`
-/// sorts before `f1:evt:9` — the R6/D20 corruption class arriving through a
-/// string comparison. The suspenders are the `stream_seq` BIGINT the enqueue
-/// carries ahead of `run_id` in every claim key
-/// ([`crate::queue::enqueue_evt_sql`] / [`crate::queue::enqueue_evt_with_policy_sql`]).
+/// braces: `run_id` is a TEXT column and external consumers key on
+/// `${run.id}`; without padding `f1:evt:10` sorts before `f1:evt:9`. The
+/// suspenders are the `stream_seq` BIGINT that [`crate::queue::enqueue_evt_sql`]
+/// carries ahead of `run_id` in the global claim key
+/// `(available_at, stream_seq, run_id)`.
 pub fn mint_evt_run_id(flow_id: &str, stream_seq: u64) -> String {
     format!("{flow_id}:evt:{stream_seq:020}")
 }

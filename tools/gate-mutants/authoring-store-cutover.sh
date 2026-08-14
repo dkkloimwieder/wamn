@@ -4,7 +4,7 @@ set -euo pipefail
 readonly OWNER="bd:wamn-0h0g.8.11"
 readonly OUTCOME="retired immutable authoring identities refuse instead of being rewritten"
 readonly TARGET="crates/schema/control/src/run_plane.rs"
-readonly EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+readonly EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"

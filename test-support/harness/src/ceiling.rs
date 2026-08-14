@@ -4,8 +4,8 @@
 //! controller (coarse doubling, then a bisect to the knee), the saturation
 //! classifier (p99 doubling or achieved-rate divergence), and the CSV shape the
 //! §11 provenance ledger points at. The effectful load generation (producer/
-//! claimer tasks, DB connections) stays in the bench that drives a campaign
-//! (queuebench C7 first; C1/C2 reuse this module).
+//! claimer tasks and DB connections) stays in the retained measurement harness
+//! that drives each campaign. The original C7 driver is archived.
 
 /// Aggregate stats for one ramp level: `level_secs` of offered load at
 /// `offered` runs/sec, measured over the offered window only (drain excluded).

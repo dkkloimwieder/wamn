@@ -15,8 +15,7 @@ pub fn valid_ident(value: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
-/// Flow, run, node-run, queue, and partition tables used by deployed-runner
-/// system and integration proofs.
+/// Flow, run, node-run, and global queue tables used by deployed-runner proofs.
 pub fn ladder_ddl(schema: &str) -> String {
     format!(
         "CREATE TABLE {schema}.flows (\
@@ -65,8 +64,7 @@ pub fn ladder_ddl(schema: &str) -> String {
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
          CREATE TABLE {schema}.run_queue (\
-            tenant_id text NOT NULL, run_id text NOT NULL, partition_key text, \
-            partition_policy text NOT NULL DEFAULT 'blocking' CHECK (partition_policy IN ('blocking', 'leapfrog')), \
+            tenant_id text NOT NULL, run_id text NOT NULL, \
             priority int NOT NULL DEFAULT 0, available_at timestamptz NOT NULL DEFAULT now(), \
             lease_owner text, lease_expires_at timestamptz, \
             lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0), \
@@ -75,25 +73,14 @@ pub fn ladder_ddl(schema: &str) -> String {
             stream_seq bigint NOT NULL DEFAULT 0, \
             PRIMARY KEY (tenant_id, run_id), \
             FOREIGN KEY (tenant_id, run_id) REFERENCES {schema}.runs (tenant_id, run_id) ON DELETE CASCADE);\
-         CREATE INDEX run_queue_claimable ON {schema}.run_queue (tenant_id, available_at, stream_seq, lease_expires_at);\
-         CREATE INDEX run_queue_partition ON {schema}.run_queue (tenant_id, partition_key) WHERE partition_key IS NOT NULL;\
+         CREATE INDEX run_queue_claimable ON {schema}.run_queue \
+            (tenant_id, available_at, stream_seq, run_id, lease_expires_at);\
          ALTER TABLE {schema}.run_queue ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.run_queue FORCE ROW LEVEL SECURITY;\
          CREATE POLICY run_queue_tenant ON {schema}.run_queue \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;\
-         CREATE TABLE {schema}.partition_owner (\
-            tenant_id text NOT NULL, partition_key text NOT NULL, \
-            lease_owner text NOT NULL, lease_expires_at timestamptz NOT NULL, \
-            acquired_at timestamptz NOT NULL DEFAULT now(), \
-            PRIMARY KEY (tenant_id, partition_key));\
-         ALTER TABLE {schema}.partition_owner ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.partition_owner FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY partition_owner_tenant ON {schema}.partition_owner \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.partition_owner TO wamn_app;"
+         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.run_queue TO wamn_app;"
     )
 }
 
@@ -127,10 +114,7 @@ pub async fn seed_run(
         .await
         .context("write-ahead run")?;
     transaction
-        .execute(
-            &enqueue_sql(),
-            &[&run_id, &Option::<&str>::None, &0i32, &0i64],
-        )
+        .execute(&enqueue_sql(), &[&run_id, &0i32, &0i64])
         .await
         .context("enqueue run")?;
     transaction.commit().await?;

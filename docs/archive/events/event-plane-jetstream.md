@@ -19,7 +19,7 @@ labels (§10).
    forward re-execution and re-fires side effects.
 3. **Events ≠ execution.** Streams feed the Postgres run queue; they never
    replace it (D3 grounds: write-ahead co-commit, leases, crash-evidence,
-   partitions).
+   global FIFO ordering).
 4. **Blast radius follows the org** (T2/R8b): streams, NATS accounts,
    retention, replication credentials — all org-scoped.
 5. **Ecosystem-standard surfaces** (D17): zero custom WIT in this subsystem;
@@ -57,8 +57,10 @@ The table stands as the record of what was dropped and what replaced it:
 | N-run-rows-per-event fan-out | one stored event, durable consumer per flow |
 | dispatchbench outbox modes | streambench/ceiling benches (§8) |
 
-**Kept, unchanged:** run queue + run state machinery; dispatcher cron path;
-write-ahead sync-webhook rows; doorbells; the queue's ordering policies (R6).
+**Kept:** run state machinery; dispatcher cron path; write-ahead sync-webhook
+rows; and doorbells. Queue admission is now one global FIFO ordered by
+`(available_at, stream_seq, run_id)`; authored ordering policies and partition
+ownership were retired by the MVP cutover.
 **Kept, repurposed:** the *outbox concept* survives as `domain_events` — a
 plain table a flow's "emit event" node inserts into within the user's
 transaction; CDC captures it like any row. Deliberate application events and
@@ -70,13 +72,13 @@ mechanical row changes ride one pipeline, distinguished by subject.
 `{op, old, new, entity?, table, lsn, txid, commit_ts, causation?}`, the subject
 `evt.<org>.<project>.<env>.<entity>.<op>`, the `Nats-Msg-Id =
 <project_env>:<lsn>`, the stream name `EVT_<org>_<env>`, the `run_id =
-<flow>:evt:<stream_seq padded 20>`, the registration declaration (JMESPath
-condition/partition-key over the event context `{op, old, new}`), and the
+<flow>:evt:<stream_seq padded 20>`, the registration declaration (an optional
+JMESPath condition over the event context `{op, old, new}`), and the
 run-input envelope are frozen into code (`wamn-event-wire`, `wamn-event-reg`,
 `wamn-materializer`, `wamn-run-state`); each is pinned by a golden test — a field
-removal/rename breaks a named test. Compatibility rule (the WIT-freeze
-discipline): 0.1.x admits only additive or clarifying changes; any breaking
-change waits for 0.2.
+removal/rename breaks a named test. The refreshed pre-release 0.1 declaration is
+an exact allowlist; retired ordering and partition fields are rejected rather
+than accepted as compatibility input.
 
 - **Provisioning** (`provision-project-env` additions): publication over the
   app schema (+ `domain_events`); **failover-enabled slot** (PG18/CNPG — slot
@@ -189,15 +191,14 @@ change waits for 0.2.
   publish / consume-in-commit-order / `Nats-Msg-Id` dedupe / R3-survives-node-loss
   on the single shared account — per-org accounts are the wamn-4xw seam.*
 - **Materializer:** durable consumer per subscribing flow (registration:
-  entity id, ops, condition, partition-key expr). Condition evaluates **here**
+  entity id, ops, optional condition). Condition evaluates **here**
   (hot-editable; filtered-out events remain in the stream, so condition edits
   are replayable). Deterministic `run_id = <flow>:evt:<stream_seq>` +
   `ON CONFLICT DO NOTHING` = the exactly-once guarantee (dedupe window is only
   the fast path). Delivery order = stream order = **commit order per DB**
-  (stronger than the outbox's per-project seq). `partitioned(key)` extracts the
-  key from the payload; **R6 `blocking` is load-bearing — decide before
-  Phase 2.** ~~v1 native in dispatcher~~ *(superseded by the Service-first
-  rework, E11/D21+E12)*. *Shipped 2026-07-19 (wamn-l5i9.17), SERVICE-FIRST: a
+  (stronger than the outbox's per-project seq). Every admitted event joins the
+  same global FIFO, with `stream_seq` as its numeric ordering tiebreak.
+  *Shipped 2026-07-19 (wamn-l5i9.17), SERVICE-FIRST: a
   wasi:cli/run Service workload (`spec.service`,
   deploy/platform/materializer.example.yaml) — the first `wamn:jetstream`
   importer (plugin wired into the washlet; the post-commit doorbell rides the
@@ -210,11 +211,10 @@ change waits for 0.2.
   SERVED and guarded per event (wamn-l5i9.31: old-image-present evaluates both
   outcomes; old-image-absent is an alertable cannot-evaluate refusal, never
   condition-false),
-  key+policy stamped kq0z-coherently from the flow's fqg.20 declaration (the
-  registration's extractor evaluates over the event context), and the E4
-  `stream_seq` BIGINT carried on every evt row (run ids zero-padded — the
-  belt). Gate: matbench (real guest + real deploy/sql DDL via `include_str!` +
-  real JetStream; 17 asserts incl. a server-side-consumer-delete full
+  the E4 `stream_seq` BIGINT carried on every event row (run ids zero-padded —
+  the belt) and admitted into the global queue. Gate: matbench (real guest +
+  real deploy/sql DDL via `include_str!` + real JetStream; 17 asserts incl. a
+  server-side-consumer-delete full
   redelivery — 608 collisions, zero new rows); recipe
   docs/archive/build-and-test.md [EVT-MAT]; first C-MAT numbers in docs/archive/results/ceilings.md.
   One workload per project-env × tenant (v1); replay + EVT-COMPONENT
@@ -243,12 +243,17 @@ the Posture-C residency story.
 
 ## 7. Implementation phases (this doc's spine)
 
-### Phase 0 — decisions + spikes (blocks everything; target: ~1–2 wks)
-**Decisions to sign:** R6 ordering (`blocking` default); 5.10 payload-store
+### Phase 0 — historical decisions + spikes
+
+This phase record predates the SR-MVP global-FIFO cutover. Its R6 `blocking`
+choice was superseded by `wamn-0h0g.4.1`; no ordering policy carries into the
+current materializer or queue.
+
+**Decisions recorded then:** R6 ordering (`blocking` default); 5.10 payload-store
 backend (now dual-prerequisite: claim-check + node streaming); envelope/subject/
 `Nats-Msg-Id`/`run_id` schemas frozen into code; replica-identity policy;
 causation depth default (~8).
-*Signed 2026-07-18 (wamn-l5i9.1):* R6 `blocking` carries to the materializer;
+*Signed 2026-07-18 (wamn-l5i9.1; historical):* R6 `blocking` carried to the materializer;
 5.10 backend deferred to a Phase-1 spike (wamn-l5i9.29); schemas stay working
 drafts through Phase 1 and freeze at the Phase-2 cutover (wamn-l5i9.30);
 replica identity = the per-entity knob as written (wamn-l5i9.31); causation
@@ -327,7 +332,8 @@ first importer + causation thread + matbench gate; first C-MAT numbers
 rendered (wamn-l5i9.32, 2026-07-20; the one-time live wamn-pg WAL-bound
 retrofit is an owner-run `kubectl patch`, see the bead notes).*
 
-*Shadow/cutover shipped (wamn-l5i9.18, 2026-07-20). **The comparison,
+*Historical shadow/cutover record, superseded by the single global-FIFO path
+(wamn-l5i9.18, 2026-07-20). **The comparison,
 defined** (the open question this bead carried; executable form = `cutbench`):
 the shadow is **compare-only by construction** — a registration gains
 `state: shadow | live` (additive under the 0.1.x freeze; an absent field reads

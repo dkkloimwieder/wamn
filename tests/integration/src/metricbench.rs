@@ -550,7 +550,7 @@ async fn seed_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::R
     // The effect path reads the trusted principal off the run row
     // (`invocation_context #>> '{principal,artifact-digest}'`) and refuses a run
     // whose digest is absent, so a fixture that only pinned catalog columns left
-    // every drive dying in `run-next: effect run artifact_digest shape` and the
+    // every single-shot `run` dying on the effect-run artifact-digest shape and the
     // executor settled nothing (wamn-wddi). The digest comes from the seeded
     // release member itself, so the pin and the principal cannot disagree.
     let catalog_version = i64::from(CATALOG_VERSION);
@@ -575,11 +575,7 @@ async fn seed_run(client: &mut Client, run_id: &str, flow_id: &str) -> anyhow::R
         )
         .await?;
     anyhow::ensure!(pinned == 1, "seeded run {run_id} was not release-pinned");
-    tx.execute(
-        &enqueue_sql(),
-        &[&run_id, &Option::<&str>::None, &0i32, &0i64],
-    )
-    .await?;
+    tx.execute(&enqueue_sql(), &[&run_id, &0i32, &0i64]).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1080,7 +1076,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hermetic_preamble_contains_release_flows_required_by_run_next() {
+    fn hermetic_preamble_contains_release_flows_required_by_single_shot_run() {
         let ddl = fixture_ddl();
         for relation in [
             "CREATE TABLE catalog.flow_artifacts (",

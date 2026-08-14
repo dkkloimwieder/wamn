@@ -27,7 +27,7 @@ fn catalog() -> Catalog {
 }
 
 /// A valid registration on `sales_orders`, insert+update, with a "changed-to"
-/// condition and a partition key.
+/// condition.
 fn reg() -> EventRegistration {
     EventRegistration {
         schema_version: SCHEMA_VERSION.to_string(),
@@ -37,7 +37,6 @@ fn reg() -> EventRegistration {
         entity: "sales_orders".into(),
         ops: vec![Op::Insert, Op::Update],
         condition: Some("new.status == 'shipped' && old.status != 'shipped'".into()),
-        partition_key: Some("new.status".into()),
     }
 }
 
@@ -85,18 +84,6 @@ fn a_syntactically_broken_condition_is_rejected() {
 }
 
 #[test]
-fn a_syntactically_broken_partition_key_is_rejected() {
-    let mut r = reg();
-    r.partition_key = Some("new[".into()); // unterminated index
-    let issues = validate(&r, &catalog()).unwrap_err();
-    assert!(
-        issues
-            .iter()
-            .any(|i| i.code == "invalid-jmespath" && i.path == "partition-key")
-    );
-}
-
-#[test]
 fn a_present_but_empty_expression_is_rejected() {
     // Empty is NOT "match everything" — omit the field (None) for that.
     let mut r = reg();
@@ -106,10 +93,9 @@ fn a_present_but_empty_expression_is_rejected() {
 }
 
 #[test]
-fn a_registration_with_no_condition_or_key_is_fine() {
+fn a_registration_with_no_condition_is_fine() {
     let mut r = reg();
     r.condition = None;
-    r.partition_key = None;
     assert!(validate(&r, &catalog()).is_ok());
 }
 
@@ -151,7 +137,6 @@ fn round_trips_through_canonical_json_with_kebab_case_fields() {
     // is a bare string (transparent EntityId); ops are lowercase.
     assert!(json.contains("\"schema-version\""));
     assert!(json.contains("\"registration-id\""));
-    assert!(json.contains("\"partition-key\""));
     assert!(json.contains("\"entity\": \"sales_orders\""));
     assert!(json.contains("\"insert\""));
     let back = EventRegistration::from_json(&json).unwrap();
@@ -166,12 +151,11 @@ fn frozen_wire_shape_is_the_exact_field_order_and_spellings() {
     let full = serde_json::to_string(&reg()).unwrap();
     assert_eq!(
         full,
-        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"condition":"new.status == 'shipped' && old.status != 'shipped'","partition-key":"new.status"}"#
+        r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"],"condition":"new.status == 'shipped' && old.status != 'shipped'"}"#
     );
-    // Minimal: the two optional expression fields are OMITTED (not null).
+    // Minimal: the optional condition is OMITTED (not null).
     let mut r = reg();
     r.condition = None;
-    r.partition_key = None;
     assert_eq!(
         serde_json::to_string(&r).unwrap(),
         r#"{"schema-version":"0.1","registration-id":"on-order-shipped","catalog-id":"shop","flow-id":"notify","entity":"sales_orders","ops":["insert","update"]}"#
@@ -182,10 +166,8 @@ fn frozen_wire_shape_is_the_exact_field_order_and_spellings() {
 fn optional_fields_are_omitted_when_absent() {
     let mut r = reg();
     r.condition = None;
-    r.partition_key = None;
     let json = r.to_json();
     assert!(!json.contains("condition"));
-    assert!(!json.contains("partition-key"));
 }
 
 #[test]
@@ -211,4 +193,14 @@ fn a_legacy_state_key_is_rejected_on_import() {
         );
         assert!(EventRegistration::from_json(&json).is_err());
     }
+}
+
+#[test]
+fn a_retired_partition_key_is_rejected_on_import() {
+    let json = r#"{"schema-version":"0.1","registration-id":"x","catalog-id":"shop",
+        "flow-id":"f","entity":"sales_orders","ops":["insert"],"partition-key":"new.id"}"#;
+    assert!(
+        EventRegistration::from_json(json).is_err(),
+        "retired ordering vocabulary must fail closed, not be silently ignored"
+    );
 }

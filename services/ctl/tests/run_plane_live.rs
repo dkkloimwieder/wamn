@@ -4,8 +4,8 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url (path `/postgres`) of a
 //! throwaway Postgres (recipe: docs/archive/build-and-test.md [RUN-PLANE-RECONCILE]);
-//! skipped cleanly when unset. Sixteen legs run sequentially under the main
-//! test entry (they share the `catalog` schema and the `wamn_app` role); the
+//! skipped cleanly when unset. The legs run sequentially under the main test
+//! entry (they share the `catalog` schema and the `wamn_app` role); the
 //! execution-pin cutover has one separate test entry:
 //!
 //! - **shared-runner legacy** (wamn-l5i9.73): the deployed fixture's old
@@ -20,17 +20,21 @@
 //! - **forced-RLS owner refusal**: a plain table owner cannot observe hidden
 //!   tenant rows, so dry-run and apply both refuse before the pointer or ledger
 //!   schema can be activated.
-//! - **v1-era drifted** (manifestations 1 + 4): a queue schema predating E4
-//!   `stream_seq` / D20 `partition_policy` / fqg.20 `partition_owner` / v8cv
-//!   `run_dead_letters`, with the pre-E4 claimable index, outbox-era tables +
-//!   the `wamn_outbox_event` trigger/function, and a stored registration still
-//!   carrying the legacy `state` key. The verb (driven through the REAL CLI
-//!   `run` path) adds the columns (defaults land on existing rows), recreates
-//!   the claimable index WITH `stream_seq`, creates the missing tables, drops
-//!   every outbox-era object, strips the `state` key — and a re-run is a no-op.
+//! - **partition-plane cutover** (wamn-0h0g.4.1): a populated but unleased
+//!   legacy queue keeps its retained row while the partition columns, owner
+//!   table, dead-letter table, CHECK, and partial index are removed under fixed
+//!   locks. Active leases and nonempty dead-letter history refuse before any
+//!   schema or unrelated authority mutation. Partial legacy state converges,
+//!   the global FIFO claim index lands exactly, and a second pass is a no-op.
+//! - **v1-era drifted** (manifestations 1 + 4): a partially converged queue
+//!   predating E4 `stream_seq`, with the pre-E4 claimable index, outbox-era
+//!   tables + the `wamn_outbox_event` trigger/function, and a stored
+//!   registration carrying both retired declaration keys. The real CLI path
+//!   adds retained columns, removes remaining partition residue and outbox
+//!   objects, strips only the retired registration keys, and is idempotent.
 //! - **queue-missing** (manifestation 2, the live poc_f1 case): run-state +
-//!   flows present, queue absent → exactly the three queue tables appear, FKs
-//!   resolve, and `run_dead_letters` keeps its append-only grant shape.
+//!   flows present, queue absent → the one global FIFO queue appears and its FK
+//!   resolves.
 //! - **from-zero** (manifestations 3 + 5 + 6, the ephemeral-fixture wipe): a
 //!   bare database without even the `wamn_app` role. `--dry-run` first, proven
 //!   STRICTLY read-only; then the apply provisions everything — run plane +
@@ -247,6 +251,84 @@ async fn indexdef(su: &Client, name: &str) -> Option<String> {
     .map(|r| r.get(0))
 }
 
+async fn install_current_run_plane(su: &Client) {
+    let schema = schema();
+    su.batch_execute(CATALOG_SCHEMA_SQL)
+        .await
+        .expect("apply current catalog schema");
+    for ddl in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL, RUN_QUEUE_SQL] {
+        su.batch_execute(&rewrite_schema(ddl, &schema))
+            .await
+            .expect("apply current run-plane schema");
+    }
+}
+
+async fn install_legacy_partition_plane(su: &Client) {
+    su.batch_execute(&format!(
+        "ALTER TABLE {SCHEMA}.run_queue \
+           ADD COLUMN partition_key text, \
+           ADD COLUMN partition_policy text NOT NULL DEFAULT 'blocking', \
+           ADD CONSTRAINT run_queue_partition_policy_check \
+             CHECK (partition_policy IN ('blocking','leapfrog')); \
+         CREATE INDEX run_queue_partition ON {SCHEMA}.run_queue \
+           (tenant_id,partition_key) WHERE partition_key IS NOT NULL; \
+         CREATE TABLE {SCHEMA}.partition_owner ( \
+           tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           partition_key text NOT NULL, lease_owner text NOT NULL, \
+           lease_expires_at timestamptz NOT NULL, \
+           acquired_at timestamptz NOT NULL DEFAULT now(), \
+           PRIMARY KEY (tenant_id,partition_key)); \
+         CREATE TABLE {SCHEMA}.run_dead_letters ( \
+           tenant_id text NOT NULL CHECK (tenant_id <> ''), \
+           run_id text NOT NULL, partition_key text NOT NULL, \
+           flow_id text NOT NULL, reason text NOT NULL, \
+           failed_at timestamptz NOT NULL DEFAULT now(), \
+           PRIMARY KEY (tenant_id,run_id), \
+           FOREIGN KEY (tenant_id,run_id) REFERENCES {SCHEMA}.runs (tenant_id,run_id) \
+             ON DELETE CASCADE);"
+    ))
+    .await
+    .expect("install retired partition plane");
+}
+
+async fn partition_plane_schema_snapshot(su: &Client) -> String {
+    su.query_one(
+        "SELECT jsonb_build_object( \
+           'relations', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind) ORDER BY c.relname) \
+               FROM pg_class c \
+              WHERE c.relnamespace=to_regnamespace($1::text) \
+                AND c.relname IN ('run_queue','partition_owner','run_dead_letters')), \
+             '[]'::jsonb), \
+           'columns', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attnotnull, \
+                                                pg_get_expr(d.adbin,d.adrelid)) \
+                              ORDER BY c.relname,a.attnum) \
+               FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid \
+               LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum \
+              WHERE c.relnamespace=to_regnamespace($1::text) \
+                AND c.relname IN ('run_queue','partition_owner','run_dead_letters') \
+                AND a.attnum > 0 AND NOT a.attisdropped), '[]'::jsonb), \
+           'constraints', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(c.relname,p.conname, \
+                                                pg_get_constraintdef(p.oid,true)) \
+                              ORDER BY c.relname,p.conname) \
+               FROM pg_constraint p JOIN pg_class c ON c.oid=p.conrelid \
+              WHERE p.connamespace=to_regnamespace($1::text) \
+                AND c.relname IN ('run_queue','partition_owner','run_dead_letters')), \
+             '[]'::jsonb), \
+           'indexes', COALESCE(( \
+             SELECT jsonb_agg(jsonb_build_array(indexname,indexdef) ORDER BY indexname) \
+               FROM pg_indexes WHERE schemaname=$1 \
+                AND tablename IN ('run_queue','partition_owner','run_dead_letters')), \
+             '[]'::jsonb))::text",
+        &[&SCHEMA],
+    )
+    .await
+    .expect("snapshot partition-plane schema")
+    .get(0)
+}
+
 fn without_marked_section(source: &str, begin: &str, end: &str) -> String {
     let start = source.find(begin).expect("migration start marker");
     let end_start = source.find(end).expect("migration end marker");
@@ -276,6 +358,11 @@ async fn run_plane_reconcile_live() {
     effect_writer_cutover_leg(&su).await;
     effect_writer_populated_refusal_leg(&su).await;
     forced_rls_owner_refusal_leg(&su).await;
+    partition_plane_authored_ordering_refusal_leg(&su).await;
+    partition_plane_cutover_leg(&su).await;
+    partition_plane_active_lease_refusal_leg(&su).await;
+    partition_plane_unobservable_lease_refusal_leg(&su).await;
+    partition_plane_dead_letter_refusal_leg(&su).await;
     v1_era_drifted_leg(&su, &url).await;
     queue_missing_leg(&su).await;
     from_zero_leg(&su).await;
@@ -533,6 +620,95 @@ async fn execution_pin_cutover_leg(su: &Client) {
     );
     assert!(!catalog_column_exists(su, "release_flows", "execution_bundle_hash").await);
     assert!(!column_exists(su, "runs", "execution_bundle_hash").await);
+}
+
+/// Persisted authored ordering bytes have no lossless global-FIFO backfill.
+/// Refuse under a flow-table lock before DDL, preserve the bytes, and converge
+/// once only default-omitted current graphs remain.
+async fn partition_plane_authored_ordering_refusal_leg(su: &Client) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.flows \
+           (tenant_id,flow_id,version,graph_json) VALUES \
+           ('retired-order','ordered',1, \
+            '{{\"schema-version\":\"0.1\",\"ordering\":{{\"key\":\"serial\"}}}}'), \
+           ('retired-order','policy',1, \
+            '{{\"schema-version\":\"0.1\",\"partition-policy\":\"blocking\"}}'); \
+         GRANT wamn_scenario_author TO wamn_app;"
+    ))
+    .await
+    .expect("seed persisted retired flow ordering keys");
+
+    let before: String = su
+        .query_one(
+            &format!(
+                "SELECT jsonb_agg(graph_json ORDER BY flow_id)::text \
+                   FROM {SCHEMA}.flows WHERE tenant_id='retired-order'"
+            ),
+            &[],
+        )
+        .await
+        .expect("snapshot persisted flow bytes")
+        .get(0);
+    let dry = reconcile_run_plane::reconcile(su, &schema(), false)
+        .await
+        .expect("retired authored ordering plans a guarded cutover");
+    let cutover = dry.actions.first().expect("leading partition cutover");
+    assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+    assert!(cutover.sql.contains(&format!(
+        "LOCK TABLE \"{SCHEMA}\".\"run_queue\", \"{SCHEMA}\".\"flows\" IN ACCESS EXCLUSIVE MODE"
+    )));
+
+    let error = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect_err("persisted authored ordering requires reprovision");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres
+        .as_db_error()
+        .expect("typed authored-order refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "retired-authored-ordering-requires-environment-reprovision"
+    );
+    let after: String = su
+        .query_one(
+            &format!(
+                "SELECT jsonb_agg(graph_json ORDER BY flow_id)::text \
+                   FROM {SCHEMA}.flows WHERE tenant_id='retired-order'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read refusal-preserved flow bytes")
+        .get(0);
+    assert_eq!(after, before);
+    assert!(!column_exists(su, "run_queue", "partition_key").await);
+    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
+    let membership_retained: bool = su
+        .query_one(
+            "SELECT pg_has_role('wamn_app','wamn_scenario_author','MEMBER')",
+            &[],
+        )
+        .await
+        .expect("read authored-ordering refusal mutation sentinel")
+        .get(0);
+    assert!(membership_retained, "refusal must be the leading action");
+
+    su.batch_execute(&format!(
+        "REVOKE wamn_scenario_author FROM wamn_app; \
+         DELETE FROM {SCHEMA}.flows WHERE tenant_id='retired-order'; \
+         INSERT INTO {SCHEMA}.flows (tenant_id,flow_id,version,graph_json) \
+         VALUES ('current-order','default-omitted',1, \
+                 '{{\"schema-version\":\"0.1\",\"nodes\":[]}}');"
+    ))
+    .await
+    .expect("replace refusal fixture with current default-omitted graph");
+    let converged = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("default-omitted flow graph needs no partition cutover");
+    assert!(converged.is_noop(), "actions: {:#?}", converged.actions);
 }
 
 /// A table owner remains subject to `FORCE ROW LEVEL SECURITY`. Letting that
@@ -1217,7 +1393,12 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute(&format!(
         "GRANT CREATE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
          GRANT SELECT ON {SCHEMA}.effect_attempts TO wamn_scenario_author; \
-         GRANT UPDATE (attempt_input_ref) ON {SCHEMA}.effect_attempts TO wamn_app;"
+         GRANT UPDATE (attempt_input_ref) ON {SCHEMA}.effect_attempts TO wamn_app; \
+         GRANT SELECT ON {SCHEMA}.runs TO wamn_effect_writer; \
+         GRANT UPDATE (status) ON {SCHEMA}.runs TO wamn_effect_writer; \
+         ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
+         REVOKE SELECT (lease_expires_at) ON {SCHEMA}.run_queue FROM wamn_effect_writer; \
+         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer;"
     ))
     .await
     .expect("install schema/table/column ACL drift");
@@ -1232,6 +1413,25 @@ async fn effect_writer_cutover_leg(su: &Client) {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
     }));
+    for table in ["runs", "run_queue"] {
+        assert!(repair.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+                && action.target == format!("{SCHEMA}.{table}.effect-read")
+        }));
+    }
+    let add_lease_owner = repair
+        .actions
+        .iter()
+        .position(|action| {
+            action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.lease_owner"
+        })
+        .expect("partial queue adds the missing writer-read column");
+    let repair_queue_read = repair
+        .actions
+        .iter()
+        .position(|action| action.target == format!("{SCHEMA}.run_queue.effect-read"))
+        .unwrap();
+    assert!(add_lease_owner < repair_queue_read);
     let privileges = su
         .query_one(
             &format!(
@@ -1253,6 +1453,36 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(!privileges.get::<_, bool>(2));
     assert!(!privileges.get::<_, bool>(3));
     assert!(privileges.get::<_, bool>(4));
+    let run_reads = su
+        .query_one(
+            &format!(
+                "SELECT \
+                    has_table_privilege('wamn_effect_writer','{SCHEMA}.runs','SELECT'), \
+                    has_table_privilege('wamn_effect_writer','{SCHEMA}.runs','UPDATE'), \
+                    has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','tenant_id','SELECT') \
+                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','run_id','SELECT') \
+                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','status','SELECT'), \
+                    has_column_privilege('wamn_effect_writer','{SCHEMA}.runs','flow_id','SELECT'), \
+                    has_table_privilege('wamn_effect_writer','{SCHEMA}.run_queue','SELECT'), \
+                    has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','tenant_id','SELECT') \
+                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','run_id','SELECT') \
+                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_owner','SELECT') \
+                      AND has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_expires_at','SELECT'), \
+                    has_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','lease_generation','SELECT'), \
+                    has_any_column_privilege('wamn_effect_writer','{SCHEMA}.run_queue','INSERT,UPDATE,REFERENCES')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read exact effect-writer runnable-state privileges");
+    assert!(!run_reads.get::<_, bool>(0));
+    assert!(!run_reads.get::<_, bool>(1));
+    assert!(run_reads.get::<_, bool>(2));
+    assert!(!run_reads.get::<_, bool>(3));
+    assert!(!run_reads.get::<_, bool>(4));
+    assert!(run_reads.get::<_, bool>(5));
+    assert!(!run_reads.get::<_, bool>(6));
+    assert!(!run_reads.get::<_, bool>(7));
 }
 
 async fn effect_writer_populated_refusal_leg(su: &Client) {
@@ -1464,6 +1694,335 @@ async fn shared_runner_legacy_leg(su: &Client) {
     );
 }
 
+/// A populated queue is retained when no worker holds a live lease. Only the
+/// retired partition state is removed, and the global FIFO claim index lands
+/// in its exact record shape.
+async fn partition_plane_cutover_leg(su: &Client) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    install_legacy_partition_plane(su).await;
+    seed_run_pin_parents(su, "partition", "cat", 1, "dev").await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+         VALUES ('partition','retained-run','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+         INSERT INTO {SCHEMA}.run_queue \
+           (tenant_id,run_id,partition_key,partition_policy,stream_seq) \
+         VALUES ('partition','retained-run','serial','blocking',7);"
+    ))
+    .await
+    .expect("seed an unleased legacy queue row");
+
+    let plan = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("drained partition plane converges");
+    assert_eq!(
+        plan.actions.first().map(|action| action.kind),
+        Some(RunPlaneActionKind::PartitionPlaneCutover),
+        "partition deletion is the leading action: {:#?}",
+        plan.actions
+    );
+    assert_eq!(
+        plan.actions
+            .iter()
+            .filter(|action| action.kind == RunPlaneActionKind::PartitionPlaneCutover)
+            .count(),
+        1
+    );
+
+    let columns: Vec<String> = su
+        .query(
+            "SELECT column_name FROM information_schema.columns \
+              WHERE table_schema=$1 AND table_name='run_queue' \
+              ORDER BY ordinal_position",
+            &[&SCHEMA],
+        )
+        .await
+        .expect("read global queue columns")
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            "tenant_id",
+            "run_id",
+            "priority",
+            "available_at",
+            "stream_seq",
+            "lease_owner",
+            "lease_expires_at",
+            "lease_generation",
+            "attempts",
+            "max_attempts",
+            "enqueued_at",
+        ]
+        .map(str::to_string)
+    );
+    let retained = su
+        .query_one(
+            &format!(
+                "SELECT stream_seq,lease_owner,lease_generation,attempts \
+                   FROM {SCHEMA}.run_queue \
+                  WHERE tenant_id='partition' AND run_id='retained-run'"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retained queue row");
+    assert_eq!(retained.get::<_, i64>(0), 7);
+    assert_eq!(retained.get::<_, Option<String>>(1), None);
+    assert_eq!(retained.get::<_, i64>(2), 0);
+    assert_eq!(retained.get::<_, i32>(3), 0);
+    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
+    assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
+    assert!(indexdef(su, "run_queue_partition").await.is_none());
+    let claimable = indexdef(su, "run_queue_claimable")
+        .await
+        .expect("global claim index exists");
+    assert!(
+        claimable.contains("(tenant_id, available_at, stream_seq, run_id, lease_expires_at)"),
+        "global FIFO index shape: {claimable}"
+    );
+    assert!(
+        !claimable.contains("WHERE"),
+        "claim index is global: {claimable}"
+    );
+
+    let again = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("partition cutover idempotence");
+    assert!(
+        again.is_noop(),
+        "second partition reconcile: {:#?}",
+        again.actions
+    );
+}
+
+/// Either source of live partition ownership refuses before any DDL or later
+/// role repair. The fixed-lock cutover is therefore safe against both queue and
+/// owner-table workers.
+async fn partition_plane_active_lease_refusal_leg(su: &Client) {
+    for lease_source in ["run_queue", "partition_owner"] {
+        reset(su).await;
+        install_current_run_plane(su).await;
+        install_legacy_partition_plane(su).await;
+        su.batch_execute("GRANT wamn_scenario_author TO wamn_app")
+            .await
+            .expect("install later authority-repair sentinel");
+        match lease_source {
+            "run_queue" => {
+                seed_run_pin_parents(su, "leased", "cat", 1, "dev").await;
+                su.batch_execute(&format!(
+                    "INSERT INTO {SCHEMA}.runs \
+                       (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                        environment,execution_bundle_hash) \
+                     VALUES ('leased','active-run','f',1,'cat',1,'dev', \
+                             '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+                     INSERT INTO {SCHEMA}.run_queue \
+                       (tenant_id,run_id,lease_owner,lease_expires_at) \
+                     VALUES ('leased','active-run','worker','infinity');"
+                ))
+                .await
+                .expect("seed active queue lease");
+            }
+            "partition_owner" => {
+                su.batch_execute(&format!(
+                    "INSERT INTO {SCHEMA}.partition_owner \
+                       (tenant_id,partition_key,lease_owner,lease_expires_at) \
+                     VALUES ('leased','serial','worker','infinity');"
+                ))
+                .await
+                .expect("seed active partition-owner lease");
+            }
+            _ => unreachable!(),
+        }
+
+        let before = partition_plane_schema_snapshot(su).await;
+        let dry = reconcile_run_plane::reconcile(su, &schema(), false)
+            .await
+            .expect("active lease dry-run plans a refusal guard");
+        assert_eq!(
+            dry.actions.first().map(|action| action.kind),
+            Some(RunPlaneActionKind::PartitionPlaneCutover)
+        );
+        let error = reconcile_run_plane::reconcile(su, &schema(), true)
+            .await
+            .expect_err("active partition lease refuses cutover");
+        let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+        let database = postgres.as_db_error().expect("typed lease refusal");
+        assert_eq!(database.code().code(), "55000");
+        assert_eq!(
+            database.message(),
+            "partition-plane-cutover-requires-drained-workers"
+        );
+        assert_eq!(
+            partition_plane_schema_snapshot(su).await,
+            before,
+            "{lease_source}: active-lease refusal leaves the schema unchanged"
+        );
+        let membership_retained: bool = su
+            .query_one(
+                "SELECT pg_has_role('wamn_app','wamn_scenario_author','MEMBER')",
+                &[],
+            )
+            .await
+            .expect("read authority-repair sentinel")
+            .get(0);
+        assert!(
+            membership_retained,
+            "{lease_source}: leading refusal precedes unrelated repair"
+        );
+    }
+}
+
+/// A populated legacy table whose lease state cannot be read is not assumed
+/// drained. The cutover refuses byte-for-byte before DDL; once the ambiguous
+/// table is empty, the same partial schema converges to the retained record.
+async fn partition_plane_unobservable_lease_refusal_leg(su: &Client) {
+    for lease_source in ["run_queue", "partition_owner"] {
+        reset(su).await;
+        install_current_run_plane(su).await;
+        install_legacy_partition_plane(su).await;
+        let expected_message = match lease_source {
+            "run_queue" => {
+                seed_run_pin_parents(su, "ambiguous", "cat", 1, "dev").await;
+                su.batch_execute(&format!(
+                    "INSERT INTO {SCHEMA}.runs \
+                       (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                        environment,execution_bundle_hash) \
+                     VALUES ('ambiguous','queue-run','f',1,'cat',1,'dev', \
+                             '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+                     INSERT INTO {SCHEMA}.run_queue (tenant_id,run_id,partition_key) \
+                     VALUES ('ambiguous','queue-run','serial'); \
+                     ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner;"
+                ))
+                .await
+                .expect("seed populated queue with unobservable lease shape");
+                "partition-plane-cutover-requires-observable-run-queue-leases-or-empty-queue"
+            }
+            "partition_owner" => {
+                su.batch_execute(&format!(
+                    "INSERT INTO {SCHEMA}.partition_owner \
+                       (tenant_id,partition_key,lease_owner,lease_expires_at) \
+                     VALUES ('ambiguous','serial','worker','infinity'); \
+                     ALTER TABLE {SCHEMA}.partition_owner DROP COLUMN lease_expires_at;"
+                ))
+                .await
+                .expect("seed populated owner table with unobservable lease shape");
+                "partition-plane-cutover-requires-observable-partition-leases-or-empty-owner-table"
+            }
+            _ => unreachable!(),
+        };
+
+        let before = partition_plane_schema_snapshot(su).await;
+        let error = reconcile_run_plane::reconcile(su, &schema(), true)
+            .await
+            .expect_err("unobservable populated lease shape refuses cutover");
+        let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+        let database = postgres.as_db_error().expect("typed lease-shape refusal");
+        assert_eq!(database.code().code(), "55000");
+        assert_eq!(database.message(), expected_message);
+        assert_eq!(
+            partition_plane_schema_snapshot(su).await,
+            before,
+            "{lease_source}: ambiguous lease refusal rolls back every DDL change"
+        );
+
+        su.batch_execute(&format!("DELETE FROM {SCHEMA}.{lease_source}"))
+            .await
+            .expect("drain ambiguous legacy table");
+        reconcile_run_plane::reconcile(su, &schema(), true)
+            .await
+            .expect("empty partial lease shape converges");
+        assert!(!table_exists(su, SCHEMA, "partition_owner").await);
+        assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
+        assert!(!column_exists(su, "run_queue", "partition_key").await);
+        assert!(!column_exists(su, "run_queue", "partition_policy").await);
+        assert!(column_exists(su, "run_queue", "lease_owner").await);
+        assert!(column_exists(su, "run_queue", "lease_expires_at").await);
+    }
+}
+
+/// Retired dead-letter history has no in-place conversion. Any retained row
+/// requires an archive or whole-environment reprovision and rolls the cutover
+/// back before a table, column, index, CHECK, or unrelated grant changes.
+async fn partition_plane_dead_letter_refusal_leg(su: &Client) {
+    reset(su).await;
+    install_current_run_plane(su).await;
+    install_legacy_partition_plane(su).await;
+    seed_run_pin_parents(su, "dead-letter", "cat", 1, "dev").await;
+    su.batch_execute(&format!(
+        "INSERT INTO {SCHEMA}.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+            environment,execution_bundle_hash) \
+         VALUES ('dead-letter','failed-run','f',1,'cat',1,'dev', \
+                 '{EMPTY_EXECUTION_BUNDLE_HASH}'); \
+         INSERT INTO {SCHEMA}.run_dead_letters \
+           (tenant_id,run_id,partition_key,flow_id,reason) \
+         VALUES ('dead-letter','failed-run','serial','f','legacy-history'); \
+         GRANT wamn_scenario_author TO wamn_app;"
+    ))
+    .await
+    .expect("seed retained dead-letter history");
+
+    let before = partition_plane_schema_snapshot(su).await;
+    let dry = reconcile_run_plane::reconcile(su, &schema(), false)
+        .await
+        .expect("dead-letter dry-run plans the guarded cutover");
+    let cutover = dry.actions.first().expect("leading partition cutover");
+    assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+    let guard = cutover
+        .sql
+        .find("retired-run-dead-letter-history-requires-archive-or-environment-reprovision")
+        .expect("archive-or-reprovision refusal diagnostic");
+    let destructive = cutover
+        .sql
+        .find("DROP INDEX")
+        .expect("guarded destructive statements");
+    assert!(
+        guard < destructive,
+        "history guard precedes destructive DDL"
+    );
+
+    let error = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect_err("nonempty retired dead-letter history refuses cutover");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres.as_db_error().expect("typed history refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "retired-run-dead-letter-history-requires-archive-or-environment-reprovision"
+    );
+    assert_eq!(
+        partition_plane_schema_snapshot(su).await,
+        before,
+        "history refusal leaves the partition schema unchanged"
+    );
+    assert_eq!(
+        su.query_one(
+            &format!("SELECT count(*) FROM {SCHEMA}.run_dead_letters"),
+            &[],
+        )
+        .await
+        .expect("dead-letter history remains")
+        .get::<_, i64>(0),
+        1
+    );
+    let membership_retained: bool = su
+        .query_one(
+            "SELECT pg_has_role('wamn_app','wamn_scenario_author','MEMBER')",
+            &[],
+        )
+        .await
+        .expect("read authority-repair sentinel")
+        .get(0);
+    assert!(membership_retained, "history refusal is the leading action");
+}
+
 /// Manifestations 1 + 4: the 2jkm.41-sweep drift set plus the outbox era.
 async fn v1_era_drifted_leg(su: &Client, url: &str) {
     reset(su).await;
@@ -1479,10 +2038,10 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     su.batch_execute(&rewrite_schema(FLOWS_SQL, &schema))
         .await
         .expect("apply flows");
-    // …and the v1-era queue: no stream_seq / partition_policy, the pre-E4
-    // claimable index, no partition_owner / run_dead_letters, plus the
-    // outbox-era tables, trigger + function on a floor table, and a stored
-    // registration carrying the legacy `state` key.
+    // …and a partially converged v1-era queue: no stream_seq or lease
+    // generation, one remaining partition-key column, the pre-E4 claimable
+    // index, no retired whole tables, plus the outbox-era objects and a stored
+    // registration carrying both retired declaration keys.
     su.batch_execute(&format!(
         "CREATE TABLE {SCHEMA}.run_queue ( \
              tenant_id text NOT NULL CHECK (tenant_id <> ''), \
@@ -1527,10 +2086,10 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
            (tenant_id, catalog_id, registration_id, flow_id, entity_id, registration) \
          VALUES ('t1', 'cat', 'r1', 'f', 'e', \
                  $1::text::jsonb)",
-        &[&r#"{"registration-id":"r1","state":"shadow"}"#],
+        &[&r#"{"registration-id":"r1","partition-key":"serial","retained":"yes","state":"shadow"}"#],
     )
     .await
-    .expect("seed a legacy state-carrying registration");
+    .expect("seed a retired-key registration");
     // A pre-existing queue row: the ADD COLUMN defaults must land on it.
     su.batch_execute(&format!(
         "INSERT INTO {SCHEMA}.runs \
@@ -1542,6 +2101,23 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     .await
     .expect("seed a pre-drift queue row");
 
+    let partial = reconcile_run_plane::reconcile(su, &schema, false)
+        .await
+        .expect("partially converged partition plane plans");
+    let cutover = partial.actions.first().expect("leading partial cutover");
+    assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+    assert!(cutover.sql.contains("DROP COLUMN IF EXISTS partition_key"));
+    assert!(
+        !cutover.sql.contains("run_queue_claimable"),
+        "cutover defers the index until stream_seq exists"
+    );
+    assert!(partial.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.stream_seq"
+    }));
+    assert!(partial.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::RecreateIndex && action.target == "run_queue_claimable"
+    }));
+
     // The REAL CLI path (arg validation + connect + apply + print).
     reconcile_run_plane::run(ReconcileRunPlaneArgs {
         admin_database_url: url.to_string(),
@@ -1551,19 +2127,22 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
     .await
     .expect("reconcile-run-plane applies");
 
-    // Column drift closed — and the defaults landed on the PRE-EXISTING row.
+    // Retained column drift closed, partition residue removed, and defaults
+    // landed on the pre-existing row.
     assert!(
         column_exists(su, "run_queue", "stream_seq").await,
         "stream_seq added"
     );
     assert!(
-        column_exists(su, "run_queue", "partition_policy").await,
-        "partition_policy added"
+        column_exists(su, "run_queue", "lease_generation").await,
+        "lease_generation added"
     );
+    assert!(!column_exists(su, "run_queue", "partition_key").await);
+    assert!(!column_exists(su, "run_queue", "partition_policy").await);
     let row = su
         .query_one(
             &format!(
-                "SELECT stream_seq, partition_policy FROM {SCHEMA}.run_queue \
+                "SELECT stream_seq, lease_generation FROM {SCHEMA}.run_queue \
                  WHERE tenant_id = 't1' AND run_id = 'r-old'"
             ),
             &[],
@@ -1571,28 +2150,24 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
         .await
         .expect("read the pre-drift row");
     assert_eq!(row.get::<_, i64>(0), 0, "stream_seq default backfilled");
-    assert_eq!(
-        row.get::<_, String>(1),
-        "blocking",
-        "partition_policy default backfilled"
-    );
+    assert_eq!(row.get::<_, i64>(1), 0, "lease generation backfilled");
 
-    // The claimable index was RECREATED with the stream_seq prefix (M2).
+    // The claimable index was recreated only after the retained columns landed.
     let def = indexdef(su, "run_queue_claimable")
         .await
         .expect("claimable index present");
     assert!(
-        def.contains("stream_seq"),
-        "claimable index recreated with stream_seq: {def}"
+        def.contains("(tenant_id, available_at, stream_seq, run_id, lease_expires_at)"),
+        "global FIFO claimable index: {def}"
     );
     assert!(
-        indexdef(su, "run_queue_partition").await.is_some(),
-        "partition index created"
+        !def.contains("WHERE"),
+        "global claim index is not partial: {def}"
     );
+    assert!(indexdef(su, "run_queue_partition").await.is_none());
 
-    // Missing tables created.
-    assert!(table_exists(su, SCHEMA, "partition_owner").await);
-    assert!(table_exists(su, SCHEMA, "run_dead_letters").await);
+    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
+    assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
 
     // The outbox era is gone: tables, trigger, function.
     assert!(!table_exists(su, SCHEMA, "outbox").await, "outbox dropped");
@@ -1629,23 +2204,20 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
         "floor table left alone"
     );
 
-    // The legacy `state` key is stripped; the registration row survives.
-    let (state_rows, reg_id): (i64, String) = {
-        let r = su
-            .query_one(
-                "SELECT (SELECT count(*) FROM catalog.event_registrations \
-                          WHERE registration ? 'state'), \
-                        (SELECT registration->>'registration-id' \
-                          FROM catalog.event_registrations \
-                          WHERE registration_id = 'r1')",
-                &[],
-            )
-            .await
-            .expect("read registrations");
-        (r.get(0), r.get(1))
-    };
-    assert_eq!(state_rows, 0, "legacy state keys stripped");
-    assert_eq!(reg_id, "r1", "registration document otherwise intact");
+    // Both retired keys are stripped; every retained document key survives.
+    let registration: String = su
+        .query_one(
+            "SELECT registration::text FROM catalog.event_registrations \
+              WHERE registration_id = 'r1'",
+            &[],
+        )
+        .await
+        .expect("read registration")
+        .get(0);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&registration).expect("parse registration"),
+        serde_json::json!({"registration-id": "r1", "retained": "yes"})
+    );
 
     // Idempotence: a second reconcile plans nothing.
     let again = reconcile_run_plane::reconcile(su, &schema, false)
@@ -1655,8 +2227,7 @@ async fn v1_era_drifted_leg(su: &Client, url: &str) {
 }
 
 /// Manifestation 2 (the live poc_f1 case): run-state + flows present, queue
-/// wholly absent — the three queue tables appear (M3), FKs resolve, and the
-/// dead-letter ledger keeps its append-only grant shape.
+/// wholly absent — the single global FIFO queue appears and its FK resolves.
 async fn queue_missing_leg(su: &Client) {
     reset(su).await;
     let schema = schema();
@@ -1675,13 +2246,9 @@ async fn queue_missing_leg(su: &Client) {
         .expect("reconcile applies");
     assert!(!plan.is_noop());
 
-    // Queue tables exist after reconcile (M3).
-    for t in ["run_queue", "partition_owner", "run_dead_letters"] {
-        assert!(
-            table_exists(su, SCHEMA, t).await,
-            "queue table {t} exists after reconcile"
-        );
-    }
+    assert!(table_exists(su, SCHEMA, "run_queue").await);
+    assert!(!table_exists(su, SCHEMA, "partition_owner").await);
+    assert!(!table_exists(su, SCHEMA, "run_dead_letters").await);
     // The FK to runs resolves: a run then its queue row insert cleanly.
     seed_run_pin_parents(su, "t1", "cat", 1, "dev").await;
     su.batch_execute(&format!(
@@ -1694,24 +2261,10 @@ async fn queue_missing_leg(su: &Client) {
     .await
     .expect("FK insert path");
 
-    // v8cv: run_dead_letters is APPEND-ONLY from the app role.
-    let mut privs: Vec<String> = su
-        .query(
-            "SELECT privilege_type FROM information_schema.role_table_grants \
-             WHERE grantee = 'wamn_app' AND table_schema = $1 AND table_name = 'run_dead_letters'",
-            &[&SCHEMA],
-        )
+    let claimable = indexdef(su, "run_queue_claimable")
         .await
-        .expect("read grants")
-        .iter()
-        .map(|r| r.get(0))
-        .collect();
-    privs.sort();
-    assert_eq!(
-        privs,
-        ["INSERT", "SELECT"],
-        "dead-letter ledger append-only grant"
-    );
+        .expect("global FIFO claim index");
+    assert!(claimable.contains("(tenant_id, available_at, stream_seq, run_id, lease_expires_at)"));
 }
 
 /// Manifestations 3 + 5 + 6 (the ephemeral-fixture wipe): a bare database —
@@ -1782,8 +2335,6 @@ async fn from_zero_leg(su: &Client) {
         "authoring_test_case_runs",
         "authoring_test_reports",
         "run_queue",
-        "partition_owner",
-        "run_dead_letters",
     ] {
         assert!(
             table_exists(su, SCHEMA, t).await,
@@ -1870,8 +2421,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        17,
-        "all seventeen run-plane tables at target"
+        15,
+        "all fifteen run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)
@@ -2814,6 +3365,24 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     )
     .await
     .expect("host author stores an exact test set");
+    let author_can_update: bool = su
+        .query_one(
+            &format!(
+                "SELECT has_table_privilege(current_user, \
+                   '{SCHEMA}.authoring_test_sets', 'UPDATE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("probe immutable test-set update authority")
+        .get(0);
+    assert!(
+        !author_can_update,
+        "host author has no test-set update grant"
+    );
+    su.batch_execute("RESET ROLE")
+        .await
+        .expect("use the table owner to exercise the immutable trigger");
     let immutable = su
         .execute(
             &format!(
@@ -2825,6 +3394,12 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .await
         .expect_err("authoring test sets are immutable");
     assert_db_code(immutable, "55000", "immutable authoring test set");
+    su.batch_execute(
+        "SET ROLE wamn_scenario_author; \
+         SELECT set_config('app.tenant','t1',false);",
+    )
+    .await
+    .expect("restore host-author role after trigger proof");
 
     // The host author can read release source facts and tenant runs, but has no
     // release publication mutation surface.

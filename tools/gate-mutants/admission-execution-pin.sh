@@ -32,7 +32,7 @@ load_mutation() {
   case "$id" in
     missing-root-plan-admits-run)
       TARGET="crates/execution/run-state/src/admission.rs"
-      EXPECTED_SHA="4537be786450218be3403e625b4c7c0afe36ed4bc7c532f4f6ea36966e1b9712"
+      EXPECTED_SHA="0defa0c2c92d760ad606980acbb98805096e79235b79d0ad2805d43b8d55071a"
       NEEDLE="      WHEN rp.execution_bundle_hash IS NULL THEN 'missing-root-plan' \\"
       REPLACEMENT="      WHEN rp.execution_bundle_hash IS NULL THEN 'ready' \\"
       GATE="admission::tests::admission_derives_root_bundle_from_authoritative_member"
@@ -40,7 +40,7 @@ load_mutation() {
       ;;
     runs-execution-bundle-fk-removed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
+      EXPECTED_SHA="076b0949fe816dae569ecacfe1243301968e621923630ae1eec54b51caadfba0"
       NEEDLE='    CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash)'
@@ -51,7 +51,7 @@ load_mutation() {
       ;;
     run-admission-pin-update-allowed)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="6702864a836f2bb7d733edceb26c50598121e7fe955bf70dd4db42030c97552e"
+      EXPECTED_SHA="076b0949fe816dae569ecacfe1243301968e621923630ae1eec54b51caadfba0"
       NEEDLE='CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash'
       REPLACEMENT='CREATE TRIGGER runs_admission_pins_immutable

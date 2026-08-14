@@ -30,15 +30,15 @@ load_mutation() {
   case "$id" in
     combined-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="7ae81ca5b9da9b29d2c0ef6a1fe8be0598687389ac7c6f4f1e831fbb3abe55c4"
+      EXPECTED_SHA="0fc07c601f2c2d7e31ead289ce2c14c6c24c23d1e4c7d5a4e0917620e398a737"
       NEEDLE='execution_input = run_sql::execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
-      GATE="combined_claim_and_checkpoint_builders_compose_the_split_statements"
-      TEST_ARGV=(cargo test --locked -p wamn-run-state --test queue "$GATE" -- --exact)
+      GATE="production_claim_live"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
       ;;
     split-dispatch-drops-trusted-lineage)
       TARGET="crates/execution/run-state/src/sql.rs"
-      EXPECTED_SHA="3d0f7264525fc38411e1f32f5137f902af60baa4a45428417c5ead4221d09d3e"
+      EXPECTED_SHA="ae3ec0f04cad6bfa4a0848b37da860fcd51f985a173adc392361bca7925f9ecc"
       NEEDLE='execution_input = execution_input_sql("r"),'
       REPLACEMENT='execution_input = "r.input_json",'
       GATE="sql::tests::dispatch_read_projects_flow_and_input"
@@ -85,6 +85,14 @@ replace_once() {
     'import os, pathlib; path=pathlib.Path(os.environ["TARGET"]); data=path.read_text(); path.write_text(data.replace(os.environ["NEEDLE"], os.environ["REPLACEMENT"], 1))'
 }
 
+assert_gate_environment() {
+  if [[ "$GATE" == "production_claim_live" \
+      && -z "${WAMN_PRODUCTION_CLAIM_PG_URL:-}" ]]; then
+    echo "WAMN_PRODUCTION_CLAIM_PG_URL must name a disposable PostgreSQL 18 database" >&2
+    return 2
+  fi
+}
+
 run_gate() {
   "${TEST_ARGV[@]}"
 }
@@ -94,6 +102,7 @@ run_green() {
   load_mutation "$id"
   assert_clean_target
   assert_precondition
+  assert_gate_environment
   echo "GREEN id=$id gate=$GATE target=$TARGET command=${TEST_ARGV[*]}"
   run_gate
 }
@@ -104,6 +113,7 @@ run_mutant() (
   load_mutation "$id"
   assert_clean_target
   assert_precondition
+  assert_gate_environment
 
   backup_dir="$(mktemp -d)"
   backup="$backup_dir/original"

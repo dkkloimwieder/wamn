@@ -1,15 +1,9 @@
-//! The shared catalog-pinning arc for the run-next gate harnesses (wamn-kex2).
+//! Shared immutable release and execution-plan fixtures for production claims.
 //!
-//! `run-next` resolves a run's graph ONLY through the immutable release lineage:
-//! the flowrunner's `PINNED_ARTIFACT_SQL` joins `catalog.release_flows` ->
-//! `release_manifests` -> `flow_artifacts` and admits a member only when the
-//! manifest entry, the stored artifact, and the run's own
-//! `invocation_context #>> '{principal,artifact-digest}'` all agree. A gate that
-//! seeds only the mutable `{schema}.flows` head therefore dies twice over —
-//! `42P01 catalog.release_flows` while the catalog schema is absent, and
-//! `run does not resolve to exactly one immutable pinned flow artifact` once it
-//! is present but empty. Every gate that reaches run-next needs the same two
-//! moves, so they live here once:
+//! The host-owned production claim resolves exact `ExecutionPlanV2` bytes from
+//! the run's immutable release before it grants a lease. These helpers publish
+//! that release with plans bound to the loaded execution-host revision and pin
+//! fixture runs to its members.
 //!
 //!   * [`publish_release`] — the canonical catalog storage DDL, dropped and
 //!     recreated, then ONE immutable release (catalog header + `flow_artifacts` +
@@ -32,9 +26,13 @@
 use anyhow::Context as _;
 use serde_json::{Value, json};
 use tokio_postgres::{Client, NoTls};
-use wamn_catalog::Artifact;
+use wamn_catalog::{
+    Artifact, ExecutionConnectionRequirement, ExecutionEffectPolicy, ExecutionNodeId,
+    ExecutionPlanBody, ExecutionPlanEdge, ExecutionPlanHeader, ExecutionPlanNode, ExecutionPlanV2,
+    ExecutionRuntimeRevision, ExecutionSourceMapEntry, RootTerminalBehavior, execution_bundle_hash,
+};
 use wamn_flow::node_contract::{Capability, EffectPolicy, NodeInterface};
-use wamn_flow::{Flow, MAIN_PORT};
+use wamn_flow::{CallFlowConfig, EntryKind, Flow, MAIN_PORT, RequestConfig};
 
 /// The canonical catalog storage DDL — the same standalone deploy artifact the
 /// retained gates lay down, so no gate fixture can drift from the schema of record.
@@ -43,9 +41,8 @@ const CATALOG_DDL: &str = include_str!("../../../deploy/sql/catalog-schema.sql")
 /// The catalog each gate release is published under, suffixed per release. A
 /// release pins at most ONE version of a flow (`catalog.release_flows` is keyed on
 /// `(tenant, catalog, catalog_version, flow_id)`) and `catalog.catalogs` admits one
-/// `applied` version per (catalog, environment), so a gate that publishes two
-/// versions of the same flow — runnerbench's hot-reload phase — gets a second
-/// catalog rather than a second version of the first.
+/// `applied` version per (catalog, environment), so repeated versions of one
+/// fixture flow get separate catalogs.
 const CATALOG_ID_PREFIX: &str = "gate-catalog-";
 /// The version every gate catalog is published at.
 const CATALOG_VERSION: i32 = 1;
@@ -59,6 +56,8 @@ struct Member {
     artifact_hash: String,
     graph_json: String,
     graph_hash: String,
+    execution_bundle_hash: String,
+    exact_bytes: Vec<u8>,
 }
 
 /// The current interface for a retained standard node or flowrunner-private
@@ -107,20 +106,172 @@ fn implementations(flow: &Flow) -> anyhow::Result<Vec<NodeInterface>> {
 }
 
 /// Build the immutable artifact for one gate fixture graph.
-fn member(tenant: &str, flow_json: &str) -> anyhow::Result<Member> {
+fn compile_execution_plan(
+    flow: &Flow,
+    root_artifact_hash: &str,
+    runtime_revision: ExecutionRuntimeRevision,
+) -> anyhow::Result<(String, Vec<u8>)> {
+    let entry = flow
+        .nodes
+        .iter()
+        .find(|node| node.entry_kind().is_some())
+        .context("validated fixture has no entry node")?;
+    let entry_instruction = ExecutionNodeId::new(&entry.id)?;
+    let entry_input_schema_guard = match entry.entry_kind() {
+        Some(EntryKind::Request) => {
+            serde_json::from_value::<RequestConfig>(entry.config.clone())
+                .context("validated request entry config is invalid")?
+                .input_schema
+        }
+        Some(EntryKind::Cron | EntryKind::Event) => Value::Bool(true),
+        None => unreachable!("entry node selected by entry-kind membership"),
+    };
+
+    let mut requirements = flow.connection_requirements.iter().collect::<Vec<_>>();
+    requirements.sort_by(|left, right| left.name.cmp(&right.name));
+    let mut semantic_nodes = flow.nodes.iter().collect::<Vec<_>>();
+    semantic_nodes.sort_by(|left, right| left.id.cmp(&right.id));
+    let nodes = semantic_nodes
+        .iter()
+        .map(|node| {
+            if node.node_type == "call-flow" {
+                let config = serde_json::from_value::<CallFlowConfig>(node.config.clone())
+                    .with_context(|| format!("call-flow node {:?} has invalid config", node.id))?;
+                return Ok(ExecutionPlanNode {
+                    local_node_id: ExecutionNodeId::new(&node.id)?,
+                    source_node_id: node.id.clone(),
+                    node_type: "call-flow".to_string(),
+                    config: json!({"site": node.id.clone(), "flow-id": config.flow_id}),
+                    effect_policy: ExecutionEffectPolicy::Effectful,
+                    source_connection_requirement: None,
+                });
+            }
+            let resolved_interface = interface(&node.node_type)?;
+            let source_connection_requirement = node
+                .connection
+                .as_ref()
+                .map(|name| {
+                    let requirement = requirements
+                        .binary_search_by(|candidate| candidate.name.as_str().cmp(name.as_str()))
+                        .ok()
+                        .map(|index| requirements[index])
+                        .with_context(|| {
+                            format!("node {:?} has unresolved connection {name:?}", node.id)
+                        })?;
+                    Ok::<_, anyhow::Error>(ExecutionConnectionRequirement {
+                        name: name.clone(),
+                        descriptor: requirement.requirement.clone(),
+                    })
+                })
+                .transpose()?;
+            Ok(ExecutionPlanNode {
+                local_node_id: ExecutionNodeId::new(&node.id)?,
+                source_node_id: node.id.clone(),
+                node_type: node.node_type.clone(),
+                config: node.config.clone(),
+                effect_policy: match resolved_interface.effect_policy {
+                    EffectPolicy::Pure => ExecutionEffectPolicy::Pure,
+                    EffectPolicy::Effectful => ExecutionEffectPolicy::Effectful,
+                },
+                source_connection_requirement,
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let mut semantic_edges = flow.edges.iter().collect::<Vec<_>>();
+    semantic_edges.sort_by(|left, right| {
+        (
+            left.from.as_str(),
+            left.from_port.as_str(),
+            left.ordinal.unwrap_or(0),
+            left.to.as_str(),
+            left.to_port.as_deref().unwrap_or(""),
+        )
+            .cmp(&(
+                right.from.as_str(),
+                right.from_port.as_str(),
+                right.ordinal.unwrap_or(0),
+                right.to.as_str(),
+                right.to_port.as_deref().unwrap_or(""),
+            ))
+    });
+    let edges = semantic_edges
+        .iter()
+        .map(|edge| {
+            Ok(ExecutionPlanEdge {
+                source: ExecutionNodeId::new(&edge.from)?,
+                source_port: edge.from_port.clone(),
+                destination: ExecutionNodeId::new(&edge.to)?,
+                destination_port: edge.to_port.clone(),
+                fan_out_ordinal: edge.ordinal.unwrap_or(0),
+            })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let responders = flow
+        .nodes
+        .iter()
+        .filter(|node| node.node_type == "respond")
+        .map(|node| ExecutionNodeId::new(&node.id).map_err(anyhow::Error::new))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let root_terminal_behavior = if responders.is_empty() {
+        RootTerminalBehavior::FrontierExhaustion
+    } else {
+        RootTerminalBehavior::Respond { responders }
+    };
+    let source_map = nodes
+        .iter()
+        .map(|node| ExecutionSourceMapEntry {
+            local_node_id: node.local_node_id.clone(),
+            source_node_id: node.source_node_id.clone(),
+        })
+        .collect();
+    let mut body = ExecutionPlanBody {
+        entry_instruction,
+        nodes,
+        edges,
+        root_terminal_behavior,
+        entry_input_schema_guard,
+        callable_contract: None,
+        source_map,
+    };
+    let probe = ExecutionPlanV2 {
+        header: ExecutionPlanHeader {
+            format_version: wamn_catalog::EXECUTION_PLAN_FORMAT_VERSION.to_string(),
+            plan_compiler_revision: wamn_catalog::PLAN_COMPILER_REVISION.to_string(),
+            runtime_revision: runtime_revision.clone(),
+            root_artifact_hash: root_artifact_hash.to_string(),
+        },
+        body: body.clone(),
+    };
+    body.callable_contract = probe.derived_callable_contract()?;
+    let plan = ExecutionPlanV2::new(runtime_revision, root_artifact_hash, body)?;
+    let exact_bytes = serde_json::to_vec(&plan).context("serialize fixture execution plan")?;
+    Ok((execution_bundle_hash(&exact_bytes), exact_bytes))
+}
+
+fn member(
+    tenant: &str,
+    flow_json: &str,
+    runtime_revision: ExecutionRuntimeRevision,
+) -> anyhow::Result<Member> {
     let flow = Flow::from_json(flow_json)
         .map_err(|error| anyhow::anyhow!("parse gate fixture graph: {error}"))?;
     let flow_version = i32::try_from(flow.version).context("gate fixture flow version")?;
     let artifact = Artifact::new(tenant, &flow, implementations(&flow)?).map_err(|error| {
         anyhow::anyhow!("build the immutable {} artifact: {error}", flow.flow_id)
     })?;
+    let artifact_hash = artifact.identity().artifact_hash().as_str().to_string();
+    let (execution_bundle_hash, exact_bytes) =
+        compile_execution_plan(&flow, &artifact_hash, runtime_revision)?;
     Ok(Member {
         flow_id: flow.flow_id.clone(),
         flow_version,
-        artifact_hash: artifact.identity().artifact_hash().as_str().to_string(),
+        artifact_hash,
         graph_json: String::from_utf8(flow.canonical_bytes())
             .expect("canonical flow graph is UTF-8"),
         graph_hash: artifact.graph_hash().to_string(),
+        execution_bundle_hash,
+        exact_bytes,
     })
 }
 
@@ -161,10 +312,11 @@ pub(crate) async fn publish_release(
     admin_url: &str,
     tenant: &str,
     flows: &[String],
+    runtime_revision: &ExecutionRuntimeRevision,
 ) -> anyhow::Result<()> {
     let mut releases: Vec<Vec<Member>> = Vec::new();
     for flow_json in flows {
-        let member = member(tenant, flow_json)?;
+        let member = member(tenant, flow_json, runtime_revision.clone())?;
         let slot = releases
             .iter()
             .position(|release: &Vec<Member>| {
@@ -228,18 +380,27 @@ pub(crate) async fn publish_release(
                     .await
                     .with_context(|| format!("publish the {} flow artifact", member.flow_id))?;
             }
-            transaction
-                .execute(
-                    "INSERT INTO catalog.execution_bundles \
-                       (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-                     VALUES ($1, \
-                       'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-                       '0.1',decode('7b7d','hex'),2) \
-                     ON CONFLICT DO NOTHING",
-                    &[&tenant],
-                )
-                .await
-                .context("seed the fixture execution bundle")?;
+            for member in members {
+                let byte_length = i32::try_from(member.exact_bytes.len())
+                    .context("fixture execution-bundle length exceeds PostgreSQL int")?;
+                transaction
+                    .execute(
+                        "INSERT INTO catalog.execution_bundles \
+                           (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+                         VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
+                        &[
+                            &tenant,
+                            &member.execution_bundle_hash,
+                            &wamn_catalog::EXECUTION_PLAN_FORMAT_VERSION,
+                            &member.exact_bytes,
+                            &byte_length,
+                        ],
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("seed the {} fixture execution bundle", member.flow_id)
+                    })?;
+            }
             transaction
                 .execute(
                     "INSERT INTO catalog.release_manifests \
@@ -254,14 +415,14 @@ pub(crate) async fn publish_release(
                         "INSERT INTO catalog.release_flows \
                            (tenant_id,catalog_id,catalog_version,flow_id,flow_version, \
                             execution_bundle_hash) \
-                         VALUES ($1,$2,$3,$4,$5, \
-                           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a')",
+                         VALUES ($1,$2,$3,$4,$5,$6)",
                         &[
                             &tenant,
                             &catalog_id,
                             &CATALOG_VERSION,
                             &member.flow_id,
                             &member.flow_version,
+                            &member.execution_bundle_hash,
                         ],
                     )
                     .await
@@ -293,8 +454,7 @@ pub(crate) async fn publish_release(
 /// statement is unqualified and the `runs` predicate reads `app.tenant`. The
 /// release the run is pinned to and the principal's `artifact-digest` are BOTH
 /// joined out of the published membership, so the pin, the release, and the
-/// principal cannot disagree — a literal digest here is the mutation that turns
-/// run-next back into `invalid active flow skipped`.
+/// principal cannot disagree.
 pub(crate) async fn pin_run(client: &Client, run_id: &str) -> anyhow::Result<()> {
     let pinned = client
         .execute(
@@ -332,12 +492,18 @@ pub(crate) async fn pin_run(client: &Client, run_id: &str) -> anyhow::Result<()>
 /// A fixture a gate publishes must be a graph a REAL release could carry:
 /// [`Artifact::new`] parses it against the current flow schema and validates it
 /// (entry kind, `respond` legality and config, and resolved interfaces). Each
-/// gate names this over the fixtures it publishes: an edit that makes one
-/// unpublishable then fails a named test instead of that gate's run-next leg in
-/// a cluster.
+/// gate names this over the fixtures it publishes so an unpublishable edit
+/// fails locally instead of at claim time.
 #[cfg(test)]
 pub(crate) fn assert_releasable(fixture: &str, flow_json: &str) {
-    if let Err(error) = member("gate-drift-tenant", flow_json) {
+    let runtime_revision = ExecutionRuntimeRevision {
+        flowrunner_component_digest:
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_string(),
+        effect_provider_revision:
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222".to_string(),
+        host_effect_contract_version: wamn_catalog::HOST_EFFECT_CONTRACT_VERSION.to_string(),
+    };
+    if let Err(error) = member("gate-drift-tenant", flow_json, runtime_revision) {
         panic!("{fixture} is not publishable as a release member: {error:#}");
     }
 }
@@ -346,8 +512,7 @@ pub(crate) fn assert_releasable(fixture: &str, flow_json: &str) {
 mod tests {
     use super::*;
 
-    /// The `poc-receipt` fixtures `runnerbench`, `logbench`'s runpath leg, and
-    /// `failoverbench`'s claim mode all publish through this module.
+    /// Both retained `poc-receipt` versions compile into canonical plans.
     #[test]
     fn the_shared_receipt_fixtures_are_releasable_graphs() {
         assert_releasable("flowbench::flow_json(1)", &crate::flowbench::flow_json(1));

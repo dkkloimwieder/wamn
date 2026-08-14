@@ -1378,6 +1378,7 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
             "schema-control",
             "scenario-worker",
             "run-state",
+            "execution-host",
             "flowrunner",
             "ctl-copy",
         ]
@@ -1387,6 +1388,65 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
         "catalog-format-and-platform-schema-major"
     );
     assert_eq!(object.ownership.drift_gate, "SR13:catalog-live");
+}
+
+#[test]
+fn host_owned_production_claim_authority_is_explicit_and_bounded() {
+    let manifest = read_manifest(&repository());
+    let principal = &manifest.principals["execution-host"];
+    assert_eq!(principal.path, "crates/execution/host");
+    assert_eq!(principal.role, "effect");
+
+    let writes = manifest
+        .objects
+        .iter()
+        .filter(|object| {
+            object
+                .ownership
+                .writers
+                .iter()
+                .any(|writer| writer == "execution-host")
+        })
+        .map(|object| object.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        writes,
+        BTreeSet::from([
+            "wamn_run.node_runs",
+            "wamn_run.run_flow_resolutions",
+            "wamn_run.run_queue",
+            "wamn_run.runs",
+        ])
+    );
+
+    let reads = manifest
+        .objects
+        .iter()
+        .filter(|object| {
+            object
+                .ownership
+                .readers
+                .iter()
+                .any(|reader| reader == "execution-host")
+        })
+        .map(|object| object.id.as_str())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        reads,
+        BTreeSet::from([
+            "catalog.connection_bindings",
+            "catalog.connection_generations",
+            "catalog.connection_instances",
+            "catalog.execution_bundles",
+            "catalog.flow_artifacts",
+            "catalog.release_flows",
+            "catalog.validated_flow_drafts",
+            "wamn_run.effect_attempts",
+            "wamn_run.run_flow_resolutions",
+            "wamn_run.run_queue",
+            "wamn_run.runs",
+        ])
+    );
 }
 
 #[test]
@@ -1517,7 +1577,7 @@ fn canonical_run_flow_resolution_function_body_is_run_state_owned() {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["run-state"]
+        ["run-state", "execution-host"]
     );
 
     let function = "CREATE FUNCTION wamn_run.materialize_run_flow_resolutions() \
@@ -1642,7 +1702,7 @@ fn producer_side_direct_run_admission_is_rejected() {
         ),
         (
             "components/rogue-producer/src/lib.rs",
-            "UPDATE wamn_run.run_queue SET partition_key='patched' WHERE run_id='bypass'",
+            "UPDATE wamn_run.run_queue SET attempts=attempts+1 WHERE run_id='bypass'",
         ),
     ] {
         let discoveries = discover_writes(path, 1, statement);

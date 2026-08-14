@@ -42,7 +42,7 @@ spec:
             - "-c"
             - "shared_buffers=256MB"
             # DURABLE commits (wamn-dzhw): the latency gates of record measured
-            # against this fixture (pgbench S2 qps/p99, queuebench D15 dispatch
+            # against this fixture (pgbench S2 qps/p99, D15 dispatch
             # SLOs) were systematically optimistic under fsync=off — a "durable
             # write-ahead" p99 without the WAL flush that makes it durable.
             # fsync=on + synchronous_commit=on matches every fsync-on deployment

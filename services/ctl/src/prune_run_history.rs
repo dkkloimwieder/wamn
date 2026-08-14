@@ -10,9 +10,8 @@
 //! **Role:** connects as the APP role (`wamn_app`, NOSUPERUSER/NOBYPASSRLS) under
 //! the tenant floor — unlike the schema-owning verbs, this is an ordinary
 //! DELETE the app role is granted. The delete is scoped to `--tenant`'s
-//! `app.tenant` claim (RLS + the explicit predicate), and `node_runs` (plus any
-//! stale `run_queue`/`run_dead_letters` rows) cascade via their `ON DELETE
-//! CASCADE` FK to `runs`.
+//! `app.tenant` claim (RLS + the explicit predicate), and `node_runs` plus any
+//! stale `run_queue` row cascade via their `ON DELETE CASCADE` FK to `runs`.
 //! Idempotent and safe to repeat on a cadence
 //! (`deploy/platform/run-retention.example.yaml`).
 //!

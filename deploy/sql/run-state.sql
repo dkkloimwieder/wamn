@@ -14,7 +14,8 @@
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
 -- `wamn_scenario_author`, and stable `wamn_effect_writer` ACL roles. Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
--- artifact grants the stable role only its ledger authority.
+-- artifact grants the stable role ledger append/read authority plus only the
+-- narrow run columns needed for its fenced runnable-state recheck.
 --
 -- Security shape mirrors the rest of the platform (s2/s3, catalog): tenant
 -- separation purely via the `app.tenant` claim the wamn:postgres plugin injects
@@ -317,6 +318,7 @@ FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- The guest-visible application role may drive the existing run-state columns,
 -- but it cannot author or mutate the admission-owned capture carrier. Off-path
 -- admissions omit that column and take its fail-closed database default.
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.runs FROM PUBLIC, wamn_effect_writer;
 GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;
 GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
@@ -344,6 +346,10 @@ GRANT INSERT (
     fail_kind, fail_node, fail_reason, created_at, updated_at
 ) ON wamn_run.runs TO wamn_app;
 GRANT SELECT ON wamn_run.runs TO wamn_scenario_author;
+-- The private effect writer may only recheck that the fenced run still has
+-- runnable state. Lease-generation authority remains outside this schema lane.
+GRANT SELECT (tenant_id, run_id, status)
+    ON wamn_run.runs TO wamn_effect_writer;
 
 -- ---------------------------------------------------------------------------
 -- run_flow_resolutions: the immutable release-bound executable map for one run.

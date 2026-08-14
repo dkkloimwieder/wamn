@@ -37,7 +37,7 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 | Metric | Kind | Attributes | Emitted by (file) |
 |---|---|---|---|
 | `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | execution-host `drain` (`crates/execution/host/src/lib.rs`) |
-| `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker `drain` (timed around `call_run_next`) |
+| `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker around one `ExecutionHost::drain` turn |
 | `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |
 | `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`crates/platform/runtime/src/plugins/wamn_postgres/resources.rs`) |
@@ -52,13 +52,16 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
   claimed drive with the terminal `outcome`; the success ratio is
   `completed / (completed+failed)` computed at query time. The `outcome` fold
   (0→completed, 1→parked, else→failed) is the SAME one `DrainReport` uses.
-- **Run-drive duration.** Whole-run drive time (around the guest `run-next`
-  call). True **per-node** p50/p99 is guest-side (node_runs timestamps), like
+- **Run-drive duration.** One host drain turn, including claim-time
+  non-execution terminalization or the guest `run` call. True **per-node**
+  p50/p99 is guest-side (node_runs timestamps), like
   `node_id` on the 9.1 spans — **deferred** (see below), derivable by query.
 - **Run-queue depth.** The dispatcher republishes each project's *claimable*
-  depth every sweep (no new loop) — the count uses the EXACT claim predicate of
-  `wamn_run_state::queue::claim_batch_sql` (available_at reached, lease NULL-or-expired,
-  budget-remaining), so the gauge counts precisely what a runner could claim now.
+  depth every sweep (no new loop) — `RUN_QUEUE_DEPTH_SQL` mirrors the global
+  production selector: due, lease absent-or-expired, and either budget remains,
+  the row was never leased, or immutable effect evidence requires non-executing
+  terminalization. The gauge therefore counts rows the host claim transaction
+  can consume or classify now, not only rows that can enter guest execution.
 - **Postgres pool + query latency.** Pool gauges read deadpool `Pool::status()`
   per project; the latency histogram wraps the awaited call at the four `db_span`
   sites (`db.operation` = query/execute/txn.query/txn.execute).

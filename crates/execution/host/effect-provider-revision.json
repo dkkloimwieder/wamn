@@ -1768,15 +1768,6 @@
       "features": []
     },
     {
-      "name": "jmespath",
-      "version": "0.3.0",
-      "source_kind": "registry",
-      "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "revision": null,
-      "checksum": "017f8f53dd3b8ada762acb1f850da2a742d0ef3f921c60849a644380de1d683a",
-      "features": []
-    },
-    {
       "name": "jni-macros",
       "version": "0.22.4",
       "source_kind": "registry",
@@ -3196,7 +3187,6 @@
         "alloc",
         "default",
         "derive",
-        "rc",
         "serde_derive",
         "std"
       ]
@@ -3211,7 +3201,6 @@
       "features": [
         "alloc",
         "default",
-        "rc",
         "result",
         "std"
       ]
@@ -6047,38 +6036,6 @@
     {
       "tag": "dependency/wamn-flow/all-targets/boon/version",
       "value": "^0.6"
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/default-features",
-      "value": "true"
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/features",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/optional",
-      "value": "false"
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/package",
-      "value": "jmespath"
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/registry",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/source",
-      "value": "registry+https://github.com/rust-lang/crates.io-index"
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/target",
-      "value": ""
-    },
-    {
-      "tag": "dependency/wamn-flow/all-targets/jmespath/version",
-      "value": "^0.3"
     },
     {
       "tag": "dependency/wamn-flow/all-targets/schemars/default-features",

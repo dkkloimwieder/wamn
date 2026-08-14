@@ -34,14 +34,22 @@ async fn connect(url: &str) -> (Client, tokio::task::JoinHandle<()>) {
 }
 
 fn attempt(input_ref: &'static str) -> BeginEffectAttempt<'static> {
+    attempt_at("writer-run", "effect-node", input_ref)
+}
+
+fn attempt_at(
+    run_id: &'static str,
+    local_node_id: &'static str,
+    input_ref: &'static str,
+) -> BeginEffectAttempt<'static> {
     BeginEffectAttempt {
-        run_id: "writer-run",
+        run_id,
         root_plan_hash: EMPTY_HASH,
         current_plan_hash: EMPTY_HASH,
         frame_id: 0,
         parent_frame_id: None,
         call_site_id: None,
-        local_node_id: "effect-node",
+        local_node_id,
         source_artifact_hash: EMPTY_HASH,
         requirement_name: "manager",
         occurrence: 0,
@@ -125,6 +133,32 @@ async fn native_effect_writer_live() {
         .batch_execute(include_str!("../../../../deploy/sql/run-state.sql"))
         .await
         .expect("apply run-state schema");
+    admin
+        .batch_execute(include_str!("../../../../deploy/sql/run-queue.sql"))
+        .await
+        .expect("apply run-queue schema");
+    admin
+        .batch_execute(&format!(
+            "INSERT INTO catalog.catalogs \
+               (tenant_id,catalog_id,version,environment,schema_version,state) \
+             VALUES ('tenant-live-a','writer-catalog',1,'test','0.1','draft'); \
+             INSERT INTO catalog.execution_bundles \
+               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
+             VALUES ('tenant-live-a','{EMPTY_HASH}','0.1',decode('7b7d','hex'),2); \
+             INSERT INTO catalog.release_manifests \
+               (tenant_id,catalog_id,catalog_version,members_json) \
+             VALUES ('tenant-live-a','writer-catalog',1,'[]'); \
+             INSERT INTO wamn_run.runs \
+               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
+                environment,execution_bundle_hash,status) \
+             VALUES ('tenant-live-a','writer-run','root',1,'writer-catalog',1, \
+                     'test','{EMPTY_HASH}','running'); \
+             INSERT INTO wamn_run.run_queue \
+               (tenant_id,run_id,lease_owner,lease_expires_at) \
+             VALUES ('tenant-live-a','writer-run','writer-live','2099-01-01');"
+        ))
+        .await
+        .expect("seed one actively leased writer run");
 
     let mut writer_url = Url::parse(&admin_url).expect("parse admin URL");
     writer_url
@@ -191,6 +225,18 @@ async fn native_effect_writer_live() {
         .expect_err("divergent attempt retry refuses");
     assert_eq!(divergent.kind(), EffectWriterErrorKind::DivergentRetry);
 
+    let attempt_has_no_run_fk: bool = admin
+        .query_one(
+            "SELECT NOT EXISTS ( \
+                SELECT 1 FROM pg_constraint \
+                 WHERE conrelid='wamn_run.effect_attempts'::regclass AND contype='f')",
+            &[],
+        )
+        .await
+        .expect("inspect canonical independent ledger")
+        .get(0);
+    assert!(attempt_has_no_run_fk);
+
     let missing = EffectAttemptId {
         attempt_id: "00000000-0000-0000-0000-000000000998",
     };
@@ -246,6 +292,32 @@ async fn native_effect_writer_live() {
         .await
         .expect_err("divergent outcome retry refuses");
     assert_eq!(divergent.kind(), EffectWriterErrorKind::DivergentRetry);
+
+    admin
+        .batch_execute(
+            "UPDATE wamn_run.runs SET status='effect-uncertain' \
+               WHERE tenant_id='tenant-live-a' AND run_id='writer-run'; \
+             DELETE FROM wamn_run.run_queue \
+               WHERE tenant_id='tenant-live-a' AND run_id='writer-run';",
+        )
+        .await
+        .expect("terminalize the run after its immutable attempt");
+    assert_eq!(
+        writer
+            .begin_attempt(attempt("sha256:writer-input"))
+            .await
+            .expect("exact terminal-run retry remains observable"),
+        first
+    );
+    let inactive_new = writer
+        .begin_attempt(attempt_at(
+            "writer-run",
+            "second-effect-node",
+            "sha256:writer-input",
+        ))
+        .await
+        .expect_err("new coordinate after terminalization is refused");
+    assert_eq!(inactive_new.kind(), EffectWriterErrorKind::RunNotRunnable);
 
     let tenant_counts = admin
         .query_one(

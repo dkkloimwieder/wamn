@@ -108,8 +108,7 @@ impl ChildCreateResult {
 ///
 /// Params are the parent fence (`$1..$4`), parent node id and occurrence,
 /// proposed child run id, internal attachment id, callee flow id, actor mode,
-/// input JSON, platform revision, depth/fanout caps, and child partition
-/// key/policy.
+/// input JSON, platform revision, and depth/fanout caps.
 ///
 /// Creation resolves and authorizes against the parent's pinned release and
 /// current single-hash activation. Recovery deliberately bypasses both live
@@ -178,9 +177,6 @@ pub fn create_or_recover_child_sql() -> String {
                         OR $12::text IS NULL OR $12::text = '' \
                         OR $13::int IS NULL OR $13::int <= 0 \
                         OR $14::bigint IS NULL OR $14::bigint <= 0 \
-                        OR $16::text IS NULL OR $16::text NOT IN ('blocking', 'leapfrog') \
-                        OR ($15::text IS NULL AND $16::text <> 'blocking') \
-                        OR $15::text = '' \
                         THEN 'invalid-input' \
                       WHEN c.run_id IS NULL AND proposed.run_id IS NOT NULL \
                         THEN 'child-id-conflict' \
@@ -284,8 +280,8 @@ pub fn create_or_recover_child_sql() -> String {
          ), \
          inserted_queue AS ( \
              INSERT INTO run_queue \
-                    (tenant_id, run_id, partition_key, partition_policy, available_at) \
-             SELECT c.tenant_id, c.run_id, $15, $16, now() FROM chosen_child AS c \
+                    (tenant_id, run_id, available_at) \
+             SELECT c.tenant_id, c.run_id, now() FROM chosen_child AS c \
               JOIN classified AS x ON x.tenant_id = c.tenant_id \
              WHERE x.child_released_at IS NULL \
              ON CONFLICT (tenant_id, run_id) DO NOTHING \
@@ -571,6 +567,10 @@ mod tests {
         assert!(sql.contains("WHEN c.run_id IS NOT NULL THEN 'ready'"));
         assert!(sql.contains("p.invoke_depth + 1 > $13::int"));
         assert!(sql.contains("fs.child_count >= $14::bigint"));
+        assert!(!sql.contains("$15"));
+        assert!(sql.contains("(tenant_id, run_id, available_at)"));
+        assert!(!sql.contains("partition_key"));
+        assert!(!sql.contains("partition_policy"));
         assert!(sql.contains("'artifact-digest', c.artifact_hash"));
         assert!(sql.contains("'run-id', $7"));
         assert!(sql.contains("invocation_context, admission_context_version"));

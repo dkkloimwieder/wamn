@@ -56,7 +56,7 @@ never a second author of the schema's statements (docs/archive/structure-review.
 The load-bearing shapes (`ON CONFLICT` idempotency, the `dispatched`→`running`
 guard, the deliberately unconditional completion write, the `success`/`error`
 reconstruction filter) are pinned by shape unit tests in that module; the runtime
-`flowbench`/`failoverbench` gates prove the end-to-end behavior.
+production-claim PostgreSQL gate proves the retained host-owned queue handoff.
 
 ## Branch-aware replay (reconstruction)
 
@@ -86,20 +86,16 @@ skew. A completed node with no captured emission (9.6 capture off) makes the run
 `ReconstructError::CaptureOff` — explicitly non-replayable rather than silently
 wrong.
 
-### At-least-once, exactly-once effect
+### Claim-time crash classification
 
-An effectful node runs its effect when it is *outstanding* (no record yet). If the
-runner is killed in the window between a node's DB write and its `node_runs` row,
-the node is outstanding on resume and re-runs — an at-least-once replay absorbed by
-the node's own idempotency (`pg-write`'s `sink` `ON CONFLICT DO NOTHING`), so a
-killed-and-resumed run leaves exactly one side effect. This is the kill-mid-run
-gate, now flowing through reconstruction rather than `step_seq`.
-
-The same reconstruction is the resume half of **checkpoint/resume on replica loss**
-(5.14): when a runner dies, a second replica reclaims the run from the durable queue
-(the 5.14 lease-expiry reclaim) and resumes it here — the kill-mid-run guarantee
-carried across a replica boundary. See docs/archive/execution/run-queue.md § *Checkpoint/resume on
-replica loss*.
+The durable effect-attempt ledger, not a missing `node_runs` projection, decides
+whether a crashed run can execute again. When a lease expires with no immutable
+attempt, the production claimant deletes replaceable node projections, clears
+`runs.state_json`, preserves identity/evidence and the immutable resolution map,
+then restarts from zero. Any immutable attempt instead makes the run
+`effect-uncertain` and removes queue eligibility; it is never replayed through
+ordinary execution. See docs/archive/execution/run-queue.md § *One production
+claim transaction*.
 
 ## Partial re-run & replay
 
@@ -118,14 +114,12 @@ the original run and its node-runs immutable — an audit/billing-safe lineage c
 
 A resume reconstructs against the run's **persisted `flow_version`** — the
 version stamped on the `runs` row when the run first opened, which the dispatcher
-sets to the active version at write-ahead time — not whatever is active now
-(wamn-cox). So a flow edited or hot-reloaded mid-run can never make a resume fold
-its recorded `node_runs` against a divergent graph: the `components/execution/flowrunner`
-driver loads the exact version on every drive path (the direct `execute`, the
-unpartitioned claim, and the partitioned claim all pin it), and a hot-reload is
-still picked up because newly dispatched runs carry the new version. `Plan::resume`
-still raises `Mismatch` as the backstop against a corrupt history. Which version a
-*new* run executes is a hot-reload / dispatcher concern (4.4 / 5.14).
+or admission path selected — not whatever is active now (wamn-cox). So a flow
+edited after admission cannot make a later claim fold recorded state against a
+divergent graph. The host-owned global-FIFO claimant resolves that exact pinned
+version, verifies the immutable execution bundle, and materializes the complete
+`run_flow_resolutions` map before granting a lease. A newly admitted run may
+select a newer version; an existing run never moves with the catalog head.
 
 ### Occurrence-keyed child state
 
@@ -188,7 +182,7 @@ are absent under `off`.
 deletes terminal runs (completed/failed/cancelled/infrastructure-failure) older
 than `--retention-days`; `node_runs` cascade via the FK. `cron_anchor` is a
 separate table it never touches, so a pruned cron run cannot re-fire its tick
-(wamn-fqg.6 — proven by dispatchbench's `retention` mode). v0 is **age-based
+(wamn-fqg.6). The former dispatchbench retention mode is historical. v0 is **age-based
 only** — replay lineage is not consulted (a lineage-aware policy is a deferral).
 Deploy per project-env with `deploy/platform/run-retention.example.yaml`.
 
@@ -207,7 +201,6 @@ model, branch-aware replay, and partial re-run. It deliberately does **not** own
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + leases + NATS doorbell + dispatcher | 5.14 (co-transacts with these INSERTs; owns its own queue table) |
 | The node-level I/O **capture policy** (admitted `full`/`off`, scrub, write ceiling) | 9.6 (fills bounded author-facing `input`/`output`/size/hash facts) |
 | The content-addressed **payload byte store** for streamed/large payloads | 5.10 (pointed at by the reserved `*_ref` columns) |
-| Per-node ordering (`strict`/`partitioned`/`unordered`) | 5.11 |
 | The `cancel(run, reason)` operation | 5.12 |
 
 The surviving nullable capture facts are bounded inline input/output plus output size and

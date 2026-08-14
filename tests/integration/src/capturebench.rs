@@ -1,6 +1,6 @@
 //! The `capturebench` subcommand: admitted-run node I/O capture gates.
 //!
-//! Pure host-side like dispatchbench (no wasm guest): it applies the REAL
+//! Pure host-side (no wasm guest): it applies the REAL
 //! `deploy/sql/run-state.sql` into a throwaway ephemeral schema, then exercises
 //! the SAME pure capture logic (`wamn_run_state::capture`) and the SAME `node_runs`
 //! insert builders the flowrunner guest binds — so the admitted mode's facts,

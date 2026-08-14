@@ -467,8 +467,6 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &none_text,
                     &none_text,
                     &none_i32,
-                    &none_text,
-                    &"blocking",
                 ],
             )
             .await?;

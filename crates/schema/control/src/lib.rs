@@ -52,7 +52,7 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: `wamn-run-state`'s `claim_batch_sql`
+//! correctly here and still misbehave live: a prior run-queue batch claim
 //! passed every pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
@@ -96,19 +96,21 @@ pub use run_plane::{
     BareSchemaName, EFFECT_WRITER_ROLE, EffectWriterRoleObservation, InvalidBareSchemaName,
     LEGACY_OUTBOX_TABLES, OUTBOX_TRIGGER_NAME, RunPlaneAction, RunPlaneActionKind,
     RunPlaneObservation, RunPlanePlan, ScenarioAuthorRoleObservation, catalog_schema_present_sql,
-    count_release_flow_rows_sql, count_run_rows_sql, count_stale_registration_state_sql,
-    ensure_scenario_author_role_sql, plan_run_plane, rewrite_schema,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    count_release_flow_rows_sql, count_retired_authored_ordering_rows_sql, count_run_rows_sql,
+    count_stale_registration_keys_sql, ensure_scenario_author_role_sql, plan_run_plane,
+    rewrite_schema, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_ledger_effective_column_privileges_sql,
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
-    select_effect_writer_role_sql, select_effect_writer_schema_privileges_sql,
+    select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
+    select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
     select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
-    strip_registration_state_sql,
+    strip_retired_registration_keys_sql,
 };
 
 // Re-exported so a driver can name the registration type the reconciler folds

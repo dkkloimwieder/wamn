@@ -117,8 +117,8 @@ default from the plugin's base config, so the MVP credential carries only the UR
 
 ## `provisionbench` — the gate
 
-A pure host-side `tokio_postgres` gate (no wasm guest — the queuebench /
-dispatchbench shape). It provisions **two** projects through the real
+A pure host-side `tokio_postgres` gate (no wasm guest). It provisions **two**
+projects through the real
 `provision-project` path, then asserts:
 
 - **routing / resolution** — each project's emitted credential, parsed through
@@ -554,28 +554,34 @@ Reconcile ONE project-env's **run-plane schema** to the deploy/sql schema of
 record (`run-state.sql` + `flows.sql` + `run-queue.sql`, embedded at compile
 time and rewritten `wamn_run` → `--schema`), plus the per-database `catalog`
 metadata schema (`catalog-schema.sql`). This is the durable migration path the
-run plane previously lacked: the deploy files evolve (E4 `stream_seq`, D20
-`partition_policy`, fqg.20 `partition_owner`, v8cv `run_dead_letters`), but
-nothing migrated schemas instantiated from older revisions — and the demo
-fixture pod is EPHEMERAL, so a restart wipes every provisioned schema.
+run plane previously lacked. It now converges schemas instantiated before the
+global-FIFO cutover as well as additive record drift — and the demo fixture pod
+is EPHEMERAL, so a restart wipes every provisioned schema.
 
 The pure decision (`wamn_schema_control::plan_run_plane`) diffs what the shell
-observed live against the record and emits the idempotent, data-preserving
-migration plan, executed in order:
+observed live against the record and emits the idempotent migration plan,
+executed in order:
 
+- **the retired partition plane** cut over first under fixed table locks. The
+  cutover refuses active or unobservable leases, refuses any retained
+  dead-letter history with
+  `retired-run-dead-letter-history-requires-archive-or-environment-reprovision`,
+  and only then removes partition policy/ownership, the empty dead-letter
+  table, and their indexes before installing the global FIFO index;
 - **missing tables** created from their record sections (DDL + indexes + RLS +
   policy + grants), in FK order — from-zero on a bare database included (the
   verb also ensures the `wamn_app` role there);
 - **missing record columns** added via `ALTER TABLE … ADD COLUMN <record
-  definition>` (defaults backfill existing rows: `stream_seq` 0,
-  `partition_policy` `'blocking'`);
+  definition>` (defaults backfill existing rows, including `stream_seq` 0);
 - **immutable effect authority storage** created as five append-only ledgers
   (`effect_attempts`, dispatches, outcomes, disposition requests, and
   dispositions), with catalog publication-provenance columns/CHECKs reconciled
   first. The writer-boundary upgrade takes `ACCESS EXCLUSIVE` locks, refuses
   populated incompatible immutable attempt/dispatch/outcome ledgers before any
   DDL, and physically removes named retired stable-key/recovery projection
-  columns. It never backfills or fabricates attempt authority;
+  columns. It never backfills or fabricates attempt authority. The private
+  writer receives only the exact ledger privileges and narrow run/queue columns
+  needed for its fenced runnable-state recheck;
 - **index drift**: a record index absent live is created; a present one whose
   live definition lost a record column (the pre-E4 `run_queue_claimable`
   without `stream_seq`) or violates a pinned disposition uniqueness/predicate
@@ -595,13 +601,12 @@ migration plan, executed in order:
 | `--schema` | the project-env schema (e.g. `wamn_runner_demo`, `poc_f1`) |
 | `--dry-run` | print the plan without applying — STRICTLY read-only (no role ensure, no writes) |
 
-**Data preserving, not insert-only:** no retained table or row is rewritten or
-deleted; unknown live columns are printed (`[extra]`) and left alone. Named
-retired identity/recovery columns are the deliberate exception: the locked
-frame/effect-writer cutovers remove them after their safety preflights.
-Populated incompatible immutable ledgers abort with the typed empty-only
-refusal; no backfill chooses or fabricates history. Incompatible canonical
-CHECK/FK validation also fails loudly. The tenant floor
+**Fail closed around retained data:** unknown live columns are printed
+(`[extra]`) and left alone. Locked cutovers remove only named retired schema
+surfaces after their safety preflights; active or unobservable leases, retained
+dead-letter rows, and populated incompatible immutable ledgers abort before any
+DDL. No migration deletes, rewrites, or fabricates their history. Incompatible
+canonical CHECK/FK validation also fails loudly. The tenant floor
 (`publish-catalog --provision` / `migrate-catalog`) and flow/seed content
 (`publish-catalog --flow` / `--seed-dataset`) remain out of scope. This child
 installs and migrates storage only; activating immutable runtime readers and
@@ -617,7 +622,7 @@ the intended upgrade path.
 
 ## `provisionbench` — the four-tier extension (wamn-q3n.8)
 
-`provisionbench` gains `--mode` (the pgbench / queuebench precedent):
+`provisionbench` gains `--mode` (the existing multi-mode benchmark pattern):
 
 - **`legacy`** — the 2.3 two-project flow above, kept as regression.
 - **`orgpair`** — a **dedicated** org stamped from the `standard` template

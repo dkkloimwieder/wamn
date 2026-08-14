@@ -1,7 +1,7 @@
 //! The `streambench` gate: the in-cluster gate of record for the event-plane
 //! DATA-PLANE NATS (D19 v3 §5/§7 Phase 1; wamn-l5i9.7 [EVT-NATS]).
 //!
-//! Unlike the ceiling campaigns (walbench/queuebench ceiling), this
+//! Unlike the throughput ceiling campaigns, this
 //! is a pass/fail GATE: it proves the JetStream substrate the CDC reader
 //! (l5i9.10) publishes onto and the materializer (l5i9.17) consumes from behaves
 //! to the v3 contract, on the dedicated data-plane cluster (deploy/nats-
@@ -28,7 +28,7 @@
 //! (§11); the subject namespace already reserves per-org isolation.
 //!
 //! Pure NATS client (no wasm, no Postgres): the substrate is a NATS mechanism.
-//! `async-nats` 0.47 is already a workspace dep (queuebench/dispatcher doorbell).
+//! `async-nats` 0.47 is already a workspace dependency for dispatcher doorbells.
 
 use std::time::{Duration, Instant};
 

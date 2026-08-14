@@ -54,6 +54,13 @@ pub mod tests {
         assert!(sql.contains("sl.root_run_id <> i.event_root_run_id"));
         assert!(sql.contains("sl.depth + 1 <> i.event_depth"));
         assert!(sql.contains("i.input_json ? 'causation'"));
+        assert!(sql.contains("(tenant_id, run_id, available_at, stream_seq)"));
+        assert!(sql.contains("$24"));
+        assert!(!sql.contains("$25"));
+        for retired in ["partition_key", "partition_policy", "existing_queue"] {
+            assert!(!sql.contains(retired), "admission still contains {retired}");
+            assert!(!SHELL.contains(retired), "guest still binds {retired}");
+        }
         assert!(SHELL.contains("text(&plan.source_run_id)"));
         assert!(SHELL.contains("text(&plan.causation.root)"));
         assert!(SHELL.contains("env_or(\"WAMN_MAT_RUN_SCHEMA\", \"wamn_run\")"));

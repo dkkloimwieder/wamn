@@ -22,8 +22,8 @@
 //!   exactly-once create, durable step advance, terminal complete + fail.
 //! * **all** — legacy, then (over one ephemeral registry schema) saga, orgpair, t3.
 //!
-//! A pure host-side `tokio_postgres` gate (no wasm guest) — the queuebench /
-//! dispatchbench shape. Substrate-agnostic (a superuser URL — locally a throwaway
+//! A pure host-side `tokio_postgres` gate (no wasm guest).
+//! Substrate-agnostic (a superuser URL — locally a throwaway
 //! `postgres:18`, in-cluster the shared CloudNativePG pool): the placement modes
 //! **simulate** per-project-env DB creation with plain SQL and keep the registry /
 //! saga in an ephemeral `wamn_system`-shaped schema, since the CNPG `Database` CRD

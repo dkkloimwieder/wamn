@@ -16,8 +16,9 @@
 #
 # TWO REPLICAS, NO LEADER: replicas race each trigger and collapse on the
 # write-ahead ON CONFLICT (deterministic run ids {flow}:cron:{tick}) —
-# exactly-once minting with no leader election, proven
-# by the dispatchbench `race` mode. Scale-out is safe by the same argument.
+# exactly-once minting with no leader election. Database uniqueness is the
+# scale-out boundary; the retired dispatchbench executable is not a current
+# proof source.
 #
 # CRASH SAFETY + SHUTDOWN: a firing is one transaction (write-ahead +
 # enqueue); a
@@ -94,7 +95,7 @@ spec:
       volumes:
         # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert
         # the host groups connect with (CN maps to the wasmcloud-runtime NATS
-        # user) so the doorbell subject is permitted — the queuebench-job
+        # user) so the doorbell subject is permitted — the runtime doorbell
         # pattern. See the credential-scope note above.
         - name: runtime-cert
           secret:

@@ -5,9 +5,8 @@
 //! version is compatible, it targets the catalog it was validated against, its
 //! entity resolves **by id** (the rename-proof key — so a registration can only
 //! bind to a real catalog entity), its op set is non-empty and duplicate-free,
-//! and each expression ([`condition`](EventRegistration::condition),
-//! [`partition_key`](EventRegistration::partition_key)) is **syntactically valid
-//! JMESPath**. Expressions are compiled, not evaluated — the materializer
+//! and its [`condition`](EventRegistration::condition) is **syntactically valid
+//! JMESPath**. The expression is compiled, not evaluated — the materializer
 //! (l5i9.17) owns evaluation against the runtime event context; this surface
 //! only guarantees a stored expression will parse.
 //!
@@ -98,7 +97,6 @@ pub fn validate(reg: &EventRegistration, catalog: &Catalog) -> Result<(), Vec<Is
     // evaluation). An empty/whitespace expression is a authoring mistake, not a
     // valid "match everything" (that is `None`), so reject it distinctly.
     check_expr(&mut issues, "condition", reg.condition.as_deref());
-    check_expr(&mut issues, "partition-key", reg.partition_key.as_deref());
 
     if issues.is_empty() {
         Ok(())

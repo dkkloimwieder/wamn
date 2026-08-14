@@ -5,7 +5,7 @@
 //! `deploy/sql/run-state.sql` / `flows.sql` / `run-queue.sql` evolve, but
 //! nothing migrated schemas instantiated from older revisions: the live demo
 //! schemas broke on the E4 `stream_seq` column (runner 42703 warn-loops), one
-//! env had NO queue tables at all, and the ephemeral fixture restart wiped
+//! env had NO queue table at all, and the ephemeral fixture restart wiped
 //! everything including the `catalog` metadata schema. This verb reads what ONE
 //! project-env schema actually has (tables, columns, indexes, CHECKs, user
 //! triggers, helper functions, legacy outbox-era objects, and the per-database
@@ -20,16 +20,17 @@
 //! - exact record CHECK constraints plus run-state helper functions and the
 //!   event-lineage trigger (missing/drifted definitions repaired; extra record
 //!   CHECKs/triggers removed),
-//! - the pre-l5i9.19 outbox-era teardown (tables, triggers, function, the
-//!   legacy registration `state` keys),
+//! - the pre-l5i9.19 outbox-era teardown (tables, triggers, function, and
+//!   retired registration `state` keys) plus retired `partition-key` cleanup,
 //! - the `catalog` metadata schema when absent (or its missing tables).
 //!
-//! **Data preserving:** no retained table or row is rewritten or deleted, and
-//! unknown live columns are printed rather than touched. The explicit
-//! frame/effect-writer cutovers physically remove only their named retired
-//! identity/recovery columns after locked safety preflights. PostgreSQL
-//! validates each canonical CHECK against existing rows and fails loudly
-//! rather than fabricating incompatible history.
+//! **Retained-data preserving:** no retained table or row is rewritten or
+//! deleted, and unknown live columns are printed rather than touched. Explicit
+//! cutovers physically remove only named retired state after locked safety
+//! preflights. The partition-plane cutover requires drained leases and refuses
+//! nonempty dead-letter history with an archive-or-environment-reprovision
+//! diagnostic. PostgreSQL validates each canonical CHECK against existing rows
+//! and fails loudly rather than fabricating incompatible history.
 //!
 //! **Ownership:** CREATE/ALTER/DROP need table ownership, and attempt-history
 //! retirement must see every tenant through forced RLS. `wamn_app` and a plain
@@ -53,12 +54,14 @@ use tokio_postgres::NoTls;
 use wamn_schema_control::{
     BareSchemaName, EffectWriterRoleObservation, RunPlaneObservation, RunPlanePlan,
     ScenarioAuthorRoleObservation, catalog_schema_present_sql, count_release_flow_rows_sql,
-    count_run_rows_sql, count_stale_registration_state_sql, plan_run_plane,
-    select_app_scenario_author_membership_sql, select_authoring_effective_column_privileges_sql,
+    count_retired_authored_ordering_rows_sql, count_run_rows_sql,
+    count_stale_registration_keys_sql, plan_run_plane, select_app_scenario_author_membership_sql,
+    select_authoring_effective_column_privileges_sql,
     select_authoring_effective_table_privileges_sql, select_authoring_table_owners_sql,
     select_authoring_table_privileges_sql, select_effect_ledger_effective_column_privileges_sql,
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
-    select_effect_writer_role_sql, select_effect_writer_schema_privileges_sql,
+    select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
+    select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
     select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
@@ -133,6 +136,7 @@ pub async fn reconcile(
                     | wamn_schema_control::RunPlaneActionKind::ExecutionPinCutover
                     | wamn_schema_control::RunPlaneActionKind::FrameIdentityCutover
                     | wamn_schema_control::RunPlaneActionKind::EffectWriterCutover
+                    | wamn_schema_control::RunPlaneActionKind::PartitionPlaneCutover
                     | wamn_schema_control::RunPlaneActionKind::StoredSuiteCutover
             )
         }) {
@@ -236,6 +240,32 @@ async fn observe(
         .context("read effective effect-ledger column privileges")?
     {
         obs.effect_ledger_effective_column_privileges
+            .entry((row.get(0), row.get(1)))
+            .or_default()
+            .insert(row.get(2));
+    }
+    for row in client
+        .query(
+            select_effect_writer_run_table_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effect-writer run table privileges")?
+    {
+        obs.effect_writer_run_table_privileges
+            .entry(row.get(0))
+            .or_default()
+            .insert(row.get(1));
+    }
+    for row in client
+        .query(
+            select_effect_writer_run_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effect-writer run column privileges")?
+    {
+        obs.effect_writer_run_column_privileges
             .entry((row.get(0), row.get(1)))
             .or_default()
             .insert(row.get(2));
@@ -365,6 +395,17 @@ async fn observe(
             .context("count effect ledger rows for writer cutover")?
             .get(0);
     }
+    if obs
+        .tables
+        .get("flows")
+        .is_some_and(|columns| columns.contains("graph_json"))
+    {
+        obs.retired_authored_ordering_rows = client
+            .query_one(&count_retired_authored_ordering_rows_sql(schema), &[])
+            .await
+            .context("count persisted retired flow-ordering keys")?
+            .get(0);
+    }
     if obs.tables.contains_key("runs") {
         obs.run_rows = client
             .query_one(&count_run_rows_sql(schema), &[])
@@ -482,10 +523,10 @@ async fn observe(
                 .get(0);
         }
         if obs.catalog_tables.contains("event_registrations") {
-            obs.stale_registration_state_rows = client
-                .query_one(count_stale_registration_state_sql(), &[])
+            obs.stale_registration_key_rows = client
+                .query_one(count_stale_registration_keys_sql(), &[])
                 .await
-                .context("count legacy registration state keys")?
+                .context("count retired registration keys")?
                 .get(0);
         }
     }

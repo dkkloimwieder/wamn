@@ -2,8 +2,8 @@
 # live dispatcher → run_queue → runner chain. The production executor's stable
 # wamn-run-worker binary (its own image target) instantiates the flowrunner
 # component (baked into its image at /components/flowrunner.wasm) and loops
-# `run-next`, claiming runs the dispatcher (deploy/platform/dispatcher.yaml) wrote-ahead +
-# enqueued and driving each to completion.
+# claims runs the dispatcher (deploy/platform/dispatcher.yaml) wrote ahead and
+# enqueued, then enters the flowrunner's single-shot `run` export.
 #
 #   kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml   # once (per project)
 #   kubectl -n wamn-system apply -f deploy/platform/runner-netpol.yaml
@@ -97,7 +97,7 @@ spec:
       volumes:
         # The operator NATS uses mTLS (verify_and_map). Reuse the runtime cert
         # the host groups connect with so the doorbell subject is permitted —
-        # the dispatcher/queuebench pattern. See the credential-scope note above.
+        # the dispatcher/run-worker pattern. See the credential-scope note above.
         - name: runtime-cert
           secret:
             secretName: wasmcloud-runtime-tls

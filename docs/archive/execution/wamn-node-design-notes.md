@@ -41,15 +41,11 @@ Changing `run`'s signature later is exactly the breaking change versioning exist
 **Limits are a first-class platform primitive:** global inline cap (default 4 MiB) and streamed cap (default 1 GiB), each overridable per-flow within plan quotas (Epic 10.2), enforced at the host on write (`limit-exceeded` carries the byte count), metered into billing (9.11). Run history captures inline payloads fully; streamed payloads as head-preview + size + hash — which also keeps fixture generation (11.3) bounded: a fixture references a stored payload snapshot, not an unbounded blob in Postgres.
 
 **2. No `run-batch` — streaming dissolved it.**
-Batch existed to amortize per-invocation overhead; a record stream through one `run` invocation amortizes identically *and* gives in-order processing for free. Ordering is therefore an orchestration policy, not a contract concern. Per-node in flow config:
-
-| Policy | Semantics | Runner behavior |
-|---|---|---|
-| `strict` | Total order | One in-flight execution per node |
-| `partitioned(key)` | Order per key, parallel across keys | Hash key expr → per-partition serial dispatch (the Kafka model; right default for tag/asset data) |
-| `unordered` | None | Free parallelism up to concurrency limit |
-
-The node stays a pure function under all three; only the runner's dispatch changes. This also means frozen flows (5.10) inherit ordering semantics unchanged.
+Batch existed to amortize per-invocation overhead; a record stream through one
+`run` invocation amortizes identically. The earlier draft also proposed
+per-node `strict | partitioned(key) | unordered` orchestration metadata. The
+pre-release MVP deleted that authored ordering surface: all durable roots join
+one global FIFO, and the node contract and manifest declare no ordering policy.
 
 **3. Cancellation: one operation, many initiators, two layers.**
 Control-plane API: `cancel(run-id, reason, [node-scope])` — invoked identically by the user (editor stop), platform policy (quota breach, misbehavior), scheduler (maintenance window, run TTL), or the runner itself (sibling branch failed). Reason propagates end-to-end: API → run state → `control.cancelled()` → run history → audit log.
@@ -70,7 +66,13 @@ Control-plane API: `cancel(run-id, reason, [node-scope])` — invoked identicall
 The builder reads the component's actual WIT imports and emits `hostInterfaces` (prompting for `allowedHosts` when `wasi:http/outgoing-handler` appears). World `node` imports nothing → empty grants → physically incapable of I/O. `payloads` and `control` are grants like any other.
 
 **8. Node metadata lives in OCI annotations, not a WIT export.**
-Display name, config JSON Schema, input/output schemas, declared ordering-policy support → `wamn.node.manifest` annotation. Registry-scannable node palette; no instantiation to browse. **SHIPPED (5.4):** `crates/node/manifest` is the annotation's canonical model (types, validation, `ANNOTATION_KEY`), with the language-neutral contract generated from it at `docs/archive/contracts/wamn-node-manifest.schema.json` (the wamn-flow pattern: fixture round-trip + boon conformance + drift guard). Declared output ports ride along (edge affordances for the editor; `error` is reserved and rejected). Capability grants are deliberately NOT in the manifest — note 7: derived from actual imports, never declared twice. The builder (5.5) writes the annotation at push.
+Display name, config JSON Schema, and input/output schemas ride in the
+`wamn.node.manifest` annotation. Registry-scannable node palette; no
+instantiation to browse. The retained language-neutral contract is
+`docs/archive/contracts/wamn-node-manifest.schema.json`. Declared output ports
+ride along (edge affordances for the editor; `error` is reserved and rejected).
+Capability grants are deliberately NOT in the manifest — note 7: derived from
+actual imports, never declared twice.
 
 **9a. Trace propagation is host-enforced, not convention.**
 Nodes SHOULD propagate `traceparent` (SDKs do it invisibly in their HTTP/DB helpers), but the guarantee doesn't depend on it: every outbound call already traverses a host plugin (`wasi:http/outgoing-handler`, `wamn:postgres`), and the host stamps trace context onto any outgoing request that lacks it, using the executing node's span. A user bypassing the SDK cannot break trace continuity — the capability boundary doubles as the telemetry boundary. SDK-set context is preferred (more precise parent spans); host injection is the floor.
@@ -136,5 +138,6 @@ jco path against the frozen ABI.
 ## Remaining open items (non-blocking for 0.1)
 
 1. **Mid-run progress events** for long stream jobs (UI progress bars) — future `emit` import, additive.
-2. **Payload store backend** — object storage vs host-local spill with TTL; pick during 5.11 implementation, invisible to the contract.
+2. **Payload store backend** — object storage vs host-local spill with TTL;
+   choose during payload-store implementation, invisible to the contract.
 3. **WASI 0.3 async migration** — native `stream<T>`/futures would replace the poll-based cancellation and resource streams; plan as a 0.2/1.0 contract revision once Wasmtime 46+ behavior is proven in our hosts.

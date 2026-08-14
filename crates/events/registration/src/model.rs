@@ -4,13 +4,12 @@
 //! registration, not code" of §5: WHICH entity's row events it wants
 //! ([`entity`](EventRegistration::entity)), WHICH ops
 //! ([`ops`](EventRegistration::ops)), an optional
-//! [`condition`](EventRegistration::condition) filter, and an optional
-//! [`partition_key`](EventRegistration::partition_key) extractor. The
+//! [`condition`](EventRegistration::condition) filter. The
 //! **materializer (l5i9.17) is the consumer**: it opens a durable consumer per
 //! registration, evaluates the condition (hot-editable — filtered-out events
-//! stay on the stream, so a condition edit is replayable), and partitions the
-//! enqueue by the key. This crate is ONLY the declaration surface; it does not
-//! decode, materialize, or enqueue.
+//! stay on the stream, so a condition edit is replayable), and admits matching
+//! runs into the global FIFO. This crate is ONLY the declaration surface; it
+//! does not decode, materialize, or enqueue.
 //!
 //! **Rename-proof by entity-id keying (EVT-OIDMAP, wamn-l5i9.11):**
 //! [`entity`](EventRegistration::entity) is the stable catalog **entity id**, not
@@ -28,26 +27,23 @@
 //!
 //! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). The declaration shape,
 //! the kebab-case field spellings, AND the expression grammar are frozen: a
-//! [`condition`](EventRegistration::condition) is a JMESPath **predicate** and a
-//! [`partition_key`](EventRegistration::partition_key) a JMESPath **expression**,
-//! both over the frozen event context `{"op", "old", "new"}` (built by
+//! [`condition`](EventRegistration::condition) is a JMESPath **predicate** over
+//! the frozen event context `{"op", "old", "new"}` (built by
 //! `wamn_materializer::event_context`) and syntax-validated at write
-//! ([`crate::validate`]). Compatibility rule (the WIT-freeze discipline): 0.1.x
-//! admits only additive or clarifying changes; any breaking change waits for
-//! 0.2. A field removal/rename breaks a named golden test in `tests/`.
+//! ([`crate::validate`]). This pre-version-alpha contract is refreshed from
+//! zero; retired fields are refused rather than carried by a compatibility
+//! reader.
 
 use serde::{Deserialize, Serialize};
 
 use wamn_event_wire::Op;
 use wamn_schema_model::EntityId;
 
-/// The registration-model **format** version. Compatibility rule mirrors the
-/// catalog / flow / RLS / WIT freezes: `0.1.x` is additive/clarifying only; a
-/// breaking change waits for `0.2`.
+/// The registration-model **format** version.
 pub const SCHEMA_VERSION: &str = "0.1";
 
 /// One event registration — a subscribing flow's declaration of the row events
-/// it wants and how they are filtered and partitioned.
+/// it wants and how they are filtered.
 ///
 /// The `(catalog_id, registration_id)` pair is the identity (unique within a
 /// tenant); `flow_id` + `entity` are denormalized into storage columns for the
@@ -80,11 +76,6 @@ pub struct EventRegistration {
     /// flips replica identity (l5i9.1 decision d).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
-    /// Optional partition key: a JMESPath **expression** extracting the
-    /// `partitioned(key)` value from the event context (§5, R6 ordering). Absent
-    /// = the flow's runs carry no partition key.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub partition_key: Option<String>,
 }
 
 impl EventRegistration {

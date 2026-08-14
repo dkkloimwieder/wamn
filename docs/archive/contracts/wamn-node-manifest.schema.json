@@ -2,32 +2,6 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "additionalProperties": false,
   "definitions": {
-    "OrderingPolicy": {
-      "description": "An ordering policy a node declares support for (design-note 2). The runner's dispatch honors the flow's per-node choice among the node's declared set; the node itself stays a pure function under all three.",
-      "oneOf": [
-        {
-          "description": "Total order: one in-flight execution per node.",
-          "enum": [
-            "strict"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "Order per partition key, parallel across keys (the Kafka model).",
-          "enum": [
-            "partitioned"
-          ],
-          "type": "string"
-        },
-        {
-          "description": "Free parallelism up to the concurrency limit.",
-          "enum": [
-            "unordered"
-          ],
-          "type": "string"
-        }
-      ]
-    },
     "Purity": {
       "description": "The only manifest-level purity assertion a custom node may make.\n\nAbsence is intentionally not represented by another wire value: an absent declaration resolves to effectful semantics.",
       "oneOf": [
@@ -66,13 +40,6 @@
     "node-type": {
       "description": "The flow-graph node `type` this component implements — a lowercase slug (`[a-z0-9-]`, alphanumeric first/last), the flow-id rule.",
       "type": "string"
-    },
-    "ordering": {
-      "description": "Ordering policies the node supports. Default: all three.",
-      "items": {
-        "$ref": "#/definitions/OrderingPolicy"
-      },
-      "type": "array"
     },
     "output-ports": {
       "description": "Output ports the node can emit (edge affordances in the editor). Default `[\"main\"]`. `\"error\"` is reserved for the engine's error routing and never emitted by a node.",

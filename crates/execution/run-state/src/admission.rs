@@ -1,14 +1,12 @@
 //! Callable-flow admission.
 //!
-//! Producers enter the run plane through the ordered same-transaction recipe
+//! Producers enter the run plane through the same-transaction recipe
 //! returned by [`admission_transaction`]. Its first statement takes the stable
 //! catalog-head key-share lock; its second rechecks the producer-specific
 //! definition and writes the run, queue row, and any producer ledger atomically.
 
 use serde_json::Value;
 use wamn_pg_core::Identifier;
-
-use crate::queue::PartitionPolicy;
 
 /// Validated schema containing the durable run-state tables and functions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -50,60 +48,6 @@ impl AdmissionProducer {
             Self::Event => "event",
         }
     }
-}
-
-/// Resolved queue ordering carried by every producer into admission.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdmissionOrdering {
-    partition_key: Option<String>,
-    partition_policy: PartitionPolicy,
-}
-
-impl AdmissionOrdering {
-    /// Unordered work uses the queue's blocking default and no partition key.
-    pub fn unordered() -> AdmissionOrdering {
-        AdmissionOrdering {
-            partition_key: None,
-            partition_policy: PartitionPolicy::Blocking,
-        }
-    }
-
-    /// Validate resolved adapter inputs before binding the admission statement.
-    pub fn from_parts(
-        partition_key: Option<String>,
-        partition_policy: &str,
-    ) -> Result<AdmissionOrdering, AdmissionOrderingError> {
-        let partition_policy = PartitionPolicy::from_sql(partition_policy)
-            .ok_or(AdmissionOrderingError::UnknownPolicy)?;
-        match partition_key {
-            Some(partition_key) if partition_key.is_empty() => {
-                Err(AdmissionOrderingError::EmptyPartitionKey)
-            }
-            None if partition_policy == PartitionPolicy::Leapfrog => {
-                Err(AdmissionOrderingError::UnkeyedLeapfrog)
-            }
-            partition_key => Ok(AdmissionOrdering {
-                partition_key,
-                partition_policy,
-            }),
-        }
-    }
-
-    pub fn partition_key(&self) -> Option<&str> {
-        self.partition_key.as_deref()
-    }
-
-    pub fn partition_policy(&self) -> PartitionPolicy {
-        self.partition_policy
-    }
-}
-
-/// Invalid queue-ordering input at the admission boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdmissionOrderingError {
-    UnknownPolicy,
-    EmptyPartitionKey,
-    UnkeyedLeapfrog,
 }
 
 /// Typed result returned by the admission transition.
@@ -269,8 +213,6 @@ fn lock_catalog_head_sql() -> String {
 /// 22. immediate source run id (event)
 /// 23. causal root run id (event)
 /// 24. causal depth (event)
-/// 25. resolved partition key (all producers; null means unordered)
-/// 26. resolved partition policy (all producers; `blocking | leapfrog`)
 ///
 /// HTTP identity is reserved in the deferred-FK ledger before the run insert.
 /// The named unique constraint chooses the concurrent winner without allowing a
@@ -290,8 +232,7 @@ WITH input AS ( \
            $18::text AS registration_id, $19::bigint AS event_seq, \
            $20::text::jsonb AS registration_document, $21::text AS registration_hash, \
            $22::text AS event_source_run_id, $23::text AS event_root_run_id, \
-           $24::int AS event_depth, $25::text AS partition_key, \
-           $26::text AS partition_policy \
+           $24::int AS event_depth \
 ), \
 locked_head AS MATERIALIZED ( \
     SELECT h.applied_catalog_version \
@@ -356,17 +297,6 @@ existing_http AS MATERIALIZED ( \
        AND a.client_key_digest = i.client_key_digest \
      FOR KEY SHARE OF a \
 ), \
-existing_queue AS MATERIALIZED ( \
-    SELECT q.* FROM wamn_run.run_queue AS q, input AS i \
-     WHERE q.tenant_id = i.tenant_id \
-       AND q.run_id = COALESCE((SELECT run_id FROM existing_http), ( \
-         SELECT r.run_id FROM wamn_run.runs AS r \
-          WHERE r.tenant_id = i.tenant_id \
-            AND (r.run_id = i.run_id OR (i.producer = 'event' \
-              AND r.idempotency_key = 'evt:' || i.registration_id || ':' || i.event_seq::text)) \
-       ), i.run_id) \
-     FOR KEY SHARE OF q \
-), \
 existing_identity_run AS MATERIALIZED ( \
     SELECT r.* FROM wamn_run.runs AS r, input AS i \
      WHERE r.tenant_id = i.tenant_id \
@@ -386,11 +316,6 @@ classified AS ( \
         OR i.input_json IS NULL OR i.invocation_context IS NULL \
         OR jsonb_typeof(i.invocation_context) IS DISTINCT FROM 'object' \
         OR i.platform_revision IS NULL OR i.platform_revision = '' THEN 'invalid-input' \
-      WHEN i.partition_policy IS NULL \
-        OR i.partition_policy NOT IN ('blocking', 'leapfrog') \
-        OR i.partition_key = '' \
-        OR (i.partition_key IS NULL AND i.partition_policy <> 'blocking') \
-        THEN 'invalid-input' \
       WHEN i.response_deadline_at IS NOT NULL AND i.run_deadline_at IS NOT NULL \
         AND i.response_deadline_at > i.run_deadline_at THEN 'invalid-input' \
       WHEN i.producer = 'http' AND (i.attachment_id IS NULL \
@@ -445,10 +370,6 @@ classified AS ( \
       WHEN i.producer = 'http' AND eh.run_id IS NOT NULL \
        AND eh.client_request_fingerprint <> i.request_fingerprint \
         THEN 'idempotency-key-reused' \
-      WHEN eq.run_id IS NOT NULL \
-       AND (eq.partition_key IS DISTINCT FROM i.partition_key \
-         OR eq.partition_policy <> i.partition_policy) \
-        THEN 'conflicting-run-identity' \
       WHEN xr.run_id IS NOT NULL \
        AND (xr.trigger_source <> i.producer \
          OR xr.flow_id <> i.flow_id OR xr.flow_version <> i.flow_version \
@@ -477,7 +398,6 @@ classified AS ( \
     LEFT JOIN release_flow AS rf ON true \
     LEFT JOIN root_plan AS rp ON true \
     LEFT JOIN existing_http AS eh ON true \
-    LEFT JOIN existing_queue AS eq ON true \
     LEFT JOIN existing_identity_run AS xr ON true \
 ), \
 created_http AS ( \
@@ -533,8 +453,8 @@ created_run AS ( \
 ), \
 created_queue AS ( \
     INSERT INTO wamn_run.run_queue \
-      (tenant_id, run_id, partition_key, partition_policy, available_at, stream_seq) \
-    SELECT r.tenant_id, r.run_id, c.partition_key, c.partition_policy, now(), \
+      (tenant_id, run_id, available_at, stream_seq) \
+    SELECT r.tenant_id, r.run_id, now(), \
            CASE WHEN c.producer = 'event' THEN c.event_seq ELSE 0 END \
       FROM created_run AS r JOIN classified AS c USING (tenant_id, run_id) \
     RETURNING tenant_id, run_id \
@@ -574,8 +494,8 @@ mod tests {
         let sql = admission_sql().admit;
 
         assert!(!sql.contains("admission_expires_at"));
-        assert!(!sql.contains("$27"));
-        assert!(sql.contains("$26::text AS partition_policy"));
+        assert!(sql.contains("$24"));
+        assert!(!sql.contains("$25"));
         assert!(!sql.contains("executor_id"));
         assert!(!sql.contains("lease_ttl_ms"));
         assert!(sql.contains("OR i.client_key_digest = ''"));
@@ -601,10 +521,10 @@ mod tests {
         let configured_sql = format!("{} {}", configured.lock_head, configured.admit);
 
         assert_eq!(
-            canonical_references, 9,
+            canonical_references, 7,
             "update this pin when admission adds a run-state boundary"
         );
-        assert_eq!(configured_sql.matches("\"wamn_runner_demo\".").count(), 9);
+        assert_eq!(configured_sql.matches("\"wamn_runner_demo\".").count(), 7);
         assert!(!configured_sql.contains("wamn_run."));
     }
 
@@ -618,33 +538,6 @@ mod tests {
             quoted
                 .lock_head()
                 .contains("\"odd schema\".lock_catalog_head")
-        );
-    }
-
-    #[test]
-    fn admission_ordering_rejects_untyped_or_incoherent_inputs() {
-        assert_eq!(
-            AdmissionOrdering::from_parts(Some("site-7".to_string()), "leapfrog")
-                .unwrap()
-                .partition_policy(),
-            PartitionPolicy::Leapfrog
-        );
-        assert_eq!(
-            AdmissionOrdering::unordered().partition_key(),
-            None,
-            "unordered work has no key"
-        );
-        assert_eq!(
-            AdmissionOrdering::from_parts(None, "leapfrog"),
-            Err(AdmissionOrderingError::UnkeyedLeapfrog)
-        );
-        assert_eq!(
-            AdmissionOrdering::from_parts(Some(String::new()), "blocking"),
-            Err(AdmissionOrderingError::EmptyPartitionKey)
-        );
-        assert_eq!(
-            AdmissionOrdering::from_parts(Some("site-7".to_string()), "unknown"),
-            Err(AdmissionOrderingError::UnknownPolicy)
         );
     }
 
@@ -680,7 +573,7 @@ mod tests {
         assert!(ddl.contains("SECURITY DEFINER"));
         assert!(sql.contains("INSERT INTO wamn_run.runs"));
         assert!(sql.contains("INSERT INTO wamn_run.run_queue"));
-        assert!(sql.contains("c.partition_key, c.partition_policy, now()"));
+        assert!(sql.contains("SELECT r.tenant_id, r.run_id, now()"));
         assert!(!sql.contains("UPDATE wamn_run.run_queue"));
         assert!(sql.contains("INSERT INTO wamn_run.invocation_admissions"));
         assert!(sql.contains("FROM created_run AS r"));
@@ -692,8 +585,7 @@ mod tests {
     #[test]
     fn callable_admission_forces_capture_off_without_new_input() {
         let sql = admission_sql().admit().to_string();
-        assert!(sql.contains("$25::text AS partition_key, $26::text AS partition_policy"));
-        assert!(!sql.contains("$27"));
+        assert!(!sql.contains("$25"));
         assert!(!sql.contains("event_source_run_id, event_root_run_id, event_depth, capture_mode"));
         assert!(
             sql.contains(
@@ -757,17 +649,15 @@ mod tests {
         ] {
             assert!(sql.contains(refusal), "missing {refusal}");
         }
-        assert!(sql.contains(
-            "(tenant_id, run_id, partition_key, partition_policy, available_at, stream_seq)"
-        ));
+        assert!(sql.contains("(tenant_id, run_id, available_at, stream_seq)"));
         assert!(!sql.contains("lease_owner"));
         assert!(!sql.contains("lease_expires_at"));
         assert!(!sql.contains("lease_generation"));
         assert!(sql.contains("THEN c.event_seq ELSE 0 END"));
         assert!(sql.contains("'evt:' || c.registration_id"));
-        assert!(sql.contains("i.partition_policy NOT IN ('blocking', 'leapfrog')"));
-        assert!(sql.contains("i.partition_key IS NULL AND i.partition_policy <> 'blocking'"));
-        assert!(sql.contains("eq.partition_key IS DISTINCT FROM i.partition_key"));
+        assert!(!sql.contains("partition_key"));
+        assert!(!sql.contains("partition_policy"));
+        assert!(!sql.contains("existing_queue"));
         assert!(sql.contains("sl.depth + 1 <> i.event_depth"));
         assert!(sql.contains("xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id"));
     }

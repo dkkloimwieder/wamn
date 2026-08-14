@@ -31,7 +31,7 @@ load_mutation() {
   case "$id" in
     check-catalog-is-not-planned)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='for spec in CHECK_SPECS {
         if spec.table == "runs" && spec.name == "runs_check" {'
       REPLACEMENT='for spec in &[] as &[CheckSpec] {
@@ -41,7 +41,7 @@ load_mutation() {
       ;;
     missing-helper-is-accepted)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="a2bfb016786fd6d400da654584a9332c8162a0216c6ca049f507d822a8536417"
+      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='.helper_functions
             .get(spec.name)
             .is_none_or(|definition| {
@@ -52,12 +52,12 @@ load_mutation() {
             .is_some_and(|definition| {
                 normalize_observed_schema(definition, schema) != spec.definition.as_ref()
             })'
-      GATE="run_plane::tests::missing_helpers_and_trigger_are_repaired_for_present_runs"
+      GATE="run_plane::tests::missing_helpers_and_record_triggers_are_repaired"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control "$GATE" -- --exact)
       ;;
     effect-shell-does-not-apply)
       TARGET="services/ctl/src/reconcile_run_plane.rs"
-      EXPECTED_SHA="9b14a047e17a56758a5529d692fd943cd9c4b607675c20d38c4a1f5434338bd6"
+      EXPECTED_SHA="dbf022b0aeddc35d58ab600ab6a2e40cd126542a304cb863a94a7b6946a793ea"
       NEEDLE='for action in &plan.actions[applied..] {
             client
                 .batch_execute(&action.sql)'

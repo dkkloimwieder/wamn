@@ -28,16 +28,19 @@ use wamn_control_registry::identifiers::{
 };
 
 /// [9.8] The claimable run-queue depth for the pinned session's tenant. Mirrors
-/// EXACTLY the claim predicate of `wamn_run_state::queue::claim_batch_sql`
+/// EXACTLY the eligibility predicate of the production claim selector
 /// (`crates/execution/run-state/src/queue/sql.rs`: `available_at` reached, lease NULL-or-
 /// expired, budget-remaining), so the gauge counts precisely the rows a runner
 /// could claim right now. Inverting a clause (e.g. `available_at > now()`) makes
 /// a seeded queue read 0 — metricbench phase 2's mutant.
-pub const RUN_QUEUE_DEPTH_SQL: &str = "SELECT count(*)::bigint FROM run_queue \
-     WHERE tenant_id = current_setting('app.tenant', true) \
-       AND available_at <= now() \
-       AND (lease_expires_at IS NULL OR lease_expires_at <= now()) \
-       AND (attempts < max_attempts OR lease_expires_at IS NULL)";
+pub const RUN_QUEUE_DEPTH_SQL: &str = "SELECT count(*)::bigint FROM run_queue AS q \
+     WHERE q.tenant_id = current_setting('app.tenant', true) \
+       AND q.available_at <= now() \
+       AND (q.lease_expires_at IS NULL OR q.lease_expires_at <= now()) \
+       AND (q.attempts < q.max_attempts OR q.lease_expires_at IS NULL \
+            OR EXISTS (SELECT 1 FROM effect_attempts AS effect \
+                        WHERE effect.tenant_id = q.tenant_id \
+                          AND effect.run_id = q.run_id))";
 
 /// [9.8] One project's last-sampled claimable queue depth, with the tenant its
 /// gauge series is labelled by.
@@ -240,7 +243,7 @@ fn next_reconcile(last_sweep_ms: i64, interval_ms: i64) -> i64 {
 
 /// The dispatcher: per-project state + the optional doorbell client + the
 /// cadence config. One instance is one replica; running several is safe (the
-/// deterministic-id `ON CONFLICT` story — gated by dispatchbench `race`).
+/// deterministic-id `ON CONFLICT` story).
 pub struct Dispatcher {
     pub projects: Vec<ProjectState>,
     nats: Option<async_nats::Client>,
@@ -693,13 +696,14 @@ mod tests {
     #[test]
     fn depth_sql_counts_claimable_not_parked() {
         let sql = RUN_QUEUE_DEPTH_SQL;
-        assert!(sql.contains("available_at <= now()"));
-        assert!(sql.contains("lease_expires_at IS NULL OR lease_expires_at <= now()"));
-        assert!(sql.contains("attempts < max_attempts OR lease_expires_at IS NULL"));
+        assert!(sql.contains("q.available_at <= now()"));
+        assert!(sql.contains("q.lease_expires_at IS NULL OR q.lease_expires_at <= now()"));
+        assert!(sql.contains("q.attempts < q.max_attempts OR q.lease_expires_at IS NULL"));
+        assert!(sql.contains("FROM effect_attempts AS effect"));
         assert!(sql.contains("current_setting('app.tenant', true)"));
         assert!(!sql.contains("available_at > now()"));
 
-        let claim = wamn_run_state::queue::claim_batch_sql(1);
+        let claim = wamn_run_state::queue::select_production_claim_sql();
         assert!(claim.contains("available_at <= now()"));
         assert!(claim.contains("lease_expires_at IS NULL"));
         assert!(claim.contains("attempts < "));

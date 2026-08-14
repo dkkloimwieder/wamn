@@ -1,18 +1,18 @@
-//! Durable queue, lease, partition, timer, and dead-letter state.
+//! Durable global FIFO queue, lease, timer, and reclaim state.
 //!
 //! The dispatch half of the flow runner: a `FOR UPDATE SKIP LOCKED` run queue in
 //! Postgres (durability), NATS-core fire-and-forget doorbells (latency), and
 //! run-claim leases that reclaim a dead replica's work (scaling). Where the run
 //! history records persist *what happened* while this module governs *what
-//! runs next and who runs it*: the write-ahead enqueue, the batch claim, lease
+//! runs next and who runs it*: the write-ahead enqueue, the one-row production claim, lease
 //! renewal, the janitor that gives up on an abandoned run, and the reconciliation
 //! sweep that backstops a lost doorbell hint.
 //!
 //! Like the rest of `wamn-run-state`, this
 //! crate is **pure**: no DB, no NATS, no clock. Every decision is a function of
 //! `(rows, now, config)` with `now` a passed-in [`crate::queue::Millis`]; the SQL is emitted as
-//! parameterized `String`s. The driver (`tests/integration/src/queuebench.rs` /
-//! the dispatcher) supplies the `wamn:postgres` effects against the schema in
+//! parameterized `String`s. The host-owned production composer and dispatcher
+//! supply the Postgres effects against the schema in
 //! `deploy/sql/run-queue.sql`, the NATS-core doorbell, the real clock, and the replica
 //! identity.
 //!
@@ -29,35 +29,26 @@
 //! assert_eq!(claim_state(&leased, 600), ClaimState::Ready); // lease expired -> reclaimable
 //! ```
 //!
-//! ## Scope (5.14) vs siblings
-//! Owns: the `run_queue` (+ `partition_owner`) tables + DDL
-//! (`deploy/sql/run-queue.sql`), the
-//! `SKIP LOCKED` claim + batch claims, the D15 write-ahead / reduced-audit fast
-//! path, run-claim leases + reclaim, the janitor (orphan →
-//! `infrastructure-failure`), the reconciliation cadence, **per-partition
-//! ownership** — the `partition_owner` lease + head-first claim
-//! ([`crate::queue::plan_partition_claim`])
-//! that dispatches `partitioned(key)` runs in order per key across replicas —
-//! ownership. Trigger schedule and cadence decisions live in `wamn-scheduler`;
+//! ## Scope vs siblings
+//! Owns: the global `run_queue`, exact FIFO claim decision, lease/reclaim
+//! classifier, and janitor. Trigger schedule and cadence decisions live in `wamn-scheduler`;
 //! this module owns only their durable SQL boundary. (Row events are no longer a
 //! dispatcher concern: the D19 v3 event plane — CDC reader → JetStream →
 //! materializer — delivers them; the outbox path was torn down at l5i9.19.)
-//! The **walking skeleton** deferred these to follow-ups; all are now
-//! delivered, including the **guest-self-claim** (fqg.4): the flowrunner guest
-//! links the pure claim-path builders and claims its own work via `run-next`.
+//! The host-only Postgres adapter composes the transaction; the flowrunner guest
+//! receives only the already-claimed `(run-id, payload)` pair.
 //! Does **not** own: the engine walk / retry / reconstruction (5.2 + 5.7 — the
 //! claimed run drives them); the `runs`/`node_runs` schema (5.7 — 5.14 co-transacts
 //! and reuses the reserved `dispatched`/`infrastructure-failure` statuses via
-//! [`crate::RunStatus`]); per-node ordering *semantics* (5.11 — 5.14 provides the
-//! per-partition claim *mechanism*); the payload byte store (5.10).
+//! [`crate::RunStatus`]); the payload byte store (5.10).
 //!
 //! ## SR12 — what the pure tests cover, and what they cannot
 //!
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: this module's `claim_batch_sql`
-//! passed every pure test while the real statement over-claimed on a
+//! correctly here and still misbehave live: a prior batch claim passed every
+//! pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
 //! every composed or plan-sensitive statement carries a comment naming what the
@@ -71,22 +62,22 @@ mod evt;
 mod janitor;
 mod lease;
 mod model;
-mod partition;
 mod sql;
 
 pub use claim::{
-    ClaimPlan, ClaimState, Claimed, claim_state, dead_letters_on_terminal, is_claimable, plan_claim,
+    ClaimPlan, ClaimState, Claimed, ProductionClaimClass, claim_state, classify_production_claim,
+    is_claimable, plan_claim, production_claim_state,
 };
 pub use evt::mint_evt_run_id;
-pub use janitor::{JanitorVerdict, janitor_verdict, orphans};
+pub use janitor::{JanitorVerdict, janitor_verdict, janitor_verdict_with_attempt, orphans};
 pub use lease::{lease_deadline, lease_live, should_renew};
-pub use model::{Millis, PartitionOwner, PartitionPolicy, QueueEntry};
-pub use partition::{partition_lease_live, plan_acquire, plan_partition_claim};
+pub use model::{Millis, QueueEntry};
 pub use sql::{
-    acquire_partitions_sql, active_flows_sql, claim_batch_sql, claim_dispatch_sql,
-    claim_partition_head_sql, complete_dequeue_sql, dead_letter_dequeue_sql, dequeue_sql,
-    enqueue_evt_sql, enqueue_evt_with_policy_sql, enqueue_sql, enqueue_with_policy_sql,
-    gc_orphan_partitions_sql, janitor_sweep_sql, mark_running_sql, park_sql, parked_due_sql,
-    record_error_and_renew_sql, record_success_and_renew_sql, release_partition_sql,
-    renew_lease_sql, renew_partition_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    active_flows_sql, complete_dequeue_sql, dequeue_sql, enqueue_evt_sql, enqueue_sql,
+    grant_production_claim_sql, mark_running_sql, park_sql, parked_due_sql,
+    record_error_and_renew_sql, record_success_and_renew_sql, renew_lease_sql,
+    reset_pre_effect_claim_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_production_claim_sql, serialize_effect_intent_sql,
+    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    terminalize_resolution_refusal_claim_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
 };

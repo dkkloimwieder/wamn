@@ -22,7 +22,7 @@ use crate::status::{NodeRunStatus, RunStatus};
 /// Build the execution-only input projection for a run-row alias.
 ///
 /// Event lineage is durable in trusted columns, never in author-visible
-/// `input_json`. At dispatch time the runner still needs the lineage object its
+/// `input_json`. At single-shot execution time the runner still needs the lineage object its
 /// frozen guest contract consumes, so both dispatch selectors use this exact
 /// expression. The right-hand `jsonb` object replaces any same-named author
 /// field; non-event rows retain their persisted input unchanged.
@@ -124,13 +124,13 @@ pub fn select_run_state_sql() -> String {
     "SELECT state_json::text FROM runs WHERE run_id = $1".to_string()
 }
 
-/// Read a claimed run's dispatch inputs — the flow it runs, the **persisted**
+/// Read an already host-claimed run's dispatch inputs — the flow it runs, the **persisted**
 /// `flow_version` the run started under, and the trigger input a dispatcher
-/// persisted — so a guest that claimed the run from the queue (fqg.4) drives the
+/// persisted — so the single-shot guest drives the
 /// *recorded* flow at the *recorded* version, not a hard-coded fixture id and not
 /// whatever version is active NOW (wamn-cox: a resume pins the run's own version,
 /// so a flow edited mid-run cannot make a resume reconstruct against a divergent
-/// graph). `$1` run_id; RLS scopes the tenant (like the other read builders). A
+/// graph). `$1` run_id; RLS scopes the tenant (like the other read builders).
 /// Event runs receive an execution-only `causation` object synthesized from
 /// trusted `event_root_run_id` / `event_depth` columns. This does not update
 /// `input_json`, and the trusted object replaces any same-named input field.
@@ -199,6 +199,33 @@ pub fn select_release_resolution_bindings_sql() -> String {
       WHERE run.tenant_id = current_setting('app.tenant', true) \
         AND run.run_id = $1 \
       ORDER BY binding.artifact_hash, binding.requirement_name"
+        .to_string()
+}
+
+/// Read the optional exact draft/test root-plan override pinned by a run.
+///
+/// The row for `$1` is returned even when no candidate is requested. A
+/// requested hash with no matching immutable draft therefore remains
+/// distinguishable from an ordinary release run and can fail closed at the
+/// host composition boundary. This statement performs no queue operation or
+/// transaction control.
+pub fn select_candidate_resolution_override_sql() -> String {
+    "SELECT run.invocation_context #>> \
+                '{principal,validated-draft-hash}' AS requested_hash, \
+            draft.validated_draft_hash, draft.catalog_id, draft.catalog_version, \
+            draft.environment, draft.flow_id, draft.runtime_flow_version, \
+            draft.execution_bundle_hash, draft.draft_artifact_hash, \
+            draft.binding_base_artifact_hash, bundle.exact_bytes \
+       FROM runs AS run \
+       LEFT JOIN catalog.validated_flow_drafts AS draft \
+         ON draft.tenant_id = run.tenant_id \
+        AND draft.validated_draft_hash = \
+            run.invocation_context #>> '{principal,validated-draft-hash}' \
+       LEFT JOIN catalog.execution_bundles AS bundle \
+         ON bundle.tenant_id = draft.tenant_id \
+        AND bundle.execution_bundle_hash = draft.execution_bundle_hash \
+      WHERE run.tenant_id = current_setting('app.tenant', true) \
+        AND run.run_id = $1"
         .to_string()
 }
 
@@ -296,7 +323,7 @@ pub fn select_completed_node_runs_sql() -> String {
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
 /// infrastructure-failure) whose `created_at` predates `$1` days ago.
-/// `node_runs` (and any surviving `run_queue` / `run_dead_letters` rows) cascade
+/// `node_runs` (and any surviving `run_queue` rows) cascade
 /// via their `ON DELETE CASCADE` FK to `runs`. A `dispatched`/`running` run is
 /// never pruned (it may still complete). Age-based
 /// only in v0 — replay lineage (`replay_of`/`root_run_id`) is not consulted.
@@ -502,6 +529,22 @@ mod tests {
                 "resolution SQL must not own claim composition token {forbidden}"
             );
         }
+
+        let candidate = select_candidate_resolution_override_sql();
+        assert!(candidate.contains("'{principal,validated-draft-hash}'"));
+        assert!(candidate.contains("LEFT JOIN catalog.validated_flow_drafts AS draft"));
+        assert!(candidate.contains("draft.validated_draft_hash"));
+        assert!(candidate.contains("draft.catalog_id"));
+        assert!(candidate.contains("draft.catalog_version"));
+        assert!(candidate.contains("draft.environment"));
+        assert!(candidate.contains("draft.flow_id"));
+        assert!(candidate.contains("draft.runtime_flow_version"));
+        assert!(candidate.contains("draft.execution_bundle_hash"));
+        assert!(candidate.contains("draft.draft_artifact_hash"));
+        assert!(candidate.contains("draft.binding_base_artifact_hash"));
+        assert!(candidate.contains("bundle.exact_bytes"));
+        assert!(!candidate.contains("FOR UPDATE"));
+        assert!(!candidate.contains("COMMIT"));
     }
 
     #[test]

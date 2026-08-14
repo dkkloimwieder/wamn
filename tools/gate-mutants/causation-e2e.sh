@@ -31,7 +31,7 @@ load_mutation() {
   case "$id" in
     invocation-drops-sink-write)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="cd38af0bd2d320b036adba7e1d035343c9dd0cf4731152244be81ed8902a5d3e"
+      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
       NEEDLE='{ "id": "write", "type": "pg-write" }'
       REPLACEMENT='{ "id": "write", "type": "transform" }'
       GATE="causation_e2e::tests::invocation_fixture_drives_one_gate_scoped_pg_write"
@@ -39,7 +39,7 @@ load_mutation() {
       ;;
     reader-requests-r1)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="cd38af0bd2d320b036adba7e1d035343c9dd0cf4731152244be81ed8902a5d3e"
+      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
       NEEDLE='stream_replicas: 3,'
       REPLACEMENT='stream_replicas: 1,'
       GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"
@@ -47,7 +47,7 @@ load_mutation() {
       ;;
     readerbench-drops-exact-causation)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="cd38af0bd2d320b036adba7e1d035343c9dd0cf4731152244be81ed8902a5d3e"
+      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
       NEEDLE='expect_causation_run: Some(run_id.into()),'
       REPLACEMENT='expect_causation_run: None,'
       GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"

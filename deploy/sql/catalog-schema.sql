@@ -1716,8 +1716,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.seed_datasets TO wamn_app;
 -- ---------------------------------------------------------------------------
 -- Event registrations (EVT-REG, D19 v3 §5, crates/events/registration). One row per
 -- registration: a subscribing flow's declaration of WHICH entity's row events it
--- wants (`entity_id`), WHICH ops, an optional condition filter, and an optional
--- partition-key expression. The materializer (crates/... l5i9.17) is the
+-- wants (`entity_id`), WHICH ops, and an optional condition filter. The
+-- materializer (crates/... l5i9.17) is the
 -- consumer — a durable consumer per registration, condition evaluated there
 -- (hot-editable). Managed through the minimal CRUD surface in crates/data/entity-access
 -- (`registration` module); the editor panel lands later (EVT-TRIGGER-UX).

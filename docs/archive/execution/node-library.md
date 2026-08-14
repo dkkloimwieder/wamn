@@ -85,9 +85,10 @@ from the trigger).
 
 - **Loop/split/merge nodes** — loops are STRUCTURAL: cycles + `conditional`
   express them (the 5.1 schema allows cycles; the engine walks them). Dedicated
-  split/merge nodes land with the 5.11 ordering/concurrency semantics
-  (wamn-1d4) — the current walk is single-token BFS with no join barrier, so a
-  parallel split/join would be a lie.
+  split/merge nodes require an explicit in-memory frame/join design — the
+  current walk is single-token BFS with no join barrier, so a parallel
+  split/join would be a lie. The retired authored ordering plane is not that
+  design.
 - **email/notify** — no email egress capability exists; notify is an
   `http-request` in disguise. Follow-up bead filed.
 
@@ -155,8 +156,7 @@ Nodes never string-match; the maps are fixed and unit-pinned:
 - **Retry waits**: a scheduled retry surfaces as `Step::Wait`; this
   per-invocation driver treats it defensively as a failed run (poc-webhook-f1's
   sync rule). Cross-invocation retry scheduling belongs to the queue layer
-  (`run_queue.available_at` / `park_sql`) and lands with the guest-claim
-  rewire (wamn-fqg.4).
+  (`run_queue.available_at` / `park_sql`) and the host-owned claim path.
 - The SDK `Emission` port is now IN the frozen contract: the 5.4 freeze
   amended `run` to return an emission record `{payload, port: option<string>}`
   (absent = `main`) before freezing 0.1 — WIT and SDK coincide, drift-guarded

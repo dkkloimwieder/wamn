@@ -9,7 +9,6 @@ use serde_json::json;
 use wamn_run_state::admission::{
     AdmissionTransition, RunStateSchema, admission_transaction, registration_evidence,
 };
-use wamn_run_state::queue::claim_partition_head_sql;
 
 fn psql(url: &str, script: &str) -> Output {
     let mut child = Command::new("psql")
@@ -47,37 +46,19 @@ fn prepare(sql: &str) -> String {
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
           timestamptz,timestamptz,text,text,text, \
-          text,bigint,text,text,text,text,int,text,text) AS {sql};"
+          text,bigint,text,text,text,text,int) AS {sql};"
     )
 }
 
-fn ordering(partition_key: Option<&str>, partition_policy: &str) -> String {
-    format!(
-        "{},'{partition_policy}'",
-        partition_key.map_or_else(|| "NULL".to_string(), |key| format!("'{key}'"))
-    )
-}
-
-fn execute_http_ordered(
-    run_id: &str,
-    key: &str,
-    fingerprint: &str,
-    partition_key: Option<&str>,
-    partition_policy: &str,
-) -> String {
+fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
     format!(
         "EXECUTE admit_stmt(\
          'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
          'principal','{key}','{fingerprint}',\
-         NULL,NULL,NULL,NULL,NULL,NULL,NULL,{})",
-        ordering(partition_key, partition_policy)
+         NULL,NULL,NULL,NULL,NULL,NULL,NULL)"
     )
-}
-
-fn execute_http(run_id: &str, key: &str, fingerprint: &str) -> String {
-    execute_http_ordered(run_id, key, fingerprint, None, "blocking")
 }
 
 fn execute_http_without_key(run_id: &str) -> String {
@@ -87,33 +68,11 @@ fn execute_http_without_key(run_id: &str) -> String {
          '{run_id}','{{\"request\":1}}','{{\"request-id\":\"req-1\"}}','rev-test',\
          now()+interval '30 seconds',now()+interval '1 minute',\
          'principal',NULL,'fingerprint-without-key',\
-         NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking')"
+         NULL,NULL,NULL,NULL,NULL,NULL,NULL)"
     )
 }
 
-fn execute_event_ordered(
-    run_id: &str,
-    document: &str,
-    hash: &str,
-    seq: i64,
-    partition_key: Option<&str>,
-    partition_policy: &str,
-) -> String {
-    execute_event_lineage_ordered(
-        run_id,
-        document,
-        hash,
-        seq,
-        run_id,
-        run_id,
-        0,
-        partition_key,
-        partition_policy,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn execute_event_lineage_ordered(
+fn execute_event_lineage(
     run_id: &str,
     document: &str,
     hash: &str,
@@ -121,8 +80,6 @@ fn execute_event_lineage_ordered(
     source_run_id: &str,
     root_run_id: &str,
     depth: i32,
-    partition_key: Option<&str>,
-    partition_policy: &str,
 ) -> String {
     format!(
         "EXECUTE admit_stmt(\
@@ -130,13 +87,12 @@ fn execute_event_lineage_ordered(
          '{run_id}','{{\"event\":{seq}}}','{{\"event-seq\":{seq}}}','rev-test',\
          NULL,now()+interval '1 minute',NULL,NULL,NULL,\
          'reg-a',{seq},'{document}','{hash}',\
-         '{source_run_id}','{root_run_id}',{depth},{})",
-        ordering(partition_key, partition_policy)
+         '{source_run_id}','{root_run_id}',{depth})"
     )
 }
 
 fn execute_event(run_id: &str, document: &str, hash: &str, seq: i64) -> String {
-    execute_event_ordered(run_id, document, hash, seq, None, "blocking")
+    execute_event_lineage(run_id, document, hash, seq, run_id, run_id, 0)
 }
 
 #[test]
@@ -410,7 +366,7 @@ fn admission_live() {
     // runs carry the immediate parent while retaining the original root.
     for (execution, expected) in [
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-child",
                 &registration_document,
                 &registration_digest,
@@ -418,13 +374,11 @@ fn admission_live() {
                 "http-1",
                 "http-1",
                 1,
-                None,
-                "blocking",
             ),
             "admitted|event-child",
         ),
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-grandchild",
                 &registration_document,
                 &registration_digest,
@@ -432,8 +386,6 @@ fn admission_live() {
                 "event-child",
                 "http-1",
                 2,
-                None,
-                "blocking",
             ),
             "admitted|event-grandchild",
         ),
@@ -460,161 +412,6 @@ fn admission_live() {
          END $$;",
     );
 
-    // The centralized insert carries ordering for every producer. Unordered
-    // work is explicitly null+blocking; keyed work preserves either policy.
-    for (execution, expected) in [
-        (
-            execute_http_ordered(
-                "http-ordered",
-                "key-ordered",
-                "fp-ordered",
-                Some("account-7"),
-                "blocking",
-            ),
-            "admitted|http-ordered",
-        ),
-        (
-            execute_http_ordered(
-                "http-blocking-head",
-                "key-blocking-head",
-                "fp-blocking-head",
-                Some("site-strict"),
-                "blocking",
-            ),
-            "admitted|http-blocking-head",
-        ),
-        (
-            execute_event_ordered(
-                "event-ordered",
-                &registration_document,
-                &registration_digest,
-                44,
-                Some("site-leap"),
-                "leapfrog",
-            ),
-            "admitted|event-ordered",
-        ),
-        (
-            execute_http_ordered(
-                "http-blocking-next",
-                "key-blocking-next",
-                "fp-blocking-next",
-                Some("site-strict"),
-                "blocking",
-            ),
-            "admitted|http-blocking-next",
-        ),
-        (
-            execute_event_ordered(
-                "event-ordered-next",
-                &registration_document,
-                &registration_digest,
-                45,
-                Some("site-leap"),
-                "leapfrog",
-            ),
-            "admitted|event-ordered-next",
-        ),
-    ] {
-        let result = success(
-            &url,
-            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
-        );
-        assert_eq!(result.trim(), expected);
-    }
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT (SELECT partition_key IS NULL AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='http-1'); \
-           ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
-           ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='http-blocking-head'); \
-           ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
-                     FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
-         END $$;",
-    );
-
-    // The policies stamped by admission drive the real partition claim: a
-    // backed-off blocking head holds its later sibling, while leapfrog yields.
-    let claim = claim_partition_head_sql(10);
-    success(
-        &url,
-        &format!(
-            "{} SET LOCAL search_path=wamn_run,public; \
-             UPDATE wamn_run.run_queue SET lease_owner=NULL, lease_expires_at=NULL \
-              WHERE run_id IN ('http-blocking-head','http-blocking-next'); \
-             UPDATE wamn_run.run_queue SET available_at=now()+interval '1 hour' \
-              WHERE run_id IN ('http-blocking-head','event-ordered'); \
-             INSERT INTO wamn_run.partition_owner \
-               (tenant_id,partition_key,lease_owner,lease_expires_at) VALUES \
-               ('t1','site-strict','ordering-probe',now()+interval '1 minute'),\
-               ('t1','site-leap','ordering-probe',now()+interval '1 minute'); \
-             PREPARE ordering_claim_stmt(text,bigint) AS {claim}; \
-             EXECUTE ordering_claim_stmt('ordering-probe',30000); \
-             DO $$ BEGIN \
-               ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
-                 WHERE run_id='http-blocking-next') IS NULL, \
-                 'blocking admission holds the later sibling'; \
-               ASSERT (SELECT lease_owner FROM wamn_run.run_queue \
-                 WHERE run_id='event-ordered-next') = 'ordering-probe', \
-                 'leapfrog admission yields to the ready sibling'; \
-             END $$; COMMIT;",
-            app_preamble()
-        ),
-    );
-
-    // A retry may recover the existing admission, but it cannot alter the
-    // ordering already stamped on that queue row.
-    for execution in [
-        execute_http_ordered(
-            "http-ordered-retry",
-            "key-ordered",
-            "fp-ordered",
-            Some("changed"),
-            "blocking",
-        ),
-        execute_http_ordered(
-            "http-blocking-head-retry",
-            "key-blocking-head",
-            "fp-blocking-head",
-            Some("changed"),
-            "blocking",
-        ),
-        execute_event_ordered(
-            "event-ordered-retry",
-            &registration_document,
-            &registration_digest,
-            44,
-            Some("changed"),
-            "blocking",
-        ),
-    ] {
-        let result = success(
-            &url,
-            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
-        );
-        assert!(
-            result.trim().starts_with("conflicting-run-identity|"),
-            "{result}"
-        );
-    }
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT (SELECT partition_key='account-7' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='http-ordered'); \
-           ASSERT (SELECT partition_key='site-strict' AND partition_policy='blocking' \
-                     FROM wamn_run.run_queue WHERE run_id='http-blocking-head'); \
-           ASSERT (SELECT partition_key='site-leap' AND partition_policy='leapfrog' \
-                     FROM wamn_run.run_queue WHERE run_id='event-ordered'); \
-           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
-                     WHERE run_id IN ('http-ordered-retry','http-blocking-head-retry',\
-                                      'event-ordered-retry')); \
-         END $$;",
-    );
-
     // Definition/head drift, conflicting HTTP reuse, and stale/bad event
     // registration evidence are typed refusals and create no run.
     let negatives = format!(
@@ -625,12 +422,12 @@ fn admission_live() {
            'http','c1','dev',99,'http-a','sha256:http','flow-http',1,\
            'http-stale','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-stale','key-stale','fp-stale',\
-           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL); \
          CREATE TEMP TABLE inactive AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'missing','sha256:http','flow-http',1,\
            'http-inactive','{{}}','{{}}','rev-test',now()+interval '30 seconds',\
            now()+interval '1 minute','principal-inactive','key-inactive','fp-inactive',\
-           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM reused) = 'idempotency-key-reused'; \
            ASSERT (SELECT result_code FROM bad_hash) = 'invalid-registration-hash'; \
@@ -651,11 +448,11 @@ fn admission_live() {
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\
            'http','c1','dev',1,'http-a','sha256:http','flow-http',1,\
            'bad-http','{{}}','{{}}','rev-test',NULL,NULL,'p','k','',\
-           NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'blocking'); \
+           NULL,NULL,NULL,NULL,NULL,NULL,NULL); \
          CREATE TEMP TABLE bad_event AS EXECUTE admit_stmt(\
            'event','c1','dev',1,NULL,NULL,'flow-event',1,\
            'bad-event','{{}}','{{}}','rev-test',NULL,NULL,NULL,NULL,NULL,\
-           'reg-a',43,'{}',NULL,'bad-event','bad-event',0,NULL,'blocking'); \
+           'reg-a',43,'{}',NULL,'bad-event','bad-event',0); \
          DO $$ BEGIN \
            ASSERT (SELECT result_code FROM bad_http) = 'invalid-input'; \
            ASSERT (SELECT result_code FROM bad_event) = 'invalid-input'; \
@@ -691,7 +488,7 @@ fn admission_live() {
     );
     for (execution, expected) in [
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-bad-root",
                 &registration_document,
                 &registration_digest,
@@ -699,13 +496,11 @@ fn admission_live() {
                 "event-child",
                 "wrong-root",
                 2,
-                None,
-                "blocking",
             ),
             "invalid-event-lineage|",
         ),
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-bad-depth",
                 &registration_document,
                 &registration_digest,
@@ -713,13 +508,11 @@ fn admission_live() {
                 "event-child",
                 "http-1",
                 3,
-                None,
-                "blocking",
             ),
             "invalid-event-lineage|",
         ),
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-foreign",
                 &registration_document,
                 &registration_digest,
@@ -727,13 +520,11 @@ fn admission_live() {
                 "foreign-source",
                 "foreign-source",
                 1,
-                None,
-                "blocking",
             ),
             "invalid-event-lineage|",
         ),
         (
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-over-depth",
                 &registration_document,
                 &registration_digest,
@@ -741,8 +532,6 @@ fn admission_live() {
                 "event-child",
                 "http-1",
                 17,
-                None,
-                "blocking",
             ),
             "invalid-input|",
         ),
@@ -771,7 +560,7 @@ fn admission_live() {
             "{} {} {}; COMMIT;",
             app_preamble(),
             prepared,
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-child-retry",
                 &registration_document,
                 &registration_digest,
@@ -779,8 +568,6 @@ fn admission_live() {
                 "http-1",
                 "http-1",
                 1,
-                None,
-                "blocking",
             )
         ),
     );
@@ -791,7 +578,7 @@ fn admission_live() {
             "{} {} {}; COMMIT;",
             app_preamble(),
             prepared,
-            execute_event_lineage_ordered(
+            execute_event_lineage(
                 "event-child-retry",
                 &registration_document,
                 &registration_digest,
@@ -799,8 +586,6 @@ fn admission_live() {
                 "event-1",
                 "event-1",
                 1,
-                None,
-                "blocking",
             )
         ),
     );
@@ -813,44 +598,6 @@ fn admission_live() {
         ),
     );
     assert!(!mutation.status.success(), "lineage mutation must fail");
-
-    for execution in [
-        execute_http_ordered(
-            "http-unknown-policy",
-            "key-unknown-policy",
-            "fp-unknown-policy",
-            Some("site"),
-            "unknown",
-        ),
-        execute_event_ordered(
-            "event-unkeyed-leapfrog",
-            &registration_document,
-            &registration_digest,
-            55,
-            None,
-            "leapfrog",
-        ),
-        execute_http_ordered(
-            "http-empty-key",
-            "key-empty",
-            "fp-empty",
-            Some(""),
-            "blocking",
-        ),
-    ] {
-        let result = success(
-            &url,
-            &format!("{} {} {}; COMMIT;", app_preamble(), prepared, execution),
-        );
-        assert_eq!(result.trim(), "invalid-input|");
-    }
-    success(
-        &url,
-        "DO $$ BEGIN \
-           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
-             'http-unknown-policy','event-unkeyed-leapfrog','http-empty-key')); \
-         END $$;",
-    );
 
     // A failure at every run, queue, and HTTP-ledger seam rolls back every
     // preceding CTE. The queue fault is HTTP-specific so it proves that both
@@ -870,13 +617,7 @@ fn admission_live() {
         (
             "queue",
             "wamn_run.run_queue",
-            execute_http_ordered(
-                "http-queue-fault",
-                "key-queue-fault",
-                "fp-queue-fault",
-                Some("fault-key"),
-                "leapfrog",
-            ),
+            execute_http("http-queue-fault", "key-queue-fault", "fp-queue-fault"),
             "http-queue-fault",
         ),
         (
@@ -935,13 +676,7 @@ fn admission_live() {
                     "{} {} {}; COMMIT;",
                     app_preamble(),
                     prepare(&race_sql),
-                    execute_http_ordered(
-                        run_id,
-                        "race-key",
-                        "race-fingerprint",
-                        Some("race-partition"),
-                        "leapfrog",
-                    )
+                    execute_http(run_id, "race-key", "race-fingerprint")
                 ),
             )
         }));
@@ -973,9 +708,6 @@ fn admission_live() {
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race run'; \
            ASSERT (SELECT count(*) FROM wamn_run.run_queue \
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race queue'; \
-           ASSERT (SELECT bool_and(partition_key='race-partition' \
-                     AND partition_policy='leapfrog') FROM wamn_run.run_queue \
-                   WHERE run_id IN ('race-a','race-b')), 'race ordering is coherent'; \
          END $$;",
     );
 

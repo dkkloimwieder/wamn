@@ -1,7 +1,7 @@
 //! # wamn-run-state — the durable execution lifecycle
 //!
 //! This crate owns the transactionally coupled `runs`, `node_runs`, `run_queue`,
-//! lease, partition, timer, and dead-letter lifecycle. It contains only models,
+//! lease, timer, and terminal lifecycle. It contains only models,
 //! decisions, reconstruction, and parameterized SQL; Postgres, clocks, and
 //! doorbells remain adapter effects.
 //!
@@ -53,7 +53,7 @@
 //! This crate's tests exercise the **decision** (which statement, what shape,
 //! which binds); they cannot exercise the **statement** — the pure model has no
 //! planner, isolation level, lock manager, or RLS. A statement can be modelled
-//! correctly here and still misbehave live: `queue::claim_batch_sql`
+//! correctly here and still misbehave live: the production claim selector
 //! passed every pure test while the real statement over-claimed on a
 //! plan-dependent `SKIP LOCKED` re-scan — the `AS MATERIALIZED` fix is a
 //! property of the emitted SQL no pure test can observe. Convention (SR12a):
@@ -82,7 +82,7 @@ pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
 mod model;
-/// Durable queue, lease, partition, timer, and dead-letter decisions and SQL.
+/// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
 mod reconstruct;
 mod rerun;

@@ -1,6 +1,6 @@
 [package]
 name = "wamn-materializer"
-description = "wamn CDC materializer decisions (EVT-MAT, D19 v3 §5, l5i9.17): the PURE per-event pipeline — registration match, tenant guard, causation budget, condition eval (REPLICA IDENTITY DEFAULT contract), partition key/policy resolution, deterministic run-id + run-input mint — as functions of (registration, flow declaration, envelope, stream_seq). PURE — no DB, no NATS, no clock; the Service guest (components/execution/materializer) supplies the wamn:postgres + wamn:jetstream effects."
+description = "wamn CDC materializer decisions: the pure per-event registration match, tenant guard, causation budget, condition evaluation, and deterministic run/input mint. The Service guest supplies PostgreSQL and JetStream effects."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,20 +9,16 @@ license.workspace = true
 # The wire contract the decisions consume: Envelope/Op/Causation (WORKING
 # DRAFT until the l5i9.30 freeze — this crate tracks it, adds no drift guards).
 wamn-event-wire = { workspace = true }
-# The declaration the materializer serves: EventRegistration (entity id, ops,
-# condition, partition-key expr).
+# The declaration the materializer serves: EventRegistration (entity, ops, and condition).
 wamn-event-reg = { workspace = true }
-# The flow-level ordering declaration (fqg.20) + head-unavailability policy
-# (D20): Ordering::partition_key_for owns the key-folding rules (never NULL for
-# an ordered flow); this crate consumes them, never re-implements them.
+# EventInput and RowEvent are shared with the flow entry contract.
 wamn-flow = { workspace = true }
-# The evt run-id mint + the queue's policy storage enum (as_sql owns the
-# literal). Scheduling remains outside this guest-safe materialization core.
+# The deterministic event run-id mint. Scheduling remains outside this
+# guest-safe materialization core.
 wamn-run-state = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-# Condition + partition-key evaluation — the codebase's one expression
-# language; 0.3 is the wamn-standard-nodes/wamn-flow/wamn-event-reg pin.
+# Condition evaluation uses the codebase's one expression language.
 jmespath = { workspace = true }
 
 [dev-dependencies]

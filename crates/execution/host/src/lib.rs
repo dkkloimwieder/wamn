@@ -1,7 +1,7 @@
 //! Shared WASI/Wasm adapter for the compiled flowrunner component.
 //!
 //! [`ExecutionHost`] instantiates one component with host-injected identity and
-//! capabilities, exposes `check-flow`, and drives the guest's `run-next` export.
+//! capabilities, claims host-side, and drives the guest's single-shot `run` export.
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,
 //! and production capability selection remains in the service leaves.
 
@@ -39,6 +39,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
 use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
+use wamn_run_state::{FailKind, RunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
@@ -46,7 +47,9 @@ use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressP
 use wamn_runtime::plugins::runner_plan_supply::{self, RUNNER_PLAN_SUPPLY_ID, RunnerPlanSupply};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
-use wamn_runtime::plugins::wamn_postgres::{self, WamnPostgres};
+use wamn_runtime::plugins::wamn_postgres::{
+    self, ProductionClaimResult, ProductionReapResult, WamnPostgres,
+};
 
 /// Stable in-image location of the compiled flowrunner component.
 pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
@@ -172,11 +175,11 @@ pub fn injected_capabilities(
     }
 }
 
-/// The `run-next` export's typed signature: `(lease-ttl-ms) -> (claimed, run-id,
-/// outcome)`.
-type RunNextFunc = TypedFunc<(u64,), (Result<(bool, Option<String>, u32), String>,)>;
-/// The side-effect-free `check-flow` export's typed signature.
-type CheckFlowFunc = TypedFunc<(String,), (Result<Vec<String>, String>,)>;
+/// The sole flowrunner export: one already claimed run and authoritative input.
+type RunFunc = TypedFunc<(String, String), (Result<u32, String>,)>;
+
+/// Production janitor grace, shared with the retry cap ceiling.
+const PRODUCTION_JANITOR_GRACE_MS: i64 = 3_600_000;
 
 fn bounded_attempt_ms(value: u64) -> u64 {
     value.clamp(1, MAX_HOST_CALL_DURATION.as_millis() as u64)
@@ -187,14 +190,28 @@ fn deadline_ticks(attempt_ms: u64) -> u64 {
     bounded_attempt_ms(attempt_ms).div_ceil(tick_ms)
 }
 
-/// One completed guest drive, borrowed for synchronous caller observation.
+/// Outcome of one host-owned queue turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveOutcome {
+    /// The guest executed and returned its frozen numeric outcome.
+    Guest(u32),
+    /// Claim-time classification or resolution terminalized without execution.
+    ClaimTerminalized {
+        status: RunStatus,
+        fail_kind: FailKind,
+    },
+    /// The crash-budget janitor terminalized a pre-effect run.
+    InfrastructureFailure,
+}
+
+/// One completed host queue turn, borrowed for synchronous caller observation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DriveObservation<'a> {
-    /// The claimed run identifier, when the guest returned one.
-    pub run_id: Option<&'a str>,
-    /// Guest outcome code: `0` completed, `1` parked, otherwise failed.
-    pub outcome: u32,
-    /// Wall time spent in the guest's `run-next` call.
+    /// The run handled by this turn.
+    pub run_id: &'a str,
+    /// Guest result or exact host-owned non-execution terminalization.
+    pub outcome: DriveOutcome,
+    /// Wall time spent claiming and, for `Guest`, executing the turn.
     pub elapsed: Duration,
 }
 
@@ -215,12 +232,14 @@ impl DrainReport {
         self.claimed > 0
     }
 
-    fn record(&mut self, outcome: u32) {
+    fn record(&mut self, outcome: DriveOutcome) {
         self.claimed += 1;
         match outcome {
-            0 => self.completed += 1,
-            1 => self.parked += 1,
-            _ => self.failed += 1,
+            DriveOutcome::Guest(0) => self.completed += 1,
+            DriveOutcome::Guest(1) => self.parked += 1,
+            DriveOutcome::Guest(_)
+            | DriveOutcome::ClaimTerminalized { .. }
+            | DriveOutcome::InfrastructureFailure => self.failed += 1,
         }
     }
 }
@@ -370,12 +389,13 @@ fn attach_memory_limiter(store: &mut Store<SharedCtx>, component_id: &str) -> Op
 /// (or parked) state. Service leaves decide when to invoke another drain.
 struct LiveExecution {
     store: Store<SharedCtx>,
-    check_flow: CheckFlowFunc,
-    run_next: RunNextFunc,
+    run: RunFunc,
 }
 
 pub struct ExecutionHost {
     live: Option<LiveExecution>,
+    postgres: Arc<WamnPostgres>,
+    component_id: Box<str>,
     runtime_revision: TrustedExecutionRuntimeRevision,
     /// Constructed private native writer; intentionally unreachable until .5.4.
     effect_writer: Option<wamn_run_state::EffectWriterClient>,
@@ -390,6 +410,7 @@ impl std::fmt::Debug for ExecutionHost {
         formatter
             .debug_struct("ExecutionHost")
             .field("runtime_revision", &self.runtime_revision)
+            .field("component_id", &self.component_id)
             .field("effect_writer_loaded", &self.effect_writer.is_some())
             .field("ttl_ms", &self.ttl_ms)
             .field("disposed", &self.live.is_none())
@@ -401,8 +422,8 @@ impl ExecutionHost {
     /// Instantiate the flowrunner component and inject this replica's identity.
     /// `identity.owner` is BOTH the component id and the `app.runner` lease
     /// owner (one process = one project = one owner, the single-project shape).
-    /// Mirrors the failoverbench claimer store-build (SR1: the gate drives the
-    /// same code).
+    /// The host retains the same plugin for private claim composition and for
+    /// the guest-visible execution transaction capability.
     #[expect(
         clippy::too_many_arguments,
         reason = "the engine, guest, session plugins, identity, capabilities, and lease TTL are distinct host-injected inputs"
@@ -485,7 +506,7 @@ impl ExecutionHost {
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
         plugins.insert(
             wamn_postgres::WAMN_POSTGRES_ID,
-            plugin as Arc<dyn HostPlugin + Send + Sync>,
+            plugin.clone() as Arc<dyn HostPlugin + Send + Sync>,
         );
         plugins.insert(
             RUNNER_EGRESS_ID,
@@ -529,15 +550,12 @@ impl ExecutionHost {
         let mem = attach_memory_limiter(&mut store, owner);
         store.set_epoch_deadline(deadline_ticks(ttl_ms));
         let instance = pre.instantiate_async(&mut store).await?;
-        let check_flow = instance.get_typed_func(&mut store, "check-flow")?;
-        let run_next = instance.get_typed_func(&mut store, "run-next")?;
+        let run = instance.get_typed_func(&mut store, "run")?;
 
         Ok(Self {
-            live: Some(LiveExecution {
-                store,
-                check_flow,
-                run_next,
-            }),
+            live: Some(LiveExecution { store, run }),
+            postgres: plugin,
+            component_id: owner.into(),
             runtime_revision,
             effect_writer,
             ttl_ms: bounded_attempt_ms(ttl_ms),
@@ -555,16 +573,16 @@ impl ExecutionHost {
         self.live.is_none()
     }
 
-    /// Return the sorted, unique node types this compiled runner cannot dispatch.
-    pub async fn check_flow(&mut self, flow_json: &str) -> anyhow::Result<Vec<String>> {
+    /// Execute one run already selected, resolved, and leased by the host.
+    async fn call_run(&mut self, run_id: &str, payload: &str) -> anyhow::Result<u32> {
         let call = {
             let live = self
                 .live
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
             live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
-            live.check_flow
-                .call_async(&mut live.store, (flow_json.to_owned(),))
+            live.run
+                .call_async(&mut live.store, (run_id.to_owned(), payload.to_owned()))
                 .await
         };
         let (result,) = match call {
@@ -572,43 +590,14 @@ impl ExecutionHost {
             Err(error) => {
                 self.live.take();
                 return Err(anyhow::anyhow!(
-                    "check-flow trapped; execution instance disposed: {error}"
+                    "run trapped; execution instance disposed: {error}"
                 ));
             }
         };
-        result.map_err(|error| anyhow::anyhow!("check-flow: {error}"))
+        result.map_err(|error| anyhow::anyhow!("run: {error}"))
     }
 
-    /// One turn of the guest's dispatch loop: claim + drive + dequeue/park the
-    /// next queued run. Returns (claimed, run_id, outcome).
-    async fn call_run_next(&mut self) -> anyhow::Result<(bool, Option<String>, u32)> {
-        let call = {
-            let live = self
-                .live
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("execution instance disposed"))?;
-            live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));
-            live.run_next
-                .call_async(&mut live.store, (self.ttl_ms,))
-                .await
-        };
-        let (r,) = match call {
-            Ok(result) => result,
-            Err(error) => {
-                self.live.take();
-                return Err(anyhow::anyhow!(
-                    "run-next trapped; execution instance disposed: {error}"
-                ));
-            }
-        };
-        r.map_err(|e| anyhow::anyhow!("run-next: {e}"))
-    }
-
-    /// Drain every currently-claimable run. Each `run-next` claims one run and
-    /// drives it terminal (dequeued) or parks it (its `available_at` pushed past
-    /// now, so it is no longer claimable this drain), so the claimable set
-    /// strictly shrinks and the loop terminates; a parked run is picked up on a
-    /// later wake. Returns the tally.
+    /// Drain every currently claimable run through host-owned queue composition.
     pub async fn drain(&mut self) -> anyhow::Result<DrainReport> {
         self.drain_observing(|_| {}).await
     }
@@ -625,35 +614,81 @@ impl ExecutionHost {
     {
         let mut report = DrainReport::default();
         loop {
-            // [9.8] time the whole run-drive; record only for a CLAIMED run (an
-            // empty claim is the idle poll, not a drive).
-            let t0 = std::time::Instant::now();
-            let (claimed, run_id, outcome) = self.call_run_next().await?;
-            if !claimed {
-                break;
+            let reap_started = std::time::Instant::now();
+            match self
+                .postgres
+                .reap_one_exhausted_production(&self.component_id, PRODUCTION_JANITOR_GRACE_MS)
+                .await?
+            {
+                ProductionReapResult::Empty | ProductionReapResult::EffectAttempt { .. } => {}
+                ProductionReapResult::Reaped { run_id } => observe_drive(
+                    &mut report,
+                    DriveObservation {
+                        run_id: &run_id,
+                        outcome: DriveOutcome::InfrastructureFailure,
+                        elapsed: reap_started.elapsed(),
+                    },
+                    &mut observe,
+                ),
             }
-            let elapsed = t0.elapsed();
-            // [9.8] Snapshot the flowrunner store's memory high-water when a
-            // limiter is attached. This remains adapter state because it
-            // requires direct access to the Wasmtime store and its limiter.
-            if let Some(mem) = &self.mem {
-                let live = self
-                    .live
-                    .as_ref()
-                    .expect("a successful drive retains its execution instance");
-                mem.snapshot_from(&live.store.data().wamn_limiter);
+
+            let claim_started = std::time::Instant::now();
+            let claim = self
+                .postgres
+                .claim_next_production(&self.component_id, self.ttl_ms as i64)
+                .await?;
+            if let Some((run_id, payload)) = claim_guest_input(&claim) {
+                let outcome = self.call_run(run_id, payload).await?;
+                // [9.8] Snapshot the flowrunner store's memory high-water
+                // after a successful guest drive when a limiter is attached.
+                if let Some(mem) = &self.mem {
+                    let live = self
+                        .live
+                        .as_ref()
+                        .expect("a successful drive retains its execution instance");
+                    mem.snapshot_from(&live.store.data().wamn_limiter);
+                }
+                observe_drive(
+                    &mut report,
+                    DriveObservation {
+                        run_id,
+                        outcome: DriveOutcome::Guest(outcome),
+                        elapsed: claim_started.elapsed(),
+                    },
+                    &mut observe,
+                );
+                continue;
             }
-            observe_drive(
-                &mut report,
-                DriveObservation {
-                    run_id: run_id.as_deref(),
-                    outcome,
-                    elapsed,
-                },
-                &mut observe,
-            );
+            match claim {
+                ProductionClaimResult::Empty => break,
+                ProductionClaimResult::Terminalized {
+                    run_id,
+                    status,
+                    fail_kind,
+                } => observe_drive(
+                    &mut report,
+                    DriveObservation {
+                        run_id: &run_id,
+                        outcome: DriveOutcome::ClaimTerminalized { status, fail_kind },
+                        elapsed: claim_started.elapsed(),
+                    },
+                    &mut observe,
+                ),
+                ProductionClaimResult::Ready { .. } => {
+                    unreachable!("ready claims are handled by claim_guest_input")
+                }
+            }
         }
         Ok(report)
+    }
+}
+
+fn claim_guest_input(claim: &ProductionClaimResult) -> Option<(&str, &str)> {
+    match claim {
+        ProductionClaimResult::Ready {
+            run_id, payload, ..
+        } => Some((run_id, payload)),
+        ProductionClaimResult::Empty | ProductionClaimResult::Terminalized { .. } => None,
     }
 }
 
@@ -664,8 +699,8 @@ mod tests {
     use super::*;
 
     async fn deadline_gate(increments: Arc<[u64]>) -> (ExecutionHost, Arc<AtomicUsize>) {
-        // Each core export calls the host tick, then returns a zeroed canonical-ABI
-        // record encoding its successful component-level result.
+        // The sole core export calls the host tick, then returns a zeroed
+        // canonical-ABI record encoding its successful component-level result.
         const COMPONENT: &str = r#"
             (component
                 (import "tick" (func $tick))
@@ -699,8 +734,8 @@ mod tests {
                             local.set $return
                             br $checkpoint
                         end)
-                    (func (export "check-flow")
-                        (param i32 i32)
+                    (func (export "run")
+                        (param i32 i32 i32 i32)
                         (result i32)
                         call $tick
                         call $epoch-checkpoint
@@ -714,46 +749,17 @@ mod tests {
                         i32.const 0
                         i32.store
                         i32.const 64)
-                    (func (export "run-next")
-                        (param i64)
-                        (result i32)
-                        call $tick
-                        call $epoch-checkpoint
-                        i32.const 64
-                        i32.const 0
-                        i32.store
-                        i32.const 68
-                        i32.const 0
-                        i32.store
-                        i32.const 72
-                        i32.const 0
-                        i32.store
-                        i32.const 76
-                        i32.const 0
-                        i32.store
-                        i32.const 80
-                        i32.const 0
-                        i32.store
-                        i32.const 84
-                        i32.const 0
-                        i32.store
-                        i32.const 64))
+                    )
                 (core instance $guest
                     (instantiate $guest
                         (with "" (instance
                             (export "tick" (func $tick-lowered))))))
-                (func (export "check-flow")
-                    (param "flow" string)
-                    (result (result (list string) (error string)))
+                (func (export "run")
+                    (param "run-id" string)
+                    (param "payload" string)
+                    (result (result u32 (error string)))
                     (canon lift
-                        (core func $guest "check-flow")
-                        (memory $guest "memory")
-                        (realloc (func $guest "realloc"))))
-                (func (export "run-next")
-                    (param "ttl-ms" u64)
-                    (result (result (tuple bool (option string) u32) (error string)))
-                    (canon lift
-                        (core func $guest "run-next")
+                        (core func $guest "run")
                         (memory $guest "memory")
                         (realloc (func $guest "realloc"))))
             )
@@ -788,19 +794,24 @@ mod tests {
             .instantiate_async(&mut store, &component)
             .await
             .expect("instantiate deadline gate");
-        let check_flow = instance
-            .get_typed_func(&mut store, "check-flow")
-            .expect("typed check-flow gate");
-        let run_next = instance
-            .get_typed_func(&mut store, "run-next")
-            .expect("typed run-next gate");
+        let run = instance
+            .get_typed_func(&mut store, "run")
+            .expect("typed run gate");
+        let postgres = Arc::new(
+            WamnPostgres::new(wamn_runtime::plugins::wamn_postgres::WamnPostgresConfig {
+                database_url: None,
+                pool_max_size: 1,
+                wait_timeout_ms: 100,
+                statement_timeout_ms: 100,
+                row_limit: 10,
+            })
+            .expect("offline postgres plugin"),
+        );
         (
             ExecutionHost {
-                live: Some(LiveExecution {
-                    store,
-                    check_flow,
-                    run_next,
-                }),
+                live: Some(LiveExecution { store, run }),
+                postgres,
+                component_id: "deadline-gate".into(),
                 runtime_revision: TrustedExecutionRuntimeRevision::from_flowrunner_bytes(&bytes),
                 effect_writer: None,
                 ttl_ms: 40,
@@ -814,10 +825,10 @@ mod tests {
     async fn invocation_b_receives_a_fresh_epoch_window_after_a_consumes_ticks() {
         let (mut host, calls) = deadline_gate(Arc::from([2, 3])).await;
 
-        host.check_flow("invocation-a")
+        host.call_run("run-a", "{}")
             .await
             .expect("A remains inside its four-tick window after consuming two ticks");
-        host.check_flow("invocation-b")
+        host.call_run("run-b", "{}")
             .await
             .expect("B has four fresh ticks, not the two remaining from A");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -828,15 +839,15 @@ mod tests {
         let (mut host, calls) = deadline_gate(Arc::from([5, 0])).await;
 
         let trapped = host
-            .check_flow("interrupt")
+            .call_run("interrupt", "{}")
             .await
             .expect_err("advancing past the four-tick window interrupts the invocation");
-        assert!(trapped.to_string().contains("check-flow trapped"));
+        assert!(trapped.to_string().contains("run trapped"));
         assert!(trapped.to_string().contains("execution instance disposed"));
         assert!(host.is_disposed());
 
         let later = host
-            .check_flow("must-not-reuse")
+            .call_run("must-not-reuse", "{}")
             .await
             .expect_err("a later invocation cannot reuse the trapped instance");
         assert_eq!(later.to_string(), "execution instance disposed");
@@ -886,16 +897,9 @@ mod tests {
     }
 
     #[test]
-    fn check_flow_rearms_before_calling_the_guest() {
+    fn run_rearms_before_calling_the_guest() {
         let source = include_str!("lib.rs");
-        let method = method_source(source, "pub async fn check_flow", "async fn call_run_next");
-        assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
-    }
-
-    #[test]
-    fn run_next_rearms_before_calling_the_guest() {
-        let source = include_str!("lib.rs");
-        let method = method_source(source, "async fn call_run_next", "pub async fn drain");
+        let method = method_source(source, "async fn call_run", "pub async fn drain");
         assert!(method.contains("live.store.set_epoch_deadline(deadline_ticks(self.ttl_ms));"));
     }
 
@@ -954,7 +958,7 @@ mod tests {
         let mut observed = Vec::new();
         let mut observe = |observation: DriveObservation<'_>| {
             observed.push((
-                observation.run_id.map(str::to_owned),
+                observation.run_id.to_owned(),
                 observation.outcome,
                 observation.elapsed,
             ));
@@ -966,8 +970,8 @@ mod tests {
             observe_drive(
                 &mut r,
                 DriveObservation {
-                    run_id: Some(&run_id),
-                    outcome,
+                    run_id: &run_id,
+                    outcome: DriveOutcome::Guest(outcome),
                     elapsed: Duration::from_millis(outcome as u64 + 1),
                 },
                 &mut observe,
@@ -978,9 +982,31 @@ mod tests {
         assert_eq!(r.parked, 1);
         assert_eq!(r.failed, 1);
         assert_eq!(observed.len(), r.claimed);
-        assert_eq!(observed[2].0.as_deref(), Some("run-1"));
-        assert_eq!(observed[2].1, 1);
+        assert_eq!(observed[2].0, "run-1");
+        assert_eq!(observed[2].1, DriveOutcome::Guest(1));
         assert_eq!(observed[2].2, Duration::from_millis(2));
         assert!(r.found_work());
+    }
+
+    #[test]
+    fn host_never_calls_guest_for_nonexecute_claim_results() {
+        assert_eq!(claim_guest_input(&ProductionClaimResult::Empty), None);
+        assert_eq!(
+            claim_guest_input(&ProductionClaimResult::Terminalized {
+                run_id: "uncertain".into(),
+                status: RunStatus::EffectUncertain,
+                fail_kind: FailKind::EffectUncertain,
+            }),
+            None
+        );
+        let ready = ProductionClaimResult::Ready {
+            run_id: "ready".into(),
+            payload: "{\"input\":true}".into(),
+            lease_generation: 9,
+        };
+        assert_eq!(
+            claim_guest_input(&ready),
+            Some(("ready", "{\"input\":true}"))
+        );
     }
 }

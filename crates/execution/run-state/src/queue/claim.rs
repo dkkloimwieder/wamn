@@ -1,10 +1,6 @@
-//! Claim eligibility — the pure decision behind the `FOR UPDATE SKIP LOCKED`
-//! claim. [`claim_state`] classifies one row; [`plan_claim`] models which rows a
-//! batch claim would take, in the same order the SQL uses
-//! ([`crate::queue::claim_batch_sql`]),
-//! so the SQL's behaviour is unit-testable without a database.
+//! Claim eligibility and reclaim classification for the global FIFO queue.
 
-use super::model::{Millis, PartitionPolicy, QueueEntry};
+use super::model::{Millis, QueueEntry};
 
 /// A queue row's claimability at a given instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +20,28 @@ pub enum ClaimState {
     Exhausted,
 }
 
+/// The production action selected before any catalog or plan read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProductionClaimClass {
+    /// A never-leased or intentionally released queue row.
+    Ordinary,
+    /// An expired lease with no immutable effect attempt.
+    ExpiredPreEffect,
+    /// An expired lease with at least one immutable effect attempt.
+    ExpiredWithAttempt,
+}
+
+impl ProductionClaimClass {
+    /// A stable name for structured logs and tests.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProductionClaimClass::Ordinary => "ordinary",
+            ProductionClaimClass::ExpiredPreEffect => "expired-pre-effect",
+            ProductionClaimClass::ExpiredWithAttempt => "expired-with-attempt",
+        }
+    }
+}
+
 impl ClaimState {
     /// A stable name for logs/metrics.
     pub fn as_str(self) -> &'static str {
@@ -39,23 +57,54 @@ impl ClaimState {
 /// Classify a row's claimability at `now`. A future `available_at` is `Parked`; a
 /// live lease is `Leased`; a budget-spent row still holding an **expired** lease is
 /// `Exhausted` (left for the janitor); anything else — including a budget-spent row
-/// whose lease was *released* (NULL) by a queue park — is `Ready`. Matches the
-/// `claim_batch_sql` predicate (`available_at <= now AND (lease_expires_at IS NULL OR
+/// whose lease was *released* (NULL) by a queue park — is `Ready`. This is the
+/// no-effect view of the production predicate (`available_at <= now AND (lease_expires_at IS NULL OR
 /// lease_expires_at <= now) AND (attempts < max_attempts OR lease_expires_at IS
 /// NULL)`). The `lease_expires_at IS NULL` disjunct is what wakes a queue-parked
 /// budget-spent run (wamn-fqg.7): reaching the `Exhausted` branch means the lease is
-/// absent or expired, so a *present* lease there is an expired one (crash evidence),
-/// while a NULL lease is a released one (an intentional queue wait) and stays
-/// `Ready`.
+/// expired (crash evidence), while a NULL lease is a released one (an intentional queue wait) and stays
+/// `Ready`. Use [`production_claim_state`] when immutable effect evidence is
+/// available; that evidence makes an expired row eligible for non-executing
+/// terminalization regardless of crash budget.
 pub fn claim_state(entry: &QueueEntry, now: Millis) -> ClaimState {
+    production_claim_state(entry, false, now)
+}
+
+/// Classify eligibility with immutable effect-attempt evidence.
+///
+/// An effect attempt makes an expired row eligible even after its crash budget
+/// is spent so production can remove it as `effect-uncertain`. It does not make
+/// a live lease or a future queue wait claimable.
+pub fn production_claim_state(
+    entry: &QueueEntry,
+    has_effect_attempt: bool,
+    now: Millis,
+) -> ClaimState {
     if entry.available_at > now {
         ClaimState::Parked
     } else if entry.lease_expires_at.is_some_and(|t| t > now) {
         ClaimState::Leased
-    } else if entry.lease_expires_at.is_some() && entry.attempts >= entry.max_attempts {
+    } else if entry.lease_expires_at.is_some()
+        && entry.attempts >= entry.max_attempts
+        && !has_effect_attempt
+    {
         ClaimState::Exhausted
     } else {
         ClaimState::Ready
+    }
+}
+
+/// Classify a row already selected by the production eligibility predicate.
+pub fn classify_production_claim(
+    had_prior_lease: bool,
+    has_effect_attempt: bool,
+) -> ProductionClaimClass {
+    if has_effect_attempt {
+        ProductionClaimClass::ExpiredWithAttempt
+    } else if had_prior_lease {
+        ProductionClaimClass::ExpiredPreEffect
+    } else {
+        ProductionClaimClass::Ordinary
     }
 }
 
@@ -64,22 +113,8 @@ pub fn is_claimable(entry: &QueueEntry, now: Millis) -> bool {
     claim_state(entry, now) == ClaimState::Ready
 }
 
-/// Whether a GUEST-OBSERVED terminal failure of this row's run must land a
-/// `run_dead_letters` marker alongside its dequeue (wamn-v8cv, the D20
-/// dead-letter + continue decision) — the pure twin of
-/// [`crate::queue::dead_letter_dequeue_sql`]'s insert predicate. True only for the
-/// head of a **`blocking`-policy partition**: that row's key promised strict
-/// ordering, so proceeding past its failure needs the alertable marker. An
-/// unpartitioned row made no ordering promise, and a `leapfrog` row opted out
-/// of it — both dequeue with no ledger row. (The janitor's crash-exhaustion
-/// verdict is the OTHER terminal path and still WEDGES a blocking key —
-/// [`crate::queue::janitor_sweep_sql`]'s exemption is untouched by this.)
-pub fn dead_letters_on_terminal(entry: &QueueEntry) -> bool {
-    entry.partition_key.is_some() && entry.partition_policy == PartitionPolicy::Blocking
-}
-
 /// The result of claiming one row: the new lease deadline and the attempt count
-/// the `claim_batch_sql` UPDATE writes.
+/// the production lease grant writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Claimed {
     pub tenant_id: String,
@@ -99,15 +134,12 @@ pub struct ClaimPlan {
     pub claimed: Vec<Claimed>,
 }
 
-/// Model a `claim_batch_sql(limit)` over a candidate row set: take the claimable
-/// **unpartitioned** rows in `(available_at, run_id)` order, up to `limit`, each
-/// with a fresh lease deadline `now + lease_ttl` and its attempt bumped.
-/// Partitioned rows (`partition_key` set) are skipped — the global claim's
-/// `partition_key IS NULL` guard leaves them to the per-partition ownership path
-/// ([`crate::queue::plan_partition_claim`]). The real SQL additionally `SKIP LOCKED`s rows
-/// another transaction already holds — a concurrency property only the live queue
-/// (queuebench) exercises; this models the eligibility + ordering + limit a single
-/// claimer sees.
+/// Model a global FIFO lease grant over a candidate row set: take claimable rows
+/// in `(available_at, stream_seq, run_id)` order, up to `limit`, each with a fresh
+/// lease deadline `now + lease_ttl`. Only reclaiming an expired lease bumps its
+/// attempt count; first claims and released queue waits remain free.
+/// The real SQL additionally `SKIP LOCKED`s rows another transaction already
+/// holds; this pure function models eligibility, ordering, and lease arithmetic.
 ///
 /// The sort mirrors the SQL's `ORDER BY (available_at, stream_seq, run_id)` (E4):
 /// the numeric `stream_seq` tiebreak rides AHEAD of `run_id`, so evt runs
@@ -120,10 +152,8 @@ pub fn plan_claim(
     limit: usize,
     lease_ttl: Millis,
 ) -> ClaimPlan {
-    let mut eligible: Vec<&QueueEntry> = candidates
-        .iter()
-        .filter(|e| e.partition_key.is_none() && is_claimable(e, now))
-        .collect();
+    let mut eligible: Vec<&QueueEntry> =
+        candidates.iter().filter(|e| is_claimable(e, now)).collect();
     eligible.sort_by(|a, b| {
         a.available_at
             .cmp(&b.available_at)

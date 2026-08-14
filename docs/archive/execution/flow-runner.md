@@ -40,7 +40,7 @@ edges leaving that port.
 - **Merge** = several edges into one node. There is no join *barrier* in v1: a
   merged node runs once per arriving token (join barriers are a later item).
 - **Fan-out** (several edges from one port) runs sequentially in frontier order
-  (true per-node parallelism is 5.11).
+  (parallel frame scheduling requires a separate future design).
 - **Cycles** are permitted by the schema; loop termination is the node/config's
   concern (the engine does not force acyclicity) — but it is **bounded** by the
   per-invocation dispatch budget (below), so a loop that never terminates fails
@@ -131,7 +131,6 @@ exactly on `step_seq`.
 |---|---|
 | The `node-error` taxonomy + SDK | `wamn-node-sdk` (5.3, ahead of the 5.4 WIT freeze; re-exported here as `NodeError`) |
 | Durable `runs`/`node_runs` schema, at-least-once, branch-aware replay | 5.7 |
-| Per-node ordering (`strict`/`partitioned`/`unordered`) | 5.11 |
 | The `cancel(run, reason)` operation + its two enforcement layers | 5.12 |
 | The durable run queue (`FOR UPDATE SKIP LOCKED`) + NATS doorbell + dispatcher | 5.14 |
 | Payload store & byte quotas | 5.10 |

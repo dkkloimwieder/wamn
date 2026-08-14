@@ -3,7 +3,7 @@
 //! `deploy/sql/run-state.sql` / `flows.sql` / `run-queue.sql` evolve, but a
 //! schema instantiated from an older revision has NO migration path: the 2jkm.41
 //! sweep found live demo schemas missing the E4 `stream_seq` column (runner
-//! drains failed 42703), the fqg.20/D20 `partition_policy`, whole queue tables
+//! drains failed 42703), the whole queue table
 //! (`poc_f1` predated per-project queue provisioning), and — after the ephemeral
 //! fixture pod restarted — everything at once, including the `catalog` metadata
 //! schema. This module is the PURE decision (the reconcile-replica-identity
@@ -25,7 +25,7 @@
 //!
 //! 1. **Additive column drift** — a present table missing record columns gains
 //!    `ALTER TABLE … ADD COLUMN <record definition>` (e.g. E4 `stream_seq
-//!    bigint NOT NULL DEFAULT 0`, D20 `partition_policy … CHECK …`).
+//!    bigint NOT NULL DEFAULT 0`).
 //! 2. **Index drift** — a record index absent live is created; a present one
 //!    whose live definition lacks a record column the record definition names
 //!    (the pre-E4 `run_queue_claimable` without `stream_seq`) is dropped and
@@ -35,8 +35,9 @@
 //! 4. **The pre-l5i9.19 outbox era** — legacy `outbox`/`evt_shadow` tables, the
 //!    constant-named `wamn_outbox_event` trigger (per entity table) and its
 //!    function are DROPPED (trigger before function — the function drop is
-//!    RESTRICT), and stored registrations carrying the legacy `state` key are
-//!    stripped (a state-carrying document fails parse post-teardown → HELD).
+//!    RESTRICT), and stored registrations carrying the legacy `state` or
+//!    `partition-key` key are stripped (a legacy document fails parse after
+//!    the owning surface is removed).
 //! 5. **From-zero restore** — an empty database plans the full set, including
 //!    `deploy/sql/catalog-schema.sql` (the `catalog` metadata schema the
 //!    registration storage and the RI reconcile read).
@@ -45,16 +46,15 @@
 //!    or replaced and non-record checks are removed. The run-state helper
 //!    functions and lineage trigger are likewise repaired from record.
 //!
-//! **Data preserving:** the plan never rewrites or deletes a retained row or
-//! drops a retained table. Unknown live columns are SURFACED (`extra_columns`)
-//! and preserved. The explicit frame/effect-writer cutovers physically remove
-//! only the named retired identity/recovery columns after their locked safety
-//! preflights; the capture-projection cutover drops only its three retired,
-//! non-authoritative node columns under lock; and the stored-test cutover drops
-//! only retired relations/helpers plus the obsolete validation dimension and
-//! command kinds. The latter refuses nonempty legacy identity/audit state rather
-//! than fabricating replacement hashes or deleting evidence. PostgreSQL validates
-//! new CHECKs against existing rows and aborts on incompatible legacy data.
+//! **Retained-data preserving:** the plan never rewrites or deletes a retained
+//! row or drops a retained table. Unknown live columns are SURFACED
+//! (`extra_columns`) and preserved. Explicit cutovers physically remove only
+//! named retired state after locked safety preflights. The partition-plane
+//! cutover requires drained leases and refuses nonempty dead-letter history;
+//! the frame/effect-writer cutovers remove retired identity/recovery columns;
+//! the capture-projection cutover removes retired non-authoritative node
+//! columns; and the stored-test cutover removes retired persistence. PostgreSQL
+//! validates new CHECKs against existing rows and aborts on incompatible data.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -849,27 +849,9 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "run_queue",
-        name: "run_queue_partition_policy_check",
-        definition: "CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))",
-        origin: CheckOrigin::Inline("partition_policy"),
-    },
-    CheckSpec {
-        table: "run_queue",
         name: "run_queue_lease_generation_check",
         definition: "CHECK (lease_generation >= 0)",
         origin: CheckOrigin::Inline("lease_generation"),
-    },
-    CheckSpec {
-        table: "partition_owner",
-        name: "partition_owner_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "run_dead_letters",
-        name: "run_dead_letters_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
     },
 ];
 
@@ -2276,6 +2258,164 @@ const TABLE_PRIVILEGE_TYPES: [&str; 7] = [
     "TRIGGER",
 ];
 
+const RETIRED_PARTITION_COLUMNS: [&str; 2] = ["partition_key", "partition_policy"];
+const RETIRED_PARTITION_TABLES: [&str; 2] = ["partition_owner", "run_dead_letters"];
+const RETIRED_PARTITION_CHECK: &str = "run_queue_partition_policy_check";
+const RETIRED_PARTITION_INDEX: &str = "run_queue_partition";
+const RETIRED_AUTHORED_ORDERING_REFUSAL: &str =
+    "retired-authored-ordering-requires-environment-reprovision";
+/// Stable operator-facing refusal for retained history that cannot be cut over.
+const RETIRED_DEAD_LETTER_REFUSAL: &str =
+    "retired-run-dead-letter-history-requires-archive-or-environment-reprovision";
+const RUN_QUEUE_CLAIMABLE_COLUMNS: [&str; 5] = [
+    "tenant_id",
+    "available_at",
+    "stream_seq",
+    "run_id",
+    "lease_expires_at",
+];
+
+fn partition_plane_cutover_needed(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("run_queue").is_some_and(|columns| {
+        RETIRED_PARTITION_COLUMNS
+            .iter()
+            .any(|column| columns.contains(*column))
+    }) || RETIRED_PARTITION_TABLES
+        .iter()
+        .any(|table| obs.tables.contains_key(*table))
+        || obs
+            .checks
+            .contains_key(&("run_queue".to_string(), RETIRED_PARTITION_CHECK.to_string()))
+        || obs.indexes.contains_key(RETIRED_PARTITION_INDEX)
+        || obs.retired_authored_ordering_rows != 0
+}
+
+fn run_queue_claim_index_ready(obs: &RunPlaneObservation) -> bool {
+    obs.tables.get("run_queue").is_some_and(|columns| {
+        RUN_QUEUE_CLAIMABLE_COLUMNS
+            .iter()
+            .all(|column| columns.contains(*column))
+    })
+}
+
+fn partition_plane_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
+    let target = schema.quoted();
+    let run_queue_present = obs.tables.contains_key("run_queue");
+    let dead_letters_present = obs.tables.contains_key("run_dead_letters");
+    let run_queue_lease_observable = obs.tables.get("run_queue").is_some_and(|columns| {
+        columns.contains("lease_owner") && columns.contains("lease_expires_at")
+    });
+    let partition_owner_lease_observable = obs
+        .tables
+        .get("partition_owner")
+        .is_some_and(|columns| columns.contains("lease_expires_at"));
+    let flow_graph_observable = obs
+        .tables
+        .get("flows")
+        .is_some_and(|columns| columns.contains("graph_json"));
+    let lock_targets = ["run_queue", "partition_owner", "run_dead_letters", "flows"]
+        .into_iter()
+        .filter(|table| obs.tables.contains_key(*table))
+        .map(|table| format!("{target}.{}", quote_ident(table)))
+        .collect::<Vec<_>>();
+    let mut statements = vec![format!(
+        "LOCK TABLE {} IN ACCESS EXCLUSIVE MODE",
+        lock_targets.join(", ")
+    )];
+
+    if flow_graph_observable {
+        statements.push(format!(
+            "DO $retired_authored_ordering$ BEGIN \
+               IF EXISTS (SELECT 1 FROM {target}.flows \
+                           WHERE graph_json ? 'ordering' \
+                              OR graph_json ? 'partition-policy') \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = '{RETIRED_AUTHORED_ORDERING_REFUSAL}'; \
+               END IF; \
+             END $retired_authored_ordering$"
+        ));
+    }
+
+    let mut active_lease_checks = Vec::new();
+    if run_queue_lease_observable {
+        active_lease_checks.push(format!(
+            "EXISTS (SELECT 1 FROM {target}.run_queue \
+              WHERE lease_owner IS NOT NULL AND lease_expires_at > clock_timestamp())"
+        ));
+    } else if run_queue_present {
+        statements.push(format!(
+            "DO $unobservable_run_queue_lease$ BEGIN \
+               IF EXISTS (SELECT 1 FROM {target}.run_queue) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'partition-plane-cutover-requires-observable-run-queue-leases-or-empty-queue'; \
+               END IF; \
+             END $unobservable_run_queue_lease$"
+        ));
+    }
+    if partition_owner_lease_observable {
+        active_lease_checks.push(format!(
+            "EXISTS (SELECT 1 FROM {target}.partition_owner \
+              WHERE lease_expires_at > clock_timestamp())"
+        ));
+    } else if obs.tables.contains_key("partition_owner") {
+        statements.push(format!(
+            "DO $unobservable_partition_lease$ BEGIN \
+               IF EXISTS (SELECT 1 FROM {target}.partition_owner) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'partition-plane-cutover-requires-observable-partition-leases-or-empty-owner-table'; \
+               END IF; \
+             END $unobservable_partition_lease$"
+        ));
+    }
+    if !active_lease_checks.is_empty() {
+        statements.push(format!(
+            "DO $partition_plane_drain$ BEGIN \
+               IF {} THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = 'partition-plane-cutover-requires-drained-workers'; \
+               END IF; \
+             END $partition_plane_drain$",
+            active_lease_checks.join(" OR ")
+        ));
+    }
+    if dead_letters_present {
+        statements.push(format!(
+            "DO $retired_dead_letters$ BEGIN \
+               IF EXISTS (SELECT 1 FROM {target}.run_dead_letters) \
+               THEN RAISE EXCEPTION USING ERRCODE = '55000', \
+                    MESSAGE = '{RETIRED_DEAD_LETTER_REFUSAL}'; \
+               END IF; \
+             END $retired_dead_letters$"
+        ));
+    }
+    if run_queue_present {
+        statements.push(format!(
+            "DROP INDEX IF EXISTS {target}.{RETIRED_PARTITION_INDEX}"
+        ));
+        statements.push(format!(
+            "ALTER TABLE {target}.run_queue \
+               DROP CONSTRAINT IF EXISTS {RETIRED_PARTITION_CHECK}, \
+               DROP COLUMN IF EXISTS partition_key, \
+               DROP COLUMN IF EXISTS partition_policy"
+        ));
+        if run_queue_claim_index_ready(obs) {
+            statements.push(format!("DROP INDEX IF EXISTS {target}.run_queue_claimable"));
+            statements.push(format!(
+                "CREATE INDEX run_queue_claimable ON {target}.run_queue \
+                   (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+            ));
+        }
+    }
+    for table in RETIRED_PARTITION_TABLES {
+        if obs.tables.contains_key(table) {
+            statements.push(format!(
+                "DROP TABLE IF EXISTS {target}.{}",
+                quote_ident(table)
+            ));
+        }
+    }
+    statements.join("; ")
+}
+
 /// Stored-suite persistence removed by wamn-0h0g.8.10, ordered child first.
 const RETIRED_STORED_SUITE_TABLES: [&str; 5] = [
     "authoring_suite_reports",
@@ -2430,6 +2570,13 @@ pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// Stable NOLOGIN ACL role inherited only by scoped writer generations.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
+const EFFECT_WRITER_RUN_READ_COLUMNS: [(&str, &[&str]); 2] = [
+    ("runs", &["tenant_id", "run_id", "status"]),
+    (
+        "run_queue",
+        &["tenant_id", "run_id", "lease_owner", "lease_expires_at"],
+    ),
+];
 
 /// Security attributes observed for the host-only scenario author role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2584,6 +2731,8 @@ pub struct RunPlaneObservation {
     /// Total immutable rows across the three effect-writer ledgers that exist.
     /// Any nonzero value makes an incompatible structural cutover refuse.
     pub effect_ledger_rows: i64,
+    /// Persisted flow graphs that still carry retired top-level ordering keys.
+    pub retired_authored_ordering_rows: i64,
     /// Host-only scenario-author role attributes, or absent when the cluster
     /// has not yet provisioned the role.
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
@@ -2599,6 +2748,12 @@ pub struct RunPlaneObservation {
     pub effect_ledger_effective_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Ledger owners keyed by table.
     pub effect_ledger_owners: BTreeMap<String, String>,
+    /// Effective table privileges held by the writer on its two run-authority
+    /// read targets. The target state is empty: only column SELECT is allowed.
+    pub effect_writer_run_table_privileges: BTreeMap<String, BTreeSet<String>>,
+    /// Effective per-column privileges held by the writer on `runs` and
+    /// `run_queue`, keyed by `(table, column)`.
+    pub effect_writer_run_column_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Whether guest-visible `wamn_app` inherits the host-only author role.
     pub app_is_scenario_author_member: bool,
     /// Effective `wamn_app` authority on the run capture carrier. The first
@@ -2659,9 +2814,9 @@ pub struct RunPlaneObservation {
     pub catalog_indexes: BTreeMap<String, String>,
     pub catalog_foreign_keys: BTreeMap<(String, String), String>,
     pub catalog_triggers: BTreeMap<(String, String), String>,
-    /// Rows in `catalog.event_registrations` still carrying the legacy `state`
-    /// key (0 when the table is absent — nothing to strip).
-    pub stale_registration_state_rows: i64,
+    /// Rows in `catalog.event_registrations` still carrying a retired `state`
+    /// or `partition-key` key (0 when the table is absent).
+    pub stale_registration_key_rows: i64,
     /// Every CHECK constraint on a record table, keyed by `(table, name)`, with
     /// PostgreSQL's canonical `pg_get_constraintdef(..., true)` definition.
     pub checks: BTreeMap<(String, String), String>,
@@ -2695,6 +2850,8 @@ pub enum RunPlaneActionKind {
     CaptureProjectionCutover,
     /// Remove invocation-admission expiry and make the client key optional.
     InvocationAdmissionRetentionCutover,
+    /// Delete the retired partition plane after a locked drain/evidence preflight.
+    PartitionPlaneCutover,
     /// Delete retired stored-suite tables, audit relation, and helper functions.
     StoredSuiteCutover,
     /// Strict empty-only installation of the coordinate-bound writer ledgers.
@@ -2742,8 +2899,8 @@ pub enum RunPlaneActionKind {
     /// Replace broad application-role run grants with column grants that omit
     /// the admission-owned `runs.capture_mode` carrier.
     RepairRunCapturePrivilege,
-    /// Strip the legacy `state` key from stored registrations.
-    StripRegistrationState,
+    /// Strip retired keys from stored registrations.
+    StripRetiredRegistrationKeys,
 }
 
 /// One reconcile action: the SQL to run and what it targets (for reporting).
@@ -3215,6 +3372,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         return plan;
     }
 
+    let partition_plane_cutover_needed = partition_plane_cutover_needed(obs);
+    if partition_plane_cutover_needed {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::PartitionPlaneCutover,
+            target: "run_queue.partition-plane".to_string(),
+            sql: partition_plane_cutover_sql(schema, obs),
+        });
+    }
+
     if stored_suite_cutover_needed(obs) {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::StoredSuiteCutover,
@@ -3619,6 +3785,100 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             });
     }
 
+    let mut effect_writer_run_read_repairs = Vec::new();
+    for (table, allowed) in EFFECT_WRITER_RUN_READ_COLUMNS {
+        let Some(live_columns) = obs.tables.get(table) else {
+            continue;
+        };
+        let table_drifted = obs
+            .effect_writer_run_table_privileges
+            .get(table)
+            .is_some_and(|privileges| !privileges.is_empty());
+        let column_drifted = allowed.iter().any(|column| !live_columns.contains(*column))
+            || live_columns.iter().any(|column| {
+                let actual = obs
+                    .effect_writer_run_column_privileges
+                    .get(&(table.to_string(), column.clone()))
+                    .cloned()
+                    .unwrap_or_default();
+                let expected: BTreeSet<String> = if allowed.contains(&column.as_str()) {
+                    ["SELECT".to_string()].into_iter().collect()
+                } else {
+                    BTreeSet::new()
+                };
+                actual != expected
+            });
+        if !table_drifted && !column_drifted {
+            continue;
+        }
+
+        let qualified = format!("{}.{}", schema.quoted(), quote_ident(table));
+        let all_columns = live_columns
+            .iter()
+            .filter(|column| {
+                !(table == "run_queue"
+                    && partition_plane_cutover_needed
+                    && RETIRED_PARTITION_COLUMNS.contains(&column.as_str()))
+            })
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let allowed_columns = allowed
+            .iter()
+            .map(|column| quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let allowed_literals = allowed
+            .iter()
+            .map(|column| format!("'{}'", column.replace('\'', "''")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        effect_writer_run_read_repairs.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+            target: format!("{}.{}.effect-read", schema.as_str(), table),
+            sql: format!(
+                "REVOKE SELECT ({all_columns}), INSERT ({all_columns}), \
+                        UPDATE ({all_columns}), REFERENCES ({all_columns}) \
+                   ON TABLE {qualified} FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
+                 REVOKE ALL PRIVILEGES ON TABLE {qualified} \
+                   FROM PUBLIC, {EFFECT_WRITER_ROLE}; \
+                 GRANT SELECT ({allowed_columns}) ON TABLE {qualified} \
+                   TO {EFFECT_WRITER_ROLE}; \
+                 DO $effect_writer_run_read_acl$ BEGIN \
+                   IF EXISTS ( \
+                        SELECT 1 FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE', \
+                                                   'TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                         WHERE pg_catalog.has_table_privilege( \
+                               '{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
+                      OR EXISTS ( \
+                        SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
+                        CROSS JOIN unnest(ARRAY['INSERT','UPDATE','REFERENCES']) privilege \
+                         WHERE attribute.attrelid=pg_catalog.to_regclass('{qualified}') \
+                           AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                           AND pg_catalog.has_column_privilege( \
+                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
+                               attribute.attname, privilege)) \
+                      OR EXISTS ( \
+                        SELECT 1 FROM pg_catalog.pg_attribute AS attribute \
+                         WHERE attribute.attrelid=pg_catalog.to_regclass('{qualified}') \
+                           AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+                           AND NOT (attribute.attname = ANY (ARRAY[{allowed_literals}])) \
+                           AND pg_catalog.has_column_privilege( \
+                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
+                               attribute.attname, 'SELECT')) \
+                      OR EXISTS ( \
+                        SELECT 1 FROM unnest(ARRAY[{allowed_literals}]) column_name \
+                         WHERE NOT pg_catalog.has_column_privilege( \
+                               '{EFFECT_WRITER_ROLE}', '{qualified}', \
+                               column_name, 'SELECT')) \
+                   THEN RAISE EXCEPTION USING ERRCODE='42501', \
+                        MESSAGE='effect-writer-run-read-privilege-out-of-bounds:{table}'; \
+                   END IF; \
+                 END $effect_writer_run_read_acl$"
+            ),
+        });
+    }
+
     if execution_pin_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::ExecutionPinCutover,
@@ -3875,6 +4135,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
             let known: BTreeSet<&str> = record_cols.iter().map(|(c, _)| c.as_str()).collect();
             for col in live_cols {
+                if partition_plane_cutover_needed
+                    && table == "run_queue"
+                    && RETIRED_PARTITION_COLUMNS.contains(&col.as_str())
+                {
+                    continue;
+                }
                 if frame_cutover_targets.includes_table(&table)
                     && frame_identity_column(&table, col)
                 {
@@ -3916,6 +4182,10 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             }
         }
     }
+
+    // Required columns are added before the exact writer read boundary names
+    // them. This also lets one reconcile turn converge a partial queue shape.
+    plan.actions.extend(effect_writer_run_read_repairs);
 
     if !capture_mode_present && run_capture_privileges_drifted && !obs.app_run_capture_privileges.0
     {
@@ -4000,6 +4270,9 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             && !(effect_writer_ledger_cutover_needed
                 && effect_writer_cutover_owned_check(table, name))
             && !(frame_cutover_targets.includes_table(table) && frame_identity_check(table, name))
+            && !(partition_plane_cutover_needed
+                && table == "run_queue"
+                && name == RETIRED_PARTITION_CHECK)
             && !(table == "runs" && name == "runs_environment_check")
         {
             plan.actions.push(RunPlaneAction {
@@ -4179,6 +4452,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             {
                 continue;
             }
+            if partition_plane_cutover_needed
+                && run_queue_claim_index_ready(obs)
+                && name == "run_queue_claimable"
+            {
+                continue;
+            }
             match obs.indexes.get(&name) {
                 None => plan.actions.push(RunPlaneAction {
                     kind: RunPlaneActionKind::CreateIndex,
@@ -4240,11 +4519,11 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     }
 
     // 5. Registration payload cleanup follows structural convergence.
-    if obs.stale_registration_state_rows > 0 {
+    if obs.stale_registration_key_rows > 0 {
         plan.actions.push(RunPlaneAction {
-            kind: RunPlaneActionKind::StripRegistrationState,
-            target: format!("{} registrations", obs.stale_registration_state_rows),
-            sql: strip_registration_state_sql().to_string(),
+            kind: RunPlaneActionKind::StripRetiredRegistrationKeys,
+            target: format!("{} registrations", obs.stale_registration_key_rows),
+            sql: strip_retired_registration_keys_sql().to_string(),
         });
     }
 
@@ -4339,13 +4618,13 @@ fn normalize_observed_schema(definition: &str, schema: &BareSchemaName) -> Strin
         .replace(&format!("{}.", schema.as_str()), "wamn_run.")
 }
 
-/// The legacy registration `state`-key strip (the l5i9.19 teardown runbook): a
-/// stored document still carrying `state` fails parse post-teardown, so the
-/// materializer HOLDs its flow (delayed-never-lost) until the key is removed.
-/// Runs as the superuser (RLS bypassed — the key is legacy across all tenants).
-pub fn strip_registration_state_sql() -> &'static str {
-    "UPDATE catalog.event_registrations SET registration = registration - 'state' \
-     WHERE registration ? 'state'"
+/// Strip retired registration keys that fail the current declaration parser.
+///
+/// Runs as the superuser across all tenants and preserves every retained key.
+pub fn strip_retired_registration_keys_sql() -> &'static str {
+    "UPDATE catalog.event_registrations \
+     SET registration = registration - 'state' - 'partition-key' \
+     WHERE registration ?| ARRAY['state', 'partition-key']"
 }
 
 // ---------------------------------------------------------------------------
@@ -4463,6 +4742,38 @@ pub fn select_effect_ledger_effective_column_privileges_sql() -> &'static str {
         AND actor.rolname IN ('wamn_app', 'wamn_scenario_author', 'wamn_effect_writer') \
         AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
       ORDER BY relation.relname, actor.rolname, privilege.name"
+}
+
+/// Effective table privileges of the private writer on run-authority tables.
+pub fn select_effect_writer_run_table_privileges_sql() -> &'static str {
+    "SELECT relation.relname, privilege.name \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_roles AS actor ON actor.rolname = 'wamn_effect_writer' \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('DELETE'::text), ('TRUNCATE'::text), \
+                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname IN ('runs', 'run_queue') \
+        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
+      ORDER BY relation.relname, privilege.name"
+}
+
+/// Effective column privileges of the private writer on run-authority tables.
+pub fn select_effect_writer_run_column_privileges_sql() -> &'static str {
+    "SELECT relation.relname, attribute.attname, privilege.name \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
+       JOIN pg_catalog.pg_roles AS actor ON actor.rolname = 'wamn_effect_writer' \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('REFERENCES'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname IN ('runs', 'run_queue') \
+        AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+        AND pg_catalog.has_column_privilege( \
+              actor.oid, relation.oid, attribute.attname, privilege.name) \
+      ORDER BY relation.relname, attribute.attnum, privilege.name"
 }
 
 /// Whether guest-visible `wamn_app` inherits the host-only author role.
@@ -4707,6 +5018,15 @@ pub fn count_release_flow_rows_sql() -> &'static str {
     "SELECT count(*) FROM catalog.release_flows"
 }
 
+/// Count persisted flow graphs that carry either retired top-level queue key.
+pub fn count_retired_authored_ordering_rows_sql(schema: &BareSchemaName) -> String {
+    format!(
+        "SELECT count(*) FROM {}.flows \
+          WHERE graph_json ? 'ordering' OR graph_json ? 'partition-policy'",
+        schema.quoted()
+    )
+}
+
 /// Every index in `$1`: `(indexname, indexdef)`.
 pub fn select_schema_indexes_sql() -> &'static str {
     "SELECT indexname, indexdef FROM pg_indexes WHERE schemaname = $1"
@@ -4788,10 +5108,12 @@ pub fn catalog_schema_present_sql() -> &'static str {
     "SELECT EXISTS ( SELECT FROM pg_namespace WHERE nspname = 'catalog' )"
 }
 
-/// Rows in `catalog.event_registrations` still carrying the legacy `state` key
-/// (the shell runs this only when the table was observed present).
-pub fn count_stale_registration_state_sql() -> &'static str {
-    "SELECT count(*) FROM catalog.event_registrations WHERE registration ? 'state'"
+/// Rows in `catalog.event_registrations` carrying a retired declaration key.
+///
+/// The shell runs this only when the table was observed present.
+pub fn count_stale_registration_keys_sql() -> &'static str {
+    "SELECT count(*) FROM catalog.event_registrations \
+     WHERE registration ?| ARRAY['state', 'partition-key']"
 }
 
 // ---------------------------------------------------------------------------
@@ -5237,6 +5559,14 @@ CREATE INDEX event_registrations_by_entity
                     .insert(key, privileges);
             }
         }
+        for (table, columns) in EFFECT_WRITER_RUN_READ_COLUMNS {
+            for column in columns {
+                obs.effect_writer_run_column_privileges.insert(
+                    (table.to_string(), (*column).to_string()),
+                    ["SELECT".to_string()].into_iter().collect(),
+                );
+            }
+        }
         obs.catalog_checks.insert(
             (
                 "flow_artifacts".to_string(),
@@ -5421,6 +5751,51 @@ CREATE INDEX event_registrations_by_entity
         obs
     }
 
+    fn add_legacy_partition_plane(obs: &mut RunPlaneObservation) {
+        obs.tables
+            .get_mut("run_queue")
+            .expect("record queue")
+            .extend(["partition_key".to_string(), "partition_policy".to_string()]);
+        obs.tables.insert(
+            "partition_owner".to_string(),
+            BTreeSet::from([
+                "tenant_id".to_string(),
+                "partition_key".to_string(),
+                "lease_owner".to_string(),
+                "lease_expires_at".to_string(),
+                "acquired_at".to_string(),
+            ]),
+        );
+        obs.tables.insert(
+            "run_dead_letters".to_string(),
+            BTreeSet::from([
+                "tenant_id".to_string(),
+                "run_id".to_string(),
+                "partition_key".to_string(),
+                "flow_id".to_string(),
+                "reason".to_string(),
+                "failed_at".to_string(),
+            ]),
+        );
+        obs.checks.insert(
+            ("run_queue".to_string(), RETIRED_PARTITION_CHECK.to_string()),
+            "CHECK (partition_policy = ANY (ARRAY['blocking'::text, 'leapfrog'::text]))"
+                .to_string(),
+        );
+        obs.indexes.insert(
+            RETIRED_PARTITION_INDEX.to_string(),
+            "CREATE INDEX run_queue_partition ON demo.run_queue USING btree \
+             (tenant_id, partition_key) WHERE (partition_key IS NOT NULL)"
+                .to_string(),
+        );
+        obs.indexes.insert(
+            "run_queue_claimable".to_string(),
+            "CREATE INDEX run_queue_claimable ON demo.run_queue USING btree \
+             (tenant_id, available_at, stream_seq, lease_expires_at)"
+                .to_string(),
+        );
+    }
+
     #[test]
     fn record_tables_are_pinned() {
         assert_eq!(
@@ -5460,10 +5835,7 @@ CREATE INDEX event_registrations_by_entity
                 "retired helper {function} remains in the schema of record"
             );
         }
-        assert_eq!(
-            record_tables(RUN_QUEUE_SQL, "wamn_run"),
-            ["run_queue", "partition_owner", "run_dead_letters"]
-        );
+        assert_eq!(record_tables(RUN_QUEUE_SQL, "wamn_run"), ["run_queue"]);
         let catalog = record_tables(CATALOG_SCHEMA_SQL, "catalog");
         assert!(catalog.first().is_some_and(|t| t == "catalogs"));
         assert!(catalog.contains(&"event_registrations".to_string()));
@@ -5531,7 +5903,7 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn run_queue_record_columns_carry_the_drift_set() {
+    fn run_queue_record_columns_pin_the_global_fifo_shape() {
         let cols = record_columns(RUN_QUEUE_SQL, "wamn_run", "run_queue");
         let names: Vec<&str> = cols.iter().map(|(c, _)| c.as_str()).collect();
         assert_eq!(
@@ -5539,8 +5911,6 @@ CREATE INDEX event_registrations_by_entity
             [
                 "tenant_id",
                 "run_id",
-                "partition_key",
-                "partition_policy",
                 "priority",
                 "available_at",
                 "stream_seq",
@@ -5552,13 +5922,25 @@ CREATE INDEX event_registrations_by_entity
                 "enqueued_at",
             ]
         );
-        // The E4 / D20 definitions the drifted-schema ALTERs are built from.
-        let def = |n: &str| cols.iter().find(|(c, _)| c == n).unwrap().1.clone();
-        assert_eq!(def("stream_seq"), "stream_seq bigint NOT NULL DEFAULT 0");
+        let definitions: Vec<&str> = cols
+            .iter()
+            .map(|(_, definition)| definition.as_str())
+            .collect();
         assert_eq!(
-            def("partition_policy"),
-            "partition_policy text NOT NULL DEFAULT 'blocking' \
-             CHECK (partition_policy IN ('blocking', 'leapfrog'))"
+            definitions,
+            [
+                "tenant_id text NOT NULL CHECK (tenant_id <> '')",
+                "run_id text NOT NULL",
+                "priority int NOT NULL DEFAULT 0",
+                "available_at timestamptz NOT NULL DEFAULT now()",
+                "stream_seq bigint NOT NULL DEFAULT 0",
+                "lease_owner text",
+                "lease_expires_at timestamptz",
+                "lease_generation bigint NOT NULL DEFAULT 0 CHECK (lease_generation >= 0)",
+                "attempts int NOT NULL DEFAULT 0",
+                "max_attempts int NOT NULL DEFAULT 20",
+                "enqueued_at timestamptz NOT NULL DEFAULT now()",
+            ]
         );
     }
 
@@ -5836,13 +6218,23 @@ CREATE INDEX event_registrations_by_entity
     fn table_sections_carry_indexes_rls_and_grants() {
         let rq = table_section(RUN_QUEUE_SQL, "wamn_run", "run_queue");
         assert!(rq.contains("CREATE INDEX run_queue_claimable"));
-        assert!(rq.contains("CREATE INDEX run_queue_partition"));
+        assert!(rq.contains("available_at, stream_seq, run_id, lease_expires_at"));
         assert!(rq.contains("FORCE ROW LEVEL SECURITY"));
-        assert!(!rq.contains("CREATE TABLE wamn_run.partition_owner"));
-
-        let dl = table_section(RUN_QUEUE_SQL, "wamn_run", "run_dead_letters");
-        assert!(dl.contains("GRANT SELECT, INSERT ON wamn_run.run_dead_letters"));
-        assert!(dl.contains("CREATE POLICY run_dead_letters_tenant"));
+        assert!(
+            rq.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.run_queue TO wamn_app")
+        );
+        for retired in [
+            "partition_key",
+            "partition_policy",
+            "partition_owner",
+            "run_dead_letters",
+            "run_queue_partition",
+        ] {
+            assert!(
+                !rq.contains(retired),
+                "retired queue DDL remains: {retired}"
+            );
+        }
 
         let cat = table_section(CATALOG_SCHEMA_SQL, "catalog", "catalogs");
         assert!(cat.contains("catalogs_one_applied_per_env"));
@@ -5885,7 +6277,6 @@ CREATE INDEX event_registrations_by_entity
                 "node_runs_seq",
                 "run_flow_resolutions_execution_bundle",
                 "run_queue_claimable",
-                "run_queue_partition",
                 "runs_event_root",
                 "runs_execution_bundle",
                 "runs_flow",
@@ -5904,7 +6295,11 @@ CREATE INDEX event_registrations_by_entity
             .find(|(n, _, _)| n == "run_queue_claimable")
             .unwrap();
         assert_eq!(table, "run_queue");
-        assert!(stmt.contains("stream_seq"));
+        assert_eq!(
+            stmt,
+            "CREATE INDEX run_queue_claimable ON wamn_run.run_queue \
+             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+        );
         // The multi-line partial expression index parses to one statement.
         let (_, _, wh) = index_statements(FLOWS_SQL, "wamn_run")
             .into_iter()
@@ -5924,8 +6319,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            17,
-            "all seventeen retained run-plane tables are at target"
+            15,
+            "all fifteen retained run-plane tables are at target"
         );
     }
 
@@ -6428,68 +6823,102 @@ CREATE INDEX event_registrations_by_entity
         );
     }
 
-    /// The v1-era drift set (the live 2jkm.41 sweep findings) plans exactly the
-    /// additive repairs: E4/D20 columns, the claimable-index recreate, the
-    /// missing fqg.20/v8cv tables, the outbox-era teardown, the registration
-    /// state strip.
+    /// A complete legacy partition plane is removed by one leading locked
+    /// cutover; the generic drift planner must not duplicate any owned drop or
+    /// claim-index repair.
     #[test]
-    fn v1_era_drift_plans_the_additive_repairs() {
+    fn legacy_partition_plane_plans_one_leading_cutover() {
         let mut obs = observation_at_record();
-        // run_queue predates E4 + D20; the claimable index predates stream_seq.
-        let rq = obs.tables.get_mut("run_queue").unwrap();
-        rq.remove("stream_seq");
-        rq.remove("partition_policy");
-        obs.indexes.insert(
-            "run_queue_claimable".into(),
-            "CREATE INDEX run_queue_claimable ON demo.run_queue \
-             USING btree (tenant_id, available_at, lease_expires_at)"
-                .into(),
-        );
-        // fqg.20 / v8cv tables not yet provisioned.
-        obs.tables.remove("partition_owner");
-        obs.tables.remove("run_dead_letters");
-        obs.indexes.remove("run_queue_partition");
-        // The outbox era: tables + trigger + function + a stored state key.
+        add_legacy_partition_plane(&mut obs);
+        // Keep the independent outbox teardown and registration cleanup in the
+        // same observation to pin their ordering after the leading cutover.
         obs.tables
             .insert("outbox".into(), BTreeSet::from(["id".into()]));
         obs.tables
             .insert("evt_shadow".into(), BTreeSet::from(["id".into()]));
         obs.outbox_trigger_tables = vec!["receipts".into()];
         obs.outbox_function_present = true;
-        obs.stale_registration_state_rows = 2;
-        // The catalog schema predates l5i9.16.
-        obs.catalog_tables.remove("event_registrations");
+        obs.stale_registration_key_rows = 2;
 
         let plan = plan_run_plane(&schema("demo"), &obs);
         let sqls: Vec<&str> = plan.actions.iter().map(|a| a.sql.as_str()).collect();
         let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
-
-        assert!(sqls.contains(
-            &"ALTER TABLE \"demo\".\"run_queue\" ADD COLUMN stream_seq bigint NOT NULL DEFAULT 0"
+        let cutover = plan.actions.first().expect("partition cutover action");
+        assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+        assert_eq!(cutover.target, "run_queue.partition-plane");
+        assert!(cutover.sql.starts_with(
+            "LOCK TABLE \"demo\".\"run_queue\", \"demo\".\"partition_owner\", \
+             \"demo\".\"run_dead_letters\", \"demo\".\"flows\" IN ACCESS EXCLUSIVE MODE"
         ));
-        assert!(sqls.iter().any(|s| s.starts_with(
-            "ALTER TABLE \"demo\".\"run_queue\" ADD COLUMN partition_policy text NOT NULL"
-        )));
-        let recreate = plan
-            .actions
-            .iter()
-            .find(|a| a.kind == RunPlaneActionKind::RecreateIndex)
-            .expect("claimable index recreates");
+        assert!(cutover.sql.contains("graph_json ? 'ordering'"));
+        assert!(cutover.sql.contains("graph_json ? 'partition-policy'"));
         assert!(
-            recreate
+            cutover
                 .sql
-                .starts_with("DROP INDEX \"demo\".\"run_queue_claimable\"; ")
+                .contains("lease_owner IS NOT NULL AND lease_expires_at > clock_timestamp()")
         );
-        assert!(recreate.sql.contains("stream_seq"));
-        assert!(plan
-            .actions
-            .iter()
-            .any(|a| a.kind == RunPlaneActionKind::CreateTable && a.target == "partition_owner"));
-        assert!(plan.actions.iter().any(|a| {
-            a.kind == RunPlaneActionKind::CreateTable
-                && a.target == "run_dead_letters"
-                && a.sql
-                    .contains("GRANT SELECT, INSERT ON demo.run_dead_letters")
+        assert!(
+            cutover
+                .sql
+                .contains("partition-plane-cutover-requires-drained-workers")
+        );
+        assert!(
+            cutover
+                .sql
+                .contains("IF EXISTS (SELECT 1 FROM \"demo\".run_dead_letters)")
+        );
+        assert!(cutover.sql.contains(RETIRED_DEAD_LETTER_REFUSAL));
+        assert!(
+            cutover
+                .sql
+                .contains("DROP INDEX IF EXISTS \"demo\".run_queue_partition")
+        );
+        assert!(
+            cutover
+                .sql
+                .contains("DROP CONSTRAINT IF EXISTS run_queue_partition_policy_check")
+        );
+        assert!(cutover.sql.contains("DROP COLUMN IF EXISTS partition_key"));
+        assert!(
+            cutover
+                .sql
+                .contains("DROP COLUMN IF EXISTS partition_policy")
+        );
+        assert!(
+            cutover
+                .sql
+                .contains("DROP TABLE IF EXISTS \"demo\".\"partition_owner\"")
+        );
+        assert!(
+            cutover
+                .sql
+                .contains("DROP TABLE IF EXISTS \"demo\".\"run_dead_letters\"")
+        );
+        assert!(!cutover.sql.contains("CASCADE"));
+        assert!(cutover.sql.contains(
+            "CREATE INDEX run_queue_claimable ON \"demo\".run_queue \
+             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+        ));
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| **kind == RunPlaneActionKind::PartitionPlaneCutover)
+                .count(),
+            1
+        );
+        assert!(!plan.actions.iter().any(|action| {
+            matches!(
+                action.kind,
+                RunPlaneActionKind::CreateIndex
+                    | RunPlaneActionKind::RecreateIndex
+                    | RunPlaneActionKind::DropExtraConstraint
+            ) && matches!(
+                action.target.as_str(),
+                "run_queue_claimable" | "run_queue.run_queue_partition_policy_check"
+            )
+        }));
+        assert!(!plan.extra_columns.iter().any(|(table, column)| {
+            table == "run_queue" && RETIRED_PARTITION_COLUMNS.contains(&column.as_str())
         }));
         assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"outbox\""));
         assert!(sqls.contains(&"DROP TABLE IF EXISTS \"demo\".\"evt_shadow\""));
@@ -6507,15 +6936,105 @@ CREATE INDEX event_registrations_by_entity
             .position(|k| *k == RunPlaneActionKind::DropLegacyFunction)
             .unwrap();
         assert!(trig < func);
+        assert!(sqls.contains(&strip_retired_registration_keys_sql()));
+    }
+
+    #[test]
+    fn persisted_retired_flow_ordering_is_a_leading_reprovision_refusal() {
+        let mut obs = observation_at_record();
+        obs.retired_authored_ordering_rows = 2;
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan.actions.first().expect("authored ordering cutover");
+        assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+        assert!(cutover.sql.starts_with(
+            "LOCK TABLE \"demo\".\"run_queue\", \"demo\".\"flows\" IN ACCESS EXCLUSIVE MODE"
+        ));
+        let refusal = cutover
+            .sql
+            .find(RETIRED_AUTHORED_ORDERING_REFUSAL)
+            .expect("exact reprovision refusal");
+        let first_ddl = cutover
+            .sql
+            .find("DROP INDEX")
+            .expect("partition cutover DDL follows preflights");
+        assert!(refusal < first_ddl);
+        assert!(cutover.sql.contains("ERRCODE = '55000'"));
+        assert!(cutover.sql.contains("graph_json ? 'ordering'"));
+        assert!(cutover.sql.contains("graph_json ? 'partition-policy'"));
         assert!(
-            plan.actions
-                .iter()
-                .any(|a| a.kind == RunPlaneActionKind::CreateCatalogTable
-                    && a.target == "event_registrations")
+            count_retired_authored_ordering_rows_sql(&schema("demo"))
+                .contains("WHERE graph_json ? 'ordering' OR graph_json ? 'partition-policy'")
         );
-        assert!(sqls.contains(&strip_registration_state_sql()));
-        // Nothing in the plan drops a live COLUMN (additive posture).
-        assert!(!sqls.iter().any(|s| s.contains("DROP COLUMN")));
+
+        obs.retired_authored_ordering_rows = 0;
+        assert!(plan_run_plane(&schema("demo"), &obs).is_noop());
+    }
+
+    /// The leading cutover must remain executable against a partially
+    /// converged queue. A missing retained claim-index column is added later by
+    /// the generic planner, which then owns the final index recreation.
+    #[test]
+    fn partial_partition_plane_defers_claim_index_until_columns_exist() {
+        let mut obs = observation_at_record();
+        add_legacy_partition_plane(&mut obs);
+        obs.tables
+            .get_mut("run_queue")
+            .expect("record queue")
+            .remove("stream_seq");
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let cutover = plan.actions.first().expect("partition cutover action");
+        assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+        assert!(!cutover.sql.contains("run_queue_claimable"));
+        assert!(plan.actions.iter().any(|action| {
+            action.kind == RunPlaneActionKind::AddColumn && action.target == "run_queue.stream_seq"
+        }));
+        let recreate = plan
+            .actions
+            .iter()
+            .find(|action| {
+                action.kind == RunPlaneActionKind::RecreateIndex
+                    && action.target == "run_queue_claimable"
+            })
+            .expect("claimable index repair follows the retained column add");
+        assert!(recreate.sql.contains(
+            "CREATE INDEX run_queue_claimable ON demo.run_queue \
+             (tenant_id, available_at, stream_seq, run_id, lease_expires_at)"
+        ));
+    }
+
+    #[test]
+    fn partial_partition_plane_requires_unobservable_lease_tables_to_be_empty() {
+        let mut obs = observation_at_record();
+        add_legacy_partition_plane(&mut obs);
+        obs.tables
+            .get_mut("run_queue")
+            .expect("record queue")
+            .remove("lease_owner");
+        obs.tables
+            .get_mut("partition_owner")
+            .expect("legacy owner table")
+            .remove("lease_expires_at");
+
+        let cutover = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .next()
+            .expect("partition cutover action");
+        assert_eq!(cutover.kind, RunPlaneActionKind::PartitionPlaneCutover);
+        assert!(!cutover.sql.contains("clock_timestamp()"));
+        assert!(cutover.sql.contains(
+            "partition-plane-cutover-requires-observable-run-queue-leases-or-empty-queue"
+        ));
+        assert!(cutover.sql.contains(
+            "partition-plane-cutover-requires-observable-partition-leases-or-empty-owner-table"
+        ));
+        assert!(
+            cutover
+                .sql
+                .contains("DROP TABLE IF EXISTS \"demo\".\"partition_owner\"")
+        );
     }
 
     #[test]
@@ -7465,9 +7984,7 @@ CREATE INDEX event_registrations_by_entity
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
-                "run_queue",
-                "partition_owner",
-                "run_dead_letters"
+                "run_queue"
             ]
         );
         assert!(
@@ -8077,6 +8594,79 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             RUN_STATE_SQL.contains("ALTER TABLE wamn_run.effect_attempts FORCE ROW LEVEL SECURITY")
         );
+        assert!(RUN_STATE_SQL.contains(
+            "GRANT SELECT (tenant_id, run_id, status)\n    ON wamn_run.runs TO wamn_effect_writer"
+        ));
+        assert!(RUN_QUEUE_SQL.contains(
+            "GRANT SELECT (tenant_id, run_id, lease_owner, lease_expires_at)\n    ON wamn_run.run_queue TO wamn_effect_writer"
+        ));
+        assert!(!RUN_STATE_SQL.contains("GRANT SELECT ON wamn_run.runs TO wamn_effect_writer"));
+        assert!(
+            !RUN_QUEUE_SQL.contains("GRANT SELECT ON wamn_run.run_queue TO wamn_effect_writer")
+        );
+    }
+
+    #[test]
+    fn effect_writer_run_reads_reconcile_to_exact_columns_without_table_authority() {
+        let mut obs = observation_at_record();
+        obs.effect_writer_run_table_privileges.insert(
+            "runs".to_string(),
+            ["SELECT".to_string(), "UPDATE".to_string()]
+                .into_iter()
+                .collect(),
+        );
+        obs.effect_writer_run_column_privileges
+            .remove(&("run_queue".to_string(), "lease_expires_at".to_string()));
+        obs.tables
+            .get_mut("run_queue")
+            .expect("queue table")
+            .remove("lease_expires_at");
+        obs.effect_writer_run_column_privileges.insert(
+            ("run_queue".to_string(), "lease_generation".to_string()),
+            ["SELECT".to_string()].into_iter().collect(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let runs = plan
+            .actions
+            .iter()
+            .find(|action| action.target == "demo.runs.effect-read")
+            .expect("runs writer-read repair");
+        assert_eq!(runs.kind, RunPlaneActionKind::RepairEffectWriterPrivilege);
+        assert!(
+            runs.sql
+                .contains("REVOKE ALL PRIVILEGES ON TABLE \"demo\".\"runs\"")
+        );
+        assert!(
+            runs.sql
+                .contains("GRANT SELECT (\"tenant_id\", \"run_id\", \"status\")")
+        );
+        assert!(runs.sql.contains("has_table_privilege"));
+
+        let queue = plan
+            .actions
+            .iter()
+            .find(|action| action.target == "demo.run_queue.effect-read")
+            .expect("queue writer-read repair");
+        let add = plan
+            .actions
+            .iter()
+            .position(|action| {
+                action.kind == RunPlaneActionKind::AddColumn
+                    && action.target == "run_queue.lease_expires_at"
+            })
+            .expect("missing allowed queue column is restored");
+        let repair = plan
+            .actions
+            .iter()
+            .position(|action| action.target == "demo.run_queue.effect-read")
+            .unwrap();
+        assert!(add < repair);
+        assert!(queue.sql.contains(
+            "GRANT SELECT (\"tenant_id\", \"run_id\", \"lease_owner\", \"lease_expires_at\")"
+        ));
+        assert!(queue.sql.contains("attribute.attname"));
+        assert!(!queue.sql.contains("ARRAY['lease_generation']"));
     }
 
     #[test]
@@ -8197,17 +8787,14 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(drops[0].target, "runs.legacy_runs_trigger");
     }
 
-    /// The queue-missing manifestation (the live poc_f1 case): run-state +
-    /// flows present, queue absent → exactly the three queue creates (+ the
-    /// schema ensure, which is idempotent).
+    /// The queue-missing manifestation (the live poc_f1 case): run-state and
+    /// flows present, queue absent → exactly the global queue create (plus the
+    /// idempotent schema ensure).
     #[test]
     fn queue_missing_plans_only_the_queue_creates() {
         let mut obs = observation_at_record();
         obs.tables.remove("run_queue");
-        obs.tables.remove("partition_owner");
-        obs.tables.remove("run_dead_letters");
         obs.indexes.remove("run_queue_claimable");
-        obs.indexes.remove("run_queue_partition");
         let plan = plan_run_plane(&schema("poc_f1"), &obs);
         let creates: Vec<&str> = plan
             .actions
@@ -8215,10 +8802,7 @@ CREATE INDEX event_registrations_by_entity
             .filter(|a| a.kind == RunPlaneActionKind::CreateTable)
             .map(|a| a.target.as_str())
             .collect();
-        assert_eq!(
-            creates,
-            ["run_queue", "partition_owner", "run_dead_letters"]
-        );
+        assert_eq!(creates, ["run_queue"]);
         assert!(
             plan.actions
                 .iter()
@@ -8285,6 +8869,12 @@ CREATE INDEX event_registrations_by_entity
         assert!(select_run_capture_privileges_sql().contains("has_table_privilege"));
         assert!(select_run_capture_privileges_sql().contains("has_column_privilege"));
         assert!(select_run_capture_privileges_sql().contains("capture_mode"));
+        let writer_tables = select_effect_writer_run_table_privileges_sql();
+        assert!(writer_tables.contains("has_table_privilege"));
+        assert!(writer_tables.contains("relation.relname IN ('runs', 'run_queue')"));
+        let writer_columns = select_effect_writer_run_column_privileges_sql();
+        assert!(writer_columns.contains("has_column_privilege"));
+        assert!(writer_columns.contains("attribute.attnum > 0"));
         assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
         assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
         // Every observation query must see the ledger, or the planner reads an
@@ -8345,9 +8935,15 @@ CREATE INDEX event_registrations_by_entity
             select_run_plane_helper_functions_sql().contains("guard_effect_disposition_append")
         );
         assert_eq!(
-            strip_registration_state_sql(),
-            "UPDATE catalog.event_registrations SET registration = registration - 'state' \
-             WHERE registration ? 'state'"
+            strip_retired_registration_keys_sql(),
+            "UPDATE catalog.event_registrations \
+             SET registration = registration - 'state' - 'partition-key' \
+             WHERE registration ?| ARRAY['state', 'partition-key']"
+        );
+        assert_eq!(
+            count_stale_registration_keys_sql(),
+            "SELECT count(*) FROM catalog.event_registrations \
+             WHERE registration ?| ARRAY['state', 'partition-key']"
         );
     }
 }

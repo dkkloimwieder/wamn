@@ -1121,52 +1121,18 @@ WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
 docker stop wamn-admission-pg
 ```
 
-Occurrence-keyed `invoke-flow` child creation and wake-at-release use the same
-throwaway database:
-
-```bash
-cargo test --locked -p wamn-run-state -p wamn-flow
-docker run -d --rm --name wamn-child-state-pg -p 5458:5432 \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-# recipe-test: CALLABLE-CHILD-STATE | integration | wamn-run-state | test | child_live | - | 1 | exact occurrence recovery, conflicting/cross-parent refusal, wait-generation fence, create/release fault rollback, atomic wake
-WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
-  cargo test --locked -p wamn-run-state --test child_live -- --ignored --nocapture
-docker stop wamn-child-state-pg
-```
-
-Callable-flow child runtime authorization, bounds, service lineage, outcome
-resume, and pre-release generation seizure extend the same gate:
-
-```bash
-cargo test --locked -p wamn-runner -p wamn-run-state
-cargo test --locked -p wamn-proof-system --lib childproof::tests::
-docker run -d --rm --name wamn-child-runtime-pg -p 5458:5432 \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=wamn postgres:18
-# recipe-test: CALLABLE-CHILD-RUNTIME | integration | wamn-run-state | test | child_live | - | 1 | creation-only authorization, service actor lineage, fresh context, depth and deadline bounds, released outcome recovery, stale-generation and pre-release cancellation
-WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
-  cargo test --locked -p wamn-run-state --test child_live -- --ignored --nocapture
-docker stop wamn-child-runtime-pg
-```
+The former occurrence-keyed child-state/runtime recipes are historical only.
+`wamn-0h0g.4.4` owns deletion of that retained pre-MVP machinery; the current
+global-FIFO gate neither revives nor claims `child_live` as runnable evidence.
 
 ### [5.7-resume-pin / wamn-cox] resume pins the run's persisted flow_version
 
 Docs: docs/archive/execution/run-state.md § *Resume pins the run's persisted version*
 
 ```bash
-# A resume loads the run's PERSISTED runs.flow_version (stamped at write-ahead
-# time), never the active version — so a flow edited/hot-reloaded mid-run cannot
-# make reconstruction fold against a divergent graph. All three drive paths pin
-# it: the direct execute (reads flow_version, load_flow_at), the unpartitioned
-# claim (claim_dispatch_sql projects r.flow_version, the guest flow_at pins it),
-# and the partitioned claim (select_run_dispatch_sql projects flow_version).
-cargo test -p wamn-run-state   # pure text pins + queue.rs live
-#   discriminating fixture (cd-0 PERSISTED=3 vs ACTIVE=4 -> claim returns 3)
-# Gate of record: runnerbench MERGE-RESUME phase (phase 9). mr-0 (v1) parks at its
-# delay-merge; a structurally-different v2 (linear in->r) is registered+activated
-# MID-RUN; the pinned resume keeps driving v1 (completed, 7 node_runs rows, m/r
-# visits (2,0,1)). See [5.14] production runner (run-worker, fqg.8) for the run cmd.
-# Historical only after `wamn-0h0g.4.9`: the removed stable-key/recovery anchors
-# are no longer a current mutation command or required evidence record.
+# The host-owned production claim reads the admitted run's immutable version
+# and materializes its exact release-bound resolution map before lease grant.
+cargo test -p wamn-run-state
 ```
 
 ### [5.9] credential vault (plugins/wamn_credentials)
@@ -1189,27 +1155,10 @@ Docs: docs/archive/execution/run-queue.md
 cargo test -p wamn-run-state -p wamn-scheduler
 cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
   && cargo fmt -p wamn-run-state -p wamn-scheduler --check
-# optional live-apply gate (deploy/sql/run-state.sql + run-queue.sql on a throwaway PG;
-# skips cleanly when unset):
-docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-docker exec wamn-rq-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-state
-# throwaway PG above (the live-apply gate created wamn_app) + a throwaway NATS:
-docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-gates --log-level error queuebench \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
-  --nats-url nats://127.0.0.1:4232 --mode all
-docker stop wamn-rq-pg wamn-rq-nats
-# In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
-# kind load docker-image wamn-gates:dev --name wamn):
-kubectl -n wamn-system apply -f deploy/gates/queuebench-job.yaml
-kubectl -n wamn-system logs -f job/queuebench
-
-# Historical only: the former PLAN-0.2 queue-runner mutation campaign was
-# retired and is not runnable against the current source tree.
+# Historical only: the former queuebench executable and its deployed Job were
+# archived by wamn-0h0g.4.1 and are not runnable against the global-FIFO source.
+# Use the focused production-claim live test plus the retained runnerbench
+# handoff recipe below.
 ```
 
 Trusted event lineage in runner execution input has its own focused campaign.
@@ -1228,17 +1177,8 @@ cargo test --locked -p wamn-proof-conformance --test gate_mutation_evidence
 # rerunning its mutants; bd:wamn-2jdm.5 owns a new immutable receipt.
 ```
 
-D20 (R6, wamn-1d4) the `partitioned(key)` head-unavailability policy lands here:
-`wamn-flow` gains `Flow::partition_policy` (`blocking` default / `leapfrog`),
-`run_queue.partition_policy` materializes it, `claim_partition_head_sql` branches on
-it, and `janitor_sweep_sql` exempts a blocking-policy row (wedge). Pure coverage:
-`partition_policy_decides_whether_a_later_run_overtakes_an_unavailable_head`,
-`blocking_wedges_a_key_behind_an_exhausted_head_leapfrog_releases_it`,
-`blocking_partition_orphan_wedges_instead_of_being_reaped` (janitor verdict), plus
-shape/DDL drift guards. The live-apply gate (Phase A/B) and the queuebench
-`partition` phase (`partition_policy_cases`) prove it through real Postgres. The
-guest does not read the flow field until fqg.9, so the in-cluster gate is a
-gates-image rebuild only (guest unchanged for this slice).
+D20/R6 ordering-policy evidence is historical. wamn-0h0g.4.1 deleted that
+authored/storage/runtime plane; its former proof modes are not current gates.
 
 ### [PLAN-3 / wamn-vshi.5] F1 capture-on run-state baseline
 
@@ -1275,37 +1215,13 @@ the present source of heap/TOAST growth, WAL, and vacuum pressure. Measurements
 are curves, not budgets. Only durable-commit provenance, exact run/node counts,
 full-capture presence, and nonzero WAL are pass/fail assertions.
 
-### [EVT-C7 / wamn-z7b.1] queuebench ceiling campaign (measurement, not a gate)
+### [EVT-C7 / wamn-z7b.1] queue ceiling campaign — archived measurement
 
 Docs: docs/archive/results/ceilings.md (the published curves) + docs/archive/events/event-plane-jetstream.md §10/§11
 
-```bash
-# The pure ramp/knee controller (coarse-double → bisect; p99-doubling /
-# rate-divergence / drain-timeout saturation) lives in wamn-gate-harness:
-cargo test -p wamn-gate-harness
-# Local iteration (short knobs; correctness only — debug build, dev-host PG):
-docker run -d --rm --name wamn-ceil-pg -p 5443:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-docker exec wamn-ceil-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_PG_URL=postgres://wamn_app:wamn_app@127.0.0.1:5443/postgres \
-  WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5443/postgres \
-  ./target/debug/wamn-gates --log-level error queuebench --mode ceiling \
-  --level-secs 5 --soak-secs 30 --burst-secs 10
-docker stop wamn-ceil-pg
-# Numbers of record (in-cluster, §10 knobs baked into the manifest; ~60–90 min):
-kubectl -n wamn-system apply -f deploy/gates/queuebench-ceiling-job.yaml
-kubectl -n wamn-system logs -f job/queuebench-ceiling
-# Extract the `=== BEGIN CSV <name> ===` blocks from the job log into
-# docs/results/ceilings-data/ and cite them from docs/archive/results/ceilings.md (§11 provenance).
-```
-
-The ceiling mode is deliberately NOT in `--mode all` (the regression gate of
-record stays deploy/gates/queuebench-job.yaml). Only the exactly-once + completeness
-sanity asserts are pass/fail; the knees/curves are measurements. Phase 2
-(fillfactor × autovacuum matrix, 30-min soak, 1M-run bloat soak) = wamn-z7b.6.
-Mutation harness for the knee controller: scratchpad `mutate_z7b1.py`
-(saturation-arm + bisect-direction mutants each fail a named
-wamn-gate-harness unit test).
+The published curves remain historical evidence. The executable, long-running
+mode, and deployed Jobs were archived by wamn-0h0g.4.1; there is no current
+rerun command for this measurement.
 
 ### [EVT-C2 / wamn-z7b.2] outboxbench — RETIRED (l5i9.19 teardown)
 
@@ -1633,22 +1549,11 @@ gate rebakes the host image + rebuilds the flowrunner wasm.
 # Unit boundary: the Postgres plugin is owned by the wamn-runtime library.
 # recipe-test: H5-CAUSATION | unit | wamn-runtime | lib | - | plugins::wamn_postgres::claims::tests:: | 15 | crates/platform/runtime/src/plugins/wamn_postgres/claims.rs claims, causation emit, forgery guard, and current-run map
 cargo test -p wamn-runtime --lib plugins::wamn_postgres::claims::tests::
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)  # guest declares the channel
-# Local live proof — the REAL plugin emit through the REAL runner (both direct
-# and queue-claim drive paths):
-docker run -d --name caus-pg -p 5491:5432 -e POSTGRES_PASSWORD=postgres postgres:18 -c wal_level=logical
-docker exec caus-pg psql -U postgres -c "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER;"
-docker exec caus-pg psql -U postgres -tAc "SELECT pg_create_logical_replication_slot('caus','test_decoding')"
-./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5491/postgres \
-  --admin-database-url postgres://postgres:postgres@127.0.0.1:5491/postgres   # runs drive; NOSUPERUSER app role emits, writes never break
-# peek: a transactional wamn.causation {run,run,0} rides EACH run's sink-write txn, content == run_id:
-docker exec caus-pg psql -U postgres -tAc "SELECT data FROM pg_logical_slot_peek_changes('caus',NULL,1500)" | grep -E "wamn.causation|sink: INSERT"
-docker rm -f caus-pg
-# In-cluster gate of record (deployed image drives real runs; the reader stitch of
-# the identical bytes is already proven at l5i9.12.1's in-cluster R3 + phase G):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev . && kind load docker-image wamn-host:dev --name wamn
 ```
+
+The former runnerbench live drive depended on guest-side claim and execution,
+so its runnable recipe was archived by wamn-0h0g.4.1. The retained runnerbench
+below stops at host-owned claim handoff; it does not prove causation emission.
 
 Mutation harness: scratchpad `mutate_l5i9_12_2.py` — M1 emit dropped from
 `build_claim_batch`, M2 `set_current_run` does not store the run, M3 the forgery
@@ -1701,15 +1606,17 @@ a new immutable receipt.
 Docs: docs/archive/events/event-plane-jetstream.md §5. The **declaration surface** the
 materializer (l5i9.17) consumes: a registration = subscribing flow id, entity id
 (the rename-proof catalog **entity id**, EVT-OIDMAP — never a table name), a
-non-empty op set, an optional JMESPath condition, and an optional JMESPath
-partition-key expr. Model + validation in the pure `wamn-event-reg` crate;
+non-empty op set, and an optional JMESPath condition. Model + validation in the
+pure `wamn-event-reg` crate;
 storage `catalog.event_registrations` (deploy/sql/catalog-schema.sql, mirrors
 `rls_policies` — jsonb doc + denormalized `flow_id`/`entity_id` columns, live-
 catalog-scoped not version-tied, tenant-RLS'd, indexed by entity for 11.8 impact
 analysis wamn-wvb); minimal CRUD builders in `wamn-api` (`registration` module —
 pinned identifiers, `$n` values, `tenant_id` server-side). NO materializer, NO
-reader change, NO UI (parked). The condition/partition-key are stored as JMESPath
-strings, validated for SYNTAX at write time (the materializer owns evaluation); a
+reader change, NO UI (parked). The condition is stored as a JMESPath string and
+validated for SYNTAX at write time (the materializer owns evaluation). The
+pre-release 0.1 declaration is an exact allowlist: the retired `partition-key`
+field is refused rather than ignored. A
 condition referencing `old` ("changed-to") is expressible but its old image needs
 REPLICA IDENTITY FULL (l5i9.31) — this surface never flips replica identity. It
 does DETECT the gap (EVT-RI-ORCH, wamn-l5i9.66): a create/update that needs the
@@ -2018,247 +1925,161 @@ restore with sha256, DEBUG builds; rebuild wamn-gates after restoring a dep.
 
 Docs: docs/archive/execution/run-queue.md
 
-```bash
-cargo test -p wamn-run-state   # incl the janitor completion-race guard (shape + live-apply)
-cargo clippy -p wamn-run-state --all-targets && cargo fmt -p wamn-run-state --check
-# Local iteration (reuse the throwaway PG above [wamn-rq-pg on 5459, wamn_app created by
-# so NO wasm rebuild — reuse the built flowrunner.wasm):
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/release/wamn-gates --log-level error failoverbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
-# In-cluster gate of record (co-located with postgres, NO cpu limit — S2 CFS lesson;
-# HOST change => full docker rebuild (both --target stages + kind load BOTH images):
-kubectl -n wamn-system apply -f deploy/gates/failoverbench-job.yaml
-kubectl -n wamn-system logs -f job/failoverbench
-```
+Historical only. The failoverbench executable and Job were archived by
+wamn-0h0g.4.1. Current reclaim-classifier coverage lives in the focused
+run-state/runtime PostgreSQL tests recorded by that issue's gate.
 
 ### [5.14] guest-self-claim
 
 Docs: docs/archive/execution/run-queue.md
 
-```bash
-cargo test -p wamn-run-state   # incl select_run_dispatch shape (fl3's traceparent seam)
-cargo build -p wamn-run-state   # the guest-safe durable-state core builds alone
-cargo clippy -p wamn-dispatcher -p wamn-executor -p wamn-gates -p wamn-run-state --all-targets \
-  && cargo fmt -p wamn-dispatcher -p wamn-executor -p wamn-gates -p wamn-run-state --check
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
-cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
-# Local iteration (throwaway postgres:18 + wamn_app; failoverbench --mode all now includes
-# claim/park/heartbeat — the guest CHANGED so rebuild the wasm above first):
-docker run -d --rm --name wamn-fqg4-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-docker exec wamn-fqg4-pg psql -U postgres -d wamn -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/debug/wamn-gates --log-level error failoverbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn --mode all
-docker stop wamn-fqg4-pg
-# In-cluster gate of record (failoverbench-job runs claim/park/heartbeat + the failover/
-# stages + kind load BOTH images (+ flowbench/testhostbench regress on the new guest):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn && kind load docker-image wamn-gates:dev --name wamn
-kubectl -n wamn-system apply -f deploy/gates/failoverbench-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/failoverbench --timeout=240s
-kubectl -n wamn-system logs job/failoverbench
-```
+Historical only. The guest-owned claim export was deleted before wamn-0h0g.4.1;
+the production transaction is host-only and the guest exposes only
+`run(run-id, payload)`.
 
-### [5.14 / wamn-fqg.9] guest-side partitioned claim
+### [5.14 / wamn-fqg.9] guest-side partitioned claim — retired
 
-Docs: docs/archive/execution/run-queue.md §Head-unavailability policy + §Per-partition ownership
+Historical design record: the issue/commit history preceding the current
+global-FIFO contract in docs/archive/execution/run-queue.md.
 
-The guest `run-next` export now also serves `partitioned(key)` runs: when the
-global (unpartitioned) `claim_dispatch_sql` is empty it leases a partition
-(`acquire_partitions_sql(1)`), claims the earliest HEAD across the partitions it
-owns in stream order (`claim_partition_head_sql(1)` — one in flight per key, D20
-policy on the row), drives it through the shared claimed-run path (renewing the
-partition lease per node alongside the run lease), and STEPS DOWN
-(`release_partition_sql`) from a just-acquired partition that yields no head. The
-WIT is unchanged (`run-next` signature identical) and `ExecutionHost.drain` loops it
-unchanged. The partition SQL/pure builders already existed (host-gated by
-queuebench); fqg.9 is their first GUEST caller — the same shape as fqg.4 for
-`claim_batch_sql`. All partition builders live in `sql.rs`/`partition.rs` OUTSIDE
-the `dispatcher` feature, so `default-features = false` already exposes them —
-nothing moved.
+This section preserves provenance for the removed guest claim design. Its APIs,
+storage, and proof executable are absent from the current source tree.
 
-```bash
-cargo test -p wamn-run-state --test queue guest_partition_loop_drives_each_key_in_stream_order  # pure: the guest limit-1 loop drives each key in (enqueued_at, stream_seq, run_id) order
-cargo clippy -p wamn-run-state -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-run-state -p wamn-gates --check
-(cd components && cargo build --release --target wasm32-wasip2 -p flowrunner)   # guest CHANGED
-cargo clippy --manifest-path components/execution/flowrunner/Cargo.toml --release --target wasm32-wasip2 \
-  && cargo fmt --manifest-path components/execution/flowrunner/Cargo.toml --check
-# Local live gates (throwaway postgres:18 + wamn_app; guest CHANGED so rebuild wasm first):
-docker run -d --name wave3-pg-fqg9 -p 55434:5432 -e POSTGRES_PASSWORD=postgres postgres:18
-docker exec wave3-pg-fqg9 psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55434/postgres \
-  ./target/debug/wamn-gates --log-level error failoverbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55434/postgres --mode partition-order
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:55434/postgres \
-  ./target/debug/wamn-gates --log-level error failoverbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:55434/postgres --mode partition-failover
-docker rm -f wave3-pg-fqg9
-```
+There is no current runnable recipe. The guest claim path and its proof modes
+were deleted by wamn-0h0g.4.1 together with the ordering plane.
 
-`failoverbench --mode all` now also runs `partition-order` + `partition-failover`.
-`partition-order`: one runner drains two interleaved keyed streams IN STREAM
-ORDER per key — `kseq` (equal enqueued_at, distinct stream_seq) + `kenq` (equal
-stream_seq, distinct enqueued_at), each seeded so stream order REVERSES run-id
-order, so a head decision that dropped either tiebreak re-orders a key — while 5
-unordered NULL-key rows drain via the old global claim (exactly once).
-`partition-failover`: owner A drives a key's head then dies (its partition lease
-force-expired — the queuebench lease-timestamp idiom); replica B reacquires the
-key and resumes IN ORDER from the next head with no skipped/duplicated run.
-Terminal-BUSINESS-failure wedging of a `blocking` partition head is NOT
-fqg.9's scope (D20 wedging covers crash-exhaustion via `janitor_sweep_sql`, and
-head-UNAVAILABILITY via `claim_partition_head_sql`; a partitioned head that
-RUNS to a terminal `failed` dequeues like the unpartitioned path — filed as a
-follow-up). Mutation harness: scratchpad `mutate_fqg9.py` — M1 pure (drop
-stream_seq from `partition::stream_key`) fails the pure test; M2 SQL builder
-(drop stream_seq from `claim_partition_head_sql`'s blocking arm) + M3 guest loop
-(short-circuit `claim_partition_run`) fail `partition-order` live.
+The earlier mode and mutation details remain recoverable from the cited issue
+and commits; they are not current gates.
 
-### [5.14] production runner (run-worker, fqg.8)
+### [5.14 / wamn-0h0g.4.1] host-owned global-FIFO claim, recovery, and cutover
 
 Docs: docs/archive/execution/run-queue.md · Manifests: deploy/platform/runner.yaml + deploy/platform/runner-db.example.yaml
 
 ```bash
-cargo test -p wamn-executor   # owner fallback + drain tally + idle backoff
-cargo clippy -p wamn-executor -p wamn-gates --all-targets \
-  && cargo fmt -p wamn-executor -p wamn-gates --check
-# Local runnerbench (throwaway postgres:18 + wamn_app; guest UNCHANGED — no wasm rebuild):
+# The flow-engine runaway budget remains independent of the retired guest claim
+# and partition proofs.
+# recipe-test: H5-RUNNER-BUDGET | integration | wamn-runner | test | runner | a_runaway_cycle_fails_at_exactly_the_budget | 1 | flow-engine runaway dispatch budget is exact and load-bearing
+cargo test --locked -p wamn-runner --test runner \
+  a_runaway_cycle_fails_at_exactly_the_budget -- --exact
+
+cargo test --locked -p wamn-proof-integration --lib runnerbench::tests::
+cargo build --locked -p wamn-gates
+cargo build --locked --manifest-path components/Cargo.toml \
+  --target wasm32-wasip2 -p flowrunner
 docker run -d --name wamn-fqg8-pg -p 5490:5432 -e POSTGRES_PASSWORD=postgres postgres:18
+until docker exec wamn-fqg8-pg pg_isready -U postgres; do sleep 1; done
 docker exec wamn-fqg8-pg psql -U postgres -c \
   "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;"
 ./target/debug/wamn-gates --log-level warn runnerbench \
-  --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
+  --flowrunner components/target/wasm32-wasip2/debug/flowrunner.wasm \
   --database-url postgres://wamn_app:wamn_app@127.0.0.1:5490/postgres \
   --admin-database-url postgres://postgres:postgres@127.0.0.1:5490/postgres
-# 8 phases: drain + reuse + empty + RUNAWAY (cjv.4 anti-wedge, LOCAL gate of
-# record: a never-terminating cyclic flow drives the engine's default 10k
-# dispatch budget, ends failed/runaway-budget + DEQUEUES, and the run queued
-# behind it still completes — under the phase's own 180s wall guard so a
-# budget-removed mutant FAILS instead of hanging; ~1-2 min wall for the 10k
-# dispatches) + STREAM + STREAM-RELOAD (fqg.18 record-stream amortization:
-# --stream-records record-runs of one flow on one warm instance, per-record
-# correctness [exactly-once, full node_runs trail, sink witness] + the
-# ms/record measurement — combined claim/checkpoint/complete statements +
-# guest plan cache took the local debug number from ~66 to ~32-37 ms/record —
-# then a mid-stream version flip must take effect for the following records =
-# the plan-cache invalidation guard) + PARTITION-ORDER (fqg.9, wamn-7hja:
-# PARTITIONED(key) runs seeded via enqueue_with_policy_sql across 2 keys with
-# INTERLEAVED insertion, drained through the production ExecutionHost::drain, assert
-# per-key IN-ORDER dispatch + one-in-flight — the independent proof of the keyed
-# claim path through the long-lived runner [failoverbench drives it via the
-# gate-local Worker]. Dispatch order is read from a gate-local sink.dispatch_seq
-# IDENTITY witness [execution order, not seed order]; the nhjg drift guard still
-# pins the run_queue/partition_owner stand-in DDL against deploy/sql/run-queue.sql)
-# + PARTITION-TERMINAL (wamn-v8cv, D20 dead-letter + continue: a blocking key's
-# HEAD fails terminally under the runner's eyes [a postgres-query node dies
-# Terminal("capability-denied") with the D8 flag off — deterministic, one step]
-# -> the dequeue lands the run_dead_letters marker in the SAME txn
-# [dead_letter_dequeue_sql] and the key CONTINUES — the runs behind it complete
-# in order; the total-ledger-count assert doubles as the polarity proof that the
-# phase-4 UNPARTITIONED runaway failure wrote no marker. The composed builder's
-# conditionality matrix [blocking -> marker, leapfrog/unpartitioned -> none,
-# redelivery idempotent, RLS isolation, key-advances] is the run-queue live
-# suite: cargo test -p wamn-run-state + WAMN_RUN_QUEUE_PG_URL).
-# Engine units:
-# recipe-test: H5-RUNNER-BUDGET | integration | wamn-runner | test | runner | a_runaway_cycle_fails_at_exactly_the_budget | 1 | flow-engine runaway dispatch budget is exact and load-bearing
-cargo test --locked -p wamn-runner --test runner a_runaway_cycle_fails_at_exactly_the_budget -- --exact
-# (budget section) + cargo test -p wamn-run-state (fail_kind literal + DDL
-# drift guard). Combined-builder shape + live-apply (PREPARE/EXECUTE the real
-# claim_dispatch/record+renew/complete+dequeue against deploy DDL incl
-# flows.sql): cargo test -p wamn-run-state (+ WAMN_RUN_QUEUE_PG_URL).
-# Mutation harnesses: scratchpad mutate_cjv4.py (6 killed) + mutate_fqg18.py
-# (5 killed — cache-never-invalidates, MATERIALIZED fence, renew tail,
-# dequeue arm, mark-running arm); NOTE the engine AND the claim path are
-# compiled into the GUEST, so those mutants need a flowrunner wasm rebuild
-# to reach the live gate. mutate_lane_c.py M_PART inverts the runnerbench
-# per-key ordering comparator (reverses the expected per-key dispatch vector);
-# the real in-order dispatch then FAILS the `partition-order` assert (a
-# host-only mutation — rebuild wamn-gates, no wasm rebuild; the production claim
-# comparator lives in the guest, covered by the fqg.9/fqg.10 partition-order
-# mutants above). mutate_v8cv.py (3 killed, one per layer): the DL insert's
-# policy predicate flipped blocking->leapfrog (killer: the run-queue LIVE
-# suite), the guest settle terminal arm reverted to the plain dequeue (killer:
-# runnerbench `partition-terminal`; wasm rebuild to reach the gate), and
-# dead_letters_on_terminal dropping the policy check (killer: its unit test).
+# Expected: fifo-a, fifo-b, fifo-z; three exact payloads; generation 1; three
+# complete resolution maps; three live host-owned leases; then an empty claim.
+# The schema is dropped immediately afterward. No guest call, dequeue, or
+# completion is asserted while .5.4 keeps interpretation hard-refused.
 docker rm -f wamn-fqg8-pg
-# In-cluster live smoke = gate of record (HOST changed — the run-worker module +
-# flowrunner.wasm baked into the prod image — so FULL rebuild BOTH stages + kind load):
-docker build --target host -t wamn-host:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-host:dev --name wamn
-# Provision a demo schema (wamn_runner_demo: run-state.sql + run-queue.sql rewritten,
-# a flows table + a sink table) via kubectl exec psql, register a fast-cron flow, then:
-kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml   # (pointed at the demo)
-kubectl -n wamn-system apply -f deploy/platform/dispatcher.yaml
-kubectl -n wamn-system apply -f deploy/platform/runner-db.example.yaml
-kubectl -n wamn-system apply -f deploy/platform/runner.yaml
-kubectl -n wamn-system rollout status deploy/runner --timeout=120s
-# Assert a dispatcher-fired cron run was CLAIMED by the runner and driven end-to-end:
-#   SELECT status FROM wamn_runner_demo.runs WHERE run_id LIKE 'runner-demo:cron:%'  -> completed
-#   + a wamn_runner_demo.sink row + wamn_runner_demo.node_runs rows.
 ```
 
-### [POC-F3] scale-to-zero / parked-project wake (wamn-fqg.12)
+This is a local handoff proof, not an in-cluster execution gate. Production
+guest execution becomes a valid gate only after wamn-0h0g.5.4 activates the
+effect-attempt interpreter path.
 
-Docs: docs/archive/execution/run-queue.md (Scale-to-zero wake) · Actuator: services/waker +
-deploy/platform/waker.yaml · Manifest: deploy/gates/wakeproof-job.yaml
+#### Final debug gate of record
 
-`wakeproof` parks the runner Deployment at 0 replicas, seeds an every-second
-cron flow into the schema the LIVE dispatcher sweeps (wamn_runner_demo/
-demo-tenant), and proves — purely from DB state + the k8s scale API — that the
-LIVE dispatcher fires a cron run, the `wamn-waker` scales the runner `0 -> 1` on
-the doorbell hint, and the woken runner drives a run to `completed`; then it
-deletes the flow and restores the runner scale. The gate NEVER enqueues or
-doorbells — the LIVE dispatcher's cron fire must (the acceptance criterion). A
-distinct `dispatcher-fires` phase separates a projects-Secret wiring gap from a
-wake failure.
+This acceptance gate is debug/offline only. `WAMN_41_CLAIM_PG_URL`,
+`WAMN_41_WRITER_PG_URL`, and `WAMN_41_RUNSTATE_PG_URL` must be superuser URLs
+for three separate disposable PostgreSQL 18 databases. The retired
+`child_live` fixture is deliberately excluded: callable-child deletion belongs
+to `wamn-0h0g.4.4`. No guest interpretation, release build, image, or
+live-cluster gate occurs before `wamn-0h0g.5.4`.
 
 ```bash
-cargo test -p wamn-waker   # decision units (parse/decide/scale-parse)
-# Integration-proof boundary: the cron-flow drift guard lives with wakeproof;
-# wamn-gates only routes the deployed command.
-# recipe-test: H5-WAKEPROOF | integration | wamn-proof-integration | lib | - | wakeproof::tests:: | 1 | tests/integration/src/wakeproof.rs cron-flow fixture parse and validation
-cargo test -p wamn-proof-integration --lib wakeproof::tests::
-cargo clippy -p wamn-waker -p wamn-gates --all-targets
-# The retired queue-runner campaign recorded historical waker-decision mutation
-# context; it is not a runnable current gate or required evidence record.
-# In-cluster gate of record (NEW image: wamn-waker; gates rebuilt for the subcommand):
-docker build --target waker -t wamn-waker:dev . && docker build --target gates -t wamn-gates:dev .
-kind load docker-image wamn-waker:dev --name wamn
-kind load docker-image wamn-gates:dev --name wamn
-# PRECONDITION 1 — the actuator:
-kubectl -n wamn-system apply -f deploy/platform/waker.yaml
-kubectl -n wamn-system rollout status deploy/waker --timeout=120s
-# PRECONDITION 2 — the dispatcher MUST sweep the runner's project. The
-# wamn-dispatch-projects Secret is per-environment (NOT manifest-managed), so add
-# a runner-demo entry ALONGSIDE any existing entries, then restart the dispatcher.
-# (Merge with the live value; do not drop other projects — e.g. f1.)
-kubectl -n wamn-system create secret generic wamn-dispatch-projects \
-  --from-literal=projects.json='{
-    "f1": {"url":"postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn","tenant":"f1-tenant","schema":"poc_f1"},
-    "runner-demo": {"url":"postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn","tenant":"demo-tenant","schema":"wamn_runner_demo"}
-  }' --dry-run=client -o yaml | kubectl -n wamn-system apply -f -
-kubectl -n wamn-system rollout restart deploy/dispatcher
-kubectl -n wamn-system rollout status deploy/dispatcher --timeout=120s
-# The runner + its wamn_runner_demo schema (run-state + run-queue + flows) must be
-# live (the fqg.8 / EXEC-LADDER bring-up above provisions them). Then run the gate
-# (Jobs are immutable — delete before re-apply):
-kubectl -n wamn-system delete job wakeproof --ignore-not-found
-kubectl -n wamn-system apply -f deploy/gates/wakeproof-job.yaml
-kubectl -n wamn-system wait --for=condition=complete job/wakeproof --timeout=300s
-kubectl -n wamn-system logs job/wakeproof   # -> overall PASS: true
-# Post-run: wakeproof restores the runner scale itself (teardown floors at 1).
-# Confirm no residue + the runner is back up:
-kubectl -n wamn-system get deploy/runner   # READY should return to its pre-gate replicas
+: "${WAMN_41_CLAIM_PG_URL:?set to a disposable PostgreSQL 18 database}"
+: "${WAMN_41_WRITER_PG_URL:?set to a second disposable PostgreSQL 18 database}"
+: "${WAMN_41_RUNSTATE_PG_URL:?set to a third disposable PostgreSQL 18 database}"
+export CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-1
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+cargo test --locked --offline \
+  -p wamn-flow -p wamn-event-reg -p wamn-materializer -p wamn-run-state \
+  -p wamn-runtime -p wamn-execution-host -p wamn-executor -p wamn-dispatcher \
+  -p wamn-schema-control -p wamn-control-provision -p wamn-ctl \
+  -p wamn-proof-integration -p wamn-proof-conformance -p wamn-pg-core \
+  -p wamn-schema-compiler --features wamn-run-state/native,wamn-ctl/ops
+cargo test --locked --offline -p wamn-runner --test runner \
+  a_runaway_cycle_fails_at_exactly_the_budget -- --exact
+cargo clippy --locked --offline \
+  -p wamn-flow -p wamn-event-reg -p wamn-materializer -p wamn-run-state \
+  -p wamn-runtime -p wamn-execution-host -p wamn-executor -p wamn-dispatcher \
+  -p wamn-schema-control -p wamn-control-provision -p wamn-ctl \
+  -p wamn-proof-integration -p wamn-proof-conformance -p wamn-pg-core \
+  -p wamn-schema-compiler --features wamn-run-state/native,wamn-ctl/ops \
+  --all-targets -- -D warnings
+
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-1-components \
+  cargo test --locked --offline --manifest-path components/Cargo.toml \
+    -p materializer
+CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-4-1-components \
+  cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+    -p materializer --target wasm32-wasip2 -- -D warnings
+
+WAMN_PRODUCTION_CLAIM_PG_URL="$WAMN_41_CLAIM_PG_URL" \
+  cargo test --locked --offline -p wamn-runtime --test production_claim_live \
+    production_claim_live -- --ignored --exact --nocapture --test-threads=1
+WAMN_CTL_PG_URL="$WAMN_41_CLAIM_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+    run_plane_reconcile_live -- --exact --nocapture --test-threads=1
+WAMN_EFFECT_WRITER_PG18_URL="$WAMN_41_WRITER_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test effect_writer_generation_live \
+    effect_writer_generation_lifecycle_is_exact_and_fail_closed \
+    -- --ignored --exact --nocapture --test-threads=1
+WAMN_RUN_STORE_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
+  cargo test --locked --offline -p wamn-run-state --features native \
+    --test effect_writer_live native_effect_writer_live \
+    -- --ignored --exact --nocapture --test-threads=1
+WAMN_RUN_STORE_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
+  cargo test --locked --offline -p wamn-run-state --test admission_live \
+    admission_live -- --ignored --exact --nocapture --test-threads=1
+
+# Regenerate only because this cutover intentionally changes the inventory;
+# the ordinary run immediately afterward is the drift gate.
+WAMN_UPDATE_PROTECTED_RELATIONS=1 WAMN_CTL_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test protected_relations_live -- --nocapture --test-threads=1
+WAMN_CTL_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
+  cargo test --locked --offline -p wamn-ctl --features ops \
+    --test protected_relations_live -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test protected_relations --test state_ownership
+
+tools/gate-mutants/global-fifo-claim.sh check
+WAMN_PRODUCTION_CLAIM_PG_URL="$WAMN_41_CLAIM_PG_URL" \
+WAMN_CTL_PG_URL="$WAMN_41_CLAIM_PG_URL" \
+  tools/gate-mutants/global-fifo-claim.sh run-all
+tools/gate-mutants/protected-relations.sh check
+WAMN_CTL_PG_URL="$WAMN_41_RUNSTATE_PG_URL" \
+  tools/gate-mutants/protected-relations.sh run-all
+
+jq empty architecture/protected-writes.json \
+  docs/archive/contracts/flow-schema.schema.json \
+  crates/execution/host/effect-provider-revision.json
+cargo fmt --all -- --check
+cargo fmt --manifest-path components/Cargo.toml --all -- --check
+bash -n tools/gate-mutants/*.sh
+git diff --check
 ```
+
+### [POC-F3] scale-to-zero / parked-project wake — historical
+
+The former `wakeproof` gate required dispatcher-owned cron admission and guest
+completion. The retained dispatcher is now reconciliation/wake-hint only, and
+guest interpretation remains hard-refused until `wamn-0h0g.5.4`; this recipe is
+therefore not runnable current evidence. `wamn-0h0g.5.8` owns the retained
+wake-from-zero behavior, and `wamn-0h0g.11.19` owns absorption of the surviving
+assertions into the M2 gate.
 
 ### [CALLABLE-FLOWS-P2A / wamn-5wd1.49] cron attachment admission
 
@@ -2286,10 +2107,9 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-cron
 ```
 
-The multi-mode `dispatchbench` gate below independently publishes the same
-immutable catalog/source/attachment/head/activation chain for every phase and
-exercises this centralized admission path under race, rollback, retention,
-reconnect, fairness, and wake faults.
+The former multi-mode `dispatchbench` executable was archived by
+`wamn-0h0g.4.1`. Current centralized admission and queue behavior are covered by
+the dispatcher units, run-plane gate, and host-owned production-claim gate.
 
 ### [CALLABLE-FLOWS-POC-F0 / wamn-5wd1.56] echo release and two-commit path
 
@@ -2389,50 +2209,13 @@ kubectl -n wamn-system logs job/callable-flow-f4
 Docs: docs/archive/execution/run-queue.md
 
 ```bash
-cargo test -p wamn-run-state -p wamn-scheduler   # durable anchors + pure cron/cadence decisions
-cargo clippy -p wamn-run-state -p wamn-scheduler --all-targets \
-  && cargo fmt -p wamn-run-state -p wamn-scheduler --check
-cargo test --locked -p wamn-proof-integration --lib dispatchbench::tests::
-cargo test --locked -p wamn-dispatcher -p wamn-scheduler
-cargo build -p wamn-dispatcher -p wamn-gates   # gate spawns the sibling service binary
-# optional live-apply gate (two disposable project databases, each with canonical
-# catalog + run-state.sql + run-queue.sql; cron admission + last-tick recovery +
-# wake scan):
-docker run -d --rm --name wamn-rq-pg -p 5459:5432 -e POSTGRES_PASSWORD=postgres \
-  -e POSTGRES_DB=wamn postgres:18
-# (postgres:18 inits-then-restarts — pg_isready lies during socket-only init; if the
-# first connection is refused, wait a few seconds and retry)
-until docker exec wamn-rq-pg pg_isready -U postgres; do sleep 1; done
-# BOTH roles: catalog-schema.sql / run-state.sql GRANT to the host-only NOLOGIN
-# author role, so without it the gate's first DDL apply dies with
-# `role "wamn_scenario_author" does not exist`.
-docker exec wamn-rq-pg psql -U postgres -c \
-  "CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS;" -c \
-  "CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-     NOINHERIT NOREPLICATION NOBYPASSRLS;"
-WAMN_RUN_QUEUE_PG_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn cargo test -p wamn-run-state
-# the live-apply gate] + a throwaway NATS for the wake/live doorbell hints):
-docker run -d --rm --name wamn-rq-nats -p 4232:4222 nats:2.12.8-alpine
-WAMN_PG_ADMIN_URL=postgres://postgres:postgres@127.0.0.1:5459/wamn \
-  ./target/debug/wamn-gates --log-level error dispatchbench \
-  --database-url postgres://wamn_app:wamn_app@127.0.0.1:5459/wamn \
-  --nats-url nats://127.0.0.1:4232 --mode all
-docker stop wamn-rq-pg wamn-rq-nats
-# dispatchbench modes: cron/ordering/race/fairness/wake/live/all (the outbox +
-# prune modes retired with the outbox path at l5i9.19 — row events are
-# matbench/streambench/readerbench territory).
-# wake (and thus --mode all) now HARD-REQUIRES NATS: a missing/unreachable
-# --nats-url is a loud bail, never a soft skip that greens the Job (C7-2).
-# Each phase provisions canonical catalog artifacts, schedule sources, cron
-# attachments, an applied head, and activation. Source/attachment/head drift
-# therefore fails the phase before any run can be admitted; there is no local
-# flow-registry fallback or direct producer run insert.
-# The production service is `wamn-dispatcher --projects-file <json>`.
-# In-cluster gate of record (co-located with postgres):
-# HOST change => full docker rebuild (both --target stages + kind load BOTH images):
-kubectl -n wamn-system apply -f deploy/gates/dispatchbench-job.yaml
-kubectl -n wamn-system logs -f job/dispatchbench
+cargo test --locked -p wamn-run-state -p wamn-scheduler -p wamn-dispatcher
+cargo clippy --locked -p wamn-run-state -p wamn-scheduler -p wamn-dispatcher \
+  --all-targets -- -D warnings
 ```
+
+The former dispatchbench CLI, modes, and Job are historical and are not
+runnable proof sources after `wamn-0h0g.4.1`.
 
 ### [SR-MVP / wamn-0h0g.8.3] admitted full|off capture
 
@@ -4104,19 +3887,12 @@ persist N rows and reconstruction replays visit-by-visit.
 cargo test -p wamn-runner    # occurrence semantics + diamond/loop resume (R24 VERIFY)
 cargo test -p wamn-run-state # per-visit reconstruction + legacy collapsed-history Mismatch
 cargo test -p wamn-run-state # composed-statement arity renumbering ($10/$11, $11/$12)
-# live builders (throwaway PG; the queue live script pins replay-no-op vs distinct-visit row):
-WAMN_RUN_QUEUE_PG_URL=... WAMN_RUN_STORE_PG_URL=... cargo test -p wamn-run-state
-# guests + the gate of record (runnerbench merge-resume: a diamond whose merge is a
-# delay node parks between the merge's visits; every re-claim reconstructs — want
-# 7 node_runs rows, m/r visits (2,0,1)):
-(cd components/execution/flowrunner && cargo build --release --target wasm32-wasip2)
-./target/debug/wamn-gates runnerbench --flowrunner components/target/wasm32-wasip2/release/flowrunner.wasm \
-  --database-url ... --admin-database-url ...
-# regressions: failoverbench (all), flowbench (all), testhostbench (all), f1bench (all).
+# The former runnerbench merge-resume and failover regression commands are
+# historical after wamn-0h0g.4.1; use this section's pure/live run-state tests.
 # mutants (apply/test/restore, each fails a NAMED check): engine occurrence:=0 ->
 # merge_visits_carry_distinct_occurrences; builder occurrence:=literal 0 ->
 # builders_are_claim_scoped_and_parameterized; success-arm visits bump dropped ->
-# merge/diamond/loop tests; guest claim path records 0 -> runnerbench merge-resume (5 rows).
+# merge/diamond/loop tests. The former guest-claim runnerbench witness is archived.
 ```
 
 ### [S2/D15-durable / wamn-dzhw] fixture pod on durable commits
@@ -4133,7 +3909,7 @@ a knob change) wipes provisioned schemas — restore BEFORE re-running gates:
 kubectl -n wamn-system exec -i deploy/postgres -- psql -U postgres -d wamn -f - < deploy/sql/catalog-schema.sql
 kubectl -n wamn-system apply -f deploy/platform/run-plane-reconcile.example.yaml   # wamn_runner_demo
 # poc_f1: f1-provision-job, then the reconcile Job sed'd to poc_f1 (queue tables)
-# gates of record, SEQUENTIAL: pgbench-job, pgbench-multiproject-job, queuebench-job.
+# retained gates of record run sequentially; the former queue Job is archived.
 ```
 
 ### Deleted builder/buildproof provenance
@@ -4259,24 +4035,11 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cf-interface-bundle-65 \
   cargo test --locked -p wamn-proof-integration --lib catalog_live::tests::
 ```
 
-## PLAN-0.2 authoritative runner artifact handoff (`wamn-2jdm.5.10`)
+## PLAN-0.2 authoritative runner artifact handoff (`wamn-2jdm.5.10`) — retired recipe
 
-The production `run-next` path loads the exact immutable artifact selected by
-the admitted run's tenant, catalog, catalog version, flow, flow version, and
-release-manifest artifact hash. Inner joins and exact equality make missing or
-mixed identities return no artifact; there is no legacy `flows` fallback. The
-named mutation changes the catalog-version join and must make the focused debug
-test fail before restoring the source hash.
-
-```bash
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
-  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner \
-  tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity \
-  -- --exact
-
-CARGO_TARGET_DIR=/tmp/wamn-target-2jdm-5-4 \
-  tools/gate-mutants/authoritative-runner-artifact.sh run
-```
+The guest-side artifact lookup and its mutation script were superseded by the
+host-owned claim-time resolver. Use the wamn-0h0g.4.1 production-claim gates;
+there is no current guest lookup command.
 
 ## Deleted custom-publish provenance (`wamn-5wd1.67`)
 
@@ -4315,7 +4078,7 @@ cargo clippy --locked -p wamn-run-state --all-targets -- -D warnings
 cargo fmt -p wamn-run-state --check
 WAMN_RUN_STORE_PG_URL=postgres://postgres:postgres@127.0.0.1:5458/wamn \
   cargo test --locked -p wamn-run-state --test admission_live \
-  --test child_live -- --ignored --nocapture --test-threads=1
+  -- --ignored --nocapture --test-threads=1
 tools/gate-mutants/trusted-invocation-context.sh run
 ```
 
@@ -4844,7 +4607,6 @@ rustfmt --edition 2024 --check --config skip_children=true \
   services/ctl/tests/run_plane_live.rs \
   test-support/fixtures/runner.rs \
   tests/integration/src/capturebench.rs \
-  tests/integration/src/failoverbench.rs \
   tests/integration/src/runnerbench.rs
 git diff --check
 ```
@@ -4985,7 +4747,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
     --test migrate migration_engine_applies_forward_and_limits_destructive_to_ops_on_postgres \
     -- --exact --nocapture
 
-# Regenerate and verify the 71-row core+ops authority table from pg_catalog.
+# Regenerate and verify the 69-row core+ops authority table from pg_catalog.
 WAMN_UPDATE_PROTECTED_RELATIONS=1 \
 WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15658/postgres \
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-12-ops CARGO_INCREMENTAL=0 \
@@ -5085,7 +4847,7 @@ test, then restore the exact source hash.
 The populated-schema cutover deletes the five legacy stored-suite/report
 tables, their two helpers, and `catalog.publish_gate_audit`, while preserving
 all four management-owned `authoring_test_*` relations. The generated authority
-table proves the deleted objects are absent and the remaining 71 relations have
+table proves the deleted objects are absent and the remaining 69 relations have
 complete ownership and grant-derived exposure records.
 
 ```bash

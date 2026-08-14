@@ -60,6 +60,10 @@
       "path": "crates/execution/run-state",
       "role": "persistence"
     },
+    "execution-host": {
+      "path": "crates/execution/host",
+      "role": "effect"
+    },
     "flow-model": {
       "path": "crates/execution/flow-model",
       "role": "semantic"
@@ -575,6 +579,7 @@
       ],
       "readers": [
         "ctl-copy",
+        "execution-host",
         "materializer",
         "scenario-worker"
       ],
@@ -599,6 +604,7 @@
         "schema-control",
         "scenario-worker",
         "run-state",
+        "execution-host",
         "flowrunner",
         "ctl-copy"
       ],
@@ -644,6 +650,7 @@
       "readers": [
         "ctl-copy",
         "ctl-migrate",
+        "execution-host",
         "materializer",
         "scenario-worker"
       ],
@@ -703,6 +710,7 @@
       "readers": [
         "scenario-worker",
         "run-state",
+        "execution-host",
         "flowrunner"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
@@ -869,7 +877,8 @@
       ],
       "readers": [
         "schema-control",
-        "run-state"
+        "run-state",
+        "execution-host"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -887,7 +896,8 @@
       ],
       "readers": [
         "schema-control",
-        "run-state"
+        "run-state",
+        "execution-host"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -905,7 +915,8 @@
       ],
       "readers": [
         "schema-control",
-        "run-state"
+        "run-state",
+        "execution-host"
       ],
       "compatibility_horizon": "catalog-format-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1335,15 +1346,15 @@
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "run-state",
-        "dispatcher",
-        "flowrunner",
-        "materializer"
+      "run-state",
+      "execution-host",
+      "flowrunner",
+      "materializer"
       ],
       "readers": [
-        "run-state",
-        "dispatcher",
-        "scenario-worker",
+      "run-state",
+      "execution-host",
+      "scenario-worker",
         "flowrunner",
         "materializer"
       ],
@@ -1376,10 +1387,12 @@
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "run-state"
+        "run-state",
+        "execution-host"
       ],
       "readers": [
         "run-state",
+        "execution-host",
         "flowrunner"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
@@ -1395,6 +1408,7 @@
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
         "run-state",
+        "execution-host",
         "schema-control",
         "flowrunner"
       ],
@@ -1419,8 +1433,10 @@
         "run-state"
       ],
       "readers": [
-        "run-state",
-        "schema-control"
+      "run-state",
+      "schema-control",
+      "execution-host",
+      "dispatcher"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
@@ -1505,52 +1521,13 @@
       "schema_source": "deploy/sql/run-queue.sql",
       "writers": [
         "run-state",
-        "dispatcher",
-        "flowrunner",
+        "execution-host",
         "materializer"
       ],
       "readers": [
         "run-state",
-        "dispatcher",
-        "flowrunner"
-      ],
-      "compatibility_horizon": "persisted-run-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.partition_owner",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
-        "run-state"
-      ],
-      "schema_source": "deploy/sql/run-queue.sql",
-      "writers": [
-        "run-state",
-        "flowrunner"
-      ],
-      "readers": [
-        "run-state",
-        "flowrunner"
-      ],
-      "compatibility_horizon": "persisted-run-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.run_dead_letters",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
-        "run-state"
-      ],
-      "schema_source": "deploy/sql/run-queue.sql",
-      "writers": [
-        "run-state",
-        "flowrunner"
-      ],
-      "readers": [
-        "run-state",
-        "flowrunner"
+        "execution-host",
+        "dispatcher"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"

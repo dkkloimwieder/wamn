@@ -665,8 +665,10 @@ The measurement must be **sustained, not single-request**. Latency favours inlin
 the point where WAL amplification and bloat say otherwise, because latency is paid per run
 while vacuum debt accumulates across them; a burst-only test sets the threshold too high
 and the cost surfaces weeks later as autovacuum falling behind. The existing
-`queuebench --mode ceiling` work is the right shape. Compression is measured in the same
-sweep, since it shifts the crossover.
+historical queuebench established the measurement shape, but its executable was
+archived by `wamn-0h0g.4.1`; any renewed threshold campaign must use a retained
+sustained-load proof. Compression is measured in the same sweep, since it
+shifts the crossover.
 
 ---
 
@@ -2578,8 +2580,10 @@ Also here: the UI builder, the on-prem profile, and frozen-flow compilation.
   executes by interpreting its artifact's flow JSON as IR; standard nodes
   native in the runner, custom nodes a separate component over a hop. Whole-flow
   compilation is a later opt-in backend, never the v1 path.
-- **D9 / D20** — ordering is a runner policy declared on the flow; a partitioned key holds
-  while its head is unavailable, with `leapfrog` the explicit opt-in to overtaking.
+- **D9 / D20** — superseded by the SR-MVP global-FIFO cutover
+  (`wamn-0h0g.4.1`). Authored ordering declarations, partition ownership, and
+  leapfrog policy are absent; every durable root uses
+  `(available_at, stream_seq, run_id)`.
 - **D17** — capabilities stay in-process host plugins; component invocation stays standard
   HTTP plus a Kubernetes Service or a host typed-func. *Revisit on the first real
   multi-region, residency, edge, or per-capability-scaling need — then a per-capability

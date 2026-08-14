@@ -30,7 +30,7 @@ fn app_preamble() -> &'static str {
 fn prepare_create(sql: &str) -> String {
     format!(
         "PREPARE create_child_stmt \
-         (text,text,text,bigint,text,int,text,text,text,text,text,text,int,bigint,text,text) \
+         (text,text,text,bigint,text,int,text,text,text,text,text,text,int,bigint) \
          AS {sql};"
     )
 }
@@ -47,7 +47,7 @@ fn execute_create(parent: &str, owner: &str, generation: i64, child: &str) -> St
         "EXECUTE create_child_stmt(\
          '{parent}','{parent}','{owner}',{generation},'invoke',0,'{child}',\
          'child-internal','child-flow','service',\
-         '{{\"decision\":\"approve\"}}','rev-child',8,64,NULL,'blocking')"
+         '{{\"decision\":\"approve\"}}','rev-child',8,64)"
     )
 }
 
