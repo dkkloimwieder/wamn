@@ -15,6 +15,27 @@ const PACKAGE_ROLES_MANIFEST: &str = "architecture/package-roles.json";
 const WORKSPACE_TIER_HELPER: &str = "tools/workspace-tier";
 const BUILD_AND_TEST_DOCS: &str = "docs/archive/build-and-test.md";
 const SPECIALIZATION_FIXTURES: [(&str, &str); 0] = [];
+const ROOT_DEFAULT_MEMBER_PATHS: [&str; 19] = [
+    "crates/authoring/model",
+    "crates/catalog/model",
+    "crates/data/entity-access",
+    "crates/execution/flow-engine",
+    "crates/execution/flow-invocation",
+    "crates/execution/flow-model",
+    "crates/execution/host",
+    "crates/execution/run-state",
+    "crates/execution/scheduler",
+    "crates/execution/standard-nodes",
+    "crates/identity/platform",
+    "crates/platform/component-policy",
+    "crates/platform/pg-core",
+    "crates/platform/runtime",
+    "crates/scenarios/model",
+    "crates/schema/model",
+    "services/executor",
+    "services/host",
+    "services/scenario-worker",
+];
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +161,7 @@ struct CargoMetadata {
 struct CargoPackage {
     id: String,
     name: String,
+    manifest_path: PathBuf,
     dependencies: Vec<CargoDependency>,
     targets: Vec<CargoTarget>,
 }
@@ -296,6 +318,30 @@ fn default_member_names(metadata: &CargoMetadata) -> BTreeSet<String> {
                 .get(id.as_str())
                 .unwrap_or_else(|| panic!("default member {id} missing from cargo metadata"))
                 .to_string()
+        })
+        .collect()
+}
+
+fn default_member_paths(root: &Path, metadata: &CargoMetadata) -> Vec<String> {
+    let packages = metadata
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package))
+        .collect::<BTreeMap<_, _>>();
+    metadata
+        .workspace_default_members
+        .iter()
+        .map(|id| {
+            packages
+                .get(id.as_str())
+                .unwrap_or_else(|| panic!("default member {id} missing from cargo metadata"))
+                .manifest_path
+                .parent()
+                .expect("workspace member manifest must have a package directory")
+                .strip_prefix(root)
+                .expect("root workspace member must live below the repository root")
+                .to_string_lossy()
+                .into_owned()
         })
         .collect()
 }
@@ -1006,14 +1052,17 @@ fn workspace_tier_membership_matches_live_classification() {
 }
 
 #[test]
-fn bare_cargo_commands_remain_exhaustive() {
+fn bare_cargo_commands_select_exact_defaults_and_workspace_remains_exhaustive() {
     let root = repository_root();
     let manifest: WorkspaceTierManifest = read_json(&root, TIER_MANIFEST);
     let root_metadata = cargo_metadata(&root, ROOT_MANIFEST);
     let component_metadata = cargo_metadata(&root, COMPONENT_MANIFEST);
 
-    assert_eq!(manifest.selection.mechanism, "named-explicit-selectors");
-    assert!(!manifest.selection.default_members_selected);
+    assert_eq!(
+        manifest.selection.mechanism,
+        "root-default-members-plus-named-explicit-selectors"
+    );
+    assert!(manifest.selection.default_members_selected);
     assert!(!manifest.selection.reason.trim().is_empty());
     assert_eq!(
         manifest.selection.package_classification_source,
@@ -1025,10 +1074,13 @@ fn bare_cargo_commands_remain_exhaustive() {
             .membership_evidence
             .contains("cargo metadata")
     );
-    assert_exact(
-        "root bare Cargo default membership",
-        default_member_names(&root_metadata),
-        workspace_names(&root_metadata),
+    assert_eq!(
+        default_member_paths(&root, &root_metadata),
+        ROOT_DEFAULT_MEMBER_PATHS
+            .iter()
+            .map(|path| (*path).to_owned())
+            .collect::<Vec<_>>(),
+        "root bare Cargo defaults must match the ratified paths and charter order"
     );
     assert_exact(
         "component bare Cargo default membership",
@@ -1042,7 +1094,10 @@ fn bare_cargo_commands_remain_exhaustive() {
         .iter()
         .map(|entry| (entry.working_directory.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
-    for (working_directory, package_count) in [(".", 38), ("components", 6)] {
+    assert_eq!(workspace_names(&root_metadata).len(), 38);
+    assert_eq!(default_member_names(&root_metadata).len(), 19);
+
+    for (working_directory, package_count) in [(".", 19), ("components", 6)] {
         let entry = semantics
             .get(working_directory)
             .unwrap_or_else(|| panic!("missing bare Cargo semantics for {working_directory}"));

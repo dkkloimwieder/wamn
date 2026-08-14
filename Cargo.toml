@@ -1,6 +1,27 @@
 [workspace]
 resolver = "2"
 members = ["services/host", "services/ctl", "services/dispatcher", "services/executor", "services/scenario-worker", "services/cdc-reader", "services/waker", "tests/orchestrator", "tests/conformance", "tests/integration", "tests/system", "test-support/harness", "test-support/fixtures", "test-support/infrastructure", "crates/authoring/model", "crates/catalog/model", "crates/execution/flow-model", "crates/execution/flow-invocation", "crates/execution/flow-engine", "crates/execution/host", "crates/execution/run-state", "crates/execution/scheduler", "crates/schema/model", "crates/schema/compiler", "crates/schema/control", "crates/data/entity-access", "crates/platform/pg-core", "crates/platform/component-policy", "crates/platform/runtime", "crates/scenarios/model", "crates/execution/standard-nodes", "crates/control/provision", "crates/control/registry", "crates/identity/platform", "crates/identity/project-state", "crates/events/wire", "crates/events/registration", "crates/events/materializer"]
+default-members = [
+  "crates/authoring/model",
+  "crates/catalog/model",
+  "crates/data/entity-access",
+  "crates/execution/flow-engine",
+  "crates/execution/flow-invocation",
+  "crates/execution/flow-model",
+  "crates/execution/host",
+  "crates/execution/run-state",
+  "crates/execution/scheduler",
+  "crates/execution/standard-nodes",
+  "crates/identity/platform",
+  "crates/platform/component-policy",
+  "crates/platform/pg-core",
+  "crates/platform/runtime",
+  "crates/scenarios/model",
+  "crates/schema/model",
+  "services/executor",
+  "services/host",
+  "services/scenario-worker",
+]
 # Guest components are built separately for wasm32-wasip2 (see components/*).
 exclude = ["components"]
 

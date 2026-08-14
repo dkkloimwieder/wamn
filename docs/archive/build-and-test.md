@@ -216,14 +216,15 @@ cargo test --locked --offline -p wamn-proof-conformance --lib ip_name_lookup::
 
 `architecture/workspace-tiers.json` is the canonical, machine-readable
 selection for the current **38 root + 6 component packages**. The selection
-uses named explicit selectors and deliberately does not add
-`default-members`. `tests/conformance/tests/workspace_tiers.rs` compares those
-sets with live, locked Cargo metadata and `architecture/package-roles.json`.
+combines the exact 19 root `default-members` with named explicit selectors.
+`tests/conformance/tests/workspace_tiers.rs` compares those sets with live,
+locked Cargo metadata and `architecture/package-roles.json`.
 
 The selected package roots are:
 
 | Tier | Root | Components | Selection |
 |---|---:|---:|---|
+| bare root default | 19 | 0 | the ratified MVP developer floor in charter order |
 | fast developer/native | 31 | 0 | every root production package; excludes proof/support packages and POCs |
 | product components | 0 | 3 | `flow-http`, `flowrunner`, `materializer` |
 | contract/conformance | 10 | 0 | all contract packages plus `wamn-proof-conformance` |
@@ -262,11 +263,15 @@ membership never constitutes deployed proof or release admission.
 
 ### Bare Cargo semantics and full coverage
 
-There are no `default-members` in either virtual workspace. Consequently:
+The root virtual workspace has 19 exact `default-members`; the component
+workspace has none. Consequently:
 
 - From the repository root, bare `cargo build`, `cargo check`, and `cargo test`
-  select all 38 root members. Bare `cargo test` uses each package's default
-  test targets.
+  select the 19-package MVP developer floor. Bare `cargo test` uses each
+  selected package's default test targets.
+- A manual root command that must cover all 38 members uses `--workspace`.
+  The full-CI helper below provides the same exhaustive membership coverage
+  with 38 explicit `--package` selectors plus `--all-targets --no-fail-fast`.
 - From `components/`, the same bare commands select all 6 component members.
   The production guest build remains
   `cargo build --workspace --target wasm32-wasip2`.
@@ -293,12 +298,16 @@ and artifact/image digests. The exact required fields and fail-closed rule live
 in `architecture/workspace-tiers.json`. Cargo defaults, a mutable tag, or an
 evidence record that names only a test command are not release evidence.
 
-### Measurement (2026-07-25)
+### Historical measurement (2026-07-25; pre-MVP workspace)
 
-Measurements used debug/default profile on `k11` (8 logical CPUs, i7-1185G7,
-60 GiB RAM, NVMe; rustc/cargo 1.97.0) with the isolated target directory
-recorded in `architecture/workspace-tiers.json`. Each cold row follows
-`cargo clean`; each warm row immediately repeats the identical command.
+These receipts predate the 38-member workspace and 19-member root default
+cutover. They remain only as historical evidence; this change records no new
+timings. `wamn-0h0g.10.6` owns replacement clean and incremental measurements.
+The historical runs used debug/default profile on `k11` (8 logical CPUs,
+i7-1185G7, 60 GiB RAM, NVMe; rustc/cargo 1.97.0) with the isolated target
+directory recorded in `architecture/workspace-tiers.json`. Each cold row
+followed `cargo clean`; each warm row immediately repeated the identical
+command.
 
 | Selection and command | Cold | Warm | Cold cache |
 |---|---:|---:|---:|

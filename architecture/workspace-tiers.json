@@ -1,9 +1,9 @@
 {
   "schema_version": "0.1",
   "selection": {
-    "mechanism": "named-explicit-selectors",
-    "default_members_selected": false,
-    "reason": "Keep bare Cargo commands visibly exhaustive. Named selectors make the 31-package developer loop and the six retained components explicit without hiding proof or support packages from bare workspace commands.",
+    "mechanism": "root-default-members-plus-named-explicit-selectors",
+    "default_members_selected": true,
+    "reason": "Bare root Cargo commands select the exact 19-package MVP developer floor. Named selectors retain the 31-package production loop and explicit 38-package full-CI coverage; --workspace remains required for the exhaustive root pass.",
     "package_classification_source": "architecture/package-roles.json",
     "membership_evidence": "cargo metadata --locked --offline --format-version 1"
   },
@@ -134,7 +134,7 @@
         "sockprobe"
       ],
       "non_cargo_inputs": [],
-      "command_semantics": "Test --workspace --all-targets in the root workspace, build --workspace --target wasm32-wasip2 in components/, and run the classified non-Cargo input checks. This is compile-and-test coverage, not deployed proof."
+      "command_semantics": "Test all 38 root packages through explicit --package selectors plus --all-targets --no-fail-fast, build all six component packages through explicit selectors for wasm32-wasip2, and run the classified non-Cargo input checks. A manual root --workspace invocation is equivalent exhaustive membership coverage. This is compile-and-test coverage, not deployed proof."
     },
     "deployed_system_proof": {
       "root_packages": [
@@ -192,8 +192,8 @@
         "cargo check",
         "cargo test"
       ],
-      "selected_packages": "all 38 root workspace members",
-      "qualification": "cargo test selects each member's default test targets; use --workspace --all-targets --no-fail-fast for full-CI target coverage"
+      "selected_packages": "exactly 19 root default members",
+      "qualification": "cargo test selects each default member's default test targets; use --workspace --all-targets --no-fail-fast for all 38 root members and full-CI target coverage"
     },
     {
       "working_directory": "components",
@@ -225,8 +225,9 @@
     "admission_rule": "Every released package artifact and image digest must join to one immutable source revision and Cargo.lock digest under SR17; every required gate evidence record must name that same source revision and exact artifact/image digests under SR26. Missing or mismatched fields fail closed."
   },
   "measurement": {
-    "status": "complete",
+    "status": "historical-pre-mvp-baseline",
     "profile": "dev",
+    "qualification": "These 2026-07-25 receipts predate the 38-member workspace and 19-member root default cutover. wamn-0h0g.10.6 owns replacement clean and incremental measurements; this change records no new timings.",
     "target_directory": "/home/kaalin/dev/wamn/target/lanes/wamn-4tob-6-29-20260725",
     "method": "Uncontended runs on 2026-07-25. Each cold run follows cargo clean in the assigned target directory; each warm run immediately repeats the identical command. /usr/bin/time recorded elapsed, user, sys, maximum RSS, and exit status. Package-selector commands compose one --package argument per package in the named tier.",
     "machine": {
