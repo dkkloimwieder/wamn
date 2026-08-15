@@ -5563,29 +5563,38 @@ bash -n tools/gate-mutants/flow-invocation-listener.sh
 git diff --check
 ```
 
-## SR-MVP — M1 forward-causation composition (`wamn-0h0g.11.18`)
+## SR-MVP — M1 causation and tenant isolation (`wamn-0h0g.11.18`, `.11.25`, `.11.10`)
 
-This Rust-only debug gate incorporates the completed `.11.9` forward-causation
-and durable-dedup proof exactly once as M1 Check 9. Check 10 remains pending
-`wamn-0h0g.11.10`. The live gate uses a generated Job identity and an isolated,
-emptyDir-backed PostgreSQL 18 sidecar; it never contacts shared PostgreSQL.
-The runner fails before Job creation unless the named sidecar image has one
-identical complete runtime/config/provenance tuple on all three Ready amd64 Kind
-nodes. It deletes the exact Job and verifies every recorded resource absent.
+This Rust-only debug gate runs the completed `.11.9` forward-causation and
+durable-dedup proof exactly once as M1 Check 9, then reuses that isolated fixture
+for Check 10's foreign-tenant skip and tenant-unscopable delete refusal. The live
+gate uses a generated Job identity and an emptyDir-backed PostgreSQL 18 sidecar;
+it never contacts shared PostgreSQL. The runner fails before Job creation unless
+the named sidecar image has one identical complete target-manifest, CRI-runtime,
+config, and provenance tuple on all three Ready amd64 Kind nodes. The target
+manifest and CRI runtime digest are deliberately distinct identities. The runner
+deletes the exact Job and verifies every recorded resource absent.
 
 ```bash
 set -euo pipefail
 
-export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave9-11-18
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave12-11-10
 export CARGO_INCREMENTAL=0
 
-main_image=wamn-gates:m1-01ca7afa-debug
+head=594872aca4ac3d2e463a080e59747e4b708c3ede
+main_image=wamn-gates:m1-594872ac-debug
 sidecar_image=wamn-postgres:m1-pg18-720c455e
-sidecar_image_id=sha256:92d4f977d48900025cdad52b2bd6d37ccec93a2b42103f1d86b34b3f6796c2ed
+sidecar_manifest_id=sha256:92d4f977d48900025cdad52b2bd6d37ccec93a2b42103f1d86b34b3f6796c2ed
+sidecar_image_id=sha256:e62166f95a837325423e8dff775282ed1eb91f7d7b0a4e87d00f030c7ef1ed9f
 sidecar_config_id=sha256:9a1a67579dc39ae2790d10ac66102510a1644bbe96f995aa722acf9168b95574
 upstream_index=sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
 upstream_child=sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324
-overlay="$CARGO_TARGET_DIR/m1-image-720c455e"
+overlay="$CARGO_TARGET_DIR/m1-image-594872ac"
+export TMPDIR="$CARGO_TARGET_DIR/docker-kind-tmp"
+
+[[ "$(git rev-parse HEAD)" == "$head" ]]
+[[ -z "$(git status --porcelain)" ]]
+install -d "$overlay" "$TMPDIR"
 
 cargo fmt --all -- --check
 bash -n tools/kubernetes-gate-run tools/gate-mutants/m1-composition.sh
@@ -5609,9 +5618,9 @@ cargo build --locked --offline --manifest-path components/Cargo.toml \
   --target wasm32-wasip2 -p materializer
 
 sha256sum -c <<'EOF'
-8a90e957268644f0f88f6df56d91c1c4668d31b8a61a0541657a1faa74951515  /home/kaalin/dev/wamn/target/plane-wave9-11-18/debug/wamn-gates
-f7bab749b3c23db00dadc2763309401a663e28e29d0ebc9e81b74b12d4d4ed28  /home/kaalin/dev/wamn/target/plane-wave9-11-18/debug/wamn-cdc-reader
-f81d5947f80a99002b4ca875acf2571956a5fd357efae48b2185425aae408e85  /home/kaalin/dev/wamn/target/plane-wave9-11-18/wasm32-wasip2/debug/materializer.wasm
+f455a2404cf660939cdcd8457c1c828ce6a4b1d64e05659a70f8ff311ccd96e9  /home/kaalin/dev/wamn/target/plane-wave12-11-10/debug/wamn-gates
+a8d427bff6f99d888f6d6e7e2b27882fe89cc1bed458a38e95c819da03d10a2a  /home/kaalin/dev/wamn/target/plane-wave12-11-10/debug/wamn-cdc-reader
+a103106e2f9d932ac3eb274bdf560fae22d0039656d7ffedd8a5642224d89e96  /home/kaalin/dev/wamn/target/plane-wave12-11-10/wasm32-wasip2/debug/materializer.wasm
 EOF
 
 docker image inspect wamn-gates:dev >/dev/null
@@ -5625,8 +5634,8 @@ install -m 0644 \
 
 cat >"$overlay/Dockerfile" <<'EOF'
 FROM wamn-gates:dev
-LABEL wamn.dev/gate="m1-check-9" \
-      wamn.dev/source-head="720c455e3ac4ac26362f0077a92e55e8e94082d2" \
+LABEL wamn.dev/gate="m1-checks-9-and-10" \
+      wamn.dev/source-head="594872aca4ac3d2e463a080e59747e4b708c3ede" \
       wamn.dev/build-profile="debug"
 COPY --chmod=0755 wamn-gates /usr/local/bin/wamn-gates
 COPY --chmod=0755 wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
@@ -5674,10 +5683,13 @@ mapfile -t unique_main_ids < <(printf '%s\n' "${main_ids[@]}" | sort -u)
 [[ ${#unique_main_ids[@]} -eq 1 ]]
 main_image_id=${unique_main_ids[0]}
 
-sed "s/sha256:POST_BUILD_MAIN_IMAGE_ID/${main_image_id}/g" \
+sed \
+  -e 's/wamn-gates:m1-01ca7afa-debug/wamn-gates:m1-594872ac-debug/g' \
+  -e "s/sha256:POST_BUILD_MAIN_IMAGE_ID/${main_image_id}/g" \
   deploy/gates/m1-gate-job.yaml \
-  >"$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml"
-! rg -n 'POST_BUILD_' "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml"
+  >"$CARGO_TARGET_DIR/m1-gate-job.594872ac.rendered.yaml"
+! rg -n 'POST_BUILD_|m1-01ca7afa' \
+  "$CARGO_TARGET_DIR/m1-gate-job.594872ac.rendered.yaml"
 
 job_spec=$(
   jq -cn \
@@ -5696,15 +5708,16 @@ job_spec=$(
       sidecar_upstream_index:$upstream_index,
       sidecar_upstream_child:$upstream_child,
       log_contains:
-        "M1 partial PASS — check 9 passed; check 10 remains pending"}'
+        "M1 PASS — checks 9 and 10 passed"}'
 )
 
 tools/kubernetes-gate-run \
-  --manifest "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml" \
+  --manifest "$CARGO_TARGET_DIR/m1-gate-job.594872ac.rendered.yaml" \
   --generated-name-prefix m1-gate- \
   --require-final-cleanup \
-  --sidecar-preflight-record "$CARGO_TARGET_DIR/m1-sidecar-preflight.json" \
-  --verdict-record "$CARGO_TARGET_DIR/m1-gate-verdict.json" \
+  --sidecar-preflight-record "$CARGO_TARGET_DIR/m1-sidecar-preflight.594872ac.json" \
+  --verdict-record "$CARGO_TARGET_DIR/m1-gate-verdict.594872ac.json" \
+  --timeout-secs 900 \
   --job "$job_spec"
 
 jq -e '
@@ -5715,16 +5728,35 @@ jq -e '
   (.jobs[0].observed.pods | length == 1) and
   .jobs[0].observed.pods[0].container_exit_code == 0 and
   .jobs[0].observed.pods[0].sidecar_exit_code == 0
-' >/dev/null "$CARGO_TARGET_DIR/m1-gate-verdict.json"
+' >/dev/null "$CARGO_TARGET_DIR/m1-gate-verdict.594872ac.json"
 
-sha256sum "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml" \
-  "$CARGO_TARGET_DIR/m1-sidecar-preflight.json" \
-  "$CARGO_TARGET_DIR/m1-gate-verdict.json"
+jq -e \
+  --arg manifest "$sidecar_manifest_id" \
+  --arg runtime "$sidecar_image_id" '
+  .manifest_digest == $manifest and
+  .runtime_image_id == $runtime and
+  .manifest_digest != .runtime_image_id and
+  (.nodes | length == 3) and
+  all(.nodes[];
+    .complete == true and
+    .manifest_digest == $manifest and
+    .runtime_image_id == $runtime)
+' "$CARGO_TARGET_DIR/m1-sidecar-preflight.594872ac.json" >/dev/null
+
+sha256sum -c <<'EOF'
+0d03b1a7c63fba12b4cfbf39b4d17e0419441bb9908fea330b12672883f980be  /home/kaalin/dev/wamn/target/plane-wave12-11-10/m1-gate-job.594872ac.rendered.yaml
+34b46ba4e7f7a8cc08e5f3e936e3e30aaee115a3b67c5699ae49c8ddccbfd4a0  /home/kaalin/dev/wamn/target/plane-wave12-11-10/m1-sidecar-preflight.594872ac.json
+EOF
 ```
 
-Receipt on `d95a727b`: Job `m1-gate-phzxc` and its UID-selected Pod both
-completed with exit `0` and were absent after cleanup. The runner recorded log
-SHA-256 `30c3b8f3d6d432c77f7401ef5fc86693b3df4a42c449e6a9166aab28d5ebb5a3`.
+Receipt on `594872ac`: Job `m1-gate-bs5jn` and its UID-selected Pod both
+completed with exit `0` and were absent after cleanup. Check 9 reported one fire
+and one durable duplicate; Check 10 reported exactly one foreign-tenant skip and
+one tenant-unscopable refusal, with no admission, doorbell, poison, or retry.
+The historical commit-qualified verdict SHA-256 is
+`a09c4cc4d264a55319d60e415c10802c39578528e7d96f809715ca887d279076`;
+the runner recorded log SHA-256
+`a189168fbae5db97cad3391423b75410fd45d9c0598c282e27d48eeab79255df`.
 
 ## SR-MVP — Rust contract-diff (`wamn-0h0g.11.15`)
 
