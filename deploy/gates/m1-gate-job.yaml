@@ -1,9 +1,11 @@
-# M1 gate (wamn-0h0g.11.18) — currently Check 9 only. Check 10 tenant
-# isolation remains pending wamn-0h0g.11.10 and is not claimed by this Job.
+# M1 gate (wamn-0h0g.11.10) — Checks 9 and 10 over one isolated fixture.
 # Check 9 is the unchanged wamn-0h0g.11.9 forward proof: tenant commit through
 # the production CDC reader and byte-stored event stream into one production-
 # materializer-admitted causal run, followed by byte-identical stored redelivery
 # beyond broker protection to prove storage-owned durable deduplication.
+# Check 10 then commits a matching foreign-tenant insert and a matching
+# tenant-unscopable RI DEFAULT delete through the same reader and materializer;
+# both are acknowledged and neither reaches admission or the doorbell.
 #
 # A locally derived, linux/amd64-only PostgreSQL 18 restartable init container
 # owns one emptyDir-backed server for this Pod. Its Dockerfile is pinned to the
@@ -53,7 +55,7 @@
 #       "sidecar_config_id":"sha256:<config-digest>",\
 #       "sidecar_upstream_index":"sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a",\
 #       "sidecar_upstream_child":"sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324",\
-#       "log_contains":"M1 partial PASS — check 9 passed; check 10 remains pending"}'
+#       "log_contains":"M1 PASS — checks 9 and 10 passed"}'
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -61,16 +63,14 @@ metadata:
   namespace: wamn-system
   labels: { app: m1-gate }
   annotations:
-    wamn.dev/m1-checks: "9"
-    wamn.dev/m1-pending-checks: "10 (wamn-0h0g.11.10)"
+    wamn.dev/m1-checks: "9,10"
 spec:
   backoffLimit: 0
   template:
     metadata:
       labels: { app: m1-gate }
       annotations:
-        wamn.dev/m1-checks: "9"
-        wamn.dev/m1-pending-checks: "10 (wamn-0h0g.11.10)"
+        wamn.dev/m1-checks: "9,10"
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: 180

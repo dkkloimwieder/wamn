@@ -1,4 +1,4 @@
-//! Forward M1 causation proof: tenant commit -> CDC -> stored event -> materializer.
+//! M1 event-path proof: forward causation, durable deduplication, and tenant isolation.
 
 use std::io::Read as _;
 use std::path::PathBuf;
@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context as _, ensure};
 use async_nats::header::NATS_MESSAGE_ID;
 use clap::Args;
+use futures_util::StreamExt as _;
 use tokio_postgres::{Client, NoTls};
 
 use wash_runtime::engine::ctx::{Ctx, SharedCtx};
@@ -19,7 +20,7 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use wamn_control_provision::sql as provision_sql;
-use wamn_control_registry::identifiers::mvp_execution_target_id;
+use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql as registry_sql;
 use wamn_event_wire::Op;
 use wamn_run_state::admission::registration_evidence;
@@ -447,7 +448,7 @@ fn registration_json(resources: &GateResources) -> String {
         catalog_id: resources.catalog_id.clone(),
         flow_id: resources.flow_id.clone(),
         entity: wamn_schema_model::EntityId::from(resources.entity_id.as_str()),
-        ops: vec![Op::Insert],
+        ops: vec![Op::Insert, Op::Delete],
         condition: None,
     }
     .to_json()
@@ -886,7 +887,7 @@ async fn setup_project(
         .batch_execute(&format!(
             "GRANT USAGE ON SCHEMA {schema} TO wamn_app; \
              CREATE TABLE {schema}.{table} (tenant_id text NOT NULL, id text NOT NULL, \
-               payload text NOT NULL, PRIMARY KEY (tenant_id,id)); \
+               payload text NOT NULL, PRIMARY KEY (id)); \
              ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY; \
              ALTER TABLE {schema}.{table} FORCE ROW LEVEL SECURITY; \
              CREATE POLICY receipts_tenant ON {schema}.{table} \
@@ -1137,10 +1138,59 @@ async fn commit_tenant_event(
     Ok(())
 }
 
-async fn wait_for_stored_event(
+fn foreign_tenant(resources: &GateResources) -> String {
+    format!("foreign-{}", resources.suffix)
+}
+
+async fn commit_tenant_isolation_events(
     args: &CausationE2eArgs,
     resources: &GateResources,
-) -> anyhow::Result<StoredEvent> {
+) -> anyhow::Result<()> {
+    let foreign_tenant = foreign_tenant(resources);
+    let mut admin = connect(&args.admin_database_url).await?;
+    let foreign = admin.transaction().await?;
+    foreign.batch_execute(&tenant_commit_sql(resources)).await?;
+    let inserted = foreign
+        .execute(
+            &format!(
+                "INSERT INTO {}.{} (tenant_id,id,payload) VALUES ($1,$2,$3)",
+                resources.schema, resources.table
+            ),
+            &[&foreign_tenant, &"foreign-1", &"must-skip"],
+        )
+        .await?;
+    ensure!(inserted == 1, "foreign tenant event was not committed once");
+    foreign.commit().await?;
+
+    let mut app = connect(&args.database_url).await?;
+    app.batch_execute(&format!(
+        "SET search_path TO {}; SET app.tenant TO '{}';",
+        resources.schema, resources.tenant
+    ))
+    .await?;
+    let unscopable = app.transaction().await?;
+    unscopable
+        .batch_execute(&tenant_commit_sql(resources))
+        .await?;
+    let deleted = unscopable
+        .execute(
+            &format!(
+                "DELETE FROM {}.{} WHERE tenant_id=$1 AND id=$2",
+                resources.schema, resources.table
+            ),
+            &[&resources.tenant, &"forward-1"],
+        )
+        .await?;
+    ensure!(deleted == 1, "tenant event row was not deleted once");
+    unscopable.commit().await?;
+    Ok(())
+}
+
+async fn wait_for_stored_events(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+    expected: u64,
+) -> anyhow::Result<Vec<StoredEvent>> {
     let js = async_nats::jetstream::new(async_nats::connect(&args.nats_url).await?);
     let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     loop {
@@ -1148,28 +1198,43 @@ async fn wait_for_stored_event(
             let info = stream.info().await?;
             let messages = info.state.messages;
             let first_sequence = info.state.first_sequence;
-            if messages == 1 {
-                let message = stream.get_raw_message(first_sequence).await?;
-                return Ok(StoredEvent {
-                    sequence: message.sequence,
-                    subject: message.subject.to_string(),
-                    message_id: message
-                        .headers
-                        .get(NATS_MESSAGE_ID)
-                        .map(ToString::to_string)
-                        .context("stored CDC event lacks Nats-Msg-Id")?,
-                    payload: message.payload.to_vec(),
-                });
+            if messages == expected {
+                let mut events = Vec::with_capacity(expected as usize);
+                for sequence in first_sequence..first_sequence + expected {
+                    let message = stream.get_raw_message(sequence).await?;
+                    events.push(StoredEvent {
+                        sequence: message.sequence,
+                        subject: message.subject.to_string(),
+                        message_id: message
+                            .headers
+                            .get(NATS_MESSAGE_ID)
+                            .map(ToString::to_string)
+                            .context("stored CDC event lacks Nats-Msg-Id")?,
+                        payload: message.payload.to_vec(),
+                    });
+                }
+                return Ok(events);
             }
-            ensure!(messages <= 1, "expected one CDC event, found {}", messages);
+            ensure!(
+                messages <= expected,
+                "expected {expected} CDC events, found {messages}"
+            );
         }
         ensure!(
             Instant::now() < deadline,
-            "CDC event did not reach {}",
+            "CDC events did not reach {}",
             resources.stream
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+async fn wait_for_stored_event(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+) -> anyhow::Result<StoredEvent> {
+    let mut events = wait_for_stored_events(args, resources, 1).await?;
+    events.pop().context("stored CDC event was not returned")
 }
 
 async fn stream_message_count(
@@ -1268,6 +1333,76 @@ fn is_post_window_storage_duplicate(
         && counter(report, "duplicate") == 1
 }
 
+fn tenant_isolation_report_is_exact(report: &serde_json::Value) -> bool {
+    counter(report, "skip-foreign-tenant") == 1
+        && counter(report, "refuse-tenant-unscopable") == 1
+        && [
+            "fired",
+            "duplicate",
+            "skip-entity",
+            "skip-op",
+            "skip-condition-false",
+            "refuse-depth",
+            "refuse-old-image-absent",
+            "refuse-condition-error",
+            "refuse-seq",
+            "held-registrations",
+            "poison",
+            "effect-retry",
+            "doorbell-failed",
+        ]
+        .into_iter()
+        .all(|name| counter(report, name) == 0)
+}
+
+fn delete_old_has_no_tenant_value(old: &serde_json::Map<String, serde_json::Value>) -> bool {
+    matches!(old.get("tenant_id"), None | Some(serde_json::Value::Null))
+}
+
+async fn admission_counts(admin: &Client) -> anyhow::Result<(i64, i64)> {
+    let row = admin
+        .query_one(
+            "SELECT (SELECT count(*) FROM wamn_run.runs), \
+                    (SELECT count(*) FROM wamn_run.run_queue)",
+            &[],
+        )
+        .await?;
+    Ok((row.get(0), row.get(1)))
+}
+
+async fn wait_for_tenant_isolation_ack(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+    final_sequence: u64,
+) -> anyhow::Result<()> {
+    let js = async_nats::jetstream::new(async_nats::connect(&args.nats_url).await?);
+    let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
+    loop {
+        let stream = js.get_stream(&resources.stream).await?;
+        let info = stream.consumer_info(&resources.durable).await?;
+        if info.num_pending == 0
+            && info.num_ack_pending == 0
+            && info.ack_floor.stream_sequence == final_sequence
+        {
+            ensure!(
+                info.num_redelivered == 0,
+                "tenant-isolation events redelivered {} time(s)",
+                info.num_redelivered
+            );
+            return Ok(());
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "tenant-isolation durable did not settle: pending={} ack-pending={} \
+             ack-floor={} expected={final_sequence}",
+            info.num_pending,
+            info.num_ack_pending,
+            info.ack_floor.stream_sequence,
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 async fn assert_one_causal_run(
     admin: &Client,
     resources: &GateResources,
@@ -1362,6 +1497,145 @@ async fn assert_one_causal_run(
         .await?
         .get(0);
     ensure!(queue_sequence == sequence as i64, "queue sequence drifted");
+    Ok(())
+}
+
+async fn run_tenant_isolation(
+    args: &CausationE2eArgs,
+    resources: &GateResources,
+    materializer: &MaterializerHarness,
+    admin: &Client,
+    first_delivery: &StoredEvent,
+) -> anyhow::Result<()> {
+    let before = admission_counts(admin).await?;
+    let doorbell_nats = async_nats::connect(&args.nats_url).await?;
+    let target = mvp_execution_target_id(&resources.tenant)?;
+    let mut doorbells = doorbell_nats.subscribe(doorbell_subject(&target)).await?;
+    doorbell_nats.flush().await?;
+
+    commit_tenant_isolation_events(args, resources).await?;
+    let stored = wait_for_stored_events(args, resources, 3).await?;
+    ensure!(
+        stored.first() == Some(first_delivery),
+        "check 9 stored event changed during check 10"
+    );
+    ensure!(
+        stored
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence),
+        "tenant-isolation events did not preserve commit order"
+    );
+
+    let foreign_delivery = &stored[1];
+    let foreign: wamn_event_wire::Envelope = serde_json::from_slice(&foreign_delivery.payload)?;
+    ensure!(foreign.op == Op::Insert, "foreign event operation drifted");
+    ensure!(
+        foreign_delivery.subject
+            == wamn_event_wire::subject(
+                &resources.org,
+                &resources.project,
+                &resources.env,
+                &resources.entity_id,
+                Op::Insert,
+            ),
+        "foreign event subject drifted"
+    );
+    ensure!(
+        foreign_delivery.message_id
+            == wamn_event_wire::msg_id(&resources.project, &resources.env, foreign.lsn),
+        "foreign event Nats-Msg-Id/LSN identity drifted"
+    );
+    ensure!(
+        foreign.entity.as_deref() == Some(resources.entity_id.as_str()),
+        "foreign event entity drifted"
+    );
+    ensure!(
+        foreign.table == resources.table,
+        "foreign event table drifted"
+    );
+    ensure!(
+        foreign
+            .new
+            .as_ref()
+            .and_then(|image| image.get("tenant_id"))
+            .and_then(serde_json::Value::as_str)
+            == Some(foreign_tenant(resources).as_str()),
+        "foreign event did not carry the exact foreign tenant"
+    );
+
+    let unscopable_delivery = &stored[2];
+    let unscopable: wamn_event_wire::Envelope =
+        serde_json::from_slice(&unscopable_delivery.payload)?;
+    ensure!(
+        unscopable.op == Op::Delete,
+        "unscopable event operation drifted"
+    );
+    ensure!(
+        unscopable_delivery.subject
+            == wamn_event_wire::subject(
+                &resources.org,
+                &resources.project,
+                &resources.env,
+                &resources.entity_id,
+                Op::Delete,
+            ),
+        "unscopable event subject drifted"
+    );
+    ensure!(
+        unscopable_delivery.message_id
+            == wamn_event_wire::msg_id(&resources.project, &resources.env, unscopable.lsn),
+        "unscopable event Nats-Msg-Id/LSN identity drifted"
+    );
+    ensure!(
+        unscopable.entity.as_deref() == Some(resources.entity_id.as_str()),
+        "unscopable event entity drifted"
+    );
+    ensure!(
+        unscopable.table == resources.table,
+        "unscopable event table drifted"
+    );
+    let old = unscopable
+        .old
+        .as_ref()
+        .context("REPLICA IDENTITY DEFAULT delete lacks its key image")?;
+    let id_match = old.get("id").and_then(serde_json::Value::as_str) == Some("forward-1");
+    let tenant_value_absent = delete_old_has_no_tenant_value(old);
+    let new_absent = unscopable.new.is_none();
+    ensure!(
+        id_match && tenant_value_absent && new_absent,
+        "delete was not the tenant-unscopable key-only old image: \
+         id_match={id_match} tenant_value_absent={tenant_value_absent} \
+         new_absent={new_absent} old_field_count={}",
+        old.len()
+    );
+
+    let report = materializer.run().await?;
+    ensure!(
+        tenant_isolation_report_is_exact(&report),
+        "tenant-isolation materializer verdicts drifted: {report}"
+    );
+    wait_for_tenant_isolation_ack(args, resources, unscopable_delivery.sequence).await?;
+    ensure!(
+        tokio::time::timeout(Duration::from_millis(300), doorbells.next())
+            .await
+            .is_err(),
+        "tenant-isolation events rang the admission doorbell"
+    );
+    ensure!(
+        admission_counts(admin).await? == before,
+        "tenant-isolation events changed run or queue rows"
+    );
+    assert_one_causal_run(
+        admin,
+        resources,
+        first_delivery.sequence,
+        &first_delivery.message_id,
+    )
+    .await?;
+    ensure!(
+        stream_message_count(args, resources).await? == 3,
+        "tenant-isolation materializer changed the three-record stream"
+    );
     Ok(())
 }
 
@@ -2163,6 +2437,7 @@ async fn run_forward(
     )
     .await?;
     ensure!(stored_messages == 1, "redelivery republished the event");
+    run_tenant_isolation(args, resources, &materializer, &admin, &first_delivery).await?;
     Ok(())
 }
 
@@ -2183,7 +2458,7 @@ pub async fn run(args: CausationE2eArgs) -> anyhow::Result<()> {
     let cleanup = cleanup(&args, &resources, &mut state, "final").await;
     finish_gate(result, cleanup)?;
     println!(
-        "causation-e2e complete — one causal run/queue fact, byte-identical redelivery deduplicated"
+        "causation-e2e complete — one causal run/queue fact, byte-identical redelivery deduplicated, tenant-isolation negatives acknowledged"
     );
     Ok(())
 }
@@ -2228,7 +2503,11 @@ mod tests {
         assert_eq!(registration["catalog-id"], resources.catalog_id);
         assert_eq!(registration["flow-id"], resources.flow_id);
         assert_eq!(registration["entity"], resources.entity_id);
-        assert_eq!(registration["ops"], serde_json::json!(["insert"]));
+        assert_eq!(registration["ops"], serde_json::json!(["insert", "delete"]));
+        assert_eq!(
+            foreign_tenant(&resources),
+            format!("foreign-{}", resources.suffix)
+        );
         assert_eq!(
             mint_evt_run_id(
                 &format!("{}:{}", resources.flow_id, resources.registration_id),
@@ -2298,6 +2577,49 @@ mod tests {
         assert_eq!(resources().stream, "M1_1234567812344abc8def1234567890ab");
     }
 
+    fn exact_tenant_isolation_report() -> serde_json::Value {
+        serde_json::json!({
+            "fired": 0, "duplicate": 0, "skip-entity": 0, "skip-op": 0,
+            "skip-foreign-tenant": 1, "skip-condition-false": 0,
+            "refuse-depth": 0, "refuse-tenant-unscopable": 1,
+            "refuse-old-image-absent": 0, "refuse-condition-error": 0,
+            "refuse-seq": 0, "held-registrations": 0, "poison": 0,
+            "effect-retry": 0, "doorbell-failed": 0
+        })
+    }
+
+    #[test]
+    fn tenant_isolation_report_requires_the_foreign_skip() {
+        let mut report = exact_tenant_isolation_report();
+        assert!(tenant_isolation_report_is_exact(&report));
+        report["skip-foreign-tenant"] = 0.into();
+        assert!(!tenant_isolation_report_is_exact(&report));
+    }
+
+    #[test]
+    fn tenant_isolation_report_requires_the_unscopable_refusal() {
+        let mut report = exact_tenant_isolation_report();
+        assert!(tenant_isolation_report_is_exact(&report));
+        report["refuse-tenant-unscopable"] = 0.into();
+        assert!(!tenant_isolation_report_is_exact(&report));
+    }
+
+    #[test]
+    fn delete_old_without_a_tenant_value_is_unscopable() {
+        let absent = serde_json::json!({"id": "forward-1"});
+        let null = serde_json::json!({"id": "forward-1", "tenant_id": null});
+        assert!(delete_old_has_no_tenant_value(absent.as_object().unwrap()));
+        assert!(delete_old_has_no_tenant_value(null.as_object().unwrap()));
+    }
+
+    #[test]
+    fn delete_old_with_a_string_tenant_is_scopable() {
+        let concrete = serde_json::json!({"id": "forward-1", "tenant_id": "tenant-a"});
+        assert!(!delete_old_has_no_tenant_value(
+            concrete.as_object().unwrap()
+        ));
+    }
+
     #[test]
     fn isolated_sidecar_urls_and_manifest_are_fail_closed() {
         let base = args();
@@ -2365,7 +2687,8 @@ mod tests {
         assert!(!job.contains("kind: PersistentVolumeClaim"));
         assert!(!job.contains("kind: Role"));
         assert!(!job.contains("kind: ClusterRole"));
-        assert!(job.contains("wamn.dev/m1-checks: \"9\""));
+        assert!(job.contains("wamn.dev/m1-checks: \"9,10\""));
+        assert!(!job.contains("m1-pending-checks"));
         assert!(job.contains("generateName: m1-gate-"));
         assert!(job.contains("serviceAccountName: event-reader"));
         assert!(job.contains("batch.kubernetes.io/controller-uid"));

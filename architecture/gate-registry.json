@@ -237,14 +237,12 @@
         "D3",
         "D19"
       ],
-      "bead_owner": "bd:wamn-0h0g.11.18",
+      "bead_owner": "bd:wamn-0h0g.11.10",
       "proof_tier": "in-cluster",
-      "expected_outcome": "pass-check-9-only",
+      "expected_outcome": "pass-checks-9-and-10",
       "can_fail": true,
       "allowed_skips": [],
-      "coverage_exclusions": [
-        "M1 check 10 tenant isolation remains pending bd:wamn-0h0g.11.10"
-      ],
+      "coverage_exclusions": [],
       "mutation_evidence": {
         "status": "proven",
         "follow_up": null,

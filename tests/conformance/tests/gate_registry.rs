@@ -676,19 +676,16 @@ fn canonical_registry_covers_every_live_gate_source() {
 }
 
 #[test]
-fn m1_gate_claims_only_completed_check_9() {
+fn m1_gate_claims_completed_checks_9_and_10() {
     let (root, registry, _, _, _) = fixtures();
     let entry = registry
         .entries
         .iter()
         .find(|entry| entry.source == "deploy/gates/m1-gate-job.yaml")
         .expect("M1 gate must be registered");
-    assert_eq!(entry.bead_owner, "bd:wamn-0h0g.11.18");
-    assert_eq!(entry.expected_outcome, "pass-check-9-only");
-    assert_eq!(
-        entry.coverage_exclusions,
-        ["M1 check 10 tenant isolation remains pending bd:wamn-0h0g.11.10"]
-    );
+    assert_eq!(entry.bead_owner, "bd:wamn-0h0g.11.10");
+    assert_eq!(entry.expected_outcome, "pass-checks-9-and-10");
+    assert!(entry.coverage_exclusions.is_empty());
     assert_eq!(entry.mutation_evidence.status, "proven");
     assert_eq!(
         entry.mutation_evidence.evidence.as_deref(),
@@ -698,8 +695,9 @@ fn m1_gate_claims_only_completed_check_9() {
     let manifest = fs::read_to_string(root.join(&entry.source)).expect("read M1 manifest");
     let sidecar = fs::read_to_string(root.join("deploy/gates/m1-postgres.Dockerfile"))
         .expect("read derived M1 PostgreSQL recipe");
-    assert!(manifest.contains("wamn.dev/m1-checks: \"9\""));
-    assert!(manifest.contains("wamn.dev/m1-pending-checks: \"10 (wamn-0h0g.11.10)\""));
+    assert!(manifest.contains("wamn.dev/m1-checks: \"9,10\""));
+    assert!(!manifest.contains("m1-pending-checks"));
+    assert!(manifest.contains("M1 PASS — checks 9 and 10 passed"));
     assert!(manifest.contains("wamn-gates --log-level error m1 --timeout-secs 120"));
     assert!(manifest.contains("restartPolicy: Always"));
     assert!(manifest.contains("image: wamn-postgres:m1-pg18-720c455e"));

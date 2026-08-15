@@ -2,9 +2,9 @@
 set -euo pipefail
 
 readonly CAMPAIGN="m1-composition"
-readonly BEAD="wamn-0h0g.11.18"
-readonly TARGET="tests/integration/src/m1.rs"
-readonly EXPECTED_SHA="b027f1e85c6911fd6a0c25a8e1904f52d6fc76d98d61dacef2f196a23c69f699"
+readonly BEAD="wamn-0h0g.11.10"
+readonly M1_SHA="3e6e993f79eeec9a6e3ab9d6fe24efe0c0ba016c7334aa9064c16eaa0689ace9"
+readonly CAUSATION_SHA="bfe20b3e97b07a6a7841a1aee3ab37e092ef9258898ebfb48018aaa80d637813"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -14,24 +14,54 @@ if [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
   exit 2
 fi
 
-declare NEEDLE REPLACEMENT GATE
+declare TARGET EXPECTED_SHA NEEDLE REPLACEMENT GATE
 
 mutation_ids() {
-  printf '%s\n' invoke-check-9-twice wrap-check-9-error
+  printf '%s\n' \
+    invoke-shared-fixture-twice \
+    wrap-m1-error \
+    accept-missing-foreign-skip \
+    accept-missing-unscopable-refusal \
+    accept-concrete-delete-tenant
 }
 
 load_mutation() {
   local id="$1"
   case "$id" in
-    invoke-check-9-twice)
+    invoke-shared-fixture-twice)
+      TARGET="tests/integration/src/m1.rs"
+      EXPECTED_SHA="$M1_SHA"
       NEEDLE='    check().await'
       REPLACEMENT=$'    check().await?;\n    check().await'
-      GATE="m1::tests::composition_invokes_check_9_exactly_once"
+      GATE="m1::tests::composition_invokes_the_shared_check_9_fixture_exactly_once"
       ;;
-    wrap-check-9-error)
+    wrap-m1-error)
+      TARGET="tests/integration/src/m1.rs"
+      EXPECTED_SHA="$M1_SHA"
       NEEDLE='    check().await'
-      REPLACEMENT='    check().await.map_err(|error| anyhow::anyhow!("M1 check 9 failed: {error:#}"))'
-      GATE="m1::tests::composition_propagates_check_9_error_unchanged"
+      REPLACEMENT='    check().await.map_err(|error| anyhow::anyhow!("M1 failed: {error:#}"))'
+      GATE="m1::tests::composition_propagates_m1_error_unchanged"
+      ;;
+    accept-missing-foreign-skip)
+      TARGET="tests/integration/src/causation_e2e.rs"
+      EXPECTED_SHA="$CAUSATION_SHA"
+      NEEDLE='counter(report, "skip-foreign-tenant") == 1'
+      REPLACEMENT='counter(report, "skip-foreign-tenant") >= 0'
+      GATE="causation_e2e::tests::tenant_isolation_report_requires_the_foreign_skip"
+      ;;
+    accept-missing-unscopable-refusal)
+      TARGET="tests/integration/src/causation_e2e.rs"
+      EXPECTED_SHA="$CAUSATION_SHA"
+      NEEDLE='counter(report, "refuse-tenant-unscopable") == 1'
+      REPLACEMENT='counter(report, "refuse-tenant-unscopable") >= 0'
+      GATE="causation_e2e::tests::tenant_isolation_report_requires_the_unscopable_refusal"
+      ;;
+    accept-concrete-delete-tenant)
+      TARGET="tests/integration/src/causation_e2e.rs"
+      EXPECTED_SHA="$CAUSATION_SHA"
+      NEEDLE='None | Some(serde_json::Value::Null)'
+      REPLACEMENT='None | Some(_)'
+      GATE="causation_e2e::tests::delete_old_with_a_string_tenant_is_scopable"
       ;;
     *)
       echo "unknown mutant: $id" >&2

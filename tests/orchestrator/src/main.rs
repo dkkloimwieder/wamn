@@ -34,7 +34,7 @@ enum Command {
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
-    /// Run M1 check 9; check 10 remains pending wamn-0h0g.11.10.
+    /// Run M1 checks 9 and 10 over one isolated event-path fixture.
     M1(m1::M1Args),
     /// Idempotently clean resources owned by one exact M1 Job identity.
     M1Cleanup(m1::M1Args),

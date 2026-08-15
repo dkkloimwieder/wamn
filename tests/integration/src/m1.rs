@@ -4,7 +4,7 @@ use std::future::Future;
 
 pub type M1Args = crate::causation_e2e::CausationE2eArgs;
 
-async fn run_check_9<F, Fut>(mut check: F) -> anyhow::Result<()>
+async fn run_checks_9_and_10<F, Fut>(mut check: F) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = anyhow::Result<()>>,
@@ -12,20 +12,18 @@ where
     check().await
 }
 
-/// Run the currently implemented portion of M1.
-///
-/// Check 10 (`wamn-0h0g.11.10`) is deliberately not claimed here.
+/// Run the complete M1 event-path proof.
 pub async fn run(args: M1Args) -> anyhow::Result<()> {
-    println!("# wamn-gates M1 — check 9 only; check 10 pending wamn-0h0g.11.10");
+    println!("# wamn-gates M1 — checks 9 and 10");
     let mut args = Some(args);
-    run_check_9(|| {
+    run_checks_9_and_10(|| {
         crate::causation_e2e::run(
             args.take()
-                .expect("M1 check 9 must be invoked exactly once"),
+                .expect("M1 checks 9 and 10 must share one fixture invocation"),
         )
     })
     .await?;
-    println!("M1 partial PASS — check 9 passed; check 10 remains pending");
+    println!("M1 PASS — checks 9 and 10 passed");
     Ok(())
 }
 
@@ -42,21 +40,21 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[derive(Debug)]
-    struct Check9Failure;
+    struct M1Failure;
 
-    impl fmt::Display for Check9Failure {
+    impl fmt::Display for M1Failure {
         fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter.write_str("check 9 sentinel failure")
+            formatter.write_str("M1 sentinel failure")
         }
     }
 
-    impl std::error::Error for Check9Failure {}
+    impl std::error::Error for M1Failure {}
 
     #[tokio::test]
-    async fn composition_invokes_check_9_exactly_once() {
+    async fn composition_invokes_the_shared_check_9_fixture_exactly_once() {
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = Arc::clone(&calls);
-        run_check_9(move || {
+        run_checks_9_and_10(move || {
             observed.fetch_add(1, Ordering::SeqCst);
             async { Ok(()) }
         })
@@ -66,10 +64,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn composition_propagates_check_9_error_unchanged() {
-        let error = run_check_9(|| async { Err(anyhow::Error::new(Check9Failure)) })
+    async fn composition_propagates_m1_error_unchanged() {
+        let error = run_checks_9_and_10(|| async { Err(anyhow::Error::new(M1Failure)) })
             .await
             .unwrap_err();
-        assert!(error.downcast_ref::<Check9Failure>().is_some());
+        assert!(error.downcast_ref::<M1Failure>().is_some());
     }
 }
