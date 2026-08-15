@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/repo-lint [run|dry-run]'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'repo-lint: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
+readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
+readonly WAMN_CARGO="${CARGO:-cargo}"
+readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
+
+readonly -a WAMN_ROOT_FORMAT=(
+  fmt --manifest-path "$WAMN_ROOT_MANIFEST" --all -- --check
+)
+readonly -a WAMN_COMPONENT_FORMAT=(
+  fmt --manifest-path "$WAMN_COMPONENT_MANIFEST" --all -- --check
+)
+readonly -a WAMN_ROOT_CLIPPY=(
+  clippy --manifest-path "$WAMN_ROOT_MANIFEST" --locked --workspace
+  --all-targets -- -D warnings
+)
+readonly -a WAMN_COMPONENT_NATIVE_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
+  --exclude flowrunner --exclude connection-http-standard
+  --all-targets -- -D warnings
+)
+readonly -a WAMN_CONNECTION_HTTP_NATIVE_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
+  --package connection-http-standard -- -D warnings
+)
+readonly -a WAMN_FLOWRUNNER_NATIVE_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
+  --package flowrunner --all-targets -- -D warnings -A dead-code
+)
+readonly -a WAMN_COMPONENT_WASM_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --workspace
+  --exclude flowrunner --target wasm32-wasip2 -- -D warnings
+)
+readonly -a WAMN_FLOWRUNNER_WASM_CLIPPY=(
+  clippy --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked
+  --package flowrunner --target wasm32-wasip2 -- -D warnings -A dead-code
+)
+
+wamn_print_plan() {
+  local -r label="$1"
+  shift
+  printf '%s:' "$label"
+  printf ' %q' "$WAMN_CARGO" "$@"
+  printf '\n'
+}
+
+wamn_dry_run() {
+  printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
+  wamn_print_plan 'root-rustfmt' "${WAMN_ROOT_FORMAT[@]}"
+  wamn_print_plan 'components-rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
+  wamn_print_plan 'root-clippy' "${WAMN_ROOT_CLIPPY[@]}"
+  wamn_print_plan 'components-native-clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
+  printf 'connection-http-native-clippy: RUSTFLAGS=%q' \
+    "$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS"
+  printf ' %q' "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
+  printf '\n'
+  wamn_print_plan 'flowrunner-native-clippy' "${WAMN_FLOWRUNNER_NATIVE_CLIPPY[@]}"
+  wamn_print_plan 'components-wasm-clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
+  wamn_print_plan 'flowrunner-wasm-clippy' "${WAMN_FLOWRUNNER_WASM_CLIPPY[@]}"
+}
+
+wamn_require_cargo() {
+  if [[ "$WAMN_CARGO" == */* ]]; then
+    [[ -x "$WAMN_CARGO" ]] || {
+      wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
+    }
+  else
+    command -v "$WAMN_CARGO" >/dev/null 2>&1 || {
+      wamn_fail 127 "Cargo executable was not found: $WAMN_CARGO"
+    }
+  fi
+}
+
+wamn_run() {
+  local -r label="$1"
+  shift
+  printf 'repo-lint: %s\n' "$label" >&2
+  "$WAMN_CARGO" "$@"
+}
+
+(($# <= 1)) || wamn_usage_error 'expected at most one command'
+readonly WAMN_COMMAND="${1:-run}"
+
+case "$WAMN_COMMAND" in
+  dry-run)
+    wamn_dry_run
+    ;;
+  run)
+    wamn_require_cargo
+    cd -- "$WAMN_REPOSITORY_ROOT"
+    wamn_run 'root rustfmt' "${WAMN_ROOT_FORMAT[@]}"
+    wamn_run 'components rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
+    wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
+    wamn_run 'components native Clippy' "${WAMN_COMPONENT_NATIVE_CLIPPY[@]}"
+    printf 'repo-lint: connection-http-standard native Clippy\n' >&2
+    RUSTFLAGS="$WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS" \
+      "$WAMN_CARGO" "${WAMN_CONNECTION_HTTP_NATIVE_CLIPPY[@]}"
+    wamn_run 'flowrunner native Clippy' "${WAMN_FLOWRUNNER_NATIVE_CLIPPY[@]}"
+    wamn_run 'components wasm Clippy' "${WAMN_COMPONENT_WASM_CLIPPY[@]}"
+    wamn_run 'flowrunner wasm Clippy' "${WAMN_FLOWRUNNER_WASM_CLIPPY[@]}"
+    ;;
+  *)
+    wamn_usage_error "unknown command '$WAMN_COMMAND'"
+    ;;
+esac

@@ -5781,3 +5781,32 @@ cargo fmt --all -- --check
 bash -n tools/contract-diff
 git diff --check
 ```
+
+## SR-MVP — repo-local lint (`wamn-0h0g.11.16`)
+
+The blocking lint check derives both package selections from Cargo: all 38 root
+workspace members and all six component workspace members. Root targets run
+Clippy with warnings denied; component targets do the same for
+native and `wasm32-wasip2`. Rustfmt checks both complete workspaces. Cargo owns
+the package inventories. Two target-specific exceptions name packages:
+`flowrunner` confines its established fail-closed-transition `dead-code`
+allowance to that package on both targets; `connection-http-standard` is named
+only on native because its no-std custom panic handler cannot link with Cargo's
+std test harness. The fixture receives a strict default-target native leg
+without `--all-targets` or a warning allowance, using its required
+`RUSTFLAGS=-C panic=abort`, and remains covered by the shared strict wasm
+workspace leg.
+
+```bash
+# Inspect the exact, CWD-independent argv without executing Cargo.
+tools/repo-lint dry-run
+
+# Focused fake-Cargo proof for workspace coverage, argv safety, and refusal.
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  cargo test --locked --offline -p wamn-proof-conformance \
+    --test repo_lint
+
+# Blocking repo-local check 16.
+CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
+  tools/repo-lint
+```
