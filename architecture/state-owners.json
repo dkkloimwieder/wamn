@@ -16,6 +16,10 @@
       "path": "deploy/sql/system-schema.sql",
       "role": "migration"
     },
+    "control-portable-store-installer": {
+      "path": "deploy/sql/control-portable-store.sql",
+      "role": "migration"
+    },
     "catalog-schema-installer": {
       "path": "deploy/sql/catalog-schema.sql",
       "role": "migration"
@@ -130,6 +134,11 @@
       "path": "deploy/sql/ops-schema.sql",
       "kind": "ddl",
       "scope": "production-control-database-ops"
+    },
+    {
+      "path": "deploy/sql/control-portable-store.sql",
+      "kind": "ddl",
+      "scope": "production-control-database-portable-store"
     },
     {
       "path": "deploy/sql/catalog-schema.sql",
@@ -523,6 +532,226 @@
       ],
       "compatibility_horizon": "platform-schema-major",
       "drift_gate": "SR13:generate-and-structurally-compare"
+    },
+    {
+      "id": "catalog.catalogs",
+      "plane": "control",
+      "semantic_owner": "schema-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.flow_artifacts",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.execution_bundles",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_manifests",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_flows",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.catalog_heads",
+      "plane": "control",
+      "semantic_owner": "schema-control",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "catalog-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.flow_drafts",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.validated_flow_drafts",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_exposure_manifests",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_sources",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_attachments",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.connection_requirements",
+      "plane": "control",
+      "semantic_owner": "schema-control",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.draft_safe_connection_grants",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "flow-format-and-platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.authoring_command_audit",
+      "plane": "control",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.release_flow_test_evidence",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "catalog.deployment_attestations",
+      "plane": "control",
+      "semantic_owner": "catalog-model",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "wamn_run.authoring_test_sets",
+      "plane": "control",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "wamn_run.authoring_test_run_reservations",
+      "plane": "control",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "wamn_run.authoring_test_case_runs",
+      "plane": "control",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
+    },
+    {
+      "id": "wamn_run.authoring_test_reports",
+      "plane": "control",
+      "semantic_owner": "scenario-worker",
+      "migration_owners": ["control-portable-store-installer"],
+      "schema_source": "deploy/sql/control-portable-store.sql",
+      "writers": ["control-portable-store-installer"],
+      "readers": [],
+      "compatibility_horizon": "platform-schema-major",
+      "drift_gate": "SR13:control-portable-live"
     },
     {
       "id": "catalog.catalogs",

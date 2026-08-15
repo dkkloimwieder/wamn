@@ -48,3 +48,4 @@ wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
 
 [dev-dependencies]
 chrono = { workspace = true, features = ["std"] }
+wamn-flow = { workspace = true }

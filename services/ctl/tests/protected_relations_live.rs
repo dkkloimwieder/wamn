@@ -19,6 +19,8 @@ const MANIFEST_PATH: &str = "architecture/state-owners.json";
 const TABLE_PATH: &str = "architecture/protected-writes.json";
 const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
 const OPS_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/ops-schema.sql");
+const CONTROL_PORTABLE_STORE_SQL: &str =
+    include_str!("../../../deploy/sql/control-portable-store.sql");
 const APP_SCHEMA_SQL: &str = include_str!("../../../deploy/sql/app-schema.sql");
 const WITNESS_SCHEMA: &str = "audit_app";
 const WITNESS_ENTITY: &str = "audit_records";
@@ -64,6 +66,7 @@ struct OwnershipFamily {
 
 #[derive(Clone, Debug)]
 struct DeclaredRelation {
+    scope: String,
     relation: String,
     physical_relation: String,
     ops: bool,
@@ -78,6 +81,12 @@ struct RelationBase {
     rls_forced: bool,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PortableFingerprint {
+    columns: Vec<String>,
+    constraints: Vec<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProtectedRelationTable {
@@ -88,6 +97,7 @@ struct ProtectedRelationTable {
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ProtectedRelationRow {
+    scope: String,
     relation: String,
     ops: bool,
     installer: String,
@@ -156,6 +166,10 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
         .map(|entry| {
             let _ = &entry.ignored;
             DeclaredRelation {
+                scope: source_scopes
+                    .get(&entry.schema_source)
+                    .expect("declared canonical source")
+                    .clone(),
                 installer: sole_installer(&entry.id, &entry.migration_owners),
                 physical_relation: entry.id.clone(),
                 relation: entry.id,
@@ -171,6 +185,10 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
             .replace("<app_schema>", WITNESS_SCHEMA)
             .replace("<catalog_entity_name>", WITNESS_ENTITY);
         DeclaredRelation {
+            scope: source_scopes
+                .get(&family.schema_source)
+                .expect("declared canonical source")
+                .clone(),
             installer: sole_installer(&family.pattern, &family.migration_owners),
             physical_relation,
             relation: family.pattern,
@@ -178,8 +196,9 @@ fn declared_relations(repository: &Path) -> Vec<DeclaredRelation> {
             owner: family.semantic_owner,
         }
     }));
-    relations.sort_by(|left, right| left.relation.cmp(&right.relation));
-    assert_eq!(relations.len(), 68, "protected relation count drifted");
+    relations
+        .sort_by(|left, right| (&left.scope, &left.relation).cmp(&(&right.scope, &right.relation)));
+    assert_eq!(relations.len(), 88, "protected relation count drifted");
     relations
 }
 
@@ -193,7 +212,7 @@ async fn connect(url: &str) -> Client {
     client
 }
 
-async fn install_scratch_database(client: &Client, url: &str, repository: &Path) {
+async fn prepare_scratch_database(client: &Client) {
     client
         .batch_execute(
             "DROP SCHEMA IF EXISTS audit_app CASCADE; \
@@ -240,13 +259,26 @@ async fn install_scratch_database(client: &Client, url: &str, repository: &Path)
         )
         .await
         .expect("prepare disposable database roles");
+}
 
-    let system_install =
-        format!("SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{OPS_SCHEMA_SQL}\nRESET ROLE;");
+async fn install_control_database(client: &Client) {
+    let system_install = format!(
+        "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\n\
+         {OPS_SCHEMA_SQL}\nRESET ROLE;"
+    );
     client
         .batch_execute(&system_install)
         .await
         .expect("install canonical control-plane schema");
+}
+
+async fn install_project_database(client: &Client, url: &str, repository: &Path) {
+    client
+        .batch_execute(
+            "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS wamn_run CASCADE",
+        )
+        .await
+        .expect("remove same-qualified control portable schemas before project install");
     client
         .batch_execute(APP_SCHEMA_SQL)
         .await
@@ -301,6 +333,95 @@ async fn install_scratch_database(client: &Client, url: &str, repository: &Path)
     assert!(repository.join(MANIFEST_PATH).is_file());
 }
 
+async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, PortableFingerprint> {
+    const RELATIONS: [&str; 18] = [
+        "catalog.catalogs",
+        "catalog.flow_artifacts",
+        "catalog.execution_bundles",
+        "catalog.release_manifests",
+        "catalog.release_flows",
+        "catalog.catalog_heads",
+        "catalog.flow_drafts",
+        "catalog.validated_flow_drafts",
+        "catalog.release_exposure_manifests",
+        "catalog.release_sources",
+        "catalog.release_attachments",
+        "catalog.connection_requirements",
+        "catalog.draft_safe_connection_grants",
+        "catalog.authoring_command_audit",
+        "wamn_run.authoring_test_sets",
+        "wamn_run.authoring_test_run_reservations",
+        "wamn_run.authoring_test_case_runs",
+        "wamn_run.authoring_test_reports",
+    ];
+    let mut fingerprints = RELATIONS
+        .into_iter()
+        .map(|relation| {
+            (
+                relation.to_string(),
+                PortableFingerprint {
+                    columns: Vec::new(),
+                    constraints: Vec::new(),
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let relations: &[&str] = &RELATIONS;
+    for row in client
+        .query(
+            "SELECT n.nspname || '.' || c.relname, \
+                    a.attnum::text || ':' || a.attname || ':' || \
+                    pg_catalog.format_type(a.atttypid,a.atttypmod) || ':' || \
+                    a.attnotnull::text || ':' || \
+                    COALESCE(pg_get_expr(d.adbin,d.adrelid,true),'-') \
+             FROM pg_catalog.pg_attribute a \
+             JOIN pg_catalog.pg_class c ON c.oid=a.attrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
+             LEFT JOIN pg_catalog.pg_attrdef d \
+               ON d.adrelid=a.attrelid AND d.adnum=a.attnum \
+             WHERE a.attnum > 0 AND NOT a.attisdropped \
+               AND n.nspname || '.' || c.relname = ANY($1) \
+             ORDER BY 1,a.attnum",
+            &[&relations],
+        )
+        .await
+        .expect("read shared portable columns")
+    {
+        let relation: String = row.get(0);
+        fingerprints
+            .get_mut(&relation)
+            .expect("shared relation")
+            .columns
+            .push(row.get(1));
+    }
+    for row in client
+        .query(
+            "SELECT n.nspname || '.' || c.relname, \
+                    con.contype::text || ':' || pg_get_constraintdef(con.oid,true) \
+             FROM pg_catalog.pg_constraint con \
+             JOIN pg_catalog.pg_class c ON c.oid=con.conrelid \
+             JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace \
+             WHERE n.nspname || '.' || c.relname = ANY($1) \
+               AND con.contype <> 't' \
+               AND NOT (n.nspname='catalog' \
+                        AND c.relname='draft_safe_connection_grants' \
+                        AND con.contype='f') \
+             ORDER BY 1,2",
+            &[&relations],
+        )
+        .await
+        .expect("read shared portable constraints")
+    {
+        let relation: String = row.get(0);
+        fingerprints
+            .get_mut(&relation)
+            .expect("shared relation")
+            .constraints
+            .push(row.get(1));
+    }
+    fingerprints
+}
+
 fn normalize_catalog_text(relation: &str, value: &str) -> String {
     let value = if relation.starts_with("<app_schema>.") {
         value.replace(WITNESS_SCHEMA, "<app_schema>")
@@ -346,8 +467,10 @@ fn trigger_mode(value: &str) -> &'static str {
     }
 }
 
-async fn generate_table(client: &Client, repository: &Path) -> ProtectedRelationTable {
-    let declarations = declared_relations(repository);
+async fn generate_rows(
+    client: &Client,
+    declarations: Vec<DeclaredRelation>,
+) -> Vec<ProtectedRelationRow> {
     let physical_to_declared = declarations
         .iter()
         .map(|entry| (entry.physical_relation.clone(), entry.relation.clone()))
@@ -708,7 +831,7 @@ async fn generate_table(client: &Client, repository: &Path) -> ProtectedRelation
         roles.sort_by(|left, right| (&left.role, &left.basis).cmp(&(&right.role, &right.basis)));
     }
 
-    let rows = declarations
+    declarations
         .into_iter()
         .map(|declaration| {
             let roles = roles_by_relation
@@ -734,6 +857,7 @@ async fn generate_table(client: &Client, repository: &Path) -> ProtectedRelation
                 "no".to_string()
             };
             ProtectedRelationRow {
+                scope: declaration.scope,
                 relation: declaration.relation.clone(),
                 ops: declaration.ops,
                 installer: declaration.installer,
@@ -752,11 +876,7 @@ async fn generate_table(client: &Client, repository: &Path) -> ProtectedRelation
                     .collect(),
             }
         })
-        .collect();
-    ProtectedRelationTable {
-        schema_version: "0.1".to_string(),
-        rows,
-    }
+        .collect()
 }
 
 #[tokio::test]
@@ -767,8 +887,40 @@ async fn protected_relations_match_reconciled_postgres() {
     };
     let repository = repository();
     let client = connect(&url).await;
-    install_scratch_database(&client, &url, &repository).await;
-    let actual = generate_table(&client, &repository).await;
+    prepare_scratch_database(&client).await;
+    let declarations = declared_relations(&repository);
+    install_control_database(&client).await;
+    let control_portable_fingerprints = shared_portable_fingerprints(&client).await;
+    let mut rows = generate_rows(
+        &client,
+        declarations
+            .iter()
+            .filter(|entry| entry.scope.starts_with("production-control-database"))
+            .cloned()
+            .collect(),
+    )
+    .await;
+    install_project_database(&client, &url, &repository).await;
+    let project_portable_fingerprints = shared_portable_fingerprints(&client).await;
+    assert_eq!(
+        control_portable_fingerprints, project_portable_fingerprints,
+        "control copies drifted from the still-authoritative project column/constraint shapes"
+    );
+    rows.extend(
+        generate_rows(
+            &client,
+            declarations
+                .into_iter()
+                .filter(|entry| entry.scope == "production-project-database")
+                .collect(),
+        )
+        .await,
+    );
+    rows.sort_by(|left, right| (&left.scope, &left.relation).cmp(&(&right.scope, &right.relation)));
+    let actual = ProtectedRelationTable {
+        schema_version: "0.1".to_string(),
+        rows,
+    };
     let actual_json = format!(
         "{}\n",
         serde_json::to_string_pretty(&actual).expect("serialize protected relation table")

@@ -50,6 +50,7 @@ struct ProtectedRelationTable {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProtectedRelationRow {
+    scope: String,
     relation: String,
     ops: bool,
     installer: String,
@@ -121,8 +122,12 @@ fn protected_relation_table_matches_declared_ownership() {
         .objects
         .into_iter()
         .map(|entry| {
+            let scope = scopes
+                .get(&entry.schema_source)
+                .unwrap_or_else(|| panic!("undeclared source {}", entry.schema_source))
+                .clone();
             (
-                entry.id.clone(),
+                (scope, entry.id.clone()),
                 (
                     is_ops_artifact(&entry.schema_source, &scopes),
                     sole_installer(&entry.id, &entry.migration_owners),
@@ -133,8 +138,12 @@ fn protected_relation_table_matches_declared_ownership() {
         })
         .collect::<BTreeMap<_, _>>();
     declared.extend(owners.families.into_iter().map(|family| {
+        let scope = scopes
+            .get(&family.schema_source)
+            .unwrap_or_else(|| panic!("undeclared source {}", family.schema_source))
+            .clone();
         (
-            family.pattern.clone(),
+            (scope, family.pattern.clone()),
             (
                 is_ops_artifact(&family.schema_source, &scopes),
                 sole_installer(&family.pattern, &family.migration_owners),
@@ -144,19 +153,24 @@ fn protected_relation_table_matches_declared_ownership() {
         )
     }));
 
-    let mut previous_relation: Option<&str> = None;
+    let mut previous_relation: Option<(&str, &str)> = None;
     let mut actual_relations = BTreeSet::new();
     for row in &table.rows {
         if let Some(previous) = previous_relation {
             assert!(
-                previous < row.relation.as_str(),
+                previous < (row.scope.as_str(), row.relation.as_str()),
                 "rows must be sorted and unique"
             );
         }
-        previous_relation = Some(&row.relation);
+        previous_relation = Some((&row.scope, &row.relation));
         let expected = declared
-            .get(&row.relation)
-            .unwrap_or_else(|| panic!("undeclared protected relation {}", row.relation));
+            .get(&(row.scope.clone(), row.relation.clone()))
+            .unwrap_or_else(|| {
+                panic!(
+                    "undeclared protected relation {} in {}",
+                    row.relation, row.scope
+                )
+            });
         assert_eq!(
             (row.ops, &row.installer, &row.owner),
             (expected.0, &expected.1, &expected.2)
@@ -207,12 +221,14 @@ fn protected_relation_table_matches_declared_ownership() {
             }
             previous_role = Some((&role.role, &role.basis));
         }
-        actual_relations.insert(row.relation.clone());
+        actual_relations.insert((row.scope.clone(), row.relation.clone()));
     }
     let node_runs = table
         .rows
         .iter()
-        .find(|row| row.relation == "wamn_run.node_runs")
+        .find(|row| {
+            row.scope == "production-project-database" && row.relation == "wamn_run.node_runs"
+        })
         .expect("node_runs is protected");
     let node_error_checks = node_runs
         .guards
@@ -226,12 +242,15 @@ fn protected_relation_table_matches_declared_ownership() {
             .rows
             .iter()
             .filter(|row| row.ops)
-            .map(|row| row.relation.as_str())
+            .map(|row| (row.scope.as_str(), row.relation.as_str()))
             .collect::<BTreeSet<_>>(),
         BTreeSet::from([
-            "provisioning.copy_sagas",
-            "provisioning.dumps",
-            "provisioning.migration_confirmations",
+            ("production-control-database-ops", "provisioning.copy_sagas"),
+            ("production-control-database-ops", "provisioning.dumps"),
+            (
+                "production-control-database-ops",
+                "provisioning.migration_confirmations",
+            ),
         ])
     );
     assert_eq!(actual_relations, declared.into_keys().collect());

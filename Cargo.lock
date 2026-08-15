@@ -4185,6 +4185,7 @@ dependencies = [
  "chrono",
  "serde_json",
  "wamn-control-registry",
+ "wamn-flow",
  "wamn-pg-core",
  "wamn-run-state",
 ]

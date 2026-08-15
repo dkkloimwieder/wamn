@@ -232,10 +232,21 @@ fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), Strin
     validate_principals(repository, manifest)?;
     validate_sources(repository, manifest)?;
 
+    let source_scopes = manifest
+        .canonical_sources
+        .iter()
+        .map(|source| (source.path.as_str(), source.scope.as_str()))
+        .collect::<BTreeMap<_, _>>();
     let mut ids = BTreeSet::new();
     for object in &manifest.objects {
-        if !ids.insert(object.id.as_str()) {
-            return Err(format!("duplicate PostgreSQL state id `{}`", object.id));
+        let scope = source_scopes
+            .get(object.ownership.schema_source.as_str())
+            .expect("owned source was validated as canonical");
+        if !ids.insert((*scope, object.id.as_str())) {
+            return Err(format!(
+                "duplicate PostgreSQL state id `{}` in scope `{scope}`",
+                object.id
+            ));
         }
         validate_owned_state(
             manifest,
@@ -251,8 +262,14 @@ fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), Strin
         )?;
     }
     for family in &manifest.families {
-        if !ids.insert(family.id.as_str()) {
-            return Err(format!("duplicate PostgreSQL state id `{}`", family.id));
+        let scope = source_scopes
+            .get(family.schema_source.as_str())
+            .expect("owned source was validated as canonical");
+        if !ids.insert((*scope, family.id.as_str())) {
+            return Err(format!(
+                "duplicate PostgreSQL state id `{}` in scope `{scope}`",
+                family.id
+            ));
         }
         require_nonempty(&format!("{}.pattern", family.id), &family.pattern)?;
         validate_owned_state(
@@ -327,6 +344,7 @@ fn validate_sources(repository: &Path, manifest: &Manifest) -> Result<(), String
         match source.scope.as_str() {
             "production-control-database"
             | "production-control-database-ops"
+            | "production-control-database-portable-store"
             | "production-project-database" => {}
             other => return Err(format!("unknown canonical source scope `{other}`")),
         }
@@ -424,7 +442,11 @@ fn validate_owned_state(
             migration_owners
         ));
     }
-    if readers.is_empty() {
+    let is_storage_only_control_snapshot = plane == "control"
+        && schema_source == "deploy/sql/control-portable-store.sql"
+        && migration_owners == ["control-portable-store-installer"]
+        && writers == ["control-portable-store-installer"];
+    if readers.is_empty() && !is_storage_only_control_snapshot {
         return Err(format!("`{id}` must document at least one reader"));
     }
     let source_exists = manifest
@@ -1198,10 +1220,26 @@ fn resolve_target<'a>(
     discovery: &Discovery,
 ) -> Result<StateTarget<'a>, String> {
     let normalized = normalize_identifier(&discovery.target);
-    if let Some(object) = manifest
+    let matching_objects = manifest
         .objects
         .iter()
-        .find(|object| object.id == normalized)
+        .filter(|object| object.id == normalized)
+        .collect::<Vec<_>>();
+    if let Some(object) = matching_objects
+        .iter()
+        .copied()
+        .find(|object| object.ownership.schema_source == discovery.path)
+        .or_else(|| {
+            matching_objects.iter().copied().find(|object| {
+                object.ownership.writers.iter().any(|writer| {
+                    manifest
+                        .principals
+                        .get(writer)
+                        .is_some_and(|principal| path_is_within(&discovery.path, &principal.path))
+                })
+            })
+        })
+        .or_else(|| (matching_objects.len() == 1).then(|| matching_objects[0]))
     {
         return Ok(StateTarget::Object(object));
     }
@@ -1241,7 +1279,15 @@ fn resolve_target<'a>(
         if let Some(object) = manifest
             .objects
             .iter()
-            .find(|object| object.id == qualified)
+            .filter(|object| object.id == qualified)
+            .find(|object| {
+                object.ownership.schema_source == discovery.path
+                    || object.ownership.writers.iter().any(|writer| {
+                        manifest.principals.get(writer).is_some_and(|principal| {
+                            path_is_within(&discovery.path, &principal.path)
+                        })
+                    })
+            })
         {
             return Ok(StateTarget::Object(object));
         }
@@ -1252,7 +1298,15 @@ fn resolve_target<'a>(
         if let Some(object) = manifest
             .objects
             .iter()
-            .find(|object| object.id == qualified)
+            .filter(|object| object.id == qualified)
+            .find(|object| {
+                object.ownership.schema_source == discovery.path
+                    || object.ownership.writers.iter().any(|writer| {
+                        manifest.principals.get(writer).is_some_and(|principal| {
+                            path_is_within(&discovery.path, &principal.path)
+                        })
+                    })
+            })
         {
             return Ok(StateTarget::Object(object));
         }
@@ -1353,7 +1407,9 @@ fn catalog_execution_bundles_state_ownership_is_ratified() {
     let object = manifest
         .objects
         .iter()
-        .find(|object| object.id == "catalog.execution_bundles")
+        .find(|object| {
+            object.id == "catalog.execution_bundles" && object.ownership.plane == "project"
+        })
         .expect("catalog.execution_bundles is registered");
 
     assert_eq!(object.ownership.plane, "project");

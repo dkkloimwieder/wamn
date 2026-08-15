@@ -106,6 +106,18 @@ pub use wamn_run_state::{
     effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
 };
 
+/// Core control-database schema, applied first by a fresh bootstrap.
+pub const SYSTEM_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/system-schema.sql");
+
+/// Dormant portable-store extension, applied after [`SYSTEM_SCHEMA_SQL`].
+pub const CONTROL_PORTABLE_STORE_SQL: &str =
+    include_str!("../../../../deploy/sql/control-portable-store.sql");
+
+/// Ordered fresh-control bootstrap record. Keeping the portable extension in
+/// this composition prevents a caller from provisioning the legacy registry
+/// floor while silently omitting the control authoring/release store.
+pub const CONTROL_BOOTSTRAP_SQL: [&str; 2] = [SYSTEM_SCHEMA_SQL, CONTROL_PORTABLE_STORE_SQL];
+
 /// Operations persistence extension, installed after the core system schema.
 #[cfg(feature = "ops")]
 pub const OPS_SCHEMA_SQL: &str = include_str!("../../../../deploy/sql/ops-schema.sql");
