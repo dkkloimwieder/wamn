@@ -242,8 +242,8 @@ fn next_reconcile(last_sweep_ms: i64, interval_ms: i64) -> i64 {
 }
 
 /// The dispatcher: per-project state + the optional doorbell client + the
-/// cadence config. One instance is one replica; running several is safe (the
-/// deterministic-id `ON CONFLICT` story).
+/// cadence config. One instance is one replica; running several is safe because
+/// sweeps are read-only and downstream claims arbitrate duplicate hints.
 pub struct Dispatcher {
     pub projects: Vec<ProjectState>,
     nats: Option<async_nats::Client>,
@@ -341,8 +341,8 @@ impl Dispatcher {
             );
         }
 
-        // Doorbells strictly after the effects committed (a hint for
-        // uncommitted work would wake a runner into an empty claim).
+        // Doorbells follow the durable queue SELECT. They are only hints; the
+        // executor's direct claim remains the state-transition boundary.
         if let Some(nats) = nats
             && !doorbells.is_empty()
         {
@@ -388,7 +388,7 @@ impl Dispatcher {
                     }
                     Err(_) => {
                         tracing::warn!(project = %self.projects[i].spec.name,
-                            "dispatcher: sweep timed out (abandoned; the in-flight transaction rolls back)");
+                            "dispatcher: read-only sweep timed out (abandoned; retrying later)");
                         true
                     }
                 };
@@ -533,8 +533,8 @@ pub async fn run(args: DispatchArgs) -> anyhow::Result<()> {
     // SIGTERM must be handled explicitly: in-container the dispatcher is PID 1,
     // which gets NO default signal disposition — an unhandled SIGTERM is
     // IGNORED, so every pod termination would hang the full grace period and
-    // die by SIGKILL. (Abrupt death is still safe — a sweep is one transaction
-    // — but a rollout should not take 30s per pod.)
+    // die by SIGKILL. Abrupt death is safe because sweeps only read queue state
+    // and publish repeatable hints, but a rollout should not take 30s per pod.
     let (tx, rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
         let mut sigterm =

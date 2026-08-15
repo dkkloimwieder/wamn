@@ -1,7 +1,7 @@
-# 5.14 shared trigger dispatcher — the always-on control-plane loop (cron +
-# parked-run wakes for every project it serves; row events are the D19 v3
-# event plane's — CDC reader → JetStream → materializer, l5i9.19). Runs the
-# wamn-dispatcher binary (its own SR9 image target — no runtime linked).
+# 5.8 shared queue dispatcher — the always-on, read-only reconciliation loop
+# that emits best-effort wake hints for every project it serves. Row events are
+# the D19 v3 event plane's — CDC reader → JetStream → materializer, l5i9.19.
+# Runs the wamn-dispatcher binary (its own SR9 image target — no runtime linked).
 #
 #   kubectl -n wamn-system apply -f deploy/platform/dispatcher-projects.example.yaml  # once
 #   kubectl -n wamn-system apply -f deploy/platform/dispatcher.yaml
@@ -14,19 +14,16 @@
 # values on every re-apply. deploy/platform/dispatcher-projects.example.yaml carries a
 # demo-project example of the shape.
 #
-# TWO REPLICAS, NO LEADER: replicas race each trigger and collapse on the
-# write-ahead ON CONFLICT (deterministic run ids {flow}:cron:{tick}) —
-# exactly-once minting with no leader election. Database uniqueness is the
-# scale-out boundary; the retired dispatchbench executable is not a current
-# proof source.
+# TWO REPLICAS, NO LEADER: replicas may publish duplicate hints from the same
+# durable queue rows. Hints are repeatable and the executor's direct claim is
+# the state-transition arbiter, so reconciliation needs no leader election.
+# The retired dispatchbench executable is not a current proof source.
 #
-# CRASH SAFETY + SHUTDOWN: a firing is one transaction (write-ahead +
-# enqueue); a
-# killed pod rolls it back and the surviving replica (or the restarted pod)
-# redelivers, so even SIGKILL mid-sweep is the crash the design absorbs. The
-# dispatcher also handles SIGTERM explicitly (PID 1 gets no default signal
-# disposition) and exits cleanly in milliseconds — a rollout never waits out
-# the grace period.
+# CRASH SAFETY + SHUTDOWN: a sweep only reads durable queue state and publishes
+# repeatable hints. A killed pod leaves no dispatcher-owned database mutation;
+# the surviving or restarted replica re-hints due work. The dispatcher also
+# handles SIGTERM explicitly (PID 1 gets no default signal disposition) and
+# exits cleanly in milliseconds — a rollout never waits out the grace period.
 #
 # STARTUP + ROLLOUTS: the initial dial of every project is fatal on failure
 # (the pod restarts until its projects' DBs are reachable — the wait-deps init
