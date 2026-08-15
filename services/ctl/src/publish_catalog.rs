@@ -689,8 +689,7 @@ async fn ensure_authoring_catalog_privileges(
              GRANT SELECT ON catalog.validated_flow_drafts TO wamn_app; \
              GRANT SELECT, INSERT ON catalog.validated_flow_drafts TO wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.draft_safe_connection_grants FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app; \
-             GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants TO wamn_scenario_author; \
+             GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.authoring_command_audit FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT, INSERT ON catalog.authoring_command_audit TO wamn_scenario_author; \
              DO $effective_acl$ BEGIN \
@@ -700,6 +699,12 @@ async fn ensure_authoring_catalog_privileges(
                   OR has_table_privilege('wamn_app', 'catalog.validated_flow_drafts', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'INSERT') \
                   OR has_table_privilege('wamn_app', 'catalog.draft_safe_connection_grants', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'INSERT') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'UPDATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'DELETE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'TRUNCATE') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'REFERENCES') \
+                  OR has_table_privilege('wamn_scenario_author', 'catalog.draft_safe_connection_grants', 'TRIGGER') \
                   OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'SELECT') \
                   OR has_table_privilege('wamn_app', 'catalog.authoring_command_audit', 'INSERT') \
                   OR has_table_privilege('wamn_scenario_author', 'catalog.authoring_command_audit', 'UPDATE') \

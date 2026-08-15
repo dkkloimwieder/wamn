@@ -5352,3 +5352,98 @@ git diff --check
 docker rm -f -v wamn-gate-0h0g-4-6-pg18
 trap - EXIT
 ```
+
+## SR-MVP — eight-operation authoring contract (`wamn-0h0g.7.3`)
+
+This debug-only gate pins the five command and three query wire operations,
+principal-scoped exact command replay, trace-only unmounted queries, read-only
+draft-safe enforcement, and the empty-only upgrade of the former command audit
+into the sole retry ledger. A populated legacy audit refuses atomically with
+SQLSTATE `55000`; it is never promoted into retry history.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave10-7-3
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+docker run --rm -d --name wamn-wave10-7-3-pg18 \
+  -e POSTGRES_PASSWORD=wamn-wave10-7-3 \
+  -e POSTGRES_DB=wamn_wave10_7_3 \
+  -p 127.0.0.1:15674:5432 \
+  postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d
+trap 'docker rm -f -v wamn-wave10-7-3-pg18 >/dev/null 2>&1 || true' EXIT
+until docker exec wamn-wave10-7-3-pg18 \
+  pg_isready -U postgres -d wamn_wave10_7_3 >/dev/null; do sleep 1; done
+
+export WAMN_CTL_PG_URL=postgresql://postgres:wamn-wave10-7-3@127.0.0.1:15674/wamn_wave10_7_3
+export WAMN_PLATFORM_IDENTITY_PG_URL="$WAMN_CTL_PG_URL"
+
+cargo test --locked --offline -p wamn-authoring-model
+cargo test --locked --offline -p wamn-scenario-worker --lib
+cargo test --locked --offline -p wamn-schema-control
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision
+
+cargo test --locked --offline -p wamn-scenario-worker \
+  --test management_live \
+  management_surface_authenticates_and_attributes_authoring_commands \
+  -- --exact --nocapture
+cargo test --locked --offline -p wamn-ctl \
+  --test run_plane_live stored_suite_cutover_live \
+  -- --exact --nocapture
+
+# The protected inventory must be generated from a fresh database cluster.
+docker rm -f -v wamn-wave10-7-3-pg18
+docker run --rm -d --name wamn-wave10-7-3-pg18 \
+  -e POSTGRES_PASSWORD=wamn-wave10-7-3 \
+  -e POSTGRES_DB=wamn_wave10_7_3 \
+  -p 127.0.0.1:15674:5432 \
+  postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d
+until docker exec wamn-wave10-7-3-pg18 \
+  pg_isready -U postgres -d wamn_wave10_7_3 >/dev/null; do sleep 1; done
+
+WAMN_UPDATE_PROTECTED_RELATIONS=1 cargo test --locked --offline \
+  -p wamn-ctl --features ops --test protected_relations_live \
+  -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-ctl --features ops \
+  --test protected_relations_live -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test protected_relations --test state_ownership
+
+(
+  cd clients/authoring-client
+  npm run generate
+  npm run check:generated
+  npm run build
+  npm test
+)
+
+tools/gate-mutants/authoring-eight-operation-contract.sh check
+tools/gate-mutants/authoring-eight-operation-contract.sh green
+tools/gate-mutants/authoring-eight-operation-contract.sh run-all
+tools/gate-mutants/authoring-store-cutover.sh run-all
+WAMN_CTL_PG_URL="$WAMN_CTL_PG_URL" \
+  tools/gate-mutants/protected-relations.sh run-all
+tools/gate-mutants/authoring-cli-collection-drift.sh run
+tools/gate-mutants/authoring-cli-unmounted-green.sh run
+tools/gate-mutants/authoring-smoke-collection-drift.sh run
+
+cargo clippy --locked --offline \
+  -p wamn-authoring-model -p wamn-scenario-worker \
+  -p wamn-schema-control -p wamn-proof-conformance \
+  --all-targets -- -D warnings
+cargo clippy --locked --offline -p wamn-ctl --features ops \
+  --all-targets -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/authoring-{eight-operation-contract,store-cutover}.sh \
+  tools/gate-mutants/authoring-cli-{collection-drift,unmounted-green}.sh \
+  tools/gate-mutants/authoring-smoke-collection-drift.sh \
+  tools/gate-mutants/protected-relations.sh
+jq -e . architecture/protected-writes.json \
+  docs/archive/contracts/authoring-surface.schema.json \
+  docs/archive/contracts/authoring-surface.v0.1.examples.json >/dev/null
+git diff --check
+
+docker rm -f -v wamn-wave10-7-3-pg18
+trap - EXIT
+```

@@ -29,11 +29,15 @@ import {
   AUTHORING_SCHEMA_VERSION,
   type AuthoringCommand,
   type AuthoringCommandKind,
+  type AuthoringQuery,
+  type AuthoringQueryKind,
+  type AuthoringQueryRequest,
   type AuthoringRequest,
   type AuthoringScope,
   type CommandRefusal,
   type CommitProvenance,
   type DraftRunCapture,
+  type QueryRefusal,
 } from "../generated/authoring.js";
 
 /// The route the management surface reserves. The contract defines no route,
@@ -87,7 +91,7 @@ export type StepStatus = "completed" | "refused" | "unmounted" | "fault";
 
 export type FaultKind = "network" | "http" | "protocol";
 
-export interface StepRecord {
+export interface CommandStepRecord {
   readonly command: AuthoringCommandKind;
   readonly "command-id": string;
   readonly status: StepStatus;
@@ -97,6 +101,19 @@ export interface StepRecord {
   readonly "http-status"?: number;
   readonly fault?: { readonly kind: FaultKind; readonly detail: string };
 }
+
+export interface QueryStepRecord {
+  readonly query: AuthoringQueryKind;
+  readonly "query-id": string;
+  readonly status: StepStatus;
+  readonly "elapsed-ms": number;
+  readonly result?: unknown;
+  readonly refusal?: QueryRefusal;
+  readonly "http-status"?: number;
+  readonly fault?: { readonly kind: FaultKind; readonly detail: string };
+}
+
+export type StepRecord = CommandStepRecord | QueryStepRecord;
 
 export interface CliDocument {
   readonly client: "wamn";
@@ -134,6 +151,10 @@ function request(commandId: string, command: AuthoringCommand): AuthoringRequest
   // environment value can select another one, so an unversioned or
   // differently-versioned request has no path through this client.
   return { "command-id": commandId, "schema-version": AUTHORING_SCHEMA_VERSION, command };
+}
+
+function queryRequest(queryId: string, query: AuthoringQuery): AuthoringQueryRequest {
+  return { "query-id": queryId, "schema-version": AUTHORING_SCHEMA_VERSION, query };
 }
 
 export interface SaveOptions {
@@ -195,6 +216,24 @@ export function draftRunRequest(options: DraftRunOptions): AuthoringRequest {
   });
 }
 
+export interface TestSetRunOptions {
+  readonly commandId: string;
+  readonly scope: AuthoringScope;
+  readonly validatedDraftId: string;
+  readonly definition: string;
+}
+
+export function testSetRunRequest(options: TestSetRunOptions): AuthoringRequest {
+  return request(options.commandId, {
+    kind: "test-set-run",
+    input: {
+      scope: options.scope,
+      "test-set": { definition: options.definition },
+      "validated-draft": { "validated-draft-id": options.validatedDraftId },
+    },
+  });
+}
+
 export interface PromoteOptions {
   readonly commandId: string;
   readonly scope: AuthoringScope;
@@ -215,6 +254,37 @@ export function promoteRequest(options: PromoteOptions): AuthoringRequest {
   });
 }
 
+export function readDraftRequest(
+  queryId: string,
+  scope: AuthoringScope,
+  draftId: string,
+  revision: number,
+): AuthoringQueryRequest {
+  return queryRequest(queryId, {
+    kind: "read-draft",
+    input: { draft: { "draft-id": draftId, revision }, scope },
+  });
+}
+
+export function getRunRequest(
+  queryId: string,
+  scope: AuthoringScope,
+  runId: string,
+): AuthoringQueryRequest {
+  return queryRequest(queryId, { kind: "get-run", input: { "run-id": runId, scope } });
+}
+
+export function getReportRequest(
+  queryId: string,
+  scope: AuthoringScope,
+  reportId: string,
+): AuthoringQueryRequest {
+  return queryRequest(queryId, {
+    kind: "get-report",
+    input: { "report-id": reportId, scope },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
@@ -227,6 +297,7 @@ const OPTIONS = new Set([
   "--project",
   "--environment",
   "--command-id",
+  "--query-id",
   "--state",
   "--file",
   "--draft-id",
@@ -236,9 +307,19 @@ const OPTIONS = new Set([
   "--input",
   "--capture",
   "--report-id",
+  "--run-id",
+  "--test-set",
 ]);
 
-export const VERBS = ["validate", "draft-run", "promote"] as const;
+export const VERBS = [
+  "validate",
+  "draft-run",
+  "test-set-run",
+  "promote",
+  "read-draft",
+  "get-run",
+  "get-report",
+] as const;
 
 export type Verb = (typeof VERBS)[number];
 
@@ -296,7 +377,11 @@ export const USAGE = `usage: wamn <command> [options]
 commands:
   validate     save the working-tree definition, then validate the exact saved revision
   draft-run    run one authored input against a validated draft
+  test-set-run run an inline test set against a validated draft
   promote      publish a validated draft proven by a successful report
+  read-draft   read one exact draft revision
+  get-run      read one run projection
+  get-report   read one test-set report projection
 
 authentication (always from a file so no token reaches argv):
   --token-file FILE   an already-issued personal access token (required)
@@ -306,12 +391,17 @@ common options:
   --project ID             project scope (required)
   --environment NAME       environment scope (required)
   --command-id ID          override the generated command id
+  --query-id ID            override the generated query correlation id
   --state FILE             client-local identity cache (default ${DEFAULT_STATE_PATH})
   --no-state               neither read nor write the state file
 
 validate:  --file PATH --draft-id ID --flow-id ID [--expected-revision N] [--no-provenance]
 draft-run: --input PATH [--validated-draft ID] [--capture full|off]
+test-set-run: --test-set PATH [--validated-draft ID]
 promote:   [--validated-draft ID] [--report-id ID]
+read-draft: --draft-id ID --expected-revision N
+get-run:    [--run-id ID]
+get-report: [--report-id ID]
 
 stdout carries exactly one JSON document; exit 0 completed, 3 refused,
 4 unmounted (the surface answers 501), 5 fault, 2 usage.`;
@@ -401,6 +491,68 @@ async function execute(
           "elapsed-ms": elapsed(),
           "http-status": 403,
           refusal: { command, reason: { kind: AUTHORIZATION_DENIED } },
+        };
+      }
+      return {
+        ...base,
+        status: "fault",
+        "elapsed-ms": elapsed(),
+        "http-status": error.status,
+        fault: { kind: "http", detail: `authoring endpoint returned HTTP ${error.status}` },
+      };
+    }
+    if (error instanceof AuthoringNetworkError) {
+      return {
+        ...base,
+        status: "fault",
+        "elapsed-ms": elapsed(),
+        fault: { kind: "network", detail: "no HTTP response was received" },
+      };
+    }
+    if (error instanceof AuthoringProtocolError) {
+      return {
+        ...base,
+        status: "fault",
+        "elapsed-ms": elapsed(),
+        fault: { kind: "protocol", detail: error.message },
+      };
+    }
+    throw error;
+  }
+}
+
+async function executeQuery(
+  client: AuthoringClient,
+  document: AuthoringQueryRequest,
+  io: CliIo,
+  transcript: Transcript,
+): Promise<QueryStepRecord> {
+  const query = document.query.kind;
+  const started = io.now();
+  const base = { query, "query-id": document["query-id"] };
+  const elapsed = () => io.now() - started;
+  try {
+    const outcome = await client.query(document);
+    if (outcome.status === "completed") {
+      transcript.note(`  ok    ${query} completed`);
+      return { ...base, status: "completed", "elapsed-ms": elapsed(), result: outcome.value.result };
+    }
+    transcript.note(`  ref   ${query} refused ${outcome.value.reason.kind}`);
+    return { ...base, status: "refused", "elapsed-ms": elapsed(), refusal: outcome.value };
+  } catch (error) {
+    if (error instanceof AuthoringHttpError) {
+      if (error.status === 501) {
+        transcript.note(`  501   ${query} is not mounted on this surface`);
+        return { ...base, status: "unmounted", "elapsed-ms": elapsed(), "http-status": 501 };
+      }
+      if (error.status === 403) {
+        transcript.note(`  ref   ${query} refused ${AUTHORIZATION_DENIED}`);
+        return {
+          ...base,
+          status: "refused",
+          "elapsed-ms": elapsed(),
+          "http-status": 403,
+          refusal: { query, reason: { kind: AUTHORIZATION_DENIED } } as QueryRefusal,
         };
       }
       return {
@@ -529,6 +681,10 @@ function commandId(session: Session, kind: AuthoringCommandKind, ordinal: number
   return ordinal === 0 ? override : `${override}-${ordinal}`;
 }
 
+function queryId(session: Session, kind: AuthoringQueryKind): string {
+  return session.parsed.values["query-id"] ?? `${kind}-${session.started.toString(36)}`;
+}
+
 function stateOrRequired(session: Session, option: string, key: keyof CliState): string {
   const supplied = session.parsed.values[option];
   if (supplied !== undefined && supplied.length > 0) return supplied;
@@ -647,6 +803,33 @@ async function runDraftRun(session: Session): Promise<StepRecord[]> {
   return [step];
 }
 
+async function runTestSetRun(session: Session): Promise<StepRecord[]> {
+  const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
+  const testSetPath = required(session.parsed, "test-set");
+  const definition = await session.io.readText(testSetPath);
+  session.transcript.note(
+    `test-set-run validated-draft=${validatedDraftId} test-set=${testSetPath} bytes=${definition.length}`,
+  );
+  const step = await execute(
+    session.client,
+    testSetRunRequest({
+      commandId: commandId(session, "test-set-run", 0),
+      definition,
+      scope: session.scope,
+      validatedDraftId,
+    }),
+    session.io,
+    session.transcript,
+  );
+  if (step.status === "completed") {
+    const receipt = step.result as { "report-id": string };
+    await writeState(session.io, session.statePath, session.state, {
+      "report-id": receipt["report-id"],
+    });
+  }
+  return [step];
+}
+
 async function runPromote(session: Session): Promise<StepRecord[]> {
   const validatedDraftId = stateOrRequired(session, "validated-draft", "validated-draft-id");
   const reportId = stateOrRequired(session, "report-id", "report-id");
@@ -660,6 +843,43 @@ async function runPromote(session: Session): Promise<StepRecord[]> {
         scope: session.scope,
         validatedDraftId,
       }),
+      session.io,
+      session.transcript,
+    ),
+  ];
+}
+
+async function runReadDraft(session: Session): Promise<StepRecord[]> {
+  const draftId = required(session.parsed, "draft-id");
+  const revision = integer(required(session.parsed, "expected-revision"), "expected-revision");
+  return [
+    await executeQuery(
+      session.client,
+      readDraftRequest(queryId(session, "read-draft"), session.scope, draftId, revision),
+      session.io,
+      session.transcript,
+    ),
+  ];
+}
+
+async function runGetRun(session: Session): Promise<StepRecord[]> {
+  const runId = stateOrRequired(session, "run-id", "run-id");
+  return [
+    await executeQuery(
+      session.client,
+      getRunRequest(queryId(session, "get-run"), session.scope, runId),
+      session.io,
+      session.transcript,
+    ),
+  ];
+}
+
+async function runGetReport(session: Session): Promise<StepRecord[]> {
+  const reportId = stateOrRequired(session, "report-id", "report-id");
+  return [
+    await executeQuery(
+      session.client,
+      getReportRequest(queryId(session, "get-report"), session.scope, reportId),
       session.io,
       session.transcript,
     ),
@@ -722,8 +942,20 @@ export async function runCli(argv: ReadonlyArray<string>, io: CliIo): Promise<nu
       case "draft-run":
         steps = await runDraftRun(session);
         break;
+      case "test-set-run":
+        steps = await runTestSetRun(session);
+        break;
       case "promote":
         steps = await runPromote(session);
+        break;
+      case "read-draft":
+        steps = await runReadDraft(session);
+        break;
+      case "get-run":
+        steps = await runGetRun(session);
+        break;
+      case "get-report":
+        steps = await runGetReport(session);
         break;
     }
 

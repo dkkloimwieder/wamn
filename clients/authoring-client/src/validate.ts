@@ -1,6 +1,8 @@
 import {
   authoringSchema,
   type AuthoringDocument,
+  type AuthoringQueryRequest,
+  type AuthoringQueryResponse,
   type AuthoringRequest,
   type AuthoringResponse,
 } from "./generated/authoring.js";
@@ -19,6 +21,7 @@ type JsonSchemaObject = {
   readonly enum?: ReadonlyArray<unknown>;
   readonly format?: string;
   readonly items?: JsonSchema;
+  readonly minLength?: number;
   readonly maximum?: number;
   readonly minimum?: number;
   readonly oneOf?: ReadonlyArray<JsonSchema>;
@@ -26,6 +29,7 @@ type JsonSchemaObject = {
   readonly required?: ReadonlyArray<string>;
   readonly title?: string;
   readonly type?: string | ReadonlyArray<string>;
+  readonly "x-max-utf8-bytes"?: number;
 };
 
 type RootSchema = JsonSchemaObject & {
@@ -47,6 +51,7 @@ const supportedKeywords = new Set([
   "enum",
   "format",
   "items",
+  "minLength",
   "maximum",
   "minimum",
   "oneOf",
@@ -54,6 +59,7 @@ const supportedKeywords = new Set([
   "required",
   "title",
   "type",
+  "x-max-utf8-bytes",
 ]);
 const supportedFormats = new Set(["uint32", "uint64"]);
 
@@ -116,6 +122,18 @@ export class AuthoringPayloadError extends Error {
 
 function fail(path: string, detail: string): never {
   throw new AuthoringPayloadError(path, detail);
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint <= 0x7f) bytes += 1;
+    else if (codePoint <= 0x7ff) bytes += 2;
+    else if (codePoint <= 0xffff) bytes += 3;
+    else bytes += 4;
+  }
+  return bytes;
 }
 
 function validateType(value: unknown, expected: string, path: string): void {
@@ -239,6 +257,22 @@ function validate(value: unknown, schema: JsonSchema, path: string): void {
     fail(path, `must be at most ${schema.maximum}`);
   }
 
+  if (
+    typeof value === "string" &&
+    schema.minLength !== undefined &&
+    utf8ByteLength(value) < schema.minLength
+  ) {
+    fail(path, `must be at least ${schema.minLength} UTF-8 bytes`);
+  }
+
+  if (
+    typeof value === "string" &&
+    schema["x-max-utf8-bytes"] !== undefined &&
+    utf8ByteLength(value) > schema["x-max-utf8-bytes"]
+  ) {
+    fail(path, `must be at most ${schema["x-max-utf8-bytes"]} UTF-8 bytes`);
+  }
+
   if (Array.isArray(value) && schema.items !== undefined) {
     value.forEach((item, index) => validate(item, schema.items!, `${path}[${index}]`));
   }
@@ -277,4 +311,12 @@ export function parseAuthoringRequest(value: unknown): AuthoringRequest {
 
 export function parseAuthoringResponse(value: unknown): AuthoringResponse {
   return parseDefinition<AuthoringResponse>(value, "AuthoringResponse");
+}
+
+export function parseAuthoringQueryRequest(value: unknown): AuthoringQueryRequest {
+  return parseDefinition<AuthoringQueryRequest>(value, "AuthoringQueryRequest");
+}
+
+export function parseAuthoringQueryResponse(value: unknown): AuthoringQueryResponse {
+  return parseDefinition<AuthoringQueryResponse>(value, "AuthoringQueryResponse");
 }

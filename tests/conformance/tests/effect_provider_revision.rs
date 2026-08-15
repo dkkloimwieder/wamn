@@ -1434,7 +1434,7 @@ fn management_and_executor_embed_identical_revision() {
     let validation = source_section(
         &authoring,
         "pub(crate) async fn validate_flow_draft(",
-        "pub(crate) async fn grant_draft_safe_generation(",
+        "#[cfg(test)]",
     );
     assert!(
         validation

@@ -3,7 +3,7 @@
 // WHAT THIS IS. The whole authoring loop driven from a real checkout by the
 // shipped `wamn` CLI and nothing else: edit a flow file, `validate` (save the
 // exact bytes, then validate the exact saved revision), edit it again,
-// `draft-run`, `promote`. Every leg is a subprocess
+// `draft-run`, `test-set-run`, `promote`. Every leg is a subprocess
 // invocation of scripts/wamn.mjs whose stdout document is read as the result, so
 // the gate proves the CLI's public behaviour rather than its internals.
 //
@@ -56,6 +56,7 @@ const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 const FLOW_ID = "receive-material";
 const DEFINITION = `{"schema-version":"0.1","flow-id":"${FLOW_ID}","version":1,"nodes":[{"id":"request","type":"request","config":{"input-schema":true}},{"id":"respond","type":"respond","config":{"status":200}}],"edges":[{"from":"request","to":"respond"}]}`;
 const AUTHORED_INPUT = '{"receipt-id":"receipt-1042","material":"aluminum"}';
+const TEST_SET = '{"schema-version":"0.1","cases":[{"case-id":"one","input":{},"expect":[{"run-terminal-outcome":{"status":"completed"}}]}]}';
 
 // A validated draft and report the retained commands cannot always own yet.
 // When `validate` is unmounted there is no draft identity to carry forward;
@@ -79,6 +80,7 @@ const RESULT_KEYS = {
     "validated-draft-id",
   ],
   "draft-run": ["run-id", "validated-draft"],
+  "test-set-run": ["report-id", "test-set", "validated-draft"],
   publish: ["artifact-hash", "flow-id", "version"],
 };
 
@@ -242,22 +244,34 @@ async function staticHalf() {
   await compiledPackage();
   const help = launchWamn(["--help"]);
   require_("cli-compiles", help.status === 0, `wamn --help exited ${help.status}`);
-  for (const verb of ["validate", "draft-run", "promote"]) {
+  for (const verb of [
+    "validate",
+    "draft-run",
+    "test-set-run",
+    "promote",
+    "read-draft",
+    "get-run",
+    "get-report",
+  ]) {
     require_(`cli-verb-${verb}`, help.stderr.includes(`  ${verb} `), `--help does not document ${verb}`);
   }
   // The cycle covers the whole public command inventory: every kind in the
-  // generated schema is reached by one of the three verbs.
+  // generated schema is reached by a documented verb.
   const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8"));
   const covered = [
     "save-flow-draft",
     "validate",
     "draft-run",
+    "test-set-run",
     "publish",
   ];
+  const commandKinds = schema.definitions.AuthoringCommand.oneOf.map(
+    (variant) => variant.properties.kind.enum[0],
+  );
   require_(
     "cycle-covers-the-command-inventory",
     JSON.stringify([...covered].sort()) ===
-      JSON.stringify([...schema.definitions.AuthoringCommandKind.enum].sort()),
+      JSON.stringify([...commandKinds].sort()),
     "the cycle does not reach every public command kind",
   );
   // This gate's own input surface: a base URL, one token file, a scope, and
@@ -303,6 +317,7 @@ async function main() {
   const state = join(checkout, ".wamn", "state.json");
   const definitionPath = join(checkout, "flows", `${FLOW_ID}.flow.json`);
   const inputPath = join(checkout, "input.json");
+  const testSetPath = join(checkout, "test-set.json");
 
   emit(`surface ${baseUrl}`);
   emit(`checkout ${checkout}`);
@@ -312,6 +327,7 @@ async function main() {
   mkdirSync(join(checkout, "flows"), { recursive: true });
   await writeFile(definitionPath, DEFINITION);
   await writeFile(inputPath, AUTHORED_INPUT);
+  await writeFile(testSetPath, TEST_SET);
   git(["init", "--quiet", "--initial-branch=main"], checkout);
   git(["add", "-A"], checkout);
   git(
@@ -432,7 +448,28 @@ async function main() {
     ["draft-run"],
   );
 
-  // ---- leg 4: promote ------------------------------------------------------
+  // ---- leg 4: test-set-run -------------------------------------------------
+  emit("leg test-set-run");
+  const testSetRun = record(
+    steps,
+    "test-set-run",
+    "test-set-run",
+    wamn("test-set-run", [
+      ...scope,
+      "--command-id",
+      `cycle-${runId}-test-set-run`,
+      "--test-set",
+      testSetPath,
+      "--validated-draft",
+      validatedDraftId,
+    ]),
+    ["test-set-run"],
+  );
+  const testSetStep = stepOf(testSetRun, "test-set-run");
+  const reportId =
+    testSetStep.status === "completed" ? testSetStep.result["report-id"] : PLACEHOLDER_REPORT;
+
+  // ---- leg 5: promote ------------------------------------------------------
   emit("leg promote");
   const promote = record(
     steps,
@@ -445,7 +482,7 @@ async function main() {
       "--validated-draft",
       validatedDraftId,
       "--report-id",
-      PLACEHOLDER_REPORT,
+      reportId,
     ]),
     ["publish"],
   );

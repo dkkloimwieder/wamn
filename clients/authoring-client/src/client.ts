@@ -2,19 +2,36 @@ import {
   AUTHORING_SCHEMA_VERSION,
   type AuthoringDocument,
   type AuthoringOutcome,
+  type AuthoringQueryOutcome,
+  type AuthoringQueryRequest,
+  type AuthoringQueryResponse,
   type AuthoringRequest,
+  type AuthoringResponse,
 } from "./generated/authoring.js";
 import {
   AuthoringPayloadError,
   parseAuthoringDocument,
+  parseAuthoringQueryRequest,
+  parseAuthoringQueryResponse,
   parseAuthoringRequest,
+  parseAuthoringResponse,
 } from "./validate.js";
 
-export type AuthoringRequestDocument = Extract<AuthoringDocument, { document: "request" }>;
-export type AuthoringResponseDocument = Extract<AuthoringDocument, { document: "response" }>;
+export type AuthoringCommandRequestDocument = {
+  readonly document: "request";
+  readonly body: AuthoringRequest;
+};
+export type AuthoringQueryRequestDocument = {
+  readonly document: "request";
+  readonly body: AuthoringQueryRequest;
+};
 
+/// The two methods deliberately stay separate: query code has no command
+/// execution method to call accidentally and command retry identity never
+/// appears in a query request.
 export interface AuthoringTransport {
-  execute(request: AuthoringRequestDocument): Promise<unknown>;
+  executeCommand(request: AuthoringCommandRequestDocument): Promise<unknown>;
+  executeQuery(request: AuthoringQueryRequestDocument): Promise<unknown>;
 }
 
 export class AuthoringNetworkError extends Error {
@@ -47,6 +64,22 @@ export class AuthoringProtocolError extends Error {
   }
 }
 
+function responseBody(payload: unknown): unknown {
+  try {
+    const document: AuthoringDocument = parseAuthoringDocument(payload);
+    if (document.document !== "response") {
+      throw new AuthoringProtocolError("authoring endpoint returned a request document");
+    }
+    return document.body;
+  } catch (error) {
+    if (error instanceof AuthoringProtocolError) throw error;
+    if (error instanceof AuthoringPayloadError) {
+      throw new AuthoringProtocolError("invalid authoring response", error);
+    }
+    throw error;
+  }
+}
+
 export class AuthoringClient {
   readonly #transport: AuthoringTransport;
 
@@ -59,39 +92,63 @@ export class AuthoringClient {
       parseAuthoringRequest(request);
     } catch (error) {
       if (error instanceof AuthoringPayloadError) {
-        throw new AuthoringProtocolError("invalid authoring request", error);
+        throw new AuthoringProtocolError("invalid authoring command request", error);
       }
       throw error;
     }
-
-    const requestDocument: AuthoringRequestDocument = { document: "request", body: request };
-    const payload = await this.#transport.execute(requestDocument);
-
-    let responseDocument: AuthoringResponseDocument;
+    const payload = await this.#transport.executeCommand({ document: "request", body: request });
+    let response: AuthoringResponse;
     try {
-      const document = parseAuthoringDocument(payload);
-      if (document.document !== "response") {
-        throw new AuthoringProtocolError("authoring endpoint returned a request document");
-      }
-      responseDocument = document;
+      response = parseAuthoringResponse(responseBody(payload));
     } catch (error) {
       if (error instanceof AuthoringProtocolError) throw error;
       if (error instanceof AuthoringPayloadError) {
-        throw new AuthoringProtocolError("invalid authoring response", error);
+        throw new AuthoringProtocolError("invalid authoring command response", error);
       }
       throw error;
     }
-
-    if (responseDocument.body["schema-version"] !== AUTHORING_SCHEMA_VERSION) {
+    if (response["schema-version"] !== AUTHORING_SCHEMA_VERSION) {
       throw new AuthoringProtocolError("authoring response has an unsupported schema version");
     }
-    if (responseDocument.body["command-id"] !== request["command-id"]) {
+    if (response["command-id"] !== request["command-id"]) {
       throw new AuthoringProtocolError("authoring response command-id does not match the request");
     }
-    if (responseDocument.body.outcome.value.command !== request.command.kind) {
+    if (response.outcome.value.command !== request.command.kind) {
       throw new AuthoringProtocolError("authoring response command does not match the request");
     }
-    return responseDocument.body.outcome;
+    return response.outcome;
+  }
+
+  async query(request: AuthoringQueryRequest): Promise<AuthoringQueryOutcome> {
+    try {
+      parseAuthoringQueryRequest(request);
+    } catch (error) {
+      if (error instanceof AuthoringPayloadError) {
+        throw new AuthoringProtocolError("invalid authoring query request", error);
+      }
+      throw error;
+    }
+    const payload = await this.#transport.executeQuery({ document: "request", body: request });
+    let response: AuthoringQueryResponse;
+    try {
+      response = parseAuthoringQueryResponse(responseBody(payload));
+    } catch (error) {
+      if (error instanceof AuthoringProtocolError) throw error;
+      if (error instanceof AuthoringPayloadError) {
+        throw new AuthoringProtocolError("invalid authoring query response", error);
+      }
+      throw error;
+    }
+    if (response["schema-version"] !== AUTHORING_SCHEMA_VERSION) {
+      throw new AuthoringProtocolError("authoring query response has an unsupported schema version");
+    }
+    if (response["query-id"] !== request["query-id"]) {
+      throw new AuthoringProtocolError("authoring query response query-id does not match the request");
+    }
+    if (response.outcome.value.query !== request.query.kind) {
+      throw new AuthoringProtocolError("authoring query response operation does not match the request");
+    }
+    return response.outcome;
   }
 }
 
@@ -117,29 +174,35 @@ export interface FetchTransportOptions {
 }
 
 export function createFetchTransport(options: FetchTransportOptions): AuthoringTransport {
-  return {
-    async execute(request) {
-      let response: FetchResponse;
-      try {
-        response = await options.fetch(options.endpoint, {
-          body: JSON.stringify(request),
-          headers: {
-            accept: "application/json",
-            "content-type": "application/json",
-            ...options.headers,
-          },
-          method: "POST",
-        });
-      } catch (error) {
-        throw new AuthoringNetworkError(error);
-      }
+  async function post(document: AuthoringCommandRequestDocument | AuthoringQueryRequestDocument) {
+    let response: FetchResponse;
+    try {
+      response = await options.fetch(options.endpoint, {
+        body: JSON.stringify(document),
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          ...options.headers,
+        },
+        method: "POST",
+      });
+    } catch (error) {
+      throw new AuthoringNetworkError(error);
+    }
+    if (!response.ok) throw new AuthoringHttpError(response.status);
+    try {
+      return await response.json();
+    } catch (error) {
+      throw new AuthoringProtocolError("authoring response is not valid JSON", error);
+    }
+  }
 
-      if (!response.ok) throw new AuthoringHttpError(response.status);
-      try {
-        return await response.json();
-      } catch (error) {
-        throw new AuthoringProtocolError("authoring response is not valid JSON", error);
-      }
+  return {
+    executeCommand(request) {
+      return post(request);
+    },
+    executeQuery(request) {
+      return post(request);
     },
   };
 }

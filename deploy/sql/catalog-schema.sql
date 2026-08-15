@@ -1301,8 +1301,8 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_referenced_connection_generation_de
 -- Draft execution is default-deny at one exact environment-owned connection
 -- generation. A grant never follows the instance's active-generation pointer:
 -- a successor generation needs its own row. The trusted development-admin
--- adapter may revoke or explicitly re-grant the same exact row; identity and
--- history timestamps cannot be rewritten by an ordinary update.
+-- provisioning seeds the sole sandbox generation. Runtime and management may
+-- inspect the relation for draft enforcement, but neither may mutate it.
 -- BEGIN AUTHORING CONNECTION AUTHORITY MIGRATION (wamn-ftfc.11)
 CREATE TABLE catalog.draft_safe_connection_grants (
     tenant_id    text NOT NULL CHECK (tenant_id <> ''),
@@ -1326,9 +1326,8 @@ CREATE POLICY draft_safe_connection_grants_tenant
     ON catalog.draft_safe_connection_grants
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON catalog.draft_safe_connection_grants TO wamn_app;
-GRANT SELECT, INSERT, UPDATE ON catalog.draft_safe_connection_grants
-    TO wamn_scenario_author;
+GRANT SELECT ON catalog.draft_safe_connection_grants
+    TO wamn_app, wamn_scenario_author;
 
 CREATE FUNCTION catalog.guard_draft_safe_connection_grant_update()
 RETURNS trigger
@@ -1369,12 +1368,13 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
 -- BEGIN AUTHORING COMMAND AUDIT MIGRATION (wamn-ctc8.8)
 -- ---------------------------------------------------------------------------
--- Authoring command ledger — WHO ran each authoring command, recorded by the
--- management transport (services/scenario-worker/src/management.rs) before the
--- command runs. Every canonical authoring mutation lands one row here, so two
--- principals issuing the same command stay distinguishable afterwards even
--- though the command's own storage keeps no history (catalog.flow_drafts is a
--- destructive upsert).
+-- Authoring command ledger — WHO ran each authoring command and its exact
+-- completed outcome. The management transport
+-- (services/scenario-worker/src/management.rs) performs the mutation and
+-- appends this completed row in one transaction, so neither commits without
+-- the other. Two principals issuing the same command stay distinguishable
+-- afterwards even though the command's own storage keeps no history
+-- (catalog.flow_drafts is a destructive upsert).
 --
 -- CROSS-PLANE PRINCIPAL, DELIBERATELY NOT AN FK: principals live in the T1
 -- system database (identity.principals) and this ledger lives in the project
@@ -1388,10 +1388,10 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- the authorization boundary, which is what this CHECK pins.
 --
 -- `command_kind` carries the wire-contract spelling (crates/authoring/model
--- AuthoringCommandKind) plus the two host-side connection-generation mutations
--- that have no client command. `command_id` is the client's own retry and
--- correlation identity from the request envelope — this is the only place it is
--- persisted, so a client can tie a retry back to the attempt it repeats.
+-- AuthoringCommandKind). Retry identity is exactly tenant + verified principal
+-- + client command ID. The request hash binds that identity to canonical
+-- contract bytes; the exact response envelope is retained for byte-identical
+-- replay. A different principal therefore cannot read or replay this row.
 --
 -- APPEND-ONLY: insert-once, with UPDATE and DELETE both refused by the shared
 -- immutability trigger. Audit evidence a careless writer can rewrite is not
@@ -1412,6 +1412,8 @@ CREATE TABLE catalog.authoring_command_audit (
     project           text NOT NULL CHECK (project <> ''),
     environment       text NOT NULL CHECK (environment <> ''),
     target_ref        text NOT NULL CHECK (target_ref <> ''),
+    request_hash      text NOT NULL,
+    outcome_bytes     bytea NOT NULL,
     -- ATTRIBUTION, NEVER AUTHORITY (wamn-ftfc.2). The client's own unverified
     -- claim about the working tree it read the content from. The platform
     -- clones no repository, runs no Git, and checks none of these values. They
@@ -1423,12 +1425,15 @@ CREATE TABLE catalog.authoring_command_audit (
     provenance_dirty  boolean,
     -- Wall-clock audit time: two rows written in one transaction still order.
     recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, audit_id),
+    PRIMARY KEY (tenant_id, principal_id, command_id),
+    CONSTRAINT authoring_command_audit_audit_id_key UNIQUE (tenant_id, audit_id),
+    CONSTRAINT authoring_command_audit_request_hash_check
+        CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT authoring_command_audit_outcome_present
+        CHECK (octet_length(outcome_bytes) > 0),
     CONSTRAINT authoring_command_audit_command_kind_check
         CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run',
-                                'publish',
-                                'grant-draft-safe-generation',
-                                'revoke-draft-safe-generation')),
+                                'test-set-run', 'publish')),
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT authoring_command_audit_effective_role_check

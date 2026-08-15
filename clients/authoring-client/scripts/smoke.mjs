@@ -50,7 +50,7 @@ const PAT_PATTERN = /^(wamn_pat_[0-9a-f]{16}_)([0-9a-f]{64})$/;
 // SHA-256 of the canonicalized `save-flow-draft` request document in the
 // checked-in collection. Re-pin it only in a commit that reviewed the
 // collection change; a silent edit on either side must fail this gate.
-const TEMPLATE_DIGEST = "7d72007db14e4418f4e6bf230fd18c41594fc8fd5055fa0370f0985194fe437a";
+const TEMPLATE_DIGEST = "0d03a8d504c8268d5c4553e6d4c20b3f53d2b973f594b4368c8257a337d41fe4";
 
 // The complete set of fields a run may substitute, and nowhere else to write.
 // `command-id` identifies one attempt, `draft-id` keeps a run from colliding

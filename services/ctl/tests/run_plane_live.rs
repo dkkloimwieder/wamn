@@ -55,9 +55,9 @@
 //!   both dry-run and apply mode (the idempotence contract).
 //! - **authoring additive upgrade + authority repair**: the pre-6A catalog gains
 //!   draft/grant storage and the run plane gains authoring-test storage; stale
-//!   guest grants and membership are removed; real author-role writes, rapid
-//!   exact-generation revoke/re-grant, and guest/release-write refusals are
-//!   exercised.
+//!   guest grants and membership are removed; the owner-seeded draft-safe
+//!   relation is SELECT-only to management; and guest/release-write refusals
+//!   are exercised.
 //! - **catalog-head lock concurrency**: both runtime and author admission call
 //!   the tenant-checking SECURITY DEFINER bridge; its SHARE lock blocks the
 //!   publisher's pointer UPDATE until admission commits.
@@ -87,25 +87,6 @@ const EMPTY_EXECUTION_BUNDLE_HASH: &str =
 
 fn schema() -> BareSchemaName {
     BareSchemaName::new(SCHEMA).expect("live-test schema is valid")
-}
-
-fn grant_draft_safe_generation_sql() -> &'static str {
-    "INSERT INTO catalog.draft_safe_connection_grants \
-       (tenant_id, environment, instance_id, generation, reason) \
-     VALUES ($1, $2, $3, $4, $5) \
-     ON CONFLICT (tenant_id, environment, instance_id, generation) DO UPDATE \
-       SET revoked_at = NULL, reason = EXCLUDED.reason, \
-           granted_at = GREATEST( \
-               clock_timestamp(), \
-               draft_safe_connection_grants.granted_at + interval '1 microsecond', \
-               COALESCE(draft_safe_connection_grants.revoked_at + interval '1 microsecond', \
-                        '-infinity'::timestamptz))"
-}
-
-fn revoke_draft_safe_generation_sql() -> &'static str {
-    "UPDATE catalog.draft_safe_connection_grants SET revoked_at = clock_timestamp() \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
-        AND generation = $4 AND revoked_at IS NULL"
 }
 
 async fn connect(url: &str) -> Client {
@@ -431,6 +412,16 @@ async fn stored_suite_cutover_live() {
     };
     let su = connect(&url).await;
     stored_suite_cutover_leg(&su).await;
+}
+
+#[tokio::test]
+async fn authoring_storage_authority_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the authoring authority gate");
+        return;
+    };
+    let su = connect(&url).await;
+    authoring_storage_authority_leg(&su, &url).await;
 }
 
 #[tokio::test]
@@ -3167,7 +3158,14 @@ async fn stored_suite_cutover_leg(su: &Client) {
              catalog_version,environment,suite_flow_version,runtime_flow_version, \
              draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
          ALTER TABLE catalog.authoring_command_audit \
+           DROP CONSTRAINT authoring_command_audit_pkey, \
+           DROP CONSTRAINT authoring_command_audit_audit_id_key, \
            DROP CONSTRAINT authoring_command_audit_command_kind_check, \
+           DROP CONSTRAINT authoring_command_audit_request_hash_check, \
+           DROP CONSTRAINT authoring_command_audit_outcome_present, \
+           DROP COLUMN request_hash, \
+           DROP COLUMN outcome_bytes, \
+           ADD CONSTRAINT authoring_command_audit_pkey PRIMARY KEY (tenant_id,audit_id), \
            ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
              command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
                               'publish','suite-projection', \
@@ -3316,7 +3314,14 @@ async fn stored_suite_cutover_leg(su: &Client) {
              catalog_version,environment,suite_flow_version,runtime_flow_version, \
              draft_artifact_hash,execution_bundle_hash,binding_base_artifact_hash); \
          ALTER TABLE catalog.authoring_command_audit \
+           DROP CONSTRAINT authoring_command_audit_pkey, \
+           DROP CONSTRAINT authoring_command_audit_audit_id_key, \
            DROP CONSTRAINT authoring_command_audit_command_kind_check, \
+           DROP CONSTRAINT authoring_command_audit_request_hash_check, \
+           DROP CONSTRAINT authoring_command_audit_outcome_present, \
+           DROP COLUMN request_hash, \
+           DROP COLUMN outcome_bytes, \
+           ADD CONSTRAINT authoring_command_audit_pkey PRIMARY KEY (tenant_id,audit_id), \
            ADD CONSTRAINT authoring_command_audit_command_kind_check CHECK ( \
              command_kind IN ('save-flow-draft','validate','draft-run','suite-run', \
                               'publish','suite-projection', \
@@ -3325,19 +3330,30 @@ async fn stored_suite_cutover_leg(su: &Client) {
          INSERT INTO catalog.authoring_command_audit ( \
            tenant_id,command_id,command_kind,principal_id,principal_kind, \
            principal_subject,effective_role,org,project,environment,target_ref) \
-         VALUES ( \
-           'legacy-authoring','legacy-suite-run','suite-run','principal','human', \
-           'author@example.com','project-author','org','project','dev','legacy')",
+         VALUES \
+           ('legacy-authoring','legacy-grant','grant-draft-safe-generation', \
+            'principal','human','author@example.com','project-author', \
+            'org','project','dev','legacy'), \
+           ('legacy-authoring','legacy-revoke','revoke-draft-safe-generation', \
+            'principal','human','author@example.com','project-author', \
+            'org','project','dev','legacy')",
     )
     .await
     .expect("seed retired immutable authoring command history");
     let error = reconcile_run_plane::reconcile(su, &schema, true)
         .await
         .expect_err("retired immutable authoring command history must refuse");
+    let database_error: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    assert_eq!(
+        database_error.as_db_error().map(|error| error.message()),
+        Some(
+            "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision"
+        )
+    );
     assert_db_code(
-        error.downcast().expect("postgres refusal"),
+        database_error,
         "55000",
-        "retired authoring command history cutover",
+        "populated legacy authoring retry-ledger cutover",
     );
     assert!(
         catalog_column_exists(su, "validated_flow_drafts", "suite_flow_version").await,
@@ -3669,9 +3685,9 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         "author receives only the narrow lock function"
     );
 
-    // Environment-owned connection generations are provisioned by the
-    // platform. The author may grant/revoke only the exact already-provisioned
-    // generation, and a successor generation never inherits that authority.
+    // Environment-owned connection generations and draft-safe decisions are
+    // provisioned by the platform. Management can inspect an owner-seeded
+    // decision, but has no mutation authority over the retained relation.
     su.batch_execute(
         "INSERT INTO catalog.connection_instances \
            (tenant_id,environment,instance_id,requirement_type,contract) \
@@ -3686,80 +3702,57 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     .expect("seed platform-owned connection generations");
 
     su.batch_execute(
-        "SET ROLE wamn_scenario_author; \
+        "INSERT INTO catalog.draft_safe_connection_grants \
+           (tenant_id,environment,instance_id,generation,reason) \
+         VALUES ('t1','dev','erp',1,'development-admin seed'); \
+         SET ROLE wamn_scenario_author; \
          SELECT set_config('app.tenant','t1',false); \
          INSERT INTO catalog.flow_drafts \
            (tenant_id,draft_id,flow_id,graph_json) \
          VALUES ('t1','draft-a','flow-a','{}');",
     )
     .await
-    .expect("host author can write the mutable draft surface");
-    su.execute(
-        grant_draft_safe_generation_sql(),
-        &[&"t1", &"dev", &"erp", &1_i64, &"initial review"],
-    )
-    .await
-    .expect("real author role grants exact generation");
-    let initial_granted: std::time::SystemTime = su
-        .query_one(
-            "SELECT granted_at FROM catalog.draft_safe_connection_grants \
-             WHERE tenant_id='t1' AND environment='dev' \
-               AND instance_id='erp' AND generation=1",
-            &[],
-        )
-        .await
-        .expect("read initial grant time")
-        .get(0);
-    su.execute(
-        revoke_draft_safe_generation_sql(),
-        &[&"t1", &"dev", &"erp", &1_i64],
-    )
-    .await
-    .expect("real author role revokes exact generation");
-    let revoked_at: std::time::SystemTime = su
-        .query_one(
-            "SELECT revoked_at FROM catalog.draft_safe_connection_grants \
-             WHERE tenant_id='t1' AND environment='dev' \
-               AND instance_id='erp' AND generation=1",
-            &[],
-        )
-        .await
-        .expect("read rapid revocation time")
-        .get(0);
-    assert!(revoked_at >= initial_granted);
-    su.execute(
-        grant_draft_safe_generation_sql(),
-        &[&"t1", &"dev", &"erp", &1_i64, &"review renewed"],
-    )
-    .await
-    .expect("real author role rapidly re-grants the same generation");
-    let regranted_at: std::time::SystemTime = su
-        .query_one(
-            "SELECT granted_at FROM catalog.draft_safe_connection_grants \
-             WHERE tenant_id='t1' AND environment='dev' \
-               AND instance_id='erp' AND generation=1 AND revoked_at IS NULL",
-            &[],
-        )
-        .await
-        .expect("read monotonic regrant time")
-        .get(0);
-    assert!(
-        regranted_at > revoked_at,
-        "same-generation rapid regrant creates a strictly later grant event"
-    );
-    let successor_grants: i64 = su
+    .expect("platform seeds authority and host author writes the mutable draft surface");
+    let visible_grants: i64 = su
         .query_one(
             "SELECT count(*) FROM catalog.draft_safe_connection_grants \
              WHERE tenant_id='t1' AND environment='dev' \
-               AND instance_id='erp' AND generation=2",
+               AND instance_id='erp' AND generation=1",
             &[],
         )
         .await
-        .expect("check successor generation authority")
+        .expect("management can inspect the owner-seeded decision")
         .get(0);
     assert_eq!(
-        successor_grants, 0,
-        "a successor generation never inherits a grant"
+        visible_grants, 1,
+        "the exact owner-seeded decision is visible"
+    );
+    let privileges: Vec<bool> = su
+        .query_one(
+            "SELECT ARRAY[ \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'SELECT'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'INSERT'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'UPDATE'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'DELETE'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'TRUNCATE'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'REFERENCES'), \
+               has_table_privilege(current_user, \
+                 'catalog.draft_safe_connection_grants', 'TRIGGER')]",
+            &[],
+        )
+        .await
+        .expect("probe exact management authority")
+        .get(0);
+    assert_eq!(
+        privileges,
+        vec![true, false, false, false, false, false, false],
+        "management has SELECT and no mutation-adjacent privilege"
     );
     let uncontrolled = su
         .execute(
@@ -3769,8 +3762,8 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
             &[],
         )
         .await
-        .expect_err("an active grant cannot be rewritten outside revoke/regrant");
-    assert_db_code(uncontrolled, "55000", "uncontrolled grant mutation");
+        .expect_err("management cannot mutate an owner-seeded decision");
+    assert_db_code(uncontrolled, "42501", "management grant mutation privilege");
 
     // The retained content-addressed test-set row is author-owned and immutable.
     let test_set_document = r#"{"schema-version":"0.1","cases":[]}"#;

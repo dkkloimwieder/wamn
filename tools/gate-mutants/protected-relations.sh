@@ -8,8 +8,8 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 table="$repository/architecture/protected-writes.json"
 live_test="$repository/services/ctl/tests/protected_relations_live.rs"
 static_test="$repository/tests/conformance/tests/protected_relations.rs"
-expected_table_sha=375de1e25abcc85f03ca56166b0f34865d22afc0ae89d16138ecf7e5ddd46199
-expected_live_sha=631b4a2fbc6165a35f720ffa4437096922cf2004413b7ead66e3f5950d53c8fc
+expected_table_sha=ee1c0bb9a92022ddd366068075884c25d23799710ca5db6638df32e3516c7d7b
+expected_live_sha=16ee629c9c4423357a4838045a7029a046e3f8e758fc461aeaec6186a0ffca84
 expected_static_sha=41f3a76aab8820462b40dd9dc744fb3ab45c16708d8636b5205ece93c5c950fd
 target_dir=${CARGO_TARGET_DIR:-/tmp/wamn-target-0h0g-12-ops}
 
@@ -113,8 +113,8 @@ case "$mode" in
             '(.rows[] | select(.relation == "provisioning.migration_confirmations") | .roles[] | select(.role == "wamn_ops") | .operations) += ["insert(confirmed_by)"]' live_gate
         run_mutant missing-cascade \
             'del(.rows[] | select(.relation == "wamn_run.run_queue") | .mechanisms[] | select(startswith("foreign-key:delete:cascade")))' live_gate
-        run_mutant missing-immutability-guard \
-            'del(.rows[] | select(.relation == "wamn_run.effect_attempt_dispatches") | .guards[] | select(startswith("trigger:effect_attempt_dispatches_update_immutable")))' live_gate
+        run_mutant missing-authoring-ledger-immutability-guard \
+            'del(.rows[] | select(.relation == "catalog.authoring_command_audit") | .guards[] | select(startswith("trigger:authoring_command_audit_immutable")))' live_gate
         run_mutant restore-cancelled-node-error \
             '(.rows[] | select(.relation == "wamn_run.node_runs") | .guards[] | select(startswith("constraint:node_runs_error_kind_check;"))) = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['\''retryable'\''::text, '\''rate-limited'\''::text, '\''terminal'\''::text, '\''invalid-input'\''::text, '\''cancelled'\''::text]))"' static_gate
         cp "$baseline" "$table"

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use anyhow::{Context as _, bail};
-use tokio_postgres::{Client, NoTls};
+use tokio_postgres::{Client, GenericClient, NoTls, Transaction};
 
 #[cfg(test)]
 use wamn_catalog::entry_input_schema_hash;
@@ -39,8 +39,6 @@ WITH session_role AS ( \
            ('catalog', 'flow_drafts', 'UPDATE'), \
            ('catalog', 'validated_flow_drafts', 'INSERT'), \
            ('catalog', 'execution_bundles', 'INSERT'), \
-           ('catalog', 'draft_safe_connection_grants', 'INSERT'), \
-           ('catalog', 'draft_safe_connection_grants', 'UPDATE'), \
            ('catalog', 'authoring_command_audit', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'INSERT'), \
            ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
@@ -82,8 +80,18 @@ SELECT current_user = session_user, \
          AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'UPDATE') \
          AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'UPDATE'), \
+         AND NOT EXISTS ( \
+             SELECT 1 FROM pg_catalog.unnest( \
+                 ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
+                  AS draft_safe_mutation(privilege) \
+              WHERE pg_catalog.has_table_privilege( \
+                  current_user, 'catalog.draft_safe_connection_grants', \
+                  draft_safe_mutation.privilege) \
+                 OR (draft_safe_mutation.privilege IN ('INSERT','UPDATE','REFERENCES') \
+                     AND pg_catalog.has_any_column_privilege( \
+                         current_user, 'catalog.draft_safe_connection_grants', \
+                         draft_safe_mutation.privilege)) \
+         ), \
        pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.authoring_command_audit', 'INSERT') \
          AND NOT pg_catalog.has_table_privilege( \
@@ -165,7 +173,7 @@ const AUTHORING_SCOPE_SQL: &str = "SELECT \
     pg_catalog.set_config('search_path', $2, false)";
 
 /// Capability token held only by the trusted host-side development adapter.
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct InternalDevAdmin {
     _private: (),
 }
@@ -290,6 +298,26 @@ impl InternalAuthoringBackend {
             .context("inject fixed authoring tenant and run schema")?;
         Ok(())
     }
+
+    /// Begin one command transaction after reasserting the fixed tenant scope.
+    ///
+    /// The returned capability copy and transaction must stay together: the
+    /// management boundary uses them to serialize retry identity, execute the
+    /// command, and persist its exact outcome as one atomic unit.
+    pub(crate) async fn begin_command_transaction(
+        &mut self,
+        tenant_id: &str,
+    ) -> anyhow::Result<(InternalDevAdmin, Transaction<'_>)> {
+        self.require_tenant(tenant_id)?;
+        self.scope().await?;
+        let authority = self.authority;
+        let transaction = self
+            .client
+            .transaction()
+            .await
+            .context("begin authoring command transaction")?;
+        Ok((authority, transaction))
+    }
 }
 
 impl Drop for InternalAuthoringBackend {
@@ -361,9 +389,9 @@ pub enum DraftRunRefusal {
     InvalidDraft { detail: String },
     CatalogDrift,
     UnresolvedNodes { node_types: Vec<String> },
-    CallFlowCalleeNotFound { site: String, flow_id: String },
-    CallFlowNotCallable { site: String, flow_id: String },
-    CallFlowContractIncompatible { site: String, flow_id: String },
+    UnresolvableCalleeName { site: String, flow_id: String },
+    MissingRecordedCallability { site: String, flow_id: String },
+    ContractIncompatibility { site: String, flow_id: String },
 }
 
 impl std::fmt::Display for DraftRunRefusal {
@@ -379,19 +407,19 @@ impl std::fmt::Display for DraftRunRefusal {
                     node_types.join(", ")
                 )
             }
-            Self::CallFlowCalleeNotFound { site, flow_id } => {
+            Self::UnresolvableCalleeName { site, flow_id } => {
                 write!(
                     formatter,
                     "call-flow site {site:?} resolves no flow {flow_id:?}"
                 )
             }
-            Self::CallFlowNotCallable { site, flow_id } => {
+            Self::MissingRecordedCallability { site, flow_id } => {
                 write!(
                     formatter,
                     "call-flow site {site:?} target {flow_id:?} has no recorded callable contract"
                 )
             }
-            Self::CallFlowContractIncompatible { site, flow_id } => {
+            Self::ContractIncompatibility { site, flow_id } => {
                 write!(
                     formatter,
                     "call-flow site {site:?} target {flow_id:?} has an incompatible callable contract"
@@ -402,32 +430,6 @@ impl std::fmt::Display for DraftRunRefusal {
 }
 
 impl std::error::Error for DraftRunRefusal {}
-
-/// Install draft-safe authority for one exact immutable connection generation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GrantDraftSafeGeneration {
-    pub tenant_id: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub generation: i64,
-    pub reason: String,
-}
-
-/// Revoke one exact connection-generation grant without affecting siblings.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RevokeDraftSafeGeneration {
-    pub tenant_id: String,
-    pub environment: String,
-    pub instance_id: String,
-    pub generation: i64,
-}
-
-/// Idempotent result of revoking exact draft-safe authority.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RevokeDraftSafeGenerationResult {
-    Revoked,
-    AlreadyRevokedOrAbsent,
-}
 
 impl InternalAuthoringBackend {
     /// Save an incrementally editable flow document under optimistic revision control.
@@ -450,41 +452,6 @@ impl InternalAuthoringBackend {
         self.scope().await?;
         validate_flow_draft(&self.authority, &mut self.client, request, flowrunner_bytes).await
     }
-
-    /// Grant draft use of one exact immutable connection generation.
-    pub async fn grant_draft_safe_generation(
-        &mut self,
-        grant: &GrantDraftSafeGeneration,
-    ) -> anyhow::Result<()> {
-        self.require_tenant(&grant.tenant_id)?;
-        self.scope().await?;
-        grant_draft_safe_generation(&self.authority, &self.client, grant).await
-    }
-
-    /// Revoke draft use of one exact immutable connection generation.
-    pub async fn revoke_draft_safe_generation(
-        &mut self,
-        revoke: &RevokeDraftSafeGeneration,
-    ) -> anyhow::Result<RevokeDraftSafeGenerationResult> {
-        self.require_tenant(&revoke.tenant_id)?;
-        self.scope().await?;
-        revoke_draft_safe_generation(&self.authority, &self.client, revoke).await
-    }
-
-    /// Record one authorized management command on the append-only ledger.
-    ///
-    /// The row is written with the same author credential and fixed tenant
-    /// scope as the command it attributes. This adapter never learns a
-    /// principal any other way: the management transport owns that context and
-    /// hands over an already-built row.
-    pub(crate) async fn record_command_audit(
-        &mut self,
-        audit: &crate::management::CommandAudit,
-    ) -> anyhow::Result<()> {
-        self.require_tenant(audit.tenant_id())?;
-        self.scope().await?;
-        crate::management::insert_command_audit(&self.client, audit).await
-    }
 }
 
 fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
@@ -501,7 +468,7 @@ fn validate_identity(value: &str, name: &str) -> anyhow::Result<()> {
 /// text at its own stage and returns the canonical typed refusal.
 pub(crate) async fn save_flow_draft(
     _authority: &InternalDevAdmin,
-    client: &Client,
+    client: &(impl GenericClient + Sync),
     request: &SaveFlowDraft,
 ) -> anyhow::Result<SaveFlowDraftResult> {
     for (value, name) in [
@@ -832,7 +799,7 @@ fn validate_own_call_flow_contract(
 }
 
 fn call_flow_callee_not_found(instruction: &CallFlowInstruction) -> DraftRunRefusal {
-    DraftRunRefusal::CallFlowCalleeNotFound {
+    DraftRunRefusal::UnresolvableCalleeName {
         site: instruction.site.to_string(),
         flow_id: instruction.flow_id.clone(),
     }
@@ -843,7 +810,7 @@ fn validate_call_flow_contract(
     contract: Option<&CallableContract>,
 ) -> Result<(), DraftRunRefusal> {
     let Some(contract) = contract else {
-        return Err(DraftRunRefusal::CallFlowNotCallable {
+        return Err(DraftRunRefusal::MissingRecordedCallability {
             site: instruction.site.to_string(),
             flow_id: instruction.flow_id.clone(),
         });
@@ -852,7 +819,7 @@ fn validate_call_flow_contract(
         || contract.return_contract != CallableReturnContract::UntypedJsonBody
         || contract.effect_ceiling != CallableEffectCeiling::Effectful
     {
-        return Err(DraftRunRefusal::CallFlowContractIncompatible {
+        return Err(DraftRunRefusal::ContractIncompatibility {
             site: instruction.site.to_string(),
             flow_id: instruction.flow_id.clone(),
         });
@@ -1090,74 +1057,6 @@ pub(crate) async fn validate_flow_draft(
     }))
 }
 
-/// Install one exact, revocable draft-safe generation grant.
-pub(crate) async fn grant_draft_safe_generation(
-    _authority: &InternalDevAdmin,
-    client: &Client,
-    grant: &GrantDraftSafeGeneration,
-) -> anyhow::Result<()> {
-    if grant.generation <= 0 {
-        bail!("draft-safe generation must be positive");
-    }
-    for (value, name) in [
-        (&grant.tenant_id, "tenant-id"),
-        (&grant.environment, "environment"),
-        (&grant.instance_id, "instance-id"),
-        (&grant.reason, "reason"),
-    ] {
-        validate_identity(value, name)?;
-    }
-    client
-        .execute(
-            drafts::grant_draft_safe_generation_sql(),
-            &[
-                &grant.tenant_id,
-                &grant.environment,
-                &grant.instance_id,
-                &grant.generation,
-                &grant.reason,
-            ],
-        )
-        .await
-        .context("grant draft-safe connection generation")?;
-    Ok(())
-}
-
-/// Revoke one exact draft-safe generation under host-only authority.
-pub(crate) async fn revoke_draft_safe_generation(
-    _authority: &InternalDevAdmin,
-    client: &Client,
-    revoke: &RevokeDraftSafeGeneration,
-) -> anyhow::Result<RevokeDraftSafeGenerationResult> {
-    if revoke.generation <= 0 {
-        bail!("draft-safe generation must be positive");
-    }
-    for (value, name) in [
-        (&revoke.tenant_id, "tenant-id"),
-        (&revoke.environment, "environment"),
-        (&revoke.instance_id, "instance-id"),
-    ] {
-        validate_identity(value, name)?;
-    }
-    let changed = client
-        .execute(
-            drafts::revoke_draft_safe_generation_sql(),
-            &[
-                &revoke.tenant_id,
-                &revoke.environment,
-                &revoke.instance_id,
-                &revoke.generation,
-            ],
-        )
-        .await
-        .context("revoke draft-safe connection generation")?;
-    Ok(if changed == 1 {
-        RevokeDraftSafeGenerationResult::Revoked
-    } else {
-        RevokeDraftSafeGenerationResult::AlreadyRevokedOrAbsent
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1214,6 +1113,17 @@ mod tests {
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("routine.proowner = session_role.oid"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.has_any_column_privilege"));
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains(
+            "has_table_privilege(current_user, 'catalog.draft_safe_connection_grants', 'SELECT')"
+        ));
+        assert!(
+            !AUTHORING_ROLE_PROBE_SQL
+                .contains("('catalog', 'draft_safe_connection_grants', 'INSERT')")
+        );
+        assert!(
+            !AUTHORING_ROLE_PROBE_SQL
+                .contains("('catalog', 'draft_safe_connection_grants', 'UPDATE')")
+        );
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'INSERT')"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
@@ -1282,11 +1192,11 @@ mod tests {
         );
         assert!(matches!(
             call_flow_callee_not_found(&instruction),
-            DraftRunRefusal::CallFlowCalleeNotFound { .. }
+            DraftRunRefusal::UnresolvableCalleeName { .. }
         ));
         assert!(matches!(
             validate_call_flow_contract(&instruction, None),
-            Err(DraftRunRefusal::CallFlowNotCallable { .. })
+            Err(DraftRunRefusal::MissingRecordedCallability { .. })
         ));
 
         let incompatible = CallableContract {
@@ -1295,7 +1205,7 @@ mod tests {
         };
         assert!(matches!(
             validate_call_flow_contract(&instruction, Some(&incompatible)),
-            Err(DraftRunRefusal::CallFlowContractIncompatible { .. })
+            Err(DraftRunRefusal::ContractIncompatibility { .. })
         ));
     }
 
@@ -1306,7 +1216,7 @@ mod tests {
             .split("pub(crate) async fn validate_flow_draft")
             .nth(1)
             .unwrap()
-            .split("pub(crate) async fn grant_draft_safe_generation")
+            .split("#[cfg(test)]")
             .next()
             .unwrap();
         let lock = validate.find("lock_draft_catalog_head_sql").unwrap();

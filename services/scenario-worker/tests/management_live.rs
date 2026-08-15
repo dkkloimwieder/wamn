@@ -34,9 +34,7 @@ use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
-use wamn_scenario_worker::authoring::{
-    InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
-};
+use wamn_scenario_worker::authoring::{InternalAuthoringBackend, SaveFlowDraft};
 use wamn_scenario_worker::management::{CommandScope, authorize, save_flow_draft};
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
@@ -122,6 +120,26 @@ fn save_document(command_id: &str, project: &str, revision: u64, draft: &str) ->
     save_definition(command_id, project, revision, draft, DRAFT_GRAPH)
 }
 
+/// The same closed save document with every object member deliberately emitted
+/// in a different order. Canonical retry identity must ignore this transport
+/// formatting while retaining the exact typed content.
+fn reordered_save_document(
+    command_id: &str,
+    project: &str,
+    revision: u64,
+    draft: &str,
+    definition: &str,
+) -> String {
+    format!(
+        r#"{{"body":{{"command":{{"input":{{"provenance":null,"definition":{},"expected-revision":{},"flow-id":"receive-material","draft-id":{},"scope":{{"environment":"dev","project-id":{}}}}},"kind":"save-flow-draft"}},"command-id":{},"schema-version":"0.1"}},"document":"request"}}"#,
+        serde_json::to_string(definition).unwrap(),
+        revision,
+        serde_json::to_string(draft).unwrap(),
+        serde_json::to_string(project).unwrap(),
+        serde_json::to_string(command_id).unwrap(),
+    )
+}
+
 /// The same command with a caller-supplied definition body.
 fn save_definition(
     command_id: &str,
@@ -201,6 +219,14 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
             }),
         ),
         (
+            "test-set-run",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "validated-draft": validated.clone(),
+                "test-set": {"definition": "{\"schema-version\":\"0.1\",\"cases\":[]}"},
+            }),
+        ),
+        (
             "publish",
             serde_json::json!({
                 "scope": scope.clone(),
@@ -217,6 +243,40 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
                 "schema-version": "0.1",
                 "command-id": format!("unmounted-{kind}"),
                 "command": {"kind": kind, "input": input},
+            }
+        });
+        (kind, document.to_string())
+    })
+    .collect()
+}
+
+fn unmounted_queries() -> Vec<(&'static str, String)> {
+    let scope = serde_json::json!({"project-id": PROJECT, "environment": "dev"});
+    [
+        (
+            "read-draft",
+            serde_json::json!({
+                "scope": scope.clone(),
+                "draft": {"draft-id": "draft-unmounted", "revision": 1},
+            }),
+        ),
+        (
+            "get-run",
+            serde_json::json!({"scope": scope.clone(), "run-id": "run-unmounted"}),
+        ),
+        (
+            "get-report",
+            serde_json::json!({"scope": scope, "report-id": "report-unmounted"}),
+        ),
+    ]
+    .into_iter()
+    .map(|(kind, input)| {
+        let document = serde_json::json!({
+            "document": "request",
+            "body": {
+                "schema-version": "0.1",
+                "query-id": format!("unmounted-{kind}"),
+                "query": {"kind": kind, "input": input},
             }
         });
         (kind, document.to_string())
@@ -333,6 +393,8 @@ async fn provision(admin: &mut Client) -> anyhow::Result<()> {
              DROP ROLE IF EXISTS wamn_app; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
              THEN CREATE ROLE wamn_system; END IF; END $$; \
+             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer') \
+             THEN CREATE ROLE wamn_effect_writer NOLOGIN; END IF; END $$; \
              CREATE ROLE wamn_app LOGIN PASSWORD 'wamn-app-live' \
                NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
              CREATE ROLE wamn_scenario_author NOLOGIN \
@@ -398,12 +460,42 @@ async fn ledger_rows(admin: &Client) -> Vec<(String, String, String, String)> {
         .collect()
 }
 
+async fn retry_ledger_count(admin: &Client, principal_id: &str, command_id: &str) -> i64 {
+    admin
+        .query_one(
+            "SELECT count(*) FROM catalog.authoring_command_audit \
+              WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3",
+            &[&TENANT, &principal_id, &command_id],
+        )
+        .await
+        .expect("count one retry identity")
+        .get(0)
+}
+
 async fn draft_count(admin: &Client) -> i64 {
     admin
         .query_one("SELECT count(*) FROM catalog.flow_drafts", &[])
         .await
         .expect("count drafts")
         .get(0)
+}
+
+async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
+    let row = admin
+        .query_one(
+            &format!(
+                "SELECT (SELECT count(*) FROM catalog.flow_drafts), \
+                        (SELECT count(*) FROM catalog.authoring_command_audit), \
+                        (SELECT count(*) FROM {SOURCE_SCHEMA}.runs), \
+                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_run_reservations), \
+                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_case_runs), \
+                        (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_reports)"
+            ),
+            &[],
+        )
+        .await
+        .expect("count every authoring durable relation");
+    (0..row.len()).map(|index| row.get(index)).collect()
 }
 
 /// Read one exact draft revision through the very statement
@@ -593,7 +685,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     assert_eq!(elsewhere.body, AUTHORIZATION_DENIED);
 
     // ---- the unmounted kinds are an absent route, not a product refusal -----
-    // `wamn-ftfc.22` re-checked validate, draft-run, and publish against this
+    // The operation-integration owner mounts the remaining four commands and
+    // three queries. This contract cut keeps each one absent.
     // tree and mounted none of them: each either has no backend or has one whose
     // trusted inputs no in-process producer supplies. Two properties have to
     // hold while that is true.
@@ -602,8 +695,10 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // unmounted kind is not a way to ask whether a route exists. Every
     // untrusted presenter gets the one refusal document for every kind.
     let unmounted = unmounted_commands();
+    let unmounted_queries = unmounted_queries();
+    let durable_before_unmounted = authoring_durable_counts(&admin).await;
     for (name, token) in &refusals {
-        for (kind, document) in &unmounted {
+        for (kind, document) in unmounted.iter().chain(&unmounted_queries) {
             let response = post("/authoring", token.as_deref(), &[], document).await;
             assert_eq!(response.status, 403, "{name} probed {kind} for a route");
             assert_eq!(
@@ -628,6 +723,19 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
             response.body
         );
     }
+    for (kind, document) in &unmounted_queries {
+        let response = post("/authoring", Some(alice.token()), &[], document).await;
+        assert_eq!(
+            response.status, 501,
+            "query {kind} answered as though it were mounted: {}",
+            response.body
+        );
+        assert!(
+            response.body.is_empty(),
+            "query {kind} answered 501 carrying a document: {}",
+            response.body
+        );
+    }
     // The ledger retains authorized command attempts. An absent route is not
     // one, so an unmounted kind leaves it untouched — and mutates nothing.
     assert!(
@@ -638,6 +746,11 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         draft_count(&admin).await,
         0,
         "an unmounted kind reached a command"
+    );
+    assert_eq!(
+        authoring_durable_counts(&admin).await,
+        durable_before_unmounted,
+        "an unmounted command or query wrote durable authoring state"
     );
 
     // Nothing above reached a command: no draft, no ledger row.
@@ -667,6 +780,45 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         saved.body
     );
 
+    // Same principal + command ID + canonical content replays the exact stored
+    // full envelope even when raw JSON object order and explicit null/omission
+    // differ. It executes no second draft write and adds no ledger row.
+    let exact_retry = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &reordered_save_document("save-1", PROJECT, 0, "draft-alice", DRAFT_GRAPH),
+    )
+    .await;
+    assert_eq!(exact_retry.status, 200);
+    assert_eq!(exact_retry.body.as_bytes(), saved.body.as_bytes());
+    assert_eq!(ledger_rows(&admin).await.len(), 1);
+    assert_eq!(stored_revision(&admin, "draft-alice").await, Some(1));
+
+    // Same retry identity with changed canonical content is the typed refusal;
+    // it neither discloses the stored completion nor mutates draft or ledger.
+    let divergent = post(
+        "/authoring",
+        Some(alice.token()),
+        &[],
+        &save_definition(
+            "save-1",
+            PROJECT,
+            0,
+            "draft-alice",
+            &DRAFT_GRAPH.replace(r#""status":200"#, r#""status":299"#),
+        ),
+    )
+    .await;
+    assert_eq!(divergent.status, 200);
+    assert_eq!(
+        outcome(&divergent.body)["value"]["reason"]["kind"],
+        "command-id-reuse"
+    );
+    assert_ne!(divergent.body, saved.body);
+    assert_eq!(ledger_rows(&admin).await.len(), 1);
+    assert_eq!(stored_revision(&admin, "draft-alice").await, Some(1));
+
     // ---- a service token reaches the same command ---------------------------
     let by_service = post(
         "/authoring",
@@ -686,8 +838,15 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     )
     .await;
     // Same draft at revision 0 again: the command runs and refuses on revision,
-    // which is a product refusal — it still attributes.
+    // which is a product refusal — it still attributes. In particular, Bob
+    // does not learn or replay Alice's stored completion for the same command
+    // ID.
     assert_eq!(by_bob.status, 200, "{}", by_bob.body);
+    assert_eq!(
+        outcome(&by_bob.body)["value"]["reason"]["kind"],
+        "revision-conflict"
+    );
+    assert_ne!(by_bob.body, saved.body);
 
     let alice_principal = resolve_subject(
         &admin,
@@ -986,19 +1145,28 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         r#ref: Some("refs/heads/main".to_owned()),
         dirty: false,
     };
+    let direct_document = save_attributed(
+        "parity-direct",
+        PROJECT,
+        0,
+        "draft-parity-direct",
+        &parity_text,
+        Some(serde_json::to_value(&claim).unwrap()),
+    );
+    let direct_command: wamn_authoring_model::AuthoringRequest =
+        serde_json::from_value(as_json(&direct_document)["body"].clone()).unwrap();
     let direct = save_flow_draft(
         &mut backend,
         &author,
         &scope,
-        "parity-direct",
+        &direct_command,
         &request("draft-parity-direct"),
-        Some(&claim),
     )
     .await
     .expect("the canonical handler runs");
-    assert!(
-        matches!(direct, SaveFlowDraftResult::Saved { revision: 1, .. }),
-        "{direct:?}"
+    assert_eq!(
+        outcome(std::str::from_utf8(&direct).unwrap())["value"]["result"]["revision"],
+        1
     );
     let over_http = submit_attributed(
         alice.token(),
@@ -1035,21 +1203,173 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         "the two paths recorded the source claim differently"
     );
 
+    // ---- concurrent retries serialize on the complete retry identity ------
+    // Separate database connections eliminate the HTTP surface's process-local
+    // mutex from this proof. Exact retries produce one mutation and one ledger
+    // row, then both callers receive the exact same stored envelope bytes.
+    let mut concurrent_backend = InternalAuthoringBackend::connect(
+        &author_url(&url),
+        TENANT.to_owned(),
+        SOURCE_SCHEMA.to_owned(),
+    )
+    .await
+    .expect("connect the concurrent authoring backend");
+    let exact_document = save_document("concurrent-exact", PROJECT, 0, "draft-concurrent-exact");
+    let exact_command: wamn_authoring_model::AuthoringRequest =
+        serde_json::from_value(as_json(&exact_document)["body"].clone()).unwrap();
+    let exact_request = SaveFlowDraft {
+        tenant_id: TENANT.to_owned(),
+        draft_id: "draft-concurrent-exact".to_owned(),
+        flow_id: "receive-material".to_owned(),
+        expected_revision: 0,
+        definition: DRAFT_GRAPH.to_owned(),
+    };
+    let (exact_left, exact_right) = tokio::join!(
+        save_flow_draft(
+            &mut backend,
+            &author,
+            &scope,
+            &exact_command,
+            &exact_request,
+        ),
+        save_flow_draft(
+            &mut concurrent_backend,
+            &author,
+            &scope,
+            &exact_command,
+            &exact_request,
+        ),
+    );
+    let exact_left = exact_left.expect("the first exact retry completes");
+    let exact_right = exact_right.expect("the second exact retry completes");
+    assert_eq!(
+        exact_left, exact_right,
+        "exact retry envelope bytes drifted"
+    );
+    assert_eq!(
+        stored_revision(&admin, "draft-concurrent-exact").await,
+        Some(1)
+    );
+    assert_eq!(
+        retry_ledger_count(&admin, author.principal_id(), "concurrent-exact").await,
+        1
+    );
+
+    // Divergent canonical requests sharing the same retry identity also
+    // serialize: exactly one request executes and the other gets the typed
+    // reuse refusal without a second draft or ledger mutation.
+    let divergent_definition = DRAFT_GRAPH.replace(r#""status":200"#, r#""status":299"#);
+    let divergent_left_document = save_definition(
+        "concurrent-divergent",
+        PROJECT,
+        0,
+        "draft-concurrent-left",
+        DRAFT_GRAPH,
+    );
+    let divergent_right_document = save_definition(
+        "concurrent-divergent",
+        PROJECT,
+        0,
+        "draft-concurrent-right",
+        &divergent_definition,
+    );
+    let divergent_left_command: wamn_authoring_model::AuthoringRequest =
+        serde_json::from_value(as_json(&divergent_left_document)["body"].clone()).unwrap();
+    let divergent_right_command: wamn_authoring_model::AuthoringRequest =
+        serde_json::from_value(as_json(&divergent_right_document)["body"].clone()).unwrap();
+    let divergent_left_request = SaveFlowDraft {
+        tenant_id: TENANT.to_owned(),
+        draft_id: "draft-concurrent-left".to_owned(),
+        flow_id: "receive-material".to_owned(),
+        expected_revision: 0,
+        definition: DRAFT_GRAPH.to_owned(),
+    };
+    let divergent_right_request = SaveFlowDraft {
+        tenant_id: TENANT.to_owned(),
+        draft_id: "draft-concurrent-right".to_owned(),
+        flow_id: "receive-material".to_owned(),
+        expected_revision: 0,
+        definition: divergent_definition,
+    };
+    let (divergent_left, divergent_right) = tokio::join!(
+        save_flow_draft(
+            &mut backend,
+            &author,
+            &scope,
+            &divergent_left_command,
+            &divergent_left_request,
+        ),
+        save_flow_draft(
+            &mut concurrent_backend,
+            &author,
+            &scope,
+            &divergent_right_command,
+            &divergent_right_request,
+        ),
+    );
+    let divergent_left = divergent_left.expect("the first divergent retry answers");
+    let divergent_right = divergent_right.expect("the second divergent retry answers");
+    let mut kinds = [
+        outcome(std::str::from_utf8(&divergent_left).unwrap())["status"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        outcome(std::str::from_utf8(&divergent_right).unwrap())["status"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    ];
+    kinds.sort();
+    assert_eq!(kinds, ["completed", "refused"]);
+    let refusal = [&divergent_left, &divergent_right]
+        .into_iter()
+        .map(|bytes| outcome(std::str::from_utf8(bytes).unwrap()))
+        .find(|value| value["status"] == "refused")
+        .expect("one divergent request refuses");
+    assert_eq!(refusal["value"]["reason"]["kind"], "command-id-reuse");
+    let created = usize::from(
+        stored_revision(&admin, "draft-concurrent-left")
+            .await
+            .is_some(),
+    ) + usize::from(
+        stored_revision(&admin, "draft-concurrent-right")
+            .await
+            .is_some(),
+    );
+    assert_eq!(created, 1, "a divergent retry executed both requests");
+    assert_eq!(
+        retry_ledger_count(&admin, author.principal_id(), "concurrent-divergent").await,
+        1
+    );
+    drop(concurrent_backend);
+
     // Both paths refuse a stale expected revision the same way.
+    let stale_direct_document = save_attributed(
+        "parity-direct-stale",
+        PROJECT,
+        9,
+        "draft-parity-direct",
+        &parity_text,
+        Some(serde_json::to_value(&claim).unwrap()),
+    );
+    let stale_direct_command: wamn_authoring_model::AuthoringRequest =
+        serde_json::from_value(as_json(&stale_direct_document)["body"].clone()).unwrap();
     let stale_direct = save_flow_draft(
         &mut backend,
         &author,
         &scope,
-        "parity-direct-stale",
+        &stale_direct_command,
         &SaveFlowDraft {
             expected_revision: 9,
             ..request("draft-parity-direct")
         },
-        Some(&claim),
     )
     .await
     .expect("the canonical handler runs");
-    assert_eq!(stale_direct, SaveFlowDraftResult::RevisionConflict);
+    assert_eq!(
+        outcome(std::str::from_utf8(&stale_direct).unwrap())["value"]["reason"]["kind"],
+        "revision-conflict"
+    );
     let stale_http = submit(
         alice.token(),
         "parity-http-stale",

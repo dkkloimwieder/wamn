@@ -12,7 +12,7 @@ readonly OWNER="bd:wamn-ftfc.14"
 readonly OUTCOME="an unmounted authoring command cannot be reported as successful"
 
 readonly TARGET="clients/authoring-client/src/cli/cli.ts"
-readonly EXPECTED_SHA="a23009cc4b8a06cf5f2acd4cadc12e60b2d82142851e2ff1c1d8a26c4b81d812"
+readonly EXPECTED_SHA="67a6fd1ac9b88ed0628be30a704ecb48f8eb82074a207843827d58b2fd0c4da2"
 readonly NEEDLE='        return { ...base, status: "unmounted", "elapsed-ms": elapsed(), "http-status": 501 };'
 readonly REPLACEMENT='        return { ...base, status: "completed", "elapsed-ms": elapsed(), "http-status": 501 };'
 readonly GATE="an unmounted command is its own answer and never a success"
@@ -31,8 +31,8 @@ assert_precondition() {
     echo "$TARGET hash mismatch: expected $EXPECTED_SHA, got $actual" >&2
     exit 2
   }
-  [[ "$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text().count(sys.argv[2]))' "$TARGET" "$NEEDLE")" == 1 ]] || {
-    echo "$TARGET must contain the mutation anchor exactly once" >&2
+  [[ "$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).read_text().count(sys.argv[2]))' "$TARGET" "$NEEDLE")" == 2 ]] || {
+    echo "$TARGET must contain the command/query mutation anchor exactly twice" >&2
     exit 2
   }
 }

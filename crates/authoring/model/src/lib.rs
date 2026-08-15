@@ -1,9 +1,9 @@
-//! Frontend-neutral authoring command contracts.
+//! Frontend-neutral authoring command and query contracts.
 //!
 //! This crate is data only. Git, HTTP, CLI, and future visual clients adapt
-//! the same messages to the canonical application handlers. Authenticated
-//! principal, Git provenance, credentials, endpoints, database authority, and
-//! frontend state are deliberately absent from client-controlled documents.
+//! the same messages to canonical application handlers. Authenticated
+//! principals, credentials, endpoints, database authority, and frontend state
+//! are deliberately absent from client-controlled documents.
 
 use std::fmt;
 
@@ -11,26 +11,28 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 
-/// Authoring contract version implemented by this crate.
-///
-/// `0.1.x` changes may only add compatible semantics. A breaking wire change
-/// requires a new minor contract and an explicit compatibility path.
+/// Authoring contract version shipped for the MVP.
 pub const SCHEMA_VERSION: &str = "0.1";
 
-/// Largest integer every `format: uint64` field on this contract may carry.
+/// Largest query correlation identifier, measured in exact UTF-8 bytes.
 ///
-/// `2^53 - 1` is the largest integer an IEEE-754 double holds exactly, so it is
-/// the whole wire domain a JavaScript `Number` can round-trip without loss. The
-/// schema publishes it as `maximum`; see `docs/archive/authoring/authoring-surface.md`.
+/// Sixty-four bytes admits UUIDs and trace-style identifiers with a short
+/// human-readable prefix while keeping the trace-only value tightly bounded.
+pub const MAX_QUERY_ID_BYTES: usize = 64;
+
+/// Maximum exact UTF-8 test-set definition size.
+pub const MAX_TEST_SET_BYTES: usize = 1024 * 1024;
+
+/// Maximum number of cases in one inline test set.
+pub const MAX_TEST_SET_CASES: usize = 256;
+
+/// Maximum number of expectations in one inline test-set case.
+pub const MAX_TEST_SET_EXPECTATIONS: usize = 64;
+
+/// Largest integer every `format: uint64` field on this contract may carry.
 pub const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
 
 /// A `uint64` wire value inside the exactly representable domain `[0, 2^53-1]`.
-///
-/// The type is the boundary: an out-of-domain integer is refused on decode and
-/// is unrepresentable on encode, so no client ever receives a rounded counter.
-/// Storage behind every one of these fields is PostgreSQL `bigint`, and each
-/// one carries a server-assigned counter or a latency that cannot legitimately
-/// approach the bound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SafeUint64(u64);
 
@@ -53,7 +55,6 @@ impl TryFrom<u64> for SafeUint64 {
     }
 }
 
-/// Accepts the `bigint` column values these fields are stored in.
 impl TryFrom<i64> for SafeUint64 {
     type Error = SafeIntegerError;
 
@@ -72,10 +73,8 @@ impl From<SafeUint64> for u64 {
     }
 }
 
-/// The domain fits `bigint`, so the storage conversion is total.
 impl From<SafeUint64> for i64 {
     fn from(value: SafeUint64) -> Self {
-        // `SAFE_INTEGER_MAX` is `2^53 - 1`, well inside `i64`.
         value.0 as Self
     }
 }
@@ -94,7 +93,6 @@ impl<'de> Deserialize<'de> for SafeUint64 {
 }
 
 impl JsonSchema for SafeUint64 {
-    /// Inlined so each `format: uint64` site publishes `maximum` in place.
     fn is_referenceable() -> bool {
         false
     }
@@ -105,11 +103,6 @@ impl JsonSchema for SafeUint64 {
 
     fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
         let mut schema = <u64 as JsonSchema>::json_schema(generator).into_object();
-        // `NumberValidation::maximum` is `f64`, and an `f64` bound serializes as
-        // `9007199254740991.0` — which `serde_json` reads back as
-        // `9007199254740990`, one below the bound this contract exists to state
-        // exactly. Publishing through `extensions` keeps `maximum` an integer
-        // literal that every parser reproduces exactly.
         schema
             .extensions
             .insert("maximum".to_owned(), Value::from(SAFE_INTEGER_MAX));
@@ -120,21 +113,102 @@ impl JsonSchema for SafeUint64 {
 /// An integer outside the exactly representable `uint64` wire domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SafeIntegerError {
-    /// The refused value, as read from the wire or from `bigint` storage.
     pub value: i128,
 }
 
 impl fmt::Display for SafeIntegerError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let value = self.value;
         write!(
             formatter,
-            "uint64 value {value} is outside the exactly representable authoring wire domain [0, {SAFE_INTEGER_MAX}]"
+            "uint64 value {} is outside the exactly representable authoring wire domain [0, {SAFE_INTEGER_MAX}]",
+            self.value
         )
     }
 }
 
 impl std::error::Error for SafeIntegerError {}
+
+/// Non-empty, bounded, trace-only query correlation identity.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct QueryId(Box<str>);
+
+impl QueryId {
+    /// Borrow the exact correlation identifier.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for QueryId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl TryFrom<String> for QueryId {
+    type Error = QueryIdError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.is_empty() || value.len() > MAX_QUERY_ID_BYTES {
+            return Err(QueryIdError {
+                byte_length: value.len(),
+            });
+        }
+        Ok(Self(value.into_boxed_str()))
+    }
+}
+
+impl Serialize for QueryId {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for QueryId {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::try_from(String::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for QueryId {
+    fn schema_name() -> String {
+        "QueryId".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        let mut schema = schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::String.into()),
+            ..Default::default()
+        };
+        schema.string = Some(Box::new(schemars::schema::StringValidation {
+            min_length: Some(1),
+            ..Default::default()
+        }));
+        schema.extensions.insert(
+            "x-max-utf8-bytes".to_owned(),
+            Value::from(MAX_QUERY_ID_BYTES),
+        );
+        schemars::schema::Schema::Object(schema)
+    }
+}
+
+/// A query correlation identifier outside its public byte bound.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QueryIdError {
+    pub byte_length: usize,
+}
+
+impl fmt::Display for QueryIdError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "query-id is {} bytes; expected 1..={MAX_QUERY_ID_BYTES}",
+            self.byte_length
+        )
+    }
+}
+
+impl std::error::Error for QueryIdError {}
 
 /// A complete request or response document on the authoring contract.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -145,20 +219,32 @@ impl std::error::Error for SafeIntegerError {}
     deny_unknown_fields
 )]
 pub enum AuthoringDocument {
-    // Both arms are boxed: a request carries the largest command input and a
-    // response the largest result, and neither should set the size of every
-    // document value in the process.
-    Request(Box<AuthoringRequest>),
-    Response(Box<AuthoringResponse>),
+    Request(Box<AuthoringRequestEnvelope>),
+    Response(Box<AuthoringResponseEnvelope>),
 }
 
-/// One idempotent client command.
+/// The structurally disjoint command or query request body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AuthoringRequestEnvelope {
+    Command(AuthoringRequest),
+    Query(AuthoringQueryRequest),
+}
+
+/// The structurally disjoint command or query response body.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AuthoringResponseEnvelope {
+    Command(AuthoringResponse),
+    Query(AuthoringQueryResponse),
+}
+
+/// One idempotent ledgered command.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthoringRequest {
     #[schemars(schema_with = "schema_version_schema")]
     pub schema_version: String,
-    /// Client-generated correlation and exact-retry identity.
     pub command_id: String,
     pub command: AuthoringCommand,
 }
@@ -173,7 +259,27 @@ pub struct AuthoringResponse {
     pub outcome: AuthoringOutcome,
 }
 
-/// Frontend-independent command inventory for the minimum authoring loop.
+/// One correlation-only, non-ledgered query.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AuthoringQueryRequest {
+    #[schemars(schema_with = "schema_version_schema")]
+    pub schema_version: String,
+    pub query_id: QueryId,
+    pub query: AuthoringQuery,
+}
+
+/// Result or typed refusal for one correlation-only query.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct AuthoringQueryResponse {
+    #[schemars(schema_with = "schema_version_schema")]
+    pub schema_version: String,
+    pub query_id: QueryId,
+    pub outcome: AuthoringQueryOutcome,
+}
+
+/// Complete five-command authoring inventory.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -185,20 +291,45 @@ pub enum AuthoringCommand {
     SaveFlowDraft(SaveFlowDraft),
     Validate(ValidateDraft),
     DraftRun(DraftRun),
+    TestSetRun(TestSetRun),
     Publish(PublishValidatedDraft),
 }
 
-/// Stable command names used to attribute a refusal without parsing prose.
+/// Stable command names used by response and ledger vocabulary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum AuthoringCommandKind {
     SaveFlowDraft,
     Validate,
     DraftRun,
+    TestSetRun,
     Publish,
 }
 
-/// A successful typed result or a typed product refusal.
+/// Complete three-query authoring inventory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    content = "input",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum AuthoringQuery {
+    ReadDraft(ReadDraft),
+    GetRun(GetRun),
+    GetReport(GetReport),
+}
+
+/// Stable query names used only for typed response attribution.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum AuthoringQueryKind {
+    ReadDraft,
+    GetRun,
+    GetReport,
+}
+
+/// A successful command result or operation-specific refusal.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "status",
@@ -211,7 +342,7 @@ pub enum AuthoringOutcome {
     Refused(CommandRefusal),
 }
 
-/// The successful result paired with each command.
+/// Successful result paired with each command.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "command",
@@ -223,13 +354,68 @@ pub enum AuthoringSuccess {
     SaveFlowDraft(DraftIdentity),
     Validate(ValidatedDraftIdentity),
     DraftRun(DraftRunReceipt),
+    TestSetRun(TestSetRunReceipt),
     Publish(PublishedFlowIdentity),
 }
 
+/// An operation-specific command refusal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "command",
+    content = "reason",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum CommandRefusal {
+    SaveFlowDraft(SaveFlowDraftRefusal),
+    Validate(ValidateRefusal),
+    DraftRun(DraftRunRefusal),
+    TestSetRun(TestSetRunRefusal),
+    Publish(PublishRefusal),
+}
+
+/// A successful query result or operation-specific refusal.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "status",
+    content = "value",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum AuthoringQueryOutcome {
+    Completed(Box<AuthoringQuerySuccess>),
+    Refused(QueryRefusal),
+}
+
+/// Successful result paired with each query.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "query",
+    content = "result",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum AuthoringQuerySuccess {
+    ReadDraft(DraftDocument),
+    GetRun(RunProjection),
+    GetReport(ReportProjection),
+}
+
+/// An operation-specific query refusal.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "query",
+    content = "reason",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum QueryRefusal {
+    ReadDraft(ReadDraftRefusal),
+    GetRun(GetRunRefusal),
+    GetReport(GetReportRefusal),
+}
+
 /// Project and environment selected by a client.
-///
-/// Organization and principal are authenticated adapter context, not fields a
-/// client may assert in this document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct AuthoringScope {
@@ -237,28 +423,12 @@ pub struct AuthoringScope {
     pub environment: String,
 }
 
-/// Where a client read the submitted definition from.
-///
-/// **Attribution only.** A checkout client knows the commit its working tree
-/// came from; recording that makes a stored revision traceable to the source it
-/// was edited in. It authorizes nothing: it selects no principal, widens no
-/// role, and changes no result. Two otherwise identical commands, one with this
-/// and one without, produce the same outcome and the same stored document.
-///
-/// The platform never clones a repository, runs Git, or verifies any of these
-/// values. They are the client's claim about its own working tree, retained
-/// verbatim beside the verified principal that actually authorized the command.
-/// No field here is an identity: a subject lives on the audited principal, and
-/// nothing in this object may be read as one.
+/// Optional, untrusted source attribution supplied by a checkout client.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct CommitProvenance {
-    /// Exact commit the working tree was at.
     pub commit: String,
-    /// Ref the checkout was on, or null when the client cannot name one.
     pub r#ref: Option<String>,
-    /// Whether the submitted content differs from that commit. A dirty tree
-    /// means the content is descended from `commit`, not equal to it.
     pub dirty: bool,
 }
 
@@ -269,15 +439,9 @@ pub struct SaveFlowDraft {
     pub scope: AuthoringScope,
     pub draft_id: String,
     pub flow_id: String,
-    /// Zero creates a draft; a positive value replaces exactly that revision.
     pub expected_revision: SafeUint64,
-    /// Exact UTF-8 flow document text, stored byte-for-byte. Save does not
-    /// parse or validate it, so a half-finished edit is preserved rather than
-    /// refused; [`AuthoringCommand::Validate`] owns that boundary.
     pub definition: String,
-    /// Optional source attribution. Omitting it is always allowed and always
-    /// equivalent in outcome.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<CommitProvenance>,
 }
 
@@ -290,9 +454,6 @@ pub struct DraftRevisionRef {
 }
 
 /// Inline, self-describing test-set document submitted to `test-set-run`.
-///
-/// `definition` is exact UTF-8 text. Its bytes are the test-set identity
-/// preimage; parsing and validation must never normalize or reserialize it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TestSetInput {
@@ -328,19 +489,26 @@ pub struct DraftRun {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
     pub input: Value,
-    /// Whether this one draft run captures node input and output. Omission is
-    /// full capture; other admission paths expose no such choice.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "draft_run_capture_is_full")]
     pub capture: DraftRunCapture,
 }
 
-/// Capture choice for one direct draft run: full capture or no capture.
+/// Capture choice for one direct draft run.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum DraftRunCapture {
     #[default]
     Full,
     Off,
+}
+
+/// Execute one bounded inline test set against an exact validated draft.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TestSetRun {
+    pub scope: AuthoringScope,
+    pub validated_draft: ValidatedDraftRef,
+    pub test_set: TestSetInput,
 }
 
 /// Publish exactly the executable proven by a successful report.
@@ -350,6 +518,30 @@ pub struct PublishValidatedDraft {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
     pub successful_report_id: String,
+}
+
+/// Read one exact saved draft revision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ReadDraft {
+    pub scope: AuthoringScope,
+    pub draft: DraftRevisionRef,
+}
+
+/// Read one author-visible run projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GetRun {
+    pub scope: AuthoringScope,
+    pub run_id: String,
+}
+
+/// Read one pending or finalized immutable report projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct GetReport {
+    pub scope: AuthoringScope,
+    pub report_id: String,
 }
 
 /// Stable identity returned after a draft save.
@@ -369,7 +561,7 @@ pub struct CatalogIdentity {
     pub version: u32,
 }
 
-/// Public pins for the exact executable accepted by validation.
+/// Public pins for the one own-flow executable accepted by validation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ValidatedDraftIdentity {
@@ -390,6 +582,15 @@ pub struct DraftRunReceipt {
     pub validated_draft: ValidatedDraftRef,
 }
 
+/// Receipt for one accepted test-set run.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TestSetRunReceipt {
+    pub report_id: String,
+    pub validated_draft: ValidatedDraftRef,
+    pub test_set: TestSetIdentity,
+}
+
 /// Immutable identity produced by publishing the tested draft.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -399,15 +600,103 @@ pub struct PublishedFlowIdentity {
     pub artifact_hash: String,
 }
 
-/// A refusal attributed to an exact command kind.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+/// Exact saved draft projection.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct CommandRefusal {
-    pub command: AuthoringCommandKind,
-    pub reason: AuthoringRefusal,
+pub struct DraftDocument {
+    pub draft: DraftIdentity,
+    pub definition: String,
 }
 
-/// Product refusals; infrastructure faults remain outside this taxonomy.
+/// Bounded author-facing run projection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RunProjection {
+    pub run_id: String,
+    pub status: RunStatus,
+    pub failure: Option<RunFailure>,
+    pub nodes: Vec<RunNodeProjection>,
+}
+
+/// Public terminal and nonterminal run states.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum RunStatus {
+    Queued,
+    Dispatched,
+    Running,
+    Succeeded,
+    Failed,
+    EffectUncertain,
+}
+
+/// Typed author-facing run failure.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum RunFailure {
+    InvalidInput,
+    RetryExhausted,
+    DeadlineExhausted,
+    EffectUncertain,
+    Terminal,
+}
+
+/// One named node's durable author projection.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct RunNodeProjection {
+    pub node_id: String,
+    pub status: String,
+    pub failure_kind: Option<String>,
+    pub output: Option<NodeOutputProjection>,
+}
+
+/// Stored output or typed oversized-output metadata.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum NodeOutputProjection {
+    Output(Value),
+    OutputTooLarge(OutputTooLarge),
+}
+
+/// Durable metadata for a captured output omitted at the write ceiling.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct OutputTooLarge {
+    #[schemars(schema_with = "output_too_large_kind_schema")]
+    pub kind: String,
+    pub size: SafeUint64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+}
+
+/// Pending or immutable finalized test report.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "state",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum ReportProjection {
+    #[schemars(rename_all = "kebab-case")]
+    Pending {
+        report_id: String,
+        validated_draft: ValidatedDraftRef,
+        test_set: TestSetIdentity,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    Finalized {
+        report_id: String,
+        validated_draft: ValidatedDraftRef,
+        test_set: TestSetIdentity,
+        passed: bool,
+        summary: Value,
+        resolution_map: Value,
+    },
+}
+
+/// Refusals owned by `save-flow-draft`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(
     tag = "kind",
@@ -415,11 +704,8 @@ pub struct CommandRefusal {
     rename_all_fields = "kebab-case",
     deny_unknown_fields
 )]
-pub enum AuthoringRefusal {
+pub enum SaveFlowDraftRefusal {
     AuthorizationDenied,
-    // `schemars` 0.8 discards `rename_all_fields`, so every field-carrying
-    // variant mirrors it for the generated schema. The serde wire names are
-    // unchanged; the schema stops advertising the Rust field spelling.
     #[schemars(rename_all = "kebab-case")]
     UnsupportedContractVersion {
         requested: String,
@@ -430,10 +716,28 @@ pub enum AuthoringRefusal {
         expected_revision: SafeUint64,
         actual_revision: Option<SafeUint64>,
     },
+    CommandIdReuse,
+}
+
+/// Refusals owned by `validate`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum ValidateRefusal {
+    AuthorizationDenied,
     #[schemars(rename_all = "kebab-case")]
-    ResourceNotFound {
-        resource: ResourceKind,
-        id: String,
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    DraftRevisionNotFound {
+        draft_id: String,
+        revision: SafeUint64,
     },
     #[schemars(rename_all = "kebab-case")]
     InvalidDraft {
@@ -444,26 +748,180 @@ pub enum AuthoringRefusal {
     UnresolvedNodes {
         node_types: Vec<String>,
     },
+    #[schemars(rename_all = "kebab-case")]
+    UnresolvableCalleeName {
+        site: String,
+        flow_id: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    MissingRecordedCallability {
+        site: String,
+        flow_id: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ContractIncompatibility {
+        site: String,
+        flow_id: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    DraftConnectionsDenied {
+        connection_names: Vec<String>,
+    },
+    CommandIdReuse,
+}
+
+/// Refusals owned by `draft-run`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum DraftRunRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ValidatedDraftNotFound {
+        validated_draft_id: String,
+    },
     ValidatedDraftDrift,
     #[schemars(rename_all = "kebab-case")]
     DraftConnectionsDenied {
         connection_names: Vec<String>,
     },
+    CommandIdReuse,
+}
+
+/// Refusals owned by `test-set-run`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum TestSetRunRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ValidatedDraftNotFound {
+        validated_draft_id: String,
+    },
+    ValidatedDraftDrift,
+    #[schemars(rename_all = "kebab-case")]
+    InvalidTestSet {
+        detail: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    DraftConnectionsDenied {
+        connection_names: Vec<String>,
+    },
+    CommandIdReuse,
+}
+
+/// Refusals owned by `publish`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum PublishRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ValidatedDraftNotFound {
+        validated_draft_id: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ReportNotFound {
+        report_id: String,
+    },
+    ReportNotSuccessful,
     PublishExecutableDrift,
     #[schemars(rename_all = "kebab-case")]
     PublishBlockedByNonterminalRuns {
         run_ids: Vec<String>,
     },
+    CommandIdReuse,
 }
 
-/// Stable resource categories for typed not-found refusals.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
-pub enum ResourceKind {
-    Draft,
-    DraftRevision,
-    ValidatedDraft,
-    Report,
+/// Refusals owned by `read-draft`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum ReadDraftRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    DraftRevisionNotFound {
+        draft_id: String,
+        revision: SafeUint64,
+    },
+}
+
+/// Refusals owned by `get-run`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum GetRunRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    RunNotFound {
+        run_id: String,
+    },
+}
+
+/// Refusals owned by `get-report`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "kebab-case",
+    deny_unknown_fields
+)]
+pub enum GetReportRefusal {
+    AuthorizationDenied,
+    #[schemars(rename_all = "kebab-case")]
+    UnsupportedContractVersion {
+        requested: String,
+        supported: String,
+    },
+    #[schemars(rename_all = "kebab-case")]
+    ReportNotFound {
+        report_id: String,
+    },
 }
 
 /// Machine-readable validation issue; `message` is explanatory only.
@@ -476,6 +934,7 @@ pub struct ValidationIssue {
     pub message: String,
 }
 
+/// Validation issue severity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ValidationSeverity {
@@ -483,38 +942,83 @@ pub enum ValidationSeverity {
     Warning,
 }
 
-/// Decode a contract document and reject missing, malformed, or unsupported
-/// versions before an application handler is selected.
+/// Decode a contract document and reject unsupported versions before dispatch.
 pub fn decode_document(input: &str) -> Result<AuthoringDocument, ContractDecodeError> {
     let document: AuthoringDocument =
-        serde_json::from_str(input).map_err(ContractDecodeError::Json)?;
+        serde_json::from_str(input).map_err(ContractDecodeError::json)?;
     let version = match &document {
-        AuthoringDocument::Request(request) => &request.schema_version,
-        AuthoringDocument::Response(response) => &response.schema_version,
+        AuthoringDocument::Request(request) => match request.as_ref() {
+            AuthoringRequestEnvelope::Command(request) => &request.schema_version,
+            AuthoringRequestEnvelope::Query(request) => &request.schema_version,
+        },
+        AuthoringDocument::Response(response) => match response.as_ref() {
+            AuthoringResponseEnvelope::Command(response) => &response.schema_version,
+            AuthoringResponseEnvelope::Query(response) => &response.schema_version,
+        },
     };
     if version != SCHEMA_VERSION {
-        return Err(ContractDecodeError::UnsupportedContractVersion {
-            requested: version.clone(),
-        });
+        return Err(ContractDecodeError::unsupported(version.clone()));
     }
-
     Ok(document)
+}
+
+/// Stable decode failure classification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContractDecodeErrorKind {
+    Json,
+    UnsupportedContractVersion,
 }
 
 /// Decode failure before application dispatch.
 #[derive(Debug)]
-pub enum ContractDecodeError {
-    Json(serde_json::Error),
-    UnsupportedContractVersion { requested: String },
+pub struct ContractDecodeError {
+    kind: ContractDecodeErrorKind,
+    requested: Option<Box<str>>,
+    source: Option<serde_json::Error>,
+}
+
+impl ContractDecodeError {
+    fn json(source: serde_json::Error) -> Self {
+        Self {
+            kind: ContractDecodeErrorKind::Json,
+            requested: None,
+            source: Some(source),
+        }
+    }
+
+    fn unsupported(requested: String) -> Self {
+        Self {
+            kind: ContractDecodeErrorKind::UnsupportedContractVersion,
+            requested: Some(requested.into_boxed_str()),
+            source: None,
+        }
+    }
+
+    pub const fn kind(&self) -> ContractDecodeErrorKind {
+        self.kind
+    }
+
+    pub fn requested(&self) -> Option<&str> {
+        self.requested.as_deref()
+    }
 }
 
 impl fmt::Display for ContractDecodeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Json(error) => write!(formatter, "invalid authoring document: {error}"),
-            Self::UnsupportedContractVersion { requested } => write!(
+        match self.kind {
+            ContractDecodeErrorKind::Json => write!(
                 formatter,
-                "unsupported authoring contract version {requested}; supported version is {SCHEMA_VERSION}"
+                "invalid authoring document: {}",
+                self.source
+                    .as_ref()
+                    .expect("JSON decode error retains its source")
+            ),
+            ContractDecodeErrorKind::UnsupportedContractVersion => write!(
+                formatter,
+                "unsupported authoring contract version {}; supported version is {SCHEMA_VERSION}",
+                self.requested
+                    .as_deref()
+                    .expect("unsupported version retains its literal")
             ),
         }
     }
@@ -522,15 +1026,13 @@ impl fmt::Display for ContractDecodeError {
 
 impl std::error::Error for ContractDecodeError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::Json(error) => Some(error),
-            Self::UnsupportedContractVersion { .. } => None,
-        }
+        self.source
+            .as_ref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
     }
 }
 
-/// Language-neutral JSON Schema for every public request, result, refusal, and
-/// identity reachable from [`AuthoringDocument`].
+/// Language-neutral JSON Schema for every public authoring document.
 pub fn json_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(AuthoringDocument)).expect("schema serializes")
 }
@@ -549,4 +1051,19 @@ fn schema_version_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::
     };
     schema.enum_values = Some(vec![Value::String(SCHEMA_VERSION.to_owned())]);
     schemars::schema::Schema::Object(schema)
+}
+
+fn output_too_large_kind_schema(
+    _: &mut schemars::r#gen::SchemaGenerator,
+) -> schemars::schema::Schema {
+    let mut schema = schemars::schema::SchemaObject {
+        instance_type: Some(schemars::schema::InstanceType::String.into()),
+        ..Default::default()
+    };
+    schema.enum_values = Some(vec![Value::String("output-too-large".to_owned())]);
+    schemars::schema::Schema::Object(schema)
+}
+
+fn draft_run_capture_is_full(capture: &DraftRunCapture) -> bool {
+    *capture == DraftRunCapture::Full
 }

@@ -451,17 +451,20 @@
       ],
       "author-reachable": "no",
       "guards": [
+        "constraint:authoring_command_audit_audit_id_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, audit_id)",
         "constraint:authoring_command_audit_command_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_id <> ''::text)",
-        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'publish'::text, 'grant-draft-safe-generation'::text, 'revoke-draft-safe-generation'::text]))",
+        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'test-set-run'::text, 'publish'::text]))",
         "constraint:authoring_command_audit_effective_role_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = ANY (ARRAY['project-author'::text, 'project-admin'::text]))",
         "constraint:authoring_command_audit_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
         "constraint:authoring_command_audit_org_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org <> ''::text)",
-        "constraint:authoring_command_audit_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, audit_id)",
+        "constraint:authoring_command_audit_outcome_present;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (octet_length(outcome_bytes) > 0)",
+        "constraint:authoring_command_audit_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, principal_id, command_id)",
         "constraint:authoring_command_audit_principal_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_id <> ''::text)",
         "constraint:authoring_command_audit_principal_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_kind = ANY (ARRAY['human'::text, 'service'::text]))",
         "constraint:authoring_command_audit_principal_subject_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_subject <> ''::text)",
         "constraint:authoring_command_audit_project_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project <> ''::text)",
         "constraint:authoring_command_audit_provenance_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((provenance_commit IS NULL) = (provenance_dirty IS NULL) AND (provenance_commit IS NULL OR provenance_commit <> ''::text) AND (provenance_ref IS NULL OR provenance_ref <> ''::text) AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL))",
+        "constraint:authoring_command_audit_request_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_command_audit_target_ref_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (target_ref <> ''::text)",
         "constraint:authoring_command_audit_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:authoring_command_audit_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
@@ -1652,17 +1655,20 @@
       ],
       "author-reachable": "no",
       "guards": [
+        "constraint:authoring_command_audit_audit_id_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, audit_id)",
         "constraint:authoring_command_audit_command_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_id <> ''::text)",
-        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'publish'::text, 'grant-draft-safe-generation'::text, 'revoke-draft-safe-generation'::text]))",
+        "constraint:authoring_command_audit_command_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'test-set-run'::text, 'publish'::text]))",
         "constraint:authoring_command_audit_effective_role_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = ANY (ARRAY['project-author'::text, 'project-admin'::text]))",
         "constraint:authoring_command_audit_environment_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (environment <> ''::text)",
         "constraint:authoring_command_audit_org_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (org <> ''::text)",
-        "constraint:authoring_command_audit_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, audit_id)",
+        "constraint:authoring_command_audit_outcome_present;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (octet_length(outcome_bytes) > 0)",
+        "constraint:authoring_command_audit_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, principal_id, command_id)",
         "constraint:authoring_command_audit_principal_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_id <> ''::text)",
         "constraint:authoring_command_audit_principal_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_kind = ANY (ARRAY['human'::text, 'service'::text]))",
         "constraint:authoring_command_audit_principal_subject_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_subject <> ''::text)",
         "constraint:authoring_command_audit_project_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (project <> ''::text)",
         "constraint:authoring_command_audit_provenance_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((provenance_commit IS NULL) = (provenance_dirty IS NULL) AND (provenance_commit IS NULL OR provenance_commit <> ''::text) AND (provenance_ref IS NULL OR provenance_ref <> ''::text) AND (provenance_commit IS NOT NULL OR provenance_ref IS NULL))",
+        "constraint:authoring_command_audit_request_hash_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
         "constraint:authoring_command_audit_target_ref_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (target_ref <> ''::text)",
         "constraint:authoring_command_audit_tenant_id_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
         "policy:authoring_command_audit_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
@@ -1991,14 +1997,6 @@
             "delete",
             "insert",
             "truncate",
-            "update"
-          ]
-        },
-        {
-          "role": "wamn_scenario_author",
-          "basis": "grant",
-          "operations": [
-            "insert",
             "update"
           ]
         }

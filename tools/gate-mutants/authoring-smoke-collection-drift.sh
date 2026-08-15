@@ -11,7 +11,7 @@ readonly OWNER="bd:wamn-jvzx.4"
 readonly OUTCOME="the authenticated smoke refuses hand-written request-collection drift"
 
 readonly TARGET="clients/authoring-client/scripts/smoke.mjs"
-readonly EXPECTED_SHA="6a39f78bdea5a28866fa7829adce94f79b79d668469d3282f10cbea891dacb4d"
+readonly EXPECTED_SHA="c188f83349e86c175487c37f4a7e421b0517c39f2ba00b57c6b8ef9fadc4915b"
 readonly NEEDLE='    writePath(document, path, values[field]);'
 readonly REPLACEMENT='    writePath(document, path, values[field]);
     writePath(document, ["body", "command", "input", "flow-id"], "hand-rolled-flow");'

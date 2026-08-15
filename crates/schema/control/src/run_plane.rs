@@ -1315,7 +1315,16 @@ const RELEASE_PUBLISHER_CHECK_NAME: &str = "release_manifests_verified_publisher
 const RELEASE_PUBLISHER_CHECK_DEF: &str =
     "CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''::text)";
 const AUTHORING_COMMAND_KIND_CHECK_NAME: &str = "authoring_command_audit_command_kind_check";
-const AUTHORING_COMMAND_KIND_CHECK_DEF: &str = "CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'publish'::text, 'grant-draft-safe-generation'::text, 'revoke-draft-safe-generation'::text]))";
+const AUTHORING_COMMAND_KIND_CHECK_DEF: &str = "CHECK (command_kind = ANY (ARRAY['save-flow-draft'::text, 'validate'::text, 'draft-run'::text, 'test-set-run'::text, 'publish'::text]))";
+const AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME: &str =
+    "authoring_command_audit_request_hash_check";
+const AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF: &str =
+    "CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'::text)";
+const AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME: &str =
+    "authoring_command_audit_outcome_present";
+const AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF: &str = "CHECK (octet_length(outcome_bytes) > 0)";
+const AUTHORING_COMMAND_PRIMARY_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_pkey ON catalog.authoring_command_audit USING btree (tenant_id, principal_id, command_id)";
+const AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF: &str = "CREATE UNIQUE INDEX authoring_command_audit_audit_id_key ON catalog.authoring_command_audit USING btree (tenant_id, audit_id)";
 
 const RETIRED_NODE_ATTEMPT_COLUMNS: &[&str] = &[
     "current_effect_attempt_id",
@@ -2059,7 +2068,7 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         schema: AuthoringTableSchema::Catalog,
         table: "draft_safe_connection_grants",
         app: &["SELECT"],
-        author: &["SELECT", "INSERT", "UPDATE"],
+        author: &["SELECT"],
     },
     // The command ledger is append-only management-plane evidence: the author
     // adds and reads rows, the guest runtime credential never sees it, and
@@ -2400,6 +2409,52 @@ const RETIRED_STORED_SUITE_FUNCTIONS: [&str; 2] = [
 ];
 const RETIRED_STORED_SUITE_CATALOG_TABLE: &str = "publish_gate_audit";
 
+fn authoring_retry_ledger_ready(obs: &RunPlaneObservation) -> bool {
+    let Some(columns) = obs.catalog_columns.get("authoring_command_audit") else {
+        return false;
+    };
+    for (column, column_type) in [("request_hash", "text"), ("outcome_bytes", "bytea")] {
+        let key = ("authoring_command_audit".to_string(), column.to_string());
+        if !columns.contains(column)
+            || !obs.catalog_non_nullable_columns.contains(&key)
+            || obs
+                .catalog_column_types
+                .get(&key)
+                .is_none_or(|actual| actual != column_type)
+        {
+            return false;
+        }
+    }
+    obs.catalog_checks
+        .get(&(
+            "authoring_command_audit".to_string(),
+            AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
+        ))
+        .is_some_and(|definition| definition == AUTHORING_COMMAND_KIND_CHECK_DEF)
+        && obs
+            .catalog_checks
+            .get(&(
+                "authoring_command_audit".to_string(),
+                AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME.to_string(),
+            ))
+            .is_some_and(|definition| definition == AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF)
+        && obs
+            .catalog_checks
+            .get(&(
+                "authoring_command_audit".to_string(),
+                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME.to_string(),
+            ))
+            .is_some_and(|definition| definition == AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF)
+        && obs
+            .catalog_indexes
+            .get("authoring_command_audit_pkey")
+            .is_some_and(|definition| definition == AUTHORING_COMMAND_PRIMARY_INDEX_DEF)
+        && obs
+            .catalog_indexes
+            .get("authoring_command_audit_audit_id_key")
+            .is_some_and(|definition| definition == AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF)
+}
+
 fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
     RETIRED_STORED_SUITE_TABLES
         .iter()
@@ -2415,13 +2470,7 @@ fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
             .get("validated_flow_drafts")
             .is_some_and(|columns| columns.contains("suite_flow_version"))
         || (obs.catalog_tables.contains("authoring_command_audit")
-            && obs
-                .catalog_checks
-                .get(&(
-                    "authoring_command_audit".to_string(),
-                    AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
-                ))
-                .is_none_or(|definition| definition != AUTHORING_COMMAND_KIND_CHECK_DEF))
+            && !authoring_retry_ledger_ready(obs))
 }
 
 fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) -> String {
@@ -2429,20 +2478,14 @@ fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) 
         .catalog_columns
         .get("validated_flow_drafts")
         .is_some_and(|columns| columns.contains("suite_flow_version"));
-    let audit_check_drifted = obs.catalog_tables.contains("authoring_command_audit")
-        && obs
-            .catalog_checks
-            .get(&(
-                "authoring_command_audit".to_string(),
-                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
-            ))
-            .is_none_or(|definition| definition != AUTHORING_COMMAND_KIND_CHECK_DEF);
+    let audit_retry_drifted = obs.catalog_tables.contains("authoring_command_audit")
+        && !authoring_retry_ledger_ready(obs);
     let mut statements = Vec::new();
     let mut lock_targets = Vec::new();
     if validation_dimension_present {
         lock_targets.push("catalog.validated_flow_drafts");
     }
-    if audit_check_drifted {
+    if audit_retry_drifted {
         lock_targets.push("catalog.authoring_command_audit");
     }
     if !lock_targets.is_empty() {
@@ -2477,24 +2520,38 @@ fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) 
                 .to_string(),
         );
     }
-    if audit_check_drifted {
+    if audit_retry_drifted {
         statements.push(
-            "DO $retired_authoring_commands$ BEGIN \
-               IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit \
-                           WHERE command_kind IN ('suite-run', 'suite-projection')) \
+            "DO $authoring_retry_ledger_cutover$ BEGIN \
+               IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit) \
                THEN RAISE EXCEPTION USING ERRCODE = '55000', \
-                    MESSAGE = 'retired-authoring-command-history-requires-reprovision'; \
+                    MESSAGE = 'authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision'; \
                END IF; \
-             END $retired_authoring_commands$"
+             END $authoring_retry_ledger_cutover$"
                 .to_string(),
         );
         statements.push(
             "ALTER TABLE catalog.authoring_command_audit \
+               DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey, \
+               DROP CONSTRAINT IF EXISTS authoring_command_audit_audit_id_key, \
                DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check, \
+               DROP CONSTRAINT IF EXISTS authoring_command_audit_request_hash_check, \
+               DROP CONSTRAINT IF EXISTS authoring_command_audit_outcome_present, \
+               DROP COLUMN IF EXISTS request_hash, \
+               DROP COLUMN IF EXISTS outcome_bytes, \
+               ADD COLUMN request_hash text NOT NULL, \
+               ADD COLUMN outcome_bytes bytea NOT NULL, \
+               ADD CONSTRAINT authoring_command_audit_pkey \
+                   PRIMARY KEY (tenant_id, principal_id, command_id), \
+               ADD CONSTRAINT authoring_command_audit_audit_id_key \
+                   UNIQUE (tenant_id, audit_id), \
                ADD CONSTRAINT authoring_command_audit_command_kind_check \
                CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run', \
-                                       'publish', 'grant-draft-safe-generation', \
-                                       'revoke-draft-safe-generation'))"
+                                       'test-set-run', 'publish')), \
+               ADD CONSTRAINT authoring_command_audit_request_hash_check \
+                   CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'), \
+               ADD CONSTRAINT authoring_command_audit_outcome_present \
+                   CHECK (octet_length(outcome_bytes) > 0)"
                 .to_string(),
         );
     }
@@ -5714,6 +5771,35 @@ CREATE INDEX event_registrations_by_entity
             ),
             AUTHORING_COMMAND_KIND_CHECK_DEF.to_string(),
         );
+        for (name, definition) in [
+            (
+                AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME,
+                AUTHORING_COMMAND_REQUEST_HASH_CHECK_DEF,
+            ),
+            (
+                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME,
+                AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_DEF,
+            ),
+        ] {
+            obs.catalog_checks.insert(
+                ("authoring_command_audit".to_string(), name.to_string()),
+                definition.to_string(),
+            );
+        }
+        for (column, column_type) in [("request_hash", "text"), ("outcome_bytes", "bytea")] {
+            let key = ("authoring_command_audit".to_string(), column.to_string());
+            obs.catalog_non_nullable_columns.insert(key.clone());
+            obs.catalog_column_types
+                .insert(key, column_type.to_string());
+        }
+        obs.catalog_indexes.insert(
+            "authoring_command_audit_pkey".to_string(),
+            AUTHORING_COMMAND_PRIMARY_INDEX_DEF.to_string(),
+        );
+        obs.catalog_indexes.insert(
+            "authoring_command_audit_audit_id_key".to_string(),
+            AUTHORING_COMMAND_AUDIT_ID_INDEX_DEF.to_string(),
+        );
         obs.catalog_non_nullable_columns.insert((
             "release_flows".to_string(),
             "execution_bundle_hash".to_string(),
@@ -6717,28 +6803,54 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn retired_command_kinds_refuse_history_before_tightening_the_check() {
+    fn authoring_retry_ledger_cutover_is_empty_only_exact_and_idempotent() {
         let mut legacy = observation_at_record();
-        legacy.catalog_checks.insert(
-            (
-                "authoring_command_audit".to_string(),
-                AUTHORING_COMMAND_KIND_CHECK_NAME.to_string(),
-            ),
+        legacy
+            .catalog_columns
+            .get_mut("authoring_command_audit")
+            .unwrap()
+            .retain(|column| !["request_hash", "outcome_bytes"].contains(&column.as_str()));
+        for column in ["request_hash", "outcome_bytes"] {
+            let key = ("authoring_command_audit".to_string(), column.to_string());
+            legacy.catalog_non_nullable_columns.remove(&key);
+            legacy.catalog_column_types.remove(&key);
+        }
+        for name in [
+            AUTHORING_COMMAND_KIND_CHECK_NAME,
+            AUTHORING_COMMAND_REQUEST_HASH_CHECK_NAME,
+            AUTHORING_COMMAND_OUTCOME_PRESENT_CHECK_NAME,
+        ] {
+            legacy
+                .catalog_checks
+                .remove(&("authoring_command_audit".to_string(), name.to_string()));
+        }
+        legacy.catalog_indexes.insert(
+            "authoring_command_audit_pkey".to_string(),
             "legacy".to_string(),
         );
+        legacy
+            .catalog_indexes
+            .remove("authoring_command_audit_audit_id_key");
 
         let plan = plan_run_plane(&schema("demo"), &legacy);
         let cutover = plan
             .actions
             .iter()
             .find(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
-            .expect("retired command vocabulary plans a cutover");
+            .expect("legacy audit shape plans a retry-ledger cutover");
         for required in [
             "LOCK TABLE catalog.authoring_command_audit IN ACCESS EXCLUSIVE MODE",
-            "command_kind IN ('suite-run', 'suite-projection')",
-            "retired-authoring-command-history-requires-reprovision",
-            "DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check",
+            "IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit)",
+            "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision",
+            "DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey",
+            "DROP COLUMN IF EXISTS request_hash",
+            "ADD COLUMN request_hash text NOT NULL",
+            "ADD COLUMN outcome_bytes bytea NOT NULL",
+            "PRIMARY KEY (tenant_id, principal_id, command_id)",
+            "UNIQUE (tenant_id, audit_id)",
             "ADD CONSTRAINT authoring_command_audit_command_kind_check",
+            "ADD CONSTRAINT authoring_command_audit_request_hash_check",
+            "ADD CONSTRAINT authoring_command_audit_outcome_present",
         ] {
             assert!(
                 cutover.sql.contains(required),
@@ -6749,10 +6861,12 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             cutover
                 .sql
-                .find("retired-authoring-command-history-requires-reprovision")
+                .find(
+                    "authoring-command-retry-ledger-cutover-requires-empty-audit-or-archive-and-reprovision",
+                )
                 < cutover
                     .sql
-                    .find("DROP CONSTRAINT IF EXISTS authoring_command_audit_command_kind_check")
+                    .find("DROP CONSTRAINT IF EXISTS authoring_command_audit_pkey")
         );
         assert!(
             !cutover
@@ -6764,6 +6878,7 @@ CREATE INDEX event_registrations_by_entity
                 .sql
                 .contains("UPDATE catalog.authoring_command_audit")
         );
+        assert!(plan_run_plane(&schema("demo"), &observation_at_record()).is_noop());
     }
 
     #[test]

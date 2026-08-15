@@ -274,15 +274,21 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
     project           text NOT NULL CHECK (project <> ''),
     environment       text NOT NULL CHECK (environment <> ''),
     target_ref        text NOT NULL CHECK (target_ref <> ''),
+    request_hash      text NOT NULL,
+    outcome_bytes     bytea NOT NULL,
     provenance_commit text,
     provenance_ref    text,
     provenance_dirty  boolean,
     recorded_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (tenant_id, audit_id),
+    PRIMARY KEY (tenant_id, principal_id, command_id),
+    CONSTRAINT authoring_command_audit_audit_id_key UNIQUE (tenant_id, audit_id),
+    CONSTRAINT authoring_command_audit_request_hash_check
+        CHECK (request_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CONSTRAINT authoring_command_audit_outcome_present
+        CHECK (octet_length(outcome_bytes) > 0),
     CONSTRAINT authoring_command_audit_command_kind_check
         CHECK (command_kind IN ('save-flow-draft', 'validate', 'draft-run',
-                                'publish', 'grant-draft-safe-generation',
-                                'revoke-draft-safe-generation')),
+                                'test-set-run', 'publish')),
     CONSTRAINT authoring_command_audit_principal_kind_check
         CHECK (principal_kind IN ('human', 'service')),
     CONSTRAINT authoring_command_audit_effective_role_check
@@ -836,7 +842,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'fb752b794bed00e6180f3b621349fb0257bf099b0e1c740d3e0a3c12993a9edb'
+       '91f3ffe851e16145aa96b6e2f1ccf56da70fafa300e238641e74ea524552dfab'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

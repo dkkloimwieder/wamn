@@ -1,10 +1,6 @@
 # Schema-first request collection for authoring-surface.schema.json version 0.1.
-#
-# The caller supplies the complete adapter endpoint and one principal's bearer
-# token. Neither value has a checked-in default. The POST method is this
-# collection's runner convention, not an additional route contract.
-#
-# CLI naming: `promote` sends the public schema command `publish`.
+# Commands carry command-id exact-retry identity. Queries carry bounded query-id
+# trace correlation only and never enter the command ledger.
 
 ### save-flow-draft
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
@@ -12,31 +8,7 @@ Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
 Accept: application/json
 Content-Type: application/json
 
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "save-receiving-draft-3",
-    "command": {
-      "kind": "save-flow-draft",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "draft-id": "draft-receiving",
-        "flow-id": "receive-material",
-        "expected-revision": 2,
-        "definition": "{\"schema-version\":\"0.1\",\"flow-id\":\"receive-material\",\"version\":4,\"nodes\":[{\"id\":\"request\",\"type\":\"request\",\"config\":{\"input-schema\":true}},{\"id\":\"respond\",\"type\":\"respond\",\"config\":{\"status\":200}}],\"edges\":[{\"from\":\"request\",\"to\":\"respond\"}]}",
-        "provenance": {
-          "commit": "0123456789abcdef0123456789abcdef01234567",
-          "ref": "refs/heads/main",
-          "dirty": false
-        }
-      }
-    }
-  }
-}
+{"document":"request","body":{"schema-version":"0.1","command-id":"save-draft-3","command":{"kind":"save-flow-draft","input":{"scope":{"project-id":"receiving","environment":"dev"},"draft-id":"draft-receiving","flow-id":"receive-material","expected-revision":2,"definition":"{draft","provenance":{"commit":"0123456789abcdef0123456789abcdef01234567","ref":"refs/heads/main","dirty":false}}}}}
 
 ### validate
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
@@ -44,26 +16,7 @@ Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
 Accept: application/json
 Content-Type: application/json
 
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "validate-receiving-draft-3",
-    "command": {
-      "kind": "validate",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "draft": {
-          "draft-id": "draft-receiving",
-          "revision": 3
-        }
-      }
-    }
-  }
-}
+{"document":"request","body":{"schema-version":"0.1","command-id":"validate-draft-3","command":{"kind":"validate","input":{"scope":{"project-id":"receiving","environment":"dev"},"draft":{"draft-id":"draft-receiving","revision":3}}}}}
 
 ### draft-run
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
@@ -71,29 +24,15 @@ Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
 Accept: application/json
 Content-Type: application/json
 
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "run-receiving-draft-3",
-    "command": {
-      "kind": "draft-run",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "validated-draft": {
-          "validated-draft-id": "sha256:validated-draft-v4"
-        },
-        "input": {
-          "receipt-id": "receipt-1042",
-          "material": "aluminum"
-        }
-      }
-    }
-  }
-}
+{"document":"request","body":{"schema-version":"0.1","command-id":"draft-run-3","command":{"kind":"draft-run","input":{"scope":{"project-id":"receiving","environment":"dev"},"validated-draft":{"validated-draft-id":"sha256:validated-v4"},"input":{"material":"aluminum"}}}}}
+
+### test-set-run
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{"document":"request","body":{"schema-version":"0.1","command-id":"test-set-run-3","command":{"kind":"test-set-run","input":{"scope":{"project-id":"receiving","environment":"dev"},"validated-draft":{"validated-draft-id":"sha256:validated-v4"},"test-set":{"definition":"{\"schema-version\":\"0.1\",\"cases\":[{\"case-id\":\"accepted\",\"input\":{},\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}]}"}}}}}
 
 ### publish
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
@@ -101,23 +40,28 @@ Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
 Accept: application/json
 Content-Type: application/json
 
-{
-  "document": "request",
-  "body": {
-    "schema-version": "0.1",
-    "command-id": "publish-receiving-draft-3",
-    "command": {
-      "kind": "publish",
-      "input": {
-        "scope": {
-          "project-id": "receiving",
-          "environment": "dev"
-        },
-        "validated-draft": {
-          "validated-draft-id": "sha256:validated-draft-v4"
-        },
-        "successful-report-id": "report-receiving-3"
-      }
-    }
-  }
-}
+{"document":"request","body":{"schema-version":"0.1","command-id":"publish-draft-3","command":{"kind":"publish","input":{"scope":{"project-id":"receiving","environment":"dev"},"validated-draft":{"validated-draft-id":"sha256:validated-v4"},"successful-report-id":"report-3"}}}}
+
+### read-draft
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{"document":"request","body":{"schema-version":"0.1","query-id":"read-draft-3","query":{"kind":"read-draft","input":{"scope":{"project-id":"receiving","environment":"dev"},"draft":{"draft-id":"draft-receiving","revision":3}}}}}
+
+### get-run
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{"document":"request","body":{"schema-version":"0.1","query-id":"get-run-1042","query":{"kind":"get-run","input":{"scope":{"project-id":"receiving","environment":"dev"},"run-id":"run-1042"}}}}
+
+### get-report
+POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}
+Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
+Accept: application/json
+Content-Type: application/json
+
+{"document":"request","body":{"schema-version":"0.1","query-id":"get-report-3","query":{"kind":"get-report","input":{"scope":{"project-id":"receiving","environment":"dev"},"report-id":"report-3"}}}}

@@ -18,7 +18,7 @@ readonly OWNER="bd:wamn-ftfc.14"
 readonly OUTCOME="the generated authoring collection detects a silently dropped optional field"
 
 readonly TARGET="clients/authoring-client/src/cli/cli.ts"
-readonly EXPECTED_SHA="a23009cc4b8a06cf5f2acd4cadc12e60b2d82142851e2ff1c1d8a26c4b81d812"
+readonly EXPECTED_SHA="67a6fd1ac9b88ed0628be30a704ecb48f8eb82074a207843827d58b2fd0c4da2"
 readonly NEEDLE='    ...(options.provenance === undefined ? {} : { provenance: options.provenance }),'
 readonly REPLACEMENT='    ...(options.provenance === undefined ? {} : {}),'
 readonly GATE="every CLI request has the shape of its checked-in collection section"

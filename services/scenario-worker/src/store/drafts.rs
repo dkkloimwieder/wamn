@@ -143,32 +143,6 @@ pub fn select_validated_flow_draft_sql() -> &'static str {
         AND draft.binding_base_artifact_hash = $11 AND draft.validated_draft_hash = $12"
 }
 
-/// Install or restore draft-safe authority on one exact immutable generation.
-///
-/// This is called only by the internal development-administrator adapter.
-/// Params: tenant, environment, instance id, generation, reason.
-pub fn grant_draft_safe_generation_sql() -> &'static str {
-    "INSERT INTO catalog.draft_safe_connection_grants \
-       (tenant_id, environment, instance_id, generation, reason) \
-     VALUES ($1, $2, $3, $4, $5) \
-     ON CONFLICT (tenant_id, environment, instance_id, generation) DO UPDATE \
-       SET revoked_at = NULL, reason = EXCLUDED.reason, \
-           granted_at = GREATEST( \
-               clock_timestamp(), \
-               draft_safe_connection_grants.granted_at + interval '1 microsecond', \
-               COALESCE(draft_safe_connection_grants.revoked_at + interval '1 microsecond', \
-                        '-infinity'::timestamptz))"
-}
-
-/// Revoke draft-safe authority without mutating the connection generation.
-///
-/// Params: tenant, environment, instance id, generation.
-pub fn revoke_draft_safe_generation_sql() -> &'static str {
-    "UPDATE catalog.draft_safe_connection_grants SET revoked_at = clock_timestamp() \
-      WHERE tenant_id = $1 AND environment = $2 AND instance_id = $3 \
-        AND generation = $4 AND revoked_at IS NULL"
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,14 +246,5 @@ mod tests {
         assert!(reload.contains("draft.draft_id, draft.draft_revision, draft.draft_edited_at"));
         assert!(!reload.contains("JOIN catalog.flow_drafts"));
         assert!(!reload.contains("FROM catalog.flow_drafts"));
-    }
-
-    #[test]
-    fn rapid_regrant_advances_authority_time_past_grant_and_revocation() {
-        let sql = grant_draft_safe_generation_sql();
-        assert!(sql.contains("granted_at = GREATEST("));
-        assert!(sql.contains("granted_at + interval '1 microsecond'"));
-        assert!(sql.contains("revoked_at + interval '1 microsecond'"));
-        assert!(sql.contains("SET revoked_at = NULL"));
     }
 }

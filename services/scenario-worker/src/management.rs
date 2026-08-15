@@ -2,11 +2,11 @@
 //!
 //! This is the boundary `authoring.rs` deferred until item 5 owned retained
 //! client identity. It verifies a personal-access-token presenter against the T1
-//! system database, derives trusted principal and project-role context, records
-//! that principal on an append-only command ledger, and only then invokes the
-//! internal adapter. The adapter itself stays principal-free: it keeps its
-//! process-local capability token and learns who the caller was only through the
-//! ledger row this module writes.
+//! system database, derives trusted principal and project-role context, and runs
+//! the internal adapter in the same transaction that appends the completed
+//! outcome to the command ledger. The mutation and completed ledger row are
+//! atomic: neither commits without the other. The adapter itself stays
+//! principal-free; only the ledger retains the verified attribution.
 //!
 //! Trusted context never comes from the request. [`AuthorizedAuthor`] has no
 //! public constructor and implements no deserialization trait, exactly like the
@@ -28,21 +28,19 @@ use hyper_util::rt::TokioIo;
 use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio_postgres::{Client, GenericClient, NoTls};
+use tracing::Instrument as _;
 
 use wamn_authoring_model::{
-    AuthoringCommand, AuthoringCommandKind, AuthoringDocument, AuthoringOutcome, AuthoringRefusal,
-    AuthoringRequest, AuthoringResponse, AuthoringSuccess, CommandRefusal, CommitProvenance,
-    ContractDecodeError, DraftIdentity, SCHEMA_VERSION, SafeUint64, decode_document,
+    AuthoringCommand, AuthoringDocument, AuthoringOutcome, AuthoringQuery, AuthoringQueryRequest,
+    AuthoringRequest, AuthoringRequestEnvelope, AuthoringResponse, AuthoringResponseEnvelope,
+    AuthoringSuccess, CommandRefusal, CommitProvenance, ContractDecodeErrorKind, DraftIdentity,
+    SCHEMA_VERSION, SafeUint64, SaveFlowDraftRefusal, decode_document,
 };
 use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
 };
 
-use crate::authoring::{
-    DraftRunRefusal, GrantDraftSafeGeneration, InternalAuthoringBackend, RevokeDraftSafeGeneration,
-    RevokeDraftSafeGenerationResult, SaveFlowDraft, SaveFlowDraftResult, ValidateFlowDraft,
-    ValidatedDraftPin,
-};
+use crate::authoring::{InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult};
 
 /// The append-only ledger row every authorized management command writes.
 ///
@@ -54,8 +52,19 @@ use crate::authoring::{
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
     (tenant_id, command_id, command_kind, principal_id, principal_kind, \
      principal_subject, effective_role, org, project, environment, target_ref, \
-     provenance_commit, provenance_ref, provenance_dirty) \
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)";
+     request_hash, outcome_bytes, provenance_commit, provenance_ref, provenance_dirty) \
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)";
+
+/// Serialize one principal-scoped retry identity before reading or executing.
+/// Hash collisions only over-serialize unrelated commands; the exact primary
+/// key and request hash still decide replay versus reuse.
+const LOCK_COMMAND_RETRY_SQL: &str = "SELECT pg_catalog.pg_advisory_xact_lock( \
+    pg_catalog.hashtextextended( \
+      pg_catalog.jsonb_build_array($1::text, $2::text, $3::text)::text, 0))";
+
+const SELECT_COMMAND_RETRY_SQL: &str = "SELECT request_hash, outcome_bytes \
+    FROM catalog.authoring_command_audit \
+    WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3";
 
 /// Bearer scheme this surface accepts, including its single trailing space.
 const BEARER_SCHEME: &str = "Bearer ";
@@ -99,17 +108,13 @@ impl fmt::Display for ManagementRole {
 
 /// Every command the ledger can attribute.
 ///
-/// A superset of the client contract inventory: the two connection-generation
-/// mutations are host-side operator actions with no client command, but they are
-/// canonical authoring mutations and are attributed like the rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AuditedCommand {
     SaveFlowDraft,
     Validate,
     DraftRun,
+    TestSetRun,
     Publish,
-    GrantDraftSafeGeneration,
-    RevokeDraftSafeGeneration,
 }
 
 impl AuditedCommand {
@@ -120,9 +125,8 @@ impl AuditedCommand {
             Self::SaveFlowDraft => "save-flow-draft",
             Self::Validate => "validate",
             Self::DraftRun => "draft-run",
+            Self::TestSetRun => "test-set-run",
             Self::Publish => "publish",
-            Self::GrantDraftSafeGeneration => "grant-draft-safe-generation",
-            Self::RevokeDraftSafeGeneration => "revoke-draft-safe-generation",
         }
     }
 }
@@ -199,7 +203,8 @@ impl CommandScope {
     }
 }
 
-/// One authorized management command, recorded before the command runs.
+/// Attribution used to append one completed command outcome atomically with its
+/// mutation.
 ///
 /// Construction takes an [`AuthorizedAuthor`], so an attributed row cannot be
 /// built without a verified presenter.
@@ -214,6 +219,27 @@ pub struct CommandAudit {
     /// verbatim beside the principal that was actually verified. It is written,
     /// never read: nothing on this path branches on it.
     provenance: Option<CommitProvenance>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct StoredCommandOutcome {
+    request_hash: String,
+    outcome_bytes: Vec<u8>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RetryDecision {
+    Execute,
+    Replay,
+    Reuse,
+}
+
+fn classify_retry(existing: Option<&StoredCommandOutcome>, request_hash: &str) -> RetryDecision {
+    match existing {
+        None => RetryDecision::Execute,
+        Some(existing) if existing.request_hash == request_hash => RetryDecision::Replay,
+        Some(_) => RetryDecision::Reuse,
+    }
 }
 
 impl CommandAudit {
@@ -280,8 +306,10 @@ fn author_from_authenticated(
 
 /// Write one attributed ledger row on an already-scoped author credential.
 pub(crate) async fn insert_command_audit(
-    client: &Client,
+    client: &(impl GenericClient + Sync),
     audit: &CommandAudit,
+    request_hash: &str,
+    outcome_bytes: &[u8],
 ) -> anyhow::Result<()> {
     client
         .execute(
@@ -298,6 +326,8 @@ pub(crate) async fn insert_command_audit(
                 &audit.scope.project.as_ref(),
                 &audit.scope.environment.as_ref(),
                 &audit.target_ref.as_ref(),
+                &request_hash,
+                &outcome_bytes,
                 &audit
                     .provenance
                     .as_ref()
@@ -314,31 +344,6 @@ pub(crate) async fn insert_command_audit(
     Ok(())
 }
 
-/// Record the attributed ledger row for one command about to run.
-///
-/// The row is written before the command, so the ledger retains every
-/// authorized attempt rather than only the attempts that happened to succeed —
-/// this audit's own append-only posture preserves authorized attempts.
-async fn record(
-    backend: &mut InternalAuthoringBackend,
-    author: &AuthorizedAuthor,
-    scope: &CommandScope,
-    command_id: &str,
-    command: AuditedCommand,
-    target_ref: &str,
-    provenance: Option<&CommitProvenance>,
-) -> anyhow::Result<()> {
-    let audit = CommandAudit {
-        scope: scope.clone(),
-        command_id: command_id.into(),
-        command,
-        author: author.clone(),
-        target_ref: target_ref.into(),
-        provenance: provenance.cloned(),
-    };
-    backend.record_command_audit(&audit).await
-}
-
 /// Save one flow draft, attributing the save to its verified author.
 ///
 /// `provenance` is the client's optional claim about where it read the content.
@@ -349,85 +354,119 @@ pub async fn save_flow_draft(
     backend: &mut InternalAuthoringBackend,
     author: &AuthorizedAuthor,
     scope: &CommandScope,
-    command_id: &str,
+    command: &AuthoringRequest,
     request: &SaveFlowDraft,
-    provenance: Option<&CommitProvenance>,
-) -> anyhow::Result<SaveFlowDraftResult> {
-    record(
-        backend,
-        author,
-        scope,
-        command_id,
-        AuditedCommand::SaveFlowDraft,
-        &request.draft_id,
-        provenance,
-    )
-    .await?;
-    backend.save_flow_draft(request).await
+) -> anyhow::Result<Vec<u8>> {
+    let AuthoringCommand::SaveFlowDraft(input) = &command.command else {
+        anyhow::bail!("save handler received a non-save command");
+    };
+    let request_hash = canonical_request_hash(command)?;
+    let audit = CommandAudit {
+        scope: scope.clone(),
+        command_id: command.command_id.clone().into(),
+        command: AuditedCommand::SaveFlowDraft,
+        author: author.clone(),
+        target_ref: request.draft_id.clone().into(),
+        provenance: input.provenance.clone(),
+    };
+
+    let (authority, transaction) = backend.begin_command_transaction(audit.tenant_id()).await?;
+    transaction
+        .query_one(
+            LOCK_COMMAND_RETRY_SQL,
+            &[
+                &audit.scope.tenant_id.as_ref(),
+                &audit.author.principal_id.as_ref(),
+                &audit.command_id.as_ref(),
+            ],
+        )
+        .await
+        .context("serialize authoring command retry identity")?;
+    let existing = transaction
+        .query_opt(
+            SELECT_COMMAND_RETRY_SQL,
+            &[
+                &audit.scope.tenant_id.as_ref(),
+                &audit.author.principal_id.as_ref(),
+                &audit.command_id.as_ref(),
+            ],
+        )
+        .await
+        .context("read authoring command retry outcome")?
+        .map(|row| StoredCommandOutcome {
+            request_hash: row.get(0),
+            outcome_bytes: row.get(1),
+        });
+    match classify_retry(existing.as_ref(), &request_hash) {
+        RetryDecision::Replay => {
+            let outcome = existing
+                .expect("replay requires a stored outcome")
+                .outcome_bytes;
+            transaction
+                .commit()
+                .await
+                .context("commit exact retry read")?;
+            return Ok(outcome);
+        }
+        RetryDecision::Reuse => {
+            let outcome = command_response_bytes(
+                &command.command_id,
+                AuthoringOutcome::Refused(CommandRefusal::SaveFlowDraft(
+                    SaveFlowDraftRefusal::CommandIdReuse,
+                )),
+            )?;
+            transaction
+                .commit()
+                .await
+                .context("commit divergent retry read")?;
+            return Ok(outcome);
+        }
+        RetryDecision::Execute => {}
+    }
+
+    let saved = crate::authoring::save_flow_draft(&authority, &transaction, request).await?;
+    let outcome = match saved {
+        SaveFlowDraftResult::Saved { revision, .. } => {
+            let revision = SafeUint64::try_from(revision)
+                .context("stored revision exceeds the exactly representable wire domain")?;
+            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SaveFlowDraft(DraftIdentity {
+                draft_id: input.draft_id.clone(),
+                flow_id: input.flow_id.clone(),
+                revision,
+            })))
+        }
+        SaveFlowDraftResult::RevisionConflict => AuthoringOutcome::Refused(
+            CommandRefusal::SaveFlowDraft(SaveFlowDraftRefusal::RevisionConflict {
+                expected_revision: input.expected_revision,
+                actual_revision: None,
+            }),
+        ),
+    };
+    let outcome_bytes = command_response_bytes(&command.command_id, outcome)?;
+    insert_command_audit(&transaction, &audit, &request_hash, &outcome_bytes).await?;
+    transaction
+        .commit()
+        .await
+        .context("commit authoring command and exact retry outcome")?;
+    Ok(outcome_bytes)
 }
 
-/// Validate one exact draft revision, attributing it to its verified author.
-pub async fn validate_flow_draft(
-    backend: &mut InternalAuthoringBackend,
-    author: &AuthorizedAuthor,
-    scope: &CommandScope,
-    command_id: &str,
-    request: &ValidateFlowDraft,
-    flowrunner_bytes: &[u8],
-) -> anyhow::Result<Result<ValidatedDraftPin, DraftRunRefusal>> {
-    record(
-        backend,
-        author,
-        scope,
-        command_id,
-        AuditedCommand::Validate,
-        &request.draft_id,
-        None,
-    )
-    .await?;
-    backend.validate_flow_draft(request, flowrunner_bytes).await
+fn canonical_request_hash(command: &AuthoringRequest) -> anyhow::Result<String> {
+    let value = serde_json::to_value(command).context("project closed command request to JSON")?;
+    Ok(crate::store::sha256(&wamn_flow::canonical_json_bytes(
+        &value,
+    )))
 }
 
-/// Grant one draft-safe connection generation, attributing it to its author.
-pub async fn grant_draft_safe_generation(
-    backend: &mut InternalAuthoringBackend,
-    author: &AuthorizedAuthor,
-    scope: &CommandScope,
-    command_id: &str,
-    grant: &GrantDraftSafeGeneration,
-) -> anyhow::Result<()> {
-    record(
-        backend,
-        author,
-        scope,
-        command_id,
-        AuditedCommand::GrantDraftSafeGeneration,
-        &grant.instance_id,
-        None,
-    )
-    .await?;
-    backend.grant_draft_safe_generation(grant).await
-}
-
-/// Revoke one draft-safe connection generation, attributing it to its author.
-pub async fn revoke_draft_safe_generation(
-    backend: &mut InternalAuthoringBackend,
-    author: &AuthorizedAuthor,
-    scope: &CommandScope,
-    command_id: &str,
-    revoke: &RevokeDraftSafeGeneration,
-) -> anyhow::Result<RevokeDraftSafeGenerationResult> {
-    record(
-        backend,
-        author,
-        scope,
-        command_id,
-        AuditedCommand::RevokeDraftSafeGeneration,
-        &revoke.instance_id,
-        None,
-    )
-    .await?;
-    backend.revoke_draft_safe_generation(revoke).await
+fn command_response_bytes(command_id: &str, outcome: AuthoringOutcome) -> anyhow::Result<Vec<u8>> {
+    serde_json::to_vec(&AuthoringDocument::Response(Box::new(
+        AuthoringResponseEnvelope::Command(AuthoringResponse {
+            schema_version: SCHEMA_VERSION.to_owned(),
+            command_id: command_id.to_owned(),
+            outcome,
+        }),
+    )))
+    .context("serialize exact authoring outcome envelope")
 }
 
 /// Arguments for the authenticated management authoring listener.
@@ -470,6 +509,7 @@ pub struct ManagementServeArgs {
 struct Surface {
     identity: Client,
     backend: tokio::sync::Mutex<InternalAuthoringBackend>,
+    query_adapter: UnmountedAuthoringQueryAdapter,
     org: Box<str>,
     project: Box<str>,
     tenant: Box<str>,
@@ -514,6 +554,7 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
     let surface = Arc::new(Surface {
         identity,
         backend: tokio::sync::Mutex::new(backend),
+        query_adapter: UnmountedAuthoringQueryAdapter,
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
         tenant: args.tenant.into_boxed_str(),
@@ -579,23 +620,61 @@ async fn authoring_command(
     };
     let document = match decode_document(text) {
         Ok(document) => document,
-        Err(ContractDecodeError::UnsupportedContractVersion { requested }) => {
+        Err(error) if error.kind() == ContractDecodeErrorKind::UnsupportedContractVersion => {
             return Ok(json(
                 StatusCode::BAD_REQUEST,
-                &AuthoringRefusal::UnsupportedContractVersion {
-                    requested,
-                    supported: SCHEMA_VERSION.to_owned(),
-                },
+                &serde_json::json!({
+                    "kind": "unsupported-contract-version",
+                    "requested": error.requested().unwrap_or_default(),
+                    "supported": SCHEMA_VERSION,
+                }),
             ));
         }
         // `deny_unknown_fields` on every contract type means a body that tries
         // to assert a principal lands here and never reaches a command.
         Err(_) => return Ok(empty(StatusCode::BAD_REQUEST)),
     };
-    let AuthoringDocument::Request(command) = document else {
+    let AuthoringDocument::Request(request) = document else {
         return Ok(empty(StatusCode::BAD_REQUEST));
     };
-    dispatch(surface, &author, &command).await
+    match request.as_ref() {
+        AuthoringRequestEnvelope::Command(command) => {
+            dispatch_command(surface, &author, command).await
+        }
+        AuthoringRequestEnvelope::Query(query) => {
+            surface.query_adapter.dispatch_unmounted(query).await
+        }
+    }
+}
+
+/// Explicit .7.3 query seam. Production mounting and storage reads belong to
+/// .7.4 and its operation owners, so this adapter can only emit correlation and
+/// report that the query is unmounted.
+#[derive(Clone, Copy, Debug, Default)]
+struct UnmountedAuthoringQueryAdapter;
+
+impl UnmountedAuthoringQueryAdapter {
+    async fn dispatch_unmounted(
+        self,
+        request: &AuthoringQueryRequest,
+    ) -> anyhow::Result<Response<Full<Bytes>>> {
+        let span = tracing::info_span!(
+            "authoring_query",
+            query_id = %request.query_id,
+            query = query_kind(&request.query),
+        );
+        async { Ok(empty(StatusCode::NOT_IMPLEMENTED)) }
+            .instrument(span)
+            .await
+    }
+}
+
+const fn query_kind(query: &AuthoringQuery) -> &'static str {
+    match query {
+        AuthoringQuery::ReadDraft(_) => "read-draft",
+        AuthoringQuery::GetRun(_) => "get-run",
+        AuthoringQuery::GetReport(_) => "get-report",
+    }
 }
 
 /// Dispatch one decoded command.
@@ -617,7 +696,7 @@ async fn authoring_command(
 ///   pin that names no real executable.
 /// - `draft-run` has no backend for admitting one arbitrary authored input.
 /// - `publish` has no backend.
-async fn dispatch(
+async fn dispatch_command(
     surface: &Surface,
     author: &AuthorizedAuthor,
     command: &AuthoringRequest,
@@ -644,43 +723,9 @@ async fn dispatch(
         definition: input.definition.clone(),
     };
     let mut backend = surface.backend.lock().await;
-    let saved = save_flow_draft(
-        &mut backend,
-        author,
-        &scope,
-        &command.command_id,
-        &request,
-        input.provenance.as_ref(),
-    )
-    .await?;
+    let outcome_bytes = save_flow_draft(&mut backend, author, &scope, command, &request).await?;
     drop(backend);
-
-    let outcome = match saved {
-        SaveFlowDraftResult::Saved { revision, .. } => {
-            let revision = SafeUint64::try_from(revision)
-                .context("stored revision exceeds the exactly representable wire domain")?;
-            AuthoringOutcome::Completed(Box::new(AuthoringSuccess::SaveFlowDraft(DraftIdentity {
-                draft_id: input.draft_id.clone(),
-                flow_id: input.flow_id.clone(),
-                revision,
-            })))
-        }
-        SaveFlowDraftResult::RevisionConflict => AuthoringOutcome::Refused(CommandRefusal {
-            command: AuthoringCommandKind::SaveFlowDraft,
-            reason: AuthoringRefusal::RevisionConflict {
-                expected_revision: input.expected_revision,
-                actual_revision: None,
-            },
-        }),
-    };
-    Ok(json(
-        StatusCode::OK,
-        &AuthoringDocument::Response(Box::new(AuthoringResponse {
-            schema_version: SCHEMA_VERSION.to_owned(),
-            command_id: command.command_id.clone(),
-            outcome,
-        })),
-    ))
+    Ok(json_bytes(StatusCode::OK, outcome_bytes))
 }
 
 /// Return the presented bearer token, or `None` when the header is absent or
@@ -705,12 +750,20 @@ fn bearer<B>(request: &Request<B>) -> Option<&str> {
 fn authorization_denied() -> Response<Full<Bytes>> {
     json(
         StatusCode::FORBIDDEN,
-        &AuthoringRefusal::AuthorizationDenied,
+        &serde_json::json!({"kind": "authorization-denied"}),
     )
 }
 
 fn json(status: StatusCode, value: &impl Serialize) -> Response<Full<Bytes>> {
     let body = serde_json::to_vec(value).expect("contract documents serialize");
+    Response::builder()
+        .status(status)
+        .header(hyper::header::CONTENT_TYPE, "application/json")
+        .body(Full::new(Bytes::from(body)))
+        .expect("static response builds")
+}
+
+fn json_bytes(status: StatusCode, body: Vec<u8>) -> Response<Full<Bytes>> {
     Response::builder()
         .status(status)
         .header(hyper::header::CONTENT_TYPE, "application/json")
@@ -728,6 +781,7 @@ fn empty(status: StatusCode) -> Response<Full<Bytes>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wamn_authoring_model::{AuthoringCommandKind, AuthoringScope, GetRun, QueryId};
 
     /// The slice of this module between two top-level items, for the structural
     /// guards below.
@@ -752,10 +806,6 @@ mod tests {
 
     #[tokio::test]
     async fn every_authentication_failure_shares_one_frozen_refusal_document() {
-        assert_eq!(
-            serde_json::to_string(&AuthoringRefusal::AuthorizationDenied).unwrap(),
-            r#"{"kind":"authorization-denied"}"#
-        );
         let denied = authorization_denied();
         assert_eq!(denied.status(), StatusCode::FORBIDDEN);
         assert_eq!(
@@ -814,6 +864,7 @@ mod tests {
             ),
             (AuthoringCommandKind::Validate, AuditedCommand::Validate),
             (AuthoringCommandKind::DraftRun, AuditedCommand::DraftRun),
+            (AuthoringCommandKind::TestSetRun, AuditedCommand::TestSetRun),
             (AuthoringCommandKind::Publish, AuditedCommand::Publish),
         ] {
             let wire = serde_json::to_string(&kind).unwrap();
@@ -822,14 +873,6 @@ mod tests {
                 wire,
                 "ledger literal drifted from the contract for {kind:?}"
             );
-        }
-        // The two host-side mutations have no client command and must not
-        // collide with a contract literal.
-        for host_side in [
-            AuditedCommand::GrantDraftSafeGeneration,
-            AuditedCommand::RevokeDraftSafeGeneration,
-        ] {
-            assert!(host_side.as_str().ends_with("-draft-safe-generation"));
         }
     }
 
@@ -847,6 +890,8 @@ mod tests {
             "project",
             "environment",
             "target_ref",
+            "request_hash",
+            "outcome_bytes",
             "provenance_commit",
             "provenance_ref",
             "provenance_dirty",
@@ -858,6 +903,20 @@ mod tests {
         }
         assert!(INSERT_COMMAND_AUDIT_SQL.contains("catalog.authoring_command_audit"));
         assert!(INSERT_COMMAND_AUDIT_SQL.starts_with("INSERT INTO"));
+        for statement in [LOCK_COMMAND_RETRY_SQL, SELECT_COMMAND_RETRY_SQL] {
+            for identity_parameter in ["$1", "$2", "$3"] {
+                assert!(
+                    statement.contains(identity_parameter),
+                    "retry statement drops {identity_parameter}: {statement}"
+                );
+            }
+        }
+        assert_eq!(SELECT_COMMAND_RETRY_SQL.matches('$').count(), 3);
+        assert!(
+            SELECT_COMMAND_RETRY_SQL
+                .contains("WHERE tenant_id = $1 AND principal_id = $2 AND command_id = $3")
+        );
+        assert!(SELECT_COMMAND_RETRY_SQL.contains("request_hash, outcome_bytes"));
         assert!(
             !INSERT_COMMAND_AUDIT_SQL
                 .to_ascii_uppercase()
@@ -914,6 +973,109 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn query_adapter_is_trace_only_and_unmounted() {
+        let request = AuthoringQueryRequest {
+            schema_version: SCHEMA_VERSION.to_owned(),
+            query_id: QueryId::try_from("query-1".to_owned()).unwrap(),
+            query: AuthoringQuery::GetRun(GetRun {
+                scope: AuthoringScope {
+                    project_id: "project-a".to_owned(),
+                    environment: "dev".to_owned(),
+                },
+                run_id: "run-1".to_owned(),
+            }),
+        };
+        let response = UnmountedAuthoringQueryAdapter
+            .dispatch_unmounted(&request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        assert!(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .is_empty()
+        );
+
+        let source = include_str!("management.rs");
+        let adapter = between(
+            source,
+            "struct UnmountedAuthoringQueryAdapter;",
+            "/// Dispatch one decoded command",
+        );
+        for required in ["authoring_query", "query_id", "query_kind"] {
+            assert!(adapter.contains(required), "query trace omits {required}");
+        }
+        for forbidden in [
+            "backend",
+            "record(",
+            "INSERT ",
+            "UPDATE ",
+            "DELETE ",
+            ".execute(",
+            ".query(",
+        ] {
+            assert!(
+                !adapter.contains(forbidden),
+                "unmounted query adapter gained {forbidden}"
+            );
+        }
+        let implementation = source.split("#[cfg(test)]").next().unwrap();
+        assert!(!implementation.contains("authoring_query_log"));
+        assert!(!implementation.contains("authoring_query_audit"));
+    }
+
+    #[test]
+    fn canonical_request_hash_ignores_object_order_and_detects_content_change() {
+        let request = |input: serde_json::Value| {
+            serde_json::from_value::<AuthoringRequest>(serde_json::json!({
+                "schema-version": "0.1",
+                "command-id": "retry-1",
+                "command": {
+                    "kind": "draft-run",
+                    "input": {
+                        "scope": {"project-id": "project-a", "environment": "dev"},
+                        "validated-draft": {"validated-draft-id": "validated-1"},
+                        "input": input
+                    }
+                }
+            }))
+            .unwrap()
+        };
+        let left = request(serde_json::json!({"z": 1, "a": {"y": 2, "x": 3}}));
+        let reordered = request(serde_json::json!({"a": {"x": 3, "y": 2}, "z": 1}));
+        let changed = request(serde_json::json!({"a": {"x": 4, "y": 2}, "z": 1}));
+        assert_eq!(
+            canonical_request_hash(&left).unwrap(),
+            canonical_request_hash(&reordered).unwrap()
+        );
+        assert_ne!(
+            canonical_request_hash(&left).unwrap(),
+            canonical_request_hash(&changed).unwrap()
+        );
+    }
+
+    #[test]
+    fn retry_classifier_is_exact_hash_or_reuse() {
+        let stored = StoredCommandOutcome {
+            request_hash: "sha256:exact".to_owned(),
+            outcome_bytes: br#"{"document":"response"}"#.to_vec(),
+        };
+        assert_eq!(classify_retry(None, "sha256:exact"), RetryDecision::Execute);
+        assert_eq!(
+            classify_retry(Some(&stored), "sha256:exact"),
+            RetryDecision::Replay
+        );
+        assert_eq!(
+            classify_retry(Some(&stored), "sha256:changed"),
+            RetryDecision::Reuse
+        );
+    }
+
     #[test]
     fn identity_is_settled_before_the_request_body_is_read() {
         let source = include_str!("management.rs");
@@ -951,43 +1113,36 @@ mod tests {
     }
 
     #[test]
-    fn every_authored_mutation_records_before_it_runs() {
+    fn every_authored_mutation_and_completed_outcome_commit_atomically() {
         let source = include_str!("management.rs");
-        for (start, end, command) in [
-            (
-                "pub async fn save_flow_draft(",
-                "/// Validate one exact",
-                "AuditedCommand::SaveFlowDraft",
-            ),
-            (
-                "pub async fn validate_flow_draft(",
-                "/// Grant one draft-safe",
-                "AuditedCommand::Validate",
-            ),
-            (
-                "pub async fn grant_draft_safe_generation(",
-                "/// Revoke one draft-safe",
-                "AuditedCommand::GrantDraftSafeGeneration",
-            ),
-            (
-                "pub async fn revoke_draft_safe_generation(",
-                "/// Arguments for the",
-                "AuditedCommand::RevokeDraftSafeGeneration",
-            ),
-        ] {
-            let body = between(source, start, end);
-            let record_at = body
-                .find("record(")
-                .unwrap_or_else(|| panic!("{start} records an audit row"));
-            let run_at = body
-                .find("backend.")
-                .unwrap_or_else(|| panic!("{start} runs a command"));
-            assert!(record_at < run_at, "{start} runs before it attributes");
-            assert!(
-                body.contains(command),
-                "{start} attributes the wrong command"
-            );
-        }
+        let body = between(
+            source,
+            "pub async fn save_flow_draft(",
+            "fn canonical_request_hash(",
+        );
+        let lock_at = body.find("LOCK_COMMAND_RETRY_SQL").unwrap();
+        let lookup_at = body.find("SELECT_COMMAND_RETRY_SQL").unwrap();
+        let run_at = body
+            .find("crate::authoring::save_flow_draft")
+            .expect("the new identity executes the command");
+        let record_at = body
+            .find("insert_command_audit")
+            .expect("the completed command stores its outcome");
+        let commit_at = body.rfind(".commit()").expect("the transaction commits");
+        assert!(lock_at < lookup_at && lookup_at < run_at);
+        assert!(run_at < record_at && record_at < commit_at);
+        assert!(body.contains("AuditedCommand::SaveFlowDraft"));
+
+        let dispatch = between(
+            source,
+            "async fn dispatch_command(",
+            "/// Return the presented",
+        );
+        assert_eq!(
+            dispatch.matches("save_flow_draft(&mut backend").count(),
+            1,
+            "save is the sole mounted audited command"
+        );
     }
 
     /// Attribution a client attaches to a submission is never an input to the
@@ -1020,7 +1175,7 @@ mod tests {
         // dispatch with, unchanged.
         let handler = between(source, "async fn authoring_command(", "/// Dispatch one");
         assert!(
-            handler.contains("dispatch(surface, &author, &command)"),
+            handler.contains("dispatch_command(surface, &author, command)"),
             "the transport dispatches something other than the author it derived"
         );
         assert!(
@@ -1061,18 +1216,17 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("the module has an implementation");
-        let statements: Vec<&str> = implementation
-            .match_indices("INSERT INTO")
-            .chain(implementation.match_indices("SELECT "))
-            .chain(implementation.match_indices("UPDATE "))
-            .map(|(at, _)| &implementation[at..])
-            .collect();
-        assert_eq!(statements.len(), 1, "the transport gained a new statement");
-        assert!(statements[0].starts_with("INSERT INTO catalog.authoring_command_audit"));
+        assert_eq!(implementation.matches("INSERT INTO").count(), 1);
+        assert_eq!(implementation.matches("UPDATE ").count(), 0);
+        assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_commit"));
+        assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_ref"));
+        assert!(INSERT_COMMAND_AUDIT_SQL.contains("provenance_dirty"));
+        assert!(!LOCK_COMMAND_RETRY_SQL.contains("provenance"));
+        assert!(!SELECT_COMMAND_RETRY_SQL.contains("provenance"));
 
         let dispatch = between(
             source,
-            "async fn dispatch(",
+            "async fn dispatch_command(",
             "/// Return the presented bearer",
         );
         let command = between(dispatch, "let request = SaveFlowDraft {", "};");
@@ -1080,8 +1234,12 @@ mod tests {
             !command.contains("provenance"),
             "attribution reached the command: {command}"
         );
-        // It is passed beside the command, to the audited boundary only.
-        assert!(dispatch.contains("input.provenance.as_ref()"));
+        let handler = between(
+            source,
+            "pub async fn save_flow_draft(",
+            "fn canonical_request_hash(",
+        );
+        assert!(handler.contains("provenance: input.provenance.clone()"));
     }
 
     /// The platform stores submitted content; it does not become a Git client,
@@ -1129,7 +1287,7 @@ mod tests {
         assert!(args.contains("WAMN_AUTHORING_PG_URL"));
         let dispatch = between(
             source,
-            "async fn dispatch(",
+            "async fn dispatch_command(",
             "/// Return the presented bearer",
         );
         for authority in ["url", "Url", "connect(", "superuser"] {

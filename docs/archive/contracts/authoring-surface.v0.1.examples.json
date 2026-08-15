@@ -3,164 +3,44 @@
   "schema-version": "0.1",
   "examples": [
     {
-      "command": "save-flow-draft",
-      "success": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "save-receiving-draft-3",
-          "outcome": {
-            "status": "completed",
-            "value": {
-              "command": "save-flow-draft",
-              "result": {
-                "draft-id": "draft-receiving",
-                "flow-id": "receive-material",
-                "revision": 3
-              }
-            }
-          }
-        }
-      },
-      "refusal": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "save-receiving-draft-3",
-          "outcome": {
-            "status": "refused",
-            "value": {
-              "command": "save-flow-draft",
-              "reason": {
-                "kind": "authorization-denied"
-              }
-            }
-          }
-        }
-      }
+      "operation": "save-flow-draft",
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"save-1","outcome":{"status":"completed","value":{"command":"save-flow-draft","result":{"draft-id":"draft-1","flow-id":"flow-1","revision":1}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"save-1","outcome":{"status":"refused","value":{"command":"save-flow-draft","reason":{"kind":"revision-conflict","expected-revision":0,"actual-revision":1}}}}}
     },
     {
-      "command": "validate",
-      "success": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "validate-receiving-draft-3",
-          "outcome": {
-            "status": "completed",
-            "value": {
-              "command": "validate",
-              "result": {
-                "validated-draft-id": "sha256:validated-draft-v4",
-                "draft": {
-                  "draft-id": "draft-receiving",
-                  "flow-id": "receive-material",
-                  "revision": 3
-                },
-                "runtime-flow-version": 4,
-                "artifact-hash": "sha256:artifact-v4",
-                "execution-bundle-hash": "sha256:bundle-v4",
-                "catalog": {
-                  "catalog-id": "receiving-catalog",
-                  "version": 9
-                },
-                "environment": "dev"
-              }
-            }
-          }
-        }
-      },
-      "refusal": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "validate-receiving-draft-3",
-          "outcome": {
-            "status": "refused",
-            "value": {
-              "command": "validate",
-              "reason": {
-                "kind": "catalog-drift"
-              }
-            }
-          }
-        }
-      }
+      "operation": "validate",
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"validate-1","outcome":{"status":"completed","value":{"command":"validate","result":{"validated-draft-id":"sha256:validated","draft":{"draft-id":"draft-1","flow-id":"flow-1","revision":1},"runtime-flow-version":1,"artifact-hash":"sha256:artifact","execution-bundle-hash":"sha256:bundle","catalog":{"catalog-id":"catalog-1","version":1},"environment":"dev"}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"validate-1","outcome":{"status":"refused","value":{"command":"validate","reason":{"kind":"missing-recorded-callability","site":"invoke-child","flow-id":"child"}}}}}
     },
     {
-      "command": "draft-run",
-      "success": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "run-receiving-draft-3",
-          "outcome": {
-            "status": "completed",
-            "value": {
-              "command": "draft-run",
-              "result": {
-                "run-id": "run-receiving-1042",
-                "validated-draft": {
-                  "validated-draft-id": "sha256:validated-draft-v4"
-                }
-              }
-            }
-          }
-        }
-      },
-      "refusal": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "run-receiving-draft-3",
-          "outcome": {
-            "status": "refused",
-            "value": {
-              "command": "draft-run",
-              "reason": {
-                "kind": "validated-draft-drift"
-              }
-            }
-          }
-        }
-      }
+      "operation": "draft-run",
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"run-1","outcome":{"status":"completed","value":{"command":"draft-run","result":{"run-id":"run-1","validated-draft":{"validated-draft-id":"sha256:validated"}}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"run-1","outcome":{"status":"refused","value":{"command":"draft-run","reason":{"kind":"draft-connections-denied","connection-names":["erp"]}}}}}
     },
     {
-      "command": "publish",
-      "success": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "publish-receiving-draft-3",
-          "outcome": {
-            "status": "completed",
-            "value": {
-              "command": "publish",
-              "result": {
-                "flow-id": "receive-material",
-                "version": 4,
-                "artifact-hash": "sha256:artifact-v4"
-              }
-            }
-          }
-        }
-      },
-      "refusal": {
-        "document": "response",
-        "body": {
-          "schema-version": "0.1",
-          "command-id": "publish-receiving-draft-3",
-          "outcome": {
-            "status": "refused",
-            "value": {
-              "command": "publish",
-              "reason": {
-                "kind": "publish-executable-drift"
-              }
-            }
-          }
-        }
-      }
+      "operation": "test-set-run",
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"test-1","outcome":{"status":"completed","value":{"command":"test-set-run","result":{"report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"},"test-set":{"hash":"sha256:test-set"}}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"test-1","outcome":{"status":"refused","value":{"command":"test-set-run","reason":{"kind":"invalid-test-set","detail":"empty cases"}}}}}
+    },
+    {
+      "operation": "publish",
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"publish-1","outcome":{"status":"completed","value":{"command":"publish","result":{"flow-id":"flow-1","version":1,"artifact-hash":"sha256:artifact"}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"publish-1","outcome":{"status":"refused","value":{"command":"publish","reason":{"kind":"report-not-successful"}}}}}
+    },
+    {
+      "operation": "read-draft",
+      "success": {"document":"response","body":{"schema-version":"0.1","query-id":"read-1","outcome":{"status":"completed","value":{"query":"read-draft","result":{"draft":{"draft-id":"draft-1","flow-id":"flow-1","revision":1},"definition":"{draft"}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","query-id":"read-1","outcome":{"status":"refused","value":{"query":"read-draft","reason":{"kind":"draft-revision-not-found","draft-id":"draft-1","revision":1}}}}}
+    },
+    {
+      "operation": "get-run",
+      "success": {"document":"response","body":{"schema-version":"0.1","query-id":"run-1","outcome":{"status":"completed","value":{"query":"get-run","result":{"run-id":"run-1","status":"effect-uncertain","failure":{"kind":"effect-uncertain"},"nodes":[]}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","query-id":"run-1","outcome":{"status":"refused","value":{"query":"get-run","reason":{"kind":"run-not-found","run-id":"run-1"}}}}}
+    },
+    {
+      "operation": "get-report",
+      "success": {"document":"response","body":{"schema-version":"0.1","query-id":"report-1","outcome":{"status":"completed","value":{"query":"get-report","result":{"state":"pending","report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"},"test-set":{"hash":"sha256:test-set"}}}}}},
+      "refusal": {"document":"response","body":{"schema-version":"0.1","query-id":"report-1","outcome":{"status":"refused","value":{"query":"get-report","reason":{"kind":"report-not-found","report-id":"report-1"}}}}}
     }
   ]
 }

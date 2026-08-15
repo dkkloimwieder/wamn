@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly OWNER="bd:wamn-0h0g.8.11"
-readonly OUTCOME="retired immutable authoring identities refuse instead of being rewritten"
+readonly OWNER="bd:wamn-0h0g.7.3"
+readonly OUTCOME="the retry ledger and retired validation identities cut over only while empty"
 readonly TARGET="crates/schema/control/src/run_plane.rs"
-readonly EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
+readonly EXPECTED_SHA="7a55b4542841164741bee5b4ea345460752f5d6f2ea3393c6248bc89c032ee4c"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
@@ -17,7 +17,7 @@ fi
 declare NEEDLE REPLACEMENT GATE EXPECTED_COUNT
 
 mutation_ids() {
-  printf '%s\n' populated-validation-identity-rewritten retired-command-history-rewritten
+  printf '%s\n' authoring-retry-ledger-populated-refusal-removed populated-validation-identity-rewritten
 }
 
 load_mutation() {
@@ -28,11 +28,11 @@ load_mutation() {
       EXPECTED_COUNT=2
       GATE="run_plane::tests::retired_validation_dimension_is_empty_only_and_idempotent"
       ;;
-    retired-command-history-rewritten)
-      NEEDLE="WHERE command_kind IN ('suite-run', 'suite-projection')"
-      REPLACEMENT="WHERE false"
+    authoring-retry-ledger-populated-refusal-removed)
+      NEEDLE='IF EXISTS (SELECT 1 FROM catalog.authoring_command_audit) \'
+      REPLACEMENT='IF false \'
       EXPECTED_COUNT=1
-      GATE="run_plane::tests::retired_command_kinds_refuse_history_before_tightening_the_check"
+      GATE="run_plane::tests::authoring_retry_ledger_cutover_is_empty_only_exact_and_idempotent"
       ;;
     *)
       echo "unknown mutant: $1" >&2

@@ -29,6 +29,7 @@ assert.ok(process.env.WAMN_AUTHORING_CLI_TEST_MODULE, "compiled CLI module is re
 const cli = await import(process.env.WAMN_AUTHORING_CLI_TEST_MODULE);
 const {
   AUTHORING_SCHEMA_VERSION,
+  parseAuthoringQueryRequest,
   parseAuthoringRequest,
 } = await import(process.env.WAMN_AUTHORING_CLIENT_TEST_MODULE);
 
@@ -42,7 +43,7 @@ const LAUNCHER = fileURLToPath(ADAPTER_URL);
 // names, nesting, and leaf types, with the values erased. Re-pin it only in a
 // commit that reviewed a collection shape change. A value edit in the collection
 // deliberately does not move this digest; a renamed or dropped field does.
-const COLLECTION_SHAPE_DIGEST = "0905b516c147af54e74efab932b9b0a851497dd3a5a00cfa76aff3e5de2d0a9e";
+const COLLECTION_SHAPE_DIGEST = "df2e4bcb8bb85511305b17653d5936b26e9af519a730fdac0813158dd2a56daf";
 
 // `draft-run`'s authored input is `unknown` on the contract, so its shape is
 // deliberately not comparable — the client sends whatever the author wrote.
@@ -120,6 +121,15 @@ function builtRequests() {
       }),
     ],
     [
+      "test-set-run",
+      cli.testSetRunRequest({
+        commandId: "test-set-1",
+        definition: '{"schema-version":"0.1","cases":[{"expectations":[{"kind":"success"}]}]}',
+        scope,
+        validatedDraftId: "sha256:validated-draft-v4",
+      }),
+    ],
+    [
       "publish",
       cli.promoteRequest({
         commandId: "publish-1",
@@ -127,6 +137,18 @@ function builtRequests() {
         scope,
         validatedDraftId: "sha256:validated-draft-v4",
       }),
+    ],
+    [
+      "read-draft",
+      cli.readDraftRequest("read-1", scope, "draft-receiving", 3),
+    ],
+    [
+      "get-run",
+      cli.getRunRequest("get-run-1", scope, "run-receiving-3"),
+    ],
+    [
+      "get-report",
+      cli.getReportRequest("get-report-1", scope, "report-receiving-3"),
     ],
   ]);
 }
@@ -154,9 +176,13 @@ test("every CLI request has the shape of its checked-in collection section", asy
 
 test("every CLI request decodes through the generated closed validator", () => {
   for (const [name, document] of builtRequests()) {
-    assert.doesNotThrow(() => parseAuthoringRequest(document), name);
+    const query = "query" in document;
+    assert.doesNotThrow(
+      () => (query ? parseAuthoringQueryRequest(document) : parseAuthoringRequest(document)),
+      name,
+    );
     assert.equal(document["schema-version"], AUTHORING_SCHEMA_VERSION, name);
-    assert.equal(document.command.kind, name);
+    assert.equal(query ? document.query.kind : document.command.kind, name);
   }
   // Optional client claims remain optional at the wire boundary.
   assert.doesNotThrow(() =>
@@ -192,11 +218,16 @@ test("every CLI request decodes through the generated closed validator", () => {
   );
 });
 
-test("the CLI sends exactly the schema's public command inventory", async () => {
+test("the CLI sends exactly the schema's public operation inventory", async () => {
   const schema = JSON.parse(await readFile(SCHEMA_URL, "utf8"));
+  const operationKinds = (definition) =>
+    definition.oneOf.map((variant) => variant.properties.kind.enum[0]);
   assert.deepEqual(
     [...builtRequests().keys()].sort(),
-    [...schema.definitions.AuthoringCommandKind.enum].sort(),
+    [
+      ...operationKinds(schema.definitions.AuthoringCommand),
+      ...operationKinds(schema.definitions.AuthoringQuery),
+    ].sort(),
   );
 });
 
@@ -563,7 +594,8 @@ test("no option, file, or default can send an unversioned or reversioned request
   // client at all, so there is nothing for a flag or a file to select.
   const factory = source.slice(source.indexOf("function request("));
   assert.equal(factory.slice(0, factory.indexOf("\n}")).split("AUTHORING_SCHEMA_VERSION").length - 1, 1);
-  assert.equal(source.split("return request(").length - 1, 4);
+  assert.equal(source.split("return request(").length - 1, 5);
+  assert.equal(source.split("return queryRequest(").length - 1, 3);
   assert.doesNotMatch(source, /"schema-version":\s*"/);
   for (const rejected of ["--schema-version", "--contract-version", "--endpoint"]) {
     assert.throws(() => cli.parseArguments([rejected, "0.2"]), /unrecognized option/);

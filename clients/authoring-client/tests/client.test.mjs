@@ -12,6 +12,7 @@ const {
   AuthoringProtocolError,
   assertSupportedAuthoringSchema,
   createFetchTransport,
+  parseAuthoringQueryRequest,
   parseAuthoringRequest,
 } = await import(process.env.WAMN_AUTHORING_CLIENT_TEST_MODULE);
 
@@ -37,6 +38,9 @@ test("runtime schema support fails closed on unknown keywords and formats", () =
   );
   assert.doesNotThrow(() =>
     assertSupportedAuthoringSchema({ allOf: [{ $ref: "#/definitions/DraftRunCapture" }], default: "full" }),
+  );
+  assert.doesNotThrow(() =>
+    assertSupportedAuthoringSchema({ minLength: 1, type: "string", "x-max-utf8-bytes": 64 }),
   );
   assert.throws(
     () => assertSupportedAuthoringSchema({ allOf: [{ type: "string" }] }),
@@ -66,6 +70,18 @@ const request = {
       "draft-id": "draft-1",
       "expected-revision": 0,
       "flow-id": "flow-1",
+      scope: { environment: "dev", "project-id": "project-1" },
+    },
+  },
+};
+
+const queryRequest = {
+  "query-id": "query-1",
+  "schema-version": AUTHORING_SCHEMA_VERSION,
+  query: {
+    kind: "get-run",
+    input: {
+      "run-id": "run-1",
       scope: { environment: "dev", "project-id": "project-1" },
     },
   },
@@ -121,10 +137,67 @@ function response(outcome) {
   };
 }
 
+function queryResponse(outcome, queryId = queryRequest["query-id"]) {
+  return {
+    document: "response",
+    body: {
+      outcome,
+      "query-id": queryId,
+      "schema-version": AUTHORING_SCHEMA_VERSION,
+    },
+  };
+}
+
+test("query-id enforces nonempty UTF-8 byte length at 64", () => {
+  for (const value of ["a".repeat(64), "é".repeat(32), "🦀".repeat(16)]) {
+    assert.doesNotThrow(() => parseAuthoringQueryRequest({ ...queryRequest, "query-id": value }));
+  }
+  for (const value of ["", "a".repeat(65), `${"a".repeat(63)}é`, `${"a".repeat(61)}🦀`]) {
+    assert.throws(
+      () => parseAuthoringQueryRequest({ ...queryRequest, "query-id": value }),
+      AuthoringPayloadError,
+    );
+  }
+});
+
+test("query dispatch is separate and verifies query-id plus operation echoes", async () => {
+  let observed;
+  const client = new AuthoringClient({
+    async executeQuery(document) {
+      observed = document;
+      return queryResponse({
+        status: "completed",
+        value: {
+          query: "get-run",
+          result: { nodes: [], "run-id": "run-1", status: "succeeded" },
+        },
+      });
+    },
+  });
+  assert.equal((await client.query(queryRequest)).status, "completed");
+  assert.deepEqual(observed, { document: "request", body: queryRequest });
+
+  for (const payload of [
+    queryResponse({
+      status: "completed",
+      value: { query: "get-run", result: { nodes: [], "run-id": "run-1", status: "succeeded" } },
+    }, "wrong-query"),
+    queryResponse({
+      status: "refused",
+      value: { query: "get-report", reason: { kind: "report-not-found", "report-id": "report-1" } },
+    }),
+  ]) {
+    await assert.rejects(
+      new AuthoringClient({ async executeQuery() { return payload; } }).query(queryRequest),
+      AuthoringProtocolError,
+    );
+  }
+});
+
 test("execute returns a schema-typed completion through a mock transport", async () => {
   let observed;
   const transport = {
-    async execute(document) {
+    async executeCommand(document) {
       observed = document;
       return response({
         status: "completed",
@@ -143,7 +216,7 @@ test("execute returns a schema-typed completion through a mock transport", async
 
 test("typed refusals return normally and are not infrastructure faults", async () => {
   const client = new AuthoringClient({
-    async execute() {
+    async executeCommand() {
       return response({
         status: "refused",
         value: {
@@ -164,7 +237,7 @@ test("typed refusals return normally and are not infrastructure faults", async (
 test("unknown and unversioned requests fail before transport", async () => {
   let calls = 0;
   const client = new AuthoringClient({
-    async execute() {
+    async executeCommand() {
       calls += 1;
       return response({ status: "refused", value: {} });
     },
@@ -208,13 +281,13 @@ test("unknown, unversioned, and mismatched responses are protocol faults", async
       },
     },
   ]) {
-    const client = new AuthoringClient({ async execute() { return payload; } });
+    const client = new AuthoringClient({ async executeCommand() { return payload; } });
     await assert.rejects(client.execute(request), AuthoringProtocolError);
   }
 });
 
 async function assertCommandMismatch(outcome) {
-  const client = new AuthoringClient({ async execute() { return response(outcome); } });
+  const client = new AuthoringClient({ async executeCommand() { return response(outcome); } });
   await assert.rejects(
     client.execute(request),
     (error) =>
@@ -250,7 +323,7 @@ test("unsafe request and response integers fail instead of returning rounded val
 
   let calls = 0;
   const client = new AuthoringClient({
-    async execute() {
+    async executeCommand() {
       calls += 1;
       return response({ status: "refused", value: {} });
     },
@@ -270,7 +343,7 @@ test("unsafe request and response integers fail instead of returning rounded val
     },
   });
   await assert.rejects(
-    new AuthoringClient({ async execute() { return unsafeResponse; } }).execute(request),
+    new AuthoringClient({ async executeCommand() { return unsafeResponse; } }).execute(request),
     AuthoringProtocolError,
   );
 });
@@ -298,7 +371,7 @@ test("uint64 wire domain accepts 2^53-1 and refuses 2^53 and u64 max", async () 
       },
     });
   const client = (revision) =>
-    new AuthoringClient({ async execute() { return identityFor(revision); } });
+    new AuthoringClient({ async executeCommand() { return identityFor(revision); } });
 
   assert.equal(
     (await client(9007199254740991).execute(request)).value.result.revision,
@@ -325,7 +398,7 @@ test("uint32 and uint64 response formats enforce exact inclusive boundaries", as
     "validated-draft-id": "validated-1",
   };
   const boundaryClient = new AuthoringClient({
-    async execute() {
+    async executeCommand() {
       return {
         document: "response",
         body: {
@@ -340,7 +413,7 @@ test("uint32 and uint64 response formats enforce exact inclusive boundaries", as
 
   const overflowIdentity = { ...identity, "runtime-flow-version": 4_294_967_296 };
   const overflowClient = new AuthoringClient({
-    async execute() {
+    async executeCommand() {
       return {
         document: "response",
         body: {
