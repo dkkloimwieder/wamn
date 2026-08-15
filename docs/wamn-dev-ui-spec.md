@@ -357,7 +357,8 @@ starts when the generated read results, typed error envelope, and
 mounted read routes exist; execution-fact reads carry
 bounded/truncated semantics · toolchain and test level per the D2
 owner decision (design is toolchain-neutral; nothing here needs more
-than Solid + CSS).
+than Solid + CSS) — decided: option B, Solid 2 RC + Node 24 (§6
+step 0).
 
 ## 5. Acceptance
 
@@ -384,6 +385,13 @@ one explicit dependency-policy amendment: exact prerelease versions
 for this package + exact internal workspace deps, nothing else).
 *Done:* the decision recorded; policy change (if B) is its own commit;
 `pnpm install` and the existing toolchain test green.
+
+**Decided (dkk, 2026-08-15): option B, plus Node 24.** Amendment
+commit `45fb9aeb`; bead `wamn-dggp.1` closed. Stack: `solid-js`
+`2.0.0-rc.0` · `@solidjs/web` `2.0.0-rc.0` (the v2 renderer split) ·
+`@solidjs/vite-plugin` `3.0.0-next.28` (replaces `vite-plugin-solid`)
+· `@types/node` `24.13.3`. Node `24.19.0` pinned in root `engines`,
+client CI, and `.nvmrc`. Done-check ran green on Node 24.19.0.
 
 ### Step 1 — Skeleton
 
