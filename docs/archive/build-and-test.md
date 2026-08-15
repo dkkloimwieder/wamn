@@ -5546,3 +5546,29 @@ git diff --check
 docker rm -f -v wamn-wave11-12-43-pg18
 trap - EXIT
 ```
+
+## SR-MVP — bounded flow-invocation listener (`wamn-0h0g.12.71`)
+
+This Rust-only debug gate proves that every runtime plugin shares one
+reconnecting PostgreSQL LISTEN connection across concurrent waits, preserves
+subscribe-before-poll and the mandatory final authoritative poll, and uses the
+same database credential as the configured max-16 pool.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave9-11-18
+export CARGO_INCREMENTAL=0
+
+cargo test --locked --offline -p wamn-runtime --lib \
+  flow_invocation::tests:: -- --nocapture
+cargo test --locked --offline -p wamn-runtime
+cargo clippy --locked --offline -p wamn-runtime --all-targets -- -D warnings
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test protected_relations
+
+tools/gate-mutants/flow-invocation-listener.sh run-all
+tools/gate-mutants/flow-invocation-listener.sh green
+
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/flow-invocation-listener.sh
+git diff --check
+```
