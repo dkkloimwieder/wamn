@@ -1,3 +1,6 @@
+// @vitest-environment node
+// A filesystem lint, not a component test: under jsdom `import.meta.url` is an
+// http: URL and cannot be resolved to a path.
 import { readFileSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";

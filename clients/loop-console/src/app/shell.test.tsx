@@ -1,32 +1,19 @@
-import { renderToString } from "@solidjs/web";
-import { describe, expect, it } from "vitest";
+import { cleanup, render } from "@solidjs/testing-library";
+import { flush } from "solid-js";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { proxyTarget } from "../config";
 import type { Route } from "../routing/route";
 import { AppShell } from "./app-shell";
 import { setReadStatus } from "./read-status";
 
-/** The markup between the shell's content column tags. */
-function column(markup: string): string {
-  const open = markup.indexOf("<main");
-  const close = markup.indexOf("</main>");
-  expect(open).toBeGreaterThan(-1);
-  expect(close).toBeGreaterThan(open);
-  return markup.slice(open, close);
-}
+afterEach(() => {
+  cleanup();
+  setReadStatus("never-contacted");
+});
 
-/** The text inside the shell's visually-hidden node, SSR markers stripped. */
-function readStatusLabel(markup: string): string {
-  const tag = 'class="visually-hidden">';
-  const open = markup.indexOf(tag);
-  expect(open).toBeGreaterThan(-1);
-  const close = markup.indexOf("</span>", open);
-  expect(close).toBeGreaterThan(open);
-  return markup.slice(open + tag.length, close).replace(/<!--.*?-->/g, "");
-}
-
-function shell(route: Route): string {
-  return renderToString(() => <AppShell route={route} />);
+function shell(route: Route) {
+  return render(() => <AppShell route={route} />);
 }
 
 describe("AppShell", () => {
@@ -43,38 +30,47 @@ describe("AppShell", () => {
     ];
 
     for (const { route, expected } of cases) {
-      const markup = shell(route);
+      const { container } = shell(route);
       // chrome above the column, and the panel region beside it
-      expect(markup).toContain("wamn loop");
-      expect(markup).toContain("<aside");
-      const inside = column(markup);
+      expect(container.querySelector("header")).toHaveTextContent("wamn loop");
+      expect(container.querySelector("aside")).toBeInTheDocument();
+
+      const column = container.querySelector("main");
+      expect(column).toBeInTheDocument();
       for (const text of expected) {
-        expect(inside).toContain(text);
+        expect(column).toHaveTextContent(text);
       }
+      cleanup();
     }
   });
 
   it("renders the top bar's wordmark, proxy target, status word, and jump hint", () => {
-    const markup = shell({ kind: "start" });
-    expect(markup).toContain("wamn loop");
-    expect(markup).toContain(proxyTarget);
-    expect(markup).toContain("never contacted");
-    expect(markup).toContain("⌘K");
+    const { container } = shell({ kind: "start" });
+    const bar = container.querySelector("header");
+    expect(bar).toHaveTextContent("wamn loop");
+    expect(bar).toHaveTextContent(proxyTarget);
+    expect(bar).toHaveTextContent("never contacted");
+    expect(bar).toHaveTextContent("⌘K");
   });
 
-  it("states read status in words, not only in the dot's color", () => {
-    // the word has to reach assistive tech, so pin it to the visually-hidden
-    // node — the dot's title attribute sits on aria-hidden markup
+  it("states read status in words, and updates them reactively", () => {
+    // the word has to reach assistive tech, so read the visually-hidden node —
+    // the dot's title attribute sits on aria-hidden markup and does not count
+    const { container } = shell({ kind: "start" });
+    const label = () => container.querySelector(".visually-hidden");
+    const dot = () => container.querySelector(".status-dot");
+
+    expect(label()).toHaveTextContent("never contacted");
+    expect(dot()).toHaveAttribute("data-status", "never-contacted");
+
     setReadStatus("fail");
-    const failed = shell({ kind: "start" });
-    expect(readStatusLabel(failed)).toContain("last read failed");
-    expect(failed).toContain('data-status="fail"');
+    flush();
+    expect(label()).toHaveTextContent("last read failed");
+    expect(dot()).toHaveAttribute("data-status", "fail");
 
     setReadStatus("ok");
-    const succeeded = shell({ kind: "start" });
-    expect(readStatusLabel(succeeded)).toContain("last read succeeded");
-    expect(succeeded).toContain('data-status="ok"');
-
-    setReadStatus("never-contacted");
+    flush();
+    expect(label()).toHaveTextContent("last read succeeded");
+    expect(dot()).toHaveAttribute("data-status", "ok");
   });
 });

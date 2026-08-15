@@ -393,6 +393,41 @@ commit `45fb9aeb`; bead `wamn-dggp.1` closed. Stack: `solid-js`
 · `@types/node` `24.13.3`. Node `24.19.0` pinned in root `engines`,
 client CI, and `.nvmrc`. Done-check ran green on Node 24.19.0.
 
+**Test level — decided (dkk, 2026-08-15): client only, never SSR.**
+Bead `wamn-dggp.12`. Step 1 first reached for Solid's SSR entry
+(`renderToString`) because it needed no DOM and therefore no new
+dependency — but that build's reactive graph is inert (a `createMemo`
+does not recompute), so it proves markup while proving nothing about
+behaviour, and it exercises a runtime this console never ships. The
+console is a client-only SPA; its tests render the client build.
+
+The setup is the one Solid 2 documents at
+<https://v2.solidjs.com/guides/testing>: Vitest with
+`environment: "jsdom"`, the plugin as plain `solid()` (never
+`solid({ ssr: true })`, and no `resolve.conditions` override — that
+override is what selected the server build), a setup file registering
+`@testing-library/jest-dom/vitest`, and `render` from
+`@solidjs/testing-library`. Solid 2 stages reactive work, so a test
+calls `flush()` from `solid-js` before reading the DOM.
+
+Three allowlist pins follow: `jsdom` `30.0.1`,
+`@solidjs/testing-library` `1.0.0-beta.2`, `@testing-library/jest-dom`
+`6.9.1`. Three deviations from the guide, each deliberate: the guide
+names `@solidjs/testing-library` `1.0.0-rc.0`, which is not published —
+`next` is `1.0.0-beta.2`, and its peer range `>=2.0.0` excludes
+`2.0.0-rc.0` (semver: a prerelease does not satisfy a range with no
+prerelease comparator), so pnpm warns; it is nonetheless the Solid 2
+line, since it peers on `@solidjs/web` at all. The guide pins `jsdom`
+`^25.0.1`, released 2024-09; `30.0.1` is current. And `jest-dom` stays
+on `6.9.1` rather than `7.x` because `@solidjs/vite-plugin` peers on
+`^6.*` — `6.10.0` is deprecated on publish, so `6.9.1` is the 6.x head.
+
+Layout, real CSS, and true focus behaviour are beyond jsdom; the guide
+sends those to Vitest browser mode with Playwright, which is deferred
+(`wamn-dggp.16`) because a browser binary download conflicts with the
+denied-lifecycle-script policy. Nothing else loosens. Referenced below
+as *the test-level decision*.
+
 ### Step 1 — Skeleton
 
 Migrate the null stub to the chosen toolchain. Hash router (the four
@@ -425,7 +460,7 @@ Disclosure · DataTable (caption, disclosure slot, empty slot,
 truncation footer) · JsonView (collapse depth, copy) · SourceView
 (line numbers, no-wrap, error-line tint, byte-faithful copy) ·
 FailurePanel · ErrorPanel · LoadingBlock/EmptyState (region-reasoned)
-· RefreshControl. Pure-selector unit tests per §7's chosen level;
+· RefreshControl. Pure-selector unit tests per the test-level decision;
 accessibility floor (no color-alone, focusable, captions) checked
 here, once, for everything downstream.
 *Done:* each primitive renders every state from step-2 fixtures.
