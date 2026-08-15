@@ -5447,3 +5447,102 @@ git diff --check
 docker rm -f -v wamn-wave10-7-3-pg18
 trap - EXIT
 ```
+
+## SR-MVP — protected node-run projection writer (`wamn-0h0g.12.43`)
+
+This Rust-only debug gate proves that `node_runs` mutation is confined to the
+private native projection writer, that expired pre-effect reset remains
+advisory-serialized and freshly ledger-classified, and that each scoped A/B
+generation has exactly the effect-ledger and projection-writer memberships.
+Use only the disposable PostgreSQL 18 database below.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave11-12-43
+
+docker run -d --name wamn-wave11-12-43-pg18 \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=wamn_wave11_12_43 \
+  -p 127.0.0.1:15675:5432 \
+  postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d
+trap 'docker rm -f -v wamn-wave11-12-43-pg18 >/dev/null 2>&1 || true' EXIT
+until docker exec wamn-wave11-12-43-pg18 \
+  pg_isready -U postgres -d wamn_wave11_12_43 >/dev/null; do sleep 1; done
+
+export WAMN_CTL_PG_URL=postgresql://postgres:postgres@127.0.0.1:15675/wamn_wave11_12_43
+export WAMN_EFFECT_WRITER_PG18_URL="$WAMN_CTL_PG_URL"
+export WAMN_RUN_STORE_PG_URL="$WAMN_CTL_PG_URL"
+export WAMN_PRODUCTION_CLAIM_PG_URL="$WAMN_CTL_PG_URL"
+
+cargo test --locked --offline -p wamn-schema-control --lib
+cargo test --locked --offline -p wamn-control-provision --lib
+cargo test --locked --offline -p wamn-run-state --features native --lib
+cargo test --locked --offline -p wamn-execution-host --lib
+cargo test --locked --offline -p wamn-runtime --lib
+cargo test --locked --offline -p wamn-ctl --lib provision_project_env::tests
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test dispatcher_boundary \
+  --test effect_provider_revision \
+  --test protected_relations \
+  --test state_ownership
+
+cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+  run_plane_reconcile_live \
+  -- --exact --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-ctl \
+  --test effect_writer_generation_live \
+  effect_writer_generation_lifecycle_is_exact_and_fail_closed \
+  -- --ignored --exact --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-run-state --features native \
+  --test effect_writer_live native_effect_writer_live \
+  -- --ignored --exact --nocapture
+cargo test --locked --offline -p wamn-runtime \
+  --test production_claim_live production_claim_live \
+  -- --ignored --exact --nocapture
+
+WAMN_UPDATE_PROTECTED_RELATIONS=1 cargo test --locked --offline \
+  -p wamn-ctl --features ops --test protected_relations_live \
+  -- --nocapture --test-threads=1
+cargo test --locked --offline \
+  -p wamn-ctl --features ops --test protected_relations_live \
+  -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test protected_relations --test state_ownership
+
+tools/gate-mutants/effect-writer-primitive.sh check
+tools/gate-mutants/effect-writer-primitive.sh green-all
+tools/gate-mutants/effect-writer-primitive.sh run-all
+tools/gate-mutants/effect-writer-primitive.sh green-all
+tools/gate-mutants/effect-writer-primitive.sh check
+
+tools/gate-mutants/run-projection-writer.sh check
+tools/gate-mutants/run-projection-writer.sh green-all
+tools/gate-mutants/run-projection-writer.sh run-all
+tools/gate-mutants/run-projection-writer.sh green-all
+tools/gate-mutants/run-projection-writer.sh check
+
+tools/gate-mutants/protected-relations.sh check
+tools/gate-mutants/protected-relations.sh green-all
+tools/gate-mutants/protected-relations.sh run-all
+tools/gate-mutants/protected-relations.sh green-all
+tools/gate-mutants/protected-relations.sh check
+
+cargo clippy --locked --offline \
+  -p wamn-run-state --features native --all-targets -- -D warnings
+cargo clippy --locked --offline \
+  -p wamn-execution-host -p wamn-runtime -p wamn-proof-conformance \
+  --all-targets -- -D warnings
+cargo clippy --locked --offline \
+  -p wamn-schema-control -p wamn-control-provision -p wamn-ctl \
+  --all-targets --all-features -- -D warnings
+
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/effect-writer-primitive.sh \
+  tools/gate-mutants/run-projection-writer.sh \
+  tools/gate-mutants/protected-relations.sh
+jq -e . architecture/protected-writes.json architecture/state-owners.json \
+  >/dev/null
+git diff --check
+
+docker rm -f -v wamn-wave11-12-43-pg18
+trap - EXIT
+```
