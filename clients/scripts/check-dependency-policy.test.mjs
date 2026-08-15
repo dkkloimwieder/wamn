@@ -23,8 +23,86 @@ async function mutant(change) {
   }
 }
 
+async function variant(change) {
+  const root = await mkdtemp(join(tmpdir(), "wamn-client-policy-"));
+  await cp(join(sourceRoot, "package.json"), join(root, "package.json"));
+  await cp(join(sourceRoot, "pnpm-workspace.yaml"), join(root, "pnpm-workspace.yaml"));
+  await cp(join(sourceRoot, "pnpm-lock.yaml"), join(root, "pnpm-lock.yaml"));
+  await cp(join(sourceRoot, ".github"), join(root, ".github"), { recursive: true });
+  await cp(join(sourceRoot, "clients"), join(root, "clients"), { recursive: true });
+  try {
+    await change(root);
+    await checkWorkspace(root);
+  } finally {
+    await rm(root, { recursive: true });
+  }
+}
+
 test("accepts the committed dependency policy", async () => {
   await checkWorkspace(sourceRoot);
+});
+
+test("accepts an exact internal workspace dependency", async () => {
+  await variant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["@wamn/authoring-client"] = "workspace:0.1.0";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects a floating internal workspace dependency", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["@wamn/authoring-client"] = "workspace:*";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects a registry version for an internal package", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["@wamn/authoring-client"] = "0.1.0";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects a workspace protocol on an external package", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies.leftpad = "workspace:1.0.0";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects a prerelease range", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["solid-js"] = "^2.0.0-rc.0";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects an unapproved prerelease version", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["solid-js"] = "2.0.0-rc.1";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
+});
+
+test("rejects a build-metadata version", async () => {
+  await mutant(async (root) => {
+    const path = join(root, "clients", "loop-console", "package.json");
+    const manifest = JSON.parse(await readFile(path, "utf8"));
+    manifest.dependencies["solid-js"] = "2.0.0-rc.0+sha.deadbeef";
+    await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+  });
 });
 
 test("rejects a drifting version range", async () => {

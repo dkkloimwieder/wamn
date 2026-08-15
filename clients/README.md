@@ -1,6 +1,6 @@
 # Client workspace
 
-The client packages use Node 22.22.1 and the Corepack-pinned pnpm recorded in
+The client packages use Node 24.19.0 and the Corepack-pinned pnpm recorded in
 the root `package.json`. From a clean checkout, run:
 
 ```bash
@@ -14,14 +14,17 @@ pnpm run client:test
 ```
 
 `clients/dependency-policy.json` is the direct-dependency allowlist. Every
-direct dependency must use its approved exact stable version; ranges,
-prereleases, aliases, URLs, Git sources, and unapproved lifecycle scripts fail
-the policy gate. pnpm's pinned 24-hour release-age policy remains active. The
-frozen install verifies that manifests and the committed lockfile agree and
-checks the lockfile's package integrities.
+direct dependency must use its approved exact version — stable or, per the D2
+option-B amendment, an exact prerelease pinned in the allowlist; internal
+`@wamn/*` packages must use an exact `workspace:` version. Ranges, aliases,
+URLs, Git sources, and unapproved lifecycle scripts fail the policy gate.
+pnpm's pinned 24-hour release-age policy remains active. The frozen install
+verifies that manifests and the committed lockfile agree and checks the
+lockfile's package integrities.
 
-The initial reviewed stack is Solid `1.9.14`, Vite `8.2.0`,
-`vite-plugin-solid` `2.11.14`, TypeScript `7.0.2`, and Vitest `4.1.10`.
+The reviewed stack (D2 option B, 2026-08-15) is Solid `2.0.0-rc.0`,
+`@solidjs/web` `2.0.0-rc.0`, `@solidjs/vite-plugin` `3.0.0-next.28`, Vite
+`8.2.0`, TypeScript `7.0.2`, and Vitest `4.1.10`.
 
 The workspace reserves `clients/authoring-client` for the generated public API
 client and `clients/loop-console` for the later polling console. This scaffold

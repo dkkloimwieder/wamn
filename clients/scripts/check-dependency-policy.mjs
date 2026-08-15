@@ -23,7 +23,11 @@ const lifecycleScripts = new Set([
   "publish",
 ]);
 
-const exactStableVersion = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const exactVersion =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?$/;
+const exactWorkspaceVersion =
+  /^workspace:(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/;
+const internalPackageScope = "@wamn/";
 const releaseAgeSetting = /minimum[-_.]?release[-_.]?age/i;
 const workspaceBypassSetting = /ignore[-_.]?workspace/i;
 const packageManagers = new Set(["bun", "npm", "npx", "pnpm", "yarn"]);
@@ -143,9 +147,16 @@ export async function checkWorkspace(root) {
 
     for (const kind of dependencyKinds) {
       for (const [name, version] of Object.entries(manifest[kind] ?? {})) {
+        if (name.startsWith(internalPackageScope)) {
+          requireCondition(
+            typeof version === "string" && exactWorkspaceVersion.test(version),
+            `${relativePath}: ${name} must use an exact workspace version, found ${version}`,
+          );
+          continue;
+        }
         requireCondition(
-          typeof version === "string" && exactStableVersion.test(version),
-          `${relativePath}: ${name} must use an exact stable version, found ${version}`,
+          typeof version === "string" && exactVersion.test(version),
+          `${relativePath}: ${name} must use an exact version, found ${version}`,
         );
         requireCondition(
           Object.hasOwn(allowed, name),
