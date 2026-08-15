@@ -1,0 +1,72 @@
+/* DataTable — §2.2's execution table and §2.3's case list: 13px cells at 1.35. */
+
+.data-table {
+  width: 100%;
+  /* row borders paint only when the table collapses them — see the error edge */
+  border-collapse: collapse;
+  font-size: var(--size-13);
+  line-height: var(--leading-table);
+}
+
+/*
+ * The left rail every row shares, so a tinted row costs no shift — the same
+ * gutter SourceView draws down its line numbers.
+ */
+.data-table tr {
+  border-left: 2px solid var(--line);
+}
+
+/* §2.2: error rows tint their left edge — beside the status word, never alone. */
+.data-table-row[data-tone] {
+  border-left-color: var(--tone);
+}
+
+/*
+ * §1.2's 12px dim frame role without `.label`'s uppercase: §2.2 prints
+ * `#  node  type  status  note` in lower case and keeps the caps for the
+ * section label above the table.
+ */
+.data-table-head {
+  padding: 0 var(--space-2) var(--space-1) 0;
+  font-size: var(--size-12);
+  text-align: left;
+  color: var(--dim);
+  border-bottom: 1px solid var(--line);
+}
+
+/*
+ * Off the 8px grid on purpose: the grid sets §1.4's section rhythm, and a 13px
+ * cell at 1.35 leading plus an 8px gutter would be a 34px row, twice the
+ * density §2.2's table is scanned at.
+ */
+.data-table-cell {
+  padding: 2px var(--space-2) 2px 0;
+  vertical-align: top;
+}
+
+.data-table tr > :first-child {
+  padding-left: var(--space-1);
+}
+
+.data-table-toggle {
+  padding: 0;
+  margin-right: var(--space-1);
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  /* a button inherits neither, and this one has to sit on its row's leading */
+  font-size: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+
+.data-table-disclosed > .data-table-cell {
+  padding: var(--space-1);
+  background: var(--panel);
+}
+
+.data-table-footer {
+  padding: var(--space-1) 0 0 var(--space-1);
+  color: var(--dim);
+  border-top: 1px solid var(--line);
+}

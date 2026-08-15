@@ -1,0 +1,43 @@
+import type { NodeRunStatus, RunStatus } from "../reader/types";
+
+/**
+ * The five §1.1 status roles.
+ *
+ * Colour here is semantic, never decorative, and never the only carrier: a tone
+ * travels with its status word, always. Primitives set `data-tone` and paint
+ * with `var(--tone)` (see `tone.css`) so no component names a status colour.
+ */
+export type Tone = "ok" | "fail" | "warn" | "uncertain" | "neutral";
+
+/**
+ * Unknown-safe on purpose, and the reason these take `string`: the wire types
+ * both statuses as bare strings (the STEP-9 RISK on `ExecutionFact`), so a word
+ * this console has never heard of must render as itself, uncoloured, rather
+ * than vanish or be claimed as a state it is not.
+ */
+const runTones: ReadonlyMap<string, Tone> = new Map(
+  Object.entries({
+    queued: "neutral",
+    dispatched: "neutral",
+    running: "neutral",
+    succeeded: "ok",
+    failed: "fail",
+    "effect-uncertain": "uncertain",
+  } satisfies Record<RunStatus, Tone>),
+);
+
+export function runTone(status: string): Tone {
+  return runTones.get(status) ?? "neutral";
+}
+
+const nodeRunTones: ReadonlyMap<string, Tone> = new Map(
+  Object.entries({
+    started: "neutral",
+    success: "ok",
+    error: "fail",
+  } satisfies Record<NodeRunStatus, Tone>),
+);
+
+export function nodeRunTone(status: string): Tone {
+  return nodeRunTones.get(status) ?? "neutral";
+}

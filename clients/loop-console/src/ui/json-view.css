@@ -1,0 +1,67 @@
+/* JsonView — §1.2's data face, one row per key, nested lists for depth. */
+
+.json-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  /* §1.2: JSON is dense cell content, at the size SourceView's lines already use */
+  font-size: var(--size-13);
+  line-height: var(--leading-table);
+}
+
+.json-actions {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.json-copy,
+.json-copy-result {
+  font-size: var(--size-12);
+  color: var(--dim);
+}
+
+.json-copy {
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.json-tree,
+.json-children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.json-children {
+  padding-left: var(--space-2);
+}
+
+/*
+ * Leaves carry an empty one, so their values line up under expandable rows —
+ * a grid width, not a `ch`, because the button spelling and the span spelling
+ * of this column do not resolve a `ch` against the same font.
+ */
+.json-mark {
+  display: inline-block;
+  width: var(--space-2);
+  color: var(--dim);
+}
+
+.json-expander {
+  padding: 0;
+  background: transparent;
+  border: none;
+  /* a button inherits neither, and the glyph belongs to the row it opens */
+  font-size: inherit;
+  line-height: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.json-label,
+.json-brace {
+  color: var(--dim);
+}

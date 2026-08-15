@@ -1,0 +1,38 @@
+/* ErrorPanel — the literal leads in the data face; everything else frames it. */
+
+.error-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  /* the state's tone, carried beside its word — never instead of it */
+  border-left: 2px solid var(--tone);
+  background: var(--panel);
+}
+
+/*
+ * Size, case and tracking are `.label`'s; only the colour differs, and the
+ * compound selector holds it whatever order the bundler lands the two files in.
+ */
+.error-panel .error-panel-word {
+  margin: 0;
+  color: var(--tone);
+}
+
+.error-panel-said {
+  margin: 0;
+  font-size: var(--size-16);
+}
+
+.error-panel-explanation {
+  margin: 0;
+  color: var(--dim);
+}
+
+/* Off the 8px grid on purpose: these pairs are one block, and the panel's own
+   8px gap is what separates that block from the sentences above it. */
+.error-panel-asked {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}

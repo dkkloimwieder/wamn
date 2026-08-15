@@ -1,0 +1,8 @@
+/* LoadingBlock / EmptyState — frame face, dim: they frame, they never carry data. */
+
+.loading-block,
+.empty-state {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
+}

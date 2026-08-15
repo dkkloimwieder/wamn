@@ -1,0 +1,11 @@
+/* FailurePanel — §2.2: three pairs the eye reads down, then `▸ raw` beneath. */
+
+.failure-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.failure-absent {
+  color: var(--dim);
+}

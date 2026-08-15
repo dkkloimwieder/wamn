@@ -1,0 +1,6 @@
+/* §2.2's status column: the status word at table-cell size, in its status colour. */
+
+.status-badge {
+  font-size: var(--size-13);
+  color: var(--tone);
+}

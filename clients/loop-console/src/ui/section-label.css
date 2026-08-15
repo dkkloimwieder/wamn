@@ -1,0 +1,18 @@
+/* §1.4's divider. Size, case, tracking and colour come from `.label`, not here. */
+
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.section-label-text {
+  margin: 0;
+  /* the heading's weight is the label role's, not the browser's bold */
+  font-weight: 400;
+}
+
+.section-rule {
+  flex: 1;
+  border-top: 1px solid var(--line);
+}

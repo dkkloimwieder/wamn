@@ -1,0 +1,27 @@
+.copy-id {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+.copy-id-button {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.copy-id-mark {
+  color: var(--dim);
+}
+
+.copy-id-outcome {
+  color: var(--dim);
+  font-size: var(--size-12);
+}

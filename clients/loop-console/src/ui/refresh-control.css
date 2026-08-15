@@ -1,0 +1,16 @@
+.refresh-control {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dim);
+  font-size: var(--size-12);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.refresh-control:disabled {
+  cursor: default;
+}

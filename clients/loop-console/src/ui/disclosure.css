@@ -1,0 +1,31 @@
+.disclosure-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: inherit;
+  line-height: var(--leading-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.disclosure-marker {
+  color: var(--dim);
+}
+
+.disclosure-panel {
+  padding-left: var(--space-2);
+  /* §1.4's one animation; height is not animatable on a panel created at expand
+     without clipping it, which would clip the focus ring on its edge. */
+  animation: disclosure-expand var(--motion-fast);
+}
+
+@keyframes disclosure-expand {
+  from {
+    opacity: 0;
+    translate: 0 -2px;
+  }
+}

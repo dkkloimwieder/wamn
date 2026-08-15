@@ -6,6 +6,15 @@
   box-sizing: border-box;
 }
 
+/*
+ * §3 accessibility floor: one visible signal focus ring, declared once for
+ * everything focusable. No primitive removes it and none declares its own.
+ */
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
 .shell {
   display: flex;
   flex-direction: column;

@@ -1,0 +1,25 @@
+/*
+ * §1.1: status colour is semantic, and lives only inside badges, glyphs, verdict
+ * bars, and the error edge of a table row. One assignment per tone, so every
+ * primitive paints with var(--tone) and none of them names a status colour.
+ */
+
+[data-tone="ok"] {
+  --tone: var(--status-ok);
+}
+
+[data-tone="fail"] {
+  --tone: var(--status-fail);
+}
+
+[data-tone="warn"] {
+  --tone: var(--status-warn);
+}
+
+[data-tone="uncertain"] {
+  --tone: var(--status-uncertain);
+}
+
+[data-tone="neutral"] {
+  --tone: var(--status-neutral);
+}

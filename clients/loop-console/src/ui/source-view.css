@@ -1,0 +1,68 @@
+/* SourceView — §2.4: line numbers, no wrapping, horizontal scroll. */
+
+.source-view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.source-actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--space-1);
+}
+
+.source-copy,
+.source-copy-result {
+  font-size: var(--size-12);
+  color: var(--dim);
+}
+
+.source-copy {
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.source-lines {
+  margin: 0;
+  padding: var(--space-1) 0;
+  overflow-x: auto;
+  list-style: none;
+  background: var(--panel);
+  font-size: var(--size-13);
+  line-height: var(--leading-table);
+}
+
+.source-line {
+  display: flex;
+  gap: var(--space-1);
+  /* the stored bytes, unwrapped — the block scrolls instead */
+  min-width: max-content;
+  white-space: pre;
+  /* the tint's gutter, reserved so tinting shifts nothing — invisible until then */
+  border-left: 2px solid var(--panel);
+}
+
+/* Stays put while the source scrolls under it. */
+.source-number {
+  position: sticky;
+  left: 0;
+  flex: none;
+  width: 5ch;
+  padding-right: var(--space-1);
+  text-align: right;
+  color: var(--dim);
+  background: var(--panel);
+}
+
+/* The parse error, tinted — and never alone: the row carries the words too. */
+.source-line[data-tone] {
+  border-left-color: var(--tone);
+}
+
+.source-line[data-tone] .source-number {
+  color: var(--tone);
+}

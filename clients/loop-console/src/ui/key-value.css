@@ -1,0 +1,24 @@
+/* §2.2: a label column the eye reads down, then the value in the data face. */
+
+.key-value {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.key-value-label {
+  flex: none;
+  /* §1.1: keys are metadata, so they sit back and let the value read. */
+  color: var(--dim);
+  /*
+   * §2.2's aligned key column, held without a shared grid so each pair stays
+   * independent. `ch` is exact here because the key stays in the data face:
+   * eight of them fit the longest key any consumer passes today (`resource`,
+   * `revision`, `expected`, `observed`), so stacked pairs align.
+   */
+  min-width: 8ch;
+}
+
+.key-value-value {
+  margin: 0;
+}
