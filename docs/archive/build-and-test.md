@@ -5725,3 +5725,27 @@ sha256sum "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml" \
 Receipt on `d95a727b`: Job `m1-gate-phzxc` and its UID-selected Pod both
 completed with exit `0` and were absent after cleanup. The runner recorded log
 SHA-256 `30c3b8f3d6d432c77f7401ef5fc86693b3df4a42c449e6a9166aab28d5ebb5a3`.
+
+## SR-MVP — Rust contract-diff (`wamn-0h0g.11.15`)
+
+This repo-local gate runs the landed Rust owners for authoring,
+flow-invocation, flow-schema, flow-http, and the flowrunner world. The roadmap
+revision is 0.2; governed wire/package identities remain 0.1/0.1.0, and the
+owner tests refuse literal schema version 0.2. No generated TypeScript or
+reference-client gate participates in the Rust-only MVP check.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave12-11-15
+export CARGO_INCREMENTAL=0
+
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test contract_diff
+tools/contract-diff dry-run
+tools/contract-diff run
+cargo clippy --locked --offline -p wamn-flow --all-targets -- -D warnings
+cargo clippy --locked --offline -p wamn-proof-conformance \
+  --test contract_diff -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/contract-diff
+git diff --check
+```
