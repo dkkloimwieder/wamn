@@ -1,0 +1,93 @@
+/* Shell layout — spec §1.4. Colors and faces come from tokens.css only. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--space-4);
+  padding: 0 var(--space-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  font-size: var(--size-13);
+}
+
+.proxy-target {
+  color: var(--dim);
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--status-neutral);
+}
+
+.status-dot[data-status="ok"] {
+  background: var(--status-ok);
+}
+
+.status-dot[data-status="fail"] {
+  background: var(--status-fail);
+}
+
+.jump-hint {
+  margin-left: auto;
+}
+
+.shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.side-panel {
+  flex: none;
+  width: 260px;
+  border-right: 1px solid var(--line);
+}
+
+.column {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 88ch;
+  padding: var(--space-3);
+}
+
+.screen-name {
+  margin: 0;
+  font-size: var(--size-16);
+  font-weight: 600;
+}
+
+.screen-params {
+  margin: var(--space-1) 0 0;
+  color: var(--dim);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

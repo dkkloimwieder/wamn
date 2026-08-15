@@ -1,0 +1,80 @@
+/*
+ * Design tokens — spec §1. This is the only file in the tree allowed to
+ * carry a literal color or a font stack; everything else uses var().
+ */
+
+:root {
+  /* §1.1 palette */
+  --ink: #101216;
+  --panel: #181B21;
+  --line: #2A2F38;
+  --text: #C9CED6;
+  --dim: #7A8290;
+  --signal: #E8C15A;
+
+  /* §1.1 status — semantic only, always paired with the status word */
+  --status-ok: #4FA870;
+  --status-fail: #C4554D;
+  --status-warn: #C8933B;
+  --status-uncertain: #9A6BD0;
+  --status-neutral: var(--dim);
+
+  /* §1.2 the two system faces — no webfonts, no @font-face, no font files */
+  --font-data: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-frame: system-ui, sans-serif;
+
+  /* §1.2 scale: 12 labels · 13 cells · 14 body · 16 heads · 28–32 verdict */
+  --size-12: 12px;
+  --size-13: 13px;
+  --size-14: 14px;
+  --size-16: 16px;
+  --size-verdict: 30px;
+  --leading-body: 1.5;
+  --leading-table: 1.35;
+
+  /* §1.4 8px base grid */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+
+  /* §1.4 motion: disclosure/tree expand only */
+  --motion-fast: 120ms ease-out;
+}
+
+body {
+  margin: 0;
+  background: var(--ink);
+  color: var(--text);
+  /* §1.2 the data face is most of every screen; the frame face is opt-in */
+  font-family: var(--font-data);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--size-14);
+  line-height: var(--leading-body);
+}
+
+/* §1.2 frame role: it frames, it never carries data */
+.frame {
+  font-family: var(--font-frame);
+  font-variant-numeric: normal;
+}
+
+/* §1.2 label role — a frame-face role: labels frame, they never carry data */
+.label {
+  font-family: var(--font-frame);
+  font-variant-numeric: normal;
+  font-size: var(--size-12);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--dim);
+}
+
+/* §1.4 reduced motion removes even disclosure/tree expand; focus rings stay */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
