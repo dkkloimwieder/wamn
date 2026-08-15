@@ -261,12 +261,21 @@ collect_sidecar_preflight() (
       echo "sidecar preflight image is incomplete on $node" >&2
       return 1
     fi
-    runtime_image_id=$manifest_digest
+    runtime_image_id=$(jq -er '
+      [.status.repoDigests[]?
+       | capture("@(?<digest>sha256:[0-9a-f]{64})$").digest]
+      | unique
+      | if length == 1 then .[0]
+        else error("CRI runtime digest is missing or ambiguous")
+        end
+    ' "$inspect_json") || {
+      echo "sidecar preflight CRI runtime digest is missing or ambiguous on $node" >&2
+      return 1
+    }
     config_id=$(jq -r '.status.id // ""' "$inspect_json")
     upstream_index=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-index"] // ""' "$inspect_json")
     upstream_child=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-child"] // ""' "$inspect_json")
-    if [[ "$runtime_image_id" != "$manifest_digest" \
-        || ! "$runtime_image_id" =~ ^sha256:[0-9a-f]{64}$ \
+    if [[ ! "$runtime_image_id" =~ ^sha256:[0-9a-f]{64}$ \
         || ! "$config_id" =~ ^sha256:[0-9a-f]{64}$ \
         || "$config_id" != "${config_digests[0]}" \
         || "$(jq -r --arg expected "$normalized_image_ref" \
@@ -405,7 +414,6 @@ else
       (.runtime_image_id | test("^sha256:[0-9a-f]{64}$")) and
       (.config_id | test("^sha256:[0-9a-f]{64}$")) and
       .image == $spec.sidecar_image and
-      .manifest_digest == $spec.sidecar_image_id and
       .runtime_image_id == $spec.sidecar_image_id and
       .config_id == $spec.sidecar_config_id and
       .upstream_index == $spec.sidecar_upstream_index and

@@ -17,8 +17,10 @@ const MAIN_IMAGE_ID: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SIDECAR_MANIFEST_ID: &str =
     "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const SIDECAR_RUNTIME_DIGEST: &str =
+    "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const SIDECAR_IMAGE: &str = "wamn-postgres:m1-pg18-720c455e";
-const SIDECAR_RUNTIME_IMAGE_ID: &str = "docker.io/library/wamn-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+const SIDECAR_RUNTIME_IMAGE_ID: &str = "docker.io/library/import-2026-08-15@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const SIDECAR_CONFIG_ID: &str =
     "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 const SIDECAR_UPSTREAM_INDEX: &str =
@@ -98,12 +100,13 @@ case "$command" in
       init_spec='[{"name":"ready"}]'
       if [[ "$name" == m1-gate-generated ]]; then
         sidecar_image="$FAKE_SIDECAR_IMAGE"
-        sidecar_image_id='docker.io/library/wamn-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+        sidecar_image_id='docker.io/library/import-2026-08-15@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
         sidecar_exit=0
         sidecar_finished='9998-01-01T00:00:03Z'
         if [[ "$FAKE_SCENARIO" == sidecar-wrong-image ]]; then sidecar_image='postgres:wrong'; fi
         if [[ "$FAKE_SCENARIO" == sidecar-image-id-missing ]]; then sidecar_image_id=''; fi
         if [[ "$FAKE_SCENARIO" == sidecar-image-id-mismatch ]]; then sidecar_image_id='docker.io/library/import@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'; fi
+        if [[ "$FAKE_SCENARIO" == sidecar-image-id-manifest-collapse ]]; then sidecar_image_id='docker.io/library/wamn-postgres@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'; fi
         if [[ "$FAKE_SCENARIO" == sidecar-failure ]]; then sidecar_exit=1; fi
         if [[ "$FAKE_SCENARIO" == sidecar-not-terminated ]]; then sidecar_finished=''; fi
         init_spec=$(printf '[{"name":"m1-postgres","image":"%s","restartPolicy":"Always"}]' "$sidecar_image")
@@ -238,8 +241,18 @@ if [[ "$1 $2" == 'crictl inspecti' ]]; then
   elif [[ "$FAKE_SCENARIO" == sidecar-repotag-duplicate && "$node" == wamn-worker2 ]]; then
     repo_tags='["docker.io/library/wamn-postgres:m1-pg18-720c455e","docker.io/library/wamn-postgres:m1-pg18-720c455e"]'
   fi
-  printf '{"status":{"id":"%s","repoDigests":["docker.io/library/import-2026-08-15@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"repoTags":%s},"info":{"imageSpec":{"architecture":"amd64","config":{"Labels":{"wamn.dev/upstream-index":"%s","wamn.dev/upstream-child":"%s"}}}}}\n' \
-    "$config" "$repo_tags" "$SIDECAR_UPSTREAM_INDEX" "$child"
+  runtime_repo_digests='["docker.io/library/import-2026-08-15@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"]'
+  if [[ "$FAKE_SCENARIO" == sidecar-runtime-digest-missing && "$node" == wamn-control-plane ]]; then
+    runtime_repo_digests='[]'
+  elif [[ "$FAKE_SCENARIO" == sidecar-runtime-digest-ambiguous && "$node" == wamn-worker ]]; then
+    runtime_repo_digests='["docker.io/library/import-a@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","docker.io/library/import-b@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]'
+  elif [[ "$FAKE_SCENARIO" == sidecar-runtime-digest-wrong ]]; then
+    runtime_repo_digests='["docker.io/library/import-2026-08-15@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]'
+  elif [[ "$FAKE_SCENARIO" == sidecar-runtime-digest-disagreement && "$node" == wamn-worker2 ]]; then
+    runtime_repo_digests='["docker.io/library/import-2026-08-15@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"]'
+  fi
+  printf '{"status":{"id":"%s","repoDigests":%s,"repoTags":%s},"info":{"imageSpec":{"architecture":"amd64","config":{"Labels":{"wamn.dev/upstream-index":"%s","wamn.dev/upstream-child":"%s"}}}}}\n' \
+    "$config" "$runtime_repo_digests" "$repo_tags" "$SIDECAR_UPSTREAM_INDEX" "$child"
 elif [[ "$1 $2 $3 $4 $5" == 'ctr -n k8s.io images inspect' ]]; then
   if [[ "$FAKE_SCENARIO" == sidecar-ctr-inspect-failure && "$node" == wamn-worker ]]; then
     exit 1
@@ -383,7 +396,7 @@ fn generated_job() -> String {
         "claim_log_prefix": "M1_MAIN_IMAGE_ID=",
         "sidecar": "m1-postgres",
         "sidecar_image": SIDECAR_IMAGE,
-        "sidecar_image_id": SIDECAR_MANIFEST_ID,
+        "sidecar_image_id": SIDECAR_RUNTIME_DIGEST,
         "sidecar_config_id": SIDECAR_CONFIG_ID,
         "sidecar_upstream_index": SIDECAR_UPSTREAM_INDEX,
         "sidecar_upstream_child": SIDECAR_UPSTREAM_CHILD,
@@ -409,6 +422,7 @@ struct RunResult {
     record: Value,
     calls: String,
     probe_calls: String,
+    sidecar_preflight: Option<Value>,
 }
 
 fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
@@ -467,6 +481,7 @@ fn run(scenario: &str, jobs: &[String], negative: bool) -> RunResult {
         record: serde_json::from_slice(&record_bytes).expect("record JSON"),
         calls: fs::read_to_string(calls).unwrap_or_default(),
         probe_calls: fs::read_to_string(probe_calls).unwrap_or_default(),
+        sidecar_preflight: None,
     }
 }
 
@@ -524,11 +539,15 @@ fn run_generated(scenario: &str) -> RunResult {
         )
     });
     parse_verdict_record(&record_bytes).expect("generated record satisfies typed contract");
+    let sidecar_preflight = fs::read(&sidecar_preflight_path)
+        .map(|bytes| serde_json::from_slice(&bytes).expect("sidecar preflight JSON"))
+        .ok();
     RunResult {
         output,
         record: serde_json::from_slice(&record_bytes).expect("record JSON"),
         calls: fs::read_to_string(calls).unwrap_or_default(),
         probe_calls: String::new(),
+        sidecar_preflight,
     }
 }
 
@@ -664,7 +683,7 @@ fn generated_name_job_is_created_captured_observed_and_deleted_exactly() {
     );
     assert_eq!(
         result.record["jobs"][0]["expected_sidecar_image_id"],
-        SIDECAR_MANIFEST_ID
+        SIDECAR_RUNTIME_DIGEST
     );
     assert_eq!(
         result.record["jobs"][0]["preflight_sidecar_config_id"],
@@ -693,6 +712,20 @@ fn generated_name_job_is_created_captured_observed_and_deleted_exactly() {
         result.record["jobs"][0]["observed"]["pods"][0]["sidecar_image_id"],
         SIDECAR_RUNTIME_IMAGE_ID
     );
+    let preflight = result
+        .sidecar_preflight
+        .as_ref()
+        .expect("passing generated Job records its sidecar preflight");
+    assert_eq!(preflight["manifest_digest"], SIDECAR_MANIFEST_ID);
+    assert_eq!(preflight["runtime_image_id"], SIDECAR_RUNTIME_DIGEST);
+    assert_ne!(preflight["manifest_digest"], preflight["runtime_image_id"]);
+    assert!(preflight["nodes"].as_array().is_some_and(|nodes| {
+        nodes.len() == 3
+            && nodes.iter().all(|node| {
+                node["manifest_digest"] == SIDECAR_MANIFEST_ID
+                    && node["runtime_image_id"] == SIDECAR_RUNTIME_DIGEST
+            })
+    }));
     assert!(!SIDECAR_IMAGE.contains('@'));
     assert_ne!(SIDECAR_CONFIG_ID, SIDECAR_MANIFEST_ID);
     let nodes = result
@@ -747,6 +780,10 @@ fn generated_name_job_refuses_sidecar_collector_failures_before_create() {
         "sidecar-repotag-missing",
         "sidecar-repotag-wrong",
         "sidecar-repotag-duplicate",
+        "sidecar-runtime-digest-missing",
+        "sidecar-runtime-digest-ambiguous",
+        "sidecar-runtime-digest-wrong",
+        "sidecar-runtime-digest-disagreement",
     ] {
         let (output, calls, docker_calls, preflight_exists) =
             run_rejected_sidecar_collection(scenario);
@@ -804,6 +841,10 @@ fn generated_name_job_refuses_invalid_identity_and_cleanup_residue() {
         ("sidecar-wrong-image", "sidecar-wrong-image"),
         ("sidecar-image-id-missing", "sidecar-image-id-missing"),
         ("sidecar-image-id-mismatch", "sidecar-image-id-mismatch"),
+        (
+            "sidecar-image-id-manifest-collapse",
+            "sidecar-image-id-mismatch",
+        ),
         ("sidecar-failure", "sidecar-exit-code-mismatch"),
         ("sidecar-not-terminated", "sidecar-completion-invalid"),
     ] {
