@@ -26,9 +26,12 @@ The reviewed stack (D2 option B, 2026-08-15) is Solid `2.0.0-rc.0`,
 `@solidjs/web` `2.0.0-rc.0`, `@solidjs/vite-plugin` `3.0.0-next.28`, Vite
 `8.2.0`, TypeScript `7.0.2`, and Vitest `4.1.10`.
 
-The workspace reserves `clients/authoring-client` for the generated public API
-client and `clients/loop-console` for the later polling console. This scaffold
-contains no product screen, API adapter, hosting configuration, or platform
+`clients/authoring-client` holds the generated public API client and the
+headless CLI below. `clients/loop-console` holds the loop console — the local
+view-only dev UI designed in `docs/wamn-dev-ui-spec.md`. It currently carries
+the shell (hash router, `tokens.css`, `AppShell`) and a fixture-backed reader
+seam, and it reads nothing live: the HTTP reader and the loopback proxy land in
+the spec's step 9. Neither package carries hosting configuration or platform
 authority.
 
 ## The headless `wamn` CLI (`wamn-ftfc.14`)
