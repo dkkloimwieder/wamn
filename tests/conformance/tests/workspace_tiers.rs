@@ -44,6 +44,8 @@ struct WorkspaceTierManifest {
     selection: Selection,
     source_inventory: SourceInventory,
     tiers: Tiers,
+    #[serde(rename = "profiles")]
+    _profiles: serde_json::Value,
     bare_cargo_semantics: Vec<BareCargoSemantics>,
     release_identity: ReleaseIdentity,
     measurement: serde_json::Value,

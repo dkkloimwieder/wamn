@@ -184,6 +184,49 @@
       "command_semantics": "Release membership is the deployable classification, but release admission requires the immutable SR17/SR26 identity join below. Cargo defaults are not release evidence."
     }
   },
+  "profiles": {
+    "root": {
+      "default_source": "cargo_metadata_workspace_default_members",
+      "m1_additions": [
+        "wamn-event-reg",
+        "wamn-event-wire",
+        "wamn-materializer",
+        "wamn-cdc-reader"
+      ],
+      "m2_additions": [
+        "wamn-dispatcher",
+        "wamn-waker"
+      ],
+      "deploy_additions": [
+        "wamn-ctl",
+        "wamn-control-provision",
+        "wamn-control-registry",
+        "wamn-project-state",
+        "wamn-schema-control",
+        "wamn-schema-compiler"
+      ],
+      "deploy_inventory_tier": "fast_developer_native",
+      "full_inventory_tier": "full_ci",
+      "ops_features": [
+        "wamn-ctl/ops"
+      ],
+      "expected_package_counts": {
+        "m1": 23,
+        "m2": 25,
+        "deploy": 31,
+        "full": 38,
+        "ops": 38
+      }
+    },
+    "components": {
+      "m1_inventory_tier": "product_components",
+      "proof_inventory_tier": "full_ci",
+      "expected_package_counts": {
+        "m1": 3,
+        "proof": 6
+      }
+    }
+  },
   "bare_cargo_semantics": [
     {
       "working_directory": ".",

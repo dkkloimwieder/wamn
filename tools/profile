@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/profile m1 | m2 | deploy | full | ops'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'profile: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+(($# == 1)) || wamn_usage_error 'exactly one profile is required'
+readonly WAMN_PROFILE="$1"
+case "$WAMN_PROFILE" in
+  m1 | m2 | deploy | full | ops) ;;
+  *) wamn_usage_error "unknown profile '$WAMN_PROFILE'" ;;
+esac
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_TIER_MANIFEST="$WAMN_REPOSITORY_ROOT/architecture/workspace-tiers.json"
+readonly WAMN_CARGO_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
+readonly WAMN_CARGO="${CARGO:-cargo}"
+
+command -v jq >/dev/null 2>&1 || wamn_fail 127 'jq is required'
+[[ -r "$WAMN_TIER_MANIFEST" ]] || {
+  wamn_fail 65 "cannot read $WAMN_TIER_MANIFEST"
+}
+if [[ "$WAMN_CARGO" == */* ]]; then
+  [[ -x "$WAMN_CARGO" ]] || {
+    wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
+  }
+else
+  command -v "$WAMN_CARGO" >/dev/null 2>&1 || {
+    wamn_fail 127 "Cargo executable was not found: $WAMN_CARGO"
+  }
+fi
+cd -- "$WAMN_REPOSITORY_ROOT"
+
+declare WAMN_METADATA
+WAMN_METADATA="$("$WAMN_CARGO" metadata \
+  --manifest-path "$WAMN_CARGO_MANIFEST" \
+  --locked --offline --no-deps --format-version 1)" || {
+  wamn_fail 65 'locked root Cargo metadata failed'
+}
+readonly WAMN_METADATA
+
+declare WAMN_PLAN
+WAMN_PLAN="$(
+  printf '%s\n' "$WAMN_METADATA" | jq -e -s --arg profile "$WAMN_PROFILE" '
+    .[0] as $contract
+    | .[1] as $metadata
+    | $contract.profiles.root as $profiles
+    | ($metadata.packages | map({key: .id, value: .name}) | from_entries) as $names
+    | [$metadata.workspace_default_members[] | $names[.]] as $defaults
+    | [$metadata.workspace_members[] | $names[.]] as $members
+    | ($profiles.m1_additions
+       + $profiles.m2_additions
+       + $profiles.deploy_additions) as $all_additions
+    | (if $profile == "m1" then
+         $defaults + $profiles.m1_additions
+       elif $profile == "m2" then
+         $defaults + $profiles.m1_additions + $profiles.m2_additions
+       elif $profile == "deploy" then
+         $defaults + $all_additions
+       else
+         $contract.tiers[$profiles.full_inventory_tier].root_packages
+       end) as $packages
+    | (if $profile == "ops" then $profiles.ops_features else [] end) as $features
+    | ($contract.tiers[$profiles.deploy_inventory_tier].root_packages) as $deploy_inventory
+    | select($contract.schema_version == "0.1")
+    | select($profiles.default_source == "cargo_metadata_workspace_default_members")
+    | select($defaults | length == 19 and length == (unique | length))
+    | select($members | length == $contract.source_inventory.root_workspace.package_count)
+    | select($members | length == (unique | length))
+    | select($all_additions | length == 12 and length == (unique | length))
+    | select(([$all_additions[] as $addition
+               | select($defaults | index($addition) != null)] | length) == 0)
+    | select($packages | length == $profiles.expected_package_counts[$profile])
+    | select($packages | length == (unique | length))
+    | select(([$packages[] as $package
+               | select($members | index($package) == null)] | length) == 0)
+    | select(($defaults + $all_additions | sort) == ($deploy_inventory | sort))
+    | select(($contract.tiers[$profiles.full_inventory_tier].root_packages | sort)
+             == ($members | sort))
+    | {packages: $packages, features: $features}
+  ' "$WAMN_TIER_MANIFEST" -
+)" || wamn_fail 65 'profile contract, canonical inventory, and locked metadata drifted'
+readonly WAMN_PLAN
+
+mapfile -t WAMN_PACKAGES < <(jq -r '.packages[]' <<<"$WAMN_PLAN")
+mapfile -t WAMN_FEATURES < <(jq -r '.features[]' <<<"$WAMN_PLAN")
+
+declare -a WAMN_ARGUMENTS=(
+  test --locked --offline --no-fail-fast --manifest-path "$WAMN_CARGO_MANIFEST"
+)
+for package in "${WAMN_PACKAGES[@]}"; do
+  WAMN_ARGUMENTS+=(-p "$package")
+done
+if ((${#WAMN_FEATURES[@]} > 0)); then
+  WAMN_ARGUMENTS+=(--features "$(IFS=,; printf '%s' "${WAMN_FEATURES[*]}")")
+fi
+
+printf 'profile: %s selects %s root packages\n' \
+  "$WAMN_PROFILE" "${#WAMN_PACKAGES[@]}" >&2
+exec "$WAMN_CARGO" "${WAMN_ARGUMENTS[@]}"

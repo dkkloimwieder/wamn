@@ -5257,3 +5257,34 @@ if rg -n --hidden --glob '!.git/**' --glob '!.beads/**' \
 fi
 git diff --check
 ```
+
+## SR-MVP — executable workspace profiles (`wamn-0h0g.10.3`)
+
+This debug-only gate proves that the profile tools derive cumulative package
+selections from the governed inventory and locked Cargo metadata. Fake-Cargo
+tests pin every command argument and refusal; the component legs perform the
+real three- and six-component `wasm32-wasip2` builds.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/gate-0h0g-10-3
+export CARGO_INCREMENTAL=0
+
+jq -e . architecture/workspace-tiers.json >/dev/null
+bash -n tools/profile tools/build-components \
+  tools/gate-mutants/profile-selectors.sh
+
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test profile_selectors --test workspace_tiers --no-fail-fast
+cargo clippy --locked --offline -p wamn-proof-conformance \
+  --test profile_selectors --test workspace_tiers -- -D warnings
+
+tools/gate-mutants/profile-selectors.sh check
+tools/gate-mutants/profile-selectors.sh green-all
+tools/gate-mutants/profile-selectors.sh run-all
+
+tools/build-components m1
+tools/build-components proof
+
+cargo fmt --all -- --check
+git diff --check
+```
