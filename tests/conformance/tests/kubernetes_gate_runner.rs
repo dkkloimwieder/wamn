@@ -230,14 +230,16 @@ if [[ "$1 $2" == 'crictl inspecti' ]]; then
   if [[ "$FAKE_SCENARIO" == sidecar-label-disagreement && "$node" == wamn-worker ]]; then
     child='sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
   fi
-  repo_digest='docker.io/library/wamn-postgres:m1-pg18-720c455e@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-  if [[ "$FAKE_SCENARIO" == sidecar-repodigest-missing && "$node" == wamn-control-plane ]]; then
-    repo_digest='docker.io/library/import@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
-  elif [[ "$FAKE_SCENARIO" == sidecar-repodigest-wrong && "$node" == wamn-worker2 ]]; then
-    repo_digest='docker.io/library/wamn-postgres:m1-pg18-720c455e@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  repo_tags='["docker.io/library/wamn-postgres:m1-pg18-720c455e"]'
+  if [[ "$FAKE_SCENARIO" == sidecar-repotag-missing && "$node" == wamn-control-plane ]]; then
+    repo_tags='[]'
+  elif [[ "$FAKE_SCENARIO" == sidecar-repotag-wrong && "$node" == wamn-worker ]]; then
+    repo_tags='["docker.io/library/foreign:m1-pg18"]'
+  elif [[ "$FAKE_SCENARIO" == sidecar-repotag-duplicate && "$node" == wamn-worker2 ]]; then
+    repo_tags='["docker.io/library/wamn-postgres:m1-pg18-720c455e","docker.io/library/wamn-postgres:m1-pg18-720c455e"]'
   fi
-  printf '{"status":{"id":"%s","repoDigests":["%s","docker.io/library/import@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"repoTags":["docker.io/library/wamn-postgres:m1-pg18-720c455e"]},"info":{"imageSpec":{"architecture":"amd64","config":{"Labels":{"wamn.dev/upstream-index":"%s","wamn.dev/upstream-child":"%s"}}}}}\n' \
-    "$config" "$repo_digest" "$SIDECAR_UPSTREAM_INDEX" "$child"
+  printf '{"status":{"id":"%s","repoDigests":["docker.io/library/import-2026-08-15@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"repoTags":%s},"info":{"imageSpec":{"architecture":"amd64","config":{"Labels":{"wamn.dev/upstream-index":"%s","wamn.dev/upstream-child":"%s"}}}}}\n' \
+    "$config" "$repo_tags" "$SIDECAR_UPSTREAM_INDEX" "$child"
 elif [[ "$1 $2 $3 $4 $5" == 'ctr -n k8s.io images inspect' ]]; then
   if [[ "$FAKE_SCENARIO" == sidecar-ctr-inspect-failure && "$node" == wamn-worker ]]; then
     exit 1
@@ -259,7 +261,16 @@ elif [[ "$1 $2 $3 $4 $5" == 'ctr -n k8s.io images inspect' ]]; then
   if [[ "$FAKE_SCENARIO" == sidecar-ctr-manifest-ambiguous && "$node" == wamn-worker ]]; then
     printf '└── application/vnd.oci.image.manifest.v1+json @%s (2225 bytes)\n' "$manifest"
   fi
-  printf '    ├── application/vnd.oci.image.config.v1+json @sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd (10622 bytes)\n'
+  config='sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
+  if [[ "$FAKE_SCENARIO" == sidecar-ctr-config-mismatch && "$node" == wamn-worker2 ]]; then
+    config='sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+  fi
+  if [[ "$FAKE_SCENARIO" != sidecar-ctr-config-missing || "$node" != wamn-worker ]]; then
+    printf '    ├── application/vnd.oci.image.config.v1+json @%s (10622 bytes)\n' "$config"
+  fi
+  if [[ "$FAKE_SCENARIO" == sidecar-ctr-config-ambiguous && "$node" == wamn-worker ]]; then
+    printf '    ├── application/vnd.oci.image.config.v1+json @%s (10622 bytes)\n' "$config"
+  fi
 elif [[ "$1 $2 $3 $4 $5" == 'ctr -n k8s.io images check' ]]; then
   if [[ "$FAKE_SCENARIO" == sidecar-incomplete && "$node" == wamn-worker ]]; then
     exit 0
@@ -727,11 +738,15 @@ fn generated_name_job_refuses_sidecar_collector_failures_before_create() {
         "sidecar-ctr-manifest-missing",
         "sidecar-ctr-manifest-ambiguous",
         "sidecar-ctr-manifest-wrong",
+        "sidecar-ctr-config-missing",
+        "sidecar-ctr-config-ambiguous",
+        "sidecar-ctr-config-mismatch",
         "sidecar-inspect-failure",
         "sidecar-incomplete",
         "sidecar-label-disagreement",
-        "sidecar-repodigest-missing",
-        "sidecar-repodigest-wrong",
+        "sidecar-repotag-missing",
+        "sidecar-repotag-wrong",
+        "sidecar-repotag-duplicate",
     ] {
         let (output, calls, docker_calls, preflight_exists) =
             run_rejected_sidecar_collection(scenario);

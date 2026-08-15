@@ -191,9 +191,9 @@ run_node_image() {
 
 collect_sidecar_preflight() (
   local spec=$1 output=$2 scratch output_tmp nodes_json image image_ref normalized_image_ref
-  local expected_repo_digest node inspect_json inspect_tree complete_ref manifest_digest runtime_ref runtime_image_id
+  local node inspect_json inspect_tree complete_ref manifest_digest runtime_image_id
   local config_id upstream_index upstream_child first
-  local -a manifest_digests
+  local -a manifest_digests config_digests
   scratch=$(mktemp -d) || return 1
   if ! output_tmp=$(mktemp "${output}.tmp.XXXXXX"); then
     rm -rf "$scratch"
@@ -245,6 +245,13 @@ collect_sidecar_preflight() (
       return 1
     fi
     manifest_digest=${manifest_digests[0]}
+    mapfile -t config_digests < <(sed -nE \
+      's/^    [├└]── application\/vnd\.oci\.image\.config\.v1\+json @(sha256:[0-9a-f]{64}) \([0-9]+ bytes\)$/\1/p' \
+      "$inspect_tree")
+    if [[ ${#config_digests[@]} -ne 1 ]]; then
+      echo "sidecar preflight containerd config child is missing or ambiguous on $node" >&2
+      return 1
+    fi
     if ! run_node_image "$node" crictl inspecti -o json "$image" >"$inspect_json"; then
       echo "sidecar preflight CRI inspect failed on $node" >&2
       return 1
@@ -254,23 +261,16 @@ collect_sidecar_preflight() (
       echo "sidecar preflight image is incomplete on $node" >&2
       return 1
     fi
-    expected_repo_digest="${normalized_image_ref}@${manifest_digest}"
-    runtime_ref=$(jq -er --arg expected "$expected_repo_digest" '
-      [.status.repoDigests[]? | select(. == $expected)] |
-      if length == 1 then .[0] else error("exact repo digest missing or duplicated") end
-    ' "$inspect_json") || {
-      echo "sidecar preflight exact repo digest is missing or ambiguous on $node" >&2
-      return 1
-    }
-    runtime_image_id=${runtime_ref##*@}
+    runtime_image_id=$manifest_digest
     config_id=$(jq -r '.status.id // ""' "$inspect_json")
     upstream_index=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-index"] // ""' "$inspect_json")
     upstream_child=$(jq -r '.info.imageSpec.config.Labels["wamn.dev/upstream-child"] // ""' "$inspect_json")
     if [[ "$runtime_image_id" != "$manifest_digest" \
         || ! "$runtime_image_id" =~ ^sha256:[0-9a-f]{64}$ \
         || ! "$config_id" =~ ^sha256:[0-9a-f]{64}$ \
+        || "$config_id" != "${config_digests[0]}" \
         || "$(jq -r --arg expected "$normalized_image_ref" \
-          '[.status.repoTags[]? | select(. == $expected)] | length' "$inspect_json")" != 1 \
+          '.status.repoTags == [$expected]' "$inspect_json")" != true \
         || "$upstream_index" != "$(jq -r '.sidecar_upstream_index' <<<"$spec")" \
         || "$upstream_child" != "$(jq -r '.sidecar_upstream_child' <<<"$spec")" ]]; then
       echo "sidecar preflight image tuple mismatch on $node" >&2
