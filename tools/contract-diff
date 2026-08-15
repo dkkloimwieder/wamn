@@ -1,0 +1,112 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly WAMN_USAGE='usage: tools/contract-diff [run|dry-run]'
+
+wamn_fail() {
+  local -r exit_code="$1"
+  shift
+  printf 'contract-diff: %s\n' "$*" >&2
+  exit "$exit_code"
+}
+
+wamn_usage_error() {
+  printf '%s\n' "$WAMN_USAGE" >&2
+  wamn_fail 64 "$*"
+}
+
+readonly WAMN_TOOL_DIRECTORY="$(
+  CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_REPOSITORY_ROOT="$(
+  CDPATH= cd -- "$WAMN_TOOL_DIRECTORY/.." >/dev/null 2>&1
+  pwd -P
+)"
+readonly WAMN_ROOT_MANIFEST="$WAMN_REPOSITORY_ROOT/Cargo.toml"
+readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
+readonly WAMN_CARGO="${CARGO:-cargo}"
+
+readonly -a WAMN_AUTHORING=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-authoring-model --test contract --test request_collection
+)
+readonly -a WAMN_FLOW_INVOCATION=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-flow-invocation --test contract --test wit_coherence
+)
+readonly -a WAMN_RUNTIME_INVOCATION=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-runtime --test flow_invocation_wit_coherence
+)
+readonly -a WAMN_FLOW_HTTP=(
+  test --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
+  -p flow-http --test adversarial
+)
+readonly -a WAMN_FLOW_SCHEMA=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-flow
+)
+readonly -a WAMN_FLOWRUNNER_WORLD=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-proof-system --lib flowrunner_contract::tests::
+)
+
+wamn_print_plan() {
+  local -r label="$1"
+  shift
+  printf '%s:' "$label"
+  printf ' %q' "$WAMN_CARGO" "$@"
+  printf '\n'
+}
+
+wamn_dry_run() {
+  printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
+  wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
+  wamn_print_plan flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
+  wamn_print_plan runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
+  wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
+  wamn_print_plan flow-schema "${WAMN_FLOW_SCHEMA[@]}"
+  wamn_print_plan flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
+}
+
+wamn_require_cargo() {
+  if [[ "$WAMN_CARGO" == */* ]]; then
+    [[ -x "$WAMN_CARGO" ]] || {
+      wamn_fail 127 "Cargo executable is not executable: $WAMN_CARGO"
+    }
+  else
+    command -v "$WAMN_CARGO" >/dev/null 2>&1 || {
+      wamn_fail 127 "Cargo executable was not found: $WAMN_CARGO"
+    }
+  fi
+}
+
+wamn_run() {
+  local -r label="$1"
+  shift
+  printf 'contract-diff: %s\n' "$label" >&2
+  "$WAMN_CARGO" "$@"
+}
+
+(($# <= 1)) || wamn_usage_error 'expected at most one command'
+readonly WAMN_COMMAND="${1:-run}"
+
+case "$WAMN_COMMAND" in
+  dry-run)
+    wamn_dry_run
+    ;;
+  run)
+    wamn_require_cargo
+    cd -- "$WAMN_REPOSITORY_ROOT"
+    wamn_run authoring "${WAMN_AUTHORING[@]}"
+    wamn_run flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
+    wamn_run runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
+    wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
+    wamn_run flow-schema "${WAMN_FLOW_SCHEMA[@]}"
+    wamn_run flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
+    ;;
+  *)
+    wamn_usage_error "unknown command '$WAMN_COMMAND'"
+    ;;
+esac

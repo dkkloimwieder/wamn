@@ -961,7 +961,7 @@ mod tests {
 
     use crate::types::{Edge, Flow, FlowConnectionRequirement, Node};
 
-    use super::ResolvedInterfaces;
+    use super::{Issue, ResolvedInterfaces};
 
     fn node(id: &str, node_type: &str) -> Node {
         Node {
@@ -1039,6 +1039,21 @@ mod tests {
         });
         flow.connection_requirements = vec![http_requirement("erp")];
         flow
+    }
+
+    #[test]
+    fn flow_schema_version_0_2_is_refused_exactly() {
+        let mut flow = request_flow();
+        flow.schema_version = "0.2".into();
+
+        assert_eq!(
+            flow.issues(&interfaces()),
+            vec![Issue::error(
+                "unsupported-schema-version",
+                "schema-version",
+                r#""0.2" is newer than this implementation (0.1)"#,
+            )]
+        );
     }
 
     #[test]
