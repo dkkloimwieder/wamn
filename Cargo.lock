@@ -4377,6 +4377,7 @@ dependencies = [
  "jmespath",
  "serde",
  "serde_json",
+ "wamn-catalog",
  "wamn-event-reg",
  "wamn-event-wire",
  "wamn-flow",

@@ -10,10 +10,9 @@ serde_json = { workspace = true }
 # REPLICA IDENTITY DEFAULT contract, causation budget, and run-id + input mint)
 # — this shell only performs the effects.
 wamn-materializer = { workspace = true }
-# The declaration surfaces the sweep reads: registrations + the flow graph.
+# The declaration surfaces the sweep reads: registrations + the canonical plan.
 wamn-event-reg = { workspace = true }
 wamn-event-wire = { workspace = true }
-wamn-flow = { workspace = true }
 # The write-ahead + evt-enqueue SQL builders. `default-features = false` keeps
 # Guest-safe durable admission SQL; schedule evaluation is separate.
 wamn-run-state = { workspace = true }

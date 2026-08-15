@@ -28,8 +28,15 @@ pub(crate) struct ReaderProcess {
 
 impl ReaderProcess {
     pub(crate) fn spawn(args: ReaderArgs) -> anyhow::Result<Self> {
+        Self::spawn_with_dup_window(args, 120)
+    }
+
+    pub(crate) fn spawn_with_dup_window(
+        args: ReaderArgs,
+        dup_window_secs: u64,
+    ) -> anyhow::Result<Self> {
         let binary = reader_binary();
-        let mut command = reader_command(&binary, &args);
+        let mut command = reader_command_with_dup_window(&binary, &args, dup_window_secs);
         command.kill_on_drop(true);
         let child = command
             .spawn()
@@ -103,7 +110,16 @@ fn reader_binary() -> OsString {
         .unwrap_or_else(|| OsString::from("wamn-cdc-reader"))
 }
 
+#[cfg(test)]
 fn reader_command(binary: &OsStr, args: &ReaderArgs) -> Command {
+    reader_command_with_dup_window(binary, args, 120)
+}
+
+fn reader_command_with_dup_window(
+    binary: &OsStr,
+    args: &ReaderArgs,
+    dup_window_secs: u64,
+) -> Command {
     let mut command = Command::new(binary);
     command
         .env("WAMN_SYSTEM_URL", &args.system_database_url)
@@ -123,7 +139,7 @@ fn reader_command(binary: &OsStr, args: &ReaderArgs) -> Command {
         .arg("--stream-replicas")
         .arg(args.stream_replicas.to_string())
         .arg("--dup-window-secs")
-        .arg("120")
+        .arg(dup_window_secs.to_string())
         .arg("--feedback-secs")
         .arg("1")
         .arg("--stall-threshold-secs")

@@ -34,7 +34,7 @@ enum Command {
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
-    /// Prove one admitted invocation through the deployed runner, WAL reader, and R3 stream.
+    /// Prove one tenant commit through production CDC, stored redelivery, and materializer admission.
     CausationE2e(causation_e2e::CausationE2eArgs),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),

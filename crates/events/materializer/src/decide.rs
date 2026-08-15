@@ -51,13 +51,48 @@ pub fn mint_registered_evt_run_id(flow_id: &str, registration_id: &str, stream_s
     mint_evt_run_id(&format!("{flow_id}:{registration_id}"), stream_seq)
 }
 
+/// Derive the frozen source-event coordinate carried by `Nats-Msg-Id`.
+pub fn source_event_id(project: &str, environment: &str, envelope: &Envelope) -> String {
+    wamn_event_wire::msg_id(project, environment, envelope.lsn)
+}
+
+/// A source-event coordinate proven to match the one delivered NATS identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSourceEventId(String);
+
+impl VerifiedSourceEventId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Accept exactly one delivered `Nats-Msg-Id`, and only when it matches the
+/// coordinate derived from trusted subscription identity plus envelope LSN.
+pub fn verified_source_event_id(
+    project: &str,
+    environment: &str,
+    envelope: &Envelope,
+    message_ids: &[&str],
+) -> Option<VerifiedSourceEventId> {
+    let expected = source_event_id(project, environment, envelope);
+    match message_ids {
+        [actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),
+        _ => None,
+    }
+}
+
 /// Build the trusted invocation context for one event admission.
-pub fn event_invocation_context_json(envelope: &Envelope, stream_seq: u64) -> String {
+pub fn event_invocation_context_json(
+    envelope: &Envelope,
+    stream_seq: u64,
+    source_event_id: &VerifiedSourceEventId,
+) -> String {
     serde_json::to_string(&serde_json::json!({
         "trigger": "event",
         "entity": envelope.entity,
         "table": envelope.table,
         "seq": stream_seq,
+        "source-event-id": source_event_id.as_str(),
     }))
     .expect("event invocation context serializes")
 }
@@ -174,12 +209,17 @@ pub fn child_causation(
 /// workload's own bound tenant (host-injected claim; the guest reads its copy
 /// from config/env — the DB claims stay host-enforced regardless).
 /// `condition` is [`serviceable`]'s compile for THIS registration.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pure decision boundary names every independently trusted input"
+)]
 pub fn decide(
     reg: &EventRegistration,
     flow: &FlowDeclaration,
     condition: Option<&CompiledCondition>,
     envelope: &Envelope,
     stream_seq: u64,
+    source_event_id: &VerifiedSourceEventId,
     tenant: &str,
     max_depth: u32,
 ) -> Verdict {
@@ -239,7 +279,8 @@ pub fn decide(
         .as_ref()
         .map_or_else(|| run_id.clone(), |parent| parent.run.clone());
     let input_json = evt_input_json(envelope, stream_seq, &child);
-    let invocation_context_json = event_invocation_context_json(envelope, stream_seq);
+    let invocation_context_json =
+        event_invocation_context_json(envelope, stream_seq, source_event_id);
     Verdict::Fire(Box::new(FirePlan {
         run_id,
         flow_id: flow.flow_id.clone(),
@@ -304,6 +345,30 @@ mod tests {
         }
     }
 
+    fn decide(
+        reg: &EventRegistration,
+        flow: &FlowDeclaration,
+        condition: Option<&CompiledCondition>,
+        envelope: &Envelope,
+        stream_seq: u64,
+        tenant: &str,
+        max_depth: u32,
+    ) -> Verdict {
+        let expected = source_event_id("app", "dev", envelope);
+        let source_event_id =
+            verified_source_event_id("app", "dev", envelope, &[&expected]).unwrap();
+        super::decide(
+            reg,
+            flow,
+            condition,
+            envelope,
+            stream_seq,
+            &source_event_id,
+            tenant,
+            max_depth,
+        )
+    }
+
     #[test]
     fn a_matching_insert_fires_with_the_e4_mint() {
         let reg = registration(None);
@@ -326,8 +391,28 @@ mod tests {
                 "trigger": "event",
                 "entity": "receipts",
                 "table": "receipts",
-                "seq": 9
+                "seq": 9,
+                "source-event-id": "app_dev:42"
             })
+        );
+    }
+
+    #[test]
+    fn source_event_id_requires_one_exact_nats_message_id() {
+        let env = envelope(Op::Insert, json!({"tenant_id": "t1"}));
+        assert_eq!(source_event_id("app", "dev", &env), "app_dev:42");
+        assert_eq!(
+            verified_source_event_id("app", "dev", &env, &["app_dev:42"]),
+            Some(VerifiedSourceEventId("app_dev:42".into()))
+        );
+        assert_eq!(verified_source_event_id("app", "dev", &env, &[]), None);
+        assert_eq!(
+            verified_source_event_id("app", "dev", &env, &["app_dev:41"]),
+            None
+        );
+        assert_eq!(
+            verified_source_event_id("app", "dev", &env, &["app_dev:42", "app_dev:42"]),
+            None
         );
     }
 

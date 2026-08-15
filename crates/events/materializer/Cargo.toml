@@ -13,6 +13,8 @@ wamn-event-wire = { workspace = true }
 wamn-event-reg = { workspace = true }
 # EventInput and RowEvent are shared with the flow entry contract.
 wamn-flow = { workspace = true }
+# Verify release members against the canonical executable-plan bytes.
+wamn-catalog = { workspace = true }
 # The deterministic event run-id mint. Scheduling remains outside this
 # guest-safe materialization core.
 wamn-run-state = { workspace = true }

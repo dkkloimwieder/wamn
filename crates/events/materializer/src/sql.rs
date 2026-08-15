@@ -23,8 +23,8 @@ pub fn select_registrations_sql() -> String {
 /// when the head or release member is absent, so the caller holds the
 /// registration. Event resolution deliberately has no attachment join.
 pub fn select_release_flow_sql() -> String {
-    "SELECT h.applied_catalog_version, r.flow_version, a.graph_json::text AS graph_json, \
-            a.interface_bundle_json::text AS interface_bundle_json \
+    "SELECT h.applied_catalog_version, r.flow_version, r.execution_bundle_hash, \
+            a.artifact_hash, b.exact_bytes \
        FROM catalog.catalog_heads AS h \
        JOIN catalog.release_flows AS r \
          ON r.tenant_id = h.tenant_id AND r.catalog_id = h.catalog_id \
@@ -32,6 +32,9 @@ pub fn select_release_flow_sql() -> String {
        JOIN catalog.flow_artifacts AS a \
          ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
         AND a.flow_version = r.flow_version \
+       JOIN catalog.execution_bundles AS b \
+         ON b.tenant_id = r.tenant_id \
+        AND b.execution_bundle_hash = r.execution_bundle_hash \
       WHERE h.tenant_id = current_setting('app.tenant', true) \
         AND h.catalog_id = $1 AND h.environment = $2 AND r.flow_id = $3"
         .to_string()
@@ -60,9 +63,13 @@ mod tests {
             flow.contains("catalog.catalog_heads")
                 && flow.contains("catalog.release_flows")
                 && flow.contains("catalog.flow_artifacts")
-                && flow.contains("interface_bundle_json"),
-            "event candidates resolve the applied release"
+                && flow.contains("catalog.execution_bundles")
+                && flow.contains("execution_bundle_hash")
+                && flow.contains("artifact_hash")
+                && flow.contains("exact_bytes"),
+            "event candidates resolve and verify the applied canonical plan"
         );
+        assert!(!flow.contains("interface_bundle_json"));
         assert!(
             !flow.contains("attachment"),
             "events never resolve attachments"

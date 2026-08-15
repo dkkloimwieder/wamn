@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly OWNER="bd:wamn-ec7j"
-readonly OUTCOME="the exact admitted run causation survives the reader pipeline"
-
+readonly OWNER="bd:wamn-0h0g.11.9"
+readonly OUTCOME="forward CDC causation and storage-owned event idempotency"
 readonly CAMPAIGN="causation-e2e"
-readonly BEAD="wamn-ec7j"
+readonly BEAD="wamn-0h0g.11.9"
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 if [[ -z "${CARGO_TARGET_DIR:-}" ]]; then
-  echo "CARGO_TARGET_DIR must name a unique debug target directory" >&2
+  echo "CARGO_TARGET_DIR must name the isolated debug target directory" >&2
   exit 2
 fi
 
@@ -20,46 +19,37 @@ declare -a TEST_ARGV
 
 mutation_ids() {
   printf '%s\n' \
-    invocation-drops-sink-write \
-    reader-requests-r1 \
-    readerbench-drops-exact-causation \
-    reader-process-ignores-replica-argument
+    canonical-plan-accepts-wrong-artifact \
+    source-event-accepts-wrong-message-id \
+    stored-redelivery-skips-post-window
 }
 
 load_mutation() {
   local id="$1"
   case "$id" in
-    invocation-drops-sink-write)
-      TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
-      NEEDLE='{ "id": "write", "type": "pg-write" }'
-      REPLACEMENT='{ "id": "write", "type": "transform" }'
-      GATE="causation_e2e::tests::invocation_fixture_drives_one_gate_scoped_pg_write"
-      TEST_ARGV=(cargo test --locked -p wamn-proof-integration --lib "$GATE" -- --exact)
+    canonical-plan-accepts-wrong-artifact)
+      TARGET="crates/events/materializer/src/lib.rs"
+      EXPECTED_SHA="079650a36ac047e9a1ad02754bd5009dd595dfa1f357d0e7f7e78f4ca6a663f2"
+      NEEDLE='if plan.header.root_artifact_hash != artifact_hash {'
+      REPLACEMENT='if plan.header.root_artifact_hash == artifact_hash {'
+      GATE="execution_plan_tests::release_plan_requires_exact_hash_artifact_and_event_entry"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-materializer --lib "$GATE" -- --exact)
       ;;
-    reader-requests-r1)
-      TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
-      NEEDLE='stream_replicas: 3,'
-      REPLACEMENT='stream_replicas: 1,'
-      GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"
-      TEST_ARGV=(cargo test --locked -p wamn-proof-integration --lib "$GATE" -- --exact)
+    source-event-accepts-wrong-message-id)
+      TARGET="crates/events/materializer/src/decide.rs"
+      EXPECTED_SHA="34b5c1ec0828ba565d3ef59501206621df1a6242363af0cf6f7bd0422c911442"
+      NEEDLE='[actual] if *actual == expected => Some(VerifiedSourceEventId(expected)),'
+      REPLACEMENT='[actual] if *actual != expected => Some(VerifiedSourceEventId(expected)),'
+      GATE="decide::tests::source_event_id_requires_one_exact_nats_message_id"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-materializer --lib "$GATE" -- --exact)
       ;;
-    readerbench-drops-exact-causation)
+    stored-redelivery-skips-post-window)
       TARGET="tests/integration/src/causation_e2e.rs"
-      EXPECTED_SHA="69e56b9788595ccf6cbb93dc55e1922f6ac751b9354a0222af4540139ceb5360"
-      NEEDLE='expect_causation_run: Some(run_id.into()),'
-      REPLACEMENT='expect_causation_run: None,'
-      GATE="causation_e2e::tests::proof_arguments_require_r3_and_the_exact_run_id"
-      TEST_ARGV=(cargo test --locked -p wamn-proof-integration --lib "$GATE" -- --exact)
-      ;;
-    reader-process-ignores-replica-argument)
-      TARGET="tests/integration/src/cdc_reader_process.rs"
-      EXPECTED_SHA="fb907b28f99b6615abec9bc13f0fbf3ee000c06ec56f5372a1ea7c1fedcbe261"
-      NEEDLE='.arg(args.stream_replicas.to_string())'
-      REPLACEMENT='.arg("1")'
-      GATE="cdc_reader_process::tests::reader_command_preserves_the_proof_runtime_contract"
-      TEST_ARGV=(cargo test --locked -p wamn-proof-integration --lib "$GATE" -- --exact)
+      EXPECTED_SHA="c5d0c69c9f137d783b5e19be74534c4898126f31d407b4c8769c267019c064d3"
+      NEEDLE='elapsed > Duration::from_secs(BROKER_DUP_WINDOW_SECS)'
+      REPLACEMENT='elapsed < Duration::from_secs(BROKER_DUP_WINDOW_SECS)'
+      GATE="causation_e2e::tests::stored_redelivery_contract_is_byte_and_sequence_exact"
+      TEST_ARGV=(cargo test --locked --offline -p wamn-proof-integration --lib "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2
@@ -73,6 +63,9 @@ sha256() {
 }
 
 assert_clean_target() {
+  if [[ "${ALLOW_DIRTY_TARGET:-0}" == "1" ]]; then
+    return
+  fi
   git diff --quiet -- "$TARGET" || {
     echo "$TARGET has unstaged changes" >&2
     return 2
@@ -90,16 +83,16 @@ assert_precondition() {
     echo "$TARGET hash mismatch: expected $EXPECTED_SHA, got $actual" >&2
     return 2
   fi
-  TARGET="$TARGET" NEEDLE="$NEEDLE" python3 -c \
-    'import os, pathlib, sys; data=pathlib.Path(os.environ["TARGET"]).read_text(); count=data.count(os.environ["NEEDLE"]); sys.exit(0 if count == 1 else 1)' || {
+  MUTATION_TARGET="$TARGET" MUTATION_NEEDLE="$NEEDLE" python3 -c \
+    'import os, pathlib, sys; data=pathlib.Path(os.environ["MUTATION_TARGET"]).read_text(); count=data.count(os.environ["MUTATION_NEEDLE"]); sys.exit(0 if count == 1 else 1)' || {
       echo "$TARGET must contain the mutation anchor exactly once" >&2
       return 2
     }
 }
 
 replace_once() {
-  TARGET="$TARGET" NEEDLE="$NEEDLE" REPLACEMENT="$REPLACEMENT" python3 -c \
-    'import os, pathlib; path=pathlib.Path(os.environ["TARGET"]); data=path.read_text(); path.write_text(data.replace(os.environ["NEEDLE"], os.environ["REPLACEMENT"], 1))'
+  MUTATION_TARGET="$TARGET" MUTATION_NEEDLE="$NEEDLE" MUTATION_REPLACEMENT="$REPLACEMENT" python3 -c \
+    'import os, pathlib; path=pathlib.Path(os.environ["MUTATION_TARGET"]); data=path.read_text(); path.write_text(data.replace(os.environ["MUTATION_NEEDLE"], os.environ["MUTATION_REPLACEMENT"], 1))'
 }
 
 run_gate() {
@@ -121,7 +114,6 @@ run_mutant() (
   load_mutation "$id"
   assert_clean_target
   assert_precondition
-
   backup_dir="$(mktemp -d)"
   backup="$backup_dir/original"
   cp "$TARGET" "$backup"
@@ -136,14 +128,12 @@ run_mutant() (
     fi
   }
   trap restore EXIT INT TERM
-
   replace_once
   mutant_sha="$(sha256 "$TARGET")"
   if [[ "$mutant_sha" == "$EXPECTED_SHA" ]]; then
     echo "mutation $id did not change $TARGET" >&2
     exit 3
   fi
-
   echo "MUTANT id=$id gate=$GATE target=$TARGET baseline_sha256=$EXPECTED_SHA mutant_sha256=$mutant_sha command=${TEST_ARGV[*]}"
   set +e
   run_gate
@@ -172,12 +162,8 @@ usage() {
 }
 
 case "${1:-}" in
-  list)
-    mutation_ids
-    ;;
-  check)
-    check_campaign
-    ;;
+  list) mutation_ids ;;
+  check) check_campaign ;;
   green)
     [[ $# -eq 2 ]] || { usage; exit 2; }
     run_green "$2"
@@ -194,8 +180,5 @@ case "${1:-}" in
     [[ $# -eq 1 ]] || { usage; exit 2; }
     while IFS= read -r id; do run_mutant "$id"; done < <(mutation_ids)
     ;;
-  *)
-    usage
-    exit 2
-    ;;
+  *) usage; exit 2 ;;
 esac

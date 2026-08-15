@@ -40,11 +40,11 @@ use std::collections::HashMap;
 
 use wamn_event_reg::EventRegistration;
 use wamn_event_wire::Envelope;
-use wamn_flow::Flow;
 use wamn_materializer::{
     DecideError, FirePlan, FlowDeclaration, MAX_CAUSATION_DEPTH, RefuseReason, SkipReason, Verdict,
-    decide, serviceable,
+    decide, event_execution_plan_is_valid, serviceable,
     sql::{select_registrations_sql, select_release_flow_sql},
+    verified_source_event_id,
 };
 use wamn_run_state::admission::{
     AdmissionProducer, AdmissionResult, AdmissionTransition, RunStateSchema, admission_transaction,
@@ -53,6 +53,7 @@ use wamn_run_state::admission::{
 
 use wamn::jetstream::consumer::{self, ConsumerConfig};
 use wamn::jetstream::doorbell;
+use wamn::jetstream::types::Header;
 use wamn::postgres::client;
 use wamn::postgres::types::{PgError, SqlValue};
 
@@ -259,8 +260,16 @@ fn durable_name(tenant: &str, catalog_id: &str, registration_id: &str) -> String
     )
 }
 
+fn nats_message_ids(headers: &[Header]) -> Vec<&str> {
+    headers
+        .iter()
+        .filter(|header| header.name.eq_ignore_ascii_case("Nats-Msg-Id"))
+        .map(|header| header.value.as_str())
+        .collect()
+}
+
 /// Load + pre-flight the tenant's registrations. Unserviceable ones are HELD
-/// (warned, not consumed). Flow graphs are read once per distinct flow.
+/// (warned, not consumed). Canonical plans are read once per distinct flow.
 fn load_servings(cfg: &Config, counters: &mut Counters) -> Result<Vec<Serving>, String> {
     let rs = client::query(&select_registrations_sql(), &[]).map_err(|e| pg_name(&e))?;
     let mut flows: HashMap<(String, String), Option<(i32, FlowDeclaration)>> = HashMap::new();
@@ -363,31 +372,25 @@ fn load_flow(catalog_id: &str, environment: &str, flow_id: &str) -> Option<(i32,
         Some(SqlValue::Int64(v)) => i32::try_from(*v).ok()?,
         _ => return None,
     };
-    let graph = match row.get(2) {
-        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s,
+    let execution_bundle_hash = match row.get(2) {
+        Some(SqlValue::Text(value)) => value,
         _ => return None,
     };
-    let interfaces = match row.get(3) {
-        Some(SqlValue::Text(s)) | Some(SqlValue::Json(s)) => s,
+    let artifact_hash = match row.get(3) {
+        Some(SqlValue::Text(value)) => value,
         _ => return None,
     };
-    let flow = Flow::from_json(graph).ok()?;
-    let interfaces: Vec<wamn_flow::node_contract::NodeInterface> =
-        serde_json::from_str(interfaces).ok()?;
-    let resolved = interfaces
-        .into_iter()
-        .map(|interface| (interface.node_type, interface.output_ports))
-        .collect();
-    flow.validate(&resolved).ok()?;
-    if flow.flow_id != flow_id {
-        // The flows-table column and the graph's embedded id must agree (the
-        // dispatcher's charset-extension rule); a mismatch holds.
+    let exact_bytes = match row.get(4) {
+        Some(SqlValue::Bytes(value)) => value,
+        _ => return None,
+    };
+    if !event_execution_plan_is_valid(execution_bundle_hash, artifact_hash, exact_bytes) {
         return None;
     }
     Some((
         catalog_version,
         FlowDeclaration {
-            flow_id: flow.flow_id.clone(),
+            flow_id: flow_id.to_string(),
             flow_version,
         },
     ))
@@ -517,6 +520,19 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
                 continue;
             }
         };
+        let headers = msg.headers();
+        let message_ids = nats_message_ids(&headers);
+        let Some(source_event_id) =
+            verified_source_event_id(&cfg.project, &cfg.env, &envelope, &message_ids)
+        else {
+            counters.poison += 1;
+            eprintln!(
+                "wamn::materializer REFUSED (poison) stream_seq={}: Nats-Msg-Id missing, duplicated, or inconsistent with envelope LSN",
+                meta.stream_seq
+            );
+            let _ = msg.term();
+            continue;
+        };
         if meta.stream_seq == 0 {
             // JetStream seqs start at 1; a 0 is the metadata-parse fallback —
             // transient, and the run id MUST NOT be minted from it.
@@ -531,6 +547,7 @@ fn serve(cfg: &Config, s: &Serving, counters: &mut Counters) {
             s.condition.as_ref(),
             &envelope,
             meta.stream_seq,
+            &source_event_id,
             &cfg.tenant,
             cfg.max_depth,
         ) {
@@ -678,5 +695,57 @@ fn main() {
             );
             return;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn envelope() -> Envelope {
+        serde_json::from_value(serde_json::json!({
+            "op": "insert",
+            "new": {"tenant_id": "tenant"},
+            "entity": "receipts",
+            "table": "receipts",
+            "lsn": 42,
+            "txid": 7,
+            "commit_ts": "2026-08-15T12:00:00Z"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn source_event_id_requires_one_case_insensitive_nats_message_id_header() {
+        let matching = vec![Header {
+            name: "nats-msg-id".into(),
+            value: "app_dev:42".into(),
+        }];
+        let ids = nats_message_ids(&matching);
+        assert_eq!(
+            verified_source_event_id("app", "dev", &envelope(), &ids)
+                .unwrap()
+                .as_str(),
+            "app_dev:42"
+        );
+
+        let missing = Vec::<Header>::new();
+        assert!(
+            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&missing))
+                .is_none()
+        );
+        let wrong = vec![Header {
+            name: "Nats-Msg-Id".into(),
+            value: "app_dev:41".into(),
+        }];
+        assert!(
+            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&wrong))
+                .is_none()
+        );
+        let duplicate = vec![matching[0].clone(), matching[0].clone()];
+        assert!(
+            verified_source_event_id("app", "dev", &envelope(), &nats_message_ids(&duplicate))
+                .is_none()
+        );
     }
 }

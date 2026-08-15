@@ -1,13 +1,14 @@
-# causation-e2e (wamn-ec7j) — one production invocation admission through the
-# existing deployed runner, the shipped WAL reader executable, and the
-# data-plane evt-nats R3 stream. The gate creates only uniquely named
-# registry/CDC/stream resources plus a temporary sink/entity map in the shared
-# runner schema. A dormant immutable release is installed once as canonical
-# fixture state; its head/activation is temporary. Always-run teardown restores
-# the exact pre-gate run-plane row counts and removes every mutable resource.
+# causation-e2e (wamn-0h0g.11.9) — a tenant commit through the production CDC
+# reader, byte-stored event stream, and production materializer into exactly one
+# causal run/queue fact. WAMN_PG_URL, WAMN_PG_ADMIN_URL, and
+# WAMN_SYSTEM_ADMIN_URL are seed/credential authorities only: the gate derives
+# fixed bead-scoped project and system database URLs, creates both disposable
+# databases, applies canonical DDL there, then always drops both WITH FORCE.
+# The shared wamn/wamn_system schemas and rows are never mutated. The uniquely
+# named CDC role and event stream are also removed and their absence verified.
 #
-# Preconditions: runner 2/2 Ready; postgres/wamn/wamn_runner_demo canonical;
-# postgres wal_level=logical; evt-nats 3/3.
+# Preconditions: project and system admin users can CREATE/DROP DATABASE;
+# project postgres has wal_level=logical; evt-nats has JetStream enabled.
 #
 #   docker build --target gates -t wamn-gates:dev .
 #   kind load docker-image wamn-gates:dev --name wamn
