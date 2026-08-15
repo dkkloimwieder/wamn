@@ -44,6 +44,26 @@ describe("AppShell", () => {
     }
   });
 
+  it("renders not found for a draft revision that is not a revision", () => {
+    // the heading is what tells one screen from another; the not-found body
+    // echoes the hash, so it contains "draft" too
+    const opaque = shell({ kind: "draft", id: "orders", revision: "head rev" }).container;
+    expect(opaque.querySelector("main .screen-name")).toHaveTextContent("not found");
+    expect(opaque.querySelector("main")).toHaveTextContent("hash #/draft/orders/head%20rev");
+    cleanup();
+
+    const numeric = shell({ kind: "draft", id: "orders", revision: "17" }).container;
+    expect(numeric.querySelector("main .screen-name")).toHaveTextContent("draft");
+    expect(numeric.querySelector("main")).toHaveTextContent("revision 17");
+    cleanup();
+
+    // revision 0 converts, and it is the one revision a truthiness check loses
+    const zero = shell({ kind: "draft", id: "orders", revision: "0" }).container;
+    expect(zero.querySelector("main .screen-name")).toHaveTextContent("draft");
+    expect(zero.querySelector("main")).toHaveTextContent("revision 0");
+    expect(zero.querySelector("main")).not.toHaveTextContent("not found");
+  });
+
   it("renders the top bar's wordmark, proxy target, status word, and jump hint", () => {
     const { container } = shell({ kind: "start" });
     const bar = container.querySelector("header");

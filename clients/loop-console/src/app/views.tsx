@@ -1,6 +1,7 @@
 import type { JSX } from "@solidjs/web";
 
-import type { Route } from "../routing/route";
+import { toHash, type Route } from "../routing/route";
+import { parseRevision } from "../routing/revision";
 
 function Screen(props: { name: string; children?: JSX.Element }): JSX.Element {
   return (
@@ -8,6 +9,14 @@ function Screen(props: { name: string; children?: JSX.Element }): JSX.Element {
       <h1 class="screen-name">{props.name}</h1>
       {props.children}
     </section>
+  );
+}
+
+function NotFound(props: { hash: string }): JSX.Element {
+  return (
+    <Screen name="not found">
+      <p class="screen-params">hash {props.hash}</p>
+    </Screen>
   );
 }
 
@@ -28,19 +37,24 @@ export function routeView(route: Route): JSX.Element {
           <p class="screen-params">id {route.id}</p>
         </Screen>
       );
-    case "draft":
+    case "draft": {
+      // The route carries the revision opaquely; this is where it becomes the
+      // number the reader takes. A segment that cannot name a revision names no
+      // draft either, so it is not-found — never a read that failed.
+      const revision = parseRevision(route.revision);
+      // Identity, not truthiness: revision 0 is a revision.
+      if (revision === null) {
+        return <NotFound hash={toHash(route)} />;
+      }
       return (
         <Screen name="draft">
           <p class="screen-params">
-            id {route.id} · revision {route.revision}
+            id {route.id} · revision {revision}
           </p>
         </Screen>
       );
+    }
     case "not-found":
-      return (
-        <Screen name="not found">
-          <p class="screen-params">hash {route.hash}</p>
-        </Screen>
-      );
+      return <NotFound hash={route.hash} />;
   }
 }
