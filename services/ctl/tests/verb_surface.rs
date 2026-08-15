@@ -9,6 +9,7 @@ const MVP_VERBS: &[&str] = &[
     "migrate-catalog",
     "reconcile-replica-identity",
     "reconcile-run-plane",
+    "terminalize-effect-uncertain",
 ];
 
 const OPS_VERBS: &[&str] = &[
@@ -129,9 +130,40 @@ fn mvp_dependency_tree_does_not_enable_ops() {
     assert!(direct.status.success());
     let direct = String::from_utf8(direct.stdout).expect("cargo tree output is UTF-8");
     assert!(
-        !direct.lines().any(|line| line.contains("wamn-run-state ")),
-        "default ctl retained the direct ops-only run-state edge\n{direct}"
+        direct.lines().any(|line| line.contains("wamn-run-state ")),
+        "default ctl omitted the terminalization transaction owner\n{direct}"
     );
+}
+
+#[test]
+fn terminalize_surface_accepts_no_asserted_effect_identity_or_outcome() {
+    let output = command_help(
+        env!("CARGO_BIN_EXE_wamn-ctl"),
+        "terminalize-effect-uncertain",
+    );
+    for required in [
+        "--tenant",
+        "--run",
+        "--basis",
+        "--evidence-ref",
+        "--correlation-id",
+    ] {
+        assert!(output.contains(required), "terminalize omitted {required}");
+    }
+    for forbidden in [
+        "--attempt",
+        "--node",
+        "--outcome",
+        "--success",
+        "--continue",
+        "--selector",
+        "--all",
+    ] {
+        assert!(
+            !output.contains(forbidden),
+            "terminalize exposed {forbidden}"
+        );
+    }
 }
 
 #[test]

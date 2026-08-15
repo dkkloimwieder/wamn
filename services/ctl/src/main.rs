@@ -5,7 +5,7 @@ use std::str::FromStr as _;
 use clap::{Parser, Subcommand};
 use wamn_ctl::{
     enable_cdc_project_env, migrate_catalog, provision, provision_org, provision_project_env,
-    publish_catalog, reconcile_replica_identity, reconcile_run_plane,
+    publish_catalog, reconcile_replica_identity, reconcile_run_plane, terminalize_effect_uncertain,
 };
 
 #[derive(Parser)]
@@ -37,6 +37,8 @@ enum Command {
     ReconcileReplicaIdentity(reconcile_replica_identity::ReconcileReplicaIdentityArgs),
     /// Reconcile a project-env's run-plane schema to deploy/sql — create missing tables, additive ALTERs, outbox-era teardown; idempotent (wamn-1wdq)
     ReconcileRunPlane(reconcile_run_plane::ReconcileRunPlaneArgs),
+    /// Terminalize one effect-uncertain run from explicit external evidence.
+    TerminalizeEffectUncertain(terminalize_effect_uncertain::TerminalizeEffectUncertainArgs),
 }
 
 #[tokio::main]
@@ -64,5 +66,6 @@ async fn main() -> anyhow::Result<()> {
         Command::MigrateCatalog(args) => migrate_catalog::run(args).await,
         Command::ReconcileReplicaIdentity(args) => reconcile_replica_identity::run(args).await,
         Command::ReconcileRunPlane(args) => reconcile_run_plane::run(args).await,
+        Command::TerminalizeEffectUncertain(args) => terminalize_effect_uncertain::run(args).await,
     }
 }

@@ -61,9 +61,9 @@
 //! - **catalog-head lock concurrency**: both runtime and author admission call
 //!   the tenant-checking SECURITY DEFINER bridge; its SHARE lock blocks the
 //!   publisher's pointer UPDATE until admission commits.
-//! - **effect-disposition security drift**: a pre-hardening ledger gains its
-//!   identity append order, closed outcome CHECK, trusted-only insert guard,
-//!   and pg_temp-last relocated search paths.
+//! - **retired effect-disposition cutover**: empty parent/child ledgers are
+//!   locked and removed child-first; populated history refuses atomically with
+//!   the exact archive-or-reprovision diagnostic.
 //! - **fail_kind CHECK drift** (wamn-fqg.16): a schema whose `runs.fail_kind`
 //!   CHECK predates cjv.4's `'runaway-budget'` literal REJECTS a runaway
 //!   `mark_failed` UPDATE. The verb drops the observed CHECK and re-adds the
@@ -409,7 +409,7 @@ async fn run_plane_reconcile_live() {
     current_noop_leg(&su).await;
     authoring_storage_authority_leg(&su, &url).await;
     catalog_head_share_lock_leg(&su, &url).await;
-    effect_disposition_security_drift_leg(&su).await;
+    retired_effect_disposition_cutover_leg(&su).await;
     persisted_literal_check_drift_leg(&su).await;
 }
 
@@ -451,6 +451,16 @@ async fn rerun_lineage_cutover_live() {
     };
     let su = connect(&url).await;
     rerun_lineage_cutover_leg(&su).await;
+}
+
+#[tokio::test]
+async fn retired_effect_disposition_cutover_live() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping retired disposition cutover gate");
+        return;
+    };
+    let su = connect(&url).await;
+    retired_effect_disposition_cutover_leg(&su).await;
 }
 
 async fn regress_execution_pin_contract(su: &Client) {
@@ -2722,8 +2732,7 @@ async fn from_zero_leg(su: &Client) {
         "effect_attempts",
         "effect_attempt_dispatches",
         "effect_attempt_outcomes",
-        "effect_disposition_requests",
-        "effect_dispositions",
+        "operator_run_actions",
         "flows",
         "authoring_test_sets",
         "authoring_test_run_reservations",
@@ -3960,6 +3969,83 @@ async fn catalog_head_share_lock_leg(su: &Client, url: &str) {
     }
 }
 
+async fn retired_effect_disposition_cutover_leg(su: &Client) {
+    reset(su).await;
+    su.batch_execute(&format!(
+        "CREATE SCHEMA {SCHEMA}; \
+         CREATE TABLE {SCHEMA}.effect_disposition_requests ( \
+             tenant_id text NOT NULL, request_id uuid NOT NULL, \
+             PRIMARY KEY (tenant_id, request_id)); \
+         CREATE TABLE {SCHEMA}.effect_dispositions ( \
+             tenant_id text NOT NULL, request_id uuid NOT NULL, \
+             PRIMARY KEY (tenant_id, request_id), \
+             FOREIGN KEY (tenant_id, request_id) \
+               REFERENCES {SCHEMA}.effect_disposition_requests (tenant_id, request_id)); \
+         CREATE FUNCTION {SCHEMA}.guard_effect_disposition_append() RETURNS trigger \
+             LANGUAGE plpgsql AS $legacy$ BEGIN RETURN NEW; END $legacy$;"
+    ))
+    .await
+    .expect("install empty retired effect-disposition pair");
+
+    let dry = reconcile_run_plane::reconcile(su, &schema(), false)
+        .await
+        .expect("empty retired pair plans cutover");
+    let cutover = dry
+        .actions
+        .iter()
+        .find(|action| action.kind == RunPlaneActionKind::RetiredEffectDispositionCutover)
+        .expect("retired effect-disposition cutover is planned");
+    assert!(cutover.sql.contains("IN ACCESS EXCLUSIVE MODE"));
+    assert!(cutover.sql.contains(
+        "retired-effect-disposition-history-requires-archive-or-environment-reprovision"
+    ));
+    reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect("empty retired pair is removed");
+    assert!(!table_exists(su, SCHEMA, "effect_disposition_requests").await);
+    assert!(!table_exists(su, SCHEMA, "effect_dispositions").await);
+    assert!(table_exists(su, SCHEMA, "operator_run_actions").await);
+    assert!(
+        reconcile_run_plane::reconcile(su, &schema(), false)
+            .await
+            .expect("post-cutover plan")
+            .is_noop()
+    );
+
+    reset(su).await;
+    su.batch_execute(&format!(
+        "CREATE SCHEMA {SCHEMA}; \
+         CREATE TABLE {SCHEMA}.effect_disposition_requests ( \
+             tenant_id text NOT NULL, request_id uuid NOT NULL, \
+             PRIMARY KEY (tenant_id, request_id)); \
+         CREATE TABLE {SCHEMA}.effect_dispositions ( \
+             tenant_id text NOT NULL, request_id uuid NOT NULL, \
+             PRIMARY KEY (tenant_id, request_id), \
+             FOREIGN KEY (tenant_id, request_id) \
+               REFERENCES {SCHEMA}.effect_disposition_requests (tenant_id, request_id)); \
+         INSERT INTO {SCHEMA}.effect_disposition_requests \
+             VALUES ('t1', '00000000-0000-0000-0000-000000000001');"
+    ))
+    .await
+    .expect("install populated retired effect-disposition pair");
+    let error = reconcile_run_plane::reconcile(su, &schema(), true)
+        .await
+        .expect_err("populated retired history refuses");
+    let postgres: tokio_postgres::Error = error.downcast().expect("postgres refusal");
+    let database = postgres.as_db_error().expect("typed cutover refusal");
+    assert_eq!(database.code().code(), "55000");
+    assert_eq!(
+        database.message(),
+        "retired-effect-disposition-history-requires-archive-or-environment-reprovision"
+    );
+    assert!(table_exists(su, SCHEMA, "effect_disposition_requests").await);
+    assert!(table_exists(su, SCHEMA, "effect_dispositions").await);
+    assert!(!table_exists(su, SCHEMA, "operator_run_actions").await);
+}
+
+/// Historical pre-cutover disposition hardening proof, retained only as source
+/// archaeology while the replacement cutover gate above owns active coverage.
+#[allow(dead_code)]
 /// wamn-4u7p.42: repair the pre-hardening disposition ledger without replacing
 /// its table. The identity column is additive, the old wall-clock history index
 /// is recreated, helper authority/search-path definitions converge exactly, and

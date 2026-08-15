@@ -27,3 +27,4 @@ pub mod reconcile_replica_identity;
 pub mod reconcile_run_plane;
 #[cfg(feature = "ops")]
 pub mod restore_project_env;
+pub mod terminalize_effect_uncertain;

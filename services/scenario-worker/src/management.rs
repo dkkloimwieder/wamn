@@ -49,7 +49,7 @@ use crate::authoring::{
 /// The principal columns are denormalized text, not a foreign key: principals
 /// live in the T1 system database while this ledger lives in the project
 /// database, so a row has to stand on its own.
-/// `wamn_run.effect_disposition_requests` carries the same shape for the same
+/// `wamn_run.operator_run_actions` carries the same shape for the same
 /// reason.
 const INSERT_COMMAND_AUDIT_SQL: &str = "INSERT INTO catalog.authoring_command_audit \
     (tenant_id, command_id, command_kind, principal_id, principal_kind, \
@@ -318,7 +318,7 @@ pub(crate) async fn insert_command_audit(
 ///
 /// The row is written before the command, so the ledger retains every
 /// authorized attempt rather than only the attempts that happened to succeed —
-/// the posture `wamn_run.effect_disposition_requests` takes for the same reason.
+/// this audit's own append-only posture preserves authorized attempts.
 async fn record(
     backend: &mut InternalAuthoringBackend,
     author: &AuthorizedAuthor,

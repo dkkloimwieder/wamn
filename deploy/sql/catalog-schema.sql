@@ -1379,7 +1379,7 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 -- CROSS-PLANE PRINCIPAL, DELIBERATELY NOT AN FK: principals live in the T1
 -- system database (identity.principals) and this ledger lives in the project
 -- database, so the attribution columns are denormalized text that stand alone —
--- the same shape, for the same reason, as wamn_run.effect_disposition_requests.
+-- the same shape, for the same reason, as wamn_run.operator_run_actions.
 -- `principal_id` is the opaque T1 uuid as text; keeping the subject beside it
 -- leaves the row readable after a subject is renamed upstream.
 --

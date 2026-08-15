@@ -45,6 +45,8 @@ mod effect_writer;
 pub mod invocation;
 /// Versioned identity shared by persisted admission and trusted effect calls.
 pub mod invocation_context;
+/// Operator resolution of an effect-uncertain run.
+pub mod operator_action;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
 mod resolution;

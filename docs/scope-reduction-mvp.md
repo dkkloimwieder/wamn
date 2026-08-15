@@ -650,7 +650,9 @@ stated).
 provision-project-env (+ the principal/PAT/route-caller issuance
 above) · enable-cdc-project-env · reconcile-replica-identity ·
 reconcile-run-plane (over the cut-3 record) · publish-catalog ·
-migrate-catalog (additive). Ops feature (modules
+migrate-catalog (additive) · terminalize-effect-uncertain (one tenant/run,
+evidence basis/reference, and correlation under the project-admin database
+credential). Ops feature (modules
 `#[cfg(feature = "ops")]`; a `wamn-ctl-ops` binary with
 `required-features = ["ops"]`; ops-only dependencies regenerated at
 execution after the F.2 deletions): dump-project-env ·
@@ -780,7 +782,7 @@ caller-outcome CHECKs, cancel columns + partial index
 (`run-state.sql:192,213,221-223,252,282-283`); recovery-class triple
 (`:402-404`); predecessor/legacy lineage (`:478-504`); effect-fact
 immutability trigger (`:75-87`); legacy columns
-(`:202-210,286-291,343`); effect-disposition writer-less (`:87-89`).
+(`:202-210,286-291,343`).
 Ordering/partition live mechanics (`run-queue.sql:26-32,131-139`);
 child machinery (`flow-model/types.rs:431-443`; `child.rs:1-6`;
 `flowrunner:1530,2006,2023-2041`). Authority: root-artifact-keyed

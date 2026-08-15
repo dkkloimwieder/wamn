@@ -5288,3 +5288,67 @@ tools/build-components proof
 cargo fmt --all -- --check
 git diff --check
 ```
+
+## SR-MVP — operator terminalization (`wamn-0h0g.4.6`)
+
+This debug-only gate proves the sole project-admin terminalization transaction,
+its immutable operator action, concurrent retry/conflict classification, and
+the empty-only legacy disposition cutover. Use only the disposable PostgreSQL
+18 database below; a populated retired disposition table must refuse atomically
+with SQLSTATE `55000`.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/gate-0h0g-4-6
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+docker run --rm -d --name wamn-gate-0h0g-4-6-pg18 \
+  -e POSTGRES_PASSWORD=wamn-gate-0h0g-4-6 \
+  -p 127.0.0.1:15673:5432 postgres:18-alpine
+trap 'docker rm -f -v wamn-gate-0h0g-4-6-pg18 >/dev/null 2>&1 || true' EXIT
+sleep 10
+until docker exec wamn-gate-0h0g-4-6-pg18 \
+  pg_isready -U postgres -d postgres >/dev/null; do sleep 1; done
+docker exec wamn-gate-0h0g-4-6-pg18 \
+  createdb -U postgres wamn_gate_0h0g_4_6
+
+export WAMN_CTL_PG_URL=postgresql://postgres:wamn-gate-0h0g-4-6@127.0.0.1:15673/wamn_gate_0h0g_4_6
+export WAMN_OPERATOR_TERMINALIZE_PG18_URL="$WAMN_CTL_PG_URL"
+
+cargo test --locked --offline -p wamn-schema-control --lib
+cargo test --locked --offline -p wamn-run-state -p wamn-ctl --lib --tests
+cargo test --locked --offline -p wamn-ctl \
+  --test terminalize_effect_uncertain_live \
+  terminalize_effect_uncertain_is_atomic_exact_and_authority_closed_live \
+  -- --exact --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-ctl --test run_plane_live \
+  retired_effect_disposition_cutover_live \
+  -- --exact --nocapture --test-threads=1
+
+WAMN_UPDATE_PROTECTED_RELATIONS=1 cargo test --locked --offline \
+  -p wamn-ctl --features ops --test protected_relations_live \
+  -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-ctl --features ops \
+  --test protected_relations_live -- --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test state_ownership --test protected_relations
+
+tools/gate-mutants/operator-terminalize.sh check
+tools/gate-mutants/operator-terminalize.sh green-all
+tools/gate-mutants/operator-terminalize.sh run-all
+tools/gate-mutants/operator-terminalize.sh green-all
+tools/gate-mutants/operator-terminalize.sh check
+
+cargo clippy --locked --offline \
+  -p wamn-run-state -p wamn-schema-control -p wamn-ctl \
+  -p wamn-proof-conformance --all-targets --features wamn-ctl/ops \
+  -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/operator-terminalize.sh
+jq -e . architecture/protected-writes.json architecture/state-owners.json \
+  >/dev/null
+git diff --check
+
+docker rm -f -v wamn-gate-0h0g-4-6-pg18
+trap - EXIT
+```

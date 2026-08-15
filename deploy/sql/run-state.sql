@@ -71,9 +71,8 @@ GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) TO wamn_a
 GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
     TO wamn_scenario_author;
 
--- Disposition requests and per-attempt entries are append-only even for the
--- owning role; retention must remove them only through an explicit future
--- audit-retention protocol, never an ad-hoc UPDATE/DELETE.
+-- Effect attempt, dispatch, and outcome facts are immutable even for their
+-- owning role; retention requires a future explicit ledger protocol.
 CREATE FUNCTION wamn_run.reject_immutable_effect_fact_change()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -81,42 +80,25 @@ AS $$
 BEGIN
     RAISE EXCEPTION USING
         ERRCODE = '55000',
-        MESSAGE = 'effect-disposition-immutable';
+        MESSAGE = 'effect-fact-immutable';
 END
 $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_effect_fact_change() FROM PUBLIC;
 
--- Direct app-role inserts can never manufacture disposition audit. Any future
--- host or project adapter must cross this guard through separately authenticated,
--- explicitly privileged platform machinery; no runner-claim bridge is provided.
-CREATE FUNCTION wamn_run.guard_effect_disposition_append()
+-- Operator actions are immutable evidence and never follow run-history
+-- pruning. Only the schema-owning project-admin path can append them.
+CREATE FUNCTION wamn_run.reject_immutable_operator_run_action_change()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path = pg_catalog, pg_temp
 AS $$
-DECLARE
-    owner_name text := pg_catalog.pg_get_userbyid((
-        SELECT rel.relowner
-        FROM pg_catalog.pg_class AS rel
-        WHERE rel.oid = TG_RELID
-    ));
-    current_is_super boolean := COALESCE(
-        (SELECT candidate.rolsuper
-         FROM pg_catalog.pg_roles AS candidate
-         WHERE candidate.rolname = CURRENT_USER),
-        false
-    );
 BEGIN
-    IF NOT current_is_super
-       AND NOT (CURRENT_USER = owner_name AND CURRENT_USER <> SESSION_USER) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '42501',
-            MESSAGE = 'effect-disposition-append-requires-trusted-adapter';
-    END IF;
-    RETURN NEW;
+    RAISE EXCEPTION USING
+        ERRCODE = '55000',
+        MESSAGE = 'operator-run-action-immutable';
 END
 $$;
-REVOKE ALL ON FUNCTION wamn_run.guard_effect_disposition_append() FROM PUBLIC;
+REVOKE ALL ON FUNCTION wamn_run.reject_immutable_operator_run_action_change()
+    FROM PUBLIC;
 
 -- Causation is fixed by the admission transaction. Normal run-state updates
 -- may advance status/checkpoints, but cannot rewrite event ancestry.
@@ -776,177 +758,67 @@ BEFORE DELETE ON wamn_run.effect_attempt_outcomes
 FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
 
 -- ---------------------------------------------------------------------------
--- Effect disposition: immutable request envelope + exact materialized attempt
--- set. A resolution wakes the run; the runner consumes the complete asserted
--- outcome through the normal atomic completion/checkpoint transition, leaving
--- this audit ledger immutable. `selection_kind = bulk` records the required
--- stable query bounds; the per-attempt rows are the set actually authorized.
+-- Immutable operator resolution evidence. There is deliberately no FK to run
+-- or node history: terminal history can be pruned without erasing the action.
+-- The project-admin transaction supplies SESSION_USER as database-role
+-- attribution and appends before changing the mutable terminal projections.
 -- ---------------------------------------------------------------------------
-CREATE TABLE wamn_run.effect_disposition_requests (
+CREATE TABLE wamn_run.operator_run_actions (
     tenant_id       text NOT NULL,
-    request_id      uuid NOT NULL DEFAULT gen_random_uuid(),
-    action          text NOT NULL,
-    selection_kind  text NOT NULL,
-    principal       text NOT NULL,
-    effective_role  text NOT NULL,
-    basis           text,
-    evidence_ref    text,
+    action_id       uuid NOT NULL DEFAULT gen_random_uuid(),
     correlation_id  text NOT NULL,
-    break_glass_reason text,
-    connection_name text,
-    connection_generation text,
-    flow_id         text,
-    window_start    timestamptz,
-    window_end      timestamptz,
-    -- Wall-clock audit time only. Per-attempt append order is carried by the
-    -- immutable effect_dispositions.append_ordinal identity.
-    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT effect_disposition_requests_tenant_check CHECK (tenant_id <> ''),
-    CONSTRAINT effect_disposition_requests_action_check
-        CHECK (action IN ('park', 'release', 'resolve')),
-    CONSTRAINT effect_disposition_requests_selection_check
-        CHECK (selection_kind IN ('single', 'bulk')),
-    CONSTRAINT effect_disposition_requests_principal_check CHECK (principal <> ''),
-    CONSTRAINT effect_disposition_requests_role_check
-        CHECK (effective_role IN ('system', 'project-deployer', 'project-admin',
-                                  'platform-admin-break-glass')),
-    CONSTRAINT effect_disposition_requests_role_action_check CHECK (
-        (effective_role = 'system'
-         AND action = 'park' AND selection_kind = 'single')
+    run_id          text NOT NULL,
+    action_kind     text NOT NULL,
+    basis           text NOT NULL,
+    evidence_ref    text NOT NULL,
+    principal       text NOT NULL,
+    principal_kind  text NOT NULL,
+    prior_run_status text NOT NULL,
+    prior_started_node_frame_id bigint,
+    prior_started_node_local_node_id text,
+    prior_started_node_occurrence int,
+    prior_started_node_status text,
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT operator_run_actions_tenant_check CHECK (tenant_id <> ''),
+    CONSTRAINT operator_run_actions_correlation_check CHECK (correlation_id <> ''),
+    CONSTRAINT operator_run_actions_run_check CHECK (run_id <> ''),
+    CONSTRAINT operator_run_actions_kind_check
+        CHECK (action_kind = 'terminalize-effect-uncertain'),
+    CONSTRAINT operator_run_actions_basis_check
+        CHECK (basis IN ('external-evidence', 'counterparty-confirmation',
+                         'operator-judgment')),
+    CONSTRAINT operator_run_actions_evidence_check CHECK (evidence_ref <> ''),
+    CONSTRAINT operator_run_actions_principal_check CHECK (principal <> ''),
+    CONSTRAINT operator_run_actions_principal_kind_check
+        CHECK (principal_kind = 'database-role'),
+    CONSTRAINT operator_run_actions_prior_run_status_check
+        CHECK (prior_run_status = 'effect-uncertain'),
+    CONSTRAINT operator_run_actions_prior_node_check CHECK (
+        (prior_started_node_frame_id IS NULL
+         AND prior_started_node_local_node_id IS NULL
+         AND prior_started_node_occurrence IS NULL
+         AND prior_started_node_status IS NULL)
         OR
-        (effective_role = 'project-deployer'
-         AND action IN ('park', 'release'))
-        OR effective_role IN ('project-admin', 'platform-admin-break-glass')
+        (prior_started_node_frame_id >= 0
+         AND prior_started_node_local_node_id IS NOT NULL
+         AND prior_started_node_local_node_id ~ '^[a-z0-9-]+$'
+         AND prior_started_node_occurrence >= 0
+         AND prior_started_node_status = 'started')
     ),
-    CONSTRAINT effect_disposition_requests_basis_check
-        CHECK (basis IS NULL OR basis IN ('external-evidence',
-                                          'counterparty-confirmation',
-                                          'operator-judgment')),
-    CONSTRAINT effect_disposition_requests_correlation_check CHECK (correlation_id <> ''),
-    CONSTRAINT effect_disposition_requests_resolution_audit_check CHECK (
-        (action = 'resolve' AND basis IS NOT NULL
-                            AND evidence_ref IS NOT NULL AND evidence_ref <> '')
-        OR (action <> 'resolve' AND basis IS NULL)
-    ),
-    CONSTRAINT effect_disposition_requests_break_glass_check CHECK (
-        (effective_role = 'platform-admin-break-glass'
-         AND break_glass_reason IS NOT NULL AND break_glass_reason <> '')
-        OR (effective_role <> 'platform-admin-break-glass'
-            AND break_glass_reason IS NULL)
-    ),
-    CONSTRAINT effect_disposition_requests_bulk_bounds_check CHECK (
-        selection_kind <> 'bulk'
-        OR (connection_name IS NOT NULL AND connection_name <> ''
-            AND connection_generation IS NOT NULL AND connection_generation <> ''
-            AND window_start IS NOT NULL AND window_end IS NOT NULL
-            AND isfinite(window_start) AND isfinite(window_end)
-            AND window_start < window_end)
-    ),
-    CONSTRAINT effect_disposition_requests_single_filters_check CHECK (
-        selection_kind <> 'single'
-        OR (connection_name IS NULL AND connection_generation IS NULL
-            AND flow_id IS NULL AND window_start IS NULL AND window_end IS NULL)
-    ),
-    PRIMARY KEY (tenant_id, request_id),
-    UNIQUE (tenant_id, request_id, action)
+    PRIMARY KEY (tenant_id, action_id),
+    CONSTRAINT operator_run_actions_run_key UNIQUE (tenant_id, run_id),
+    CONSTRAINT operator_run_actions_correlation_key UNIQUE (tenant_id, correlation_id)
 );
-ALTER TABLE wamn_run.effect_disposition_requests ENABLE ROW LEVEL SECURITY;
-ALTER TABLE wamn_run.effect_disposition_requests FORCE ROW LEVEL SECURITY;
-CREATE POLICY effect_disposition_requests_tenant
-    ON wamn_run.effect_disposition_requests
+ALTER TABLE wamn_run.operator_run_actions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE wamn_run.operator_run_actions FORCE ROW LEVEL SECURITY;
+CREATE POLICY operator_run_actions_tenant ON wamn_run.operator_run_actions
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON wamn_run.effect_disposition_requests TO wamn_app;
-REVOKE INSERT ON wamn_run.effect_disposition_requests FROM wamn_app;
-CREATE TRIGGER effect_disposition_requests_insert_guard
-BEFORE INSERT ON wamn_run.effect_disposition_requests
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append();
-CREATE TRIGGER effect_disposition_requests_update_immutable
-BEFORE UPDATE ON wamn_run.effect_disposition_requests
-FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
-CREATE TRIGGER effect_disposition_requests_delete_immutable
-BEFORE DELETE ON wamn_run.effect_disposition_requests
-FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
-
-CREATE TABLE wamn_run.effect_dispositions (
-    tenant_id       text NOT NULL,
-    request_id      uuid NOT NULL,
-    attempt_id      uuid NOT NULL,
-    -- Global immutable append order. This is the sole latest-history key;
-    -- created_at below remains an audit timestamp and is never ordering truth.
-    append_ordinal  bigint GENERATED ALWAYS AS IDENTITY,
-    -- Stable position in the request's materialized exact attempt set. Single
-    -- and automatic requests use zero; bulk orders by immutable attempt facts.
-    selection_ordinal int NOT NULL DEFAULT 0,
-    action          text NOT NULL,
-    resolution_status text,
-    success_payload jsonb,
-    success_port    text,
-    success_context jsonb,
-    failure_kind    text,
-    failure_detail  jsonb,
-    created_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
-    CONSTRAINT effect_dispositions_tenant_check CHECK (tenant_id <> ''),
-    CONSTRAINT effect_dispositions_selection_ordinal_check
-        CHECK (selection_ordinal >= 0),
-    CONSTRAINT effect_dispositions_action_check
-        CHECK (action IN ('park', 'release', 'resolve')),
-    CONSTRAINT effect_dispositions_resolution_status_check
-        CHECK (resolution_status IS NULL OR resolution_status IN ('succeeded', 'failed')),
-    CONSTRAINT effect_dispositions_failure_kind_check
-        CHECK (failure_kind IS NULL OR failure_kind IN ('terminal', 'invalid-input')),
-    CONSTRAINT effect_dispositions_outcome_check CHECK ((
-        (action <> 'resolve' AND resolution_status IS NULL
-         AND success_payload IS NULL AND success_port IS NULL
-         AND success_context IS NULL AND failure_kind IS NULL
-         AND failure_detail IS NULL)
-        OR
-        (action = 'resolve' AND resolution_status = 'succeeded'
-         AND success_payload IS NOT NULL
-         AND success_port IS NOT NULL AND success_port <> ''
-         AND (success_context IS NULL OR jsonb_typeof(success_context) = 'object')
-         AND failure_kind IS NULL AND failure_detail IS NULL)
-        OR
-        (action = 'resolve' AND resolution_status = 'failed'
-         AND success_payload IS NULL AND success_port IS NULL
-         AND success_context IS NULL
-         AND failure_kind IN ('terminal', 'invalid-input')
-         AND failure_detail IS NOT NULL
-         AND jsonb_typeof(failure_detail) = 'object'
-         AND failure_detail ? 'message'
-         AND jsonb_typeof(failure_detail -> 'message') = 'string'
-         AND (NOT (failure_detail ? 'code')
-              OR failure_detail -> 'code' = 'null'::jsonb
-              OR jsonb_typeof(failure_detail -> 'code') = 'string'))
-    ) IS TRUE),
-    PRIMARY KEY (tenant_id, request_id, attempt_id),
-    FOREIGN KEY (tenant_id, request_id, action)
-        REFERENCES wamn_run.effect_disposition_requests (tenant_id, request_id, action),
-    FOREIGN KEY (tenant_id, attempt_id)
-        REFERENCES wamn_run.effect_attempts (tenant_id, attempt_id)
-);
-CREATE UNIQUE INDEX effect_dispositions_one_resolution
-    ON wamn_run.effect_dispositions (tenant_id, attempt_id)
-    WHERE action = 'resolve';
-CREATE UNIQUE INDEX effect_dispositions_request_ordinal
-    ON wamn_run.effect_dispositions (tenant_id, request_id, selection_ordinal);
-CREATE UNIQUE INDEX effect_dispositions_append_order
-    ON wamn_run.effect_dispositions (append_ordinal);
-CREATE INDEX effect_dispositions_attempt_history
-    ON wamn_run.effect_dispositions (tenant_id, attempt_id, append_ordinal DESC);
-ALTER TABLE wamn_run.effect_dispositions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE wamn_run.effect_dispositions FORCE ROW LEVEL SECURITY;
-CREATE POLICY effect_dispositions_tenant ON wamn_run.effect_dispositions
-    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
-    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT ON wamn_run.effect_dispositions TO wamn_app;
-REVOKE INSERT ON wamn_run.effect_dispositions FROM wamn_app;
-CREATE TRIGGER effect_dispositions_insert_guard
-BEFORE INSERT ON wamn_run.effect_dispositions
-FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append();
-CREATE TRIGGER effect_dispositions_update_immutable
-BEFORE UPDATE ON wamn_run.effect_dispositions
-FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
-CREATE TRIGGER effect_dispositions_delete_immutable
-BEFORE DELETE ON wamn_run.effect_dispositions
-FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change();
+REVOKE ALL PRIVILEGES ON TABLE wamn_run.operator_run_actions
+    FROM PUBLIC, wamn_app, wamn_scenario_author, wamn_effect_writer;
+CREATE TRIGGER operator_run_actions_update_immutable
+BEFORE UPDATE ON wamn_run.operator_run_actions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change();
+CREATE TRIGGER operator_run_actions_delete_immutable
+BEFORE DELETE ON wamn_run.operator_run_actions
+FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change();

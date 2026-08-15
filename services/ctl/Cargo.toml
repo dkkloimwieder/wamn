@@ -8,7 +8,6 @@ license.workspace = true
 [features]
 default = []
 ops = [
-    "dep:wamn-run-state",
     "wamn-control-provision/ops",
     "wamn-schema-control/ops",
 ]
@@ -68,7 +67,7 @@ wamn-platform-identity = { workspace = true }
 # policy rows and applies them on the dst.
 # 9.6 prune-run-history: the single-source run-state SQL builder
 # (`prune_terminal_runs_sql`) the retention verb and the capturebench gate share.
-wamn-run-state = { workspace = true, optional = true }
+wamn-run-state = { workspace = true }
 # 11.8 ops-only impact-report: the PURE schema-change impact analysis
 # (entities → flows via registration + node config → generated API).
 # This shell reads the dependency rows and calls wamn_schema_control::impact::analyze.

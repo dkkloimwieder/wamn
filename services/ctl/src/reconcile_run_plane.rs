@@ -69,7 +69,7 @@ use wamn_schema_control::{
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
-const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 8] = [
+const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 9] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
     RunPlaneActionKind::ExecutionPinCutover,
     RunPlaneActionKind::FrameIdentityCutover,
@@ -78,6 +78,7 @@ const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 8] = [
     RunPlaneActionKind::ChildRunCutover,
     RunPlaneActionKind::RerunLineageCutover,
     RunPlaneActionKind::StoredSuiteCutover,
+    RunPlaneActionKind::RetiredEffectDispositionCutover,
 ];
 
 #[derive(Debug, Args)]
@@ -572,6 +573,7 @@ mod tests {
                 RunPlaneActionKind::ChildRunCutover,
                 RunPlaneActionKind::RerunLineageCutover,
                 RunPlaneActionKind::StoredSuiteCutover,
+                RunPlaneActionKind::RetiredEffectDispositionCutover,
             ]
         );
         assert!(!LEADING_CUTOVER_ACTIONS.contains(&RunPlaneActionKind::EnsureSchema));

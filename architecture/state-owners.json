@@ -103,6 +103,10 @@
       "path": "services/ctl/src/migrate_catalog.rs",
       "role": "effect"
     },
+    "ctl-terminalize": {
+      "path": "services/ctl/src/terminalize_effect_uncertain.rs",
+      "role": "effect"
+    },
     "dispatcher": {
       "path": "services/dispatcher",
       "role": "effect"
@@ -1688,34 +1692,19 @@
       "drift_gate": "SR13:generate-and-structurally-compare"
     },
     {
-      "id": "wamn_run.effect_disposition_requests",
+      "id": "wamn_run.operator_run_actions",
       "plane": "project",
       "semantic_owner": "run-state",
       "migration_owners": [
-        "run-state"
+        "schema-control"
       ],
       "schema_source": "deploy/sql/run-state.sql",
       "writers": [
-        "schema-control"
-      ],
-      "readers": [
-        "schema-control"
-      ],
-      "compatibility_horizon": "persisted-run-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
-    },
-    {
-      "id": "wamn_run.effect_dispositions",
-      "plane": "project",
-      "semantic_owner": "run-state",
-      "migration_owners": [
+        "ctl-terminalize",
         "run-state"
       ],
-      "schema_source": "deploy/sql/run-state.sql",
-      "writers": [
-        "schema-control"
-      ],
       "readers": [
+        "ctl-terminalize",
         "schema-control"
       ],
       "compatibility_horizon": "persisted-run-and-platform-schema-major",

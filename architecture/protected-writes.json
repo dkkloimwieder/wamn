@@ -3028,92 +3028,6 @@
     },
     {
       "scope": "production-project-database",
-      "relation": "wamn_run.effect_disposition_requests",
-      "ops": false,
-      "installer": "run-state",
-      "owner": "run-state",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:effect_disposition_requests_action_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (action = ANY (ARRAY['park'::text, 'release'::text, 'resolve'::text]))",
-        "constraint:effect_disposition_requests_basis_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (basis IS NULL OR (basis = ANY (ARRAY['external-evidence'::text, 'counterparty-confirmation'::text, 'operator-judgment'::text])))",
-        "constraint:effect_disposition_requests_break_glass_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = 'platform-admin-break-glass'::text AND break_glass_reason IS NOT NULL AND break_glass_reason <> ''::text OR effective_role <> 'platform-admin-break-glass'::text AND break_glass_reason IS NULL)",
-        "constraint:effect_disposition_requests_bulk_bounds_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (selection_kind <> 'bulk'::text OR connection_name IS NOT NULL AND connection_name <> ''::text AND connection_generation IS NOT NULL AND connection_generation <> ''::text AND window_start IS NOT NULL AND window_end IS NOT NULL AND isfinite(window_start) AND isfinite(window_end) AND window_start < window_end)",
-        "constraint:effect_disposition_requests_correlation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (correlation_id <> ''::text)",
-        "constraint:effect_disposition_requests_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, request_id)",
-        "constraint:effect_disposition_requests_principal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal <> ''::text)",
-        "constraint:effect_disposition_requests_resolution_audit_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (action = 'resolve'::text AND basis IS NOT NULL AND evidence_ref IS NOT NULL AND evidence_ref <> ''::text OR action <> 'resolve'::text AND basis IS NULL)",
-        "constraint:effect_disposition_requests_role_action_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = 'system'::text AND action = 'park'::text AND selection_kind = 'single'::text OR effective_role = 'project-deployer'::text AND (action = ANY (ARRAY['park'::text, 'release'::text])) OR (effective_role = ANY (ARRAY['project-admin'::text, 'platform-admin-break-glass'::text])))",
-        "constraint:effect_disposition_requests_role_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (effective_role = ANY (ARRAY['system'::text, 'project-deployer'::text, 'project-admin'::text, 'platform-admin-break-glass'::text]))",
-        "constraint:effect_disposition_requests_selection_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (selection_kind = ANY (ARRAY['single'::text, 'bulk'::text]))",
-        "constraint:effect_disposition_requests_single_filters_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (selection_kind <> 'single'::text OR connection_name IS NULL AND connection_generation IS NULL AND flow_id IS NULL AND window_start IS NULL AND window_end IS NULL)",
-        "constraint:effect_disposition_requests_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "constraint:effect_disposition_requests_tenant_id_request_id_action_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, request_id, action)",
-        "policy:effect_disposition_requests_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "trigger:effect_disposition_requests_delete_immutable;mode=origin;function=wamn_run.reject_immutable_effect_fact_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER effect_disposition_requests_delete_immutable BEFORE DELETE ON wamn_run.effect_disposition_requests FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change()",
-        "trigger:effect_disposition_requests_insert_guard;mode=origin;function=wamn_run.guard_effect_disposition_append();function-owner=postgres;security-definer=false;config=search_path=pg_catalog, pg_temp;definition=CREATE TRIGGER effect_disposition_requests_insert_guard BEFORE INSERT ON wamn_run.effect_disposition_requests FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append()",
-        "trigger:effect_disposition_requests_update_immutable;mode=origin;function=wamn_run.reject_immutable_effect_fact_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER effect_disposition_requests_update_immutable BEFORE UPDATE ON wamn_run.effect_disposition_requests FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change()"
-      ]
-    },
-    {
-      "scope": "production-project-database",
-      "relation": "wamn_run.effect_dispositions",
-      "ops": false,
-      "installer": "run-state",
-      "owner": "run-state",
-      "mechanisms": [
-        "direct-dml"
-      ],
-      "roles": [
-        {
-          "role": "postgres",
-          "basis": "owner",
-          "operations": [
-            "delete",
-            "insert",
-            "truncate",
-            "update"
-          ]
-        }
-      ],
-      "author-reachable": "no",
-      "guards": [
-        "constraint:effect_dispositions_action_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (action = ANY (ARRAY['park'::text, 'release'::text, 'resolve'::text]))",
-        "constraint:effect_dispositions_failure_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (failure_kind IS NULL OR (failure_kind = ANY (ARRAY['terminal'::text, 'invalid-input'::text])))",
-        "constraint:effect_dispositions_outcome_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK ((action <> 'resolve'::text AND resolution_status IS NULL AND success_payload IS NULL AND success_port IS NULL AND success_context IS NULL AND failure_kind IS NULL AND failure_detail IS NULL OR action = 'resolve'::text AND resolution_status = 'succeeded'::text AND success_payload IS NOT NULL AND success_port IS NOT NULL AND success_port <> ''::text AND (success_context IS NULL OR jsonb_typeof(success_context) = 'object'::text) AND failure_kind IS NULL AND failure_detail IS NULL OR action = 'resolve'::text AND resolution_status = 'failed'::text AND success_payload IS NULL AND success_port IS NULL AND success_context IS NULL AND (failure_kind = ANY (ARRAY['terminal'::text, 'invalid-input'::text])) AND failure_detail IS NOT NULL AND jsonb_typeof(failure_detail) = 'object'::text AND failure_detail ? 'message'::text AND jsonb_typeof(failure_detail -> 'message'::text) = 'string'::text AND (NOT failure_detail ? 'code'::text OR (failure_detail -> 'code'::text) = 'null'::jsonb OR jsonb_typeof(failure_detail -> 'code'::text) = 'string'::text)) IS TRUE)",
-        "constraint:effect_dispositions_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, request_id, attempt_id)",
-        "constraint:effect_dispositions_resolution_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (resolution_status IS NULL OR (resolution_status = ANY (ARRAY['succeeded'::text, 'failed'::text])))",
-        "constraint:effect_dispositions_selection_ordinal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (selection_ordinal >= 0)",
-        "constraint:effect_dispositions_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
-        "constraint:effect_dispositions_tenant_id_attempt_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, attempt_id) REFERENCES wamn_run.effect_attempts(tenant_id, attempt_id)",
-        "constraint:effect_dispositions_tenant_id_request_id_action_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, request_id, action) REFERENCES wamn_run.effect_disposition_requests(tenant_id, request_id, action)",
-        "policy:effect_dispositions_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
-        "row-security:enabled=true;forced=true",
-        "trigger:effect_dispositions_delete_immutable;mode=origin;function=wamn_run.reject_immutable_effect_fact_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER effect_dispositions_delete_immutable BEFORE DELETE ON wamn_run.effect_dispositions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change()",
-        "trigger:effect_dispositions_insert_guard;mode=origin;function=wamn_run.guard_effect_disposition_append();function-owner=postgres;security-definer=false;config=search_path=pg_catalog, pg_temp;definition=CREATE TRIGGER effect_dispositions_insert_guard BEFORE INSERT ON wamn_run.effect_dispositions FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_effect_disposition_append()",
-        "trigger:effect_dispositions_update_immutable;mode=origin;function=wamn_run.reject_immutable_effect_fact_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER effect_dispositions_update_immutable BEFORE UPDATE ON wamn_run.effect_dispositions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_effect_fact_change()",
-        "unique-index:effect_dispositions_append_order;valid=true;ready=true;definition=CREATE UNIQUE INDEX effect_dispositions_append_order ON wamn_run.effect_dispositions USING btree (append_ordinal)",
-        "unique-index:effect_dispositions_one_resolution;valid=true;ready=true;definition=CREATE UNIQUE INDEX effect_dispositions_one_resolution ON wamn_run.effect_dispositions USING btree (tenant_id, attempt_id) WHERE action = 'resolve'::text",
-        "unique-index:effect_dispositions_request_ordinal;valid=true;ready=true;definition=CREATE UNIQUE INDEX effect_dispositions_request_ordinal ON wamn_run.effect_dispositions USING btree (tenant_id, request_id, selection_ordinal)"
-      ]
-    },
-    {
-      "scope": "production-project-database",
       "relation": "wamn_run.flows",
       "ops": false,
       "installer": "schema-control",
@@ -3235,6 +3149,48 @@
         "constraint:node_runs_tenant_id_run_id_fkey;kind=foreign-key;deferrable=false;deferred=false;validated=true;definition=FOREIGN KEY (tenant_id, run_id) REFERENCES wamn_run.runs(tenant_id, run_id) ON DELETE CASCADE",
         "policy:node_runs_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
         "row-security:enabled=true;forced=true"
+      ]
+    },
+    {
+      "scope": "production-project-database",
+      "relation": "wamn_run.operator_run_actions",
+      "ops": false,
+      "installer": "schema-control",
+      "owner": "run-state",
+      "mechanisms": [
+        "direct-dml"
+      ],
+      "roles": [
+        {
+          "role": "postgres",
+          "basis": "owner",
+          "operations": [
+            "delete",
+            "insert",
+            "truncate",
+            "update"
+          ]
+        }
+      ],
+      "author-reachable": "no",
+      "guards": [
+        "constraint:operator_run_actions_basis_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (basis = ANY (ARRAY['external-evidence'::text, 'counterparty-confirmation'::text, 'operator-judgment'::text]))",
+        "constraint:operator_run_actions_correlation_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (correlation_id <> ''::text)",
+        "constraint:operator_run_actions_correlation_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, correlation_id)",
+        "constraint:operator_run_actions_evidence_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (evidence_ref <> ''::text)",
+        "constraint:operator_run_actions_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (action_kind = 'terminalize-effect-uncertain'::text)",
+        "constraint:operator_run_actions_pkey;kind=primary-key;deferrable=false;deferred=false;validated=true;definition=PRIMARY KEY (tenant_id, action_id)",
+        "constraint:operator_run_actions_principal_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal <> ''::text)",
+        "constraint:operator_run_actions_principal_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (principal_kind = 'database-role'::text)",
+        "constraint:operator_run_actions_prior_node_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (prior_started_node_frame_id IS NULL AND prior_started_node_local_node_id IS NULL AND prior_started_node_occurrence IS NULL AND prior_started_node_status IS NULL OR prior_started_node_frame_id >= 0 AND prior_started_node_local_node_id IS NOT NULL AND prior_started_node_local_node_id ~ '^[a-z0-9-]+$'::text AND prior_started_node_occurrence >= 0 AND prior_started_node_status = 'started'::text)",
+        "constraint:operator_run_actions_prior_run_status_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (prior_run_status = 'effect-uncertain'::text)",
+        "constraint:operator_run_actions_run_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (run_id <> ''::text)",
+        "constraint:operator_run_actions_run_key;kind=unique;deferrable=false;deferred=false;validated=true;definition=UNIQUE (tenant_id, run_id)",
+        "constraint:operator_run_actions_tenant_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (tenant_id <> ''::text)",
+        "policy:operator_run_actions_tenant;command=all;permissive=true;roles=PUBLIC;using=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text);check=tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text)",
+        "row-security:enabled=true;forced=true",
+        "trigger:operator_run_actions_delete_immutable;mode=origin;function=wamn_run.reject_immutable_operator_run_action_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER operator_run_actions_delete_immutable BEFORE DELETE ON wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change()",
+        "trigger:operator_run_actions_update_immutable;mode=origin;function=wamn_run.reject_immutable_operator_run_action_change();function-owner=postgres;security-definer=false;config=;definition=CREATE TRIGGER operator_run_actions_update_immutable BEFORE UPDATE ON wamn_run.operator_run_actions FOR EACH ROW EXECUTE FUNCTION wamn_run.reject_immutable_operator_run_action_change()"
       ]
     },
     {
