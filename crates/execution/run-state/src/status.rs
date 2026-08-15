@@ -237,6 +237,8 @@ impl From<wamn_runner::ExecutionFailureKind> for FailKind {
             wamn_runner::ExecutionFailureKind::RetryExhausted => FailKind::RetryExhausted,
             wamn_runner::ExecutionFailureKind::InvalidInput => FailKind::InvalidInput,
             wamn_runner::ExecutionFailureKind::RunawayBudget => FailKind::RunawayBudget,
+            wamn_runner::ExecutionFailureKind::DepthBudget => FailKind::DepthBudget,
+            wamn_runner::ExecutionFailureKind::DispatchBudget => FailKind::DispatchBudget,
         }
     }
 }

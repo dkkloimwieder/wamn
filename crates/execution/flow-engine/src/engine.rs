@@ -67,6 +67,14 @@ pub enum ExecutionFailureKind {
     /// permitted loop that never terminated (cjv.4). Unconditionally terminal:
     /// never routed to an error path, which could itself be part of the loop.
     RunawayBudget,
+    /// The root run exhausted its maximum call-depth resource-safety floor
+    /// across the in-memory frame stack. Unconditionally terminal: never routed
+    /// to a node error path, which could recurse into another frame.
+    DepthBudget,
+    /// The root run exhausted its total-dispatched-node resource-safety floor
+    /// across all in-memory frames. Unconditionally terminal: never routed to a
+    /// node error path, which could consume more of the exhausted budget.
+    DispatchBudget,
 }
 
 /// The recorded failure of a run.

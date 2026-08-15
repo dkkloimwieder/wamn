@@ -180,6 +180,32 @@ fn status_maps_from_the_engine_taxonomy() {
     );
 }
 
+#[test]
+fn root_budget_failures_map_to_exact_persisted_kinds() {
+    for (engine, persisted, literal) in [
+        (
+            wamn_runner::ExecutionFailureKind::DepthBudget,
+            FailKind::DepthBudget,
+            "depth-budget",
+        ),
+        (
+            wamn_runner::ExecutionFailureKind::DispatchBudget,
+            FailKind::DispatchBudget,
+            "dispatch-budget",
+        ),
+        (
+            wamn_runner::ExecutionFailureKind::RunawayBudget,
+            FailKind::RunawayBudget,
+            "runaway-budget",
+        ),
+    ] {
+        let mapped = FailKind::from(engine);
+        assert_eq!(mapped, persisted);
+        assert_eq!(mapped.as_sql(), literal);
+        assert_eq!(FailKind::from_sql(literal), Some(persisted));
+    }
+}
+
 // ---- deploy/sql/run-state.sql drift guard --------------------------------------
 
 #[test]

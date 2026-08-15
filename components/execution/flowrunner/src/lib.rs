@@ -1,8 +1,8 @@
 //! Single-shot flow-runner component.
 //!
 //! The public world has one product operation, `run`. Production execution
-//! remains fail-closed until runtime budgets and effect activation land in
-//! their owning changes. Immutable claimed-run plans cross the trusted host
+//! remains fail-closed until effect activation lands in its owning change.
+//! Immutable claimed-run plans cross the trusted host
 //! supply, are hash-verified, and feed the in-memory frame interpreter.
 //! This component retains
 //! the standard-node capability adapter, including the self-describing trusted
@@ -11,8 +11,8 @@
 mod frames;
 
 pub use frames::{
-    FrameCompletion, FrameExecutionError, FrameExecutionErrorKind, FrameFailure, FrameStack,
-    PureNodeDispatcher, TrustedFrame, TrustedFrameFacts,
+    DEFAULT_ROOT_DISPATCH_BUDGET, FrameCompletion, FrameExecutionError, FrameExecutionErrorKind,
+    FrameFailure, FrameStack, MAX_CALL_DEPTH, PureNodeDispatcher, TrustedFrame, TrustedFrameFacts,
 };
 
 wit_bindgen::generate!({
@@ -434,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    fn run_remains_hard_refused_before_budget_and_effect_activation() {
+    fn run_remains_hard_refused_before_effect_activation() {
         assert_eq!(
             <Component as Guest>::run("run".into(), "{}".into()),
             Err(EXECUTION_INTERPRETER_REFUSAL.to_string())

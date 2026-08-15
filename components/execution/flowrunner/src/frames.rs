@@ -17,6 +17,19 @@ use super::{VerifiedResolutionPlan, VerifiedResolutionSnapshot};
 const CALL_INPUT_SCHEMA_URI: &str = "mem://call-flow-input-schema.json";
 const CALL_INPUT_INVALID: &str = "call-input-invalid";
 
+/// Maximum number of simultaneously active callee frames under one root run.
+///
+/// The root frame is depth zero and does not consume this allowance. The
+/// sixty-fifth callee is refused before its frame identity is allocated.
+pub const MAX_CALL_DEPTH: usize = 64;
+
+/// Maximum node dispatches emitted across every frame under one root run.
+///
+/// Ordinary loop dispatches, reducer re-dispatches after a retryable pure-node
+/// outcome, and call-flow instructions consume the same root-owned allowance.
+/// The 10,001st dispatch fails the root run; effects are never retried.
+pub const DEFAULT_ROOT_DISPATCH_BUDGET: u64 = 10_000;
+
 /// A stable category for a frame interpreter refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameExecutionErrorKind {
@@ -91,15 +104,27 @@ impl std::error::Error for FrameExecutionError {}
 /// One graph failure retained at a root frame boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FrameFailure {
+    frame_id: u64,
     node_id: String,
+    occurrence: u32,
     kind: ExecutionFailureKind,
     detail: ErrorDetail,
 }
 
 impl FrameFailure {
+    /// Trusted frame in which the terminal failure was observed.
+    pub fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+
     /// Local node whose unhandled failure ended this frame.
     pub fn node_id(&self) -> &str {
         &self.node_id
+    }
+
+    /// Visit of the local node attributed to the terminal failure.
+    pub fn occurrence(&self) -> u32 {
+        self.occurrence
     }
 
     /// Reducer classification of the unhandled failure.
@@ -111,6 +136,13 @@ impl FrameFailure {
     pub fn detail(&self) -> &ErrorDetail {
         &self.detail
     }
+
+    fn is_root_budget_exhaustion(&self) -> bool {
+        matches!(
+            self.kind,
+            ExecutionFailureKind::DepthBudget | ExecutionFailureKind::DispatchBudget
+        )
+    }
 }
 
 /// Terminal result of executing one root frame.
@@ -121,6 +153,11 @@ pub enum FrameCompletion {
     /// An event graph exhausted its frontier successfully.
     FrontierExhausted { body: Value },
     /// The graph ended with an unhandled node failure.
+    Failed(FrameFailure),
+}
+
+enum FrameDispatchOutcome {
+    Node(NodeOutcome),
     Failed(FrameFailure),
 }
 
@@ -228,6 +265,8 @@ pub struct FrameStack<'snapshot> {
     snapshot: &'snapshot VerifiedResolutionSnapshot,
     frames: Vec<FrameRecord>,
     next_frame_id: u64,
+    dispatched_nodes: u64,
+    root_dispatch_budget: u64,
     started: bool,
 }
 
@@ -246,6 +285,8 @@ impl<'snapshot> FrameStack<'snapshot> {
                 current_plan_hash: root.execution_bundle_hash().to_string(),
             }],
             next_frame_id: 1,
+            dispatched_nodes: 0,
+            root_dispatch_budget: DEFAULT_ROOT_DISPATCH_BUDGET,
             started: false,
         }
     }
@@ -306,13 +347,14 @@ impl<'snapshot> FrameStack<'snapshot> {
                 error.to_string(),
             )
         })?;
-        // .3.8 owns the root-global depth and dispatch budgets. Do not substitute
-        // the reducer's legacy per-plan default for that later contract.
+        // Framed execution owns the root-global depth and dispatch budgets. Do
+        // not substitute the reducer's legacy direct-Plan compatibility limit.
         plan.set_dispatch_budget(u64::MAX);
 
         let mut state = plan.start(&self.run_id, payload);
         let mut now_ms = 0;
         let mut response_status = None;
+        let mut last_boundary = None;
         loop {
             match plan.next(&mut state, now_ms) {
                 Step::Done(ExecutionStatus::Completed) => {
@@ -330,8 +372,15 @@ impl<'snapshot> FrameStack<'snapshot> {
                     let failure = state
                         .failure()
                         .expect("failed reducer state retains its failure");
+                    let occurrence = last_boundary
+                        .as_ref()
+                        .filter(|(node, _)| node == &failure.node)
+                        .map(|(_, occurrence)| *occurrence)
+                        .unwrap_or_default();
                     return Ok(FrameCompletion::Failed(FrameFailure {
+                        frame_id,
                         node_id: failure.node.clone(),
+                        occurrence,
                         kind: failure.kind,
                         detail: failure.detail.clone(),
                     }));
@@ -346,6 +395,7 @@ impl<'snapshot> FrameStack<'snapshot> {
                 }
                 Step::Wait { until_ms, .. } => now_ms = until_ms,
                 Step::Reserved(step) => {
+                    last_boundary = Some((step.node().to_string(), step.occurrence()));
                     plan.apply_reserved(&mut state, &step).map_err(|error| {
                         FrameExecutionError::new(
                             FrameExecutionErrorKind::InvalidTransition,
@@ -356,19 +406,48 @@ impl<'snapshot> FrameStack<'snapshot> {
                     })?;
                 }
                 Step::Dispatch(node) => {
-                    let outcome = self.dispatch_node(&node, &mut response_status, dispatcher)?;
-                    plan.apply(&mut state, &node, outcome, now_ms)
-                        .map_err(|error| {
-                            FrameExecutionError::new(
-                                FrameExecutionErrorKind::InvalidTransition,
-                                frame_id,
-                                Some(&node.node),
-                                error.to_string(),
-                            )
-                        })?;
+                    last_boundary = Some((node.node.clone(), node.occurrence));
+                    if let Some(failure) = self.debit_root_dispatch(&node) {
+                        return Ok(FrameCompletion::Failed(failure));
+                    }
+                    match self.dispatch_node(&node, &mut response_status, dispatcher)? {
+                        FrameDispatchOutcome::Node(outcome) => {
+                            plan.apply(&mut state, &node, outcome, now_ms)
+                                .map_err(|error| {
+                                    FrameExecutionError::new(
+                                        FrameExecutionErrorKind::InvalidTransition,
+                                        frame_id,
+                                        Some(&node.node),
+                                        error.to_string(),
+                                    )
+                                })?;
+                        }
+                        FrameDispatchOutcome::Failed(failure) => {
+                            return Ok(FrameCompletion::Failed(failure));
+                        }
+                    }
                 }
             }
         }
+    }
+
+    fn debit_root_dispatch(&mut self, dispatch: &Dispatch) -> Option<FrameFailure> {
+        if checked_debit(&mut self.dispatched_nodes, self.root_dispatch_budget) {
+            return None;
+        }
+        Some(FrameFailure {
+            frame_id: self.current_record().frame_id,
+            node_id: dispatch.node.clone(),
+            occurrence: dispatch.occurrence,
+            kind: ExecutionFailureKind::DispatchBudget,
+            detail: ErrorDetail::coded(
+                "dispatch-budget",
+                format!(
+                    "root dispatch budget of {} exhausted before node dispatch",
+                    self.root_dispatch_budget
+                ),
+            ),
+        })
     }
 
     fn dispatch_node(
@@ -376,14 +455,18 @@ impl<'snapshot> FrameStack<'snapshot> {
         dispatch: &Dispatch,
         response_status: &mut Option<u16>,
         dispatcher: &mut impl PureNodeDispatcher,
-    ) -> Result<NodeOutcome, FrameExecutionError> {
+    ) -> Result<FrameDispatchOutcome, FrameExecutionError> {
         match dispatch.node_type.as_str() {
-            "request" | "event" => Ok(NodeOutcome::ok(dispatch.payload.clone())),
+            "request" | "event" => Ok(FrameDispatchOutcome::Node(NodeOutcome::ok(
+                dispatch.payload.clone(),
+            ))),
             "respond" => {
                 let config = serde_json::from_value::<RespondConfig>(dispatch.config.clone())
                     .map_err(|error| self.invalid_plan_error(&dispatch.node, error.to_string()))?;
                 *response_status = Some(config.status);
-                Ok(NodeOutcome::ok(dispatch.payload.clone()))
+                Ok(FrameDispatchOutcome::Node(NodeOutcome::ok(
+                    dispatch.payload.clone(),
+                )))
             }
             "call-flow" => self.dispatch_call(dispatch, dispatcher),
             _ => {
@@ -396,7 +479,9 @@ impl<'snapshot> FrameStack<'snapshot> {
                         "effect activation is unavailable before wamn-0h0g.5.4",
                     ));
                 }
-                Ok(dispatcher.dispatch(self.trusted_current(), dispatch))
+                Ok(FrameDispatchOutcome::Node(
+                    dispatcher.dispatch(self.trusted_current(), dispatch),
+                ))
             }
         }
     }
@@ -405,7 +490,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         &mut self,
         dispatch: &Dispatch,
         dispatcher: &mut impl PureNodeDispatcher,
-    ) -> Result<NodeOutcome, FrameExecutionError> {
+    ) -> Result<FrameDispatchOutcome, FrameExecutionError> {
         // The reducer sees the canonical public-flow projection (`flow-id`
         // only). The trusted call boundary reads the original compiled
         // instruction, including its site identity, from the verified plan.
@@ -434,17 +519,37 @@ impl<'snapshot> FrameStack<'snapshot> {
         if let Some(error) = call_input_error(callee.plan(), &dispatch.payload)
             .map_err(|message| self.invalid_plan_error(&dispatch.node, message))?
         {
-            return Ok(NodeOutcome::Error(NodeError::InvalidInput(error)));
+            return Ok(FrameDispatchOutcome::Node(NodeOutcome::Error(
+                NodeError::InvalidInput(error),
+            )));
+        }
+
+        if self.frames.len() > MAX_CALL_DEPTH {
+            return Ok(FrameDispatchOutcome::Failed(FrameFailure {
+                frame_id: self.current_record().frame_id,
+                node_id: dispatch.node.clone(),
+                occurrence: dispatch.occurrence,
+                kind: ExecutionFailureKind::DepthBudget,
+                detail: ErrorDetail::coded(
+                    "depth-budget",
+                    format!("maximum call depth of {MAX_CALL_DEPTH} exhausted before callee entry"),
+                ),
+            }));
         }
 
         let frame_id = self.push_callee(&instruction)?;
         let completion = self.execute_current(dispatch.payload.clone(), dispatcher);
         self.pop_callee(frame_id);
         match completion? {
-            FrameCompletion::Responded { body, .. } => Ok(NodeOutcome::ok(body)),
-            FrameCompletion::Failed(failure) => {
-                Ok(NodeOutcome::Error(callee_failure_outcome(&failure)))
+            FrameCompletion::Responded { body, .. } => {
+                Ok(FrameDispatchOutcome::Node(NodeOutcome::ok(body)))
             }
+            FrameCompletion::Failed(failure) if failure.is_root_budget_exhaustion() => {
+                Ok(FrameDispatchOutcome::Failed(failure))
+            }
+            FrameCompletion::Failed(failure) => Ok(FrameDispatchOutcome::Node(NodeOutcome::Error(
+                callee_failure_outcome(&failure),
+            ))),
             FrameCompletion::FrontierExhausted { .. } => Err(FrameExecutionError::new(
                 FrameExecutionErrorKind::CalleeDidNotRespond,
                 self.current_record().frame_id,
@@ -578,6 +683,16 @@ fn call_input_error(
             code: Some(CALL_INPUT_INVALID.to_string()),
             data: None,
         }))
+}
+
+fn checked_debit(counter: &mut u64, limit: u64) -> bool {
+    if *counter >= limit {
+        return false;
+    }
+    *counter = counter
+        .checked_add(1)
+        .expect("a dispatch counter below its u64 limit can increment");
+    true
 }
 
 fn callee_failure_outcome(failure: &FrameFailure) -> NodeError {
@@ -745,7 +860,9 @@ mod tests {
                         .insert("calls".to_string(), json!(calls));
                     NodeOutcome::ok(body)
                 }
-                "observe" | "recover" => NodeOutcome::ok(node.payload.clone()),
+                "observe" | "recover" | "loop-a" | "loop-b" => {
+                    NodeOutcome::ok(node.payload.clone())
+                }
                 "explode" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
                     "callee-broke",
                     "callee exploded",
@@ -896,6 +1013,184 @@ mod tests {
             root_execution_bundle_hash,
             plans,
         }
+    }
+
+    fn runaway_loop_plan() -> ExecutionPlanV2 {
+        request_plan(
+            &hash('c'),
+            json!(true),
+            vec![
+                node(
+                    "loop-a",
+                    "test-loop",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+                node(
+                    "loop-b",
+                    "test-loop",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+            ],
+            vec![
+                edge("request", "main", "loop-a"),
+                edge("loop-a", "main", "loop-b"),
+                edge("loop-a", "done", RESPOND),
+                edge("loop-b", "main", "loop-a"),
+                edge("loop-b", "done", RESPOND),
+            ],
+            200,
+        )
+    }
+
+    #[test]
+    fn root_budget_constants_are_exact_platform_literals() {
+        assert_eq!(MAX_CALL_DEPTH, 64);
+        assert_eq!(DEFAULT_ROOT_DISPATCH_BUDGET, 10_000);
+    }
+
+    #[test]
+    fn checked_dispatch_counter_reaches_its_limit_without_wrapping() {
+        let mut counter = u64::MAX - 1;
+
+        assert!(checked_debit(&mut counter, u64::MAX));
+        assert_eq!(counter, u64::MAX);
+        assert!(!checked_debit(&mut counter, u64::MAX));
+        assert_eq!(counter, u64::MAX);
+    }
+
+    #[test]
+    fn root_global_dispatch_budget_fails_the_ten_thousand_and_first_dispatch() {
+        let root = runaway_loop_plan();
+        let snapshot = snapshot("root", vec![("root", root)]);
+        let mut stack = FrameStack::new("run-dispatch-budget", &snapshot);
+        let mut dispatcher = RecordingDispatcher::default();
+
+        let FrameCompletion::Failed(failure) =
+            stack.execute_root(json!({}), &mut dispatcher).unwrap()
+        else {
+            panic!("the root-global dispatch budget must fail the runaway loop");
+        };
+
+        assert_eq!(failure.kind(), ExecutionFailureKind::DispatchBudget);
+        assert_eq!(failure.detail().code.as_deref(), Some("dispatch-budget"));
+        assert_eq!(failure.frame_id(), 0);
+        assert_eq!(failure.node_id(), "loop-b");
+        assert_eq!(failure.occurrence(), 4_999);
+        assert_eq!(stack.dispatched_nodes, DEFAULT_ROOT_DISPATCH_BUDGET);
+        assert_eq!(dispatcher.seen.len(), 9_999);
+        assert_eq!(stack.depth(), 1);
+    }
+
+    #[test]
+    fn dispatch_budget_debits_before_call_input_validation() {
+        let callee = request_plan(
+            &hash('d'),
+            json!({"type": "string"}),
+            Vec::new(),
+            vec![edge("request", "main", RESPOND)],
+            200,
+        );
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![
+                call_node("call", "callee"),
+                node(
+                    "recover",
+                    "test-pure",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+            ],
+            vec![
+                edge("request", "main", "call"),
+                edge("call", "main", RESPOND),
+                edge("call", wamn_flow::ERROR_PORT, "recover"),
+                edge("recover", "main", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
+        let mut stack = FrameStack::new("run-budget-before-guard", &snapshot);
+        stack.root_dispatch_budget = 1;
+        let mut dispatcher = RecordingDispatcher::default();
+
+        let FrameCompletion::Failed(failure) =
+            stack.execute_root(json!(7), &mut dispatcher).unwrap()
+        else {
+            panic!("dispatch exhaustion must win before the invalid call input guard");
+        };
+
+        assert_eq!(failure.kind(), ExecutionFailureKind::DispatchBudget);
+        assert_eq!(failure.frame_id(), 0);
+        assert_eq!(failure.node_id(), "call");
+        assert_eq!(failure.occurrence(), 0);
+        assert_eq!(stack.dispatched_nodes, 1);
+        assert_eq!(stack.next_frame_id, 1);
+        assert!(dispatcher.seen.is_empty());
+    }
+
+    #[test]
+    fn nested_dispatch_budget_failure_bypasses_the_call_error_edge() {
+        let callee = request_plan(
+            &hash('d'),
+            json!(true),
+            vec![node(
+                "stamp",
+                "test-pure",
+                json!({}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "stamp"),
+                edge("stamp", "main", RESPOND),
+            ],
+            200,
+        );
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![
+                call_node("call", "callee"),
+                node(
+                    "recover",
+                    "test-pure",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+            ],
+            vec![
+                edge("request", "main", "call"),
+                edge("call", "main", RESPOND),
+                edge("call", wamn_flow::ERROR_PORT, "recover"),
+                edge("recover", "main", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
+        let mut stack = FrameStack::new("run-nested-dispatch-budget", &snapshot);
+        stack.root_dispatch_budget = 2;
+        let mut dispatcher = RecordingDispatcher::default();
+
+        let FrameCompletion::Failed(failure) =
+            stack.execute_root(json!({}), &mut dispatcher).unwrap()
+        else {
+            panic!("nested dispatch exhaustion must fail the root");
+        };
+
+        assert_eq!(failure.kind(), ExecutionFailureKind::DispatchBudget);
+        assert_eq!(failure.frame_id(), 1);
+        assert_eq!(failure.node_id(), "request");
+        assert_eq!(failure.occurrence(), 0);
+        assert_eq!(stack.dispatched_nodes, 2);
+        assert_eq!(stack.next_frame_id, 2);
+        assert!(
+            dispatcher.seen.is_empty(),
+            "the caller error edge did not run"
+        );
+        assert_eq!(stack.depth(), 1);
     }
 
     #[test]
@@ -1123,6 +1418,87 @@ mod tests {
             ],
             200,
         )
+    }
+
+    #[test]
+    fn invalid_sixty_fifth_call_input_wins_before_depth_budget() {
+        let plan = request_plan(
+            &hash('c'),
+            json!({"type": "integer", "minimum": 1}),
+            vec![
+                node(
+                    "branch",
+                    "test-branch",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+                call_node("call", "self-flow"),
+            ],
+            vec![
+                edge("request", "main", "branch"),
+                edge("branch", "recurse", "call"),
+                edge("branch", "done", RESPOND),
+                edge("call", "main", RESPOND),
+                edge("call", wamn_flow::ERROR_PORT, RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("self-flow", vec![("self-flow", plan)]);
+        let mut stack = FrameStack::new("run-depth-guard-order", &snapshot);
+        let mut dispatcher = RecordingDispatcher::default();
+
+        let FrameCompletion::Responded { body, .. } = stack
+            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher)
+            .unwrap()
+        else {
+            panic!("the invalid call input must route before the depth floor");
+        };
+
+        assert_eq!(body["error"]["code"], CALL_INPUT_INVALID);
+        assert_eq!(
+            stack.next_frame_id,
+            u64::try_from(MAX_CALL_DEPTH).expect("platform call depth fits u64") + 1,
+            "the invalid sixty-fifth call did not allocate a frame identity"
+        );
+        assert_eq!(
+            dispatcher.seen.last().map(|seen| seen.frame_id),
+            Some(u64::try_from(MAX_CALL_DEPTH).expect("platform call depth fits u64"))
+        );
+        assert_eq!(stack.depth(), 1, "every admitted callee was popped");
+    }
+
+    #[test]
+    fn sixty_fifth_valid_recursive_call_fails_before_frame_id_allocation() {
+        let plan = recursive_plan(&hash('c'), "self-flow");
+        let snapshot = snapshot("self-flow", vec![("self-flow", plan)]);
+        let mut stack = FrameStack::new("run-depth-budget", &snapshot);
+        let mut dispatcher = RecordingDispatcher::default();
+
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher)
+            .unwrap()
+        else {
+            panic!("the sixty-fifth valid recursive call must fail the root");
+        };
+
+        assert_eq!(failure.kind(), ExecutionFailureKind::DepthBudget);
+        assert_eq!(failure.detail().code.as_deref(), Some("depth-budget"));
+        assert_eq!(
+            failure.frame_id(),
+            u64::try_from(MAX_CALL_DEPTH).expect("platform call depth fits u64")
+        );
+        assert_eq!(failure.node_id(), "call");
+        assert_eq!(failure.occurrence(), 0);
+        assert_eq!(
+            stack.next_frame_id,
+            u64::try_from(MAX_CALL_DEPTH).expect("platform call depth fits u64") + 1,
+            "the refused sixty-fifth callee did not allocate a frame identity"
+        );
+        assert_eq!(
+            stack.dispatched_nodes,
+            u64::try_from((MAX_CALL_DEPTH + 1) * 3).expect("platform budget proof count fits u64")
+        );
+        assert_eq!(stack.depth(), 1, "every admitted callee was popped");
     }
 
     #[test]

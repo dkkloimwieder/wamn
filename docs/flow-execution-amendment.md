@@ -145,13 +145,21 @@ terminalize. No child run, queue row, parent wait, actor mode,
 lineage, cancellation, or independent recovery exists.
 
 **Recursion and loops are supported.** Self- and mutual reference are
-ordinary calls. Termination is runtime-enforced: a **maximum call
-depth** per root run and a **total-dispatched-node budget**;
-exhaustion is a typed failure (`depth-budget` / `dispatch-budget`)
-failing the run. No static **termination** analysis ships in MVP
-(claim necessarily performs static call-graph *reachability* to build
-the snapshot). A bounded `for-each` node is outside MVP,
-demand-gated.
+ordinary calls. Termination is runtime-enforced by two named platform
+constants: `MAX_CALL_DEPTH = 64` (root depth zero, so 64 active
+callees are admitted) and `DEFAULT_ROOT_DISPATCH_BUDGET = 10_000`
+across the whole root run. The dispatch counter is debited once for
+every emitted `Step::Dispatch`, including ordinary loop re-dispatches
+and `call-flow`; dispatch 10,001 fails `dispatch-budget`. For a call,
+the debit precedes the callee input guard, which precedes the depth
+check and frame-id allocation; the 65th callee therefore fails
+`depth-budget` without consuming a frame id. Both resource failures
+are terminal, attributed to the active caller-frame node occurrence,
+and never follow a call-site error edge. Per-environment configuration
+of either value is demand-gated. No static **termination** analysis
+ships in MVP (claim necessarily performs static call-graph
+*reachability* to build the snapshot). A bounded `for-each` node is
+outside MVP, demand-gated.
 
 **Node identity: dynamic frames for uniqueness, stable selectors
 for authors.** A call-site chain grows per recursion depth, so it
