@@ -88,6 +88,14 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("GRANT UPDATE"));
     assert!(!sql.contains("GRANT DELETE"));
     assert!(!sql.contains("guard_authoring_test_orchestration_write"));
+    assert!(sql.contains(
+        r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
+        E'\n' ORDER BY (con.contype::text || ':'
+        || pg_get_constraintdef(con.oid, false)) COLLATE "C""#
+    ));
+    assert!(sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
+    assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
+    assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
 }
 
 #[test]
@@ -153,6 +161,35 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
     script.push_str(&ddl());
     script.push_str(&format!(
         r#"
+DO $$ BEGIN
+  ASSERT (SELECT count(*) FROM pg_constraint
+          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
+            AND contype <> 'n') = 16,
+         'release evidence must retain exactly 16 governed constraints';
+  ASSERT (SELECT count(*) FROM pg_constraint
+          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
+            AND contype = 'c') = 11,
+         'release evidence must retain exactly eleven CHECK constraints';
+  ASSERT (SELECT count(*) FROM pg_constraint
+          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
+            AND contype = 'f') = 4,
+         'release evidence must retain exactly four local foreign keys';
+  ASSERT (SELECT count(*) FROM pg_constraint
+          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
+            AND contype = 'p') = 1,
+         'release evidence must retain exactly one primary key';
+  ASSERT (SELECT encode(sha256(convert_to(string_agg(
+            contype::text || ':' || pg_get_constraintdef(oid, false),
+            E'\n' ORDER BY (contype::text || ':'
+              || pg_get_constraintdef(oid, false)) COLLATE "C"
+          ), 'UTF8')), 'hex')
+          FROM pg_constraint
+          WHERE conrelid='catalog.release_flow_test_evidence'::regclass
+            AND contype <> 'n') =
+         '7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed',
+         'release evidence constraint fingerprint must be version-stable';
+END $$;
+
 SET app.tenant = 'tenant-a';
 INSERT INTO catalog.catalogs
   (tenant_id,catalog_id,version,environment,schema_version,state)

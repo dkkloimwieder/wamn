@@ -762,16 +762,16 @@ BEGIN
     END IF;
 
     SELECT encode(sha256(convert_to(string_agg(
-        con.contype::text || ':' || pg_get_constraintdef(con.oid, true),
-        E'\n' ORDER BY con.contype::text || ':'
-        || pg_get_constraintdef(con.oid, true)
+        con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
+        E'\n' ORDER BY (con.contype::text || ':'
+        || pg_get_constraintdef(con.oid, false)) COLLATE "C"
     ), 'UTF8')), 'hex')
     INTO evidence_constraints_fingerprint
     FROM pg_constraint con
     WHERE con.conrelid = 'catalog.release_flow_test_evidence'::regclass
       AND con.contype <> 'n';
     IF evidence_constraints_fingerprint <>
-       'ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78'
+       '7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'release-flow-test-evidence-constraint-drift';
