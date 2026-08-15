@@ -8,7 +8,7 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{capturebench, causation_e2e, impactproof, readerbench, runnerbench};
+use wamn_proof_integration::{capturebench, impactproof, m1, readerbench, runnerbench};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -34,8 +34,10 @@ enum Command {
     Runnerbench(runnerbench::RunnerBenchArgs),
     /// Assert an EVT_ stream holds a CDC reader's exact write program (order / dedupe / envelope shape) — the l5i9.10 gate's stream-side step
     Readerbench(readerbench::ReaderBenchArgs),
-    /// Prove one tenant commit through production CDC, stored redelivery, and materializer admission.
-    CausationE2e(causation_e2e::CausationE2eArgs),
+    /// Run M1 check 9; check 10 remains pending wamn-0h0g.11.10.
+    M1(m1::M1Args),
+    /// Idempotently clean resources owned by one exact M1 Job identity.
+    M1Cleanup(m1::M1Args),
     /// Serve the 9.2 reflecting upstream (echoes received trace headers as JSON)
     ServeEcho(traceproof::ServeEchoArgs),
     /// Run the E13a publish-time egress-guard refusal gate (a wasi:sockets importer is refused; a standard component publishes)
@@ -64,7 +66,8 @@ async fn async_main() -> anyhow::Result<()> {
         Command::Capturebench(args) => capturebench::run(args).await,
         Command::Runnerbench(args) => runnerbench::run(args).await,
         Command::Readerbench(args) => readerbench::run(args).await,
-        Command::CausationE2e(args) => causation_e2e::run(args).await,
+        Command::M1(args) => m1::run(args).await,
+        Command::M1Cleanup(args) => m1::cleanup(args).await,
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,

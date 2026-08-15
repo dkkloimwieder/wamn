@@ -150,7 +150,7 @@
       "plan_anchor": "**D19**",
       "primary_source": {
         "source_kind": "manifest",
-        "source": "deploy/gates/causation-e2e-job.yaml"
+        "source": "deploy/gates/m1-gate-job.yaml"
       }
     },
     {
@@ -231,26 +231,29 @@
   "entries": [
     {
       "source_kind": "manifest",
-      "source": "deploy/gates/causation-e2e-job.yaml",
+      "source": "deploy/gates/m1-gate-job.yaml",
       "classification": "required-gate",
       "decision_ids": [
         "D3",
         "D19"
       ],
-      "bead_owner": "bd:wamn-2jdm.2",
+      "bead_owner": "bd:wamn-0h0g.11.18",
       "proof_tier": "in-cluster",
-      "expected_outcome": "pass",
+      "expected_outcome": "pass-check-9-only",
       "can_fail": true,
       "allowed_skips": [],
-      "coverage_exclusions": [],
+      "coverage_exclusions": [
+        "M1 check 10 tenant isolation remains pending bd:wamn-0h0g.11.10"
+      ],
       "mutation_evidence": {
-        "status": "pending",
-        "follow_up": "bd:wamn-2jdm.4"
+        "status": "proven",
+        "follow_up": null,
+        "evidence": "tools/gate-mutants/m1-composition.sh"
       },
       "cadence": "per-shipping-change",
       "latest_evidence": {
-        "issue": "bd:wamn-ec7j",
-        "git": "git:21c3836fe0536c347355ef21f7d811eb92cc678a",
+        "issue": "bd:wamn-0h0g.11.9",
+        "git": "git:388c99b3f843e6c0c7b433225caa727cb9602be6",
         "machine_evidence": "missing",
         "evidence_follow_up": "bd:wamn-2jdm.8",
         "scheduling_follow_up": "bd:wamn-2jdm.8"

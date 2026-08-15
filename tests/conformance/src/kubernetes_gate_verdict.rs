@@ -21,7 +21,7 @@ where
     }
 }
 
-/// A complete aggregate verdict for one freshly applied manifest.
+/// A complete aggregate verdict for one freshly created or applied manifest.
 #[derive(Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct GateVerdictRecord {
@@ -63,6 +63,13 @@ pub struct JobVerdictRecord {
     pub expectation: Expectation,
     pub expected_exit_code: i32,
     pub expected_image: String,
+    pub sidecar: Option<String>,
+    pub expected_sidecar_image: Option<String>,
+    pub expected_sidecar_image_id: Option<String>,
+    pub preflight_sidecar_config_id: Option<String>,
+    pub sidecar_upstream_index: Option<String>,
+    pub sidecar_upstream_child: Option<String>,
+    pub sidecar_preflight_sha256: Option<String>,
     pub claimed_image_id: Option<String>,
     pub observed: ObservedJob,
     pub verdict: Verdict,
@@ -89,12 +96,15 @@ pub struct ObservedJob {
 pub struct PodObservation {
     pub name: String,
     pub uid: String,
+    pub node: String,
     pub created_at: String,
     pub started_at: Option<String>,
     pub phase: String,
     pub init_exit_codes: Vec<Option<i32>>,
     pub container_exit_code: Option<i32>,
     pub image_id: String,
+    pub sidecar_exit_code: Option<i32>,
+    pub sidecar_image_id: Option<String>,
 }
 
 /// Exact executable/argv probe and its before/after stdout identities.

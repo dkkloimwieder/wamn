@@ -676,6 +676,51 @@ fn canonical_registry_covers_every_live_gate_source() {
 }
 
 #[test]
+fn m1_gate_claims_only_completed_check_9() {
+    let (root, registry, _, _, _) = fixtures();
+    let entry = registry
+        .entries
+        .iter()
+        .find(|entry| entry.source == "deploy/gates/m1-gate-job.yaml")
+        .expect("M1 gate must be registered");
+    assert_eq!(entry.bead_owner, "bd:wamn-0h0g.11.18");
+    assert_eq!(entry.expected_outcome, "pass-check-9-only");
+    assert_eq!(
+        entry.coverage_exclusions,
+        ["M1 check 10 tenant isolation remains pending bd:wamn-0h0g.11.10"]
+    );
+    assert_eq!(entry.mutation_evidence.status, "proven");
+    assert_eq!(
+        entry.mutation_evidence.evidence.as_deref(),
+        Some("tools/gate-mutants/m1-composition.sh")
+    );
+
+    let manifest = fs::read_to_string(root.join(&entry.source)).expect("read M1 manifest");
+    let sidecar = fs::read_to_string(root.join("deploy/gates/m1-postgres.Dockerfile"))
+        .expect("read derived M1 PostgreSQL recipe");
+    assert!(manifest.contains("wamn.dev/m1-checks: \"9\""));
+    assert!(manifest.contains("wamn.dev/m1-pending-checks: \"10 (wamn-0h0g.11.10)\""));
+    assert!(manifest.contains("wamn-gates --log-level error m1 --timeout-secs 120"));
+    assert!(manifest.contains("restartPolicy: Always"));
+    assert!(manifest.contains("image: wamn-postgres:m1-pg18-720c455e"));
+    assert!(!manifest.contains("m1-pg18-720c455e@sha256:"));
+    assert!(manifest.contains("imagePullPolicy: Never"));
+    assert!(manifest.contains("--sidecar-preflight-record"));
+    assert!(!manifest.contains("ctr -n k8s.io images tag"));
+    assert!(manifest.contains("emptyDir: {}"));
+    assert!(manifest.contains("postgres://postgres@127.0.0.1:5432/postgres"));
+    assert!(manifest.contains("sha256:POST_BUILD_MAIN_IMAGE_ID"));
+    assert!(manifest.contains("claim_log_prefix\":\"M1_MAIN_IMAGE_ID="));
+    assert!(sidecar.contains("FROM --platform=linux/amd64 postgres:18.6-trixie@sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a"));
+    assert!(sidecar.contains("wamn.dev/upstream-index=\"sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a\""));
+    assert!(sidecar.contains("wamn.dev/upstream-child=\"sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324\""));
+    assert!(!manifest.contains("secretKeyRef"));
+    assert!(!manifest.contains("wamn-pg"));
+    assert!(!manifest.contains("wamn-sysdb"));
+    assert!(!manifest.contains("error causation-e2e --timeout-secs"));
+}
+
+#[test]
 fn rejects_gate_authority_drift_mutant() {
     let (root, mut registry, manifests, recipes, historical_plan) = fixtures();
     registry.authority.push_str(" drift");
