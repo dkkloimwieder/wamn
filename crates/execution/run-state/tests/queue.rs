@@ -1,12 +1,13 @@
 use serde_json::json;
 use wamn_run_state::queue::{
     ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, claim_state,
-    classify_production_claim, enqueue_evt_sql, enqueue_sql, grant_production_claim_sql,
-    janitor_verdict_with_attempt, lease_deadline, lease_live, mint_evt_run_id, park_sql,
-    parked_due_sql, plan_claim, production_claim_state, reset_pre_effect_claim_sql,
-    select_claim_effect_attempt_sql, select_exhausted_production_sql, select_production_claim_sql,
-    serialize_effect_intent_sql, should_renew, terminalize_effect_uncertain_claim_sql,
-    terminalize_exhausted_production_sql, terminalize_resolution_refusal_claim_sql,
+    classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql, enqueue_sql,
+    grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline, lease_live,
+    mint_evt_run_id, park_sql, parked_due_sql, plan_claim, production_claim_state,
+    select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_pre_effect_projection_sql, select_production_claim_sql, serialize_effect_intent_sql,
+    should_renew, terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    terminalize_resolution_refusal_claim_sql,
 };
 
 #[test]
@@ -81,6 +82,13 @@ fn global_fifo_uses_available_stream_run_tie_break() {
     assert!(sql.contains("AS MATERIALIZED"));
     assert!(sql.contains("FOR UPDATE OF selected_run, q SKIP LOCKED"));
     assert!(sql.contains("LIMIT 1"));
+    for fence in [
+        "candidate.lease_owner",
+        "candidate.lease_expires_at::text",
+        "candidate.lease_generation",
+    ] {
+        assert!(sql.contains(fence), "missing reset fence {fence}");
+    }
 }
 
 #[test]
@@ -113,10 +121,14 @@ fn production_lease_uses_a_fresh_post_fence_clock() {
 }
 
 #[test]
-fn pre_effect_reset_deletes_only_node_projection_and_nulls_only_state_json() {
-    let sql = reset_pre_effect_claim_sql();
-    assert!(sql.contains("DELETE FROM node_runs"));
+fn app_pre_effect_step_clears_only_state_after_private_projection_reset() {
+    let projection = select_pre_effect_projection_sql();
+    assert!(projection.contains("SELECT EXISTS"));
+    assert!(projection.contains("FROM node_runs"));
+    let sql = clear_pre_effect_state_sql();
     assert!(sql.contains("UPDATE runs SET state_json = NULL"));
+    assert!(sql.contains("NOT EXISTS"));
+    assert!(!sql.contains("DELETE FROM node_runs"));
     for preserved in [
         "input_json =",
         "invocation_context =",

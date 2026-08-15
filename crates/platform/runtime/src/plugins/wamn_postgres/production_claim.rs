@@ -6,9 +6,9 @@ use deadpool_postgres::Object;
 use tokio_postgres::Row;
 use tokio_postgres::types::{FromSql, ToSql};
 use wamn_run_state::queue::{
-    ProductionClaimClass, classify_production_claim, grant_production_claim_sql,
-    reset_pre_effect_claim_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
-    select_production_claim_sql, serialize_effect_intent_sql,
+    ProductionClaimClass, classify_production_claim, clear_pre_effect_state_sql,
+    grant_production_claim_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
+    select_pre_effect_projection_sql, select_production_claim_sql, serialize_effect_intent_sql,
     terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
     terminalize_resolution_refusal_claim_sql,
 };
@@ -90,6 +90,14 @@ pub enum ProductionClaimResult {
         payload: String,
         lease_generation: i64,
     },
+    /// A committed app claim observed an exact expired pre-effect fence whose
+    /// mutable projection must be cleared by the private native writer.
+    ResetRequired {
+        run_id: String,
+        prior_lease_owner: String,
+        prior_lease_expires_at: String,
+        prior_lease_generation: i64,
+    },
     /// Claim-time classification or resolution removed the row without execution.
     Terminalized {
         run_id: String,
@@ -116,6 +124,9 @@ struct SelectedClaim {
     tenant_id: String,
     run_id: String,
     had_prior_lease: bool,
+    prior_lease_owner: Option<String>,
+    prior_lease_expires_at: Option<String>,
+    prior_lease_generation: i64,
     status: RunStatus,
     root_flow_id: String,
     flow_version: i32,
@@ -376,15 +387,45 @@ async fn claim_in_transaction(
             return terminalize_effect_uncertain(connection, &selected).await;
         }
         ProductionClaimClass::ExpiredPreEffect => {
-            let reset_sql = reset_pre_effect_claim_sql();
-            let reset = connection
-                .prepare_cached(&reset_sql)
+            let projection_sql = select_pre_effect_projection_sql();
+            let projection = connection
+                .prepare_cached(&projection_sql)
                 .await
-                .map_err(|error| storage("prepare pre-effect reset", error))?;
+                .map_err(|error| storage("prepare pre-effect projection check", error))?;
+            let projection_row = connection
+                .query_one(&projection, &[&selected.run_id])
+                .await
+                .map_err(|error| storage("classify pre-effect projection", error))?;
+            let has_projection = row_value(&projection_row, 0, "pre-effect projection")?;
+            if has_projection {
+                return Ok(ProductionClaimResult::ResetRequired {
+                    run_id: selected.run_id,
+                    prior_lease_owner: selected.prior_lease_owner.ok_or_else(|| {
+                        ProductionClaimError::new(
+                            ProductionClaimErrorKind::Contract,
+                            "decode reset fence",
+                            "expired claim lacks prior lease owner",
+                        )
+                    })?,
+                    prior_lease_expires_at: selected.prior_lease_expires_at.ok_or_else(|| {
+                        ProductionClaimError::new(
+                            ProductionClaimErrorKind::Contract,
+                            "decode reset fence",
+                            "expired claim lacks prior lease expiry",
+                        )
+                    })?,
+                    prior_lease_generation: selected.prior_lease_generation,
+                });
+            }
+            let clear_sql = clear_pre_effect_state_sql();
+            let clear = connection
+                .prepare_cached(&clear_sql)
+                .await
+                .map_err(|error| storage("prepare pre-effect state clear", error))?;
             connection
-                .query_one(&reset, &[&selected.run_id])
+                .query_one(&clear, &[&selected.run_id])
                 .await
-                .map_err(|error| storage("reset pre-effect projection", error))?;
+                .map_err(|error| storage("clear pre-effect state", error))?;
         }
         ProductionClaimClass::Ordinary => {}
     }
@@ -912,7 +953,7 @@ fn generic_failure_outcome(
 }
 
 fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimError> {
-    let status: String = row_value(row, 3, "run status")?;
+    let status: String = row_value(row, 6, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
@@ -924,14 +965,17 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         tenant_id: row_value(row, 0, "tenant id")?,
         run_id: row_value(row, 1, "run id")?,
         had_prior_lease: row_value(row, 2, "prior lease evidence")?,
+        prior_lease_owner: row_value(row, 3, "prior lease owner")?,
+        prior_lease_expires_at: row_value(row, 4, "prior lease expiry")?,
+        prior_lease_generation: row_value(row, 5, "prior lease generation")?,
         status,
-        root_flow_id: row_value(row, 4, "root flow id")?,
-        flow_version: row_value(row, 5, "root flow version")?,
-        catalog_id: row_value(row, 6, "catalog id")?,
-        catalog_version: row_value(row, 7, "catalog version")?,
-        environment: row_value(row, 8, "environment")?,
-        execution_bundle_hash: row_value(row, 9, "execution bundle hash")?,
-        payload: row_value(row, 10, "authoritative input")?,
+        root_flow_id: row_value(row, 7, "root flow id")?,
+        flow_version: row_value(row, 8, "root flow version")?,
+        catalog_id: row_value(row, 9, "catalog id")?,
+        catalog_version: row_value(row, 10, "catalog version")?,
+        environment: row_value(row, 11, "environment")?,
+        execution_bundle_hash: row_value(row, 12, "execution bundle hash")?,
+        payload: row_value(row, 13, "authoritative input")?,
     })
 }
 
@@ -993,6 +1037,9 @@ mod tests {
             tenant_id: "tenant-a".into(),
             run_id: "run-a".into(),
             had_prior_lease: false,
+            prior_lease_owner: None,
+            prior_lease_expires_at: None,
+            prior_lease_generation: 0,
             status: RunStatus::Dispatched,
             root_flow_id: "root".into(),
             flow_version: 7,
@@ -1100,5 +1147,21 @@ mod tests {
         let lease_sql = grant_production_claim_sql();
         assert!(lease_sql.contains("lease_expires_at = statement_timestamp()"));
         assert!(!lease_sql.contains("lease_expires_at = now()"));
+    }
+
+    #[test]
+    fn expired_projection_handoff_commits_before_private_delete_and_reclaims_fresh() {
+        let source = include_str!("production_claim.rs");
+        let start = source.find("async fn claim_in_transaction(").unwrap();
+        let end = source.find("async fn reap_in_transaction(").unwrap();
+        let body = &source[start..end];
+        let classify = body.find("ProductionClaimClass::ExpiredPreEffect").unwrap();
+        let projection = body.find("select_pre_effect_projection_sql()").unwrap();
+        let handoff = body.find("ProductionClaimResult::ResetRequired").unwrap();
+        let clear = body.find("clear_pre_effect_state_sql()").unwrap();
+        let grant = body.find("grant_production_claim_sql()").unwrap();
+        assert!(classify < projection && projection < handoff);
+        assert!(handoff < clear && clear < grant);
+        assert!(!body.contains("DELETE FROM node_runs"));
     }
 }

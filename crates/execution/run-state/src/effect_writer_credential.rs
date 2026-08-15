@@ -16,6 +16,8 @@ pub const EFFECT_WRITER_CREDENTIAL_KEY: &str = "credential.json";
 pub const EFFECT_WRITER_CREDENTIAL_PATH: &str = "/etc/wamn/effect-writer/credential.json";
 /// Stable NOLOGIN role carrying ledger authority and narrow fenced-run reads.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
+/// Stable NOLOGIN role carrying only mutable `node_runs` projection authority.
+pub const RUN_PROJECTION_WRITER_ROLE: &str = "wamn_run_projection_writer";
 
 const EFFECT_WRITER_SCOPE_DOMAIN: &[u8] = b"wamn.effect-writer.scope.v0.1";
 const EFFECT_WRITER_SCOPE_HASH_HEX_LEN: usize = 40;

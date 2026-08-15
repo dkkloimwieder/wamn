@@ -39,7 +39,7 @@ use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
 
 use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
-use wamn_run_state::{FailKind, RunStatus};
+use wamn_run_state::{EffectWriterErrorKind, FailKind, ResetProjectionFence, RunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
@@ -398,7 +398,8 @@ pub struct ExecutionHost {
     postgres: Arc<WamnPostgres>,
     component_id: Box<str>,
     runtime_revision: TrustedExecutionRuntimeRevision,
-    /// Constructed private native writer; intentionally unreachable until .5.4.
+    /// Fixed private writer. Only expired-pre-effect projection reset is active;
+    /// effect dispatch and frame-fact persistence remain unmounted until .5.4.
     effect_writer: Option<wamn_run_state::EffectWriterClient>,
     ttl_ms: u64,
     /// [9.8] `Some` when a memory limiter is attached (a budget was configured);
@@ -662,6 +663,37 @@ impl ExecutionHost {
             }
             match claim {
                 ProductionClaimResult::Empty => break,
+                ProductionClaimResult::ResetRequired {
+                    run_id,
+                    prior_lease_owner,
+                    prior_lease_expires_at,
+                    prior_lease_generation,
+                } => {
+                    let writer = self.effect_writer.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "expired pre-effect projection requires the fixed private writer"
+                        )
+                    })?;
+                    match writer
+                        .reset_expired_pre_effect_projection(ResetProjectionFence {
+                            run_id: &run_id,
+                            prior_lease_owner: &prior_lease_owner,
+                            prior_lease_expires_at: &prior_lease_expires_at,
+                            prior_lease_generation,
+                        })
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                EffectWriterErrorKind::EffectAttemptPresent
+                                    | EffectWriterErrorKind::ResetFenceLost
+                            ) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    continue;
+                }
                 ProductionClaimResult::Terminalized {
                     run_id,
                     status,
@@ -689,7 +721,9 @@ fn claim_guest_input(claim: &ProductionClaimResult) -> Option<(&str, &str)> {
         ProductionClaimResult::Ready {
             run_id, payload, ..
         } => Some((run_id, payload)),
-        ProductionClaimResult::Empty | ProductionClaimResult::Terminalized { .. } => None,
+        ProductionClaimResult::Empty
+        | ProductionClaimResult::ResetRequired { .. }
+        | ProductionClaimResult::Terminalized { .. } => None,
     }
 }
 
@@ -993,6 +1027,15 @@ mod tests {
     fn host_never_calls_guest_for_nonexecute_claim_results() {
         assert_eq!(claim_guest_input(&ProductionClaimResult::Empty), None);
         assert_eq!(
+            claim_guest_input(&ProductionClaimResult::ResetRequired {
+                run_id: "reset".into(),
+                prior_lease_owner: "dead".into(),
+                prior_lease_expires_at: "2000-01-01 00:00:00+00".into(),
+                prior_lease_generation: 4,
+            }),
+            None
+        );
+        assert_eq!(
             claim_guest_input(&ProductionClaimResult::Terminalized {
                 run_id: "uncertain".into(),
                 status: RunStatus::EffectUncertain,
@@ -1009,5 +1052,28 @@ mod tests {
             claim_guest_input(&ready),
             Some(("ready", "{\"input\":true}"))
         );
+    }
+
+    #[test]
+    fn reset_handoff_is_private_fail_closed_and_reenters_claim_loop() {
+        let source = include_str!("lib.rs");
+        let reset = source
+            .find("ProductionClaimResult::ResetRequired {")
+            .unwrap();
+        let missing = source[reset..]
+            .find("requires the fixed private writer")
+            .unwrap();
+        let call = source[reset..]
+            .find(".reset_expired_pre_effect_projection(")
+            .unwrap();
+        let attempt_won = source[reset..]
+            .find("EffectWriterErrorKind::EffectAttemptPresent")
+            .unwrap();
+        let fence_lost = source[reset..]
+            .find("EffectWriterErrorKind::ResetFenceLost")
+            .unwrap();
+        let retry = source[reset..].find("continue;").unwrap();
+        assert!(missing < call && call < attempt_won && attempt_won < retry);
+        assert!(call < fence_lost && fence_lost < retry);
     }
 }

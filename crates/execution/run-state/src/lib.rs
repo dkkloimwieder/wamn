@@ -72,14 +72,16 @@ pub use effect_writer::{
 #[cfg(feature = "native")]
 pub use effect_writer::{
     EffectWriterClient, EffectWriterError, EffectWriterErrorKind, EffectWriterScope,
+    ResetProjectionFence, RunProjectionFence, RunProjectionOutcome, RunProjectionPersistence,
 };
 #[cfg(feature = "effect-writer-credential")]
 pub use effect_writer_credential::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,
     EFFECT_WRITER_CREDENTIAL_SCHEMA_VERSION, EFFECT_WRITER_ROLE, EffectWriterCredential,
     EffectWriterCredentialError, EffectWriterCredentialErrorKind, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, effect_writer_credential, effect_writer_generation_role,
-    effect_writer_scope_hash, parse_effect_writer_credential, validate_effect_writer_credential,
+    EffectWriterCredentialValidity, RUN_PROJECTION_WRITER_ROLE, effect_writer_credential,
+    effect_writer_generation_role, effect_writer_scope_hash, parse_effect_writer_credential,
+    validate_effect_writer_credential,
 };
 pub use resolution::{
     BoundConnectionRequirement, CandidatePlanOverride, CatalogResolutionPlan,

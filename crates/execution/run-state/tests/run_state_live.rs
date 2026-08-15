@@ -5,9 +5,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use wamn_run_state::transitions::{
-    complete_sql, release_caller_sql, reserved_checkpoint_sql, terminalize_sql,
-};
+use wamn_run_state::transitions::{release_caller_sql, terminalize_sql};
 
 fn psql(url: &str, script: &str) -> Output {
     let mut child = Command::new("psql")
@@ -111,8 +109,6 @@ fn run_state_live() {
 
     let release = release_caller_sql();
     let terminalize = terminalize_sql();
-    let reserved_checkpoint = reserved_checkpoint_sql();
-    let complete = complete_sql();
     let materialize_resolutions = wamn_run_state::sql::materialize_run_flow_resolutions_sql();
     let select_resolution_plans = wamn_run_state::sql::select_release_resolution_plans_sql();
 
@@ -510,49 +506,6 @@ fn run_state_live() {
          END $$;",
     );
 
-    // A stale entry boundary cannot insert its synthetic node checkpoint. The
-    // same statement succeeds under the current generation.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status) \
-         VALUES ('t1','entry-1','f',1,'cat',1,'prod', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'running'); \
-         INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
-         VALUES ('t1','entry-1','worker-entry',now()+interval '1 minute',8);",
-    );
-    let entry_script = format!(
-        "{} PREPARE entry_stmt \
-           (text,text,text,bigint,text,int,int,text,text,text,text,bigint,text,text,boolean,bigint) \
-           AS {}; \
-         CREATE TEMP TABLE stale_entry AS \
-           EXECUTE entry_stmt('entry-1','entry-1','worker-entry',7, \
-                              'in',0,0,'main','{{\"tick\":1}}','{{\"tick\":1}}', \
-                              NULL,NULL,NULL,'full',false,30000); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM stale_entry) = 'fence-lost', \
-                  'stale entry generation loses'; \
-           ASSERT NOT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1'), \
-                  'stale generation writes no entry checkpoint'; \
-         END $$; \
-         CREATE TEMP TABLE current_entry AS \
-           EXECUTE entry_stmt('entry-1','entry-1','worker-entry',8, \
-                              'in',0,0,'main','{{\"tick\":1}}','{{\"tick\":1}}', \
-                              NULL,NULL,NULL,'full',false,30000); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM current_entry) = 'recorded', \
-                  'current entry generation records'; \
-           ASSERT EXISTS (SELECT FROM node_runs WHERE run_id='entry-1' AND local_node_id='in'), \
-                  'current generation writes entry checkpoint'; \
-         END $$; COMMIT;",
-        app_preamble(),
-        reserved_checkpoint
-    );
-    success(&url, &entry_script);
-
     // Positive caller release, duplicate replay, then terminalization. A
     // transition after terminal state returns its typed refusal.
     success(
@@ -744,43 +697,6 @@ fn run_state_live() {
     );
     success(&url, &stale_script);
     winner.join().expect("winner thread");
-
-    // Attempt completion writes the attempt and checkpoint together, and a
-    // duplicate completion receives a typed refusal.
-    success(
-        &url,
-        "INSERT INTO wamn_run.runs \
-           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
-            execution_bundle_hash,status,state_json) \
-         VALUES ('t1','attempt-1','f',1,'cat',1,'prod', \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'running','{\"step\":0}'); \
-         INSERT INTO wamn_run.run_queue \
-           (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
-         VALUES ('t1','attempt-1','worker-c',now()+interval '1 minute',4); \
-         INSERT INTO wamn_run.node_runs \
-           (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status) \
-         VALUES ('t1','attempt-1',0, \
-           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
-           'effect',0,1,'started');",
-    );
-    let complete_script = format!(
-        "{} PREPARE complete_stmt \
-           (text,text,text,bigint,text,int,text,text,text) AS {}; \
-         CREATE TEMP TABLE completed AS \
-           EXECUTE complete_stmt('attempt-1','attempt-1','worker-c',4, \
-                                 'effect',0,'main','{{\"value\":1}}','{{\"step\":1}}'); \
-         DO $$ BEGIN \
-           ASSERT (SELECT result_code FROM completed) = 'completed', 'attempt completed'; \
-           ASSERT (SELECT status FROM node_runs WHERE run_id='attempt-1') = 'success', \
-                  'attempt output persisted'; \
-           ASSERT (SELECT state_json FROM runs WHERE run_id='attempt-1') = '{{\"step\":1}}', \
-                  'checkpoint persisted'; \
-         END $$; COMMIT;",
-        app_preamble(),
-        complete
-    );
-    success(&url, &complete_script);
 
     // The named unique constraint is the stable input to the public
     // InvocationAdmissionRefusal mapping.

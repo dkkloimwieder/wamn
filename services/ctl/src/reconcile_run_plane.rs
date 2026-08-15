@@ -62,15 +62,19 @@ use wamn_schema_control::{
     select_effect_ledger_effective_privileges_sql, select_effect_ledger_table_privileges_sql,
     select_effect_writer_role_sql, select_effect_writer_run_column_privileges_sql,
     select_effect_writer_run_table_privileges_sql, select_effect_writer_schema_privileges_sql,
+    select_node_runs_column_privileges_sql, select_node_runs_effective_column_privileges_sql,
+    select_node_runs_effective_privileges_sql, select_node_runs_table_privileges_sql,
     select_outbox_function_present_sql, select_outbox_trigger_tables_sql,
     select_run_capture_privileges_sql, select_run_plane_helper_functions_sql,
+    select_run_projection_schema_privileges_sql, select_run_projection_writer_role_sql,
     select_scenario_author_catalog_lock_privilege_sql, select_scenario_author_role_sql,
     select_scenario_author_schema_usage_sql, select_schema_checks_sql, select_schema_columns_sql,
     select_schema_foreign_keys_sql, select_schema_indexes_sql, select_schema_triggers_sql,
 };
 
-const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 9] = [
+const LEADING_CUTOVER_ACTIONS: [RunPlaneActionKind; 10] = [
     RunPlaneActionKind::VerifyEffectWriterRole,
+    RunPlaneActionKind::VerifyRunProjectionWriterRole,
     RunPlaneActionKind::ExecutionPinCutover,
     RunPlaneActionKind::FrameIdentityCutover,
     RunPlaneActionKind::EffectWriterCutover,
@@ -184,9 +188,25 @@ async fn observe(
                 bypasses_rls: row.get(6),
             }),
         effect_writer_role: client
-            .query_opt(select_effect_writer_role_sql(), &[])
+            .query_opt(&select_effect_writer_role_sql(), &[])
             .await
             .context("read effect-writer role boundary")?
+            .map(|row| EffectWriterRoleObservation {
+                can_login: row.get(0),
+                is_superuser: row.get(1),
+                can_create_database: row.get(2),
+                can_create_role: row.get(3),
+                inherits_roles: row.get(4),
+                can_replicate: row.get(5),
+                bypasses_rls: row.get(6),
+                can_connect: row.get(7),
+                owns_objects: row.get(8),
+                membership_out_of_bounds: row.get(9),
+            }),
+        run_projection_writer_role: client
+            .query_opt(&select_run_projection_writer_role_sql(), &[])
+            .await
+            .context("read run-projection-writer role boundary")?
             .map(|row| EffectWriterRoleObservation {
                 can_login: row.get(0),
                 is_superuser: row.get(1),
@@ -209,6 +229,67 @@ async fn observe(
         .await
         .context("read effect-writer schema privileges")?;
     obs.effect_writer_schema_privileges = (writer_schema.get(0), writer_schema.get(1));
+    let projection_schema = client
+        .query_one(
+            select_run_projection_schema_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read run-projection-writer schema privileges")?;
+    obs.run_projection_schema_privileges = (projection_schema.get(0), projection_schema.get(1));
+    for row in client
+        .query(select_node_runs_table_privileges_sql(), &[&schema.as_str()])
+        .await
+        .context("read direct node-runs privileges")?
+    {
+        obs.node_runs_table_privileges
+            .entry(row.get(0))
+            .or_default()
+            .insert(row.get(1));
+    }
+    for row in client
+        .query(
+            select_node_runs_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read direct node-runs column privileges")?
+    {
+        obs.node_runs_column_privileges
+            .entry(row.get(0))
+            .or_default()
+            .insert(row.get(1));
+    }
+    for row in client
+        .query(
+            select_node_runs_effective_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective node-runs privileges")?
+    {
+        obs.node_runs_effective_privileges
+            .entry(row.get(0))
+            .or_default()
+            .insert(row.get(1));
+        obs.node_runs_owner = Some(row.get(2));
+        if row.get(3) {
+            obs.node_runs_app_members.insert(row.get(0));
+        }
+    }
+    for row in client
+        .query(
+            select_node_runs_effective_column_privileges_sql(),
+            &[&schema.as_str()],
+        )
+        .await
+        .context("read effective node-runs column privileges")?
+    {
+        obs.node_runs_effective_column_privileges
+            .entry(row.get(0))
+            .or_default()
+            .insert(row.get(1));
+    }
     for row in client
         .query(
             select_effect_ledger_table_privileges_sql(),
@@ -566,6 +647,7 @@ mod tests {
             LEADING_CUTOVER_ACTIONS,
             [
                 RunPlaneActionKind::VerifyEffectWriterRole,
+                RunPlaneActionKind::VerifyRunProjectionWriterRole,
                 RunPlaneActionKind::ExecutionPinCutover,
                 RunPlaneActionKind::FrameIdentityCutover,
                 RunPlaneActionKind::EffectWriterCutover,

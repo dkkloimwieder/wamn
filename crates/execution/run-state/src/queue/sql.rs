@@ -7,7 +7,6 @@
 //! immutable plan map, then either grant a lease or dequeue a typed refusal.
 
 use crate::{RunStatus, sql as run_sql};
-use wamn_pg_core::Sql;
 
 /// Insert the write-ahead run row. Params: run id, flow id, flow version.
 pub fn write_ahead_run_sql() -> String {
@@ -48,7 +47,8 @@ pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
              SELECT q.tenant_id, q.run_id, \
-                    q.lease_expires_at IS NOT NULL AS had_prior_lease \
+                    q.lease_expires_at IS NOT NULL AS had_prior_lease, \
+                    q.lease_owner, q.lease_expires_at, q.lease_generation \
                FROM run_queue AS q \
                JOIN runs AS selected_run \
                  ON selected_run.tenant_id = q.tenant_id \
@@ -70,7 +70,9 @@ pub fn select_production_claim_sql() -> String {
               LIMIT 1 \
          ) \
          SELECT candidate.tenant_id, candidate.run_id, \
-                candidate.had_prior_lease, r.status, r.flow_id, r.flow_version, r.catalog_id, \
+                candidate.had_prior_lease, candidate.lease_owner, \
+                candidate.lease_expires_at::text, candidate.lease_generation, \
+                r.status, r.flow_id, r.flow_version, r.catalog_id, \
                 r.catalog_version, r.environment, r.execution_bundle_hash, \
                 ({execution_input})::text AS input_json \
            FROM candidate \
@@ -94,6 +96,14 @@ pub fn select_claim_effect_attempt_sql() -> String {
     .to_string()
 }
 
+/// Whether the selected run still has mutable projection rows to reset.
+pub fn select_pre_effect_projection_sql() -> String {
+    "SELECT EXISTS ( \
+         SELECT 1 FROM node_runs \
+          WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1)"
+        .to_string()
+}
+
 /// Serialize effect-attempt creation against claim-time classification.
 ///
 /// `$1` is the run id. The tenant claim and run id form one transaction-scoped
@@ -109,19 +119,17 @@ pub fn serialize_effect_intent_sql() -> String {
         .to_string()
 }
 
-/// Remove only replaceable pre-effect state. `$1` is the selected run id.
+/// Clear replaceable pre-effect checkpoint state only after projection deletion.
+/// `$1` is the selected run id.
 ///
 /// `runs.state_json` is the only run column changed; immutable ledgers and the
 /// already-materialized resolution map are preserved.
-pub fn reset_pre_effect_claim_sql() -> String {
-    "WITH deleted_nodes AS ( \
-         DELETE FROM node_runs \
-          WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
-          RETURNING run_id \
-     ) \
-     UPDATE runs SET state_json = NULL \
+pub fn clear_pre_effect_state_sql() -> String {
+    "UPDATE runs SET state_json = NULL \
       WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
-        AND (SELECT count(*) FROM deleted_nodes) >= 0 \
+        AND NOT EXISTS ( \
+            SELECT 1 FROM node_runs \
+             WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1) \
       RETURNING run_id"
         .to_string()
 }
@@ -257,29 +265,6 @@ pub fn complete_dequeue_sql() -> String {
         "WITH done AS ({completed}) {dequeue}",
         completed = run_sql::update_run_completed().text(),
         dequeue = dequeue_sql(),
-    )
-}
-
-/// Record a successful node checkpoint and renew the held lease.
-pub fn record_success_and_renew_sql() -> String {
-    checkpoint_then_renew(run_sql::insert_node_run_success())
-}
-
-/// Record an error node checkpoint and renew the held lease.
-pub fn record_error_and_renew_sql() -> String {
-    checkpoint_then_renew(run_sql::insert_node_run_error())
-}
-
-fn checkpoint_then_renew(head: Sql) -> String {
-    format!(
-        "WITH recorded AS ({insert}) \
-         UPDATE run_queue \
-            SET lease_expires_at = now() + (${ttl}::bigint * interval '1 millisecond') \
-          WHERE tenant_id = current_setting('app.tenant', true) \
-            AND run_id = $1 AND lease_owner = ${owner}",
-        insert = head.text(),
-        ttl = head.param(1),
-        owner = head.param(2),
     )
 }
 
@@ -441,19 +426,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn renew_tail_numbers_against_head_arity() {
-        let five = checkpoint_then_renew(Sql::new("INSERT $1 $2 $3 $4 $5", 5));
-        assert!(five.contains("$6::bigint * interval '1 millisecond'"));
-        assert!(five.contains("AND run_id = $1 AND lease_owner = $7"));
-        assert!(!five.contains("$8"));
-    }
-
-    #[test]
     fn composed_arity_flows_from_the_producing_crate() {
-        assert_eq!(run_sql::insert_node_run_success().arity(), 9);
-        assert!(record_success_and_renew_sql().contains("lease_owner = $11"));
-        assert_eq!(run_sql::insert_node_run_error().arity(), 10);
-        assert!(record_error_and_renew_sql().contains("lease_owner = $12"));
         assert_eq!(run_sql::update_run_completed().arity(), 2);
         let completed = complete_dequeue_sql();
         assert!(completed.contains(run_sql::update_run_completed().text()));

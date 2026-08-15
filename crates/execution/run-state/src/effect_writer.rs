@@ -9,7 +9,7 @@ use std::time::SystemTime;
 use crate::effect_writer_credential::{
     EffectWriterCredentialScope, parse_effect_writer_credential, validate_effect_writer_credential,
 };
-use crate::queue::serialize_effect_intent_sql;
+use crate::queue::{select_claim_effect_attempt_sql, serialize_effect_intent_sql};
 use deadpool_postgres::{Manager, Pool};
 use tokio_postgres::NoTls;
 use wamn_pg_core::Sql;
@@ -63,6 +63,58 @@ pub struct RecordEffectOutcome<'a> {
     pub outcome_status: &'a str,
 }
 
+/// Exact expired claim identity carried across the committed app/private reset boundary.
+#[derive(Debug, Clone, Copy)]
+pub struct ResetProjectionFence<'a> {
+    pub run_id: &'a str,
+    pub prior_lease_owner: &'a str,
+    pub prior_lease_expires_at: &'a str,
+    pub prior_lease_generation: i64,
+}
+
+/// Exact live claim authority attached by the host to one trusted node fact.
+#[derive(Debug, Clone, Copy)]
+pub struct RunProjectionFence<'a> {
+    pub run_id: &'a str,
+    pub lease_owner: &'a str,
+    pub lease_generation: i64,
+}
+
+/// Terminal portion of a trusted frame fact after host-owned translation.
+#[derive(Debug, Clone, Copy)]
+pub enum RunProjectionOutcome<'a> {
+    Success {
+        output_port: &'a str,
+    },
+    Error {
+        kind: crate::NodeErrorKind,
+        detail_json: &'a str,
+    },
+}
+
+/// Database-shaped persistence DTO for one host-validated node fact.
+///
+/// This is deliberately not the `.3.5` wire/fact type. Before `.5.4` calls
+/// this inactive adapter, that owner must verify source/root identity and use
+/// checked `u64`/`u32` to `i64`/`i32` conversions. No guest or transport value
+/// constructs persistence identity directly.
+#[derive(Debug, Clone, Copy)]
+pub struct RunProjectionPersistence<'a> {
+    pub fence: RunProjectionFence<'a>,
+    pub current_plan_hash: &'a str,
+    pub frame_id: i64,
+    pub parent_frame_id: Option<i64>,
+    pub call_site_id: Option<&'a str>,
+    pub local_node_id: &'a str,
+    pub occurrence: i32,
+    pub sequence: i64,
+    pub outcome: RunProjectionOutcome<'a>,
+    pub output_json: Option<&'a str>,
+    pub input_json: Option<&'a str>,
+    pub output_size: Option<i64>,
+    pub payload_hash: Option<&'a str>,
+}
+
 /// Stable internal failure categories for the private native adapter boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EffectWriterErrorKind {
@@ -71,6 +123,10 @@ pub enum EffectWriterErrorKind {
     MissingAttempt,
     MissingDispatch,
     RunNotRunnable,
+    EffectAttemptPresent,
+    ResetFenceLost,
+    DivergentProjection,
+    ProjectionFenceLost,
     Storage,
 }
 
@@ -80,6 +136,7 @@ pub struct EffectWriterError {
     kind: EffectWriterErrorKind,
     operation: &'static str,
     attempt_id: Option<String>,
+    run_id: Option<String>,
     source: Option<Box<dyn std::error::Error + Send + Sync>>,
 }
 
@@ -94,12 +151,18 @@ impl EffectWriterError {
             kind,
             operation,
             attempt_id: None,
+            run_id: None,
             source: None,
         }
     }
 
     fn with_attempt(mut self, attempt_id: impl Into<String>) -> Self {
         self.attempt_id = Some(attempt_id.into());
+        self
+    }
+
+    fn with_run(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
         self
     }
 
@@ -118,6 +181,9 @@ impl std::fmt::Display for EffectWriterError {
         )?;
         if let Some(attempt_id) = &self.attempt_id {
             write!(formatter, " (attempt {attempt_id})")?;
+        }
+        if let Some(run_id) = &self.run_id {
+            write!(formatter, " (run {run_id})")?;
         }
         Ok(())
     }
@@ -226,6 +292,226 @@ impl EffectWriterClient {
             pool,
             tenant_id,
             schema,
+        })
+    }
+
+    /// Delete only a mutable projection still owned by the exact expired claim.
+    ///
+    /// The shared advisory fence precedes a fresh immutable-ledger snapshot.
+    /// The delete then rechecks owner, expiry, generation, expiry-at-reset, and
+    /// runnable status in the same transaction. It never clears run state,
+    /// rewrites resolution evidence, or grants a replacement lease.
+    pub async fn reset_expired_pre_effect_projection(
+        &self,
+        fence: ResetProjectionFence<'_>,
+    ) -> Result<u64, EffectWriterError> {
+        let mut connection = self.pool.get().await.map_err(|source| {
+            EffectWriterError::new(
+                EffectWriterErrorKind::Storage,
+                "checkout private reset connection",
+            )
+            .with_run(fence.run_id)
+            .with_source(source)
+        })?;
+        let transaction = connection
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::ReadCommitted)
+            .start()
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection reset")
+                    .with_run(fence.run_id)
+                    .with_source(source)
+            })?;
+        transaction
+            .query_one(
+                bind_writer_authority().text(),
+                &[&self.tenant_id, &self.schema],
+            )
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind reset authority")
+                    .with_run(fence.run_id)
+                    .with_source(source)
+            })?;
+        transaction
+            .query_one(serialize_effect_intent_sql().as_str(), &[&fence.run_id])
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "fence projection reset")
+                    .with_run(fence.run_id)
+                    .with_source(source)
+            })?;
+        let effect_row = transaction
+            .query_one(select_claim_effect_attempt_sql().as_str(), &[&fence.run_id])
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(
+                    EffectWriterErrorKind::Storage,
+                    "classify reset effect evidence",
+                )
+                .with_run(fence.run_id)
+                .with_source(source)
+            })?;
+        if effect_row.get::<_, bool>(0) {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::EffectAttemptPresent,
+                "classify projection reset",
+            )
+            .with_run(fence.run_id));
+        }
+        let reset = transaction
+            .query_one(
+                reset_expired_projection().text(),
+                &[
+                    &fence.run_id,
+                    &fence.prior_lease_owner,
+                    &fence.prior_lease_expires_at,
+                    &fence.prior_lease_generation,
+                ],
+            )
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "delete projection")
+                    .with_run(fence.run_id)
+                    .with_source(source)
+            })?;
+        let fence_matches: bool = reset.get(0);
+        let deleted: i64 = reset.get(1);
+        if !fence_matches {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::ResetFenceLost,
+                "verify projection reset fence",
+            )
+            .with_run(fence.run_id));
+        }
+        transaction.commit().await.map_err(|source| {
+            EffectWriterError::new(EffectWriterErrorKind::Storage, "commit projection reset")
+                .with_run(fence.run_id)
+                .with_source(source)
+        })?;
+        u64::try_from(deleted).map_err(|source| {
+            EffectWriterError::new(EffectWriterErrorKind::Storage, "decode projection reset")
+                .with_run(fence.run_id)
+                .with_source(source)
+        })
+    }
+
+    /// Persist one trusted completed node fact behind the exact live claim.
+    ///
+    /// This API is native-only and has no production caller until `.5.4` owns
+    /// the trusted fact translation. It inserts the started coordinate and
+    /// terminalizes it atomically, accepting only an exact terminal retry.
+    pub async fn record_run_projection(
+        &self,
+        fact: RunProjectionPersistence<'_>,
+    ) -> Result<(), EffectWriterError> {
+        let (output_port, error_kind, error_detail) = match fact.outcome {
+            RunProjectionOutcome::Success { output_port } => (output_port, None, None),
+            RunProjectionOutcome::Error { kind, detail_json } => {
+                ("error", Some(kind.as_sql()), Some(detail_json))
+            }
+        };
+        let params: [&(dyn tokio_postgres::types::ToSql + Sync); 17] = [
+            &fact.fence.run_id,
+            &fact.fence.lease_owner,
+            &fact.fence.lease_generation,
+            &fact.current_plan_hash,
+            &fact.frame_id,
+            &fact.parent_frame_id,
+            &fact.call_site_id,
+            &fact.local_node_id,
+            &fact.occurrence,
+            &fact.sequence,
+            &output_port,
+            &fact.output_json,
+            &fact.input_json,
+            &error_kind,
+            &error_detail,
+            &fact.output_size,
+            &fact.payload_hash,
+        ];
+        let mut connection = self.pool.get().await.map_err(|source| {
+            EffectWriterError::new(
+                EffectWriterErrorKind::Storage,
+                "checkout private projection connection",
+            )
+            .with_run(fact.fence.run_id)
+            .with_source(source)
+        })?;
+        let transaction = connection
+            .build_transaction()
+            .isolation_level(tokio_postgres::IsolationLevel::ReadCommitted)
+            .start()
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection write")
+                    .with_run(fact.fence.run_id)
+                    .with_source(source)
+            })?;
+        transaction
+            .query_one(
+                bind_writer_authority().text(),
+                &[&self.tenant_id, &self.schema],
+            )
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "bind projection authority")
+                    .with_run(fact.fence.run_id)
+                    .with_source(source)
+            })?;
+        transaction
+            .query_one(
+                serialize_effect_intent_sql().as_str(),
+                &[&fact.fence.run_id],
+            )
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "fence projection write")
+                    .with_run(fact.fence.run_id)
+                    .with_source(source)
+            })?;
+        let started = transaction
+            .query_one(begin_run_projection().text(), &params[..10])
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "begin projection")
+                    .with_run(fact.fence.run_id)
+                    .with_source(source)
+            })?;
+        if !started.get::<_, bool>(0) {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::ProjectionFenceLost,
+                "verify projection claim fence",
+            )
+            .with_run(fact.fence.run_id));
+        }
+        if !started.get::<_, bool>(1) {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::DivergentProjection,
+                "verify projection identity",
+            )
+            .with_run(fact.fence.run_id));
+        }
+        let terminal = transaction
+            .query_opt(complete_run_projection().text(), &params)
+            .await
+            .map_err(|source| {
+                EffectWriterError::new(EffectWriterErrorKind::Storage, "complete projection")
+                    .with_run(fact.fence.run_id)
+                    .with_source(source)
+            })?;
+        if terminal.is_none() {
+            return Err(EffectWriterError::new(
+                EffectWriterErrorKind::DivergentProjection,
+                "verify terminal projection retry",
+            )
+            .with_run(fact.fence.run_id));
+        }
+        transaction.commit().await.map_err(|source| {
+            EffectWriterError::new(EffectWriterErrorKind::Storage, "commit projection write")
+                .with_run(fact.fence.run_id)
+                .with_source(source)
         })
     }
 
@@ -622,6 +908,120 @@ fn bind_writer_authority() -> Sql {
     )
 }
 
+/// Insert the started projection coordinate behind the exact live lease, or
+/// verify that an existing coordinate has the same immutable identity.
+fn begin_run_projection() -> Sql {
+    Sql::new(
+        r#"WITH authority AS MATERIALIZED (
+    SELECT q.tenant_id, q.run_id
+      FROM run_queue AS q
+      JOIN runs AS r
+        ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id
+     WHERE q.tenant_id = current_setting('app.tenant', true)
+       AND q.run_id = $1::text
+       AND q.lease_owner IS NOT DISTINCT FROM $2::text
+       AND q.lease_generation IS NOT DISTINCT FROM $3::bigint
+       AND q.lease_expires_at > statement_timestamp()
+       AND r.status = 'running'
+),
+accepted AS (
+    INSERT INTO node_runs AS projection
+        (tenant_id, run_id, current_plan_hash, frame_id, parent_frame_id,
+         call_site_id, local_node_id, occurrence, seq, status)
+    SELECT tenant_id, run_id, $4::text, $5::bigint, $6::bigint,
+           $7::text, $8::text, $9::int, $10::bigint, 'started'
+      FROM authority
+    ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence)
+    DO UPDATE SET seq = projection.seq
+      WHERE ROW(projection.current_plan_hash, projection.frame_id,
+                projection.parent_frame_id, projection.call_site_id,
+                projection.local_node_id, projection.occurrence, projection.seq)
+            IS NOT DISTINCT FROM
+            ROW($4::text, $5::bigint, $6::bigint, $7::text,
+                $8::text, $9::int, $10::bigint)
+    RETURNING run_id
+)
+SELECT EXISTS (SELECT 1 FROM authority), EXISTS (SELECT 1 FROM accepted)"#,
+        10,
+    )
+}
+
+/// Terminalize a started projection or accept only a byte-equivalent retry.
+fn complete_run_projection() -> Sql {
+    Sql::new(
+        r#"UPDATE node_runs AS projection
+   SET status = CASE WHEN $14::text IS NULL THEN 'success' ELSE 'error' END,
+       output_port = $11::text,
+       output_json = $12::text::jsonb,
+       input_json = $13::text::jsonb,
+       error_kind = $14::text,
+       error_detail = $15::text::jsonb,
+       output_size = $16::bigint,
+       payload_hash = $17::text,
+       ended_at = CASE WHEN projection.status = 'started'
+                       THEN statement_timestamp() ELSE projection.ended_at END
+ WHERE projection.tenant_id = current_setting('app.tenant', true)
+   AND projection.run_id = $1::text
+   AND EXISTS (
+       SELECT 1 FROM run_queue AS queue
+       JOIN runs AS runnable_run
+         ON runnable_run.tenant_id = queue.tenant_id
+        AND runnable_run.run_id = queue.run_id
+      WHERE queue.tenant_id = projection.tenant_id
+        AND queue.run_id = projection.run_id
+        AND queue.lease_owner IS NOT DISTINCT FROM $2::text
+        AND queue.lease_generation IS NOT DISTINCT FROM $3::bigint
+        AND queue.lease_expires_at > statement_timestamp()
+        AND runnable_run.status = 'running')
+   AND projection.frame_id = $5::bigint
+   AND projection.local_node_id = $8::text
+   AND projection.occurrence = $9::int
+   AND ROW(projection.current_plan_hash, projection.parent_frame_id,
+           projection.call_site_id, projection.seq)
+       IS NOT DISTINCT FROM ROW($4::text, $6::bigint, $7::text, $10::bigint)
+   AND (projection.status = 'started'
+        OR ROW(projection.status, projection.output_port,
+               projection.output_json, projection.input_json,
+               projection.error_kind, projection.error_detail,
+               projection.output_size, projection.payload_hash)
+           IS NOT DISTINCT FROM
+           ROW(CASE WHEN $14::text IS NULL THEN 'success' ELSE 'error' END,
+               $11::text, $12::text::jsonb, $13::text::jsonb,
+               $14::text, $15::text::jsonb, $16::bigint, $17::text))
+RETURNING run_id"#,
+        17,
+    )
+}
+
+/// Delete mutable projection rows only while the committed prior claim fence
+/// still denotes the same expired runnable run.
+fn reset_expired_projection() -> Sql {
+    Sql::new(
+        r#"WITH exact_claim AS MATERIALIZED (
+    SELECT q.tenant_id, q.run_id
+      FROM run_queue AS q
+      JOIN runs AS r
+        ON r.tenant_id = q.tenant_id AND r.run_id = q.run_id
+     WHERE q.tenant_id = current_setting('app.tenant', true)
+       AND q.run_id = $1::text
+       AND q.lease_owner IS NOT DISTINCT FROM $2::text
+       AND q.lease_expires_at IS NOT DISTINCT FROM $3::text::timestamptz
+       AND q.lease_generation IS NOT DISTINCT FROM $4::bigint
+       AND q.lease_expires_at <= statement_timestamp()
+       AND r.status IN ('dispatched', 'running')
+),
+deleted AS (
+    DELETE FROM node_runs AS projection
+     USING exact_claim AS claim
+     WHERE projection.tenant_id = claim.tenant_id
+       AND projection.run_id = claim.run_id
+     RETURNING projection.run_id
+)
+SELECT EXISTS (SELECT 1 FROM exact_claim), count(*)::bigint FROM deleted"#,
+        4,
+    )
+}
+
 /// Recheck runnable queue authority after the shared effect-intent fence.
 ///
 /// Lease-owner/generation matching remains the activation boundary owned by
@@ -783,10 +1183,10 @@ pub(crate) fn effect_dispatch_exists() -> Sql {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_effect_dispatch, begin_effect_attempt, bind_writer_authority,
-        effect_attempt_coordinate_exists, effect_attempt_exists, effect_dispatch_exists,
-        effect_run_is_runnable, record_effect_outcome, valid_schema, verify_effect_attempt,
-        verify_effect_outcome,
+        acquire_effect_dispatch, begin_effect_attempt, begin_run_projection, bind_writer_authority,
+        complete_run_projection, effect_attempt_coordinate_exists, effect_attempt_exists,
+        effect_dispatch_exists, effect_run_is_runnable, record_effect_outcome,
+        reset_expired_projection, valid_schema, verify_effect_attempt, verify_effect_outcome,
     };
 
     #[test]
@@ -811,6 +1211,81 @@ mod tests {
         assert!(verify.text().contains("attempt_deadline_at"));
         assert!(verify.text().contains("attempt_input_ref"));
         assert!(!verify.text().contains("wamn_run."));
+    }
+
+    #[test]
+    fn projection_reset_is_exact_expired_fenced_and_deletes_only_node_runs() {
+        let statement = reset_expired_projection();
+        assert_eq!(statement.arity(), 4);
+        for evidence in [
+            "q.lease_owner IS NOT DISTINCT FROM $2::text",
+            "q.lease_expires_at IS NOT DISTINCT FROM $3::text::timestamptz",
+            "q.lease_generation IS NOT DISTINCT FROM $4::bigint",
+            "q.lease_expires_at <= statement_timestamp()",
+            "r.status IN ('dispatched', 'running')",
+        ] {
+            assert!(statement.text().contains(evidence), "missing {evidence}");
+        }
+        assert!(statement.text().contains("DELETE FROM node_runs"));
+        for forbidden in [
+            "DELETE FROM effect_attempts",
+            "DELETE FROM run_flow_resolutions",
+            "UPDATE runs",
+            "UPDATE run_queue",
+        ] {
+            assert!(!statement.text().contains(forbidden), "found {forbidden}");
+        }
+        let source = include_str!("effect_writer.rs");
+        let reset = source
+            .find("pub async fn reset_expired_pre_effect_projection")
+            .expect("private reset method");
+        let body = &source[reset..];
+        let advisory = body
+            .find("serialize_effect_intent_sql().as_str()")
+            .expect("reset acquires the shared advisory fence");
+        let fresh_effect = body
+            .find("select_claim_effect_attempt_sql().as_str()")
+            .expect("reset freshly reclassifies immutable effect evidence");
+        let delete = body
+            .find("reset_expired_projection().text()")
+            .expect("reset deletes only after fresh classification");
+        let commit = body.find("transaction.commit()").expect("reset commit");
+        assert!(advisory < fresh_effect && fresh_effect < delete && delete < commit);
+    }
+
+    #[test]
+    fn projection_write_is_live_fenced_and_exact_retry_only() {
+        let begin = begin_run_projection();
+        assert_eq!(begin.arity(), 10);
+        for evidence in [
+            "q.lease_owner IS NOT DISTINCT FROM $2::text",
+            "q.lease_generation IS NOT DISTINCT FROM $3::bigint",
+            "q.lease_expires_at > statement_timestamp()",
+            "r.status = 'running'",
+            "ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence)",
+            "IS NOT DISTINCT FROM",
+        ] {
+            assert!(begin.text().contains(evidence), "missing {evidence}");
+        }
+        let complete = complete_run_projection();
+        assert_eq!(complete.arity(), 17);
+        assert!(complete.text().contains("projection.status = 'started'"));
+        assert!(complete.text().contains("projection.error_detail"));
+        assert!(complete.text().contains("IS NOT DISTINCT FROM"));
+        assert!(!complete.text().contains("UPDATE runs"));
+        assert!(!complete.text().contains("UPDATE run_queue"));
+
+        let source = include_str!("effect_writer.rs");
+        let fence = source
+            .find("query_one(\n                serialize_effect_intent_sql().as_str()")
+            .expect("projection writer acquires the shared advisory fence");
+        let begin_call = source
+            .find("query_one(begin_run_projection().text()")
+            .expect("projection writer begins the coordinate");
+        let complete_call = source
+            .find("query_opt(complete_run_projection().text()")
+            .expect("projection writer terminalizes the coordinate");
+        assert!(fence < begin_call && begin_call < complete_call);
     }
 
     #[test]
@@ -902,6 +1377,9 @@ mod tests {
             record_effect_outcome(),
             verify_effect_outcome(),
             effect_dispatch_exists(),
+            begin_run_projection(),
+            complete_run_projection(),
+            reset_expired_projection(),
         ] {
             assert!(!statement.text().contains("wamn_run."));
             assert!(!statement.text().contains("search_path"));

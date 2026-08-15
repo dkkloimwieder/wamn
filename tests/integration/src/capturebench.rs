@@ -158,7 +158,8 @@ async fn connect_app(app_url: &str) -> anyhow::Result<(Client, tokio::task::Join
 }
 
 // ---------------------------------------------------------------------------
-// Row helpers — the SAME insert builders the flowrunner guest binds.
+// Row helpers — fixture-only superuser seeds. Production projection mutation
+// is available only through the private native run-state adapter.
 // ---------------------------------------------------------------------------
 
 /// Insert a `runs` row (the node_runs FK parent). `created_at` is `now()` shifted
@@ -208,23 +209,34 @@ fn to_jsonb(s: &Option<String>) -> Option<Value> {
         .map(|t| serde_json::from_str(t).expect("captured json re-parses"))
 }
 
-/// Write a completed `success` node-run via `insert_node_run_success_sql` with the
-/// capture columns `capture::derive` produced — the exact nine-param bind the guest
-/// makes.
+/// Seed a completed `success` projection with the capture facts under test.
 async fn write_success(
-    client: &Client,
+    admin_url: &str,
     run_id: &str,
     node_id: &str,
-    seq: i32,
+    seq: i64,
     port: &str,
     c: &capture::Captured,
 ) -> anyhow::Result<()> {
     let out_j = to_jsonb(&c.output_json);
     let in_j = to_jsonb(&c.input_json);
     let occ: i32 = 0;
+    let (client, connection) = tokio_postgres::connect(admin_url, NoTls).await?;
+    let task = tokio::spawn(connection);
+    client
+        .batch_execute(&format!(
+            "SET search_path TO {SCHEMA}; SET app.tenant TO '{TENANT}';"
+        ))
+        .await?;
     client
         .execute(
-            &wamn_run_state::sql::insert_node_run_success_sql(),
+            "INSERT INTO node_runs \
+               (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status, \
+                output_port,output_json,input_json,output_size,payload_hash) \
+             SELECT current_setting('app.tenant',true),$1,0,r.execution_bundle_hash,$2,$3,$4, \
+                    'success',$5,$6,$7,$8,$9 \
+               FROM runs AS r WHERE r.tenant_id=current_setting('app.tenant',true) \
+                                  AND r.run_id=$1",
             &[
                 &run_id,
                 &node_id,
@@ -239,17 +251,17 @@ async fn write_success(
         )
         .await
         .context("write success node_run")?;
+    drop(client);
+    task.await??;
     Ok(())
 }
 
-/// Write a completed `error` node-run via `insert_node_run_error_sql`. `detail` is
-/// the taxonomy blob — scrubbed here when the payloads were scrubbed, mirroring the
-/// guest's error path (the detail can echo the payload).
+/// Seed a completed `error` projection; detail is scrubbed like the host path.
 async fn write_error(
-    client: &Client,
+    admin_url: &str,
     run_id: &str,
     node_id: &str,
-    seq: i32,
+    seq: i64,
     kind: &str,
     mut detail: Value,
     c: &capture::Captured,
@@ -258,9 +270,22 @@ async fn write_error(
     let out_j = to_jsonb(&c.output_json);
     let in_j = to_jsonb(&c.input_json);
     let occ: i32 = 0;
+    let (client, connection) = tokio_postgres::connect(admin_url, NoTls).await?;
+    let task = tokio::spawn(connection);
+    client
+        .batch_execute(&format!(
+            "SET search_path TO {SCHEMA}; SET app.tenant TO '{TENANT}';"
+        ))
+        .await?;
     client
         .execute(
-            &wamn_run_state::sql::insert_node_run_error_sql(),
+            "INSERT INTO node_runs \
+               (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,occurrence,seq,status, \
+                output_port,output_json,input_json,error_kind,error_detail,output_size,payload_hash) \
+             SELECT current_setting('app.tenant',true),$1,0,r.execution_bundle_hash,$2,$3,$4, \
+                    'error','error',$5,$6,$7,$8,$9,$10 \
+               FROM runs AS r WHERE r.tenant_id=current_setting('app.tenant',true) \
+                                  AND r.run_id=$1",
             &[
                 &run_id,
                 &node_id,
@@ -276,6 +301,8 @@ async fn write_error(
         )
         .await
         .context("write error node_run")?;
+    drop(client);
+    task.await??;
     Ok(())
 }
 
@@ -315,7 +342,7 @@ async fn off_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool> {
         &json!({ "at": "a" }),
         &json!({ "at": "a" }),
     );
-    write_success(&app, run_id, "a", 0, "main", &captured).await?;
+    write_success(admin_url, run_id, "a", 0, "main", &captured).await?;
 
     let row = app
         .query_one(
@@ -350,7 +377,7 @@ async fn output_too_large_phase(app_url: &str, admin_url: &str) -> anyhow::Resul
     let c = capture::derive(CaptureMode::Full, &output, &json!({ "in": 1 }));
 
     seed_run(admin_url, "cap-big", "running", 0, CaptureMode::Full).await?;
-    write_success(&app, "cap-big", "a", 0, "main", &c).await?;
+    write_success(admin_url, "cap-big", "a", 0, "main", &c).await?;
 
     let row = app
         .query_one(
@@ -405,14 +432,14 @@ async fn redaction_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     let output = json!({ "token": SECRET, "auth": format!("Bearer {SECRET}") });
     let input = json!({ "api_key": SECRET, "nested": { "private_key": SECRET } });
     let cs = capture::derive(CaptureMode::Full, &output, &input);
-    write_success(&app, "cap-scrub", "a", 0, "main", &cs).await?;
+    write_success(admin_url, "cap-scrub", "a", 0, "main", &cs).await?;
 
     // An error row: the secret rides the error payload AND the taxonomy detail
     // under secret keys, exercising the guest's error-path detail scrub.
     let err_payload = json!({ "error": { "token": SECRET, "code": "x" } });
     let err_detail = json!({ "message": "node failed", "code": "x", "data": { "secret": SECRET } });
     let ce = capture::derive(CaptureMode::Full, &err_payload, &input);
-    write_error(&app, "cap-scrub", "b", 1, "terminal", err_detail, &ce).await?;
+    write_error(admin_url, "cap-scrub", "b", 1, "terminal", err_detail, &ce).await?;
 
     // Containment scan (f3proof shape): concatenate every text-bearing column of
     // every node_runs row for the run and assert the raw secret is absent.
@@ -469,7 +496,7 @@ async fn retention_phase(app_url: &str, admin_url: &str) -> anyhow::Result<bool>
     // completed run, and an OLD but RUNNING run (terminal-only guard).
     seed_run(admin_url, "old-done", "completed", 40, CaptureMode::Full).await?;
     let c = capture::derive(CaptureMode::Full, &json!({ "at": "a" }), &json!({}));
-    write_success(&app, "old-done", "a", 0, "main", &c).await?;
+    write_success(admin_url, "old-done", "a", 0, "main", &c).await?;
     seed_run(admin_url, "recent-done", "completed", 1, CaptureMode::Off).await?;
     seed_run(admin_url, "old-running", "running", 40, CaptureMode::Off).await?;
 

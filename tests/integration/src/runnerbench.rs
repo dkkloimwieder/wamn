@@ -79,7 +79,7 @@ fn runner_ddl(schema: &str) -> String {
          CREATE POLICY node_runs_tenant ON {schema}.node_runs \
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT, UPDATE, DELETE ON {schema}.node_runs TO wamn_app;\
+         GRANT SELECT ON {schema}.node_runs TO wamn_app;\
          CREATE TABLE {schema}.run_flow_resolutions (\
             tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
             execution_bundle_hash text NOT NULL, source_artifact_hash text NOT NULL, \

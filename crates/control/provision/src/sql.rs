@@ -10,7 +10,7 @@
 use crate::name::{APP_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
-use wamn_run_state::EFFECT_WRITER_ROLE;
+use wamn_run_state::{EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE};
 
 // Quote a SQL identifier (double-quoted, embedded `"` doubled). Mirrors the
 // canonical `wamn_schema_compiler::sql::quote_ident` (inlined to keep this crate's
@@ -117,14 +117,16 @@ pub fn grant_connect_sql(project: &str) -> String {
 /// cluster-global, ownership-free role identity and restrictive attributes.
 pub fn ensure_effect_writer_acl_role_sql() -> String {
     format!(
-        "DO $$ BEGIN \
-           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
-             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
-               NOINHERIT NOREPLICATION NOBYPASSRLS; \
-           END IF; \
+        "DO $$ DECLARE role_name text; BEGIN \
+           FOREACH role_name IN ARRAY ARRAY[{effect_lit}, {projection_lit}] LOOP \
+             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = role_name) THEN \
+               EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                 NOINHERIT NOREPLICATION NOBYPASSRLS', role_name); \
+             END IF; \
+           END LOOP; \
          END $$;",
-        role = quote_ident(EFFECT_WRITER_ROLE),
-        role_lit = quote_literal(EFFECT_WRITER_ROLE),
+        effect_lit = quote_literal(EFFECT_WRITER_ROLE),
+        projection_lit = quote_literal(RUN_PROJECTION_WRITER_ROLE),
     )
 }
 
@@ -132,7 +134,7 @@ pub fn ensure_effect_writer_acl_role_sql() -> String {
 ///
 /// `role` is the validated deterministic generation name. The caller verifies
 /// the slot is inactive before applying this batch. Password and server-side
-/// `VALID UNTIL` are replaced, membership is solely the stable ACL role, and
+/// `VALID UNTIL` are replaced, membership is exactly the two stable ACL roles, and
 /// direct database authority is solely `CONNECT` on this project database.
 pub fn prepare_effect_writer_generation_sql(
     database: &str,
@@ -153,11 +155,14 @@ pub fn prepare_effect_writer_generation_sql(
          ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
          GRANT {acl_role} TO {role_ident} \
            WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
+         GRANT {projection_role} TO {role_ident} \
+           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
          GRANT CONNECT ON DATABASE {database} TO {role_ident};",
         ensure = ensure_effect_writer_acl_role_sql(),
         password = quote_literal(password),
         expires_at = quote_literal(expires_at),
         acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),
         database = quote_ident(database),
     )
 }
@@ -169,10 +174,11 @@ pub fn prepare_effect_writer_generation_sql(
 pub fn retire_effect_writer_generation_sql(database: &str, role: &str) -> String {
     let role_ident = quote_ident(role);
     format!(
-        "REVOKE {acl_role} FROM {role_ident}; \
+        "REVOKE {acl_role}, {projection_role} FROM {role_ident}; \
          REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
          ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
         acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),
         database = quote_ident(database),
     )
 }
@@ -211,6 +217,48 @@ pub fn effect_writer_generation_state_sql() -> &'static str {
             COALESCE((SELECT bool_and(NOT m.admin_option AND m.inherit_option AND m.set_option) \
                         FROM pg_auth_members m WHERE m.roleid = r.oid), true) \
               AS member_options_exact, \
+            NOT (EXISTS ( \
+              SELECT 1 FROM pg_roles generation \
+               WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                 AND (has_database_privilege(generation.oid, current_database(), 'CONNECT') \
+                      OR EXISTS ( \
+                           SELECT 1 FROM pg_auth_members edge \
+                           JOIN pg_roles parent ON parent.oid = edge.roleid \
+                          WHERE edge.member = generation.oid \
+                            AND parent.rolname IN ( \
+                                  'wamn_effect_writer', 'wamn_run_projection_writer'))) \
+                 AND (NOT generation.rolcanlogin OR generation.rolsuper \
+                      OR generation.rolcreatedb OR generation.rolcreaterole \
+                      OR NOT generation.rolinherit OR generation.rolreplication \
+                      OR generation.rolbypassrls \
+                      OR (SELECT array_agg(parent.rolname::text ORDER BY parent.rolname::text) \
+                            FROM pg_auth_members edge \
+                            JOIN pg_roles parent ON parent.oid = edge.roleid \
+                           WHERE edge.member = generation.oid) \
+                         IS DISTINCT FROM ARRAY[ \
+                              'wamn_effect_writer', 'wamn_run_projection_writer']::text[] \
+                      OR EXISTS (SELECT 1 FROM pg_auth_members edge \
+                                  WHERE edge.member = generation.oid \
+                                    AND (edge.admin_option OR NOT edge.inherit_option \
+                                         OR NOT edge.set_option)) \
+                      OR EXISTS (SELECT 1 FROM pg_auth_members edge \
+                                  WHERE edge.roleid = generation.oid) \
+                      OR EXISTS (SELECT 1 FROM pg_shdepend dependency \
+                                  WHERE dependency.refclassid = 'pg_authid'::regclass \
+                                    AND dependency.refobjid = generation.oid \
+                                    AND dependency.deptype = 'o'))) \
+              OR (SELECT count(*) FROM pg_roles generation \
+                   WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                     AND has_database_privilege( \
+                           generation.oid, current_database(), 'CONNECT')) > 2 \
+              OR (SELECT count(DISTINCT substring( \
+                           generation.rolname FROM \
+                           '^wamn_effect_writer_([0-9a-f]{40})_[ab]$')) \
+                    FROM pg_roles generation \
+                   WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                     AND has_database_privilege( \
+                           generation.oid, current_database(), 'CONNECT')) > 1) \
+              AS generation_children_exact, \
             COALESCE((SELECT array_agg(d.datname::text ORDER BY d.datname::text) \
                         FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) acl \
                        WHERE acl.grantee = r.oid AND acl.privilege_type = 'CONNECT'), \
@@ -581,9 +629,11 @@ mod tests {
     }
 
     #[test]
-    fn effect_writer_acl_role_is_stable_nologin_and_owns_no_grants_here() {
+    fn writer_acl_roles_are_stable_nologin_and_own_no_grants_here() {
         let sql = ensure_effect_writer_acl_role_sql();
-        assert!(sql.contains("CREATE ROLE \"wamn_effect_writer\" NOLOGIN"));
+        assert!(sql.contains("'wamn_effect_writer'"));
+        assert!(sql.contains("'wamn_run_projection_writer'"));
+        assert!(sql.contains("CREATE ROLE %I NOLOGIN"));
         for attr in [
             "NOSUPERUSER",
             "NOCREATEDB",
@@ -616,6 +666,9 @@ mod tests {
             "ALTER ROLE \"{role}\" LOGIN PASSWORD 'a''b' VALID UNTIL '2026-09-01T00:00:00Z'"
         )));
         assert!(sql.contains(&format!("GRANT \"wamn_effect_writer\" TO \"{role}\"")));
+        assert!(sql.contains(&format!(
+            "GRANT \"wamn_run_projection_writer\" TO \"{role}\""
+        )));
         assert!(sql.contains("WITH ADMIN FALSE, INHERIT TRUE, SET TRUE"));
         assert!(sql.contains(&format!(
             "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" TO \"{role}\""
@@ -638,7 +691,9 @@ mod tests {
     fn generation_retire_commits_authority_removal_before_session_termination() {
         let role = "wamn_effect_writer_1111111111111111111111111111111111111111_a";
         let sql = retire_effect_writer_generation_sql("wamn-db-acme--billing--dev", role);
-        let membership = sql.find("REVOKE \"wamn_effect_writer\"").unwrap();
+        let membership = sql
+            .find("REVOKE \"wamn_effect_writer\", \"wamn_run_projection_writer\"")
+            .unwrap();
         let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
         let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
         assert!(membership < connect && connect < no_login);
@@ -661,6 +716,12 @@ mod tests {
         assert!(sql.contains("r.rolpassword IS NOT NULL AS password_set"));
         assert!(sql.contains("pg_auth_members"));
         assert!(sql.contains("NOT m.admin_option AND m.inherit_option AND m.set_option"));
+        assert!(sql.contains("AS generation_children_exact"));
+        assert!(sql.contains("'wamn_effect_writer', 'wamn_run_projection_writer'"));
+        assert!(sql.contains("WHERE edge.roleid = generation.oid"));
+        assert!(sql.contains("dependency.deptype = 'o'"));
+        assert!(sql.contains("current_database(), 'CONNECT')) > 2"));
+        assert!(sql.contains("count(DISTINCT substring("));
         assert!(sql.contains("WHERE m.roleid = r.oid"));
         assert!(sql.contains("rolvaliduntil"));
         assert!(sql.contains("isfinite"));

@@ -66,6 +66,7 @@ use wamn_platform_identity::{
     IdentityErrorKind, Principal, PrincipalKind, PrincipalStatus, assign_project_role,
     authenticate_pat, create_service, issue_pat, resolve_subject, revoke_pat,
 };
+use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
 use crate::env_policies::read_env_policy;
 
@@ -409,6 +410,7 @@ struct EffectWriterRoleState {
     membership_options_exact: bool,
     member_roles: Vec<String>,
     member_options_exact: bool,
+    generation_children_exact: bool,
     connect_databases: Vec<String>,
     sessions: i64,
     owned_objects: i64,
@@ -421,10 +423,11 @@ impl EffectWriterRoleState {
             && self.inherit
             && self.password_set
             && self.valid_until_finite
-            && self.memberships == [EFFECT_WRITER_ROLE]
+            && self.memberships == [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE]
             && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
+            && self.generation_children_exact
             && self.connect_databases == [database]
             && self.owned_objects == 0
     }
@@ -440,6 +443,7 @@ impl EffectWriterRoleState {
             && self.membership_options_exact
             && self.member_roles.is_empty()
             && self.member_options_exact
+            && self.generation_children_exact
             && self.connect_databases.is_empty()
             && self.sessions == 0
             && self.owned_objects == 0
@@ -459,6 +463,7 @@ impl EffectWriterRoleState {
                 .iter()
                 .all(|role| is_effect_writer_generation_role(role))
             && self.member_options_exact
+            && self.generation_children_exact
             && self.connect_databases.is_empty()
             && self.sessions == 0
             && self.owned_objects == 0
@@ -655,7 +660,18 @@ async fn prepare_effect_writer_generation(
         verify_role_acl_inventory(
             admin_config,
             EFFECT_WRITER_ROLE,
-            RoleAclExpectation::AclRole,
+            RoleAclExpectation::EffectAclRole,
+        )
+        .await?;
+    }
+    if read_effect_writer_role_state(&transaction, RUN_PROJECTION_WRITER_ROLE)
+        .await?
+        .is_some()
+    {
+        verify_role_acl_inventory(
+            admin_config,
+            RUN_PROJECTION_WRITER_ROLE,
+            RoleAclExpectation::ProjectionAclRole,
         )
         .await?;
     }
@@ -707,6 +723,25 @@ async fn prepare_effect_writer_generation(
             acl_role.is_acl_role(),
             "stable effect-writer ACL role is not a connection-free NOLOGIN role"
         );
+        verify_role_acl_inventory(
+            admin_config,
+            EFFECT_WRITER_ROLE,
+            RoleAclExpectation::EffectAclRole,
+        )
+        .await?;
+        let projection_role = read_effect_writer_role_state(&admin, RUN_PROJECTION_WRITER_ROLE)
+            .await?
+            .context("stable run-projection ACL role disappeared")?;
+        anyhow::ensure!(
+            projection_role.is_acl_role(),
+            "stable run-projection ACL role is not a connection-free NOLOGIN role"
+        );
+        verify_role_acl_inventory(
+            admin_config,
+            RUN_PROJECTION_WRITER_ROLE,
+            RoleAclExpectation::ProjectionAclRole,
+        )
+        .await?;
 
         let scope = EffectWriterCredentialScope {
             org: org.to_string(),
@@ -913,7 +948,20 @@ async fn abort_effect_writer_generation(
     verify_role_acl_inventory(
         admin_config,
         EFFECT_WRITER_ROLE,
-        RoleAclExpectation::AclRole,
+        RoleAclExpectation::EffectAclRole,
+    )
+    .await?;
+    let projection_role = read_effect_writer_role_state(&transaction, RUN_PROJECTION_WRITER_ROLE)
+        .await?
+        .context("stable run-projection ACL role does not exist")?;
+    anyhow::ensure!(
+        projection_role.is_acl_role(),
+        "stable run-projection ACL role is not a connection-free NOLOGIN role"
+    );
+    verify_role_acl_inventory(
+        admin_config,
+        RUN_PROJECTION_WRITER_ROLE,
+        RoleAclExpectation::ProjectionAclRole,
     )
     .await?;
     transaction
@@ -1092,7 +1140,8 @@ async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> any
 enum RoleAclExpectation<'a> {
     None,
     Generation { database: &'a str },
-    AclRole,
+    EffectAclRole,
+    ProjectionAclRole,
 }
 
 async fn verify_role_acl_inventory(
@@ -1131,8 +1180,11 @@ async fn verify_role_acl_inventory(
             })
             .collect();
         match expectation {
-            RoleAclExpectation::AclRole => {
+            RoleAclExpectation::EffectAclRole => {
                 verify_effect_writer_acl_role_inventory(role, &database, &inventory)?;
+            }
+            RoleAclExpectation::ProjectionAclRole => {
+                verify_run_projection_acl_role_inventory(role, &database, &inventory)?;
             }
             expectation => {
                 for acl in &inventory {
@@ -1144,7 +1196,8 @@ async fn verify_role_acl_inventory(
                                 && acl.object_name == expected
                                 && acl.privilege == "CONNECT"
                         }
-                        RoleAclExpectation::AclRole => unreachable!("handled above"),
+                        RoleAclExpectation::EffectAclRole
+                        | RoleAclExpectation::ProjectionAclRole => unreachable!("handled above"),
                     };
                     anyhow::ensure!(
                         allowed,
@@ -1159,6 +1212,53 @@ async fn verify_role_acl_inventory(
         }
         drop(client);
         task.await.context("join cross-database ACL connection")??;
+    }
+    Ok(())
+}
+
+fn verify_run_projection_acl_role_inventory(
+    role: &str,
+    database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    let mut by_schema: BTreeMap<String, BTreeSet<(String, String, String)>> = BTreeMap::new();
+    for acl in inventory {
+        anyhow::ensure!(
+            matches!(acl.object_kind.as_str(), "schema" | "relation"),
+            "stable role {role:?} carries non-projection {} ACL in database {database:?}",
+            acl.object_kind
+        );
+        by_schema
+            .entry(acl.schema_name.clone())
+            .or_default()
+            .insert((
+                acl.object_kind.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            ));
+    }
+    for (schema, actual) in by_schema {
+        anyhow::ensure!(
+            !schema.starts_with("pg_")
+                && !matches!(
+                    schema.as_str(),
+                    "public" | "information_schema" | "wamn_system" | "catalog" | "app"
+                ),
+            "stable role {role:?} carries projection ACLs in reserved schema {schema:?} in database {database:?}"
+        );
+        let mut expected =
+            BTreeSet::from([("schema".to_string(), schema.clone(), "USAGE".to_string())]);
+        for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+            expected.insert((
+                "relation".to_string(),
+                "node_runs".to_string(),
+                privilege.to_string(),
+            ));
+        }
+        anyhow::ensure!(
+            actual == expected,
+            "stable role {role:?} ACLs in database {database:?} schema {schema:?} are not the exact run-projection grant set"
+        );
     }
     Ok(())
 }
@@ -1223,7 +1323,13 @@ fn verify_effect_writer_acl_role_inventory(
             ("runs", &["tenant_id", "run_id", "status"][..]),
             (
                 "run_queue",
-                &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+                &[
+                    "tenant_id",
+                    "run_id",
+                    "lease_owner",
+                    "lease_expires_at",
+                    "lease_generation",
+                ][..],
             ),
         ] {
             for column in columns {
@@ -1265,6 +1371,7 @@ async fn read_effect_writer_role_state(
         membership_options_exact: row.get("membership_options_exact"),
         member_roles: row.get("member_roles"),
         member_options_exact: row.get("member_options_exact"),
+        generation_children_exact: row.get("generation_children_exact"),
         connect_databases: row.get("connect_databases"),
         sessions: row.get("sessions"),
         owned_objects: row.get("owned_objects"),
@@ -2163,7 +2270,13 @@ mod tests {
             ("runs", &["tenant_id", "run_id", "status"][..]),
             (
                 "run_queue",
-                &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+                &[
+                    "tenant_id",
+                    "run_id",
+                    "lease_owner",
+                    "lease_expires_at",
+                    "lease_generation",
+                ][..],
             ),
         ] {
             for column in columns {

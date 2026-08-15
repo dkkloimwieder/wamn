@@ -2595,11 +2595,19 @@ pub const OUTBOX_TRIGGER_NAME: &str = "wamn_outbox_event";
 pub const SCENARIO_AUTHOR_ROLE: &str = "wamn_scenario_author";
 /// Stable NOLOGIN ACL role inherited only by scoped writer generations.
 pub const EFFECT_WRITER_ROLE: &str = "wamn_effect_writer";
+/// Stable NOLOGIN ACL role inherited by the same scoped writer generations.
+pub const RUN_PROJECTION_WRITER_ROLE: &str = "wamn_run_projection_writer";
 const EFFECT_WRITER_RUN_READ_COLUMNS: [(&str, &[&str]); 2] = [
     ("runs", &["tenant_id", "run_id", "status"]),
     (
         "run_queue",
-        &["tenant_id", "run_id", "lease_owner", "lease_expires_at"],
+        &[
+            "tenant_id",
+            "run_id",
+            "lease_owner",
+            "lease_expires_at",
+            "lease_generation",
+        ],
     ),
 ];
 
@@ -2763,8 +2771,24 @@ pub struct RunPlaneObservation {
     pub scenario_author_role: Option<ScenarioAuthorRoleObservation>,
     /// Stable writer role attributes, ownership, membership, and CONNECT.
     pub effect_writer_role: Option<EffectWriterRoleObservation>,
+    /// Stable projection-writer role attributes, ownership, membership, and CONNECT.
+    pub run_projection_writer_role: Option<EffectWriterRoleObservation>,
     /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` schema boundary.
     pub effect_writer_schema_privileges: (bool, bool),
+    /// Exact direct `(USAGE-without-PUBLIC, effective-CREATE)` projection boundary.
+    pub run_projection_schema_privileges: (bool, bool),
+    /// Direct `node_runs` grants keyed by grantee.
+    pub node_runs_table_privileges: BTreeMap<String, BTreeSet<String>>,
+    /// Direct `node_runs` column grants keyed by grantee.
+    pub node_runs_column_privileges: BTreeMap<String, BTreeSet<String>>,
+    /// Effective `node_runs` grants keyed by grantee.
+    pub node_runs_effective_privileges: BTreeMap<String, BTreeSet<String>>,
+    /// Roles whose effective projection read is inherited from `wamn_app`.
+    pub node_runs_app_members: BTreeSet<String>,
+    /// Effective `node_runs` column grants keyed by grantee.
+    pub node_runs_effective_column_privileges: BTreeMap<String, BTreeSet<String>>,
+    /// Owner of `node_runs`, because ownership can restore revoked authority.
+    pub node_runs_owner: Option<String>,
     /// Direct ledger grants keyed by `(table, grantee)`.
     pub effect_ledger_table_privileges: BTreeMap<(String, String), BTreeSet<String>>,
     /// Effective ledger grants keyed by `(table, grantee)`.
@@ -2873,6 +2897,8 @@ pub enum RunPlaneActionKind {
     FrameIdentityCutover,
     /// Preserve the output-size fact while removing retired node capture columns.
     CaptureProjectionCutover,
+    /// Widen trusted global node-fact sequence storage from int4 to int8.
+    WidenNodeRunSequence,
     /// Remove invocation-admission expiry and make the client key optional.
     InvocationAdmissionRetentionCutover,
     /// Delete the retired partition plane after a locked drain/evidence preflight.
@@ -2889,6 +2915,8 @@ pub enum RunPlaneActionKind {
     EffectWriterCutover,
     /// Refuse a provisioning-owned stable writer role outside its frozen shape.
     VerifyEffectWriterRole,
+    /// Refuse a projection-writer role outside its frozen ACL-only shape.
+    VerifyRunProjectionWriterRole,
     /// Converge exact stable-writer schema/table ACLs and deny other writers.
     RepairEffectWriterPrivilege,
     /// Drop/re-add a drifted record CHECK, or add it when absent.
@@ -3293,6 +3321,8 @@ ALTER TABLE {target}.runs
     ADD CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash);
+GRANT INSERT (execution_bundle_hash), UPDATE (execution_bundle_hash)
+    ON {target}.runs TO wamn_app;
 DROP INDEX IF EXISTS {target}.runs_release;
 DROP INDEX IF EXISTS {target}.runs_execution_bundle;
 CREATE INDEX runs_release ON {target}.runs (tenant_id, catalog_id, catalog_version);
@@ -3467,6 +3497,67 @@ fn run_capture_privileges_drifted(schema: &BareSchemaName, obs: &RunPlaneObserva
         || !obs.app_run_capture_privileges.2
 }
 
+fn is_effect_writer_generation_role(role: &str) -> bool {
+    let Some(suffix) = role.strip_prefix("wamn_effect_writer_") else {
+        return false;
+    };
+    let Some((scope_hash, generation)) = suffix.rsplit_once('_') else {
+        return false;
+    };
+    scope_hash.len() == 40
+        && scope_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        && matches!(generation, "a" | "b")
+}
+
+fn generation_role_contract_violation_sql() -> &'static str {
+    "EXISTS ( \
+         SELECT 1 FROM pg_catalog.pg_roles AS generation \
+          WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+            AND (pg_catalog.has_database_privilege( \
+                   generation.oid, current_database(), 'CONNECT') \
+                 OR EXISTS ( \
+                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
+                      JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
+                     WHERE edge.member = generation.oid \
+                       AND parent.rolname IN ( \
+                             'wamn_effect_writer', 'wamn_run_projection_writer'))) \
+            AND (NOT generation.rolcanlogin OR generation.rolsuper \
+                 OR generation.rolcreatedb OR generation.rolcreaterole \
+                 OR NOT generation.rolinherit OR generation.rolreplication \
+                 OR generation.rolbypassrls \
+                 OR (SELECT pg_catalog.array_agg( \
+                              parent.rolname::text ORDER BY parent.rolname::text) \
+                       FROM pg_catalog.pg_auth_members AS edge \
+                       JOIN pg_catalog.pg_roles AS parent ON parent.oid = edge.roleid \
+                      WHERE edge.member = generation.oid) \
+                    IS DISTINCT FROM ARRAY[ \
+                         'wamn_effect_writer', 'wamn_run_projection_writer']::text[] \
+                 OR EXISTS ( \
+                      SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
+                       WHERE edge.member = generation.oid \
+                         AND (edge.admin_option OR NOT edge.inherit_option \
+                              OR NOT edge.set_option)) \
+                 OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members AS edge \
+                             WHERE edge.roleid = generation.oid) \
+                 OR EXISTS (SELECT 1 FROM pg_catalog.pg_shdepend AS dependency \
+                             WHERE dependency.refclassid = 'pg_authid'::regclass \
+                               AND dependency.refobjid = generation.oid \
+                               AND dependency.deptype = 'o'))) \
+       OR (SELECT count(*) FROM pg_catalog.pg_roles AS generation \
+            WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+              AND pg_catalog.has_database_privilege( \
+                    generation.oid, current_database(), 'CONNECT')) > 2 \
+       OR (SELECT count(DISTINCT substring( \
+                    generation.rolname FROM \
+                    '^wamn_effect_writer_([0-9a-f]{40})_[ab]$')) \
+             FROM pg_catalog.pg_roles AS generation \
+            WHERE generation.rolname ~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+              AND pg_catalog.has_database_privilege( \
+                    generation.oid, current_database(), 'CONNECT')) > 1"
+}
+
 /// Reconcile one project-env's run-plane schema (+ the per-database `catalog`
 /// metadata schema) against the schema of record. Pure: `obs` is what the
 /// driver read; the returned plan is what it should execute, in order.
@@ -3560,7 +3651,7 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::VerifyEffectWriterRole,
             target: EFFECT_WRITER_ROLE.to_string(),
-            sql: "DO $effect_writer_role$ \
+            sql: format!("DO $effect_writer_role$ \
                   DECLARE role_oid oid; \
                   BEGIN \
                     SELECT oid INTO role_oid FROM pg_catalog.pg_roles \
@@ -3578,16 +3669,57 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                             SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
                             JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
                             WHERE membership.roleid = role_oid \
-                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
                                    OR NOT member.rolcanlogin OR member.rolsuper \
                                    OR member.rolcreatedb OR member.rolcreaterole \
                                    OR NOT member.rolinherit OR member.rolreplication \
                                    OR member.rolbypassrls)) \
+                       OR {generation_contract} \
                     THEN RAISE EXCEPTION USING ERRCODE = '42501', \
                          MESSAGE = 'effect-writer-role-out-of-bounds'; \
                     END IF; \
-                  END $effect_writer_role$"
-                .to_string(),
+                  END $effect_writer_role$",
+                generation_contract = generation_role_contract_violation_sql(),
+            ),
+        });
+    }
+    if obs
+        .run_projection_writer_role
+        .is_none_or(|role| !role.is_acl_only())
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::VerifyRunProjectionWriterRole,
+            target: RUN_PROJECTION_WRITER_ROLE.to_string(),
+            sql: format!("DO $run_projection_writer_role$ \
+                  DECLARE role_oid oid; \
+                  BEGIN \
+                    SELECT oid INTO role_oid FROM pg_catalog.pg_roles \
+                     WHERE rolname = 'wamn_run_projection_writer' AND NOT rolcanlogin \
+                       AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole \
+                       AND NOT rolinherit AND NOT rolreplication AND NOT rolbypassrls; \
+                    IF role_oid IS NULL \
+                       OR pg_catalog.has_database_privilege(role_oid, current_database(), 'CONNECT') \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role_oid) \
+                       OR EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role_oid) \
+                       OR EXISTS ( \
+                            SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
+                            JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
+                            WHERE membership.roleid = role_oid \
+                              AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
+                                   OR NOT member.rolcanlogin OR member.rolsuper \
+                                   OR member.rolcreatedb OR member.rolcreaterole \
+                                   OR NOT member.rolinherit OR member.rolreplication \
+                                   OR member.rolbypassrls)) \
+                       OR {generation_contract} \
+                    THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                         MESSAGE = 'run-projection-writer-role-out-of-bounds'; \
+                    END IF; \
+                  END $run_projection_writer_role$",
+                generation_contract = generation_role_contract_violation_sql(),
+            ),
         });
     }
     let frame_cutover_targets = frame_identity_cutover_targets(obs, schema);
@@ -3616,6 +3748,21 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 schema,
                 capture_output_size_rename_needed,
                 capture_output_size_conflict,
+            ),
+        });
+    }
+    if obs.tables.contains_key("node_runs")
+        && obs
+            .column_types
+            .get(&("node_runs".to_string(), "seq".to_string()))
+            .is_some_and(|column_type| column_type != "bigint")
+    {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::WidenNodeRunSequence,
+            target: "node_runs.seq".to_string(),
+            sql: format!(
+                "ALTER TABLE {}.node_runs ALTER COLUMN seq TYPE bigint USING seq::bigint",
+                schema.quoted()
             ),
         });
     }
@@ -3834,6 +3981,203 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 schema.as_str(),
             ),
         });
+    }
+    if obs.run_projection_schema_privileges != (true, false) {
+        plan.actions.push(RunPlaneAction {
+            kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+            target: format!("{}.projection-usage", schema.as_str()),
+            sql: format!(
+                "REVOKE ALL PRIVILEGES ON SCHEMA {} FROM {RUN_PROJECTION_WRITER_ROLE}; \
+                 GRANT USAGE ON SCHEMA {} TO {RUN_PROJECTION_WRITER_ROLE}; \
+                 DO $run_projection_schema_acl$ BEGIN \
+                   IF NOT pg_catalog.has_schema_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{}', 'USAGE') \
+                      OR pg_catalog.has_schema_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{}', 'CREATE') \
+                   THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                        MESSAGE = 'run-projection-writer-schema-privilege-out-of-bounds'; \
+                   END IF; \
+                 END $run_projection_schema_acl$",
+                schema.quoted(),
+                schema.quoted(),
+                schema.as_str(),
+                schema.as_str(),
+            ),
+        });
+    }
+    if obs.tables.contains_key("node_runs")
+        && !frame_cutover_targets.node
+        && !effect_writer_cutover_needed
+        && !effect_writer_ledger_cutover_needed
+        && !capture_projection_cutover_needed
+    {
+        let expected = |grantee: &str| -> BTreeSet<String> {
+            match grantee {
+                "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
+                RUN_PROJECTION_WRITER_ROLE => ["SELECT", "INSERT", "UPDATE", "DELETE"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                _ => BTreeSet::new(),
+            }
+        };
+        let fixed_grantees = [
+            "PUBLIC",
+            "wamn_app",
+            SCENARIO_AUTHOR_ROLE,
+            EFFECT_WRITER_ROLE,
+            RUN_PROJECTION_WRITER_ROLE,
+        ];
+        let direct_drifted = fixed_grantees.into_iter().any(|grantee| {
+            obs.node_runs_table_privileges
+                .get(grantee)
+                .cloned()
+                .unwrap_or_default()
+                != expected(grantee)
+        }) || obs.node_runs_table_privileges.iter().any(
+            |(grantee, privileges)| {
+                !fixed_grantees.contains(&grantee.as_str()) && !privileges.is_empty()
+            },
+        ) || obs
+            .node_runs_column_privileges
+            .values()
+            .any(|privileges| !privileges.is_empty());
+        let expected_effective = |grantee: &str| -> BTreeSet<String> {
+            if is_effect_writer_generation_role(grantee) {
+                ["SELECT", "INSERT", "UPDATE", "DELETE"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            } else if obs.node_runs_app_members.contains(grantee) {
+                ["SELECT"].into_iter().map(str::to_string).collect()
+            } else {
+                expected(grantee)
+            }
+        };
+        let effective_drifted = obs
+            .node_runs_effective_privileges
+            .iter()
+            .any(|(grantee, privileges)| privileges != &expected_effective(grantee))
+            || fixed_grantees[1..].iter().any(|grantee| {
+                obs.node_runs_effective_privileges
+                    .get(*grantee)
+                    .cloned()
+                    .unwrap_or_default()
+                    != expected_effective(grantee)
+            });
+        let expected_column = |grantee: &str| -> BTreeSet<String> {
+            if is_effect_writer_generation_role(grantee) {
+                ["SELECT", "INSERT", "UPDATE"]
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect()
+            } else if obs.node_runs_app_members.contains(grantee) {
+                ["SELECT"].into_iter().map(str::to_string).collect()
+            } else {
+                match grantee {
+                    "wamn_app" => ["SELECT"].into_iter().map(str::to_string).collect(),
+                    RUN_PROJECTION_WRITER_ROLE => ["SELECT", "INSERT", "UPDATE"]
+                        .into_iter()
+                        .map(str::to_string)
+                        .collect(),
+                    _ => BTreeSet::new(),
+                }
+            }
+        };
+        let effective_column_drifted = obs
+            .node_runs_effective_column_privileges
+            .iter()
+            .any(|(grantee, privileges)| privileges != &expected_column(grantee))
+            || fixed_grantees[1..].iter().any(|grantee| {
+                obs.node_runs_effective_column_privileges
+                    .get(*grantee)
+                    .cloned()
+                    .unwrap_or_default()
+                    != expected_column(grantee)
+            });
+        let boundary_owned = obs.node_runs_owner.as_deref().is_some_and(|owner| {
+            [
+                "wamn_app",
+                SCENARIO_AUTHOR_ROLE,
+                EFFECT_WRITER_ROLE,
+                RUN_PROJECTION_WRITER_ROLE,
+            ]
+            .contains(&owner)
+        });
+        if direct_drifted || effective_drifted || effective_column_drifted || boundary_owned {
+            let qualified = format!("{}.node_runs", schema.quoted());
+            let columns = obs.tables["node_runs"]
+                .iter()
+                .map(|column| quote_ident(column))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let revoke_grantees = fixed_grantees
+                .into_iter()
+                .map(str::to_string)
+                .chain(obs.node_runs_table_privileges.keys().cloned())
+                .chain(obs.node_runs_column_privileges.keys().cloned())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .map(|grantee| {
+                    if grantee == "PUBLIC" {
+                        grantee
+                    } else {
+                        quote_ident(&grantee)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            plan.actions.push(RunPlaneAction {
+                kind: RunPlaneActionKind::RepairEffectWriterPrivilege,
+                target: format!("{}.node_runs", schema.as_str()),
+                sql: format!(
+                    "REVOKE SELECT ({columns}), INSERT ({columns}), UPDATE ({columns}), \
+                            REFERENCES ({columns}) ON TABLE {qualified} \
+                       FROM {revoke_grantees}; \
+                     REVOKE ALL PRIVILEGES ON TABLE {qualified} \
+                       FROM {revoke_grantees}; \
+                     GRANT SELECT ON TABLE {qualified} TO wamn_app; \
+                     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE {qualified} \
+                       TO {RUN_PROJECTION_WRITER_ROLE}; \
+                     DO $node_runs_projection_acl$ BEGIN \
+                       IF EXISTS (SELECT 1 FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('wamn_app', '{qualified}', privilege)) \
+                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', privilege) \
+                                      OR pg_catalog.has_table_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', privilege)) \
+                          OR EXISTS (SELECT 1 FROM unnest(ARRAY['TRUNCATE','REFERENCES','TRIGGER']) privilege \
+                                   WHERE pg_catalog.has_table_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{qualified}', privilege)) \
+                          OR pg_catalog.has_any_column_privilege('wamn_app', '{qualified}', 'INSERT,UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{SCENARIO_AUTHOR_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{EFFECT_WRITER_ROLE}', '{qualified}', 'SELECT,INSERT,UPDATE,REFERENCES') \
+                          OR pg_catalog.has_any_column_privilege('{RUN_PROJECTION_WRITER_ROLE}', '{qualified}', 'REFERENCES') \
+                          OR EXISTS ( \
+                               SELECT 1 FROM pg_catalog.pg_roles AS actor \
+                               CROSS JOIN pg_catalog.pg_class AS relation \
+                               WHERE relation.oid = pg_catalog.to_regclass('{qualified}') \
+                                 AND NOT actor.rolsuper AND actor.oid <> relation.relowner \
+                                 AND actor.rolname !~ '^pg_' \
+                                 AND actor.rolname NOT IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', \
+                                                           '{EFFECT_WRITER_ROLE}', '{RUN_PROJECTION_WRITER_ROLE}') \
+                                 AND actor.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
+                                 AND (NOT pg_catalog.pg_has_role(actor.oid, 'wamn_app', 'USAGE') \
+                                      OR pg_catalog.has_table_privilege(actor.oid, relation.oid, \
+                                           'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
+                                      OR pg_catalog.has_any_column_privilege(actor.oid, relation.oid, \
+                                           'INSERT,UPDATE,REFERENCES')) \
+                                 AND (pg_catalog.has_table_privilege(actor.oid, relation.oid, \
+                                         'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') \
+                                      OR pg_catalog.has_any_column_privilege(actor.oid, relation.oid, \
+                                         'SELECT,INSERT,UPDATE,REFERENCES'))) \
+                          OR (SELECT owner.rolname FROM pg_catalog.pg_class relation \
+                              JOIN pg_catalog.pg_roles owner ON owner.oid = relation.relowner \
+                             WHERE relation.oid = pg_catalog.to_regclass('{qualified}')) \
+                             IN ('wamn_app', '{SCENARIO_AUTHOR_ROLE}', '{EFFECT_WRITER_ROLE}', '{RUN_PROJECTION_WRITER_ROLE}') \
+                       THEN RAISE EXCEPTION USING ERRCODE = '42501', \
+                            MESSAGE = 'node-runs-projection-privilege-out-of-bounds'; \
+                       END IF; \
+                     END $node_runs_projection_acl$"
+                ),
+            });
+        }
     }
     for table in [
         "effect_attempts",
@@ -4566,6 +4910,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         .map(|spec| (spec.table.as_str(), spec.name.as_str()))
         .collect();
     for spec in &trigger_specs {
+        if execution_pin_cutover_needed
+            && spec.table == "runs"
+            && spec.name == "runs_admission_pins_immutable"
+        {
+            continue;
+        }
         if !obs.tables.contains_key(&spec.table)
             && table_section_carries_trigger(&spec.table, &spec.name)
         {
@@ -4834,8 +5184,9 @@ pub fn select_scenario_author_role_sql() -> &'static str {
 }
 
 /// Provisioning-owned writer role attributes plus ownership/membership/CONNECT.
-pub fn select_effect_writer_role_sql() -> &'static str {
-    "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
+pub fn select_effect_writer_role_sql() -> String {
+    format!(
+        "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
             role.rolinherit, role.rolreplication, role.rolbypassrls, \
             pg_catalog.has_database_privilege(role.oid, current_database(), 'CONNECT'), \
             EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role.oid) \
@@ -4847,13 +5198,43 @@ pub fn select_effect_writer_role_sql() -> &'static str {
                    SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
                    JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
                    WHERE membership.roleid = role.oid \
-                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{40}_[ab]$' \
+                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
                           OR NOT member.rolcanlogin OR member.rolsuper \
                           OR member.rolcreatedb OR member.rolcreaterole \
                           OR NOT member.rolinherit OR member.rolreplication \
                           OR member.rolbypassrls)) \
+              OR {generation_contract} \
        FROM pg_catalog.pg_roles AS role \
-      WHERE role.rolname = 'wamn_effect_writer'"
+      WHERE role.rolname = 'wamn_effect_writer'",
+        generation_contract = generation_role_contract_violation_sql(),
+    )
+}
+
+/// Projection-writer role attributes plus ownership/membership/CONNECT.
+pub fn select_run_projection_writer_role_sql() -> String {
+    format!(
+        "SELECT role.rolcanlogin, role.rolsuper, role.rolcreatedb, role.rolcreaterole, \
+            role.rolinherit, role.rolreplication, role.rolbypassrls, \
+            pg_catalog.has_database_privilege(role.oid, current_database(), 'CONNECT'), \
+            EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE relowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_namespace WHERE nspowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_proc WHERE proowner = role.oid) \
+              OR EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datdba = role.oid), \
+            EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members WHERE member = role.oid) \
+              OR EXISTS ( \
+                   SELECT 1 FROM pg_catalog.pg_auth_members AS membership \
+                   JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member \
+                   WHERE membership.roleid = role.oid \
+                     AND (member.rolname !~ '^wamn_effect_writer_[0-9a-f]{{40}}_[ab]$' \
+                          OR NOT member.rolcanlogin OR member.rolsuper \
+                          OR member.rolcreatedb OR member.rolcreaterole \
+                          OR NOT member.rolinherit OR member.rolreplication \
+                          OR member.rolbypassrls)) \
+              OR {generation_contract} \
+       FROM pg_catalog.pg_roles AS role \
+      WHERE role.rolname = 'wamn_run_projection_writer'",
+        generation_contract = generation_role_contract_violation_sql(),
+    )
 }
 
 /// Exact direct writer USAGE/no-PUBLIC boundary plus effective CREATE.
@@ -4871,6 +5252,87 @@ pub fn select_effect_writer_schema_privileges_sql() -> &'static str {
        LEFT JOIN pg_catalog.pg_roles AS role \
          ON role.rolname = 'wamn_effect_writer' \
        LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
+}
+
+/// Exact direct projection-writer USAGE/no-PUBLIC boundary plus effective CREATE.
+pub fn select_run_projection_schema_privileges_sql() -> &'static str {
+    "SELECT COALESCE( \
+              EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
+                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
+                       WHERE acl.grantee = role.oid AND acl.privilege_type = 'USAGE') \
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.aclexplode(COALESCE( \
+                        namespace.nspacl, pg_catalog.acldefault('n', namespace.nspowner))) acl \
+                       WHERE acl.grantee = 0 \
+                         AND acl.privilege_type IN ('USAGE', 'CREATE')), false), \
+            COALESCE(pg_catalog.has_schema_privilege(role.oid, namespace.oid, 'CREATE'), false) \
+       FROM (SELECT 1) AS singleton \
+       LEFT JOIN pg_catalog.pg_roles AS role \
+         ON role.rolname = 'wamn_run_projection_writer' \
+       LEFT JOIN pg_catalog.pg_namespace AS namespace ON namespace.nspname = $1"
+}
+
+/// Direct table grants on the mutable run projection.
+pub fn select_node_runs_table_privileges_sql() -> &'static str {
+    "SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE grantee.rolname END, \
+            acl.privilege_type \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl \
+       LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
+      WHERE namespace.nspname = $1 AND relation.relname = 'node_runs' \
+        AND (acl.grantee = 0 OR (acl.grantee <> relation.relowner AND NOT grantee.rolsuper)) \
+      ORDER BY 1, 2"
+}
+
+/// Direct column grants on the mutable run projection, across every grantee.
+pub fn select_node_runs_column_privileges_sql() -> &'static str {
+    "SELECT CASE WHEN acl.grantee = 0 THEN 'PUBLIC' ELSE grantee.rolname END, \
+            acl.privilege_type \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_attribute AS attribute ON attribute.attrelid = relation.oid \
+       CROSS JOIN LATERAL pg_catalog.aclexplode(attribute.attacl) AS acl \
+       LEFT JOIN pg_catalog.pg_roles AS grantee ON grantee.oid = acl.grantee \
+      WHERE namespace.nspname = $1 AND relation.relname = 'node_runs' \
+        AND attribute.attnum > 0 AND NOT attribute.attisdropped \
+        AND (acl.grantee = 0 OR (acl.grantee <> relation.relowner AND NOT grantee.rolsuper)) \
+      ORDER BY 1, 2"
+}
+
+/// Effective table grants and owner on the mutable run projection.
+pub fn select_node_runs_effective_privileges_sql() -> &'static str {
+    "SELECT actor.rolname, privilege.name, owner.rolname, \
+            pg_catalog.pg_has_role(actor.oid, 'wamn_app', 'USAGE') \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
+       CROSS JOIN pg_catalog.pg_roles AS actor \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('DELETE'::text), ('TRUNCATE'::text), \
+                          ('REFERENCES'::text), ('TRIGGER'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname = 'node_runs' \
+        AND NOT actor.rolsuper AND actor.oid <> owner.oid \
+        AND actor.rolname !~ '^pg_' \
+        AND pg_catalog.has_table_privilege(actor.oid, relation.oid, privilege.name) \
+      ORDER BY actor.rolname, privilege.name"
+}
+
+/// Effective column grants on the mutable run projection.
+pub fn select_node_runs_effective_column_privileges_sql() -> &'static str {
+    "SELECT actor.rolname, privilege.name \
+       FROM pg_catalog.pg_class AS relation \
+       JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
+       JOIN pg_catalog.pg_roles AS owner ON owner.oid = relation.relowner \
+       CROSS JOIN pg_catalog.pg_roles AS actor \
+       CROSS JOIN (VALUES ('SELECT'::text), ('INSERT'::text), ('UPDATE'::text), \
+                          ('REFERENCES'::text)) AS privilege(name) \
+      WHERE namespace.nspname = $1 AND relation.relkind = 'r' \
+        AND relation.relname = 'node_runs' \
+        AND NOT actor.rolsuper AND actor.oid <> owner.oid \
+        AND actor.rolname !~ '^pg_' \
+        AND pg_catalog.has_any_column_privilege(actor.oid, relation.oid, privilege.name) \
+      ORDER BY actor.rolname, privilege.name"
 }
 
 /// Direct grants on the three immutable effect-writer ledgers.
@@ -5637,7 +6099,20 @@ CREATE INDEX event_registrations_by_entity
                 owns_objects: false,
                 membership_out_of_bounds: false,
             }),
+            run_projection_writer_role: Some(EffectWriterRoleObservation {
+                can_login: false,
+                is_superuser: false,
+                can_create_database: false,
+                can_create_role: false,
+                inherits_roles: false,
+                can_replicate: false,
+                bypasses_rls: false,
+                can_connect: false,
+                owns_objects: false,
+                membership_out_of_bounds: false,
+            }),
             effect_writer_schema_privileges: (true, false),
+            run_projection_schema_privileges: (true, false),
             ..Default::default()
         };
         obs.scenario_author_schema_usage
@@ -5742,6 +6217,34 @@ CREATE INDEX event_registrations_by_entity
                     ["SELECT".to_string()].into_iter().collect(),
                 );
             }
+        }
+        obs.node_runs_owner = Some("platform_admin".to_string());
+        for (grantee, table_privileges, column_privileges) in [
+            ("wamn_app", &['S'][..], &['S'][..]),
+            (
+                RUN_PROJECTION_WRITER_ROLE,
+                &['S', 'I', 'U', 'D'][..],
+                &['S', 'I', 'U'][..],
+            ),
+        ] {
+            let expand = |privileges: &[char]| {
+                privileges
+                    .iter()
+                    .map(|privilege| match privilege {
+                        'S' => "SELECT".to_string(),
+                        'I' => "INSERT".to_string(),
+                        'U' => "UPDATE".to_string(),
+                        'D' => "DELETE".to_string(),
+                        _ => unreachable!("closed privilege abbreviation"),
+                    })
+                    .collect()
+            };
+            obs.node_runs_table_privileges
+                .insert(grantee.to_string(), expand(table_privileges));
+            obs.node_runs_effective_privileges
+                .insert(grantee.to_string(), expand(table_privileges));
+            obs.node_runs_effective_column_privileges
+                .insert(grantee.to_string(), expand(column_privileges));
         }
         obs.catalog_checks.insert(
             (
@@ -5860,6 +6363,7 @@ CREATE INDEX event_registrations_by_entity
             ("node_runs", "call_site_id", "text", false),
             ("node_runs", "current_plan_hash", "text", true),
             ("node_runs", "local_node_id", "text", true),
+            ("node_runs", "seq", "bigint", true),
             ("effect_attempts", "root_plan_hash", "text", true),
             ("effect_attempts", "current_plan_hash", "text", true),
             ("effect_attempts", "frame_id", "bigint", true),
@@ -8330,8 +8834,9 @@ CREATE INDEX event_registrations_by_entity
         let plan = plan_run_plane(&schema("wamn_runner_demo"), &obs);
         let kinds: Vec<RunPlaneActionKind> = plan.actions.iter().map(|a| a.kind).collect();
         assert_eq!(kinds[0], RunPlaneActionKind::VerifyEffectWriterRole);
-        assert_eq!(kinds[1], RunPlaneActionKind::EnsureScenarioAuthorRole);
-        assert_eq!(kinds[2], RunPlaneActionKind::EnsureSchema);
+        assert_eq!(kinds[1], RunPlaneActionKind::VerifyRunProjectionWriterRole);
+        assert_eq!(kinds[2], RunPlaneActionKind::EnsureScenarioAuthorRole);
+        assert_eq!(kinds[3], RunPlaneActionKind::EnsureSchema);
         let creates: Vec<&str> = plan
             .actions
             .iter()
@@ -8966,7 +9471,7 @@ CREATE INDEX event_registrations_by_entity
             "GRANT SELECT (tenant_id, run_id, status)\n    ON wamn_run.runs TO wamn_effect_writer"
         ));
         assert!(RUN_QUEUE_SQL.contains(
-            "GRANT SELECT (tenant_id, run_id, lease_owner, lease_expires_at)\n    ON wamn_run.run_queue TO wamn_effect_writer"
+            "GRANT SELECT (tenant_id, run_id, lease_owner, lease_expires_at, lease_generation)\n    ON wamn_run.run_queue TO wamn_effect_writer"
         ));
         assert!(!RUN_STATE_SQL.contains("GRANT SELECT ON wamn_run.runs TO wamn_effect_writer"));
         assert!(
@@ -9031,7 +9536,7 @@ CREATE INDEX event_registrations_by_entity
             .unwrap();
         assert!(add < repair);
         assert!(queue.sql.contains(
-            "GRANT SELECT (\"tenant_id\", \"run_id\", \"lease_owner\", \"lease_expires_at\")"
+            "GRANT SELECT (\"tenant_id\", \"run_id\", \"lease_owner\", \"lease_expires_at\", \"lease_generation\")"
         ));
         assert!(queue.sql.contains("attribute.attname"));
         assert!(!queue.sql.contains("ARRAY['lease_generation']"));
@@ -9083,6 +9588,124 @@ CREATE INDEX event_registrations_by_entity
         assert!(table_action.sql.contains("REVOKE SELECT ("));
         assert!(table_action.sql.contains("has_any_column_privilege"));
         assert!(table_action.sql.contains("GRANT SELECT, INSERT"));
+    }
+
+    #[test]
+    fn node_projection_acl_repair_removes_app_and_indirect_mutation() {
+        let mut obs = observation_at_record();
+        obs.run_projection_schema_privileges = (true, true);
+        obs.node_runs_table_privileges
+            .entry("wamn_app".to_string())
+            .or_default()
+            .insert("UPDATE".to_string());
+        obs.node_runs_effective_privileges
+            .entry(SCENARIO_AUTHOR_ROLE.to_string())
+            .or_default()
+            .insert("DELETE".to_string());
+        obs.node_runs_effective_column_privileges
+            .entry(EFFECT_WRITER_ROLE.to_string())
+            .or_default()
+            .insert("UPDATE".to_string());
+        obs.node_runs_table_privileges.insert(
+            "rogue_direct".to_string(),
+            ["INSERT".to_string()].into_iter().collect(),
+        );
+        obs.node_runs_column_privileges.insert(
+            "rogue_column".to_string(),
+            ["UPDATE".to_string()].into_iter().collect(),
+        );
+        obs.node_runs_effective_privileges.insert(
+            "rogue_member".to_string(),
+            ["DELETE".to_string()].into_iter().collect(),
+        );
+        obs.node_runs_effective_column_privileges.insert(
+            "rogue_member".to_string(),
+            ["UPDATE".to_string()].into_iter().collect(),
+        );
+
+        let plan = plan_run_plane(&schema("demo"), &obs);
+        let schema_action = plan
+            .actions
+            .iter()
+            .find(|action| action.target == "demo.projection-usage")
+            .expect("projection schema ACL repair");
+        assert!(schema_action.sql.contains("wamn_run_projection_writer"));
+        let table_action = plan
+            .actions
+            .iter()
+            .find(|action| action.target == "demo.node_runs")
+            .expect("node projection ACL repair");
+        assert!(table_action.sql.contains("GRANT SELECT ON TABLE"));
+        assert!(table_action.sql.contains("TO wamn_app"));
+        assert!(
+            table_action
+                .sql
+                .contains("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE")
+        );
+        assert!(table_action.sql.contains("TO wamn_run_projection_writer"));
+        assert!(table_action.sql.contains("\"rogue_direct\""));
+        assert!(table_action.sql.contains("\"rogue_column\""));
+        assert!(
+            table_action
+                .sql
+                .contains("FROM pg_catalog.pg_roles AS actor")
+        );
+        assert!(table_action.sql.contains("actor.rolname !~"));
+        assert!(
+            table_action
+                .sql
+                .contains("node-runs-projection-privilege-out-of-bounds")
+        );
+    }
+
+    #[test]
+    fn node_projection_sequence_widens_from_integer_to_bigint() {
+        let mut obs = observation_at_record();
+        obs.column_types.insert(
+            ("node_runs".to_string(), "seq".to_string()),
+            "integer".to_string(),
+        );
+
+        let action = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::WidenNodeRunSequence)
+            .expect("legacy projection sequence widening");
+        assert_eq!(action.target, "node_runs.seq");
+        assert_eq!(
+            action.sql,
+            "ALTER TABLE \"demo\".node_runs ALTER COLUMN seq TYPE bigint USING seq::bigint"
+        );
+    }
+
+    #[test]
+    fn projection_role_is_acl_only_and_accepts_only_scoped_generation_members() {
+        let mut obs = observation_at_record();
+        obs.run_projection_writer_role = None;
+        let action = plan_run_plane(&schema("demo"), &obs)
+            .actions
+            .into_iter()
+            .find(|action| action.kind == RunPlaneActionKind::VerifyRunProjectionWriterRole)
+            .expect("projection role verification");
+        assert!(action.sql.contains("NOT rolcanlogin"));
+        assert!(action.sql.contains("NOT rolinherit"));
+        assert!(action.sql.contains("has_database_privilege"));
+        assert!(action.sql.contains("relowner = role_oid"));
+        assert!(
+            action
+                .sql
+                .contains("^wamn_effect_writer_[0-9a-f]{40}_[ab]$")
+        );
+        for evidence in [
+            "'wamn_effect_writer', 'wamn_run_projection_writer'",
+            "edge.admin_option OR NOT edge.inherit_option",
+            "WHERE edge.roleid = generation.oid",
+            "dependency.deptype = 'o'",
+            "current_database(), 'CONNECT')) > 2",
+            "count(DISTINCT substring(",
+        ] {
+            assert!(action.sql.contains(evidence), "missing {evidence}");
+        }
     }
 
     #[test]
@@ -9239,6 +9862,19 @@ CREATE INDEX event_registrations_by_entity
         let writer_columns = select_effect_writer_run_column_privileges_sql();
         assert!(writer_columns.contains("has_column_privilege"));
         assert!(writer_columns.contains("attribute.attnum > 0"));
+        assert!(select_run_projection_writer_role_sql().contains("wamn_run_projection_writer"));
+        assert!(select_run_projection_schema_privileges_sql().contains("has_schema_privilege"));
+        let direct_projection = select_node_runs_table_privileges_sql();
+        assert!(direct_projection.contains("node_runs"));
+        assert!(!direct_projection.contains("grantee IN"));
+        assert!(select_node_runs_column_privileges_sql().contains("attribute.attacl"));
+        let effective_projection = select_node_runs_effective_privileges_sql();
+        assert!(effective_projection.contains("has_table_privilege"));
+        assert!(effective_projection.contains("NOT actor.rolsuper"));
+        assert!(!effective_projection.contains("actor.rolname IN"));
+        assert!(
+            select_node_runs_effective_column_privileges_sql().contains("has_any_column_privilege")
+        );
         assert!(select_authoring_table_privileges_sql().contains("draft_safe_connection_grants"));
         assert!(!select_authoring_table_privileges_sql().contains("authoring_report_reservations"));
         // Every observation query must see the ledger, or the planner reads an

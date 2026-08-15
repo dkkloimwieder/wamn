@@ -10,7 +10,8 @@
 -- fixtures carry their own `runs`/`node_runs` copies (postgres-init.sql schema
 -- `s3`) so flowbench exercises the rewired runner; this file is the production schema and the
 -- target of the crate's live-apply gate. Assumes pre-existing `wamn_app`,
--- `wamn_scenario_author`, and stable `wamn_effect_writer` ACL roles. Role and
+-- `wamn_scenario_author`, stable `wamn_effect_writer`, and stable
+-- `wamn_run_projection_writer` ACL roles. Role and
 -- scoped LOGIN credential-generation lifecycle is provisioning-owned; this
 -- artifact grants the stable role ledger append/read authority plus only the
 -- narrow run columns needed for its fenced runnable-state recheck.
@@ -32,10 +33,12 @@
 -- pointed at by `input_ref`/`output_ref`.
 
 CREATE SCHEMA IF NOT EXISTS wamn_run AUTHORIZATION CURRENT_USER;
-REVOKE ALL PRIVILEGES ON SCHEMA wamn_run FROM PUBLIC, wamn_effect_writer;
+REVOKE ALL PRIVILEGES ON SCHEMA wamn_run
+    FROM PUBLIC, wamn_effect_writer, wamn_run_projection_writer;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_app;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_scenario_author;
 GRANT USAGE ON SCHEMA wamn_run TO wamn_effect_writer;
+GRANT USAGE ON SCHEMA wamn_run TO wamn_run_projection_writer;
 
 -- Final admission must share-lock the stable catalog head, but the application
 -- role must never gain UPDATE privilege on that control-plane row. This narrow
@@ -543,7 +546,7 @@ CREATE TABLE wamn_run.node_runs (
     current_plan_hash text NOT NULL,
     local_node_id text NOT NULL,
     occurrence    int  NOT NULL DEFAULT 0,
-    seq           int  NOT NULL,
+    seq           bigint NOT NULL,
     status        text NOT NULL
         CHECK (status IN ('started', 'success', 'error')),
     output_port   text,
@@ -580,7 +583,9 @@ ALTER TABLE wamn_run.node_runs FORCE ROW LEVEL SECURITY;
 CREATE POLICY node_runs_tenant ON wamn_run.node_runs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs TO wamn_app;
+GRANT SELECT ON wamn_run.node_runs TO wamn_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.node_runs
+    TO wamn_run_projection_writer;
 
 -- ---------------------------------------------------------------------------
 -- Immutable effect-attempt ledger. `node_runs` remains the current occurrence

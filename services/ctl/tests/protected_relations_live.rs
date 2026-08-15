@@ -243,6 +243,11 @@ async fn prepare_scratch_database(client: &Client) {
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
                ELSE ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_run_projection_writer') THEN \
+                 CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               ELSE ALTER ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+                   NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_ops') THEN \
                  CREATE ROLE wamn_ops NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
@@ -253,6 +258,7 @@ async fn prepare_scratch_database(client: &Client) {
              DO $$ BEGIN \
                EXECUTE format('REVOKE CONNECT, TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); \
                EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer', current_database()); \
+               EXECUTE format('REVOKE CONNECT ON DATABASE %I FROM wamn_run_projection_writer', current_database()); \
                EXECUTE format('GRANT CONNECT ON DATABASE %I TO wamn_app', current_database()); \
                EXECUTE format('GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); \
              END $$;",

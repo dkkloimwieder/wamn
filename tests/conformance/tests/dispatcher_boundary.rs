@@ -10,6 +10,9 @@ const DISPATCHER_MAIN: &str = "services/dispatcher/src/main.rs";
 const DISPATCHER_MANIFEST: &str = "services/dispatcher/Cargo.toml";
 const DISPATCHER_DEPLOYMENT: &str = "deploy/platform/dispatcher.yaml";
 const EXECUTION_HOST_SOURCE: &str = "crates/execution/host/src/lib.rs";
+const RUN_STATE_SQL_SOURCE: &str = "crates/execution/run-state/src/sql.rs";
+const RUN_STATE_QUEUE_SQL_SOURCE: &str = "crates/execution/run-state/src/queue/sql.rs";
+const RUN_STATE_TRANSITIONS_SOURCE: &str = "crates/execution/run-state/src/transitions.rs";
 const EXECUTOR_SOURCE: &str = "services/executor/src/lib.rs";
 const EXECUTOR_MANIFEST: &str = "services/executor/Cargo.toml";
 const WAKER_SOURCE: &str = "services/waker/src/lib.rs";
@@ -173,6 +176,8 @@ fn dispatcher_reconciliation_is_tenant_scoped_and_read_only() {
         "claim_next_production",
         "grant_production_claim_sql",
         "reset_pre_effect_claim_sql",
+        "record_run_projection",
+        "reset_expired_pre_effect_projection",
         "terminalize_effect_uncertain_claim_sql",
         "terminalize_resolution_refusal_claim_sql",
         "terminalize_exhausted_production_sql",
@@ -265,6 +270,31 @@ fn executor_remains_the_direct_claim_owner() {
     assert!(!dispatcher_manifest.contains("wamn-execution-host"));
     assert!(!dispatcher.contains("ExecutionHost"));
     assert!(!dispatcher.contains("claim_next_production"));
+}
+
+#[test]
+fn guest_safe_run_state_surface_has_no_raw_projection_mutation() {
+    for path in [
+        RUN_STATE_SQL_SOURCE,
+        RUN_STATE_QUEUE_SQL_SOURCE,
+        RUN_STATE_TRANSITIONS_SOURCE,
+    ] {
+        let source = read(path);
+        for forbidden in [
+            "INSERT INTO node_runs",
+            "UPDATE node_runs",
+            "insert_node_run_success",
+            "insert_node_run_error",
+            "reserved_checkpoint_sql",
+            "complete_attempt_success_sql",
+            "complete_attempt_error_sql",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "guest-safe source {path} retained projection mutation {forbidden:?}"
+            );
+        }
+    }
 }
 
 #[test]

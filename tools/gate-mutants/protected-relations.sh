@@ -8,8 +8,8 @@ repository=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 table="$repository/architecture/protected-writes.json"
 live_test="$repository/services/ctl/tests/protected_relations_live.rs"
 static_test="$repository/tests/conformance/tests/protected_relations.rs"
-expected_table_sha=ee1c0bb9a92022ddd366068075884c25d23799710ca5db6638df32e3516c7d7b
-expected_live_sha=16ee629c9c4423357a4838045a7029a046e3f8e758fc461aeaec6186a0ffca84
+expected_table_sha=a33f31a4e1513b82f35cb5ee91a23f7a0cf5370397e55916af6b29dbb69a1963
+expected_live_sha=fcd56d66979ca8593cd3f43b0c324f0f8b433706bda4aa3bc3036d59ef6cd14d
 expected_static_sha=41f3a76aab8820462b40dd9dc744fb3ab45c16708d8636b5205ece93c5c950fd
 target_dir=${CARGO_TARGET_DIR:-/tmp/wamn-target-0h0g-12-ops}
 
@@ -109,6 +109,8 @@ case "$mode" in
             '(.rows[] | select(.relation == "provisioning.migration_confirmations") | .ops) = false' static_gate
         run_mutant missing-effect-writer-role \
             'del(.rows[] | select(.relation == "wamn_run.effect_attempt_dispatches") | .roles[] | select(.role == "wamn_effect_writer"))' live_gate
+        run_mutant missing-run-projection-writer-role \
+            'del(.rows[] | select(.relation == "wamn_run.node_runs") | .roles[] | select(.role == "wamn_run_projection_writer"))' live_gate
         run_mutant expand-confirmation-ops-acl \
             '(.rows[] | select(.relation == "provisioning.migration_confirmations") | .roles[] | select(.role == "wamn_ops") | .operations) += ["insert(confirmed_by)"]' live_gate
         run_mutant missing-cascade \
@@ -119,7 +121,7 @@ case "$mode" in
             '(.rows[] | select(.relation == "wamn_run.node_runs") | .guards[] | select(startswith("constraint:node_runs_error_kind_check;"))) = "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['\''retryable'\''::text, '\''rate-limited'\''::text, '\''terminal'\''::text, '\''invalid-input'\''::text, '\''cancelled'\''::text]))"' static_gate
         cp "$baseline" "$table"
         assert_baseline
-        echo "protected relation mutation campaign: 10/10 killed"
+        echo "protected relation mutation campaign: 11/11 killed"
         ;;
     *)
         echo "usage: $0 {check|green-all|run-all}" >&2

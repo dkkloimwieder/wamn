@@ -164,6 +164,13 @@ async fn reset(su: &Client) {
              ALTER ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
                NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
            END IF; \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_run_projection_writer') THEN \
+             CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           ELSE \
+             ALTER ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
          END $$; \
          REVOKE wamn_scenario_author FROM wamn_app; \
          DO $$ BEGIN \
@@ -172,6 +179,9 @@ async fn reset(su: &Client) {
            ); \
            EXECUTE format( \
              'GRANT CONNECT ON DATABASE %I TO wamn_app', current_database() \
+           ); \
+           EXECUTE format( \
+             'REVOKE CONNECT ON DATABASE %I FROM wamn_effect_writer, wamn_run_projection_writer', current_database() \
            ); \
          END $$;"
     ))
@@ -782,6 +792,9 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
            END IF; \
          END $role$; \
          ALTER ROLE rp_owner_no_bypass NOSUPERUSER NOBYPASSRLS; \
+         DO $temporary$ BEGIN EXECUTE format( \
+           'GRANT TEMPORARY ON DATABASE %I TO rp_owner_no_bypass', current_database()); \
+         END $temporary$; \
          CREATE SCHEMA {SCHEMA} AUTHORIZATION rp_owner_no_bypass; \
          SET ROLE rp_owner_no_bypass; \
          CREATE TABLE {SCHEMA}.node_runs ( \
@@ -827,9 +840,14 @@ async fn forced_rls_owner_refusal_leg(su: &Client) {
             "explicit forced-RLS refusal: {error:#}"
         );
     }
-    su.batch_execute("RESET ROLE; DROP TABLE pg_temp.pg_roles")
-        .await
-        .expect("restore superuser after owner refusal");
+    su.batch_execute(
+        "RESET ROLE; DROP TABLE pg_temp.pg_roles; \
+         DO $temporary$ BEGIN EXECUTE format( \
+           'REVOKE TEMPORARY ON DATABASE %I FROM rp_owner_no_bypass', current_database()); \
+         END $temporary$;",
+    )
+    .await
+    .expect("restore superuser after owner refusal");
 
     assert_eq!(
         su.query_one(&format!("SELECT count(*) FROM {SCHEMA}.node_runs"), &[])
@@ -1343,6 +1361,24 @@ async fn effect_writer_cutover_leg(su: &Client) {
     su.batch_execute("ALTER ROLE wamn_effect_writer NOLOGIN")
         .await
         .expect("restore stable writer role");
+    su.batch_execute("ALTER ROLE wamn_run_projection_writer LOGIN")
+        .await
+        .expect("make stable projection role invalid");
+    let error = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("invalid stable projection role refuses before empty cutover");
+    let postgres: tokio_postgres::Error = error.downcast().expect("projection role refusal");
+    let database = postgres
+        .as_db_error()
+        .expect("typed projection role refusal");
+    assert_eq!(database.code().code(), "42501");
+    assert_eq!(
+        database.message(),
+        "run-projection-writer-role-out-of-bounds"
+    );
+    su.batch_execute("ALTER ROLE wamn_run_projection_writer NOLOGIN")
+        .await
+        .expect("restore stable projection role");
 
     let plan = reconcile_run_plane::reconcile(su, &schema, true)
         .await
@@ -1456,7 +1492,10 @@ async fn effect_writer_cutover_leg(su: &Client) {
          GRANT UPDATE (status) ON {SCHEMA}.runs TO wamn_effect_writer; \
          ALTER TABLE {SCHEMA}.run_queue DROP COLUMN lease_owner; \
          REVOKE SELECT (lease_expires_at) ON {SCHEMA}.run_queue FROM wamn_effect_writer; \
-         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer;"
+         GRANT SELECT (lease_generation) ON {SCHEMA}.run_queue TO wamn_effect_writer; \
+         GRANT UPDATE ON {SCHEMA}.node_runs TO wamn_app; \
+         REVOKE DELETE ON {SCHEMA}.node_runs FROM wamn_run_projection_writer; \
+         GRANT SELECT ON {SCHEMA}.node_runs TO wamn_effect_writer;"
     ))
     .await
     .expect("install schema/table/column ACL drift");
@@ -1470,6 +1509,10 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(repair.actions.iter().any(|action| {
         action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
             && action.target == format!("{SCHEMA}.effect_attempts")
+    }));
+    assert!(repair.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            && action.target == format!("{SCHEMA}.node_runs")
     }));
     for table in ["runs", "run_queue"] {
         assert!(repair.actions.iter().any(|action| {
@@ -1539,8 +1582,165 @@ async fn effect_writer_cutover_leg(su: &Client) {
     assert!(!run_reads.get::<_, bool>(3));
     assert!(!run_reads.get::<_, bool>(4));
     assert!(run_reads.get::<_, bool>(5));
-    assert!(!run_reads.get::<_, bool>(6));
+    assert!(run_reads.get::<_, bool>(6));
     assert!(!run_reads.get::<_, bool>(7));
+    let projection_acl = su
+        .query_one(
+            &format!(
+                "SELECT \
+                    has_table_privilege('wamn_app','{SCHEMA}.node_runs','SELECT'), \
+                    has_any_column_privilege('wamn_app','{SCHEMA}.node_runs','INSERT,UPDATE,REFERENCES') \
+                      OR has_table_privilege('wamn_app','{SCHEMA}.node_runs','DELETE'), \
+                    has_table_privilege('wamn_run_projection_writer','{SCHEMA}.node_runs','SELECT,INSERT,UPDATE,DELETE'), \
+                    has_table_privilege('wamn_run_projection_writer','{SCHEMA}.node_runs','TRUNCATE,REFERENCES,TRIGGER'), \
+                    has_table_privilege('wamn_effect_writer','{SCHEMA}.node_runs','SELECT,INSERT,UPDATE,DELETE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read exact run-projection ACL boundary");
+    assert!(projection_acl.get::<_, bool>(0));
+    assert!(!projection_acl.get::<_, bool>(1));
+    assert!(projection_acl.get::<_, bool>(2));
+    assert!(!projection_acl.get::<_, bool>(3));
+    assert!(!projection_acl.get::<_, bool>(4));
+
+    su.batch_execute(&format!(
+        "DO $roles$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_direct') THEN \
+             CREATE ROLE wamn_projection_rogue_direct NOLOGIN; \
+           END IF; \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_column') THEN \
+             CREATE ROLE wamn_projection_rogue_column NOLOGIN; \
+           END IF; \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_projection_rogue_member') THEN \
+             CREATE ROLE wamn_projection_rogue_member NOLOGIN INHERIT; \
+           END IF; \
+         END $roles$; \
+         GRANT INSERT ON {SCHEMA}.node_runs TO wamn_projection_rogue_direct; \
+         GRANT UPDATE (status) ON {SCHEMA}.node_runs TO wamn_projection_rogue_column; \
+         GRANT wamn_projection_rogue_column TO wamn_projection_rogue_member;"
+    ))
+    .await
+    .expect("install rogue direct and inherited-column authority");
+    let rogue_repair = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("revoke every directly granted rogue projection path");
+    assert!(rogue_repair.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            && action.target == format!("{SCHEMA}.node_runs")
+    }));
+    let rogue_direct_closed: bool = su
+        .query_one(
+            &format!(
+                "SELECT NOT has_table_privilege('wamn_projection_rogue_direct', \
+                           '{SCHEMA}.node_runs','INSERT') \
+                    AND NOT has_column_privilege('wamn_projection_rogue_column', \
+                           '{SCHEMA}.node_runs','status','UPDATE') \
+                    AND NOT has_column_privilege('wamn_projection_rogue_member', \
+                           '{SCHEMA}.node_runs','status','UPDATE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read closed rogue direct projection authority")
+        .get(0);
+    assert!(rogue_direct_closed);
+
+    let generation = "wamn_effect_writer_0000000000000000000000000000000000000000_a";
+    su.batch_execute(&format!(
+        "DO $generation$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{generation}') THEN \
+             CREATE ROLE {generation} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               INHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $generation$; \
+         GRANT wamn_effect_writer, wamn_run_projection_writer TO {generation}; \
+         GRANT {generation} TO wamn_projection_rogue_member;"
+    ))
+    .await
+    .expect("install unexpected transitive generation membership");
+    let inherited = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("unexpected stable-role membership must fail closed");
+    assert!(
+        format!("{inherited:#}").contains("effect-writer-role-out-of-bounds"),
+        "wrong inherited-authority refusal: {inherited:#}"
+    );
+    assert!(
+        su.query_one(
+            &format!(
+                "SELECT has_table_privilege('wamn_projection_rogue_member', \
+                                             '{SCHEMA}.node_runs','UPDATE')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read retained refused membership")
+        .get::<_, bool>(0),
+        "refusal is atomic and does not silently rewrite role membership"
+    );
+    su.batch_execute(&format!(
+        "REVOKE {generation} FROM wamn_projection_rogue_member; \
+         REVOKE wamn_effect_writer, wamn_run_projection_writer FROM {generation}; \
+         REVOKE wamn_projection_rogue_column FROM wamn_projection_rogue_member;"
+    ))
+    .await
+    .expect("remove disposable rogue memberships");
+
+    let impostor = "wamn_effect_writer_1111111111111111111111111111111111111111_b";
+    su.batch_execute(&format!(
+        "DO $impostor$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='{impostor}') THEN \
+             CREATE ROLE {impostor} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               INHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $impostor$; \
+         ALTER ROLE {impostor} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+           INHERIT NOREPLICATION NOBYPASSRLS; \
+         GRANT wamn_run_projection_writer TO {impostor}; \
+         DO $connect$ BEGIN EXECUTE format( \
+           'GRANT CONNECT ON DATABASE %I TO {impostor}', current_database()); \
+         END $connect$;"
+    ))
+    .await
+    .expect("install projection-only connected generation impostor");
+    let impostor_refusal = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect_err("projection-only connected generation impostor must fail closed");
+    assert!(
+        format!("{impostor_refusal:#}").contains("effect-writer-role-out-of-bounds"),
+        "wrong connected-generation refusal: {impostor_refusal:#}"
+    );
+    let impostor_retained: bool = su
+        .query_one(
+            &format!(
+                "SELECT has_database_privilege('{impostor}',current_database(),'CONNECT') \
+                    AND pg_has_role('{impostor}','wamn_run_projection_writer','MEMBER') \
+                    AND NOT pg_has_role('{impostor}','wamn_effect_writer','MEMBER')"
+            ),
+            &[],
+        )
+        .await
+        .expect("read atomically retained connected impostor")
+        .get(0);
+    assert!(impostor_retained);
+    su.batch_execute(&format!(
+        "DO $disconnect$ BEGIN EXECUTE format( \
+           'REVOKE CONNECT ON DATABASE %I FROM {impostor}', current_database()); \
+         END $disconnect$; \
+         REVOKE wamn_run_projection_writer FROM {impostor}; \
+         ALTER ROLE {impostor} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';"
+    ))
+    .await
+    .expect("remove disposable connected generation impostor authority");
+    let clean = reconcile_run_plane::reconcile(su, &schema, true)
+        .await
+        .expect("projection ACL converges after authority removal");
+    assert!(!clean.actions.iter().any(|action| {
+        action.kind == RunPlaneActionKind::RepairEffectWriterPrivilege
+            && action.target == format!("{SCHEMA}.node_runs")
+    }));
 }
 
 async fn effect_writer_populated_refusal_leg(su: &Client) {
@@ -2834,8 +3034,8 @@ async fn current_noop_leg(su: &Client) {
     );
     assert_eq!(
         dry.at_target.len(),
-        15,
-        "all fifteen run-plane tables at target"
+        14,
+        "all fourteen run-plane tables at target"
     );
 
     let apply = reconcile_run_plane::reconcile(su, &schema, true)

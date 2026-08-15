@@ -5,10 +5,9 @@
 //! parameters, identifiers are pinned, table names are UNQUALIFIED (the host
 //! injects the schema via `search_path` — the S6 schema-as-fixture pattern),
 //! and the tenant comes from the session claim
-//! (`current_setting('app.tenant', true)`). **Whoever holds the connection
-//! executes**: the wasm guests (`flowrunner`, `poc-webhook-f1`) bind these
-//! through `wamn:postgres`, host drivers through `tokio_postgres` — one SQL
-//! text, never two authors of the schema's statements. Status literals
+//! (`current_setting('app.tenant', true)`). These are run-level statements;
+//! mutable `node_runs` projection writes live only in the private native
+//! adapter. Status literals
 //! interpolate from [`crate::RunStatus`] so the builders cannot drift
 //! from the model (the same discipline this crate's `queue` module uses).
 //!
@@ -17,7 +16,7 @@
 
 use wamn_pg_core::Sql;
 
-use crate::status::{NodeRunStatus, RunStatus};
+use crate::status::RunStatus;
 
 /// Build the execution-only input projection for a run-row alias.
 ///
@@ -39,27 +38,9 @@ pub(crate) fn execution_input_sql(run_alias: &str) -> String {
     )
 }
 
-// SR11: the THREE builders `queue` COMPOSES are also exposed as [`Sql`]
-// (text + param arity) so the consumer renumbers its lease-renew tail against the
-// arity instead of hardcoding `$7`/`$8` on an assumption about this crate. The
-// arity is declared here, beside the text, and asserted against the text by
-// `composed_builder_arities_match_their_placeholders` so the two cannot drift.
-// The plain `*_sql` String builders stay for the direct callers (the guests, the
-// benches). Other leaf builders are never composed and keep returning `String`.
-
 /// [`update_run_completed_sql`] carried with its param arity (`$1..$2`).
 pub fn update_run_completed() -> Sql {
     Sql::new(update_run_completed_sql(), 2)
-}
-
-/// [`insert_node_run_success_sql`] carried with its param arity (`$1..$9`).
-pub fn insert_node_run_success() -> Sql {
-    Sql::new(insert_node_run_success_sql(), 9)
-}
-
-/// [`insert_node_run_error_sql`] carried with its param arity (`$1..$10`).
-pub fn insert_node_run_error() -> Sql {
-    Sql::new(insert_node_run_error_sql(), 10)
 }
 
 /// Idempotent run open (caller-minted run id): a fresh run records its trigger
@@ -232,57 +213,6 @@ pub fn materialize_run_flow_resolutions_sql() -> String {
         .to_string()
 }
 
-/// Record a completed node execution in the root frame for run history;
-/// idempotent by
-/// `(run_id, frame_id, local_node_id, occurrence)`. `occurrence` is the engine-computed visit
-/// number ([`Dispatch::occurrence`](wamn_runner::Dispatch)) — a merge/loop
-/// node's Nth visit is its own row, so ON CONFLICT dedupes only a duplicate of
-/// the same visit, never a distinct one (wamn-03m / cjv.10 / R24). `$1`
-/// run_id, `$2` local_node_id, `$3` occurrence, `$4` seq, `$5` output_port,
-/// `$6` output_json, `$7` input_json, plus the 9.6 capture columns filled by
-/// [`crate::capture::derive`]: `$8` output_size and `$9` payload_hash. Capture
-/// mode is a run admission fact and is not duplicated on the node projection.
-pub fn insert_node_run_success_sql() -> String {
-    format!(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
-            local_node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            output_size, payload_hash) \
-         VALUES (current_setting('app.tenant', true), $1, 0, NULL, NULL, \
-                 (SELECT execution_bundle_hash FROM runs \
-                   WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1), \
-                 $2, $3, $4, '{success}', $5, $6, $7, \
-                 $8, $9) \
-         ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING",
-        success = NodeRunStatus::Success.as_sql(),
-    )
-}
-
-/// Record an error-ROUTED node as an emission on the reserved `error` port
-/// carrying the `{"error": {...}}` payload the engine routes. The taxonomy
-/// lands in `error_kind`/`error_detail` for the run history.
-/// `$1` run_id, `$2` local_node_id, `$3` occurrence (the engine-computed visit),
-/// `$4` seq, `$5` output_json (the error payload), `$6` input_json,
-/// `$7` error_kind, `$8` error_detail, plus the 9.6 capture columns filled by
-/// [`crate::capture::derive`] over the error payload: `$9` output_size and
-/// `$10` payload_hash.
-pub fn insert_node_run_error_sql() -> String {
-    format!(
-        "INSERT INTO node_runs \
-           (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
-            local_node_id, occurrence, seq, status, output_port, output_json, input_json, \
-            error_kind, error_detail, \
-            output_size, payload_hash) \
-         VALUES (current_setting('app.tenant', true), $1, 0, NULL, NULL, \
-                 (SELECT execution_bundle_hash FROM runs \
-                   WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1), \
-                 $2, $3, $4, '{error}', 'error', $5, $6, $7, $8, \
-                 $9, $10) \
-         ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING",
-        error = NodeRunStatus::Error.as_sql(),
-    )
-}
-
 /// Prune terminal run history older than a retention window (9.6, wamn-srb): the
 /// `prune-run-history` verb's statement. DELETE the current tenant's `runs` rows
 /// in a TERMINAL state ([`RunStatus::is_terminal`] — completed / failed /
@@ -336,43 +266,20 @@ mod tests {
         max
     }
 
-    /// SR11: each composed builder's declared arity equals the highest placeholder
-    /// in its own text, so a param added to the SQL without bumping the arity is
-    /// caught HERE — before `queue` mis-numbers its tail against a stale
-    /// arity.
+    /// The remaining composed run-level builder pins its declared arity beside
+    /// the SQL text.
     #[test]
     fn composed_builder_arities_match_their_placeholders() {
-        for stmt in [
-            update_run_completed(),
-            insert_node_run_success(),
-            insert_node_run_error(),
-        ] {
-            assert_eq!(
-                stmt.arity(),
-                max_placeholder(stmt.text()),
-                "declared arity must match the text's highest $n: {}",
-                stmt.text()
-            );
-        }
-        // The exact contract `queue` composes against, pinned. The node-run
-        // arities grow by the two durable 9.6 output facts: success 7 -> 9,
-        // error 8 -> 10 — the composed renew tail renumbers against these
-        // automatically (`queue::checkpoint_then_renew`).
+        let stmt = update_run_completed();
+        assert_eq!(stmt.arity(), max_placeholder(stmt.text()));
         assert_eq!(update_run_completed().arity(), 2);
-        assert_eq!(insert_node_run_success().arity(), 9);
-        assert_eq!(insert_node_run_error().arity(), 10);
     }
 
     /// The builders stay in the house shape: unqualified tables, claim-scoped
     /// tenant, `$n` values only (no interpolated data), model-tied literals.
     #[test]
     fn builders_are_claim_scoped_and_parameterized() {
-        for sql in [
-            insert_run_sql(),
-            insert_run_returning_id_sql(),
-            insert_node_run_success_sql(),
-            insert_node_run_error_sql(),
-        ] {
+        for sql in [insert_run_sql(), insert_run_returning_id_sql()] {
             assert!(sql.contains("current_setting('app.tenant', true)"), "{sql}");
             assert!(
                 !sql.contains("wamn_run."),
@@ -381,32 +288,6 @@ mod tests {
         }
         assert!(insert_run_sql().contains("ON CONFLICT (tenant_id, run_id) DO NOTHING"));
         assert!(insert_run_returning_id_sql().contains("RETURNING run_id"));
-        for sql in [insert_node_run_success_sql(), insert_node_run_error_sql()] {
-            assert!(
-                sql.contains(
-                    "ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING"
-                ),
-                "{sql}"
-            );
-            assert!(
-                sql.contains(
-                    "(SELECT execution_bundle_hash FROM runs \
-                   WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1)"
-                ),
-                "frameless root frame must use the pinned run plan hash: {sql}"
-            );
-            // occurrence is the $3 PARAM (the engine-computed visit), never a
-            // literal 0 — a literal collapses a merge/loop node's N visits onto
-            // one row and ON CONFLICT silently drops the rest (cjv.10 / R24).
-            assert!(
-                sql.contains("$2, $3, $4"),
-                "occurrence must bind as $3: {sql}"
-            );
-            assert!(
-                !sql.contains("local_node_id, 0,"),
-                "no literal occurrence: {sql}"
-            );
-        }
     }
 
     #[test]
@@ -534,8 +415,6 @@ mod tests {
             "completion is deliberately unconditional (fqg.2 reverse-race)"
         );
         assert!(update_run_failed_sql().contains("SET status = 'failed'"));
-        assert!(insert_node_run_success_sql().contains("'success'"));
-        assert!(insert_node_run_error_sql().contains("'error', 'error'"));
     }
 
     /// Every column the builders write exists in the canonical DDL — the
@@ -587,7 +466,7 @@ mod tests {
             "output_json",
             "error_kind",
             "error_detail",
-            // 9.6 capture facts the builders now write (wamn-srb).
+            // 9.6 capture facts persisted by the private native adapter.
             "output_size",
             "payload_hash",
         ] {

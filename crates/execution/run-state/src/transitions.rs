@@ -9,7 +9,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{NodeRunStatus, RunStatus};
+use crate::RunStatus;
 
 pub(crate) const FENCED_PREFIX: &str = "\
 WITH input AS ( \
@@ -211,78 +211,6 @@ impl TerminalizeResult {
     }
 }
 
-/// Typed result of [`reserved_checkpoint_sql`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReservedCheckpointResult {
-    Recorded,
-    RunTerminal(RunStatus),
-    FenceLost,
-    CrossRunAuthority,
-    NotFound,
-}
-
-impl ReservedCheckpointResult {
-    pub fn from_parts(code: &str, run_status: &str) -> Option<ReservedCheckpointResult> {
-        match code {
-            "recorded" => Some(ReservedCheckpointResult::Recorded),
-            "run-terminal" => Some(ReservedCheckpointResult::RunTerminal(RunStatus::from_sql(
-                run_status,
-            )?)),
-            "fence-lost" => Some(ReservedCheckpointResult::FenceLost),
-            "cross-run-authority" => Some(ReservedCheckpointResult::CrossRunAuthority),
-            "not-found" => Some(ReservedCheckpointResult::NotFound),
-            _ => None,
-        }
-    }
-
-    /// `FenceLost` is absolute: callers must stop without another store access.
-    pub fn permits_access(self) -> bool {
-        self != ReservedCheckpointResult::FenceLost
-    }
-}
-
-/// Record an engine-reserved checkpoint and renew its queue lease under the
-/// exact claim generation.
-///
-/// Params: target run id, authority run id, lease owner, lease generation,
-/// local node id, occurrence, sequence, output port, output JSON text, input JSON
-/// text, payload size, payload hash, and lease TTL milliseconds.
-/// A replayed checkpoint still renews, but a stale
-/// owner or generation cannot insert the checkpoint.
-pub fn reserved_checkpoint_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         recorded AS ( \
-             INSERT INTO node_runs \
-                    (tenant_id, run_id, frame_id, parent_frame_id, call_site_id, current_plan_hash, \
-                     local_node_id, occurrence, seq, status, \
-                     output_port, output_json, input_json, output_size, payload_hash) \
-             SELECT a.tenant_id, a.run_id, 0, NULL, NULL, a.execution_bundle_hash, \
-                    $5, $6, $7, '{success}', \
-                    $8, $9::text::jsonb, $10::text::jsonb, $11, $12 \
-               FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-             ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence) DO NOTHING \
-             RETURNING run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = \
-                    now() + ($13::bigint * interval '1 millisecond') \
-              FROM authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND q.tenant_id = a.tenant_id AND q.run_id = a.run_id \
-                AND (SELECT count(*) FROM recorded) >= 0 \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN r.run_id IS NOT NULL THEN 'recorded' ELSE a.result_code END \
-                    AS result_code, \
-                a.status AS run_status \
-           FROM authority AS a LEFT JOIN renewed AS r ON true",
-        success = NodeRunStatus::Success.as_sql(),
-    )
-}
-
 /// Take the first durable terminal result and remove its queue row atomically.
 ///
 /// Params: target run id, authority run id, lease owner, lease generation,
@@ -326,201 +254,6 @@ pub fn terminalize_sql() -> String {
     )
 }
 
-/// Typed result shared by fenced checkpoint transitions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CheckpointResult {
-    Applied,
-    AlreadyCompleted,
-    AttemptNotFound,
-    AttemptNotStarted,
-    RunTerminal(RunStatus),
-    FenceLost,
-    CrossRunAuthority,
-    NotFound,
-}
-
-impl CheckpointResult {
-    pub fn from_parts(code: &str, run_status: &str) -> Option<CheckpointResult> {
-        match code {
-            "completed" => Some(CheckpointResult::Applied),
-            "already-completed" => Some(CheckpointResult::AlreadyCompleted),
-            "attempt-not-found" => Some(CheckpointResult::AttemptNotFound),
-            "attempt-not-started" => Some(CheckpointResult::AttemptNotStarted),
-            "run-terminal" => Some(CheckpointResult::RunTerminal(RunStatus::from_sql(
-                run_status,
-            )?)),
-            "fence-lost" => Some(CheckpointResult::FenceLost),
-            "cross-run-authority" => Some(CheckpointResult::CrossRunAuthority),
-            "not-found" => Some(CheckpointResult::NotFound),
-            _ => None,
-        }
-    }
-
-    /// `FenceLost` is absolute: callers must stop without another store access.
-    pub fn permits_access(self) -> bool {
-        self != CheckpointResult::FenceLost
-    }
-}
-
-/// Complete one persisted effect attempt and advance the run checkpoint.
-///
-/// Params: target run id, authority run id, lease owner, lease generation,
-/// local node id, occurrence, output port, output JSON text, state JSON text.
-pub fn complete_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         locked_attempt AS MATERIALIZED ( \
-             SELECT n.* FROM node_runs AS n, authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-              FOR UPDATE OF n \
-         ), \
-         classified AS ( \
-             SELECT CASE \
-                      WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
-                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
-                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
-               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
-         ), \
-         completed_attempt AS ( \
-             UPDATE node_runs AS n \
-                SET status = 'success', output_port = $7, \
-                    output_json = $8::text::jsonb, ended_at = now() \
-               FROM classified AS c \
-              WHERE c.result_code = 'ready' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.tenant_id, n.run_id \
-         ), \
-         checkpointed AS ( \
-             UPDATE runs AS r SET state_json = $9::text::jsonb, updated_at = now() \
-               FROM completed_attempt AS n \
-              WHERE r.tenant_id = n.tenant_id AND r.run_id = n.run_id \
-             RETURNING r.run_id, r.status \
-         ) \
-         SELECT CASE WHEN p.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
-                    AS result_code, \
-                COALESCE(p.status, c.status) AS run_status \
-           FROM classified AS c LEFT JOIN checkpointed AS p ON true"
-    )
-}
-
-/// Complete a successful attempt, checkpoint replacement context, and renew.
-///
-/// Params: fence `$1..$4`, local node id, occurrence, output port, captured output,
-/// captured input, size, hash, replacement context document, and lease TTL
-/// milliseconds.
-pub fn complete_attempt_success_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         locked_attempt AS MATERIALIZED ( \
-             SELECT n.* FROM node_runs AS n, authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-              FOR UPDATE OF n \
-         ), \
-         classified AS ( \
-             SELECT CASE \
-                      WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
-                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
-                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
-               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
-         ), \
-         completed_attempt AS ( \
-             UPDATE node_runs AS n \
-                SET status = 'success', output_port = $7, output_json = $8::text::jsonb, \
-                    input_json = $9::text::jsonb, output_size = $10, \
-                    payload_hash = $11, ended_at = now() \
-               FROM classified AS c \
-              WHERE c.result_code = 'ready' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.tenant_id, n.run_id \
-         ), \
-         checkpointed AS ( \
-             UPDATE runs AS r \
-                SET state_json = jsonb_set(COALESCE(r.state_json, '{{}}'::jsonb), \
-                                           '{{context}}', $12::text::jsonb, true), \
-                    updated_at = now() \
-               FROM completed_attempt AS n \
-              WHERE r.tenant_id = n.tenant_id AND r.run_id = n.run_id \
-                AND jsonb_typeof($12::text::jsonb) = 'object' \
-             RETURNING r.run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($13::bigint * interval '1 millisecond') \
-               FROM checkpointed AS p, classified AS c \
-              WHERE q.tenant_id = c.tenant_id AND q.run_id = p.run_id \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN q.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
-                    AS result_code, c.status AS run_status \
-           FROM classified AS c \
-           LEFT JOIN renewed AS q ON true"
-    )
-}
-
-/// Complete an error-routed attempt and renew the exact queue lease.
-///
-/// Params: fence `$1..$4`, local node id, occurrence, captured error output,
-/// captured input, error kind/detail, size, hash, and lease TTL
-/// milliseconds.
-pub fn complete_attempt_error_sql() -> String {
-    format!(
-        "{FENCED_PREFIX}, \
-         locked_attempt AS MATERIALIZED ( \
-             SELECT n.* FROM node_runs AS n, authority AS a \
-              WHERE a.result_code = 'ready' \
-                AND n.tenant_id = a.tenant_id AND n.run_id = a.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-              FOR UPDATE OF n \
-         ), \
-         classified AS ( \
-             SELECT CASE \
-                      WHEN a.result_code <> 'ready' THEN a.result_code \
-                      WHEN n.run_id IS NULL THEN 'attempt-not-found' \
-                      WHEN n.status IN ('success', 'error') THEN 'already-completed' \
-                      WHEN n.status <> 'started' THEN 'attempt-not-started' \
-                      ELSE 'ready' \
-                    END AS result_code, a.tenant_id, a.run_id, a.status \
-               FROM authority AS a LEFT JOIN locked_attempt AS n ON true \
-         ), \
-         completed_attempt AS ( \
-             UPDATE node_runs AS n \
-                SET status = 'error', output_port = 'error', \
-                    output_json = $7::text::jsonb, input_json = $8::text::jsonb, \
-                    error_kind = $9, error_detail = $10::text::jsonb, \
-                    output_size = $11, payload_hash = $12, \
-                    ended_at = now() \
-               FROM classified AS c \
-              WHERE c.result_code = 'ready' \
-                AND n.tenant_id = c.tenant_id AND n.run_id = c.run_id \
-                AND n.frame_id = 0 AND n.local_node_id = $5 AND n.occurrence = $6 \
-             RETURNING n.tenant_id, n.run_id \
-         ), \
-         renewed AS ( \
-             UPDATE run_queue AS q \
-                SET lease_expires_at = now() + ($13::bigint * interval '1 millisecond') \
-               FROM completed_attempt AS n, classified AS c \
-              WHERE q.tenant_id = c.tenant_id AND q.run_id = n.run_id \
-             RETURNING q.run_id \
-         ) \
-         SELECT CASE WHEN q.run_id IS NOT NULL THEN 'completed' ELSE c.result_code END \
-                    AS result_code, c.status AS run_status \
-           FROM classified AS c \
-           LEFT JOIN renewed AS q ON true"
-    )
-}
-
 /// Typed mapping for the admissions ledger's named duplicate identity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvocationAdmissionRefusal {
@@ -544,8 +277,6 @@ mod tests {
     fn fence_lost_forbids_subsequent_access() {
         assert!(!CallerReleaseResult::FenceLost.permits_access());
         assert!(!TerminalizeResult::FenceLost.permits_access());
-        assert!(!ReservedCheckpointResult::FenceLost.permits_access());
-        assert!(!CheckpointResult::FenceLost.permits_access());
     }
 
     #[test]
@@ -619,12 +350,7 @@ mod tests {
 
     #[test]
     fn transitions_are_queue_joined_and_generation_fenced() {
-        for sql in [
-            release_caller_sql(),
-            reserved_checkpoint_sql(),
-            terminalize_sql(),
-            complete_sql(),
-        ] {
+        for sql in [release_caller_sql(), terminalize_sql()] {
             assert!(sql.contains("locked_queue AS MATERIALIZED"), "{sql}");
             assert!(
                 sql.contains("q.lease_owner IS DISTINCT FROM i.lease_owner"),
@@ -640,26 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn reserved_checkpoint_inserts_only_from_ready_generation_authority() {
-        let sql = reserved_checkpoint_sql();
-        assert!(sql.contains("INSERT INTO node_runs"), "{sql}");
-        assert!(sql.contains("r.execution_bundle_hash"), "{sql}");
-        assert!(sql.contains("a.execution_bundle_hash"), "{sql}");
-        assert!(sql.contains("FROM authority AS a"), "{sql}");
-        assert!(sql.contains("WHERE a.result_code = 'ready'"), "{sql}");
-        assert!(
-            sql.contains("q.lease_generation IS DISTINCT FROM i.lease_generation"),
-            "{sql}"
-        );
-        assert!(
-            sql.find("authority AS").expect("authority CTE")
-                < sql.find("recorded AS").expect("record CTE"),
-            "{sql}"
-        );
-    }
-
-    #[test]
-    fn terminal_and_checkpoint_transitions_are_atomic_statements() {
+    fn terminal_transition_is_an_atomic_statement() {
         let terminal = terminalize_sql();
         assert!(terminal.contains("trigger_source IN ('http','internal','studio')"));
         assert!(!terminal.contains("attachment_id IS NOT NULL"));
@@ -668,54 +375,6 @@ mod tests {
         assert!(!terminal.contains("run_dead_letters"));
         assert!(!terminal.contains("partition_key"));
         assert!(!terminal.contains("partition_policy"));
-
-        let complete = complete_sql();
-        assert!(complete.contains("completed_attempt AS"));
-        assert!(complete.contains("checkpointed AS"));
-    }
-
-    #[test]
-    fn attempt_completion_updates_existing_intent_atomically() {
-        let success = complete_attempt_success_sql();
-        assert!(success.contains("UPDATE node_runs AS n"));
-        assert!(success.contains("SET status = 'success'"));
-        assert!(success.contains("checkpointed AS"));
-        assert!(success.contains("renewed AS"));
-        assert!(!success.contains("INSERT INTO node_runs"));
-
-        let error = complete_attempt_error_sql();
-        assert!(error.contains("SET status = 'error'"));
-        assert!(error.contains("output_port = 'error'"));
-        assert!(error.contains("renewed AS"));
-        assert!(!error.contains("INSERT INTO node_runs"));
-
-        for sql in [success, error] {
-            assert!(!sql.contains("cancel_requested"));
-            assert!(!sql.contains("caller_outcome_kind ="));
-            assert!(!sql.contains("pg_notify"));
-        }
-    }
-
-    #[test]
-    fn node_writes_carry_only_authoritative_capture_facts() {
-        let reserved = reserved_checkpoint_sql();
-        assert!(reserved.contains("$13::bigint * interval '1 millisecond'"));
-        assert!(!reserved.contains("$14"));
-
-        let success = complete_attempt_success_sql();
-        assert!(success.contains("'{context}', $12::text::jsonb"));
-        assert!(success.contains("$13::bigint * interval '1 millisecond'"));
-        assert!(!success.contains("$14"));
-
-        let error = complete_attempt_error_sql();
-        assert!(error.contains("$13::bigint * interval '1 millisecond'"));
-        assert!(!error.contains("$14"));
-
-        for sql in [reserved, success, error] {
-            assert!(!sql.contains("preview_head"));
-            assert!(!sql.contains("capture_mode"));
-            assert!(!sql.contains("redacted"));
-        }
     }
 
     #[test]

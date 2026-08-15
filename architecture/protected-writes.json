@@ -3107,7 +3107,7 @@
       "scope": "production-project-database",
       "relation": "wamn_run.node_runs",
       "ops": false,
-      "installer": "run-state",
+      "installer": "schema-control",
       "owner": "run-state",
       "mechanisms": [
         "direct-dml",
@@ -3125,7 +3125,7 @@
           ]
         },
         {
-          "role": "wamn_app",
+          "role": "wamn_run_projection_writer",
           "basis": "grant",
           "operations": [
             "delete",
@@ -3134,7 +3134,7 @@
           ]
         }
       ],
-      "author-reachable": "author SQL, RLS-bounded",
+      "author-reachable": "no",
       "guards": [
         "constraint:node_runs_error_kind_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (error_kind = ANY (ARRAY['retryable'::text, 'rate-limited'::text, 'terminal'::text, 'invalid-input'::text]))",
         "constraint:node_runs_frame_check;kind=check;deferrable=false;deferred=false;validated=true;definition=CHECK (frame_id >= 0)",

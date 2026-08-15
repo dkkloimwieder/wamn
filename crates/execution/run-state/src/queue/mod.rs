@@ -73,11 +73,11 @@ pub use janitor::{JanitorVerdict, janitor_verdict, janitor_verdict_with_attempt,
 pub use lease::{lease_deadline, lease_live, should_renew};
 pub use model::{Millis, QueueEntry};
 pub use sql::{
-    active_flows_sql, complete_dequeue_sql, dequeue_sql, enqueue_evt_sql, enqueue_sql,
-    grant_production_claim_sql, mark_running_sql, park_sql, parked_due_sql,
-    record_error_and_renew_sql, record_success_and_renew_sql, renew_lease_sql,
-    reset_pre_effect_claim_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
-    select_production_claim_sql, serialize_effect_intent_sql,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
-    terminalize_resolution_refusal_claim_sql, write_ahead_run_sql, write_ahead_triggered_run_sql,
+    active_flows_sql, clear_pre_effect_state_sql, complete_dequeue_sql, dequeue_sql,
+    enqueue_evt_sql, enqueue_sql, grant_production_claim_sql, mark_running_sql, park_sql,
+    parked_due_sql, renew_lease_sql, select_claim_effect_attempt_sql,
+    select_exhausted_production_sql, select_pre_effect_projection_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql, terminalize_resolution_refusal_claim_sql,
+    write_ahead_run_sql, write_ahead_triggered_run_sql,
 };

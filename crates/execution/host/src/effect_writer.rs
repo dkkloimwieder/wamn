@@ -81,6 +81,8 @@ mod tests {
             assert!(!construction.contains(operation));
             assert!(!host.contains(operation));
         }
+        assert!(!host.contains(".record_run_projection("));
+        assert!(host.contains(".reset_expired_pre_effect_projection("));
     }
 
     #[test]

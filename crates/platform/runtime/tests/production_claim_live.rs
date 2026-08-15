@@ -10,7 +10,7 @@ use url::Url;
 use wamn_run_state::{
     BeginEffectAttempt, CredentialGeneration, EffectAttempt, EffectWriterClient,
     EffectWriterCredentialScope, EffectWriterCredentialValidity, EffectWriterErrorKind,
-    EffectWriterScope, FailKind, RunStatus, effect_writer_credential,
+    EffectWriterScope, FailKind, ResetProjectionFence, RunStatus, effect_writer_credential,
     effect_writer_generation_role, queue::select_production_claim_sql,
 };
 use wamn_runtime::plugins::wamn_postgres::{
@@ -264,6 +264,10 @@ async fn install_effect_writer(
                  CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB \
                    NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_run_projection_writer') THEN \
+                 CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname={role_literal}) THEN \
                  CREATE ROLE {role_identifier} LOGIN PASSWORD {password_literal} \
                    NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
@@ -273,13 +277,17 @@ async fn install_effect_writer(
                END IF; \
              END $roles$; \
              GRANT wamn_effect_writer TO {role_identifier}; \
+             GRANT wamn_run_projection_writer TO {role_identifier}; \
              GRANT CONNECT ON DATABASE {} TO {role_identifier}; \
              GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_effect_writer; \
              GRANT SELECT (tenant_id,run_id,status) \
                ON {SCHEMA}.runs TO wamn_effect_writer; \
-             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at) \
+             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
                ON {SCHEMA}.run_queue TO wamn_effect_writer; \
              GRANT SELECT,INSERT ON {SCHEMA}.effect_attempts TO wamn_effect_writer; \
+             GRANT USAGE ON SCHEMA {SCHEMA} TO wamn_run_projection_writer; \
+             GRANT SELECT,INSERT,UPDATE,DELETE ON {SCHEMA}.node_runs \
+               TO wamn_run_projection_writer; \
              ALTER TABLE {SCHEMA}.runs ENABLE ROW LEVEL SECURITY; \
              ALTER TABLE {SCHEMA}.runs FORCE ROW LEVEL SECURITY; \
              CREATE POLICY runs_tenant ON {SCHEMA}.runs \
@@ -288,6 +296,11 @@ async fn install_effect_writer(
              ALTER TABLE {SCHEMA}.run_queue FORCE ROW LEVEL SECURITY; \
              CREATE POLICY run_queue_tenant ON {SCHEMA}.run_queue \
                USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
+             ALTER TABLE {SCHEMA}.node_runs ENABLE ROW LEVEL SECURITY; \
+             ALTER TABLE {SCHEMA}.node_runs FORCE ROW LEVEL SECURITY; \
+             CREATE POLICY node_runs_tenant ON {SCHEMA}.node_runs \
+               USING (tenant_id=NULLIF(current_setting('app.tenant',true),'')) \
+               WITH CHECK (tenant_id=NULLIF(current_setting('app.tenant',true),'')); \
              ALTER TABLE {SCHEMA}.effect_attempts ENABLE ROW LEVEL SECURITY; \
              ALTER TABLE {SCHEMA}.effect_attempts FORCE ROW LEVEL SECURITY; \
              CREATE POLICY effect_attempts_tenant ON {SCHEMA}.effect_attempts \
@@ -731,6 +744,58 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?
         .get::<_, String>(0),
     )?;
+    let reset_required = plugin.claim_next_production(COMPONENT, 30_000).await?;
+    let reset_fence = match &reset_required {
+        ProductionClaimResult::ResetRequired {
+            run_id,
+            prior_lease_owner,
+            prior_lease_expires_at,
+            prior_lease_generation,
+        } => ResetProjectionFence {
+            run_id,
+            prior_lease_owner,
+            prior_lease_expires_at,
+            prior_lease_generation: *prior_lease_generation,
+        },
+        other => panic!("expected private projection reset handoff, got {other:?}"),
+    };
+    assert!(
+        admin
+            .query_one(
+                &format!("SELECT state_json IS NOT NULL FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id='pre-effect'"),
+                &[&TENANT],
+            )
+            .await?
+            .get::<_, bool>(0),
+        "the app handoff committed without clearing checkpoint state"
+    );
+    let wrong_generation = ResetProjectionFence {
+        prior_lease_generation: reset_fence.prior_lease_generation + 1,
+        ..reset_fence
+    };
+    let mismatch = writer
+        .reset_expired_pre_effect_projection(wrong_generation)
+        .await
+        .expect_err("a different lease generation reset projection state");
+    assert_eq!(mismatch.kind(), EffectWriterErrorKind::ResetFenceLost);
+    assert_eq!(
+        admin
+            .query_one(
+                &format!("SELECT count(*) FROM {SCHEMA}.node_runs WHERE tenant_id=$1 AND run_id='pre-effect'"),
+                &[&TENANT],
+            )
+            .await?
+            .get::<_, i64>(0),
+        1,
+        "fence mismatch mutated the projection"
+    );
+    assert_eq!(
+        writer
+            .reset_expired_pre_effect_projection(reset_fence)
+            .await
+            .map_err(anyhow::Error::new)?,
+        1
+    );
     let pre_effect = plugin.claim_next_production(COMPONENT, 30_000).await?;
     let (run_id, payload, lease_generation) = match pre_effect {
         ProductionClaimResult::Ready {
@@ -1193,9 +1258,17 @@ async fn production_claim_live() -> anyhow::Result<()> {
     )
     .await?;
 
+    drop(plugin);
+    drop(writer);
+    let writer_role = quote_identifier(&writer_role);
     admin
         .batch_execute(&format!(
-            "DROP SCHEMA {SCHEMA} CASCADE; DROP SCHEMA catalog CASCADE"
+            "DROP SCHEMA {SCHEMA} CASCADE; DROP SCHEMA catalog CASCADE; \
+             DO $disconnect$ BEGIN EXECUTE format( \
+               'REVOKE CONNECT ON DATABASE %I FROM {writer_role}', current_database()); \
+             END $disconnect$; \
+             REVOKE wamn_effect_writer, wamn_run_projection_writer FROM {writer_role}; \
+             ALTER ROLE {writer_role} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';"
         ))
         .await?;
     Ok(())

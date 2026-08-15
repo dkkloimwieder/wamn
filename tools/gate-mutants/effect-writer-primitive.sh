@@ -51,7 +51,7 @@ load_mutation() {
   case "$id" in
     restore-attempt-key-column)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="076b0949fe816dae569ecacfe1243301968e621923630ae1eec54b51caadfba0"
+      EXPECTED_SHA="33244b0531d770c303bba41d81768ff1f327a2be07dd1a2c17521d6f2052ef18"
       NEEDLE='    attempt_input_ref text NOT NULL,'
       REPLACEMENT='    attempt_input_ref text NOT NULL,
     attempt_key text,'
@@ -60,7 +60,7 @@ load_mutation() {
       ;;
     bypass-populated-ledger-preflight)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
+      EXPECTED_SHA="aad9cc3e4ee2cefdee48c7083f7f4d3d64bd4203055823cfc8ee12482a78600b"
       NEEDLE='DO $retire$
 BEGIN
     IF {populated} THEN'
@@ -72,7 +72,7 @@ BEGIN
       ;;
     allow-login-stable-writer-role)
       TARGET="crates/schema/control/src/run_plane.rs"
-      EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
+      EXPECTED_SHA="aad9cc3e4ee2cefdee48c7083f7f4d3d64bd4203055823cfc8ee12482a78600b"
       NEEDLE="WHERE rolname = 'wamn_effect_writer' AND NOT rolcanlogin \\"
       REPLACEMENT="WHERE rolname = 'wamn_effect_writer' \\"
       GATE="run_plane_reconcile_live"
@@ -80,7 +80,7 @@ BEGIN
       ;;
     grant-attempt-insert-to-app)
       TARGET="deploy/sql/run-state.sql"
-      EXPECTED_SHA="076b0949fe816dae569ecacfe1243301968e621923630ae1eec54b51caadfba0"
+      EXPECTED_SHA="33244b0531d770c303bba41d81768ff1f327a2be07dd1a2c17521d6f2052ef18"
       NEEDLE='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_effect_writer;'
       REPLACEMENT='GRANT SELECT, INSERT ON wamn_run.effect_attempts TO wamn_app;'
       GATE="run_plane::tests::effect_writer_surface_uses_acl_not_insert_authorization_triggers"
@@ -88,7 +88,7 @@ BEGIN
       ;;
     accept-divergent-attempt-retry)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE='           $19::text::timestamptz, $20::text)"#,'
       REPLACEMENT='           $19::text::timestamptz,
            CASE WHEN $20::text IS NULL THEN attempt_input_ref ELSE attempt_input_ref END)"#,'
@@ -97,7 +97,7 @@ BEGIN
       ;;
     return-existing-dispatch-as-permit)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE='ON CONFLICT DO NOTHING
 RETURNING attempt_id::text, dispatched_at::text'
       REPLACEMENT='ON CONFLICT (tenant_id, run_id, frame_id, local_node_id, occurrence)
@@ -108,7 +108,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     accept-divergent-outcome-retry)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE='   AND outcome.outcome_status IS NOT DISTINCT FROM $3::text'
       REPLACEMENT='   AND true'
       GATE="effect_writer::tests::outcome_builder_accepts_only_an_identical_retry"
@@ -116,7 +116,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     drop-tenant-binding)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE="SELECT pg_catalog.set_config('app.tenant', \$1::text, true),"
       REPLACEMENT="SELECT pg_catalog.set_config('app.tenant_mutant', \$1::text, true),"
       GATE="effect_writer::tests::writer_statements_use_only_the_host_bound_search_path"
@@ -124,7 +124,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     hard-code-writer-schema)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE='r#"INSERT INTO effect_attempts'
       REPLACEMENT='r#"INSERT INTO wamn_run.effect_attempts'
       GATE="effect_writer::tests::writer_statements_use_only_the_host_bound_search_path"
@@ -132,7 +132,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     omit-pg-temp-search-path-sentinel)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE="pg_catalog.quote_ident(\$2::text) || ', pg_catalog, pg_temp', true)\","
       REPLACEMENT="pg_catalog.quote_ident(\$2::text) || ', pg_catalog', true)\","
       GATE="effect_writer::tests::writer_statements_use_only_the_host_bound_search_path"
@@ -140,7 +140,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     accept-noncanonical-host-schema)
       TARGET="crates/execution/run-state/src/effect_writer.rs"
-      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      EXPECTED_SHA="f14e263f0693a9f9f15167f4f242a4f8768da7867f5b00c56a24a0afc2f61f1d"
       NEEDLE='        && bytes
             .iter()
             .all(|byte| matches!(byte, b'"'"'A'"'"'..=b'"'"'Z'"'"' | b'"'"'a'"'"'..=b'"'"'z'"'"' | b'"'"'0'"'"'..=b'"'"'9'"'"' | b'"'"'_'"'"'))'
@@ -181,7 +181,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     bypass-credential-scope)
       TARGET="crates/execution/run-state/src/effect_writer_credential.rs"
-      EXPECTED_SHA="633fdbd17a722db2aefbc6f3a2fd496e398879964d30962de31578334c7929c0"
+      EXPECTED_SHA="afa2936078d7276caf0b4a20f43ab4732eee172645bd9395c0f68df719623f21"
       NEEDLE='    if credential.org != expected.org'
       REPLACEMENT='    if false'
       GATE="effect_writer_credential::tests::mismatched_scope_and_expired_window_refuse"
@@ -189,7 +189,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     bypass-credential-expiry)
       TARGET="crates/execution/run-state/src/effect_writer_credential.rs"
-      EXPECTED_SHA="633fdbd17a722db2aefbc6f3a2fd496e398879964d30962de31578334c7929c0"
+      EXPECTED_SHA="afa2936078d7276caf0b4a20f43ab4732eee172645bd9395c0f68df719623f21"
       NEEDLE='    if now >= expires_at {'
       REPLACEMENT='    if false {'
       GATE="effect_writer_credential::tests::mismatched_scope_and_expired_window_refuse"
@@ -197,25 +197,27 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     make-stable-acl-role-login)
       TARGET="crates/control/provision/src/sql.rs"
-      EXPECTED_SHA="6a99148caf523cd0235eed4832591c26699ae6fa0a94fe18faa62279784dac08"
-      NEEDLE='             CREATE ROLE {role} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \'
-      REPLACEMENT='             CREATE ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \'
-      GATE="sql::tests::effect_writer_acl_role_is_stable_nologin_and_owns_no_grants_here"
+      EXPECTED_SHA="48641760fb8997abe2a5e2623eb9432eb3f135ce045d6e828af6b2b33b5be527"
+      NEEDLE="EXECUTE format('CREATE ROLE %I NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE"
+      REPLACEMENT="EXECUTE format('CREATE ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE"
+      GATE="sql::tests::writer_acl_roles_are_stable_nologin_and_own_no_grants_here"
       TEST_ARGV=(cargo test --locked --offline -p wamn-control-provision --lib "$GATE" -- --exact)
       ;;
     grant-generation-wrong-membership)
       TARGET="crates/control/provision/src/sql.rs"
-      EXPECTED_SHA="6a99148caf523cd0235eed4832591c26699ae6fa0a94fe18faa62279784dac08"
+      EXPECTED_SHA="48641760fb8997abe2a5e2623eb9432eb3f135ce045d6e828af6b2b33b5be527"
       NEEDLE='        expires_at = quote_literal(expires_at),
-        acl_role = quote_ident(EFFECT_WRITER_ROLE),'
+        acl_role = quote_ident(EFFECT_WRITER_ROLE),
+        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),'
       REPLACEMENT='        expires_at = quote_literal(expires_at),
-        acl_role = quote_ident(APP_ROLE),'
+        acl_role = quote_ident(APP_ROLE),
+        projection_role = quote_ident(RUN_PROJECTION_WRITER_ROLE),'
       GATE="sql::tests::generation_prepare_has_only_login_membership_and_project_connect"
       TEST_ARGV=(cargo test --locked --offline -p wamn-control-provision --lib "$GATE" -- --exact)
       ;;
     ignore-public-connect-floor)
       TARGET="crates/control/provision/src/sql.rs"
-      EXPECTED_SHA="6a99148caf523cd0235eed4832591c26699ae6fa0a94fe18faa62279784dac08"
+      EXPECTED_SHA="48641760fb8997abe2a5e2623eb9432eb3f135ce045d6e828af6b2b33b5be527"
       NEEDLE="WHERE acl.grantee = 0 AND acl.privilege_type = 'CONNECT')"
       REPLACEMENT='WHERE false)'
       GATE="sql::tests::generation_cluster_probes_are_read_only_and_scope_locked"
@@ -223,7 +225,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     retain-public-temporary)
       TARGET="crates/control/provision/src/sql.rs"
-      EXPECTED_SHA="6a99148caf523cd0235eed4832591c26699ae6fa0a94fe18faa62279784dac08"
+      EXPECTED_SHA="48641760fb8997abe2a5e2623eb9432eb3f135ce045d6e828af6b2b33b5be527"
       NEEDLE='REVOKE CONNECT, TEMPORARY ON DATABASE {db} FROM PUBLIC; \
          GRANT CONNECT ON DATABASE {db} TO {role};'
       REPLACEMENT='REVOKE CONNECT ON DATABASE {db} FROM PUBLIC; \
@@ -233,11 +235,19 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     hard-code-stable-ledger-schema)
       TARGET="services/ctl/src/provision_project_env.rs"
-      EXPECTED_SHA="72832bab5686b4a00da0965aed69bab68858cf1b2b46aac9cf1b78c9241d1575"
-      NEEDLE='    for (schema, actual) in by_schema {'
-      REPLACEMENT='    for (schema, actual) in by_schema {
-        anyhow::ensure!(schema == "wamn_run", "mutant hard-coded writer schema");'
-      GATE="provision_project_env::tests::stable_acl_inventory_accepts_only_a_complete_host_schema_ledger_set"
+      EXPECTED_SHA="67f6b2d85aa23786b83faf05f4934c44ed3ad02da7f514aeb2db4bd8cc0867e8"
+      NEEDLE='fn verify_effect_writer_acl_role_inventory(
+    role: &str,
+    database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {'
+      REPLACEMENT='fn verify_effect_writer_acl_role_inventory(
+    role: &str,
+    database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(inventory.iter().all(|acl| acl.schema_name == "wamn_run"), "mutant hard-coded writer schema");'
+      GATE="provision_project_env::tests::stable_acl_inventory_accepts_only_the_complete_writer_schema_set"
       TEST_ARGV=(cargo test --locked --offline -p wamn-ctl --lib "$GATE" -- --exact)
       ;;
     skip-unpublished-generation-abort)
@@ -266,7 +276,7 @@ RETURNING attempt_id::text, dispatched_at::text'
       ;;
     activate-production-effect-call)
       TARGET="crates/execution/host/src/effect_writer.rs"
-      EXPECTED_SHA="819277627e994e172d2bd4ec395500ce82e9ead0df458685d4d1dbd040ec06f2"
+      EXPECTED_SHA="209581dcad2391b7a4f143c445f5f87a6728ef0ee630e049f194a46abe2d438c"
       NEEDLE='    Ok(Some(client))'
       REPLACEMENT='    if false {
         let _ = client

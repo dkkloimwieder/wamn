@@ -18,6 +18,7 @@ use wamn_control_provision::{
     EffectWriterCredentialScope, effect_writer_generation_role, project_env_database_name, sql,
 };
 use wamn_ctl::provision_project_env::{self, ProvisionProjectEnvArgs};
+use wamn_run_state::RUN_PROJECTION_WRITER_ROLE;
 
 const ORG: &str = "pg18proof";
 const PROJECT: &str = "ledger";
@@ -46,6 +47,20 @@ fn secret_path(generation: CredentialGeneration) -> PathBuf {
         std::process::id(),
         generation.as_str()
     ))
+}
+
+fn is_scoped_generation_role(role: &str) -> bool {
+    let Some(scoped) = role.strip_prefix("wamn_effect_writer_") else {
+        return false;
+    };
+    let Some((scope_hash, generation)) = scoped.rsplit_once('_') else {
+        return false;
+    };
+    scope_hash.len() == 40
+        && scope_hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+        && matches!(generation, "a" | "b")
 }
 
 fn action_args(
@@ -153,26 +168,12 @@ async fn assert_role(
     assert!(row.get::<_, bool>("membership_options_exact"));
     let member_roles: Vec<String> = row.get("member_roles");
     assert!(row.get::<_, bool>("member_options_exact"));
-    if role == EFFECT_WRITER_ROLE {
+    assert!(row.get::<_, bool>("generation_children_exact"));
+    if [EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE].contains(&role) {
         assert!(
-            member_roles.iter().all(|member| {
-                member
-                    == &effect_writer_generation_role(
-                        ORG,
-                        PROJECT,
-                        ENVIRONMENT,
-                        &project_env_database_name(ORG, PROJECT, ENVIRONMENT),
-                        CredentialGeneration::A,
-                    )
-                    || member
-                        == &effect_writer_generation_role(
-                            ORG,
-                            PROJECT,
-                            ENVIRONMENT,
-                            &project_env_database_name(ORG, PROJECT, ENVIRONMENT),
-                            CredentialGeneration::B,
-                        )
-            }),
+            member_roles
+                .iter()
+                .all(|member| is_scoped_generation_role(member)),
             "stable ACL role has an unexpected member"
         );
     } else {
@@ -251,7 +252,6 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     catalog
         .batch_execute(&format!(
             "DROP ROLE IF EXISTS \"{role_a}\"; DROP ROLE IF EXISTS \"{role_b}\"; \
-             DROP ROLE IF EXISTS \"{EFFECT_WRITER_ROLE}\"; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') \
                THEN CREATE ROLE wamn_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                  NOREPLICATION NOBYPASSRLS; END IF; END $$;"
@@ -264,11 +264,11 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .expect("create lifecycle database");
     let public_connect_before: bool = catalog
         .query_one(
-            "SELECT has_database_privilege('public', current_database(), 'CONNECT')",
-            &[],
+            "SELECT has_database_privilege('public', $1::text, 'CONNECT')",
+            &[&database],
         )
         .await
-        .expect("probe fresh-cluster PUBLIC CONNECT")
+        .expect("probe new lifecycle database PUBLIC CONNECT")
         .get(0);
     assert!(public_connect_before);
     catalog
@@ -290,6 +290,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
              CREATE TABLE wamn_runner_demo.run_queue ( \
                tenant_id text, run_id text, lease_owner text, \
                lease_expires_at timestamptz, lease_generation bigint); \
+             CREATE TABLE wamn_runner_demo.node_runs (tenant_id text, run_id text); \
              CREATE TABLE wamn_system.probe (id bigint); CREATE TABLE catalog.probe (id bigint); \
              CREATE TABLE app.probe (id bigint); CREATE TABLE unrelated.probe (id bigint);",
         )
@@ -327,8 +328,11 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
                TO wamn_effect_writer; \
              GRANT SELECT (tenant_id,run_id,status) \
                ON wamn_runner_demo.runs TO wamn_effect_writer; \
-             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at) \
-               ON wamn_runner_demo.run_queue TO wamn_effect_writer;",
+             GRANT SELECT (tenant_id,run_id,lease_owner,lease_expires_at,lease_generation) \
+               ON wamn_runner_demo.run_queue TO wamn_effect_writer; \
+             GRANT USAGE ON SCHEMA wamn_runner_demo TO wamn_run_projection_writer; \
+             GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_runner_demo.node_runs \
+               TO wamn_run_projection_writer;",
         )
         .await
         .expect("apply schema-control-owned ledger grants");
@@ -351,12 +355,23 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
     .await;
     assert_role(
         &target,
+        RUN_PROJECTION_WRITER_ROLE,
+        false,
+        false,
+        false,
+        None,
+        &[],
+        &[],
+    )
+    .await;
+    assert_role(
+        &target,
         &role_a,
         true,
         true,
         true,
         Some(&expires_a),
-        &[EFFECT_WRITER_ROLE],
+        &[EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE],
         &[&database],
     )
     .await;
@@ -380,7 +395,13 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         ("runs", &["tenant_id", "run_id", "status"][..]),
         (
             "run_queue",
-            &["tenant_id", "run_id", "lease_owner", "lease_expires_at"][..],
+            &[
+                "tenant_id",
+                "run_id",
+                "lease_owner",
+                "lease_expires_at",
+                "lease_generation",
+            ][..],
         ),
     ] {
         for column in columns {
@@ -388,6 +409,16 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         }
     }
     assert_eq!(stable_acl, expected_stable);
+    assert_eq!(
+        direct_acl_set(&target, RUN_PROJECTION_WRITER_ROLE).await,
+        BTreeSet::from([
+            format!("schema:{LEDGER_SCHEMA}:{LEDGER_SCHEMA}:USAGE"),
+            format!("relation:{LEDGER_SCHEMA}:node_runs:DELETE"),
+            format!("relation:{LEDGER_SCHEMA}:node_runs:INSERT"),
+            format!("relation:{LEDGER_SCHEMA}:node_runs:SELECT"),
+            format!("relation:{LEDGER_SCHEMA}:node_runs:UPDATE"),
+        ])
+    );
     let exact_run_reads = client_a
         .query_one(
             "SELECT \
@@ -397,8 +428,8 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
                NOT has_table_privilege(current_user,'wamn_runner_demo.run_queue','SELECT'), \
                has_column_privilege(current_user,'wamn_runner_demo.run_queue', \
                                     'lease_expires_at','SELECT'), \
-               NOT has_column_privilege(current_user,'wamn_runner_demo.run_queue', \
-                                        'lease_generation','SELECT'), \
+               has_column_privilege(current_user,'wamn_runner_demo.run_queue', \
+                                    'lease_generation','SELECT'), \
                NOT has_any_column_privilege(current_user,'wamn_runner_demo.run_queue', \
                                             'INSERT,UPDATE,REFERENCES')",
             &[],
@@ -568,7 +599,7 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         true,
         true,
         Some(&expires_b),
-        &[EFFECT_WRITER_ROLE],
+        &[EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE],
         &[&database],
     )
     .await;
@@ -595,12 +626,9 @@ async fn effect_writer_generation_lifecycle_is_exact_and_fail_closed() {
         .await
         .expect("drop lifecycle database");
     catalog
-        .batch_execute(&format!(
-            "DROP ROLE \"{role_a}\"; DROP ROLE \"{role_b}\"; \
-             DROP ROLE \"{EFFECT_WRITER_ROLE}\";"
-        ))
+        .batch_execute(&format!("DROP ROLE \"{role_a}\"; DROP ROLE \"{role_b}\";"))
         .await
-        .expect("clean lifecycle roles");
+        .expect("clean scoped lifecycle roles while retaining stable ACL roles");
     let _ = std::fs::remove_file(secret_a);
     let _ = std::fs::remove_file(secret_b);
 }
