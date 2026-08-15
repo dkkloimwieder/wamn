@@ -12,7 +12,7 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::flow_invocation::{
-    InvocationService, InvocationServiceConfig, PostgresInvocationBackend,
+    InvocationService, InvocationServiceConfig, PostgresInvocationBackend, SharedOutcomeListener,
 };
 
 mod bindings {
@@ -36,7 +36,7 @@ pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::
 
 pub struct WamnFlowInvocation {
     backend: Option<PostgresInvocationBackend>,
-    database_url: Option<String>,
+    outcome_listener: Option<SharedOutcomeListener>,
     services: RwLock<HashMap<String, InvocationService<PostgresInvocationBackend>>>,
 }
 
@@ -51,9 +51,10 @@ impl WamnFlowInvocation {
             .map(build_pool)
             .transpose()?
             .map(PostgresInvocationBackend::new);
+        let outcome_listener = database_url.map(SharedOutcomeListener::postgres);
         Ok(Self {
             backend,
-            database_url,
+            outcome_listener,
             services: RwLock::new(HashMap::new()),
         })
     }
@@ -69,9 +70,13 @@ impl WamnFlowInvocation {
             .backend
             .clone()
             .ok_or_else(|| anyhow::anyhow!("flow invocation database is not configured"))?;
-        let service = InvocationService::new(
+        let outcome_listener = self
+            .outcome_listener
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("flow invocation listener is not configured"))?;
+        let service = InvocationService::with_listener(
             backend,
-            self.database_url.clone(),
+            outcome_listener,
             InvocationServiceConfig {
                 tenant_id: tenant.to_string(),
                 catalog_id: catalog.to_string(),

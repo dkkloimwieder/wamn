@@ -4,6 +4,7 @@
 //! adaptation, authentication, mapping, and flow graph execution remain outside
 //! this module.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow};
@@ -27,6 +28,164 @@ use wamn_run_state::invocation::{
 };
 
 const EFFECT_UNCERTAIN_HTTP_STATUS: u16 = 502;
+const OUTCOME_HINT_CAPACITY: usize = 256;
+const OUTCOME_LISTENER_RECONNECT_DELAY: Duration = Duration::from_millis(250);
+
+#[async_trait]
+trait OutcomeConnector: Send + Sync {
+    async fn listen(
+        &self,
+        hints: tokio::sync::broadcast::Sender<String>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> anyhow::Result<()>;
+}
+
+struct PostgresOutcomeConnector {
+    database_url: String,
+}
+
+#[async_trait]
+impl OutcomeConnector for PostgresOutcomeConnector {
+    async fn listen(
+        &self,
+        hints: tokio::sync::broadcast::Sender<String>,
+        mut shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> anyhow::Result<()> {
+        let (client, mut connection) = tokio_postgres::connect(&self.database_url, NoTls)
+            .await
+            .context("connect invocation outcome listener")?;
+        let mut driver = AbortOnDrop(tokio::spawn(async move {
+            while let Some(message) =
+                futures_util::future::poll_fn(|context| connection.poll_message(context)).await
+            {
+                match message {
+                    Ok(AsyncMessage::Notification(notification)) => {
+                        let _ = hints.send(notification.payload().to_string());
+                    }
+                    Ok(_) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            Err(anyhow!("flow-invocation outcome LISTEN connection closed"))
+        }));
+        if let Err(error) = client.batch_execute("LISTEN wamn_run_outcome").await {
+            driver.abort();
+            return Err(error).context("LISTEN wamn_run_outcome");
+        }
+
+        let result = tokio::select! {
+            changed = shutdown.changed() => {
+                changed.map_err(|_| anyhow!("outcome listener shutdown owner dropped"))?;
+                Ok(())
+            }
+            result = &mut driver.0 => {
+                result.context("join invocation outcome listener connection")?
+            }
+        };
+        driver.abort();
+        drop(client);
+        result
+    }
+}
+
+struct AbortOnDrop<T>(tokio::task::JoinHandle<T>);
+
+impl<T> AbortOnDrop<T> {
+    fn abort(&self) {
+        self.0.abort();
+    }
+}
+
+impl<T> Drop for AbortOnDrop<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SharedOutcomeListener {
+    inner: Arc<SharedOutcomeListenerInner>,
+}
+
+struct SharedOutcomeListenerInner {
+    hints: tokio::sync::broadcast::Sender<String>,
+    shutdown: tokio::sync::watch::Sender<bool>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for SharedOutcomeListenerInner {
+    fn drop(&mut self) {
+        let _ = self.shutdown.send(true);
+        self.task.abort();
+    }
+}
+
+impl SharedOutcomeListener {
+    pub(crate) fn postgres(database_url: String) -> Self {
+        Self::with_connector(
+            Arc::new(PostgresOutcomeConnector { database_url }),
+            OUTCOME_LISTENER_RECONNECT_DELAY,
+        )
+    }
+
+    fn with_connector(connector: Arc<dyn OutcomeConnector>, reconnect_delay: Duration) -> Self {
+        let (hints, _) = tokio::sync::broadcast::channel(OUTCOME_HINT_CAPACITY);
+        let (shutdown, shutdown_receiver) = tokio::sync::watch::channel(false);
+        let task_hints = hints.clone();
+        let task = tokio::spawn(run_outcome_listener(
+            connector,
+            task_hints,
+            shutdown_receiver,
+            reconnect_delay,
+        ));
+        Self {
+            inner: Arc::new(SharedOutcomeListenerInner {
+                hints,
+                shutdown,
+                task,
+            }),
+        }
+    }
+
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.inner.hints.subscribe()
+    }
+
+    #[cfg(test)]
+    fn receiver_count(&self) -> usize {
+        self.inner.hints.receiver_count()
+    }
+}
+
+async fn run_outcome_listener(
+    connector: Arc<dyn OutcomeConnector>,
+    hints: tokio::sync::broadcast::Sender<String>,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+    reconnect_delay: Duration,
+) {
+    loop {
+        if *shutdown.borrow() {
+            return;
+        }
+        if let Err(error) = connector.listen(hints.clone(), shutdown.clone()).await {
+            tracing::warn!(
+                error = %error,
+                "flow-invocation outcome LISTEN connection failed; reconnecting"
+            );
+        }
+        if *shutdown.borrow() {
+            return;
+        }
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return;
+                }
+            }
+            () = tokio::time::sleep(reconnect_delay) => {}
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct InvocationServiceConfig {
@@ -83,19 +242,27 @@ pub trait InvocationBackend: Clone + Send + Sync + 'static {
 #[derive(Clone)]
 pub struct InvocationService<B> {
     backend: B,
-    notification_database_url: Option<String>,
+    outcome_listener: Option<SharedOutcomeListener>,
     config: InvocationServiceConfig,
 }
 
 impl<B: InvocationBackend> InvocationService<B> {
-    pub fn new(
+    pub fn new(backend: B, config: InvocationServiceConfig) -> Self {
+        Self {
+            backend,
+            outcome_listener: None,
+            config,
+        }
+    }
+
+    pub(crate) fn with_listener(
         backend: B,
-        notification_database_url: Option<String>,
+        outcome_listener: SharedOutcomeListener,
         config: InvocationServiceConfig,
     ) -> Self {
         Self {
             backend,
-            notification_database_url,
+            outcome_listener: Some(outcome_listener),
             config,
         }
     }
@@ -237,19 +404,18 @@ impl<B: InvocationBackend> InvocationService<B> {
         run_id: String,
         timeout_ms: u32,
     ) -> anyhow::Result<Option<InvokeResult>> {
+        // Subscribe before the first poll so a completion between observation
+        // and waiting cannot be lost. Hints only shorten the bounded wait.
+        let mut notifications = self
+            .outcome_listener
+            .as_ref()
+            .map(SharedOutcomeListener::subscribe);
         if let Some(outcome) = released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
         {
             return Ok(Some(to_invoke_result(outcome)?));
         }
 
-        if let Some(database_url) = &self.notification_database_url {
-            let mut notifications = listen_for_outcomes(database_url).await?;
-            // Poll after subscription closes the poll-to-subscribe lost-wake race.
-            if let Some(outcome) =
-                released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
-            {
-                return Ok(Some(to_invoke_result(outcome)?));
-            }
+        if let Some(notifications) = notifications.as_mut() {
             let expected = format!("{}:{run_id}", self.config.tenant_id);
             let deadline = tokio::time::sleep(Duration::from_millis(u64::from(timeout_ms)));
             tokio::pin!(deadline);
@@ -258,9 +424,10 @@ impl<B: InvocationBackend> InvocationService<B> {
                     _ = &mut deadline => break,
                     message = notifications.recv() => {
                         match message {
-                            Some(payload) if payload == expected => break,
-                            Some(_) => {}
-                            None => break,
+                            Ok(payload) if payload == expected => break,
+                            Ok(_) => {}
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_))
+                            | Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
                 }
@@ -274,51 +441,6 @@ impl<B: InvocationBackend> InvocationService<B> {
         released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
             .map(to_invoke_result)
             .transpose()
-    }
-}
-
-async fn listen_for_outcomes(database_url: &str) -> anyhow::Result<OutcomeListener> {
-    let (client, mut connection) = tokio_postgres::connect(database_url, NoTls)
-        .await
-        .context("connect invocation outcome listener")?;
-    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
-    tokio::spawn(async move {
-        while let Some(message) =
-            futures_util::future::poll_fn(|context| connection.poll_message(context)).await
-        {
-            match message {
-                Ok(AsyncMessage::Notification(notification)) => {
-                    let _ = sender.send(notification.payload().to_string());
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    tracing::warn!(
-                        error = %error,
-                        "flow-invocation outcome LISTEN connection failed"
-                    );
-                    break;
-                }
-            }
-        }
-    });
-    client
-        .batch_execute("LISTEN wamn_run_outcome")
-        .await
-        .context("LISTEN wamn_run_outcome")?;
-    Ok(OutcomeListener {
-        _client: client,
-        receiver,
-    })
-}
-
-struct OutcomeListener {
-    _client: tokio_postgres::Client,
-    receiver: tokio::sync::mpsc::UnboundedReceiver<String>,
-}
-
-impl OutcomeListener {
-    async fn recv(&mut self) -> Option<String> {
-        self.receiver.recv().await
     }
 }
 
@@ -714,6 +836,7 @@ fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
 mod tests {
     use std::collections::VecDeque;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::*;
     use tokio::sync::Mutex;
@@ -727,6 +850,72 @@ mod tests {
         admitted_versions: Arc<Mutex<Vec<i32>>>,
         admitted_client_keys: Arc<Mutex<Vec<Option<String>>>>,
         polls: Arc<Mutex<VecDeque<InvocationPoll>>>,
+    }
+
+    struct CountingConnector {
+        starts: Arc<AtomicUsize>,
+        active: Arc<AtomicUsize>,
+        max_active: Arc<AtomicUsize>,
+        fail_first: AtomicBool,
+        payloads: Vec<String>,
+    }
+
+    impl CountingConnector {
+        fn new(payloads: Vec<String>, fail_first: bool) -> Self {
+            Self {
+                starts: Arc::new(AtomicUsize::new(0)),
+                active: Arc::new(AtomicUsize::new(0)),
+                max_active: Arc::new(AtomicUsize::new(0)),
+                fail_first: AtomicBool::new(fail_first),
+                payloads,
+            }
+        }
+    }
+
+    struct ActiveConnection(Arc<AtomicUsize>);
+
+    impl Drop for ActiveConnection {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl OutcomeConnector for CountingConnector {
+        async fn listen(
+            &self,
+            hints: tokio::sync::broadcast::Sender<String>,
+            mut shutdown: tokio::sync::watch::Receiver<bool>,
+        ) -> anyhow::Result<()> {
+            self.starts.fetch_add(1, Ordering::SeqCst);
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(active, Ordering::SeqCst);
+            let _active = ActiveConnection(Arc::clone(&self.active));
+            if self.fail_first.swap(false, Ordering::SeqCst) {
+                return Err(anyhow!("injected listener disconnect"));
+            }
+            while hints.receiver_count() < self.payloads.len() {
+                tokio::task::yield_now().await;
+            }
+            for payload in &self.payloads {
+                let _ = hints.send(payload.clone());
+            }
+            shutdown
+                .changed()
+                .await
+                .map_err(|_| anyhow!("test listener shutdown owner dropped"))?;
+            Ok(())
+        }
+    }
+
+    async fn eventually(predicate: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !predicate() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("condition did not become true");
     }
 
     #[async_trait]
@@ -881,7 +1070,7 @@ mod tests {
             .lock()
             .await
             .push_back(InvocationRecovery::Released(outcome("responded", "", 200)));
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -901,7 +1090,7 @@ mod tests {
             .lock()
             .await
             .push_back(InvocationRecovery::Missing);
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -931,7 +1120,7 @@ mod tests {
                 run_id: "run-promoted".to_string(),
             },
         ]);
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -961,7 +1150,7 @@ mod tests {
             .lock()
             .await
             .push_back(AdmissionResult::HeadDrift);
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
         let mut without_key = request();
         without_key.idempotency_key = None;
 
@@ -987,7 +1176,7 @@ mod tests {
             let backend = MockBackend::default();
             backend.targets.lock().await.push_back(Some(target(true)));
             backend.recoveries.lock().await.push_back(recovery);
-            let service = InvocationService::new(backend.clone(), None, config());
+            let service = InvocationService::new(backend.clone(), config());
             let BeginResult::Rejected(rejection) = service.begin(request()).await.unwrap() else {
                 panic!("conflict must reject before admission");
             };
@@ -1007,7 +1196,7 @@ mod tests {
             .push_back(InvocationRecovery::InFlight {
                 run_id: "run-live".to_string(),
             });
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1033,7 +1222,7 @@ mod tests {
             .lock()
             .await
             .push_back(AdmissionResult::Duplicate { run_id: None });
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1060,7 +1249,7 @@ mod tests {
             .push_back(AdmissionResult::Duplicate {
                 run_id: Some("run-winner".to_string()),
             });
-        let service = InvocationService::new(backend.clone(), None, config());
+        let service = InvocationService::new(backend.clone(), config());
 
         assert_eq!(
             service.begin(request()).await.unwrap(),
@@ -1079,7 +1268,7 @@ mod tests {
             .lock()
             .await
             .push_back(Some(target(true)));
-        let required_service = InvocationService::new(required_backend.clone(), None, config());
+        let required_service = InvocationService::new(required_backend.clone(), config());
         let mut without_key = request();
         without_key.idempotency_key = None;
 
@@ -1105,7 +1294,7 @@ mod tests {
             .push_back(AdmissionResult::Admitted {
                 run_id: "run-pure".to_string(),
             });
-        let pure_service = InvocationService::new(pure_backend.clone(), None, config());
+        let pure_service = InvocationService::new(pure_backend.clone(), config());
 
         assert_eq!(
             pure_service.begin(without_key).await.unwrap(),
@@ -1126,7 +1315,7 @@ mod tests {
             InvocationPoll::Running,
             InvocationPoll::Released(outcome("responded", "", 202)),
         ]);
-        let service = InvocationService::new(backend, None, config());
+        let service = InvocationService::new(backend, config());
 
         assert!(matches!(
             service.wait("run-1".to_string(), 0).await.unwrap(),
@@ -1135,6 +1324,95 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[tokio::test]
+    async fn concurrent_waiters_share_one_listener_connection_and_receive_broadcast_hints() {
+        const WAITER_COUNT: usize = 8;
+        let connector = Arc::new(CountingConnector::new(
+            (0..WAITER_COUNT)
+                .map(|index| format!("tenant-a:run-{index}"))
+                .collect(),
+            false,
+        ));
+        let listener =
+            SharedOutcomeListener::with_connector(connector.clone(), Duration::from_millis(1));
+        let mut waits = Vec::new();
+        for index in 0..WAITER_COUNT {
+            let backend = MockBackend::default();
+            backend.polls.lock().await.extend([
+                InvocationPoll::Running,
+                InvocationPoll::Released(outcome("responded", "", 200)),
+            ]);
+            let service = InvocationService::with_listener(backend, listener.clone(), config());
+            waits.push(tokio::spawn(async move {
+                service.wait(format!("run-{index}"), 5_000).await
+            }));
+        }
+
+        for wait in waits {
+            assert!(wait.await.unwrap().unwrap().is_some());
+        }
+        assert_eq!(connector.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(connector.max_active.load(Ordering::SeqCst), 1);
+        assert_eq!(connector.active.load(Ordering::SeqCst), 1);
+        drop(listener);
+        eventually(|| connector.active.load(Ordering::SeqCst) == 0).await;
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_wait_drops_only_its_subscription_and_plugin_drop_stops_listener() {
+        let connector = Arc::new(CountingConnector::new(Vec::new(), false));
+        let listener =
+            SharedOutcomeListener::with_connector(connector.clone(), Duration::from_millis(1));
+        let backend = MockBackend::default();
+        backend
+            .polls
+            .lock()
+            .await
+            .push_back(InvocationPoll::Running);
+        let service = InvocationService::with_listener(backend, listener.clone(), config());
+        let wait = tokio::spawn(async move { service.wait("run-1".to_string(), 60_000).await });
+
+        eventually(|| listener.receiver_count() == 1).await;
+        eventually(|| connector.active.load(Ordering::SeqCst) == 1).await;
+        wait.abort();
+        assert!(wait.await.unwrap_err().is_cancelled());
+        eventually(|| listener.receiver_count() == 0).await;
+        assert_eq!(connector.active.load(Ordering::SeqCst), 1);
+
+        drop(listener);
+        eventually(|| connector.active.load(Ordering::SeqCst) == 0).await;
+    }
+
+    #[tokio::test]
+    async fn listener_disconnect_drops_the_old_connection_before_reconnect() {
+        let connector = Arc::new(CountingConnector::new(Vec::new(), true));
+        let listener =
+            SharedOutcomeListener::with_connector(connector.clone(), Duration::from_millis(1));
+
+        eventually(|| connector.starts.load(Ordering::SeqCst) >= 2).await;
+        assert_eq!(connector.max_active.load(Ordering::SeqCst), 1);
+        assert_eq!(connector.active.load(Ordering::SeqCst), 1);
+        drop(listener);
+        eventually(|| connector.active.load(Ordering::SeqCst) == 0).await;
+    }
+
+    #[test]
+    fn plugin_configures_exactly_pool_sixteen_plus_one_shared_listener_from_one_url() {
+        let plugin = include_str!("plugins/wamn_flow_invocation.rs");
+        assert_eq!(plugin.matches(".max_size(16)").count(), 1);
+        assert_eq!(plugin.matches("SharedOutcomeListener::postgres").count(), 1);
+        assert_eq!(plugin.matches("WAMN_RUN_STORE_PG_URL").count(), 1);
+        assert!(!plugin.contains("WAMN_RUN_STORE_LISTENER_PG_URL"));
+        assert!(plugin.contains(
+            "let backend = database_url\n            .as_deref()\n            .map(build_pool)"
+        ));
+        assert!(
+            plugin.contains(
+                "let outcome_listener = database_url.map(SharedOutcomeListener::postgres);"
+            )
+        );
     }
 
     #[test]
