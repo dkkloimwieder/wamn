@@ -5361,6 +5361,9 @@ draft-safe enforcement, and the empty-only upgrade of the former command audit
 into the sole retry ledger. A populated legacy audit refuses atomically with
 SQLSTATE `55000`; it is never promoted into retry history.
 
+The Rust-only MVP gate stops at the Rust-owned wire/schema boundary. Generated
+TypeScript and reference-client drift are deferred to `wamn-0h0g.7.6`.
+
 ```bash
 export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave10-7-3
 export CARGO_INCREMENTAL=0
@@ -5410,23 +5413,12 @@ cargo test --locked --offline -p wamn-ctl --features ops \
 cargo test --locked --offline -p wamn-proof-conformance \
   --test protected_relations --test state_ownership
 
-(
-  cd clients/authoring-client
-  npm run generate
-  npm run check:generated
-  npm run build
-  npm test
-)
-
 tools/gate-mutants/authoring-eight-operation-contract.sh check
 tools/gate-mutants/authoring-eight-operation-contract.sh green
 tools/gate-mutants/authoring-eight-operation-contract.sh run-all
 tools/gate-mutants/authoring-store-cutover.sh run-all
 WAMN_CTL_PG_URL="$WAMN_CTL_PG_URL" \
   tools/gate-mutants/protected-relations.sh run-all
-tools/gate-mutants/authoring-cli-collection-drift.sh run
-tools/gate-mutants/authoring-cli-unmounted-green.sh run
-tools/gate-mutants/authoring-smoke-collection-drift.sh run
 
 cargo clippy --locked --offline \
   -p wamn-authoring-model -p wamn-scenario-worker \
@@ -5436,8 +5428,6 @@ cargo clippy --locked --offline -p wamn-ctl --features ops \
   --all-targets -- -D warnings
 cargo fmt --all -- --check
 bash -n tools/gate-mutants/authoring-{eight-operation-contract,store-cutover}.sh \
-  tools/gate-mutants/authoring-cli-{collection-drift,unmounted-green}.sh \
-  tools/gate-mutants/authoring-smoke-collection-drift.sh \
   tools/gate-mutants/protected-relations.sh
 jq -e . architecture/protected-writes.json \
   docs/archive/contracts/authoring-surface.schema.json \
@@ -5572,3 +5562,166 @@ cargo fmt --all -- --check
 bash -n tools/gate-mutants/flow-invocation-listener.sh
 git diff --check
 ```
+
+## SR-MVP — M1 forward-causation composition (`wamn-0h0g.11.18`)
+
+This Rust-only debug gate incorporates the completed `.11.9` forward-causation
+and durable-dedup proof exactly once as M1 Check 9. Check 10 remains pending
+`wamn-0h0g.11.10`. The live gate uses a generated Job identity and an isolated,
+emptyDir-backed PostgreSQL 18 sidecar; it never contacts shared PostgreSQL.
+The runner fails before Job creation unless the named sidecar image has one
+identical complete runtime/config/provenance tuple on all three Ready amd64 Kind
+nodes. It deletes the exact Job and verifies every recorded resource absent.
+
+```bash
+set -euo pipefail
+
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave9-11-18
+export CARGO_INCREMENTAL=0
+
+main_image=wamn-gates:m1-01ca7afa-debug
+sidecar_image=wamn-postgres:m1-pg18-720c455e
+sidecar_image_id=sha256:92d4f977d48900025cdad52b2bd6d37ccec93a2b42103f1d86b34b3f6796c2ed
+sidecar_config_id=sha256:9a1a67579dc39ae2790d10ac66102510a1644bbe96f995aa722acf9168b95574
+upstream_index=sha256:ae6c78831cbc35fa3a4aaf4d763ddacf6183d6004774cc2dc28b3920410d1d1a
+upstream_child=sha256:cd78ca58eb75f929698e117a589488ccb2bd45107247fe02400b50ff6c418324
+overlay="$CARGO_TARGET_DIR/m1-image-720c455e"
+
+cargo fmt --all -- --check
+bash -n tools/kubernetes-gate-run tools/gate-mutants/m1-composition.sh
+git diff --check
+cargo test --locked --offline -p wamn-proof-integration --lib m1::tests
+cargo test --locked --offline -p wamn-proof-integration --lib \
+  causation_e2e::tests
+cargo test --locked --offline -p wamn-proof-conformance --lib
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test gate_registry --test kubernetes_gate_runner
+tools/gate-mutants/m1-composition.sh check
+tools/gate-mutants/m1-composition.sh run-all
+tools/gate-mutants/m1-composition.sh green-all
+tools/gate-mutants/m1-composition.sh check
+cargo clippy --locked --offline \
+  -p wamn-proof-integration -p wamn-proof-conformance \
+  --all-targets -- -D warnings
+
+cargo build --locked --offline -p wamn-gates -p wamn-cdc-reader
+cargo build --locked --offline --manifest-path components/Cargo.toml \
+  --target wasm32-wasip2 -p materializer
+
+sha256sum -c <<'EOF'
+8a90e957268644f0f88f6df56d91c1c4668d31b8a61a0541657a1faa74951515  /home/kaalin/dev/wamn/target/plane-wave9-11-18/debug/wamn-gates
+f7bab749b3c23db00dadc2763309401a663e28e29d0ebc9e81b74b12d4d4ed28  /home/kaalin/dev/wamn/target/plane-wave9-11-18/debug/wamn-cdc-reader
+f81d5947f80a99002b4ca875acf2571956a5fd357efae48b2185425aae408e85  /home/kaalin/dev/wamn/target/plane-wave9-11-18/wasm32-wasip2/debug/materializer.wasm
+EOF
+
+docker image inspect wamn-gates:dev >/dev/null
+install -d "$overlay"
+install -m 0755 "$CARGO_TARGET_DIR/debug/wamn-gates" "$overlay/wamn-gates"
+install -m 0755 "$CARGO_TARGET_DIR/debug/wamn-cdc-reader" \
+  "$overlay/wamn-cdc-reader"
+install -m 0644 \
+  "$CARGO_TARGET_DIR/wasm32-wasip2/debug/materializer.wasm" \
+  "$overlay/materializer.wasm"
+
+cat >"$overlay/Dockerfile" <<'EOF'
+FROM wamn-gates:dev
+LABEL wamn.dev/gate="m1-check-9" \
+      wamn.dev/source-head="720c455e3ac4ac26362f0077a92e55e8e94082d2" \
+      wamn.dev/build-profile="debug"
+COPY --chmod=0755 wamn-gates /usr/local/bin/wamn-gates
+COPY --chmod=0755 wamn-cdc-reader /usr/local/bin/wamn-cdc-reader
+COPY --chmod=0644 materializer.wasm /bench/materializer.wasm
+EOF
+
+docker build --platform=linux/amd64 --provenance=false \
+  -f "$overlay/Dockerfile" -t "$main_image" "$overlay"
+docker build --platform=linux/amd64 --provenance=false \
+  -f deploy/gates/m1-postgres.Dockerfile \
+  -t "$sidecar_image" deploy/gates
+
+install -d "$CARGO_TARGET_DIR/kind-tmp"
+TMPDIR="$CARGO_TARGET_DIR/kind-tmp" \
+  kind load docker-image "$main_image" --name wamn
+TMPDIR="$CARGO_TARGET_DIR/kind-tmp" \
+  kind load docker-image "$sidecar_image" --name wamn
+
+nodes_json=$(kubectl get nodes -o json)
+jq -e '
+  (.items | length == 3) and
+  ([.items[].metadata.name] | unique | length == 3) and
+  all(.items[];
+    .status.nodeInfo.architecture == "amd64" and
+    any(.status.conditions[]?;
+      .type == "Ready" and .status == "True"))
+' >/dev/null <<<"$nodes_json"
+mapfile -t nodes < <(jq -r '.items[].metadata.name' <<<"$nodes_json" | sort)
+
+declare -a main_ids=()
+for node in "${nodes[@]}"; do
+  main_ids+=("$(
+    docker exec "$node" crictl inspecti -o json "$main_image" |
+      jq -er '
+        [.status.repoDigests[]? | split("@")[1]
+         | select(test("^sha256:[0-9a-f]{64}$"))]
+        | unique
+        | if length == 1 then .[0]
+          else error("main runtime digest missing or ambiguous")
+          end
+      '
+  )")
+done
+mapfile -t unique_main_ids < <(printf '%s\n' "${main_ids[@]}" | sort -u)
+[[ ${#unique_main_ids[@]} -eq 1 ]]
+main_image_id=${unique_main_ids[0]}
+
+sed "s/sha256:POST_BUILD_MAIN_IMAGE_ID/${main_image_id}/g" \
+  deploy/gates/m1-gate-job.yaml \
+  >"$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml"
+! rg -n 'POST_BUILD_' "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml"
+
+job_spec=$(
+  jq -cn \
+    --arg main_image "$main_image" \
+    --arg main_image_id "$main_image_id" \
+    --arg sidecar_image "$sidecar_image" \
+    --arg sidecar_image_id "$sidecar_image_id" \
+    --arg sidecar_config_id "$sidecar_config_id" \
+    --arg upstream_index "$upstream_index" \
+    --arg upstream_child "$upstream_child" \
+    '{name:"m1-gate-",container:"m1-gate",expectation:"positive",
+      exit_code:0,image:$main_image,claimed_image_id:$main_image_id,
+      claim_log_prefix:"M1_MAIN_IMAGE_ID=",sidecar:"m1-postgres",
+      sidecar_image:$sidecar_image,sidecar_image_id:$sidecar_image_id,
+      sidecar_config_id:$sidecar_config_id,
+      sidecar_upstream_index:$upstream_index,
+      sidecar_upstream_child:$upstream_child,
+      log_contains:
+        "M1 partial PASS — check 9 passed; check 10 remains pending"}'
+)
+
+tools/kubernetes-gate-run \
+  --manifest "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml" \
+  --generated-name-prefix m1-gate- \
+  --require-final-cleanup \
+  --sidecar-preflight-record "$CARGO_TARGET_DIR/m1-sidecar-preflight.json" \
+  --verdict-record "$CARGO_TARGET_DIR/m1-gate-verdict.json" \
+  --job "$job_spec"
+
+jq -e '
+  .verdict == "pass" and .failure_classes == [] and
+  (.jobs | length == 1) and .jobs[0].verdict == "pass" and
+  .jobs[0].observed.condition == "complete" and
+  .jobs[0].observed.claimed_image_id == .jobs[0].claimed_image_id and
+  (.jobs[0].observed.pods | length == 1) and
+  .jobs[0].observed.pods[0].container_exit_code == 0 and
+  .jobs[0].observed.pods[0].sidecar_exit_code == 0
+' >/dev/null "$CARGO_TARGET_DIR/m1-gate-verdict.json"
+
+sha256sum "$CARGO_TARGET_DIR/m1-gate-job.rendered.yaml" \
+  "$CARGO_TARGET_DIR/m1-sidecar-preflight.json" \
+  "$CARGO_TARGET_DIR/m1-gate-verdict.json"
+```
+
+Receipt on `d95a727b`: Job `m1-gate-phzxc` and its UID-selected Pod both
+completed with exit `0` and were absent after cleanup. The runner recorded log
+SHA-256 `30c3b8f3d6d432c77f7401ef5fc86693b3df4a42c449e6a9166aab28d5ebb5a3`.
