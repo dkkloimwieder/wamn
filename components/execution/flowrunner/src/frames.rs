@@ -10,7 +10,10 @@ use wamn_flow::node_contract::{ErrorDetail, NodeError};
 use wamn_flow::{
     Edge, Flow, FlowConnectionRequirement, Node, ResolvedInterfaces, RespondConfig, SCHEMA_VERSION,
 };
-use wamn_runner::{Dispatch, ExecutionFailureKind, ExecutionStatus, NodeOutcome, Plan, Step};
+use wamn_run_state::{CaptureMode, Captured, derive_capture};
+use wamn_runner::{
+    Dispatch, ExecutionFailureKind, ExecutionStatus, NodeOutcome, Plan, ReservedStep, Step,
+};
 
 use super::{VerifiedResolutionPlan, VerifiedResolutionSnapshot};
 
@@ -41,6 +44,10 @@ pub enum FrameExecutionErrorKind {
     MissingCallee,
     /// The root-local monotonic frame identity space was exhausted.
     FrameIdentityExhausted,
+    /// The root-local monotonic fact sequence space was exhausted.
+    FactSequenceExhausted,
+    /// The trusted fact consumer refused one completed occurrence.
+    FactSinkRefused,
     /// An ordinary effectful node reached the pre-activation interpreter.
     EffectActivationUnavailable,
     /// The graph reducer refused an interpreter-owned transition.
@@ -56,6 +63,7 @@ pub struct FrameExecutionError {
     frame_id: u64,
     node_id: Option<String>,
     message: String,
+    source: Option<NodeFactSinkError>,
 }
 
 impl FrameExecutionError {
@@ -85,6 +93,17 @@ impl FrameExecutionError {
             frame_id,
             node_id: node_id.map(str::to_string),
             message: message.into(),
+            source: None,
+        }
+    }
+
+    fn fact_sink_refused(frame_id: u64, node_id: &str, source: NodeFactSinkError) -> Self {
+        Self {
+            kind: FrameExecutionErrorKind::FactSinkRefused,
+            frame_id,
+            node_id: Some(node_id.to_string()),
+            message: "trusted node-fact sink refused a completed occurrence".to_string(),
+            source: Some(source),
         }
     }
 }
@@ -99,7 +118,13 @@ impl fmt::Display for FrameExecutionError {
     }
 }
 
-impl std::error::Error for FrameExecutionError {}
+impl std::error::Error for FrameExecutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_ref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
 
 /// One graph failure retained at a root frame boundary.
 #[derive(Debug, Clone, PartialEq)]
@@ -233,6 +258,152 @@ pub struct TrustedFrame<'snapshot> {
     parent: Option<TrustedFrameFacts<'snapshot>>,
 }
 
+/// A terminal result attached to one trusted node fact.
+#[derive(Debug, Clone, PartialEq)]
+pub enum NodeFactOutcome {
+    /// The occurrence completed on one exact output port.
+    Success { output_port: String },
+    /// The occurrence completed with the frozen standard-node error taxonomy.
+    Error(NodeError),
+}
+
+impl NodeFactOutcome {
+    /// Exact output port selected by the terminal outcome.
+    pub fn output_port(&self) -> &str {
+        match self {
+            Self::Success { output_port } => output_port,
+            Self::Error(_) => wamn_flow::ERROR_PORT,
+        }
+    }
+
+    /// Classified node error, when this is an error fact.
+    pub fn error(&self) -> Option<&NodeError> {
+        match self {
+            Self::Success { .. } => None,
+            Self::Error(error) => Some(error),
+        }
+    }
+}
+
+/// One completed node occurrence constructed only by the trusted frame stack.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrustedNodeFact {
+    run_id: String,
+    root_plan_hash: String,
+    frame_id: u64,
+    parent_frame_id: Option<u64>,
+    call_site_id: Option<ExecutionNodeId>,
+    flow_id: String,
+    current_plan_hash: String,
+    source_artifact_hash: String,
+    local_node_id: ExecutionNodeId,
+    source_node_id: String,
+    occurrence: u32,
+    sequence: u64,
+    outcome: NodeFactOutcome,
+    capture: Captured,
+}
+
+impl TrustedNodeFact {
+    /// Root run under which this occurrence completed.
+    pub fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    /// Exact root plan hash anchoring every frame in this run.
+    pub fn root_plan_hash(&self) -> &str {
+        &self.root_plan_hash
+    }
+
+    /// Root-run-local frame identity.
+    pub fn frame_id(&self) -> u64 {
+        self.frame_id
+    }
+
+    /// Immediate parent frame, absent only for the root frame.
+    pub fn parent_frame_id(&self) -> Option<u64> {
+        self.parent_frame_id
+    }
+
+    /// Call-flow site in the immediate parent, absent only for the root frame.
+    pub fn call_site_id(&self) -> Option<&ExecutionNodeId> {
+        self.call_site_id.as_ref()
+    }
+
+    /// Immutable flow selected from the verified run resolution.
+    pub fn flow_id(&self) -> &str {
+        &self.flow_id
+    }
+
+    /// Exact execution bundle hash of the active plan.
+    pub fn current_plan_hash(&self) -> &str {
+        &self.current_plan_hash
+    }
+
+    /// Exact source artifact hash carried by the active verified plan.
+    pub fn source_artifact_hash(&self) -> &str {
+        &self.source_artifact_hash
+    }
+
+    /// Plan-local node identity used by the durable frame key.
+    pub fn local_node_id(&self) -> &ExecutionNodeId {
+        &self.local_node_id
+    }
+
+    /// Original authored node identity derived from the verified source map.
+    pub fn source_node_id(&self) -> &str {
+        &self.source_node_id
+    }
+
+    /// Visit number of this local node in the current frame.
+    pub fn occurrence(&self) -> u32 {
+        self.occurrence
+    }
+
+    /// Zero-based accepted-emission order across the complete root run.
+    pub fn sequence(&self) -> u64 {
+        self.sequence
+    }
+
+    /// Exact terminal node result.
+    pub fn outcome(&self) -> &NodeFactOutcome {
+        &self.outcome
+    }
+
+    /// Run-state-owned full/off node I/O projection.
+    pub fn capture(&self) -> &Captured {
+        &self.capture
+    }
+}
+
+/// Context retained when a trusted node-fact consumer refuses an emission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeFactSinkError {
+    message: String,
+}
+
+impl NodeFactSinkError {
+    /// Describe one fact-consumer refusal without introducing a wire taxonomy.
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for NodeFactSinkError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for NodeFactSinkError {}
+
+/// Fallible consumer of trusted, terminal frame facts.
+pub trait NodeFactSink {
+    fn emit(&mut self, fact: TrustedNodeFact) -> Result<(), NodeFactSinkError>;
+}
+
 impl<'snapshot> TrustedFrame<'snapshot> {
     /// Exact current-frame facts.
     pub fn current(self) -> TrustedFrameFacts<'snapshot> {
@@ -248,9 +419,9 @@ impl<'snapshot> TrustedFrame<'snapshot> {
 /// The only ordinary-node seam exposed before effect activation lands.
 ///
 /// The frame interpreter invokes this trait only for nodes whose compiled
-/// policy is [`ExecutionEffectPolicy::Pure`]. Entry, response, fail, and
-/// call-flow boundaries stay interpreter-owned; an ordinary effectful node is
-/// refused before this method can run.
+/// policy is [`ExecutionEffectPolicy::Pure`]. Entry, response, and call-flow
+/// boundaries stay interpreter-owned; fail keeps its existing pure standard-
+/// node ABI. An ordinary effectful node is refused before this method can run.
 pub trait PureNodeDispatcher {
     fn dispatch(&mut self, frame: TrustedFrame<'_>, node: &Dispatch) -> NodeOutcome;
 }
@@ -263,8 +434,10 @@ pub trait PureNodeDispatcher {
 pub struct FrameStack<'snapshot> {
     run_id: String,
     snapshot: &'snapshot VerifiedResolutionSnapshot,
+    capture_mode: CaptureMode,
     frames: Vec<FrameRecord>,
     next_frame_id: u64,
+    next_fact_sequence: u64,
     dispatched_nodes: u64,
     root_dispatch_budget: u64,
     started: bool,
@@ -272,11 +445,16 @@ pub struct FrameStack<'snapshot> {
 
 impl<'snapshot> FrameStack<'snapshot> {
     /// Start one root-local stack at frame zero.
-    pub fn new(run_id: impl Into<String>, snapshot: &'snapshot VerifiedResolutionSnapshot) -> Self {
+    pub fn new(
+        run_id: impl Into<String>,
+        snapshot: &'snapshot VerifiedResolutionSnapshot,
+        capture_mode: CaptureMode,
+    ) -> Self {
         let root = snapshot.root();
         Self {
             run_id: run_id.into(),
             snapshot,
+            capture_mode,
             frames: vec![FrameRecord {
                 frame_id: 0,
                 parent_frame_id: None,
@@ -285,6 +463,7 @@ impl<'snapshot> FrameStack<'snapshot> {
                 current_plan_hash: root.execution_bundle_hash().to_string(),
             }],
             next_frame_id: 1,
+            next_fact_sequence: 0,
             dispatched_nodes: 0,
             root_dispatch_budget: DEFAULT_ROOT_DISPATCH_BUDGET,
             started: false,
@@ -296,6 +475,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         &mut self,
         payload: Value,
         dispatcher: &mut impl PureNodeDispatcher,
+        fact_sink: &mut impl NodeFactSink,
     ) -> Result<FrameCompletion, FrameExecutionError> {
         if self.started {
             return Err(FrameExecutionError::new(
@@ -308,7 +488,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         // Set before projection, dispatch, or a callee lookup: even a refused
         // first attempt cannot replay the same claimed root through this stack.
         self.started = true;
-        self.execute_current(payload, dispatcher)
+        self.execute_current(payload, dispatcher, fact_sink)
     }
 
     /// Current stack depth, including the root frame.
@@ -320,6 +500,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         &mut self,
         payload: Value,
         dispatcher: &mut impl PureNodeDispatcher,
+        fact_sink: &mut impl NodeFactSink,
     ) -> Result<FrameCompletion, FrameExecutionError> {
         let frame_id = self.current_record().frame_id;
         let flow_id = self.current_record().flow_id.clone();
@@ -355,9 +536,11 @@ impl<'snapshot> FrameStack<'snapshot> {
         let mut now_ms = 0;
         let mut response_status = None;
         let mut last_boundary = None;
+        let mut pending_retry_fact: Option<(Dispatch, NodeOutcome)> = None;
         loop {
             match plan.next(&mut state, now_ms) {
                 Step::Done(ExecutionStatus::Completed) => {
+                    self.emit_pending_retry_fact(&mut pending_retry_fact, fact_sink)?;
                     return Ok(match response_status {
                         Some(status) => FrameCompletion::Responded {
                             body: state.result().clone(),
@@ -369,6 +552,7 @@ impl<'snapshot> FrameStack<'snapshot> {
                     });
                 }
                 Step::Done(ExecutionStatus::Failed) => {
+                    self.emit_pending_retry_fact(&mut pending_retry_fact, fact_sink)?;
                     let failure = state
                         .failure()
                         .expect("failed reducer state retains its failure");
@@ -393,8 +577,20 @@ impl<'snapshot> FrameStack<'snapshot> {
                         "graph reducer returned a nonterminal done state",
                     ));
                 }
-                Step::Wait { until_ms, .. } => now_ms = until_ms,
+                Step::Wait {
+                    node,
+                    until_ms,
+                    attempt,
+                    ..
+                } => {
+                    if let Some((pending, _)) = pending_retry_fact.take() {
+                        debug_assert_eq!(pending.node, node);
+                        debug_assert!(attempt > pending.attempt);
+                    }
+                    now_ms = until_ms;
+                }
                 Step::Reserved(step) => {
+                    self.emit_pending_retry_fact(&mut pending_retry_fact, fact_sink)?;
                     last_boundary = Some((step.node().to_string(), step.occurrence()));
                     plan.apply_reserved(&mut state, &step).map_err(|error| {
                         FrameExecutionError::new(
@@ -404,15 +600,33 @@ impl<'snapshot> FrameStack<'snapshot> {
                             error.to_string(),
                         )
                     })?;
+                    let outcome = reserved_outcome(&step);
+                    self.emit_node_fact(
+                        step.node(),
+                        step.occurrence(),
+                        step.payload(),
+                        &outcome,
+                        fact_sink,
+                    )?;
                 }
                 Step::Dispatch(node) => {
+                    let is_retry = pending_retry_fact.as_ref().is_some_and(|(pending, _)| {
+                        pending.node == node.node
+                            && pending.occurrence == node.occurrence
+                            && node.attempt > pending.attempt
+                    });
+                    if is_retry {
+                        pending_retry_fact = None;
+                    } else {
+                        self.emit_pending_retry_fact(&mut pending_retry_fact, fact_sink)?;
+                    }
                     last_boundary = Some((node.node.clone(), node.occurrence));
                     if let Some(failure) = self.debit_root_dispatch(&node) {
                         return Ok(FrameCompletion::Failed(failure));
                     }
-                    match self.dispatch_node(&node, &mut response_status, dispatcher)? {
+                    match self.dispatch_node(&node, &mut response_status, dispatcher, fact_sink)? {
                         FrameDispatchOutcome::Node(outcome) => {
-                            plan.apply(&mut state, &node, outcome, now_ms)
+                            plan.apply(&mut state, &node, outcome.clone(), now_ms)
                                 .map_err(|error| {
                                     FrameExecutionError::new(
                                         FrameExecutionErrorKind::InvalidTransition,
@@ -421,6 +635,17 @@ impl<'snapshot> FrameStack<'snapshot> {
                                         error.to_string(),
                                     )
                                 })?;
+                            if outcome_may_retry(&outcome) {
+                                pending_retry_fact = Some((node, outcome));
+                            } else {
+                                self.emit_node_fact(
+                                    &node.node,
+                                    node.occurrence,
+                                    &node.payload,
+                                    &outcome,
+                                    fact_sink,
+                                )?;
+                            }
                         }
                         FrameDispatchOutcome::Failed(failure) => {
                             return Ok(FrameCompletion::Failed(failure));
@@ -429,6 +654,116 @@ impl<'snapshot> FrameStack<'snapshot> {
                 }
             }
         }
+    }
+
+    fn emit_pending_retry_fact(
+        &mut self,
+        pending: &mut Option<(Dispatch, NodeOutcome)>,
+        fact_sink: &mut impl NodeFactSink,
+    ) -> Result<(), FrameExecutionError> {
+        let Some((dispatch, outcome)) = pending.take() else {
+            return Ok(());
+        };
+        self.emit_node_fact(
+            &dispatch.node,
+            dispatch.occurrence,
+            &dispatch.payload,
+            &outcome,
+            fact_sink,
+        )
+    }
+
+    fn emit_node_fact(
+        &mut self,
+        node_id: &str,
+        occurrence: u32,
+        input: &Value,
+        outcome: &NodeOutcome,
+        fact_sink: &mut impl NodeFactSink,
+    ) -> Result<(), FrameExecutionError> {
+        let sequence = self.next_fact_sequence;
+        let next_sequence = sequence.checked_add(1).ok_or_else(|| {
+            FrameExecutionError::new(
+                FrameExecutionErrorKind::FactSequenceExhausted,
+                self.current_record().frame_id,
+                Some(node_id),
+                "root-local node-fact sequence space is exhausted",
+            )
+        })?;
+        let (fact_outcome, output) = node_fact_outcome(outcome);
+        let capture = derive_capture(self.capture_mode, &output, input);
+        let (
+            run_id,
+            root_plan_hash,
+            frame_id,
+            parent_frame_id,
+            call_site_id,
+            flow_id,
+            current_plan_hash,
+            source_artifact_hash,
+            local_node_id,
+            source_node_id,
+        ) = {
+            let frame = self.trusted_current().current();
+            let plan_node = frame
+                .plan()
+                .body
+                .nodes
+                .iter()
+                .find(|node| node.local_node_id.as_str() == node_id)
+                .ok_or_else(|| {
+                    self.invalid_plan_error(
+                        node_id,
+                        "active fact node is absent from its verified plan",
+                    )
+                })?;
+            let source = frame
+                .plan()
+                .body
+                .source_map
+                .iter()
+                .find(|source| source.local_node_id == plan_node.local_node_id)
+                .filter(|source| source.source_node_id == plan_node.source_node_id)
+                .ok_or_else(|| {
+                    self.invalid_plan_error(
+                        node_id,
+                        "active fact node has no exact verified source-map entry",
+                    )
+                })?;
+            (
+                frame.run_id().to_string(),
+                frame.root_plan_hash().to_string(),
+                frame.frame_id(),
+                frame.parent_frame_id(),
+                frame.call_site_id().cloned(),
+                frame.flow_id().to_string(),
+                frame.current_plan_hash().to_string(),
+                frame.source_artifact_hash().to_string(),
+                plan_node.local_node_id.clone(),
+                source.source_node_id.clone(),
+            )
+        };
+        let fact = TrustedNodeFact {
+            run_id,
+            root_plan_hash,
+            frame_id,
+            parent_frame_id,
+            call_site_id,
+            flow_id,
+            current_plan_hash,
+            source_artifact_hash,
+            local_node_id,
+            source_node_id,
+            occurrence,
+            sequence,
+            outcome: fact_outcome,
+            capture,
+        };
+        fact_sink
+            .emit(fact)
+            .map_err(|source| FrameExecutionError::fact_sink_refused(frame_id, node_id, source))?;
+        self.next_fact_sequence = next_sequence;
+        Ok(())
     }
 
     fn debit_root_dispatch(&mut self, dispatch: &Dispatch) -> Option<FrameFailure> {
@@ -455,6 +790,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         dispatch: &Dispatch,
         response_status: &mut Option<u16>,
         dispatcher: &mut impl PureNodeDispatcher,
+        fact_sink: &mut impl NodeFactSink,
     ) -> Result<FrameDispatchOutcome, FrameExecutionError> {
         match dispatch.node_type.as_str() {
             "request" | "event" => Ok(FrameDispatchOutcome::Node(NodeOutcome::ok(
@@ -468,7 +804,7 @@ impl<'snapshot> FrameStack<'snapshot> {
                     dispatch.payload.clone(),
                 )))
             }
-            "call-flow" => self.dispatch_call(dispatch, dispatcher),
+            "call-flow" => self.dispatch_call(dispatch, dispatcher, fact_sink),
             _ => {
                 let plan_node = self.current_plan_node(&dispatch.node)?;
                 if plan_node.effect_policy == ExecutionEffectPolicy::Effectful {
@@ -490,6 +826,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         &mut self,
         dispatch: &Dispatch,
         dispatcher: &mut impl PureNodeDispatcher,
+        fact_sink: &mut impl NodeFactSink,
     ) -> Result<FrameDispatchOutcome, FrameExecutionError> {
         // The reducer sees the canonical public-flow projection (`flow-id`
         // only). The trusted call boundary reads the original compiled
@@ -538,7 +875,7 @@ impl<'snapshot> FrameStack<'snapshot> {
         }
 
         let frame_id = self.push_callee(&instruction)?;
-        let completion = self.execute_current(dispatch.payload.clone(), dispatcher);
+        let completion = self.execute_current(dispatch.payload.clone(), dispatcher, fact_sink);
         self.pop_callee(frame_id);
         match completion? {
             FrameCompletion::Responded { body, .. } => {
@@ -695,6 +1032,46 @@ fn checked_debit(counter: &mut u64, limit: u64) -> bool {
     true
 }
 
+fn outcome_may_retry(outcome: &NodeOutcome) -> bool {
+    matches!(
+        outcome,
+        NodeOutcome::Error(NodeError::Retryable(_) | NodeError::RateLimited(_))
+    )
+}
+
+fn node_fact_outcome(outcome: &NodeOutcome) -> (NodeFactOutcome, Value) {
+    match outcome {
+        NodeOutcome::Success { payload, port, .. } => (
+            NodeFactOutcome::Success {
+                output_port: port.clone(),
+            },
+            payload.clone(),
+        ),
+        NodeOutcome::Error(error) => (
+            NodeFactOutcome::Error(error.clone()),
+            node_error_detail(error).to_error_payload(),
+        ),
+    }
+}
+
+fn node_error_detail(error: &NodeError) -> &ErrorDetail {
+    match error {
+        NodeError::Retryable(detail)
+        | NodeError::Terminal(detail)
+        | NodeError::InvalidInput(detail) => detail,
+        NodeError::RateLimited(rate_limit) => &rate_limit.detail,
+    }
+}
+
+fn reserved_outcome(step: &ReservedStep) -> NodeOutcome {
+    match step {
+        ReservedStep::Entry { payload, .. } => NodeOutcome::ok(payload.clone()),
+        ReservedStep::Fail { code, message, .. } => NodeOutcome::Error(NodeError::Terminal(
+            ErrorDetail::coded(code, message.as_deref().unwrap_or(code)),
+        )),
+    }
+}
+
 fn callee_failure_outcome(failure: &FrameFailure) -> NodeError {
     let code = failure
         .detail
@@ -829,6 +1206,22 @@ mod tests {
         seen: Vec<SeenFrame>,
     }
 
+    #[derive(Default)]
+    struct RecordingFactSink {
+        facts: Vec<TrustedNodeFact>,
+        refuse_at: Option<usize>,
+    }
+
+    impl NodeFactSink for RecordingFactSink {
+        fn emit(&mut self, fact: TrustedNodeFact) -> Result<(), NodeFactSinkError> {
+            if self.refuse_at == Some(self.facts.len()) {
+                return Err(NodeFactSinkError::new("test fact sink refusal"));
+            }
+            self.facts.push(fact);
+            Ok(())
+        }
+    }
+
     impl PureNodeDispatcher for RecordingDispatcher {
         fn dispatch(&mut self, frame: TrustedFrame<'_>, node: &Dispatch) -> NodeOutcome {
             let current = frame.current();
@@ -860,9 +1253,18 @@ mod tests {
                         .insert("calls".to_string(), json!(calls));
                     NodeOutcome::ok(body)
                 }
-                "observe" | "recover" | "loop-a" | "loop-b" => {
+                "observe" | "observe-local" | "recover" | "loop-a" | "loop-b" => {
                     NodeOutcome::ok(node.payload.clone())
                 }
+                "retry-once" if node.attempt == 0 => NodeOutcome::Error(NodeError::Retryable(
+                    ErrorDetail::coded("try-again", "retry once"),
+                )),
+                "retry-once" => NodeOutcome::ok(node.payload.clone()),
+                "branch-fail" => NodeOutcome::ok_on(node.payload.clone(), "stop"),
+                "stop" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
+                    "authored-stop",
+                    "stop now",
+                ))),
                 "explode" => NodeOutcome::Error(NodeError::Terminal(ErrorDetail::coded(
                     "callee-broke",
                     "callee exploded",
@@ -1045,6 +1447,334 @@ mod tests {
     }
 
     #[test]
+    fn source_map_drives_author_selector_and_missing_mapping_never_falls_back() {
+        let mut root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![node(
+                "observe-local",
+                "test-pure",
+                json!({}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "observe-local"),
+                edge("observe-local", "main", RESPOND),
+            ],
+            200,
+        );
+        root.body
+            .nodes
+            .iter_mut()
+            .find(|node| node.local_node_id.as_str() == "observe-local")
+            .unwrap()
+            .source_node_id = "authored-observe".to_string();
+        root.body
+            .source_map
+            .iter_mut()
+            .find(|source| source.local_node_id.as_str() == "observe-local")
+            .unwrap()
+            .source_node_id = "authored-observe".to_string();
+        let valid_snapshot = snapshot("root-flow", vec![("root-flow", root)]);
+        let root_plan_hash = valid_snapshot.root_execution_bundle_hash().to_string();
+        let mut stack = FrameStack::new("run-source", &valid_snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
+
+        assert!(matches!(
+            stack
+                .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+                .unwrap(),
+            FrameCompletion::Responded { .. }
+        ));
+
+        let observed = fact_sink
+            .facts
+            .iter()
+            .find(|fact| fact.local_node_id().as_str() == "observe-local")
+            .unwrap();
+        assert_eq!(observed.source_node_id(), "authored-observe");
+        assert_eq!(observed.flow_id(), "root-flow");
+        assert_eq!(observed.root_plan_hash(), root_plan_hash);
+        assert_eq!(observed.current_plan_hash(), root_plan_hash);
+        assert_eq!(observed.source_artifact_hash(), hash('c'));
+
+        let mut missing = request_plan(
+            &hash('d'),
+            json!(true),
+            Vec::new(),
+            vec![edge("request", "main", RESPOND)],
+            200,
+        );
+        missing
+            .body
+            .source_map
+            .retain(|source| source.local_node_id.as_str() != "request");
+        let missing_snapshot = snapshot("missing-map", vec![("missing-map", missing)]);
+        let mut missing_stack =
+            FrameStack::new("run-missing-map", &missing_snapshot, CaptureMode::Off);
+        let mut missing_dispatcher = RecordingDispatcher::default();
+        let mut missing_sink = RecordingFactSink::default();
+
+        let error = missing_stack
+            .execute_root(json!({}), &mut missing_dispatcher, &mut missing_sink)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), FrameExecutionErrorKind::InvalidVerifiedPlan);
+        assert_eq!(error.frame_id(), 0);
+        assert_eq!(error.node_id(), Some("request"));
+        assert!(missing_dispatcher.seen.is_empty());
+        assert!(missing_sink.facts.is_empty());
+        assert_eq!(missing_stack.next_fact_sequence, 0);
+    }
+
+    #[test]
+    fn capture_full_scrubs_and_bounds_while_off_records_zero_node_io() {
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![node(
+                "observe",
+                "test-pure",
+                json!({}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "observe"),
+                edge("observe", "main", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root)]);
+        let payload = json!({"token": "secret-value", "visible": "yes"});
+        let mut full_stack = FrameStack::new("run-full", &snapshot, CaptureMode::Full);
+        let mut full_dispatcher = RecordingDispatcher::default();
+        let mut full_sink = RecordingFactSink::default();
+        full_stack
+            .execute_root(payload.clone(), &mut full_dispatcher, &mut full_sink)
+            .unwrap();
+
+        let captured = full_sink
+            .facts
+            .iter()
+            .find(|fact| fact.local_node_id().as_str() == "observe")
+            .unwrap()
+            .capture();
+        let stored = format!(
+            "{}{}",
+            captured.output_json.as_deref().unwrap(),
+            captured.input_json.as_deref().unwrap()
+        );
+        assert!(!stored.contains("secret-value"));
+        assert!(stored.contains(wamn_run_state::capture::REDACTED));
+        assert_eq!(
+            captured.output_size,
+            Some(i64::try_from(payload.to_string().len()).unwrap())
+        );
+        assert!(captured.payload_hash.is_some());
+
+        let oversized = json!({
+            "blob": "x".repeat(wamn_run_state::capture::OUTPUT_CAPTURE_CEILING_BYTES),
+            "password": "oversized-secret",
+        });
+        let mut oversized_stack = FrameStack::new("run-oversized", &snapshot, CaptureMode::Full);
+        let mut oversized_dispatcher = RecordingDispatcher::default();
+        let mut oversized_sink = RecordingFactSink::default();
+        oversized_stack
+            .execute_root(oversized, &mut oversized_dispatcher, &mut oversized_sink)
+            .unwrap();
+        let oversized_capture = oversized_sink
+            .facts
+            .iter()
+            .find(|fact| fact.local_node_id().as_str() == "observe")
+            .unwrap()
+            .capture();
+        assert_eq!(oversized_capture.output_json, None);
+        assert!(
+            oversized_capture.output_size.unwrap()
+                > i64::try_from(wamn_run_state::capture::OUTPUT_CAPTURE_CEILING_BYTES).unwrap()
+        );
+        assert!(oversized_capture.payload_hash.is_some());
+        assert!(
+            !oversized_capture
+                .input_json
+                .as_deref()
+                .unwrap()
+                .contains("oversized-secret")
+        );
+
+        let mut off_stack = FrameStack::new("run-off", &snapshot, CaptureMode::Off);
+        let mut off_dispatcher = RecordingDispatcher::default();
+        let mut off_sink = RecordingFactSink::default();
+        off_stack
+            .execute_root(payload, &mut off_dispatcher, &mut off_sink)
+            .unwrap();
+        assert!(off_sink.facts.iter().all(|fact| {
+            fact.capture().input_json.is_none()
+                && fact.capture().output_json.is_none()
+                && fact.capture().output_size.is_none()
+                && fact.capture().payload_hash.is_none()
+        }));
+    }
+
+    #[test]
+    fn retry_attempts_emit_only_the_completed_occurrence_fact() {
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![node(
+                "retry-once",
+                "test-pure",
+                json!({"retry": {"max-attempts": 2, "base-ms": 0}}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "retry-once"),
+                edge("retry-once", "main", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root)]);
+        let mut stack = FrameStack::new("run-retry", &snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
+
+        stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap();
+
+        assert_eq!(
+            dispatcher
+                .seen
+                .iter()
+                .map(|seen| seen.node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["retry-once", "retry-once"]
+        );
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.sequence(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request"), (1, "retry-once"), (2, RESPOND)]
+        );
+        let retried = &fact_sink.facts[1];
+        assert_eq!(retried.occurrence(), 0);
+        assert!(matches!(retried.outcome(), NodeFactOutcome::Success { .. }));
+    }
+
+    #[test]
+    fn fact_sink_refusal_fails_closed_without_allocating_or_running_a_successor() {
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![node(
+                "observe",
+                "test-pure",
+                json!({}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "observe"),
+                edge("observe", "main", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root)]);
+        let mut stack = FrameStack::new("run-refusal", &snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink {
+            facts: Vec::new(),
+            refuse_at: Some(1),
+        };
+
+        let error = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
+
+        assert_eq!(error.kind(), FrameExecutionErrorKind::FactSinkRefused);
+        assert_eq!(error.frame_id(), 0);
+        assert_eq!(error.node_id(), Some("observe"));
+        assert_eq!(
+            std::error::Error::source(&error).unwrap().to_string(),
+            "test fact sink refusal"
+        );
+        assert_eq!(dispatcher.seen.len(), 1);
+        assert_eq!(dispatcher.seen[0].node_id, "observe");
+        assert_eq!(fact_sink.facts.len(), 1);
+        assert_eq!(fact_sink.facts[0].sequence(), 0);
+        assert_eq!(fact_sink.facts[0].local_node_id().as_str(), "request");
+        assert_eq!(stack.next_fact_sequence, 1);
+        assert_eq!(stack.depth(), 1);
+
+        let replay = stack
+            .execute_root(json!({"again": true}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
+        assert_eq!(replay.kind(), FrameExecutionErrorKind::RootAlreadyExecuted);
+        assert_eq!(dispatcher.seen.len(), 1);
+        assert_eq!(fact_sink.facts.len(), 1);
+    }
+
+    #[test]
+    fn reserved_entry_and_dispatched_fail_emit_exact_terminal_facts() {
+        let root = request_plan(
+            &hash('c'),
+            json!(true),
+            vec![
+                node(
+                    "branch-fail",
+                    "test-branch",
+                    json!({}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+                node(
+                    "stop",
+                    "fail",
+                    json!({"code": "authored-stop", "message": "stop now", "status": 422}),
+                    ExecutionEffectPolicy::Pure,
+                ),
+            ],
+            vec![
+                edge("request", "main", "branch-fail"),
+                edge("branch-fail", "stop", "stop"),
+                edge("branch-fail", "continue", RESPOND),
+            ],
+            200,
+        );
+        let snapshot = snapshot("root", vec![("root", root)]);
+        let mut stack = FrameStack::new("run-fail", &snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
+
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!({"value": 1}), &mut dispatcher, &mut fact_sink)
+            .unwrap()
+        else {
+            panic!("the fail node must terminate the frame");
+        };
+
+        assert_eq!(failure.node_id(), "stop");
+        assert_eq!(failure.detail().code.as_deref(), Some("authored-stop"));
+        assert_eq!(dispatcher.seen.len(), 2);
+        assert_eq!(dispatcher.seen[0].node_id, "branch-fail");
+        assert_eq!(dispatcher.seen[1].node_id, "stop");
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.sequence(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request"), (1, "branch-fail"), (2, "stop")]
+        );
+        assert!(matches!(
+            fact_sink.facts[2].outcome(),
+            NodeFactOutcome::Error(NodeError::Terminal(detail))
+                if detail.code.as_deref() == Some("authored-stop")
+        ));
+    }
+
+    #[test]
     fn root_budget_constants_are_exact_platform_literals() {
         assert_eq!(MAX_CALL_DEPTH, 64);
         assert_eq!(DEFAULT_ROOT_DISPATCH_BUDGET, 10_000);
@@ -1064,11 +1794,13 @@ mod tests {
     fn root_global_dispatch_budget_fails_the_ten_thousand_and_first_dispatch() {
         let root = runaway_loop_plan();
         let snapshot = snapshot("root", vec![("root", root)]);
-        let mut stack = FrameStack::new("run-dispatch-budget", &snapshot);
+        let mut stack = FrameStack::new("run-dispatch-budget", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let FrameCompletion::Failed(failure) =
-            stack.execute_root(json!({}), &mut dispatcher).unwrap()
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap()
         else {
             panic!("the root-global dispatch budget must fail the runaway loop");
         };
@@ -1081,6 +1813,15 @@ mod tests {
         assert_eq!(stack.dispatched_nodes, DEFAULT_ROOT_DISPATCH_BUDGET);
         assert_eq!(dispatcher.seen.len(), 9_999);
         assert_eq!(stack.depth(), 1);
+        assert_eq!(fact_sink.facts.len(), 10_000);
+        assert_eq!(fact_sink.facts.last().unwrap().sequence(), 9_999);
+        assert!(
+            fact_sink
+                .facts
+                .iter()
+                .all(|fact| fact.outcome().error().is_none()),
+            "dispatch-budget is a run failure, not an invented node error fact"
+        );
     }
 
     #[test]
@@ -1113,12 +1854,14 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-budget-before-guard", &snapshot);
+        let mut stack = FrameStack::new("run-budget-before-guard", &snapshot, CaptureMode::Off);
         stack.root_dispatch_budget = 1;
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let FrameCompletion::Failed(failure) =
-            stack.execute_root(json!(7), &mut dispatcher).unwrap()
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!(7), &mut dispatcher, &mut fact_sink)
+            .unwrap()
         else {
             panic!("dispatch exhaustion must win before the invalid call input guard");
         };
@@ -1170,12 +1913,14 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-nested-dispatch-budget", &snapshot);
+        let mut stack = FrameStack::new("run-nested-dispatch-budget", &snapshot, CaptureMode::Off);
         stack.root_dispatch_budget = 2;
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let FrameCompletion::Failed(failure) =
-            stack.execute_root(json!({}), &mut dispatcher).unwrap()
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap()
         else {
             panic!("nested dispatch exhaustion must fail the root");
         };
@@ -1191,6 +1936,15 @@ mod tests {
             "the caller error edge did not run"
         );
         assert_eq!(stack.depth(), 1);
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.frame_id(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request")],
+            "budget refusal emits no fact for the refused node or caller"
+        );
     }
 
     #[test]
@@ -1238,11 +1992,12 @@ mod tests {
             .unwrap()
             .execution_bundle_hash()
             .to_string();
-        let mut stack = FrameStack::new("run-7", &snapshot);
+        let mut stack = FrameStack::new("run-7", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         let completion = stack
-            .execute_root(json!({"calls": 0}), &mut dispatcher)
+            .execute_root(json!({"calls": 0}), &mut dispatcher, &mut fact_sink)
             .unwrap();
 
         assert_eq!(
@@ -1282,6 +2037,62 @@ mod tests {
         assert_eq!(dispatcher.seen[2].plan_hash, root_hash);
         assert_eq!(dispatcher.seen[2].source_hash, hash('c'));
         assert!(dispatcher.seen.iter().all(|seen| seen.run_id == "run-7"));
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (
+                    fact.sequence(),
+                    fact.frame_id(),
+                    fact.local_node_id().as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (0, 0, "request"),
+                (1, 1, "request"),
+                (2, 1, "stamp"),
+                (3, 1, RESPOND),
+                (4, 0, "call-one"),
+                (5, 2, "request"),
+                (6, 2, "stamp"),
+                (7, 2, RESPOND),
+                (8, 0, "call-two"),
+                (9, 0, "observe"),
+                (10, 0, RESPOND),
+            ],
+            "one accepted root-global sequence orders callee completion before each caller fact"
+        );
+        let call_facts = fact_sink
+            .facts
+            .iter()
+            .filter(|fact| fact.local_node_id().as_str().starts_with("call-"))
+            .collect::<Vec<_>>();
+        assert_eq!(call_facts.len(), 2, "each call occurrence emits once");
+        assert!(call_facts.iter().all(|fact| fact.frame_id() == 0));
+        assert!(call_facts.iter().all(|fact| fact.call_site_id().is_none()));
+        assert!(call_facts.iter().all(|fact| {
+            matches!(
+                fact.outcome(),
+                NodeFactOutcome::Success { output_port } if output_port == wamn_flow::MAIN_PORT
+            )
+        }));
+        assert!(fact_sink.facts[1..4].iter().all(|fact| {
+            fact.parent_frame_id() == Some(0)
+                && fact
+                    .call_site_id()
+                    .is_some_and(|site| site.as_str() == "call-one")
+                && fact.current_plan_hash() == callee_hash
+                && fact.root_plan_hash() == root_hash
+                && fact.flow_id() == "callee"
+                && fact.source_artifact_hash() == hash('d')
+        }));
+        assert!(fact_sink.facts.iter().all(|fact| {
+            fact.run_id() == "run-7"
+                && fact.capture().input_json.is_none()
+                && fact.capture().output_json.is_none()
+                && fact.capture().output_size.is_none()
+                && fact.capture().payload_hash.is_none()
+        }));
     }
 
     #[test]
@@ -1318,11 +2129,12 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-invalid", &snapshot);
+        let mut stack = FrameStack::new("run-invalid", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         let FrameCompletion::Responded { body, .. } = stack
-            .execute_root(json!({"name": 7}), &mut dispatcher)
+            .execute_root(json!({"name": 7}), &mut dispatcher, &mut fact_sink)
             .unwrap()
         else {
             panic!("caller error path must respond");
@@ -1334,6 +2146,23 @@ mod tests {
         assert_eq!(dispatcher.seen[0].frame_id, 0);
         assert_eq!(stack.next_frame_id, 1, "invalid input never pushes a frame");
         assert_eq!(stack.depth(), 1);
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.sequence(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request"), (1, "call"), (2, "recover"), (3, RESPOND)]
+        );
+        let call_fact = &fact_sink.facts[1];
+        assert_eq!(call_fact.frame_id(), 0);
+        assert_eq!(call_fact.parent_frame_id(), None);
+        assert_eq!(call_fact.call_site_id(), None);
+        assert!(matches!(
+            call_fact.outcome(),
+            NodeFactOutcome::Error(NodeError::InvalidInput(detail))
+                if detail.code.as_deref() == Some(CALL_INPUT_INVALID)
+        ));
     }
 
     #[test]
@@ -1374,11 +2203,12 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-failure", &snapshot);
+        let mut stack = FrameStack::new("run-failure", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         let FrameCompletion::Responded { body, .. } = stack
-            .execute_root(json!({"value": 1}), &mut dispatcher)
+            .execute_root(json!({"value": 1}), &mut dispatcher, &mut fact_sink)
             .unwrap()
         else {
             panic!("caller error path must respond");
@@ -1395,6 +2225,43 @@ mod tests {
             [("explode", 1), ("recover", 0)]
         );
         assert_eq!(stack.depth(), 1);
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (
+                    fact.sequence(),
+                    fact.frame_id(),
+                    fact.local_node_id().as_str(),
+                ))
+                .collect::<Vec<_>>(),
+            [
+                (0, 0, "request"),
+                (1, 1, "request"),
+                (2, 1, "explode"),
+                (3, 0, "call"),
+                (4, 0, "recover"),
+                (5, 0, RESPOND),
+            ]
+        );
+        let explode = &fact_sink.facts[2];
+        assert_eq!(explode.parent_frame_id(), Some(0));
+        assert_eq!(
+            explode.call_site_id().map(ExecutionNodeId::as_str),
+            Some("call")
+        );
+        assert!(matches!(
+            explode.outcome(),
+            NodeFactOutcome::Error(NodeError::Terminal(detail))
+                if detail.code.as_deref() == Some("callee-broke")
+        ));
+        let caller = &fact_sink.facts[3];
+        assert_eq!(caller.frame_id(), 0);
+        assert!(matches!(
+            caller.outcome(),
+            NodeFactOutcome::Error(NodeError::Terminal(detail))
+                if detail.code.as_deref() == Some("callee-broke")
+        ));
     }
 
     fn recursive_plan(source_hash: &str, target: &str) -> ExecutionPlanV2 {
@@ -1444,11 +2311,12 @@ mod tests {
             200,
         );
         let snapshot = snapshot("self-flow", vec![("self-flow", plan)]);
-        let mut stack = FrameStack::new("run-depth-guard-order", &snapshot);
+        let mut stack = FrameStack::new("run-depth-guard-order", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         let FrameCompletion::Responded { body, .. } = stack
-            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher)
+            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher, &mut fact_sink)
             .unwrap()
         else {
             panic!("the invalid call input must route before the depth floor");
@@ -1471,11 +2339,12 @@ mod tests {
     fn sixty_fifth_valid_recursive_call_fails_before_frame_id_allocation() {
         let plan = recursive_plan(&hash('c'), "self-flow");
         let snapshot = snapshot("self-flow", vec![("self-flow", plan)]);
-        let mut stack = FrameStack::new("run-depth-budget", &snapshot);
+        let mut stack = FrameStack::new("run-depth-budget", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         let FrameCompletion::Failed(failure) = stack
-            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher)
+            .execute_root(json!(MAX_CALL_DEPTH + 1), &mut dispatcher, &mut fact_sink)
             .unwrap()
         else {
             panic!("the sixty-fifth valid recursive call must fail the root");
@@ -1505,11 +2374,12 @@ mod tests {
     fn finite_self_and_mutual_recursion_use_ordinary_monotonic_frames() {
         let self_plan = recursive_plan(&hash('c'), "self-flow");
         let self_snapshot = snapshot("self-flow", vec![("self-flow", self_plan)]);
-        let mut self_stack = FrameStack::new("run-self", &self_snapshot);
+        let mut self_stack = FrameStack::new("run-self", &self_snapshot, CaptureMode::Off);
         let mut self_dispatcher = RecordingDispatcher::default();
+        let mut self_fact_sink = RecordingFactSink::default();
         assert_eq!(
             self_stack
-                .execute_root(json!(2), &mut self_dispatcher)
+                .execute_root(json!(2), &mut self_dispatcher, &mut self_fact_sink)
                 .unwrap(),
             FrameCompletion::Responded {
                 body: json!("done"),
@@ -1529,15 +2399,46 @@ mod tests {
             ]
         );
         assert_eq!(self_stack.depth(), 1);
+        assert_eq!(
+            self_fact_sink
+                .facts
+                .iter()
+                .map(TrustedNodeFact::sequence)
+                .collect::<Vec<_>>(),
+            (0..u64::try_from(self_fact_sink.facts.len()).unwrap()).collect::<Vec<_>>()
+        );
+        let self_keys = self_fact_sink
+            .facts
+            .iter()
+            .map(|fact| {
+                (
+                    fact.frame_id(),
+                    fact.local_node_id().clone(),
+                    fact.occurrence(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(self_keys.len(), self_fact_sink.facts.len());
+        assert_eq!(
+            self_fact_sink
+                .facts
+                .iter()
+                .filter(|fact| fact.local_node_id().as_str() == "call")
+                .map(TrustedNodeFact::frame_id)
+                .collect::<Vec<_>>(),
+            [1, 0],
+            "callee call facts complete before their callers"
+        );
 
         let alpha = recursive_plan(&hash('d'), "beta");
         let beta = recursive_plan(&hash('e'), "alpha");
         let mutual_snapshot = snapshot("alpha", vec![("alpha", alpha), ("beta", beta)]);
-        let mut mutual_stack = FrameStack::new("run-mutual", &mutual_snapshot);
+        let mut mutual_stack = FrameStack::new("run-mutual", &mutual_snapshot, CaptureMode::Off);
         let mut mutual_dispatcher = RecordingDispatcher::default();
+        let mut mutual_fact_sink = RecordingFactSink::default();
         assert!(matches!(
             mutual_stack
-                .execute_root(json!(3), &mut mutual_dispatcher)
+                .execute_root(json!(3), &mut mutual_dispatcher, &mut mutual_fact_sink)
                 .unwrap(),
             FrameCompletion::Responded { body, .. } if body == json!("done")
         ));
@@ -1555,6 +2456,27 @@ mod tests {
             ]
         );
         assert_eq!(mutual_stack.depth(), 1);
+        let mutual_keys = mutual_fact_sink
+            .facts
+            .iter()
+            .map(|fact| {
+                (
+                    fact.frame_id(),
+                    fact.local_node_id().clone(),
+                    fact.occurrence(),
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(mutual_keys.len(), mutual_fact_sink.facts.len());
+        assert!(
+            mutual_fact_sink
+                .facts
+                .iter()
+                .enumerate()
+                .all(|(index, fact)| {
+                    fact.sequence() == u64::try_from(index).expect("fact count fits u64")
+                })
+        );
     }
 
     #[test]
@@ -1570,10 +2492,13 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root)]);
-        let mut stack = FrameStack::new("run-missing", &snapshot);
+        let mut stack = FrameStack::new("run-missing", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let error = stack.execute_root(json!({}), &mut dispatcher).unwrap_err();
+        let error = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
 
         assert_eq!(error.kind(), FrameExecutionErrorKind::MissingCallee);
         assert_eq!(error.frame_id(), 0);
@@ -1608,10 +2533,13 @@ mod tests {
             .unwrap()
             .config["site"] = json!("forged-site");
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-forged", &snapshot);
+        let mut stack = FrameStack::new("run-forged", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let error = stack.execute_root(json!({}), &mut dispatcher).unwrap_err();
+        let error = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
 
         assert_eq!(error.kind(), FrameExecutionErrorKind::InvalidVerifiedPlan);
         assert_eq!(error.node_id(), Some("call"));
@@ -1647,10 +2575,13 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root), ("callee", callee)]);
-        let mut stack = FrameStack::new("run-effect", &snapshot);
+        let mut stack = FrameStack::new("run-effect", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
-        let error = stack.execute_root(json!({}), &mut dispatcher).unwrap_err();
+        let error = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
 
         assert_eq!(
             error.kind(),
@@ -1664,10 +2595,26 @@ mod tests {
             "the callee was entered exactly once"
         );
         assert_eq!(stack.depth(), 1, "interpreter refusal popped the callee");
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.frame_id(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request"), (1, "request")],
+            "the effectful occurrence and its unfinished call site emit no fact"
+        );
 
-        let replay = stack.execute_root(json!({}), &mut dispatcher).unwrap_err();
+        let replay = stack
+            .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
         assert_eq!(replay.kind(), FrameExecutionErrorKind::RootAlreadyExecuted);
         assert!(dispatcher.seen.is_empty(), "a refused root cannot replay");
+        assert_eq!(
+            fact_sink.facts.len(),
+            2,
+            "a refused root cannot re-emit facts"
+        );
     }
 
     #[test]
@@ -1680,15 +2627,18 @@ mod tests {
             200,
         );
         let snapshot = snapshot("root", vec![("root", root)]);
-        let mut stack = FrameStack::new("run-once", &snapshot);
+        let mut stack = FrameStack::new("run-once", &snapshot, CaptureMode::Off);
         let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
 
         assert!(matches!(
-            stack.execute_root(json!({}), &mut dispatcher).unwrap(),
+            stack
+                .execute_root(json!({}), &mut dispatcher, &mut fact_sink)
+                .unwrap(),
             FrameCompletion::Responded { .. }
         ));
         let replay = stack
-            .execute_root(json!({"replay": true}), &mut dispatcher)
+            .execute_root(json!({"replay": true}), &mut dispatcher, &mut fact_sink)
             .unwrap_err();
 
         assert_eq!(replay.kind(), FrameExecutionErrorKind::RootAlreadyExecuted);

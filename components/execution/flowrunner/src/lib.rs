@@ -12,7 +12,8 @@ mod frames;
 
 pub use frames::{
     DEFAULT_ROOT_DISPATCH_BUDGET, FrameCompletion, FrameExecutionError, FrameExecutionErrorKind,
-    FrameFailure, FrameStack, MAX_CALL_DEPTH, PureNodeDispatcher, TrustedFrame, TrustedFrameFacts,
+    FrameFailure, FrameStack, MAX_CALL_DEPTH, NodeFactOutcome, NodeFactSink, NodeFactSinkError,
+    PureNodeDispatcher, TrustedFrame, TrustedFrameFacts, TrustedNodeFact,
 };
 
 wit_bindgen::generate!({

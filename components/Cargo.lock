@@ -206,6 +206,7 @@ dependencies = [
  "serde_json",
  "wamn-catalog",
  "wamn-flow",
+ "wamn-run-state",
  "wamn-runner",
  "wit-bindgen 0.44.0",
 ]

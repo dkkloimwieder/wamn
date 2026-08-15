@@ -16,6 +16,9 @@ wamn-catalog = { workspace = true }
 # Pure graph reducer used by the in-memory frame driver. The component keeps
 # effectful node activation hard-refused until its owning change.
 wamn-runner = { workspace = true }
+# Reuses the run-state-owned pure capture contract without enabling its native
+# database adapter or exposing any persistence path to the component.
+wamn-run-state = { workspace = true }
 
 [lib]
 crate-type = ["cdylib"]
