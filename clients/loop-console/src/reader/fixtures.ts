@@ -610,12 +610,12 @@ const draftSourceRevision16 = `{
     { "id": "respond", "type": "respond" }
   ],
   "edges": [
-    { "from": "ingress", "out": "main", "to": "parse-order", "in": "main" },
-    { "from": "parse-order", "out": "main", "to": "check-stock", "in": "main" },
-    { "from": "check-stock", "out": "in-stock", "to": "reserve", "in": "main" },
-    { "from": "check-stock", "out": "backorder", "to": "fetch-inventory", "in": "main" },
-    { "from": "fetch-inventory", "out": "main", "to": "reserve", "in": "main" },
-    { "from": "reserve", "out": "main", "to": "respond", "in": "main" }
+    { "from": "ingress", "to": "parse-order" },
+    { "from": "parse-order", "to": "check-stock" },
+    { "from": "check-stock", "from-port": "in-stock", "to": "reserve" },
+    { "from": "check-stock", "from-port": "backorder", "to": "fetch-inventory" },
+    { "from": "fetch-inventory", "to": "reserve" },
+    { "from": "reserve", "to": "respond" }
   ],
   "schema-version" "0.1",
   "flow-id": "orders",
@@ -687,8 +687,8 @@ export const unattributedDraft: Draft = draft({
     { "id": "respond", "type": "respond" }
   ],
   "edges": [
-    { "from": "ingress", "out": "main", "to": "charge-card", "in": "main" },
-    { "from": "charge-card", "out": "main", "to": "respond", "in": "main" }
+    { "from": "ingress", "to": "charge-card" },
+    { "from": "charge-card", "to": "respond" }
   ],
   "schema-version": "0.1",
   "flow-id": "charges",
@@ -716,9 +716,9 @@ export const loopingDraft: Draft = draft({
     { "id": "next-subscriber", "type": "conditional", "config": { "expr": "ctx.remaining > 0" } }
   ],
   "edges": [
-    { "from": "ingress", "out": "main", "to": "notify-subscriber", "in": "main" },
-    { "from": "notify-subscriber", "out": "main", "to": "next-subscriber", "in": "main" },
-    { "from": "next-subscriber", "out": "more", "to": "notify-subscriber", "in": "main" }
+    { "from": "ingress", "to": "notify-subscriber" },
+    { "from": "notify-subscriber", "to": "next-subscriber" },
+    { "from": "next-subscriber", "from-port": "more", "to": "notify-subscriber" }
   ],
   "schema-version": "0.1",
   "flow-id": "notifications",
