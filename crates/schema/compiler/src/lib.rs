@@ -1,5 +1,7 @@
 //! wamn DDL compiler (3.2).
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! Turns the canonical catalog model (3.1, [`wamn_schema_model`]) into Postgres DDL:
 //! a whole catalog into `CREATE` statements, or a catalog *diff* into an ordered
 //! [`MigrationPlan`] of `ALTER`s. Every operation is classified

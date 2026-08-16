@@ -1,5 +1,7 @@
 //! wamn-waker: the scale-to-zero / parked-project wake actuator (wamn-fqg.12, POC-F3).
 //!
+//! MVP outcome: wake-from-zero.
+//!
 //! A tiny always-on service that turns a doorbell hint into a Kubernetes scale
 //! action: when the dispatcher publishes a project's execution-target doorbell
 //! and its runner Deployment sits at 0 replicas, the waker scales it `0 -> 1` so

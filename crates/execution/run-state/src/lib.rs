@@ -1,5 +1,7 @@
 //! # wamn-run-state — the durable execution lifecycle
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! This crate owns the transactionally coupled `runs`, `node_runs`, `run_queue`,
 //! lease, timer, and terminal lifecycle. It contains only decisions and
 //! parameterized SQL; Postgres, clocks, and

@@ -1,5 +1,7 @@
 //! The pure Rust mirror of `wamn:flow-invocation@0.1.0`.
 //!
+//! MVP outcome: M0 authenticated admission via the warm run-worker.
+//!
 //! This crate mirrors [`wit/package.wit`](../wit/package.wit), the versioned
 //! caller-facing boundary between ingress and flow execution from FLOW-SPEC
 //! rev18 §8, §§9.1–9.7, and §11. The two-stage handshake returns a durable run

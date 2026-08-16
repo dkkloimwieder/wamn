@@ -1,5 +1,7 @@
 //! One-shot control-plane verbs.
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! Provisioning (`provision-project`, `provision-org`, `provision-project-env`,
 //! `enable-cdc-project-env`), catalog application (`publish-catalog`,
 //! `migrate-catalog`), and reconciliation ship in `wamn-ctl`. Environment

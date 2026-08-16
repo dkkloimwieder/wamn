@@ -1,4 +1,6 @@
 //! Catalog-derived, transport-neutral PostgreSQL entity access.
+//!
+//! MVP outcome: the Postgres standard node (`standard-nodes/src/postgres.rs`).
 
 mod error;
 mod planner;

@@ -1,5 +1,7 @@
 //! wamn migration engine (2.5).
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! The **live executor** that applies a catalog to a project database. It does
 //! not re-derive migration logic — it **composes the shipped machinery**:
 //!

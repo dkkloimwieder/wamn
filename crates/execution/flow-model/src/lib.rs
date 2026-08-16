@@ -1,5 +1,7 @@
 //! Canonical wamn flow-graph schema (5.1).
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! A flow is **data, not code**: a versioned directed graph of typed nodes
 //! ([`Node`]) wired by ported edges ([`Edge`]), starting at one typed entry,
 //! and declaring portable connection requirements. Deploying a flow flips an

@@ -1,5 +1,7 @@
 //! Production composition for the flow serving executor.
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! This service leaf selects only production credentials, clock, randomness,
 //! egress, and database adapters. It also owns the NATS doorbell, idle cadence,
 //! retry, and shutdown lifecycle around the shared execution host. Deterministic

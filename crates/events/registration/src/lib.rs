@@ -1,5 +1,7 @@
 //! wamn event registration model (EVT-REG, D19 v3 §5).
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! The **declaration surface** for the event plane's materializer (l5i9.17): an
 //! [`EventRegistration`] is a subscribing flow's "a registration, not code" —
 //! an entity id, an op set, and an optional condition. This crate models and

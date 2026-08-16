@@ -1,4 +1,6 @@
 //! Thin HTTP adapter for the versioned callable-flow invocation contract.
+//!
+//! MVP outcome: M0 authenticated admission via the warm run-worker.
 
 use boon::{Compiler, Draft, Schemas};
 use serde::{Deserialize, Serialize};

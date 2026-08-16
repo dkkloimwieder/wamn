@@ -1,5 +1,7 @@
 //! Single-shot flow-runner component.
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! The public world has one product operation, `run`. Production execution
 //! remains fail-closed until effect activation lands in its owning change.
 //! Immutable claimed-run plans cross the trusted host

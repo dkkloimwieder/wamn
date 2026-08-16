@@ -1,5 +1,7 @@
 //! # wamn-materializer (EVT-MAT, D19 v3 §5 / l5i9.17) — CDC event → run decisions
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! The **pure per-event pipeline** the Service-first materializer guest
 //! (`components/execution/materializer`) drives: given a subscribing flow's declaration
 //! (an [`EventRegistration`] + its subscribed flow identity) and one

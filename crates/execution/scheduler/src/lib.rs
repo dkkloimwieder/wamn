@@ -1,4 +1,6 @@
 //! Adaptive polling cadence shared by execution services.
+//!
+//! MVP outcome: wake-from-zero.
 
 mod dispatch;
 

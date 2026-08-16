@@ -1,4 +1,6 @@
 //! Shared native runtime configuration and wasmCloud host capability adapters.
+//!
+//! MVP outcome: crash floor · M0 execution · flow composition.
 
 pub mod connection_authority;
 pub mod connection_generation;

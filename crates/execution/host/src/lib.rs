@@ -1,5 +1,7 @@
 //! Shared WASI/Wasm adapter for the compiled flowrunner component.
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! [`ExecutionHost`] instantiates one component with host-injected identity and
 //! capabilities, claims host-side, and drives the guest's single-shot `run` export.
 //! Artifact lifecycle policy such as polling, doorbell subscription, shutdown,

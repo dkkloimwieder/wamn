@@ -2,6 +2,8 @@
 //! one pg_walstream session for ONE project-env, publishing row events onto
 //! the org+env `EVT_` JetStream stream.
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! Dispatcher-family NATIVE service (the v3 posture exception: it holds the
 //! R8b **replication** credential — `WAMN_CDC_URL`, the plain libpq URL from
 //! the `wamn-cdc-…` Secret; the reader appends `sslmode` +

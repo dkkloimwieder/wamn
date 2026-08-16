@@ -1,5 +1,7 @@
 //! Canonical immutable catalog identities and definition hashing.
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! This crate owns only the pure definition plane. Persistence, publication,
 //! activation transitions, and compatibility readers live in effect crates.
 

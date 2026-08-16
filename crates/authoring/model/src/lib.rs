@@ -1,5 +1,7 @@
 //! Frontend-neutral authoring command and query contracts.
 //!
+//! MVP outcome: publish gate.
+//!
 //! This crate is data only. Git, HTTP, CLI, and future visual clients adapt
 //! the same messages to canonical application handlers. Authenticated
 //! principals, credentials, endpoints, database authority, and frontend state

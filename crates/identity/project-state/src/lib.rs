@@ -1,6 +1,8 @@
 //! The per-project **system schema v1** — the auth/RBAC/config tables that live
 //! in a project database (wamn-as5, `docs/archive/platform-plan.md` §2.4).
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! This crate is the pure MODEL: the schema name, the table/column manifest, and
 //! the CHECK literals, kept as a single source and tied to the hand-written DDL
 //! [`deploy/sql/app-schema.sql`](../../../../deploy/sql/app-schema.sql) by a drift guard

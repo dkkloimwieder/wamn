@@ -1,5 +1,7 @@
 //! wamn project provisioning (2.3) — the **pure** core.
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! Standing up a project turns the SQL-emitting E3 crates into a live system:
 //! given a project id, provision a per-project Postgres **database** on the
 //! shared cluster (D6: CloudNativePG, one shared Cluster with a database per

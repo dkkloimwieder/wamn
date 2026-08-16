@@ -1,6 +1,8 @@
 //! The Service-first materializer guest (EVT-MAT, D19 v3 §5 / l5i9.17) — the
 //! effect shell over the PURE `wamn-materializer` decision pipeline.
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! One sweep: read the tenant's registrations + each subscribed flow's ACTIVE
 //! graph identity through `wamn:postgres`; per serviceable
 //! registration bind a durable pull consumer on the org/env `EVT_` stream

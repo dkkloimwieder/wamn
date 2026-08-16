@@ -1,5 +1,7 @@
 //! wamn-host: the production host binary.
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! `host` — ClusterHost driven by the runtime-operator over NATS. The
 //! long-lived services live in their own artifacts (SR9): `wamn-dispatcher`,
 //! `wamn-run-worker`, `wamn-cdc-reader`.

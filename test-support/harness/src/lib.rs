@@ -1,5 +1,7 @@
 //! Shared measurement/assertion vocabulary for the gate suite (`wamn-gates`).
 //!
+//! MVP outcome: proof floor.
+//!
 //! The gates accreted per-bench copies of the same helpers (`percentile`
 //! existed three times host-side); this crate is the single place they live
 //! (docs/archive/structure-review.md SR1). Scope: pure, dependency-light helpers —

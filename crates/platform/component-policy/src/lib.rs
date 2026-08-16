@@ -1,6 +1,8 @@
 //! Structurally refuses publication of first-party components that import
 //! `wasi:sockets`.
 //!
+//! MVP outcome: egress confinement (import allowlist, mutation-proofed).
+//!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
 //! publication. It is independent of the pinned wasmCloud v2.6.1 runtime
 //! policy: `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default

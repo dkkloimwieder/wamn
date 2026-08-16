@@ -2,6 +2,8 @@
 //! the envelope a CDC reader publishes per row event, the subject it lands on,
 //! and the `Nats-Msg-Id` the whole plane keys dedupe on.
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! **STATUS: FROZEN 0.1.0** (2026-07-19, wamn-l5i9.30). These shapes are the
 //! Phase-2 cutover contract: the reader service (wamn-l5i9.10) publishes them,
 //! the materializer (wamn-l5i9.17) consumes them, and `readerbench` /

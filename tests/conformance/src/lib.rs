@@ -1,4 +1,6 @@
 //! Contract proofs for component policy, WIT behavior, schemas, and artifacts.
+//!
+//! MVP outcome: proof floor.
 
 pub mod catalog;
 pub mod egressbench;

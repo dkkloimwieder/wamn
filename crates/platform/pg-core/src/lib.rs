@@ -1,5 +1,7 @@
 //! Guest-safe PostgreSQL vocabulary shared across bounded contexts.
 //!
+//! MVP outcome: event spine (causation depth = loop guard).
+//!
 //! A [`Sql`] is a parameterized statement fragment carried **with** its
 //! positional-parameter arity (the count of distinct `$n` placeholders it binds).
 //! The pure crates emit SQL as `String`; when a fragment produced in one crate is

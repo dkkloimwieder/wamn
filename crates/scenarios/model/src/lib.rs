@@ -1,5 +1,7 @@
 //! Pure contracts and evaluation for the MVP publish test gate.
 //!
+//! MVP outcome: publish gate.
+//!
 //! Test-set parsing is closed to four assertion families. Effectful callers
 //! collect the bounded [`Captured`] facts; this crate only evaluates them.
 

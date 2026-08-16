@@ -1,5 +1,7 @@
 //! sockprobe — E13/E15 runtime raw-socket fixture (wamn-o3u6).
 //!
+//! MVP outcome: proof floor.
+//!
 //! A `wasi:cli` command that ATTEMPTS each raw outbound TCP + UDP egress arm via
 //! `wasi:sockets` (reached through `std::net` on wasm32-wasip2 — the default
 //! command world imports the whole `wasi:sockets` package) and reports the

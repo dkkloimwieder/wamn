@@ -2,6 +2,8 @@
 //! emits best-effort NATS doorbell hints, and adapts each project's sweep
 //! cadence to observed work.
 //!
+//! MVP outcome: wake-from-zero.
+//!
 //! One project sweep hints every currently-due unleased queue row and then
 //! tightens or decays the project's cadence. Dropped database connections are
 //! re-dialed and every sweep has a deadline so one unhealthy project cannot

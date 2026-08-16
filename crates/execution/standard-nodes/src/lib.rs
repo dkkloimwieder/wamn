@@ -1,5 +1,7 @@
 //! # wamn-standard-nodes — the standard node library v1 (5.3)
 //!
+//! MVP outcome: M0 node set.
+//!
 //! The production node vocabulary, authored against the flow model's pure
 //! node contract — **never the runner crate** (the purity rule, enforced
 //! mechanically by this crate's `purity_lint` test over `cargo metadata`).

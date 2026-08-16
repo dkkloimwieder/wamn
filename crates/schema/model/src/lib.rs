@@ -1,5 +1,7 @@
 //! Canonical wamn metadata catalog schema (3.1).
 //!
+//! MVP outcome: provisioning · publish · additive schema · tenant isolation (T1 minting).
+//!
 //! The catalog is **data, not DDL**: a versioned set of entities ([`Entity`]),
 //! each with typed fields ([`Field`] / [`FieldType`]) plus indexes ([`Index`])
 //! and constraints ([`Constraint`]), wired by relations ([`Relation`]). It is

@@ -1,5 +1,7 @@
 //! Orchestration facade for retained proof inputs and repository fixtures.
 //!
+//! MVP outcome: proof floor.
+//!
 //! `wamn-gates` retains the routing needed by the MVP proof inputs while their
 //! implementations live in explicit conformance, integration, system, and
 //! test-support homes. Proofs that import service clients remain integration

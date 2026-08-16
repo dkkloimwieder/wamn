@@ -1,5 +1,7 @@
 //! First-party platform identities live in the T1 system database.
 //!
+//! MVP outcome: management auth.
+//!
 //! This crate owns human and service principals, project-role assignments, and
 //! opaque personal access tokens. It deliberately contains no HTTP, OIDC, JWT,
 //! or per-project `app_system` authority: every function here is

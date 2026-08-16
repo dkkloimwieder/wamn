@@ -1,4 +1,6 @@
 //! Integration and measurement proofs that compose real repository adapters.
+//!
+//! MVP outcome: proof floor.
 
 pub use wamn_test_infrastructure::ctl_process;
 

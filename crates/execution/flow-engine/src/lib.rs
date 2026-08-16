@@ -1,5 +1,7 @@
 //! # wamn-runner (5.2) — the flow-runner engine
 //!
+//! MVP outcome: crash floor · M0 execution · flow composition.
+//!
 //! A **pure, synchronous reducer** over a [`wamn_flow::Flow`]: it walks the graph
 //! from `entry` following ported edges, branches and merges, routes errors, and
 //! schedules retries with backoff — deciding everything **mechanically** from the

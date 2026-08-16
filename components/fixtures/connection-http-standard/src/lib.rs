@@ -1,4 +1,6 @@
 //! Standard-node fixture importing only the typed HTTP connection capability.
+//!
+//! MVP outcome: proof floor.
 
 #![no_std]
 
