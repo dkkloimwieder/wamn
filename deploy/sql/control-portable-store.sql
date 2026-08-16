@@ -470,7 +470,6 @@ CREATE TABLE IF NOT EXISTS catalog.deployment_attestations (
     project_id              text NOT NULL CHECK (project_id <> ''),
     environment             text NOT NULL CHECK (environment <> ''),
     deployed_manifest_hash  text NOT NULL CHECK (deployed_manifest_hash ~ '^sha256:[0-9a-f]{64}$'),
-    deployed_resolution_map jsonb NOT NULL CHECK (jsonb_typeof(deployed_resolution_map) = 'object'),
     attested_at             timestamptz NOT NULL,
     CONSTRAINT deployment_attestations_coordinate UNIQUE (
         tenant_id, catalog_id, catalog_version, org_id, project_id, environment
@@ -549,7 +548,6 @@ CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
     p_project_id text,
     p_environment text,
     p_deployed_manifest_hash text,
-    p_deployed_resolution_map jsonb,
     p_attested_at timestamptz
 )
 RETURNS timestamptz
@@ -560,11 +558,10 @@ DECLARE
 BEGIN
     INSERT INTO catalog.deployment_attestations (
         tenant_id, catalog_id, catalog_version, org_id, project_id,
-        environment, deployed_manifest_hash, deployed_resolution_map, attested_at
+        environment, deployed_manifest_hash, attested_at
     ) VALUES (
         p_tenant_id, p_catalog_id, p_catalog_version, p_org_id, p_project_id,
-        p_environment, p_deployed_manifest_hash, p_deployed_resolution_map,
-        p_attested_at
+        p_environment, p_deployed_manifest_hash, p_attested_at
     )
     ON CONFLICT (
         tenant_id, catalog_id, catalog_version, org_id, project_id, environment
@@ -584,7 +581,6 @@ BEGIN
       AND project_id = p_project_id
       AND environment = p_environment
       AND deployed_manifest_hash = p_deployed_manifest_hash
-      AND deployed_resolution_map = p_deployed_resolution_map
       AND attested_at = p_attested_at;
 
     IF existing_attested_at IS NULL THEN
@@ -595,7 +591,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_deployment_attestation(
-    text, text, int, text, text, text, text, jsonb, timestamptz
+    text, text, int, text, text, text, text, timestamptz
 ) FROM PUBLIC;
 
 -- Tenant isolation is structural even while the dormant tables are owner-only.
@@ -760,7 +756,6 @@ BEGIN
         'catalog_version:integer:true', 'org_id:text:true',
         'project_id:text:true', 'environment:text:true',
         'deployed_manifest_hash:text:true',
-        'deployed_resolution_map:jsonb:true',
         'attested_at:timestamp with time zone:true'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
@@ -793,7 +788,7 @@ BEGIN
     WHERE con.conrelid = 'catalog.deployment_attestations'::regclass
       AND con.contype <> 'n';
     IF attestation_constraints_fingerprint <>
-       '33335ad49ccfdc2e80a32f6a70c1fece23658252e3d9fb0ddbf0975c9d095208'
+       '402504526c60def1fddf35860ec2829c7b516837292b10a9e35ed377b8af9745'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'deployment-attestation-constraint-drift';

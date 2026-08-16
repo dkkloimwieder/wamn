@@ -308,18 +308,16 @@ DO $$ DECLARE
 BEGIN
   first_attested_at := catalog.register_deployment_attestation(
     'tenant-a','cat',1,'org-a','project-a','dev','sha256:'||repeat('2',64),
-    jsonb_build_object('flow-a','sha256:'||repeat('3',64)),
     '2026-08-15T12:00:00Z'::timestamptz);
   ASSERT first_attested_at = catalog.register_deployment_attestation(
       'tenant-a','cat',1,'org-a','project-a','dev','sha256:'||repeat('2',64),
-      jsonb_build_object('flow-a','sha256:'||repeat('3',64)),
       '2026-08-15T12:00:00Z'::timestamptz),
     'exact attestation retry must return the original row';
 END $$;
 DO $$ BEGIN BEGIN
   PERFORM catalog.register_deployment_attestation(
     'tenant-a','cat',1,'org-a','project-a','dev','sha256:'||repeat('4',64),
-    '{{}}'::jsonb,'2026-08-15T12:00:00Z'::timestamptz);
+    '2026-08-15T12:00:00Z'::timestamptz);
   ASSERT false, 'same attestation coordinate with different content must conflict';
 EXCEPTION WHEN unique_violation THEN
   ASSERT SQLERRM = 'deployment-attestation-content-conflict';
