@@ -1,0 +1,110 @@
+/*
+ * §6 step 7's overlay. Colours and faces come from tokens.css only; the shapes
+ * here are §1.4's — 8px grid, hairline rules, no boxes that are not doing work.
+ */
+
+.palette-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  justify-content: center;
+  padding: 10vh var(--space-2) var(--space-2);
+}
+
+/*
+ * The dim behind the palette, drawn as its own layer: `opacity` on the scrim
+ * itself would fade the palette with it, and the one token spelling of a
+ * translucent ink is a solid ink at less than full opacity — tokens.css is the
+ * only file allowed to name a colour, and it names no alpha.
+ */
+.palette-scrim::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--ink);
+  opacity: 0.88;
+}
+
+.palette {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: min(72ch, 100%);
+  max-height: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.palette-input {
+  padding: var(--space-1);
+  border: 1px solid var(--line);
+  background: var(--ink);
+  color: var(--text);
+  /*
+   * Size only. A form control does not inherit its family, and the one
+   * declaration that would fix that is the one src/styles/token-discipline.test.ts
+   * bans outright — so the input carries the browser's control face on purpose
+   * rather than a literal stack this package is not allowed to write.
+   */
+  font-size: var(--size-14);
+}
+
+.palette-groups {
+  overflow-y: auto;
+}
+
+.palette-group {
+  margin-bottom: var(--space-1);
+}
+
+.palette-group-name {
+  margin: 0 0 2px;
+}
+
+.palette-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 2px var(--space-1);
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: inherit;
+  line-height: var(--leading-table);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* §2.0's active-entity treatment: a 2px signal edge, and a ground of its own. */
+.palette-row[aria-current="true"] {
+  background: var(--ink);
+  box-shadow: inset 2px 0 0 0 var(--signal);
+}
+
+/* Holds the cursor's column whether or not this row is the one carrying it. */
+.palette-row-mark {
+  flex: none;
+  width: 1ch;
+  color: var(--signal);
+}
+
+.palette-row-text {
+  overflow-wrap: anywhere;
+}
+
+.palette-row-detail {
+  margin-left: auto;
+  padding-left: var(--space-1);
+  font-size: var(--size-12);
+  color: var(--dim);
+  text-align: right;
+}
+
+/* The group's note sits where its rows would have been — past the cursor column. */
+.palette-group-note {
+  padding: 2px var(--space-1) 2px calc(var(--space-1) + 1ch + var(--space-1));
+}
