@@ -432,6 +432,45 @@ function captionOffences(where: string, container: HTMLElement): string[] {
   return offences;
 }
 
+/**
+ * `@solidjs/web` does not drop a boolean ARIA value — it renders it as the
+ * **empty string**. `aria-selected={true}` emits `aria-selected=""`, which is
+ * not one of the enumerated values a screen reader answers to, so the state
+ * goes unreported. (Numbers survive intact: `aria-level={2}` emits `"2"`.)
+ *
+ * A dropped attribute would be absent and obvious. An empty one is present,
+ * meaningless, and reads in the source exactly like the working spelling
+ * `aria-selected={x ? "true" : "false"}` — which is why this is a floor rule
+ * and not a thing each component is trusted to remember. Nothing in the DOM
+ * distinguishes the two after render except the value, so the value is what is
+ * scanned.
+ *
+ * It hides especially well because it is a *first paint* fault. `false` renders
+ * as no attribute at all, and a later change goes through `setAttribute`, which
+ * stringifies — so a control that starts closed and is then opened reports
+ * `"true"` correctly and looks fine. Only a value that is already true when the
+ * element is first written comes out empty. That is the case a tree of rows
+ * lands in on every render, one row at a time.
+ *
+ * The empty string is never a correct value for any `aria-*` attribute: the
+ * enumerated ones take words, the id-reference ones take ids, and the ones that
+ * take free text are meant to say something. Where an attribute has nothing to
+ * say, the attribute belongs off the element.
+ */
+function ariaOffences(where: string, container: HTMLElement): string[] {
+  const offences: string[] = [];
+  for (const element of container.querySelectorAll<HTMLElement>("*")) {
+    for (const attribute of element.attributes) {
+      if (attribute.name.startsWith("aria-") && attribute.value === "") {
+        offences.push(
+          `${where}: <${element.tagName.toLowerCase()}> renders ${attribute.name} as the empty string`,
+        );
+      }
+    }
+  }
+  return offences;
+}
+
 describe("accessibility floor", () => {
   it("never leaves a tone to carry a status on its own", () => {
     const offences: string[] = [];
@@ -466,6 +505,14 @@ describe("accessibility floor", () => {
     const offences: string[] = [];
     eachRendering((primitive, container) => {
       offences.push(...captionOffences(primitive.name, container));
+    });
+    expect(offences).toEqual([]);
+  });
+
+  it("never renders an aria attribute as the empty string", () => {
+    const offences: string[] = [];
+    eachRendering((primitive, container) => {
+      offences.push(...ariaOffences(primitive.name, container));
     });
     expect(offences).toEqual([]);
   });
@@ -596,6 +643,14 @@ describe("accessibility floor — the assembled screen", () => {
     const offences: string[] = [];
     await eachScreen((page, container) => {
       offences.push(...captionOffences(page.name, container));
+    });
+    expect(offences).toEqual([]);
+  });
+
+  it("never renders an aria attribute as the empty string", async () => {
+    const offences: string[] = [];
+    await eachScreen((page, container) => {
+      offences.push(...ariaOffences(page.name, container));
     });
     expect(offences).toEqual([]);
   });
