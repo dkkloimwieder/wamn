@@ -34,7 +34,13 @@
 .start-jump-field {
   width: 100%;
   padding: var(--space-1) var(--space-2);
-  font-family: var(--font-data);
+  /*
+   * Size only, as `.palette-input` already does for the same reason: a form
+   * control does not inherit its family, and every declaration that would fix
+   * that — the property and the shorthand alike — is banned outside
+   * tokens.css. The field carries the browser's control face on purpose rather
+   * than a literal stack this package is not allowed to write.
+   */
   font-size: var(--size-14);
   color: var(--text);
   background: var(--panel);

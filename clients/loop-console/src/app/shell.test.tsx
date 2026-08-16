@@ -32,7 +32,12 @@ async function settle(): Promise<void> {
 describe("AppShell", () => {
   it("renders each route's screen inside the shell", async () => {
     const cases: Array<{ route: Route; expected: string[] }> = [
-      { route: { kind: "start" }, expected: ["start"] },
+      // the start route mounts §2.1's screen, which states where the console is
+      // pointed and offers the one field that gets an author to a verdict
+      {
+        route: { kind: "start" },
+        expected: ["wamn loop console", "dev target:", "paste a run, report or draft id"],
+      },
       // the run route mounts the run screen, which answers out of the reader
       {
         route: { kind: "run", id: FAILING_RUN_ID },
