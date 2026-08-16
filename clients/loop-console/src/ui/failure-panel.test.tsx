@@ -16,18 +16,38 @@ function failureOf(failure: RunFailure | null): RunFailure {
   return failure;
 }
 
+function text(node: Element | null): string {
+  return (node?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Every pair the panel prints, label beside its own value.
+ *
+ * Text over the whole panel would pass with the values dealt to the wrong
+ * labels — `at retry-exhausted` says the run failed at a node called
+ * `retry-exhausted` — and the pairing is the only thing that makes a value
+ * readable at all.
+ */
+function pairs(container: HTMLElement): ReadonlyArray<readonly [string, string]> {
+  return Array.from(
+    container.querySelectorAll(".key-value"),
+    (pair): readonly [string, string] => [
+      text(pair.querySelector("dt")),
+      text(pair.querySelector("dd")),
+    ],
+  );
+}
+
 describe("FailurePanel", () => {
   it("renders the failing run's kind, node, and detail as pairs", () => {
     const { container } = render(() => <FailurePanel failure={failureOf(failingRun.failure)} />);
-    const panel = container.querySelector(".failure-panel");
 
-    expect(panel).toHaveTextContent("kind");
-    expect(panel).toHaveTextContent("retry-exhausted");
-    expect(panel).toHaveTextContent("at");
-    expect(panel).toHaveTextContent("fetch-inventory");
-    expect(panel).toHaveTextContent("detail");
-    expect(panel).toHaveTextContent("upstream 503 after 4 attempts");
-    expect(panel).not.toHaveTextContent("not recorded");
+    expect(pairs(container)).toEqual([
+      ["kind", "retry-exhausted"],
+      ["at", "fetch-inventory"],
+      ["detail", "upstream 503 after 4 attempts"],
+    ]);
+    expect(container.querySelector(".failure-panel")).not.toHaveTextContent("not recorded");
   });
 
   it("keeps the raw failure behind a disclosure, and opens it into a JsonView", () => {
@@ -38,6 +58,8 @@ describe("FailurePanel", () => {
     const toggle = getByRole("button", { name: "raw failure" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(container.querySelector(".json-tree")).toBeNull();
+    // closed is empty, not hidden: nothing of the raw failure exists to be read
+    expect(container.querySelector(".disclosure-panel")).toBeNull();
 
     fireEvent.click(toggle);
     flush();
@@ -46,6 +68,80 @@ describe("FailurePanel", () => {
     const tree = container.querySelector(".json-tree");
     expect(tree).toHaveTextContent('"attempts": 4');
     expect(tree).toHaveTextContent('"node": "fetch-inventory"');
+  });
+
+  it("trails the detail with the raw toggle, on the detail's row and no other", () => {
+    // §2.2's wireframe puts `▸ raw` at the end of the detail line. jsdom lays
+    // nothing out, so what is provable here is the grouping the line is made of:
+    // the toggle shares the detail's row, and `kind` and `at` keep theirs.
+    const { container, getByRole } = render(() => (
+      <FailurePanel failure={failureOf(failingRun.failure)} />
+    ));
+
+    const row = getByRole("button", { name: "raw failure" }).closest(".failure-detail-row");
+    expect(row).not.toBeNull();
+    expect(row).toHaveTextContent("detail");
+    expect(row).toHaveTextContent("upstream 503 after 4 attempts");
+    expect(row).not.toHaveTextContent("retry-exhausted");
+    expect(row).not.toHaveTextContent("fetch-inventory");
+
+    // and the pair itself still says only what `runs.fail_reason` recorded: the
+    // raw failure is evidence beside the detail, never part of its value
+    expect(pairs(container)[2]).toEqual(["detail", "upstream 503 after 4 attempts"]);
+  });
+
+  it("opens the raw beneath the row it trails", () => {
+    const { container, getByRole } = render(() => (
+      <FailurePanel failure={failureOf(failingRun.failure)} />
+    ));
+
+    const toggle = getByRole("button", { name: "raw failure" });
+    fireEvent.click(toggle);
+    flush();
+
+    // the evidence stays attached to the detail it was opened from: the tree
+    // exists, and it hangs inside the very row the toggle sits in. `contains`
+    // rather than a query off the row, so a toggle that escaped the row (which
+    // makes `closest` null) fails here instead of quietly asserting nothing.
+    const tree = container.querySelector(".json-tree");
+    expect(tree).not.toBeNull();
+    expect(toggle.closest(".failure-detail-row")?.contains(tree)).toBe(true);
+  });
+
+  it("names the opened raw's controls after the evidence they act on", () => {
+    // §2.2 puts more JsonViews on this one screen — a captured output per
+    // disclosed fact — and §3's floor forbids two controls sharing a name. The
+    // subject this panel hands JsonView is the whole of what keeps these
+    // unique, so it is load-bearing behaviour and not decoration.
+    const { getByRole } = render(() => <FailurePanel failure={failureOf(failingRun.failure)} />);
+
+    fireEvent.click(getByRole("button", { name: "raw failure" }));
+    flush();
+
+    expect(getByRole("button", { name: "copy the raw failure" })).toBeInTheDocument();
+    const nested = getByRole("button", { name: "collapse the raw failure.last" });
+
+    // and it keeps naming this panel's evidence as it moves
+    fireEvent.click(nested);
+    flush();
+    expect(getByRole("button", { name: "expand the raw failure.last" })).toBeInTheDocument();
+  });
+
+  it("still trails an unrecorded detail with the raw, because the two are independent", () => {
+    // a shape, not domain data: no fixture pairs a null `runs.fail_reason` with
+    // a raw failure, but the wire carries them separately and a missing reason
+    // must not withdraw evidence the read did return
+    const detailless: RunFailure = {
+      kind: "terminal",
+      node: "charge-card",
+      detail: null,
+      raw: { kind: "terminal", node: "charge-card" },
+    };
+    const { getByRole } = render(() => <FailurePanel failure={detailless} />);
+
+    const row = getByRole("button", { name: "raw failure" }).closest(".failure-detail-row");
+    expect(row).toHaveTextContent("detail");
+    expect(row).toHaveTextContent("not recorded");
   });
 
   it("offers no raw disclosure when the effect-uncertain run carries no raw", () => {
@@ -64,9 +160,12 @@ describe("FailurePanel", () => {
     ));
 
     // the detail column of `runs` is null here, and a blank would read as none
-    const pairs = container.querySelectorAll(".key-value");
-    expect(pairs[2]).toHaveTextContent("detail");
-    expect(pairs[2]).toHaveTextContent("not recorded");
+    expect(pairs(container)[2]).toEqual(["detail", "not recorded"]);
+
+    // §1.2: `not recorded` is the console's own word about the read, not
+    // something the read returned. In the data face it would sit in the same
+    // column as `upstream 503 after 4 attempts` and read as a recorded value.
+    expect(container.querySelector(".failure-absent")).toHaveClass("frame");
   });
 
   it("states an absent failing node too, which no fixture carries", () => {
@@ -75,9 +174,22 @@ describe("FailurePanel", () => {
     const nodeless: RunFailure = { kind: "deadline-exhausted", node: null, detail: null, raw: null };
     const { container } = render(() => <FailurePanel failure={nodeless} />);
 
-    const pairs = container.querySelectorAll(".key-value");
-    expect(pairs[1]).toHaveTextContent("at");
-    expect(pairs[1]).toHaveTextContent("not recorded");
+    expect(pairs(container)[1]).toEqual(["at", "not recorded"]);
+  });
+
+  it("reads a blank fail_node or fail_reason as no record, not as an empty value", () => {
+    // a shape, not domain data: both are plain nullable text columns and nothing
+    // between the database and here rejects the empty string, so `""` reaches
+    // this panel as a legal value. Printed as itself it is a blank beside `at` —
+    // a run that failed nowhere — which is the claim the panel refuses to make.
+    const blank: RunFailure = { kind: "terminal", node: "", detail: "   ", raw: null };
+    const { container } = render(() => <FailurePanel failure={blank} />);
+
+    expect(pairs(container)).toEqual([
+      ["kind", "terminal"],
+      ["at", "not recorded"],
+      ["detail", "not recorded"],
+    ]);
   });
 
   it("moves every pair when a refresh re-reads the screen into another failure", () => {
