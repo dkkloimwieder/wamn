@@ -1965,10 +1965,6 @@ async fn child_run_cutover_leg(su: &Client) {
             event_source_run_id,event_root_run_id,event_depth) \
          VALUES ('child-cutover','retained-run','f',1,'cat',1,'dev', \
                  '{EMPTY_EXECUTION_BUNDLE_HASH}','event','source-run','event-root',3); \
-         INSERT INTO {SCHEMA}.run_flow_resolutions \
-           (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
-         VALUES ('child-cutover','retained-run','f', \
-                 '{EMPTY_EXECUTION_BUNDLE_HASH}','sha256:retained-source'); \
          INSERT INTO {SCHEMA}.node_runs \
            (tenant_id,run_id,frame_id,current_plan_hash,local_node_id,seq,status) \
          VALUES ('child-cutover','retained-run',0, \
@@ -2015,10 +2011,9 @@ async fn child_run_cutover_leg(su: &Client) {
         .query_one(
             &format!(
                 "SELECT r.trigger_source, r.event_source_run_id, r.event_root_run_id, r.event_depth, \
-                        n.frame_id, f.source_artifact_hash \
+                        n.frame_id \
                    FROM {SCHEMA}.runs AS r \
                    JOIN {SCHEMA}.node_runs AS n USING (tenant_id,run_id) \
-                   JOIN {SCHEMA}.run_flow_resolutions AS f USING (tenant_id,run_id) \
                   WHERE r.tenant_id='child-cutover' AND r.run_id='retained-run'"
             ),
             &[],
@@ -2039,7 +2034,6 @@ async fn child_run_cutover_leg(su: &Client) {
     );
     assert_eq!(retained.get::<_, Option<i32>>(3), Some(3));
     assert_eq!(retained.get::<_, i64>(4), 0);
-    assert_eq!(retained.get::<_, String>(5), "sha256:retained-source");
     assert!(
         reconcile_run_plane::reconcile(su, &schema(), false)
             .await

@@ -1469,7 +1469,6 @@ fn host_owned_production_claim_authority_is_explicit_and_bounded() {
         writes,
         BTreeSet::from([
             "wamn_run.node_runs",
-            "wamn_run.run_flow_resolutions",
             "wamn_run.run_queue",
             "wamn_run.runs",
         ])
@@ -1494,11 +1493,7 @@ fn host_owned_production_claim_authority_is_explicit_and_bounded() {
             "catalog.connection_generations",
             "catalog.connection_instances",
             "catalog.execution_bundles",
-            "catalog.flow_artifacts",
-            "catalog.release_flows",
-            "catalog.validated_flow_drafts",
             "wamn_run.effect_attempts",
-            "wamn_run.run_flow_resolutions",
             "wamn_run.run_queue",
             "wamn_run.runs",
         ])
@@ -1614,15 +1609,15 @@ fn undeclared_writer_is_rejected() {
 }
 
 #[test]
-fn canonical_run_flow_resolution_function_body_is_run_state_owned() {
+fn canonical_node_run_function_body_is_run_state_owned() {
     let manifest = read_manifest(&repository());
     assert_eq!(manifest.principals["run-state"].role, "persistence");
     assert_eq!(manifest.principals["schema-control"].role, "migration");
     let ownership = &manifest
         .objects
         .iter()
-        .find(|object| object.id == "wamn_run.run_flow_resolutions")
-        .expect("run-flow resolution ownership")
+        .find(|object| object.id == "wamn_run.node_runs")
+        .expect("node-run ownership")
         .ownership;
     assert_eq!(ownership.semantic_owner, "run-state");
     assert_eq!(ownership.migration_owners, ["schema-control"]);
@@ -1636,18 +1631,18 @@ fn canonical_run_flow_resolution_function_body_is_run_state_owned() {
         ["run-state", "execution-host"]
     );
 
-    let function = "CREATE FUNCTION wamn_run.materialize_run_flow_resolutions() \
+    let function = "CREATE FUNCTION wamn_run.project_node_run() \
                     RETURNS void LANGUAGE plpgsql AS $$ BEGIN \
-                    INSERT INTO wamn_run.run_flow_resolutions (run_id) VALUES ('run-1'); \
+                    INSERT INTO wamn_run.node_runs (run_id) VALUES ('run-1'); \
                     END $$";
     let canonical = discover_writes("deploy/sql/run-state.sql", 375, function);
-    assert_only_write(&canonical, "insert", "wamn_run.run_flow_resolutions");
+    assert_only_write(&canonical, "insert", "wamn_run.node_runs");
     assert_eq!(canonical[0].provenance, SqlProvenance::CreateFunctionBody);
     validate_discovered_writers(&manifest, &canonical)
         .expect("the canonical function body executes with run-state authority");
 
     let copied = discover_writes("crates/schema/control/src/run_plane.rs", 1_023, function);
-    assert_only_write(&copied, "insert", "wamn_run.run_flow_resolutions");
+    assert_only_write(&copied, "insert", "wamn_run.node_runs");
     assert_eq!(copied[0].provenance, SqlProvenance::CreateFunctionBody);
     let error = validate_discovered_writers(&manifest, &copied).unwrap_err();
     assert!(error.contains("undeclared insert writer"), "{error}");
@@ -1656,9 +1651,9 @@ fn canonical_run_flow_resolution_function_body_is_run_state_owned() {
         let carrier = discover_writes(
             path,
             500,
-            "INSERT INTO wamn_run.run_flow_resolutions (run_id) VALUES ('run-1')",
+            "INSERT INTO wamn_run.node_runs (run_id) VALUES ('run-1')",
         );
-        assert_only_write(&carrier, "insert", "wamn_run.run_flow_resolutions");
+        assert_only_write(&carrier, "insert", "wamn_run.node_runs");
         assert_eq!(carrier[0].provenance, SqlProvenance::Carrier);
         let error = validate_discovered_writers(&manifest, &carrier).unwrap_err();
         assert!(error.contains("undeclared insert writer"), "{error}");

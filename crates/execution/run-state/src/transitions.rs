@@ -419,7 +419,6 @@ mod tests {
         assert!(!run.contains("\n    root_run_id     text"));
         assert!(!run.contains("CREATE INDEX runs_root "));
         assert!(run.contains("CREATE TABLE wamn_run.invocation_admissions"));
-        assert!(run.contains("CREATE TABLE wamn_run.run_flow_resolutions"));
         assert!(run.contains("frame_id bigint"));
         assert!(run.contains("CREATE TRIGGER runs_event_lineage_immutable"));
         assert!(run.contains("'effect-uncertain'"));

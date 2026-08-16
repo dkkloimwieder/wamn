@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly OWNER="bd:wamn-0h0g.2.5"
-readonly OUTCOME="HTTP effects require the exact current plan, source resolution, and attempt"
+readonly OUTCOME="HTTP effects require the exact attempt and source artifact, and a permitting node in the presented current plan; binding that plan to the run is wamn-0h0g.15.66"
 
 readonly CAMPAIGN="current-plan-effect-authority"
 readonly BEAD="wamn-0h0g.2.5"
@@ -25,7 +25,7 @@ mutation_ids() {
     connection-root-plan-bypass \
     connection-resolution-bypass \
     claims-root-bundle-for-current-plan \
-    claims-drop-source-resolution-match \
+    claims-drop-attempt-source-artifact-match \
     claims-drop-attempt-occurrence-match \
     claims-invert-plan-node-permission
 }
@@ -73,10 +73,10 @@ load_mutation() {
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
       TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --ignored --exact --nocapture)
       ;;
-    claims-drop-source-resolution-match)
+    claims-drop-attempt-source-artifact-match)
       TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
       EXPECTED_SHA="e67c2ee071aec3fbc7d69b84cfaace0fad52129674bfe944f1317cc75fd9da1b"
-      NEEDLE='AND resolution.source_artifact_hash = $7 \'
+      NEEDLE='AND attempt.source_artifact_hash = $7 \'
       REPLACEMENT='AND true \'
       GATE="plugins::wamn_postgres::claims::tests::live_effect_authority_uses_callee_plan_and_exact_attempt"
       TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --ignored --exact --nocapture)

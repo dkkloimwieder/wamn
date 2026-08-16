@@ -100,41 +100,12 @@ pub struct ConnectionEffectSnapshot {
     pub draft_generation_granted: bool,
 }
 
-/// Immutable identity rows for one claimed run's complete resolution map.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RunResolutionMetadata {
-    pub tenant_id: String,
-    pub root_flow_id: String,
-    pub root_execution_bundle_hash: String,
-    pub plans: Vec<ResolutionPlanMetadata>,
-}
-
-/// One immutable `run_flow_resolutions` row, without its cacheable bytes.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolutionPlanMetadata {
-    pub flow_id: String,
-    pub execution_bundle_hash: String,
-    pub source_artifact_hash: String,
-}
-
 /// Exact bytes loaded by immutable tenant-scoped execution-bundle identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionPlanBytes {
     pub execution_bundle_hash: String,
     pub exact_bytes: Vec<u8>,
 }
-
-const RUN_RESOLUTION_METADATA_SQL: &str = "\
-SELECT run.tenant_id, run.flow_id, run.execution_bundle_hash, \
-       resolution.flow_id, resolution.execution_bundle_hash, \
-       resolution.source_artifact_hash \
-  FROM runs AS run \
-  JOIN run_flow_resolutions AS resolution \
-    ON resolution.tenant_id = run.tenant_id \
-   AND resolution.run_id = run.run_id \
- WHERE run.tenant_id = current_setting('app.tenant', true) \
-   AND run.run_id = $1 \
- ORDER BY resolution.flow_id";
 
 const RESOLUTION_PLAN_BYTES_SQL: &str = "\
 SELECT bundle.execution_bundle_hash, bundle.exact_bytes \
@@ -143,19 +114,22 @@ SELECT bundle.execution_bundle_hash, bundle.exact_bytes \
    AND bundle.execution_bundle_hash = ANY($1::text[]) \
  ORDER BY bundle.execution_bundle_hash";
 
+/// SECURITY GAP (wamn-0h0g.15.66) — `authorized_plan` NO LONGER BINDS THE PLAN
+/// TO THE RUN. Its only run-scoped predicate was an EXISTS over
+/// `run_flow_resolutions`, deleted with that table (wamn-0h0g.15.10); the CTE now
+/// admits ANY execution bundle whose hash is `$3`, narrowed only by the outer
+/// `plan.tenant_id = r.tenant_id` join. Every surviving constraint on `$3` flows
+/// through `attempt_matches`, and `effect_attempts` is written by
+/// `begin_effect_attempt` from the SAME guest-supplied context this statement
+/// then checks `$3` against — so the run-to-plan binding is not verified by the
+/// database at all, and a compromised component may present another flow's
+/// bundle hash within its own tenant. wamn-0h0g.15.66 restores a run-scoped
+/// predicate here once the claim-time recorded manifest digest lands.
 const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH authorized_plan AS MATERIALIZED ( \
     SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
       FROM catalog.execution_bundles AS bundle \
      WHERE bundle.execution_bundle_hash = $3 \
-       AND EXISTS ( \
-           SELECT 1 \
-             FROM run_flow_resolutions AS resolution \
-            WHERE resolution.tenant_id = bundle.tenant_id \
-              AND resolution.run_id = $1 \
-              AND resolution.execution_bundle_hash = $3 \
-              AND resolution.source_artifact_hash = $7 \
-       ) \
 ) \
 SELECT r.status, r.execution_bundle_hash = $2, \
        plan.execution_bundle_hash IS NOT NULL, attempt.attempt_id IS NOT NULL, \
@@ -882,84 +856,6 @@ impl WamnPostgres {
         }
     }
 
-    /// Load only the immutable resolution identities already materialized for a run.
-    ///
-    /// This never reads release membership or a catalog head. The component's
-    /// host-injected tenant, project, and schema claims scope the read.
-    pub async fn run_resolution_metadata(
-        &self,
-        component_id: &str,
-        run_id: &str,
-    ) -> anyhow::Result<Option<RunResolutionMetadata>> {
-        let tenant = self
-            .tenant_for(component_id)
-            .context("plan supply has no host-injected tenant")?;
-        let project = self.project_for(component_id);
-        let schema = self.schema_for(component_id);
-        let (conn, policy) = self
-            .checkout(&project)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if let Err(error) = self
-            .begin_with_claims(
-                &conn,
-                &tenant,
-                schema.as_deref(),
-                None,
-                None,
-                policy.statement_timeout_ms,
-            )
-            .await
-        {
-            self.destroy(conn);
-            return Err(anyhow::anyhow!(error.to_string()));
-        }
-        let result: anyhow::Result<Option<RunResolutionMetadata>> = async {
-            let rows = conn
-                .query(RUN_RESOLUTION_METADATA_SQL, &[&run_id])
-                .await
-                .context("query immutable run resolution metadata")?;
-            let Some(first) = rows.first() else {
-                return Ok(None);
-            };
-            let tenant_id: String = first.try_get(0)?;
-            let root_flow_id: String = first.try_get(1)?;
-            let root_execution_bundle_hash: String = first.try_get(2)?;
-            let plans = rows
-                .into_iter()
-                .map(|row| {
-                    Ok(ResolutionPlanMetadata {
-                        flow_id: row.try_get(3)?,
-                        execution_bundle_hash: row.try_get(4)?,
-                        source_artifact_hash: row.try_get(5)?,
-                    })
-                })
-                .collect::<anyhow::Result<Vec<_>>>()?;
-            Ok(Some(RunResolutionMetadata {
-                tenant_id,
-                root_flow_id,
-                root_execution_bundle_hash,
-                plans,
-            }))
-        }
-        .await;
-        match result {
-            Ok(metadata) => {
-                if let Err(error) = conn.batch_execute("COMMIT").await {
-                    self.destroy(conn);
-                    return Err(error).context("commit immutable resolution metadata read");
-                }
-                Ok(metadata)
-            }
-            Err(error) => {
-                if conn.batch_execute("ROLLBACK").await.is_err() {
-                    self.destroy(conn);
-                }
-                Err(error)
-            }
-        }
-    }
-
     /// Load exact immutable plan bytes for cache misses under injected tenant RLS.
     pub async fn resolution_plan_bytes(
         &self,
@@ -1178,11 +1074,6 @@ mod tests {
 
     #[test]
     fn plan_supply_reads_only_immutable_run_map_and_bundle_identity() {
-        assert!(RUN_RESOLUTION_METADATA_SQL.contains("JOIN run_flow_resolutions"));
-        assert!(RUN_RESOLUTION_METADATA_SQL.contains("run.run_id = $1"));
-        assert!(RUN_RESOLUTION_METADATA_SQL.contains("ORDER BY resolution.flow_id"));
-        assert!(!RUN_RESOLUTION_METADATA_SQL.contains("release_flows"));
-        assert!(!RUN_RESOLUTION_METADATA_SQL.contains("active"));
         assert!(RESOLUTION_PLAN_BYTES_SQL.contains("catalog.execution_bundles"));
         assert!(RESOLUTION_PLAN_BYTES_SQL.contains("ANY($1::text[])"));
         assert!(!RESOLUTION_PLAN_BYTES_SQL.contains("flow_id"));
@@ -1320,13 +1211,10 @@ mod tests {
     }
 
     #[test]
-    fn effect_authority_uses_the_exact_attempt_and_resolved_current_plan() {
+    fn effect_authority_uses_the_exact_attempt_and_current_plan() {
+        // Short of the run-scoped resolution predicates by design; wamn-0h0g.15.66 restores them.
         for required in [
             "FROM runs AS r",
-            "FROM run_flow_resolutions AS resolution",
-            "resolution.run_id = $1",
-            "resolution.execution_bundle_hash = $3",
-            "resolution.source_artifact_hash = $7",
             "FROM catalog.execution_bundles AS bundle",
             "bundle.execution_bundle_hash = $3",
             "convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}'",
@@ -2055,23 +1943,6 @@ mod tests {
         .await
         .expect("seed root-pinned running run");
         seed.execute(
-            "INSERT INTO wamn_run.run_flow_resolutions \
-               (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
-             VALUES \
-               ($1,$2,'root-flow',$3,$4), \
-               ($1,$2,'callee-flow',$5,$6)",
-            &[
-                &TENANT,
-                &RUN_ID,
-                &root_plan_hash,
-                &root_artifact_hash,
-                &current_plan_hash,
-                &callee_artifact_hash,
-            ],
-        )
-        .await
-        .expect("seed complete root and callee resolution map");
-        seed.execute(
             "INSERT INTO wamn_run.effect_attempts \
                (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,parent_frame_id, \
                 call_site_id,local_node_id,source_artifact_hash,requirement_name,occurrence, \
@@ -2205,7 +2076,10 @@ mod tests {
             .await
             .expect("load wrong-source snapshot")
             .expect("run remains visible for wrong source artifact");
-        assert!(!wrong_source.resolution_matches);
+        // resolution_matches no longer binds the source artifact — `authorized_plan`
+        // only asks that a bundle with hash $3 exist in the tenant;
+        // wamn-0h0g.15.66 restores the binding.
+        assert!(wrong_source.resolution_matches);
         assert!(!wrong_source.attempt_matches);
         assert!(!wrong_source.node_permitted);
         assert!(wrong_source.requirement_json.is_none());

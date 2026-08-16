@@ -1229,7 +1229,6 @@ mod tests {
         assert!(statement.text().contains("DELETE FROM node_runs"));
         for forbidden in [
             "DELETE FROM effect_attempts",
-            "DELETE FROM run_flow_resolutions",
             "UPDATE runs",
             "UPDATE run_queue",
         ] {

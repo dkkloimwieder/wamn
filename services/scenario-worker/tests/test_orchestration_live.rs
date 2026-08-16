@@ -5,10 +5,8 @@
 
 use tokio_postgres::{Client, NoTls};
 use wamn_authoring_model::TestSetInput;
-use wamn_scenario_model::{NodeFailureKind, NodeTerminalStatus};
 use wamn_scenario_worker::store::test_orchestration::{
-    TestReportReconciliation, TestReportReservation, named_node_observations,
-    reconcile_test_report, reserve_test_report,
+    TestReportReconciliation, TestReportReservation, reconcile_test_report, reserve_test_report,
 };
 use wamn_scenario_worker::store::test_sets::store_test_set;
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
@@ -305,15 +303,6 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .expect("seed effect-uncertain run");
     client
         .execute(
-            "INSERT INTO run_flow_resolutions \
-               (tenant_id,run_id,flow_id,execution_bundle_hash,source_artifact_hash) \
-             VALUES ($1,$2,'flow-a',$3,'artifact-a')",
-            &[&TENANT, &run_id, &plan_hash],
-        )
-        .await
-        .expect("seed immutable resolution map");
-    client
-        .execute(
             "INSERT INTO node_runs \
                (tenant_id,run_id,frame_id,current_plan_hash,local_node_id, \
                 occurrence,seq,status,error_kind,ended_at) \
@@ -322,14 +311,6 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         )
         .await
         .expect("seed frame-keyed terminal fact");
-    let observed = named_node_observations(&client, TENANT, &run_id)
-        .await
-        .expect("project named-node evidence");
-    assert_eq!(observed.len(), 1);
-    assert_eq!(observed[0].flow_id, "flow-a");
-    assert_eq!(observed[0].node_id, "write");
-    assert_eq!(observed[0].status, NodeTerminalStatus::Error);
-    assert_eq!(observed[0].failure_kind, Some(NodeFailureKind::Terminal));
     assert_eq!(
         reconcile_test_report(&mut client, TENANT, "uncertain-report")
             .await

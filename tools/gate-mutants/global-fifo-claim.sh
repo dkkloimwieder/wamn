@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly OWNER="bd:wamn-0h0g.4.1"
-readonly OUTCOME="one fenced host transaction classifies, resolves, and grants the global FIFO root claim"
+readonly OUTCOME="one fenced host transaction locks, classifies, and leases the global FIFO root claim"
 readonly CAMPAIGN="global-fifo-claim"
 readonly BEAD="wamn-0h0g.4.1"
 readonly EXPECTED_PROFILE="debug"
@@ -33,10 +33,6 @@ mutation_ids() {
     writer-skips-runnable-recheck \
     pre-effect-keeps-node-projections \
     effect-uncertain-overwrites-released-caller \
-    resolution-map-materialization-bypassed \
-    candidate-override-ignored \
-    resolution-refusal-overwrites-released-caller \
-    resolution-refusal-releases-callerless \
     janitor-reaps-effect-attempt \
     janitor-hash-diverges-from-jcs \
     exhausted-janitor-overwrites-released-caller \
@@ -125,53 +121,6 @@ load_mutation() {
                                AND r.caller_released_at IS NULL",'
       REPLACEMENT='        uncertain = RunStatus::EffectUncertain.as_sql(),
         unreleased_attached = "r.trigger_source IN ('\''http'\'','\''internal'\'','\''studio'\'')",'
-      EXPECTED_COUNT=1
-      GATE="production_claim_live"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
-      ;;
-    resolution-map-materialization-bypassed)
-      TARGET="crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs"
-      EXPECTED_SHA="86ded382030e8d4ecc3792f19ec934f56a441fb9335449cdaf6681c805f23d38"
-      NEEDLE='    let materialize_sql = materialize_run_flow_resolutions_sql();'
-      REPLACEMENT=$'    let materialize_sql = "SELECT \'resolved\'::text, NULL::text WHERE $1::text IS NOT NULL AND $2::text IS NOT NULL".to_string();'
-      EXPECTED_COUNT=1
-      GATE="production_claim_live"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
-      ;;
-    candidate-override-ignored)
-      TARGET="crates/platform/runtime/src/plugins/wamn_postgres/production_claim.rs"
-      EXPECTED_SHA="86ded382030e8d4ecc3792f19ec934f56a441fb9335449cdaf6681c805f23d38"
-      NEEDLE='        CandidateOverrideLoad::Ready(candidate) => candidate,'
-      REPLACEMENT='        CandidateOverrideLoad::Ready(candidate) => {
-            let _ = candidate;
-            None
-        },'
-      EXPECTED_COUNT=1
-      GATE="production_claim_live"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
-      ;;
-    resolution-refusal-overwrites-released-caller)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="0fc07c601f2c2d7e31ead289ce2c14c6c24c23d1e4c7d5a4e0917620e398a737"
-      NEEDLE='        failed = RunStatus::Failed.as_sql(),
-        unreleased_attached = "r.trigger_source IN ('\''http'\'','\''internal'\'','\''studio'\'') \
-                               AND r.caller_released_at IS NULL",'
-      REPLACEMENT='        failed = RunStatus::Failed.as_sql(),
-        unreleased_attached = "r.trigger_source IN ('\''http'\'','\''internal'\'','\''studio'\'')",'
-      EXPECTED_COUNT=1
-      GATE="production_claim_live"
-      TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
-      ;;
-    resolution-refusal-releases-callerless)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="0fc07c601f2c2d7e31ead289ce2c14c6c24c23d1e4c7d5a4e0917620e398a737"
-      NEEDLE='        failed = RunStatus::Failed.as_sql(),
-        unreleased_attached = "r.trigger_source IN ('\''http'\'','\''internal'\'','\''studio'\'') \
-                               AND r.caller_released_at IS NULL",'
-      REPLACEMENT='        failed = RunStatus::Failed.as_sql(),
-        unreleased_attached = "(r.trigger_source IS NULL \
-                                OR r.trigger_source IN ('\''http'\'','\''internal'\'','\''studio'\'')) \
-                               AND r.caller_released_at IS NULL",'
       EXPECTED_COUNT=1
       GATE="production_claim_live"
       TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)

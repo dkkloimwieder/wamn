@@ -7,7 +7,6 @@ use wamn_run_state::queue::{
     select_claim_effect_attempt_sql, select_exhausted_production_sql,
     select_pre_effect_projection_sql, select_production_claim_sql, serialize_effect_intent_sql,
     should_renew, terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
-    terminalize_resolution_refusal_claim_sql,
 };
 
 #[test]
@@ -99,7 +98,6 @@ fn effect_attempt_escape_is_classified_before_any_plan_read() {
     assert!(!candidate.contains("AS has_effect_attempt"));
     assert!(!candidate.contains("catalog."));
     assert!(!candidate.contains("execution_bundles"));
-    assert!(!candidate.contains("run_flow_resolutions"));
 
     let classification = select_claim_effect_attempt_sql();
     assert!(classification.contains("SELECT EXISTS"));
@@ -134,7 +132,6 @@ fn app_pre_effect_step_clears_only_state_after_private_projection_reset() {
         "invocation_context =",
         "catalog_id =",
         "updated_at =",
-        "DELETE FROM run_flow_resolutions",
         "DELETE FROM effect_attempts",
     ] {
         assert!(!sql.contains(preserved), "reset must preserve {preserved}");
@@ -142,7 +139,7 @@ fn app_pre_effect_step_clears_only_state_after_private_projection_reset() {
 }
 
 #[test]
-fn complete_map_grant_is_a_separate_final_statement() {
+fn lease_grant_is_a_separate_final_statement() {
     let select = select_production_claim_sql();
     let grant = grant_production_claim_sql();
     assert!(!select.contains("SET lease_owner"));
@@ -164,19 +161,6 @@ fn effect_uncertain_terminalization_dequeues_and_persists_exact_attached_shape()
     assert!(sql.contains("THEN $3"));
     assert!(sql.contains("DELETE FROM run_queue"));
     assert!(sql.contains("caller_released_at IS NULL"));
-}
-
-#[test]
-fn typed_resolution_refusal_terminalizes_and_dequeues() {
-    let sql = terminalize_resolution_refusal_claim_sql();
-    assert!(sql.contains("status = 'failed'"));
-    assert!(sql.contains("fail_kind = $2"));
-    assert!(sql.contains("fail_node = $3"));
-    assert!(sql.contains("fail_reason = $4"));
-    assert!(sql.contains("THEN $5::text::jsonb"));
-    assert!(sql.contains("THEN $6"));
-    assert!(sql.contains("THEN 500"));
-    assert!(sql.contains("DELETE FROM run_queue"));
 }
 
 #[test]

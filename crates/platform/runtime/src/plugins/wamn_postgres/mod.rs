@@ -50,8 +50,7 @@ mod resources;
 mod types;
 
 pub use claims::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ResolutionPlanBytes, ResolutionPlanMetadata,
-    RunResolutionMetadata, WamnPostgres,
+    ConnectionEffectLookup, ConnectionEffectSnapshot, ResolutionPlanBytes, WamnPostgres,
 };
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,

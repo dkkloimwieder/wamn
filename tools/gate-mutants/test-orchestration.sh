@@ -19,7 +19,6 @@ declare -a TEST_ARGV
 
 mutation_ids() {
   printf '%s\n' \
-    named-node-plan-join-bypass \
     schema-control-drops-case-runs \
     from-zero-skips-post-helper-triggers
 }
@@ -27,14 +26,6 @@ mutation_ids() {
 load_mutation() {
   local id="$1"
   case "$id" in
-    named-node-plan-join-bypass)
-      TARGET="services/scenario-worker/src/store/test_orchestration.rs"
-      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
-      NEEDLE='AND resolution.execution_bundle_hash = node.current_plan_hash \'
-      REPLACEMENT='AND true \'
-      GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency_and_named_node_projection"
-      TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
-      ;;
     schema-control-drops-case-runs)
       TARGET="crates/schema/control/src/run_plane.rs"
       EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"

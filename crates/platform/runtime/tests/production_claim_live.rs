@@ -22,8 +22,6 @@ const COMPONENT: &str = "claim-live-runner";
 const SCHEMA: &str = "wamn_claim_live";
 const RELEASE_ARTIFACT: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-const DRAFT_ARTIFACT: &str =
-    "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const EMPTY_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
 const WRITER_PASSWORD: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const WRITER_LATCH: i64 = 7_141_013;
@@ -136,19 +134,6 @@ fn plan_bytes(root_artifact_hash: &str) -> (String, Vec<u8>) {
     (digest(&bytes), bytes)
 }
 
-fn canonical_materializer_sql() -> String {
-    let source = include_str!("../../../../deploy/sql/run-state.sql");
-    let start = source
-        .find("CREATE FUNCTION wamn_run.materialize_run_flow_resolutions(")
-        .expect("canonical resolution materializer start");
-    let tail = &source[start..];
-    let end = tail
-        .find("\n$$;")
-        .expect("canonical resolution materializer end")
-        + "\n$$;".len();
-    tail[..end].replace("wamn_run.", &format!("{SCHEMA}."))
-}
-
 async fn install_schema(client: &Client) -> anyhow::Result<()> {
     client
         .batch_execute(&format!(
@@ -196,10 +181,6 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
                PRIMARY KEY (tenant_id, attempt_id), \
                UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
-             CREATE TABLE {SCHEMA}.run_flow_resolutions ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-               execution_bundle_hash text NOT NULL, source_artifact_hash text NOT NULL, \
-               PRIMARY KEY (tenant_id, run_id, flow_id)); \
              CREATE TABLE catalog.execution_bundles ( \
                tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, exact_bytes bytea NOT NULL, \
                PRIMARY KEY (tenant_id, execution_bundle_hash)); \
@@ -210,12 +191,6 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
              CREATE TABLE catalog.flow_artifacts ( \
                tenant_id text NOT NULL, flow_id text NOT NULL, flow_version int NOT NULL, \
                artifact_hash text NOT NULL, PRIMARY KEY (tenant_id, flow_id, flow_version)); \
-             CREATE TABLE catalog.validated_flow_drafts ( \
-               tenant_id text NOT NULL, validated_draft_hash text NOT NULL, catalog_id text NOT NULL, \
-               catalog_version int NOT NULL, environment text NOT NULL, flow_id text NOT NULL, \
-               runtime_flow_version int NOT NULL, execution_bundle_hash text NOT NULL, \
-               draft_artifact_hash text NOT NULL, binding_base_artifact_hash text NOT NULL, \
-               PRIMARY KEY (tenant_id, validated_draft_hash)); \
              CREATE TABLE catalog.connection_bindings ( \
                tenant_id text NOT NULL, catalog_id text NOT NULL, catalog_version int NOT NULL, \
                environment text NOT NULL, artifact_hash text NOT NULL, requirement_name text NOT NULL, \
@@ -229,7 +204,6 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                generation bigint NOT NULL, PRIMARY KEY (tenant_id, environment, instance_id, generation));"
         ))
         .await?;
-    client.batch_execute(&canonical_materializer_sql()).await?;
     Ok(())
 }
 
@@ -687,8 +661,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
 
     // Expired pre-effect recovery deletes only node projections and NULLs only
-    // state_json; every other admitted or lineage column and an existing
-    // immutable resolution row survives the retry.
+    // state_json; every other admitted or lineage column survives the retry.
     admin
         .execute(
             &format!(
@@ -721,15 +694,6 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .execute(
             &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'pre-effect','old-node')"),
             &[&TENANT],
-        )
-        .await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.run_flow_resolutions \
-                   VALUES ($1,'pre-effect','root',$2,$3)"
-            ),
-            &[&TENANT, &release_hash, &RELEASE_ARTIFACT],
         )
         .await?;
     let before: Value = serde_json::from_str(
@@ -827,200 +791,21 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .get::<_, String>(0),
     )?;
     assert_eq!(after, before);
-    let (state, nodes, resolutions): (Option<String>, i64, i64) = {
+    let (state, nodes): (Option<String>, i64) = {
         let row = admin
             .query_one(
                 &format!(
                     "SELECT r.state_json::text, \
                             (SELECT count(*) FROM {SCHEMA}.node_runs n \
-                              WHERE n.tenant_id=r.tenant_id AND n.run_id=r.run_id), \
-                            (SELECT count(*) FROM {SCHEMA}.run_flow_resolutions m \
-                              WHERE m.tenant_id=r.tenant_id AND m.run_id=r.run_id) \
+                              WHERE n.tenant_id=r.tenant_id AND n.run_id=r.run_id) \
                        FROM {SCHEMA}.runs r WHERE r.tenant_id=$1 AND r.run_id='pre-effect'"
                 ),
                 &[&TENANT],
             )
             .await?;
-        (row.get(0), row.get(1), row.get(2))
+        (row.get(0), row.get(1))
     };
-    assert_eq!((state, nodes, resolutions), (None, 0, 1));
-
-    // Canonical materialization is verification-only when any immutable row
-    // already exists. A mixed prior map refuses and remains unchanged.
-    seed_run(&admin, "mixed-map", "cat-main", &release_hash, 25).await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.run_flow_resolutions \
-                   VALUES ($1,'mixed-map','root',$2,'foreign-artifact')"
-            ),
-            &[&TENANT, &release_hash],
-        )
-        .await?;
-    make_callerless(&admin, "mixed-map").await?;
-    assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
-        ProductionClaimResult::Terminalized {
-            run_id: "mixed-map".into(),
-            status: RunStatus::Failed,
-            fail_kind: FailKind::ForeignRevision,
-        }
-    );
-    let mixed = admin
-        .query_one(
-            &format!(
-                "SELECT map.execution_bundle_hash,map.source_artifact_hash, \
-                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.tenant_id=map.tenant_id AND q.run_id=map.run_id) \
-                   FROM {SCHEMA}.run_flow_resolutions map \
-                  WHERE map.tenant_id=$1 AND map.run_id='mixed-map'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    assert_eq!(mixed.get::<_, String>(0), release_hash);
-    assert_eq!(mixed.get::<_, String>(1), "foreign-artifact");
-    assert!(!mixed.get::<_, bool>(2));
-    assert_callerless_terminal(&admin, "mixed-map", "failed").await?;
-
-    // A malformed exact release is a typed refusal before lease grant.
-    let invalid_hash = format!("sha256:{}", "e".repeat(64));
-    seed_release(&admin, "cat-invalid", &invalid_hash, b"not-that-hash").await?;
-    seed_run(&admin, "refused", "cat-invalid", &invalid_hash, 30).await?;
-    assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
-        ProductionClaimResult::Terminalized {
-            run_id: "refused".into(),
-            status: RunStatus::Failed,
-            fail_kind: FailKind::HashInvalidBytes,
-        }
-    );
-    let refused = admin
-        .query_one(
-            &format!(
-                "SELECT status,fail_kind,caller_outcome_json::text,caller_http_status, \
-                        caller_release_node_id,caller_outcome_hash, \
-                        EXISTS (SELECT 1 FROM {SCHEMA}.run_queue q \
-                                 WHERE q.tenant_id=r.tenant_id AND q.run_id=r.run_id) \
-                   FROM {SCHEMA}.runs r WHERE tenant_id=$1 AND run_id='refused'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    let expected_refusal = json!({"error": {
-        "code": "hash-invalid-bytes", "flow-id": "root", "flow-version": 1,
-        "run-id": "refused"
-    }});
-    assert_eq!(refused.get::<_, String>(0), "failed");
-    assert_eq!(refused.get::<_, String>(1), "hash-invalid-bytes");
-    assert_eq!(
-        serde_json::from_str::<Value>(&refused.get::<_, String>(2))?,
-        expected_refusal
-    );
-    assert_eq!(refused.get::<_, i32>(3), 500);
-    assert_eq!(refused.get::<_, Option<String>>(4), None);
-    assert_eq!(
-        refused.get::<_, String>(5),
-        wamn_flow::canonical_json_sha256(&expected_refusal)
-    );
-    assert!(!refused.get::<_, bool>(6));
-
-    seed_run(&admin, "refused-winner", "cat-invalid", &invalid_hash, 31).await?;
-    let refused_winner = install_prior_caller_winner(&admin, "refused-winner").await?;
-    assert_eq!(
-        plugin.claim_next_production(COMPONENT, 30_000).await?,
-        ProductionClaimResult::Terminalized {
-            run_id: "refused-winner".into(),
-            status: RunStatus::Failed,
-            fail_kind: FailKind::HashInvalidBytes,
-        }
-    );
-    assert_prior_winner_terminal(&admin, "refused-winner", "failed", &refused_winner).await?;
-
-    // The exact draft root overrides the differing release root; the immutable
-    // map records the draft bundle plus release binding-base artifact and an
-    // expired retry verifies the same map rather than replacing it.
-    let (draft_hash, draft_bytes) = plan_bytes(DRAFT_ARTIFACT);
-    admin
-        .execute(
-            "INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,exact_bytes) VALUES ($1,$2,$3)",
-            &[&TENANT, &draft_hash, &draft_bytes],
-        )
-        .await?;
-    admin
-        .execute(
-            "INSERT INTO catalog.validated_flow_drafts \
-               (tenant_id,validated_draft_hash,catalog_id,catalog_version,environment,flow_id, \
-                runtime_flow_version,execution_bundle_hash,draft_artifact_hash, \
-                binding_base_artifact_hash) \
-             VALUES ($1,'validated-a','cat-main',1,'test','root',1,$2,$3,$4)",
-            &[&TENANT, &draft_hash, &DRAFT_ARTIFACT, &RELEASE_ARTIFACT],
-        )
-        .await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.runs \
-                   (tenant_id,run_id,flow_id,flow_version,status,catalog_id,catalog_version, \
-                    environment,execution_bundle_hash,input_json,invocation_context) \
-                 VALUES ($1,'candidate','root',1,'dispatched','cat-main',1,'test',$2,'{{}}', \
-                    '{{\"principal\":{{\"validated-draft-hash\":\"validated-a\"}}}}')"
-            ),
-            &[&TENANT, &draft_hash],
-        )
-        .await?;
-    admin
-        .execute(
-            &format!(
-                "INSERT INTO {SCHEMA}.run_queue \
-                   (tenant_id,run_id,available_at,stream_seq) \
-                 VALUES ($1,'candidate','2000-01-01',40)"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
-        "candidate"
-    );
-    let candidate_map = admin
-        .query_one(
-            &format!(
-                "SELECT execution_bundle_hash,source_artifact_hash \
-                   FROM {SCHEMA}.run_flow_resolutions \
-                  WHERE tenant_id=$1 AND run_id='candidate' AND flow_id='root'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    assert_eq!(candidate_map.get::<_, String>(0), draft_hash);
-    assert_eq!(candidate_map.get::<_, String>(1), RELEASE_ARTIFACT);
-    admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.run_queue \
-                    SET lease_expires_at='2000-01-01', lease_owner='dead' \
-                  WHERE tenant_id=$1 AND run_id='candidate'"
-            ),
-            &[&TENANT],
-        )
-        .await?;
-    assert_eq!(
-        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
-        "candidate"
-    );
-    let map_count: i64 = admin
-        .query_one(
-            &format!(
-                "SELECT count(*) FROM {SCHEMA}.run_flow_resolutions \
-                  WHERE tenant_id=$1 AND run_id='candidate'"
-            ),
-            &[&TENANT],
-        )
-        .await?
-        .get(0);
-    assert_eq!(map_count, 1);
+    assert_eq!((state, nodes), (None, 0));
 
     // A writer that fenced and validated while the lease was live may commit
     // after the lease expires. The reaper holds the row lock, waits on the same

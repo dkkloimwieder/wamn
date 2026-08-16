@@ -51,7 +51,6 @@ pub mod invocation_context;
 pub mod operator_action;
 /// Durable global queue, lease, timer, and terminal decisions and SQL.
 pub mod queue;
-mod resolution;
 /// Contract-owned helpers for checking repository stand-in schemas.
 #[cfg(feature = "test-util")]
 pub mod schema_drift;
@@ -84,10 +83,6 @@ pub use effect_writer_credential::{
     EffectWriterCredentialValidity, RUN_PROJECTION_WRITER_ROLE, effect_writer_credential,
     effect_writer_generation_role, effect_writer_scope_hash, parse_effect_writer_credential,
     validate_effect_writer_credential,
-};
-pub use resolution::{
-    BoundConnectionRequirement, CandidatePlanOverride, CatalogResolutionPlan,
-    FlowResolutionRefusal, PinnedRunResolution, RunFlowResolution, resolve_run_flow_resolutions,
 };
 pub use status::{
     EffectUncertainFailure, FailKind, InvalidEffectUncertainRunId, NodeErrorKind, NodeRunStatus,

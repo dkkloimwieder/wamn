@@ -9,7 +9,6 @@ use std::collections::BTreeSet;
 use anyhow::{Context as _, bail};
 use serde_json::Value;
 use tokio_postgres::{Client, GenericClient};
-use wamn_scenario_model::{NamedNodeTerminal, NodeFailureKind, NodeTerminalStatus};
 
 use super::sha256;
 
@@ -118,19 +117,6 @@ pub fn select_test_case_mappings_sql() -> &'static str {
     "SELECT ordinal, case_id, run_id \
        FROM authoring_test_case_runs \
       WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
-}
-
-/// Project frame-keyed node facts through plan identity to stable named nodes.
-pub fn select_named_node_observations_sql() -> &'static str {
-    "SELECT resolution.flow_id, node.local_node_id, node.status, node.error_kind \
-       FROM node_runs AS node \
-       JOIN run_flow_resolutions AS resolution \
-         ON resolution.tenant_id = node.tenant_id \
-        AND resolution.run_id = node.run_id \
-        AND resolution.execution_bundle_hash = node.current_plan_hash \
-      WHERE node.tenant_id = $1 AND node.run_id = $2 \
-        AND node.status IN ('success', 'error') \
-      ORDER BY node.frame_id, node.local_node_id, node.occurrence"
 }
 
 fn validate_reservation(reservation: &TestReportReservation) -> anyhow::Result<()> {
@@ -473,51 +459,6 @@ pub async fn reconcile_test_report(
     Ok(TestReportReconciliation::Finalized { passed })
 }
 
-/// Load all terminal named-node observations without collapsing frames/visits.
-pub async fn named_node_observations<C>(
-    client: &C,
-    tenant_id: &str,
-    run_id: &str,
-) -> anyhow::Result<Vec<NamedNodeTerminal>>
-where
-    C: GenericClient + Sync,
-{
-    let rows = client
-        .query(select_named_node_observations_sql(), &[&tenant_id, &run_id])
-        .await
-        .context("project named-node observations")?;
-    rows.into_iter()
-        .map(|row| {
-            let status: String = row.get(2);
-            let failure: Option<String> = row.get(3);
-            let (status, failure_kind) = match (status.as_str(), failure.as_deref()) {
-                ("success", None) => (NodeTerminalStatus::Success, None),
-                ("error", Some("retryable")) => {
-                    (NodeTerminalStatus::Error, Some(NodeFailureKind::Retryable))
-                }
-                ("error", Some("rate-limited")) => (
-                    NodeTerminalStatus::Error,
-                    Some(NodeFailureKind::RateLimited),
-                ),
-                ("error", Some("terminal")) => {
-                    (NodeTerminalStatus::Error, Some(NodeFailureKind::Terminal))
-                }
-                ("error", Some("invalid-input")) => (
-                    NodeTerminalStatus::Error,
-                    Some(NodeFailureKind::InvalidInput),
-                ),
-                _ => bail!("invalid terminal node fact in test report projection"),
-            };
-            Ok(NamedNodeTerminal {
-                flow_id: row.get(0),
-                node_id: row.get(1),
-                status,
-                failure_kind,
-            })
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -556,7 +497,7 @@ mod tests {
     }
 
     #[test]
-    fn statements_pin_normalized_idempotency_and_named_node_projection() {
+    fn statements_pin_normalized_idempotency() {
         assert!(
             insert_test_report_reservation_sql()
                 .contains("ON CONFLICT (tenant_id, report_id) DO NOTHING")
@@ -567,12 +508,6 @@ mod tests {
         assert!(case.contains("(($3 + 1) * $6)::int"));
         assert!(!case.contains("FROM runs"));
         assert!(!case.contains("JOIN runs"));
-
-        let projection = select_named_node_observations_sql();
-        assert!(projection.contains("resolution.execution_bundle_hash = node.current_plan_hash"));
-        assert!(projection.contains("resolution.flow_id, node.local_node_id"));
-        assert!(projection.contains("node.frame_id"));
-        assert!(!projection.contains("DISTINCT"));
     }
 
     #[test]

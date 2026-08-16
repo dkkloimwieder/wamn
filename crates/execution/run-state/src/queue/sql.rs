@@ -3,8 +3,7 @@
 //! Identifiers are static, runtime values are bound, and table names remain
 //! unqualified so the host-injected transaction `search_path` selects the run
 //! plane. The production claim is deliberately split into small statements
-//! composed by one host-owned transaction: lock and classify first, resolve the
-//! immutable plan map, then either grant a lease or dequeue a typed refusal.
+//! composed by one host-owned transaction: lock, classify, then grant a lease.
 
 use crate::{RunStatus, sql as run_sql};
 
@@ -208,52 +207,6 @@ pub fn terminalize_effect_uncertain_claim_sql() -> String {
          SELECT updated.status FROM updated \
           WHERE EXISTS (SELECT 1 FROM dequeued)",
         uncertain = RunStatus::EffectUncertain.as_sql(),
-        unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
-                               AND r.caller_released_at IS NULL",
-    )
-}
-
-/// Persist a typed claim-time resolution refusal and dequeue atomically.
-///
-/// Params: run id, fail kind, refusing flow, reason, exact generic caller body
-/// JSON, and RFC 8785 body hash. The attached-caller stored status is 500.
-pub fn terminalize_resolution_refusal_claim_sql() -> String {
-    format!(
-        "WITH updated AS ( \
-             UPDATE runs AS r \
-                SET status = '{failed}', fail_kind = $2, fail_node = $3, \
-                    fail_reason = $4, \
-                    caller_outcome_kind = CASE \
-                        WHEN {unreleased_attached} THEN 'failed' \
-                        ELSE r.caller_outcome_kind END, \
-                    caller_outcome_json = CASE \
-                        WHEN {unreleased_attached} THEN $5::text::jsonb \
-                        ELSE r.caller_outcome_json END, \
-                    caller_http_status = CASE \
-                        WHEN {unreleased_attached} THEN 500 \
-                        ELSE r.caller_http_status END, \
-                    caller_release_node_id = CASE \
-                        WHEN {unreleased_attached} THEN NULL \
-                        ELSE r.caller_release_node_id END, \
-                    caller_outcome_hash = CASE \
-                        WHEN {unreleased_attached} THEN $6 \
-                        ELSE r.caller_outcome_hash END, \
-                    caller_released_at = CASE \
-                        WHEN {unreleased_attached} THEN now() \
-                        ELSE r.caller_released_at END, \
-                    updated_at = now() \
-              WHERE r.tenant_id = current_setting('app.tenant', true) \
-                AND r.run_id = $1 \
-              RETURNING r.tenant_id, r.run_id, r.status \
-         ), \
-         dequeued AS ( \
-             DELETE FROM run_queue AS q USING updated \
-              WHERE q.tenant_id = updated.tenant_id AND q.run_id = updated.run_id \
-              RETURNING q.run_id \
-         ) \
-         SELECT updated.status FROM updated \
-          WHERE EXISTS (SELECT 1 FROM dequeued)",
-        failed = RunStatus::Failed.as_sql(),
         unreleased_attached = "r.trigger_source IN ('http','internal','studio') \
                                AND r.caller_released_at IS NULL",
     )

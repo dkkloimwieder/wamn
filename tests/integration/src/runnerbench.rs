@@ -80,68 +80,6 @@ fn runner_ddl(schema: &str) -> String {
             USING (tenant_id = current_setting('app.tenant', true)) \
             WITH CHECK (tenant_id = current_setting('app.tenant', true));\
          GRANT SELECT ON {schema}.node_runs TO wamn_app;\
-         CREATE TABLE {schema}.run_flow_resolutions (\
-            tenant_id text NOT NULL, run_id text NOT NULL, flow_id text NOT NULL, \
-            execution_bundle_hash text NOT NULL, source_artifact_hash text NOT NULL, \
-            PRIMARY KEY (tenant_id, run_id, flow_id), \
-            FOREIGN KEY (tenant_id, execution_bundle_hash) \
-              REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash));\
-         ALTER TABLE {schema}.run_flow_resolutions ENABLE ROW LEVEL SECURITY;\
-         ALTER TABLE {schema}.run_flow_resolutions FORCE ROW LEVEL SECURITY;\
-         CREATE POLICY run_flow_resolutions_tenant ON {schema}.run_flow_resolutions \
-            USING (tenant_id = current_setting('app.tenant', true)) \
-            WITH CHECK (tenant_id = current_setting('app.tenant', true));\
-         GRANT SELECT, INSERT ON {schema}.run_flow_resolutions TO wamn_app;\
-         CREATE FUNCTION {schema}.materialize_run_flow_resolutions(\
-            p_run_id text, p_resolution_map jsonb) \
-         RETURNS TABLE (result_code text, fail_kind text) LANGUAGE plpgsql AS $body$ \
-         BEGIN \
-           IF jsonb_typeof(p_resolution_map) IS DISTINCT FROM 'array' \
-              OR jsonb_array_length(p_resolution_map) = 0 THEN \
-             RETURN QUERY SELECT 'refused'::text, 'incompatible-contract'::text; \
-             RETURN; \
-           END IF; \
-           IF NOT EXISTS (\
-             SELECT 1 FROM {schema}.run_flow_resolutions \
-              WHERE tenant_id = current_setting('app.tenant', true) AND run_id = p_run_id\
-           ) THEN \
-             INSERT INTO {schema}.run_flow_resolutions \
-               (tenant_id, run_id, flow_id, execution_bundle_hash, source_artifact_hash) \
-             SELECT current_setting('app.tenant', true), p_run_id, \
-                    entry.value ->> 'flow-id', \
-                    entry.value ->> 'execution-bundle-hash', \
-                    entry.value ->> 'source-artifact-hash' \
-               FROM jsonb_array_elements(p_resolution_map) AS entry(value); \
-           END IF; \
-           IF EXISTS (\
-             (SELECT flow_id, execution_bundle_hash, source_artifact_hash \
-                FROM {schema}.run_flow_resolutions \
-               WHERE tenant_id = current_setting('app.tenant', true) AND run_id = p_run_id \
-              EXCEPT \
-              SELECT entry.value ->> 'flow-id', \
-                     entry.value ->> 'execution-bundle-hash', \
-                     entry.value ->> 'source-artifact-hash' \
-                FROM jsonb_array_elements(p_resolution_map) AS entry(value)) \
-             UNION ALL \
-             (SELECT entry.value ->> 'flow-id', \
-                     entry.value ->> 'execution-bundle-hash', \
-                     entry.value ->> 'source-artifact-hash' \
-                FROM jsonb_array_elements(p_resolution_map) AS entry(value) \
-              EXCEPT \
-              SELECT flow_id, execution_bundle_hash, source_artifact_hash \
-                FROM {schema}.run_flow_resolutions \
-               WHERE tenant_id = current_setting('app.tenant', true) AND run_id = p_run_id)\
-           ) THEN \
-             RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text; \
-             RETURN; \
-           END IF; \
-           RETURN QUERY SELECT 'resolved'::text, NULL::text; \
-         EXCEPTION WHEN foreign_key_violation OR check_violation OR unique_violation THEN \
-           RETURN QUERY SELECT 'refused'::text, 'foreign-revision'::text; \
-         END \
-         $body$;\
-         REVOKE ALL ON FUNCTION {schema}.materialize_run_flow_resolutions(text, jsonb) FROM PUBLIC;\
-         GRANT EXECUTE ON FUNCTION {schema}.materialize_run_flow_resolutions(text, jsonb) TO wamn_app;\
          CREATE TABLE {schema}.effect_attempts (tenant_id text NOT NULL, run_id text NOT NULL);\
          ALTER TABLE {schema}.effect_attempts ENABLE ROW LEVEL SECURITY;\
          ALTER TABLE {schema}.effect_attempts FORCE ROW LEVEL SECURITY;\
@@ -311,10 +249,6 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             .iter()
             .all(|(_, _, lease_generation)| *lease_generation == 1);
         let empty_after_handoff = matches!(empty, ProductionClaimResult::Empty);
-        let materialized: i64 = seed
-            .query_one("SELECT count(*) FROM run_flow_resolutions", &[])
-            .await?
-            .get(0);
         let leased: i64 = seed
             .query_one(
                 "SELECT count(*) FROM run_queue \
@@ -332,14 +266,13 @@ pub async fn run(args: RunnerBenchArgs) -> anyhow::Result<()> {
             && exact_payloads
             && fresh_generations
             && empty_after_handoff
-            && materialized == 3
             && leased == 3
             && running == 3;
         println!(
             "# runnerbench global claim handoff\n\
              order={order:?} exact={exact_order}; payloads={exact_payloads}; \
              generations={fresh_generations}; empty={empty_after_handoff}; \
-             maps={materialized}/3; live-leases={leased}/3; running={running}/3; pass={pass}"
+             live-leases={leased}/3; running={running}/3; pass={pass}"
         );
         anyhow::Ok(pass)
     }
@@ -378,11 +311,7 @@ mod tests {
     #[test]
     fn runnerbench_stand_in_carries_production_claim_surfaces() {
         let ddl = runner_ddl("wamn_run");
-        for required in [
-            "CREATE TABLE wamn_run.effect_attempts",
-            "CREATE TABLE wamn_run.run_flow_resolutions",
-            "CREATE FUNCTION wamn_run.materialize_run_flow_resolutions",
-        ] {
+        for required in ["CREATE TABLE wamn_run.effect_attempts"] {
             assert!(ddl.contains(required), "runnerbench DDL lacks {required}");
         }
 
