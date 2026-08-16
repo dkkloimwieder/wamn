@@ -1,9 +1,11 @@
 # Deployment simplification — follow wasmCloud v2: operator-managed hosts, OCI artifacts, GitOps convergence
 
 Status: RATIFIED (owner 2026-08-16, decision `wamn-0h0g.13.43` —
-rulings 1–6 below) · supersedes the affected clauses of
-`.2.4`, `.4.12`, `.8.19`, `.8.22`, `.9.9` (attestation scope), and the
-flow-execution amendment's release-bound-resolution section ·
+rulings 1–6 below; test-contract simplification ratified same day,
+record `wamn-0h0g.13.44`) · supersedes the affected clauses of
+`.2.4`, `.4.12`, `.8.19`, `.8.22`, `.9.9` (attestation scope), the
+flow-execution amendment's release-bound-resolution section, and
+parts of `.8.1`/`.8.2` (test contract) ·
 owner-directed 2026-08-14, branch `mvp`, tracker `wamn-0h0g`,
 implementation sub-epic `wamn-0h0g.15`.
 
@@ -183,6 +185,10 @@ they land as one branch with a single green-up:
    flow-http leg is the *first* host-side `wamn:flow-http-routing`
    implementation — no host impl exists today; the materializer
    registration sweep is the real DB-read rewrite).
+5. *Test contract*: `authoring_test_sets` store (both planes) +
+   four-family parser → in-draft `cases` + flat expect shape;
+   `test-set-run` payload drops; report diff shape unchanged
+   (`wamn-0h0g.15.27`).
 Effect authority's verification set is untouched except the map
 lookup rewording — the guards `effect-writer-primitive.sh` and
 `current-plan-effect-authority.sh` survive with a one-line predicate
@@ -204,6 +210,47 @@ merge to `mvp`.
 write-ahead run/queue row, the reclaim classifier, the effect
 ledger + writer generations, bindings/generations, evidence + command
 ledger, the dispatcher, frame execution, budgets.
+
+## Test contract simplification (owner-ratified 2026-08-16; supersedes parts of `.8.1`/`.8.2`; record `wamn-0h0g.13.44`, implementation `wamn-0h0g.15.27`)
+
+The unconditional gate stands — agent-written flows make it *more*
+load-bearing. What simplifies is the contract the gate enforces, by
+three deletions:
+
+**One expect shape, no families.** Assertion vocabulary flattens to
+contract-test form (the industry pattern for gating generated code —
+golden input → expected observable):
+`expect: { outcome: responded|failed, status?, body_subset?,
+failure_code? }`. The four named assertion families delete from the
+API. The named-node family (white-box in a black-box gate) is cut —
+its authoring-time job is already `draft-run` + capture + `get-run`;
+demand-gated if a consumer ever names itself. Reopens `.8.2`.
+
+**Tests live in the draft.** A `cases` array sits beside the graph in
+the flow document — unit tests in the source file. One document for
+an agent to emit; one draft hash covering flow **and** tests (the
+evidence weld strengthens: two-artifact lineage becomes one);
+successor-draft copies carry tests forward for free. The separate
+test-set store (`authoring_test_sets`, its size cap, hash, FK)
+deletes; `test-set-run` drops its payload and means "run the draft's
+cases"; the wire contract loses an input type. Reopens `.8.1`;
+demolition-compatible — the store deletes in Tier C before more
+accretes around it.
+
+**Retained, each with its consumer:** the accepted→poll async shape
+(suite length) · ordinal/reservation internals (orchestration guts,
+invisible to the API) · the machine-diffable per-case
+expected/actual report (the agent's repair loop) · the publish weld —
+green report FK'd to the draft hash, which now covers tests by
+construction.
+
+Rejected: tests-as-flows (assertion via transform/conditional;
+re-imports taxonomy), CI attestation (degrades the gate's claim to
+"their runner said so" — wrong buyer, wrong author), sync-only test
+execution (dies on suite length).
+
+The agent loop after this ruling: emit one document → `test-set-run`
+→ read the diff → fix → repeat.
 
 ## Fork sync — wamn/2.7.0 (assessed 2026-08-14; include)
 
@@ -303,6 +350,15 @@ green-up at the merge · adoption is fresh beads
 (`wamn-0h0g.15.15`–`.15.17`, `.15.19`) superseding
 `wamn-x09`/`wamn-6s1`/`wamn-d8i`/`wamn-fqg.40`.
 
-Net new machinery across the six rulings: one Job kind already in use,
+**Addendum (same day):** the test-contract simplification section is
+owner-ratified with this spec — record `wamn-0h0g.13.44`,
+implementation `wamn-0h0g.15.27` (Tier C item 5). Its ruling extends
+the freeze clause updates: `.8.5` (cases source = the draft), `.8.18`
+(the test-set-bytes leg of the move deletes), `.7.4` (the wire
+contract loses `TestSetInput`). Note ruling 1's test path composes
+with it unchanged: `test-set-run` now runs the draft's `cases`
+through the same scratch candidate-manifest Job.
+
+Net new machinery across the rulings: one Job kind already in use,
 one ConfigMap-per-digest convention, zero daemons, zero roles, zero
 protocols — and one mechanism deleted (the readiness revision check).
