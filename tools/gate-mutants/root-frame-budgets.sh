@@ -31,7 +31,7 @@ mutation_ids() {
 load_mutation() {
   local id="$1"
   TARGET="components/execution/flowrunner/src/frames.rs"
-  EXPECTED_SHA="105c5e4c310fc56ece5baa1892f9934f6a6306b696afdb53993fd142ece9b74c"
+  EXPECTED_SHA="03eae52f098dfa0b12d50dc129d259222db254e8b58b0b2e44ea225c52e77309"
   EXPECTED_COUNT=1
   case "$id" in
     depth-check-bypass)
