@@ -7,6 +7,25 @@ cycles) · owner-directed 2026-08-10, branch `mvp`, tracker `wamn-0h0g`
 the prior draft of this amendment (the pinned Merkle-closure form) in
 place.
 
+> **Deployment-simplification amendment (owner-ratified 2026-08-16 by
+> `wamn-0h0g.13.43`; the test-contract clauses by `wamn-0h0g.13.44`).**
+> Read this document through `docs/deployment-simplification-spec.md`.
+> **Runs are never version-pinned**: a run executes under the release
+> its claiming pod carries and records `(release version, manifest
+> digest)` write-once at claim, and resolution is a pure read of that
+> pod's mounted release manifest. The *Release-bound resolution at
+> claim* section below is superseded whole, and the clauses elsewhere
+> that depend on it are either marked where they appear or re-read
+> inside that section's own marker — the two "snapshot" clauses in
+> *Execution: frames under one root run* are re-read there, not marked
+> in place. Every unmarked section stands: the execution plan and its
+> header, byte identity and the deterministic compiler, append-only
+> `execution_bundles` (explicitly affirmed by ruling 2), the frame
+> stack, recursion and the two budgets, frame identity and the
+> `(flow_id, node_id)` selector, the intrinsic call contract, and
+> effect authority's verification set — which changes only in the
+> wording of its map lookup.
+
 ## Why the chartered model is replaced
 
 Two premises fell, one per stage. **Expansion** was forced by round-7
@@ -76,6 +95,56 @@ per-flow; composition is resolved at execution.
 
 ## Release-bound resolution at claim — one immutable map per run
 
+> **Superseded — deployment simplification (`wamn-0h0g.13.43`;
+> `docs/deployment-simplification-spec.md`, "Deleted by this ruling"
+> and "Version semantics (no pinning)").** This section's ruling —
+> every admitted run pins `catalog_id + catalog_version`, and
+> resolution walks the run's pinned release — is deleted
+> (`wamn-0h0g.15.10`, `.15.11`). **Runs execute under the current
+> release of the claiming pod**, the standard job-queue semantic;
+> rollout overlap behaves as it does for any HTTP service behind a
+> load balancer, and drain completes it. Deleted with it: the
+> `run_flow_resolutions` relation and its insert, the five-step claim,
+> every claim-time resolution and verification leg (name resolution,
+> callable-contract re-check, per-requirement binding check, and the
+> single-environment execution-runtime-revision check — ruling 4 ships
+> no revision check at all), and the per-run resolution map as an
+> audit object. **What replaces it:** the claim is lock → classify →
+> lease — the single-shot reclaim classifier is unchanged — plus a
+> write-once record of `(release version, manifest digest)` taken from
+> the claiming pod's identity under the existing immutability trigger;
+> resolution is a pure read of that pod's mounted release manifest,
+> whose call-edge adjacency yields the transitive set
+> (`wamn-0h0g.15.13`); plan bytes fetch by digest from OCI, verify at
+> transfer, and cache for the process lifetime (ruling 3). The plan
+> cache's **bound** is not ruled on and does not die with this
+> section: ruling 3 governs invalidation, not capacity, so the cache
+> stays bounded and keyed `(tenant_id, execution_bundle_hash)` — the
+> same bounded process-memory cache stands unmarked at
+> `docs/plane-amendment.md:259-260`. The immutability the pinned map
+> bought is bought instead by construction: the manifest deploys as an
+> **immutable ConfigMap named by its digest**, referenced by that name
+> in the pod template, so manifest and image are atomic per pod and a
+> callee republishing mid-run is still invisible to a running run
+> (ruling 4). Refusals
+> move rather than vanish — unbound connection requirements and
+> unfetchable or hash-mismatched plans are gated at **readiness**; a
+> hash mismatch on fetch remains an integrity refusal that never
+> executes; a `(flow, plan-hash)` absent from the run's recorded
+> manifest is caught by effect authority. Breaking input contracts are
+> author versioning events (publish a new attachment, migrate callers,
+> tombstone the old), not a pinning knob: there is no agreement knob
+> and no new refusal category. The audit chain is run → recorded
+> version → manifest digest → plan hashes → bytes. Two terms defined
+> here and used later read differently: **"the run's snapshot"** (in
+> *Execution: frames under one root run*) is the pod's mounted
+> manifest and its plan cache, not a per-run map; and "claim
+> necessarily performs static call-graph *reachability* to build the
+> snapshot" reads — the manifest's call-edge adjacency, materialized
+> once at mint, supplies that reachability, and claim performs no walk.
+> **The draft/test bootstrap rule survives as data — see the next
+> marker.**
+
 Frames never resolve names, and resolution never reads a moving
 head. Every admitted run pins an immutable `catalog_id +
 catalog_version`; **resolution walks the run's pinned release**, so
@@ -114,6 +183,43 @@ claim**, typed, before any guest execution. Frames perform in-memory
 lookups against the map; a callee republishing mid-run is invisible
 to that run. The plan cache is bounded, keyed
 `(tenant_id, execution_bundle_hash)`.
+
+> **Retained as data, one clause deleted — deployment simplification
+> (`wamn-0h0g.13.43`, ruling 1; report-level map-consistency
+> *checking* per "Deleted by this ruling"; cases source per
+> `wamn-0h0g.13.44`).** The
+> narrowed bootstrap rule stands, re-expressed as data:
+> `test-set-run` and `draft-run` materialize the **candidate
+> manifest** (released set + candidate overlay) as a scratch
+> ConfigMap, a per-report **Job** whose pods mount it executes the
+> cases, and claims are targeted at that scratch claimant through the
+> landed `wamn-0h0g.5.9` placement seam (`execution_target_id`). No
+> pin exception exists — the candidate *is* the claiming pod's
+> release — and post-publish testing is rejected, since it inverts the
+> gate ordering. Read "the pinned release" as "the released set inside
+> the candidate manifest"; the first-publication limit on brand-new
+> mutually recursive groups is unchanged. **Deleted:** the
+> test-set-consistency clause's closing requirement — "**and every
+> case run must match it**" — one report resolves one world *by
+> construction*, because every case mounts the same immutable
+> candidate ConfigMap, so there is nothing left to re-aggregate a
+> per-case map against. **Retained:** the recorded **report-level
+> resolution map and its hash**. What dies is map-consistency
+> *checking*, not the map. The report-level map is the source of the
+> `tested_resolution_map` the publish gate consumes
+> (`docs/deployment-simplification-spec.md:34`), and the spec's own
+> Tier B entry retains that evidence column in the same breath as it
+> deletes the check (`:152-154`). The landed shape agrees:
+> `deploy/sql/authoring-tests.sql:190-191` names the report's map "the
+> exact `flow_id -> execution_bundle_hash` object consumed later as
+> `tested_resolution_map`", and `:199-201` keeps `resolution_map` and
+> `resolution_map_hash` `NOT NULL` under their self-consistency hash
+> `CHECK`. Deleted in Tier B (`wamn-0h0g.15.7`, landed `1dbfd097`) is
+> only the checking machinery: the `deploy/sql/authoring-tests.sql`
+> trigger legs that re-aggregated `run_flow_resolutions` against the
+> recorded map, and their scenario-worker caller. Under
+> `wamn-0h0g.13.44` the cases come from the draft's own `cases` array,
+> not a separate test-set store (`wamn-0h0g.15.27`).
 
 **Draft/test bootstrap rule (narrowed):** during validate,
 draft-run, and test-set-run, a reference to the flow under test —
@@ -175,6 +281,22 @@ this flow/node pair must match* — bounded, and simpler for authors
 than paths. Call-site-specific selectors are a future explicit
 addition. The node-id charset rule stands.
 
+> **One clause superseded — deployment simplification
+> (`wamn-0h0g.13.43`).** Effect authority's verification set is
+> untouched **except the map lookup**: for "the run's resolution map
+> contains the current plan hash" read "**the release manifest
+> recorded on the run at claim contains `(flow, plan-hash)`**" — the
+> rest of the chain (plan contains node → immutable attempt matches
+> `(frame, node, occurrence)` and the trusted effect facts → source
+> artifact + requirement → binding → active generation) is unchanged,
+> as are the attempt ledger's self-description and the absence of a
+> `run_frames` relation. The root plan hash remains the run identity
+> anchor carried on every dispatched effect, but it is no longer
+> pinned at admission: the admission-time bundle pin moves to the
+> claim-time write-once recording of `(release version, manifest
+> digest)` (`wamn-0h0g.15.11`); the exact column shape is that lane's
+> work, not this amendment's.
+
 **Effect authority uses the current frame directly.** Every
 dispatched effect carries trusted execution facts: root plan hash
 (the run identity and anchor, `runs.execution_bundle_hash` non-null)
@@ -194,6 +316,19 @@ row. Links through pure intermediate frames are attested by descendant
 attempt records; the pure frames are not independently row-backed.
 There is no `run_frames` relation or other frame registry. Full descent
 from the root is therefore not a separate authorization check.
+
+> **One clause superseded — deployment simplification
+> (`wamn-0h0g.13.43`).** "Claim's preflight re-verifies contract
+> compatibility for the whole reachable set" dies with the five-step
+> claim; there is no preflight (`wamn-0h0g.15.10`). Callable contracts
+> are recorded in the plan and projected into the release manifest, so
+> compatibility is checked at the callee's own validation and at the
+> publish gate — point-in-time, unchanged — and the runtime
+> call-enter guard remains the authoritative input-direction check,
+> converting drift into a typed `invalid-input` at the site. The rest
+> of the call contract stands: intrinsic recording,
+> `return_contract = untyped-json-body`,
+> `effect_ceiling = effectful`, and call-flow ⇒ idempotency key.
 
 **The call contract is intrinsic — recorded data, not a flag.** At
 its own validation, every callable plan records a
@@ -219,6 +354,25 @@ promise.
 
 ## Publication and the gate claim
 
+> **Partly superseded — deployment simplification (`wamn-0h0g.13.43`,
+> ruling 5).** The publish gate itself is unchanged and remains the
+> gate; publication still verifies own plan bytes, current callee
+> resolution with recorded callability, and bound requirements,
+> point-in-time. Two clauses die. (1) The **`deployed_resolution_map`**
+> is dropped — here from the evidence row and, in
+> `docs/plane-amendment.md`, from the deployment attestation; it is
+> derivable (digest → manifest → map). `tested_resolution_map` is
+> **retained** in release evidence, as are the attestation's six-part
+> coordinate, `deployed_manifest_hash`, and `attested_at`
+> (`wamn-0h0g.15.8`). (2) "Evidence plus the per-run resolution map
+> make any historical execution exactly reconstructable" reads:
+> evidence plus the `(release version, manifest digest)` recorded on
+> the run at claim — run → recorded version → manifest digest → plan
+> hashes → bytes, every link content-addressed and immutable. The
+> narrowed gate claim, the callee's own unconditional gate, and the
+> call-enter guard are unchanged, and `execution_bundles` stays
+> append-only (ruling 2) so recorded hashes stay resolvable.
+
 Publication verifies: the flow's **own** plan bytes present,
 hash-valid, and carrying the environment's runtime revision · every
 named callee **currently resolves** in the target release with
@@ -241,6 +395,42 @@ the per-run resolution map make any historical execution exactly
 reconstructable.
 
 ## Delta against the chartered text
+
+> **Partly superseded — deployment simplification (`wamn-0h0g.13.43`;
+> test-contract clauses `wamn-0h0g.13.44`).** The **Deleted** list
+> stands in full; nothing it retired comes back. Four entries below do
+> not stand. **Added:** "release-bound claim-time resolution with the
+> immutable `run_flow_resolutions` relation" is deleted — read: the
+> claim records `(release version, manifest digest)` write-once and
+> resolves by reading the pod's mounted manifest — and
+> "tested/deployed resolution maps in evidence" loses its deployed
+> half (ruling 5). Everything else added here stands: the frame stack,
+> the `CallableContract` record, frame identity with the
+> `(flow_id, node_id)` selector, `plan_compiler_revision` and the
+> deterministic-encoding contract, the two runtime budgets,
+> self-describing effect attempts, and the narrowed bootstrap rule (as
+> data, per ruling 1). **Owner-local proofs:** the claim-time refusal
+> proofs (unresolvable name, hash-invalid bytes, foreign revision)
+> retire with the five-step claim — hash-invalid bytes survive as an
+> integrity refusal at fetch, unbound requirements move to the
+> readiness gate, and the revision check is deleted outright (ruling
+> 4); "snapshot atomicity across a mid-run callee republish" is now
+> proved by construction (the pod's manifest ConfigMap is immutable
+> and digest-named), not by a per-run map. The remaining proofs and
+> the unchanged M0 gate with its 16-check count stand. **Owner
+> decisions:** "late binding over pinning, **release-bound** — the
+> catalog release is the unit of change, never the claim instant" is
+> superseded — late binding stands, but the unit is the release the
+> **claiming pod** carries; no run is pinned and no version-pinning
+> knob exists. **Read-as:** those clauses stand and gain one hop —
+> wherever the charter points at this amendment for expansion,
+> inlining, synthetic instructions, cycle refusal, the expanded-node
+> bound, callee pinning, or drift-invalidation, read this amendment
+> **as amended here** by `docs/deployment-simplification-spec.md`
+> (the charter's own read-through lands with `wamn-0h0g.15.24`). The
+> `call-flow { flow-id }` public shape, the respond-body-only
+> limitation, the `effect-uncertain` literal, caller completion
+> semantics, and the idempotency-key requirement stand unmodified.
 
 **Deleted:** the recursive expander · callee inlining and
 namespacing rewrites · the canonical-JSON / canonicalized-preimage

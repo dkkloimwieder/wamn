@@ -1,5 +1,35 @@
 # Run queue — global FIFO claim and reclaim
 
+> **Read through the deployment-simplification ruling (owner-ratified
+> 2026-08-16, `wamn-0h0g.13.43`,
+> `docs/deployment-simplification-spec.md`).** This document's
+> resolution-map and release-pin references are superseded: claim step
+> 4 (resolve and verify the complete immutable `run_flow_resolutions`
+> map, with a retry reproducing an identical map), step 5's "only
+> after the map succeeds" ordering, the "materialize/verify the map"
+> leg of the **ordinary** classification, both the "catalog" and the
+> "resolution-map" facts in the **expired pre-effect** preservation
+> list, the typed resolution refusal paragraph, and the
+> `map identity/refusal` and `map-before-lease` proof-floor lines are
+> all superseded. Most die with `run_flow_resolutions` ("Deleted by
+> this ruling"); the preservation list's "catalog" item is the
+> admitted run's catalog pin and dies instead with `.2.4`'s
+> admission-time bundle pin, which moves to claim-time recording
+> (`docs/deployment-simplification-spec.md:90-91`). The claim becomes
+> **lock → classify → lease** plus one write-once record of
+> `(release version, manifest digest)` taken from the claiming pod's
+> identity; resolution is a pure read of that pod's mounted release
+> manifest, and that record is what a reclaim preserves in place of
+> the two struck items. The column shape is `wamn-0h0g.15.11`'s work,
+> not this marker's. Everything else here stands unchanged: the
+> durable record, the global FIFO order and its index prefix,
+> visibility and lease rules, the effect-attempt advisory fence, the
+> three classifications and their preservation semantics, `attempts`
+> accounting, the exhausted pre-effect janitor, doorbells and dispatcher
+> reconciliation, and the retired partition plane. The code, SQL, and
+> guard deletions land in the wave's claim-path commit
+> (`wamn-0h0g.15.10`, `.15.11`).
+
 The run queue is the durable handoff between admission and the warm run worker.
 PostgreSQL owns queue truth; NATS doorbells are latency hints only. The one
 production claimant lives in the trusted host and gives the flowrunner guest
