@@ -1,0 +1,38 @@
+/* FactInspector — §6 step 4's three lanes, opened under one execution row. */
+
+.fact-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.fact-lane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* §1.4's label role, here as the lane's frame face rather than a section divider. */
+.fact-lane-label {
+  margin: 0;
+}
+
+.fact-lane-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* Every sentence the lanes say about a value rather than with one. */
+.fact-note {
+  color: var(--dim);
+}
+
+/* Trace mode's two lines: the document does not wrap, the `[json]` pop shows the rest. */
+.fact-json-preview {
+  overflow-x: auto;
+  /* the newlines the preview kept, without `pre`'s own monospace default */
+  white-space: pre;
+  font-size: var(--size-13);
+  line-height: var(--leading-table);
+}

@@ -16,6 +16,7 @@ export type Column<Row> = {
   readonly cell: (row: Row) => JSX.Element;
 };
 
+/** Disclosure's contract, row-shaped: uncontrolled until `open` is supplied. */
 export type RowDisclosure = {
   /** What the toggle opens, so the button's name says what it acts on. */
   readonly label: string;
@@ -26,6 +27,22 @@ export type RowDisclosure = {
   readonly content: () => JSX.Element;
   /** §2.3's failed cases arrive open — the author came for them — and still close. */
   readonly startOpen?: boolean;
+  /**
+   * Supplied means the owner drives the row: step 4's expand-all/collapse-all.
+   * It outranks `startOpen`, which a controlled row never consults again. The
+   * owner's value is a loan and not a transfer — released, the row returns to
+   * what the reader last asked for, so leaving trace mode gives the reader back
+   * the table they had rather than freezing the owner's last sweep.
+   */
+  readonly open?: boolean;
+  /**
+   * The state the reader ASKED for, not one the row entered: a controlled row
+   * reports every click and moves only when its owner answers, so an owner that
+   * ignores two clicks hears the same value twice. An owner that supplies `open`
+   * and no `onToggle` leaves the row nothing to answer with — §2.6's `Enter on
+   * any row toggles its disclosure` is that owner's to keep, not the row's.
+   */
+  readonly onToggle?: (next: boolean) => void;
 };
 
 export type DataTableProps<Row> = {
@@ -58,10 +75,23 @@ function DataRow<Row>(props: {
   const rowDisclosure = createMemo(() => props.disclosure);
   // Seeded, not derived: the reader's own open/closed state outlives a re-read,
   // so `startOpen` is read once here and never again.
-  const [open, setOpen] = createSignal(untrack(() => rowDisclosure()?.startOpen ?? false));
+  const [ownOpen, setOwnOpen] = createSignal(untrack(() => rowDisclosure()?.startOpen ?? false));
+  const open = () => rowDisclosure()?.open ?? ownOpen();
+
+  function toggle(): void {
+    const next = !open();
+    setOwnOpen(next);
+    rowDisclosure()?.onToggle?.(next);
+  }
 
   return (
-    <>
+    /*
+     * A row group per row, so opening one row inserts a node inside its own
+     * group instead of lengthening the body's row list. Expand-all moves every
+     * row at once, and a body that reorders its rows re-inserts the toggle the
+     * reader is standing on — which drops the focus §2.6's keyboard depends on.
+     */
+    <tbody>
       <tr class="data-table-row" data-tone={props.tone ?? undefined}>
         <For each={props.columns}>
           {(column, index) => (
@@ -77,9 +107,10 @@ function DataRow<Row>(props: {
                     class="data-table-toggle"
                     // spelled out: @solidjs/web drops a `false` aria value
                     aria-expanded={open() ? "true" : "false"}
-                    aria-controls={panelId}
+                    // only while the disclosed row exists; see disclosure.tsx
+                    aria-controls={open() ? panelId : undefined}
                     aria-label={`${open() ? "collapse" : "expand"} ${disclosure().label}`}
-                    onClick={() => setOpen(!open())}
+                    onClick={toggle}
                   >
                     {open() ? "▾" : "▸"}
                   </button>
@@ -91,16 +122,20 @@ function DataRow<Row>(props: {
         </For>
       </tr>
       {/* The thunk runs only here, so closed content is never built at all. */}
-      <Show when={open() ? rowDisclosure() : null}>
-        {(disclosure) => (
-          <tr class="data-table-disclosed" id={panelId}>
-            <td class="data-table-cell" colspan={props.columns.length}>
-              {disclosure().content()}
-            </td>
-          </tr>
-        )}
+      <Show when={open()}>
+        <tr class="data-table-disclosed" id={panelId}>
+          <td class="data-table-cell" colspan={props.columns.length}>
+            {/*
+             * Read once, on the flush that opens the row: step 4's inspector
+             * holds disclosures and JSON views of its own, and rebuilding it
+             * because the caller's factory returned a fresh descriptor would
+             * throw away expansions the reader opened by hand.
+             */}
+            {untrack(() => rowDisclosure()?.content())}
+          </td>
+        </tr>
       </Show>
-    </>
+    </tbody>
   );
 }
 
@@ -124,29 +159,29 @@ export function DataTable<Row>(props: DataTableProps<Row>): JSX.Element {
           </For>
         </tr>
       </thead>
-      <tbody>
-        <Show
-          when={props.rows.length > 0}
-          fallback={
+      <Show
+        when={props.rows.length > 0}
+        fallback={
+          <tbody>
             <tr>
               <td class="data-table-cell" colspan={props.columns.length}>
                 {props.empty}
               </td>
             </tr>
-          }
-        >
-          <For each={props.rows} keyed={props.rowKey}>
-            {(row) => (
-              <DataRow
-                row={row()}
-                columns={props.columns}
-                tone={props.tone?.(row()) ?? null}
-                disclosure={props.disclosure?.(row()) ?? null}
-              />
-            )}
-          </For>
-        </Show>
-      </tbody>
+          </tbody>
+        }
+      >
+        <For each={props.rows} keyed={props.rowKey}>
+          {(row) => (
+            <DataRow
+              row={row()}
+              columns={props.columns}
+              tone={props.tone?.(row()) ?? null}
+              disclosure={props.disclosure?.(row()) ?? null}
+            />
+          )}
+        </For>
+      </Show>
       <Show when={props.footer}>
         <tfoot>
           <tr>

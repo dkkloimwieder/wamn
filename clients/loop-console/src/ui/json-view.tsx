@@ -92,7 +92,8 @@ function JsonNode(props: {
             class="json-mark json-expander"
             // spelled out: a `false` here is an attribute Solid would drop
             aria-expanded={open() ? "true" : "false"}
-            aria-controls={panelId}
+            // only while the children exist; a closed row controls nothing
+            aria-controls={open() ? panelId : undefined}
             aria-label={`${open() ? "collapse" : "expand"} ${props.path}`}
             onClick={() => setOpen(!open())}
           >

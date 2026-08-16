@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { captureOffRun, failingRun, finalizedReport, truncatedRun } from "../reader/fixtures";
 import type { ExecutionFact, ReportCase } from "../reader/types";
+import { factNote } from "../screens/execution-table";
 import { DataTable, type Column } from "./data-table";
 import { KeyValue } from "./key-value";
 import { PassGlyph } from "./pass-glyph";
@@ -13,16 +14,11 @@ import { StatusBadge } from "./status-badge";
 
 afterEach(cleanup);
 
-/** §2.2's note column: the one scrap per row that usually answers "what happened". */
-function note(fact: ExecutionFact): string {
-  if (fact.failure !== null) {
-    const attempts = (fact.attempt ?? 0) + 1;
-    return attempts > 1 ? `${fact.failure.kind} ×${attempts}` : fact.failure.kind;
-  }
-  return fact.outputPort !== null && fact.outputPort !== "main" ? `→ ${fact.outputPort}` : "";
-}
-
-/** §2.2's execution table, as step 4 will build it. */
+/**
+ * §2.2's execution table, as step 4 builds it — down to `factNote`, which the
+ * screen owns. A second copy of the note here would be a second answer to "what
+ * happened on this row", and the two would drift.
+ */
 const factColumns: ReadonlyArray<Column<ExecutionFact>> = [
   { header: "#", cell: (fact) => fact.index },
   { header: "node", cell: (fact) => fact.node },
@@ -31,7 +27,7 @@ const factColumns: ReadonlyArray<Column<ExecutionFact>> = [
     header: "status",
     cell: (fact) => <StatusBadge status={fact.status} tone={nodeRunTone(fact.status)} />,
   },
-  { header: "note", cell: (fact) => note(fact) },
+  { header: "note", cell: (fact) => factNote(fact) },
 ];
 
 const factKey = (fact: ExecutionFact): string => String(fact.index);
@@ -209,6 +205,197 @@ describe("DataTable", () => {
     expect(rows(container)[1]).toHaveTextContent("fetch-inventory");
   });
 
+  it("reports an uncontrolled row's toggle, so its owner can follow a row it does not drive", () => {
+    const reported: boolean[] = [];
+    const { getByLabelText } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          content: () => <p>occurrence {fact.occurrence + 1}</p>,
+          onToggle: (next) => reported.push(next),
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    const toggle = getByLabelText("expand fact 4, fetch-inventory");
+    fireEvent.click(toggle);
+    flush();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(reported).toEqual([true]);
+
+    fireEvent.click(toggle);
+    flush();
+    expect(reported).toEqual([true, false]);
+  });
+
+  it("moves a controlled row only when its owner says so", () => {
+    const [open, setOpen] = createSignal(false);
+    const reported: boolean[] = [];
+    const { container, getByLabelText } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          // supplied `open` outranks the seed, so the owner holds the only state
+          startOpen: true,
+          open: open(),
+          content: () => <p>occurrence {fact.occurrence + 1}</p>,
+          onToggle: (next) => reported.push(next),
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    const toggle = getByLabelText("expand fact 4, fetch-inventory");
+    fireEvent.click(toggle);
+    flush();
+    // the click is reported and nothing moves: the row is not its own state
+    expect(reported).toEqual([true]);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".data-table-disclosed")).toBeNull();
+
+    setOpen(true);
+    flush();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector(".data-table-disclosed")).toHaveTextContent("occurrence 1");
+
+    fireEvent.click(toggle);
+    flush();
+    expect(reported).toEqual([true, false]);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("opens and closes every row from one signal, as step 4's trace mode does", () => {
+    const [traceOpen, setTraceOpen] = createSignal(false);
+    let built = 0;
+    const { container, getAllByRole } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          open: traceOpen(),
+          content: () => {
+            built += 1;
+            return <p>occurrence {fact.occurrence + 1}</p>;
+          },
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    // collapsed, the whole run costs nothing: no row built the subtree behind it
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(0);
+    expect(built).toBe(0);
+
+    setTraceOpen(true);
+    flush();
+
+    const disclosed = [...container.querySelectorAll<HTMLElement>(".data-table-disclosed")];
+    expect(disclosed).toHaveLength(failingRun.facts.length);
+    expect(built).toBe(failingRun.facts.length);
+    expect(getAllByRole("button", { name: /^collapse /u })).toHaveLength(failingRun.facts.length);
+    for (const row of disclosed) {
+      expect(row.previousElementSibling).toHaveClass("data-table-row");
+    }
+
+    setTraceOpen(false);
+    flush();
+
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(0);
+    expect(getAllByRole("button", { name: /^expand /u })).toHaveLength(failingRun.facts.length);
+  });
+
+  it("builds no subtree behind the truncated run's 200 closed rows, and one each when they open", () => {
+    const [traceOpen, setTraceOpen] = createSignal(false);
+    const count = truncatedRun.facts.length;
+    let built = 0;
+    const { container } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={truncatedRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          open: traceOpen(),
+          content: () => {
+            built += 1;
+            return <p>occurrence {fact.occurrence + 1}</p>;
+          },
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    // the size the thunk exists for: 200 rows the reader has not asked to open
+    expect(count).toBe(200);
+    expect(built).toBe(0);
+
+    setTraceOpen(true);
+    flush();
+    expect(built).toBe(count);
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(count);
+
+    setTraceOpen(false);
+    flush();
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(0);
+  });
+
+  it("returns a released row to what the reader last asked for, not to the owner's last sweep", () => {
+    const [open, setOpen] = createSignal<boolean | undefined>(undefined);
+    const { container, getByLabelText } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          open: open(),
+          content: () => <p>occurrence {fact.occurrence + 1}</p>,
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    // trace mode opens rows the reader never touched, and leaving it hands the
+    // table back as they had it — the owner's value was a loan, not a transfer
+    setOpen(true);
+    flush();
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(
+      failingRun.facts.length,
+    );
+
+    setOpen(undefined);
+    flush();
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(0);
+
+    // and a click the owner refused while it held every row shut is a request
+    // that still stands: released, the row opens on the reader's own say-so
+    setOpen(false);
+    flush();
+    const toggle = getByLabelText("expand fact 3, check-stock");
+    fireEvent.click(toggle);
+    flush();
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+    setOpen(undefined);
+    flush();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelectorAll(".data-table-disclosed")).toHaveLength(1);
+  });
+
   it("offers no toggle on a row whose disclosure the caller declines", () => {
     const { container, getAllByRole } = render(() => (
       <DataTable
@@ -329,6 +516,80 @@ describe("DataTable", () => {
       // every disclosed row follows its own row, never another row's disclosure
       expect(row.previousElementSibling).toHaveClass("data-table-row");
     }
+  });
+
+  it("leaves the reader standing on the same toggle when trace mode sweeps every row", () => {
+    const [traceOpen, setTraceOpen] = createSignal(false);
+    const { getByLabelText } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => ({
+          label: `fact ${fact.index}, ${fact.node}`,
+          open: traceOpen(),
+          content: () => <p>occurrence {fact.occurrence + 1}</p>,
+        })}
+        empty={noFacts}
+      />
+    ));
+
+    const toggle = getByLabelText("expand fact 3, check-stock");
+    toggle.focus();
+
+    setTraceOpen(true);
+    flush();
+    // §2.6 is keyboard-first: the sweep opens five rows around this button and
+    // the reader keeps their place on it, rather than being returned to <body>
+    expect(getByLabelText("collapse fact 3, check-stock")).toBe(toggle);
+    expect(document.activeElement).toBe(toggle);
+
+    setTraceOpen(false);
+    flush();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("keeps an open row's subtree when the caller returns a fresh disclosure", () => {
+    const [refreshedAt, setRefreshedAt] = createSignal(1);
+    let built = 0;
+    const { container, getByLabelText } = render(() => (
+      <DataTable
+        caption="execution facts"
+        columns={factColumns}
+        rows={failingRun.facts}
+        rowKey={factKey}
+        disclosure={(fact) => {
+          // the screen's factory reads what the screen knows, so a re-read hands
+          // every row a fresh descriptor even where nothing about it changed
+          refreshedAt();
+          return {
+            label: `fact ${fact.index}, ${fact.node}`,
+            content: () => {
+              built += 1;
+              return <p>occurrence {fact.occurrence + 1}</p>;
+            },
+          };
+        }}
+        empty={noFacts}
+      />
+    ));
+
+    const toggle = getByLabelText("expand fact 3, check-stock");
+    fireEvent.click(toggle);
+    flush();
+    expect(built).toBe(1);
+    const panel = container.querySelector(".data-table-disclosed p");
+
+    // §2.6's refresh re-runs the factory for every row; step 4's inspector holds
+    // disclosures and JSON views the reader opened by hand, and they are inside
+    // this node — so the row that was open keeps the subtree it already built
+    setRefreshedAt(2);
+    flush();
+    expect(built).toBe(1);
+    expect(container.querySelector(".data-table-disclosed p")).toBe(panel);
+    // and the toggle the reader may be standing on survives the re-read too
+    expect(getByLabelText("collapse fact 3, check-stock")).toBe(toggle);
   });
 
   it("renders the empty slot across the columns when a read returns no rows", () => {

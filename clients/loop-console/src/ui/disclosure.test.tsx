@@ -70,13 +70,19 @@ describe("Disclosure", () => {
     const toggle = getByRole("button", { name: "occurrence 1–4 · frame root" });
     expect(toggle.tagName).toBe("BUTTON");
     expect(toggle).not.toHaveAttribute("tabindex");
-    expect(toggle).toHaveAttribute("aria-controls");
+    // Closed, it controls nothing — the panel does not exist yet, and naming an
+    // absent id is a reference to nothing. It points at the panel once there is
+    // one, which is the pairing that makes the button a disclosure.
+    expect(toggle).not.toHaveAttribute("aria-controls");
 
     toggle.focus();
     expect(document.activeElement).toBe(toggle);
     toggle.click();
     flush();
     expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const panelId = toggle.getAttribute("aria-controls");
+    expect(panelId).not.toBeNull();
+    expect(document.getElementById(panelId ?? "")).toBeInTheDocument();
   });
 
   it("moves only when its owner says so once `open` is supplied", () => {

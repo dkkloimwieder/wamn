@@ -3,6 +3,7 @@ import { flush } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { proxyTarget } from "../config";
+import { FAILING_RUN_ID } from "../reader/fixtures";
 import type { Route } from "../routing/route";
 import { AppShell } from "./app-shell";
 import { setReadStatus } from "./read-status";
@@ -16,11 +17,22 @@ function shell(route: Route) {
   return render(() => <AppShell route={route} />);
 }
 
+/** The run route reads through the reader seam; two ticks settle its read. */
+async function settle(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+  flush();
+}
+
 describe("AppShell", () => {
-  it("renders each route's placeholder inside the shell", () => {
+  it("renders each route's screen inside the shell", async () => {
     const cases: Array<{ route: Route; expected: string[] }> = [
       { route: { kind: "start" }, expected: ["start"] },
-      { route: { kind: "run", id: "01J9X3F2K" }, expected: ["run", "id 01J9X3F2K"] },
+      // the run route mounts the run screen, which answers out of the reader
+      {
+        route: { kind: "run", id: FAILING_RUN_ID },
+        expected: ["FAILED · retry-exhausted at fetch-inventory", "execution", "details"],
+      },
       { route: { kind: "report", id: "01J9X8Q11" }, expected: ["report", "id 01J9X8Q11"] },
       {
         route: { kind: "draft", id: "orders", revision: "17" },
@@ -31,6 +43,7 @@ describe("AppShell", () => {
 
     for (const { route, expected } of cases) {
       const { container } = shell(route);
+      await settle();
       // chrome above the column, and the panel region beside it
       expect(container.querySelector("header")).toHaveTextContent("wamn loop");
       expect(container.querySelector("aside")).toBeInTheDocument();
@@ -62,6 +75,17 @@ describe("AppShell", () => {
     expect(zero.querySelector("main .screen-name")).toHaveTextContent("draft");
     expect(zero.querySelector("main")).toHaveTextContent("revision 0");
     expect(zero.querySelector("main")).not.toHaveTextContent("not found");
+  });
+
+  it("gives the run route one heading, and it is the verdict", async () => {
+    const { container } = shell({ kind: "run", id: FAILING_RUN_ID });
+    await settle();
+
+    const headings = container.querySelectorAll("h1");
+    expect(headings).toHaveLength(1);
+    expect(headings[0]).toHaveTextContent("FAILED · retry-exhausted at fetch-inventory");
+    // the step-1 placeholder heading is gone from this route (wamn-dggp.21)
+    expect(container.querySelector(".screen-name")).toBeNull();
   });
 
   it("renders the top bar's wordmark, proxy target, status word, and jump hint", () => {

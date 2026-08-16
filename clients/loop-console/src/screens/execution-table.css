@@ -1,0 +1,16 @@
+/* ExecutionTable — what §2.2's note and duration columns add to a DataTable cell. */
+
+/*
+ * The ctx chip annotates its row rather than being data in it, so it takes the
+ * frame face's dim 12px label role beside the note's own scrap.
+ */
+.execution-ctx {
+  margin-left: var(--space-1);
+  font-size: var(--size-12);
+  color: var(--dim);
+}
+
+/* An absence is metadata, not a value: it reads at the weight of a label. */
+.execution-absent {
+  color: var(--dim);
+}

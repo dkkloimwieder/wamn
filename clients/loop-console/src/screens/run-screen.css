@@ -1,0 +1,52 @@
+/* RunScreen — §2.2's column: the verdict, then its sections down §1.4's grid. */
+
+.run-screen {
+  display: flex;
+  flex-direction: column;
+  /* §1.4: 32px between sections, and the label on the hairline is the divider. */
+  gap: var(--space-4);
+}
+
+.run-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* The section rule's own controls, sitting after the hairline it runs out on. */
+.run-controls {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+/* §2.2's `EXECUTION ──── 14 facts, all`: the count belongs to the rule. */
+.run-count {
+  color: var(--dim);
+  font-size: var(--size-12);
+}
+
+/*
+ * Trace mode's two controls read as chrome, not as data: the 12px frame-face
+ * weight §1.4 gives everything that sits on a section rule.
+ */
+.run-control {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dim);
+  font-size: var(--size-12);
+  cursor: pointer;
+}
+
+/* What the screen says *about* its evidence rather than with it (§1.2). */
+.run-note,
+.run-fault {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
+}
+
+.run-absent {
+  color: var(--dim);
+}

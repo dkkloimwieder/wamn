@@ -1,0 +1,41 @@
+/*
+ * UncertainPanel — §2.2's dominant section.
+ *
+ * Dominance is §1.2's scale, not a second signature: the platform's meaning is
+ * set at head size in the frame face, and beside 12px section labels and 13px
+ * table cells that reads as a second verdict — which is what this state is.
+ * §1.3's 3px status rule belongs to the verdict bar alone, and §1.1 keeps the
+ * purple inside the badge on the divider, so nothing here paints with `--tone`;
+ * `data-tone` states which status the panel stands for.
+ */
+
+.uncertain-panel {
+  display: flex;
+  flex-direction: column;
+  /* §1.4: the panel opens two sections, 32px apart like every other pair. */
+  gap: var(--space-4);
+}
+
+.uncertain-meaning,
+.uncertain-resolution,
+.uncertain-record {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* §1.2: an explanatory sentence is frame-face — here at head size, because
+   these are the sentences that must actually be read. */
+.uncertain-sentence {
+  margin: 0;
+  font-size: var(--size-16);
+}
+
+/* The resolution state is data, so it sits quietly beside its label's rule. */
+.uncertain-resolution-state {
+  font-size: var(--size-13);
+}
+
+.uncertain-absent {
+  color: var(--dim);
+}

@@ -35,7 +35,9 @@ export function Disclosure(props: DisclosureProps): JSX.Element {
         type="button"
         class="disclosure-toggle"
         aria-expanded={expanded()}
-        aria-controls={panelId}
+        // Only while the panel exists: closed content is never created, and
+        // aria-controls pointing at an absent id is a reference to nothing.
+        aria-controls={open() ? panelId : undefined}
         onClick={toggle}
       >
         <span class="disclosure-marker" aria-hidden="true">

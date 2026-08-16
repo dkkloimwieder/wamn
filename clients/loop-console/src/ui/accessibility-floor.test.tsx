@@ -8,12 +8,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ReadResult, ReaderError } from "../reader/errors";
 import { fixtureReader } from "../reader/fixture-reader";
 import {
+  EFFECT_UNCERTAIN_RUN_ID,
+  FAILING_RUN_ID,
   effectUncertainRun,
   failingRun,
   finalizedReport,
   nonParsingDraft,
 } from "../reader/fixtures";
 import type { ExecutionFact, ReportCase } from "../reader/types";
+import { RunScreen } from "../screens/run-screen";
 import { CopyId } from "./copy-id";
 import { DataTable, type Column, type RowDisclosure } from "./data-table";
 import { Disclosure } from "./disclosure";
@@ -315,23 +318,98 @@ function eachRendering(check: (primitive: Primitive, container: HTMLElement) => 
   }
 }
 
+// ── the four assertions, over one rendering ─────────────────────────────────
+
+/**
+ * Each check reads one rendering and answers with what is wrong with it, so a
+ * whole screen can be held to exactly what every primitive is held to. They are
+ * separate rather than one sweep because each is a different promise, and a
+ * failure has to name which promise broke.
+ */
+
+function toneOffences(where: string, container: HTMLElement, says: readonly string[]): string[] {
+  const offences: string[] = [];
+  const toned = [...container.querySelectorAll("[data-tone]")];
+  const spoken = toned.map(reachableText);
+  for (const [index, element] of toned.entries()) {
+    if (!/\p{L}/u.test(spoken[index])) {
+      const tone = element.getAttribute("data-tone");
+      offences.push(`${where}: [data-tone=${tone}] says nothing a reader reaches`);
+    }
+  }
+  for (const word of says) {
+    if (!spoken.some((said) => said.includes(word))) {
+      offences.push(`${where}: no toned element says "${word}"`);
+    }
+  }
+  return offences;
+}
+
+function controlOffences(
+  where: string,
+  container: HTMLElement,
+): { readonly offences: readonly string[]; readonly handlers: number } {
+  const offences: string[] = [];
+  let handlers = 0;
+  for (const element of container.querySelectorAll<HTMLElement>("*")) {
+    // Solid lands a delegated handler on the node itself, as `$$click`. A
+    // listener added any other way is invisible from here — that is bead
+    // wamn-dggp.16's to see, in a real browser.
+    const handled = Object.keys(element).some((key) => key.startsWith("$$"));
+    const at = `${where}: <${element.tagName.toLowerCase()}>`;
+    if (handled) {
+      handlers += 1;
+      if (element.tagName !== "BUTTON") {
+        offences.push(`${at} handles events but is not a button`);
+      }
+    }
+    if (element.getAttribute("role") === "button" && element.tagName !== "BUTTON") {
+      offences.push(`${at} plays a button instead of being one`);
+    }
+    if ((element.getAttribute("tabindex") ?? "").startsWith("-")) {
+      offences.push(`${at} is out of the tab order`);
+    }
+  }
+  return { offences, handlers };
+}
+
+function nameOffences(where: string, container: HTMLElement): string[] {
+  const offences: string[] = [];
+  const named = new Map<string, number>();
+  for (const button of container.querySelectorAll("button")) {
+    const name = reachableText(button);
+    if (!/\p{L}/u.test(name)) {
+      offences.push(`${where}: a button is named ${JSON.stringify(name)}`);
+    }
+    named.set(name, (named.get(name) ?? 0) + 1);
+  }
+  // Two controls of one screen act on two different things, so a name that
+  // repeats is a name that stopped saying which — the shape a dropped label
+  // takes when every toggle falls back to "expand".
+  for (const [name, count] of named) {
+    if (count > 1) {
+      offences.push(`${where}: ${count} buttons are all named ${JSON.stringify(name)}`);
+    }
+  }
+  return offences;
+}
+
+function captionOffences(where: string, container: HTMLElement): string[] {
+  const offences: string[] = [];
+  for (const table of container.querySelectorAll("table")) {
+    const caption = table.querySelector(":scope > caption");
+    if (caption === null || !/\p{L}/u.test(reachableText(caption))) {
+      offences.push(`${where}: a table carries no caption`);
+    }
+  }
+  return offences;
+}
+
 describe("accessibility floor", () => {
   it("never leaves a tone to carry a status on its own", () => {
     const offences: string[] = [];
     eachRendering((primitive, container) => {
-      const toned = [...container.querySelectorAll("[data-tone]")];
-      const spoken = toned.map(reachableText);
-      for (const [index, element] of toned.entries()) {
-        if (!/\p{L}/u.test(spoken[index])) {
-          const tone = element.getAttribute("data-tone");
-          offences.push(`${primitive.name}: [data-tone=${tone}] says nothing a reader reaches`);
-        }
-      }
-      for (const word of primitive.says) {
-        if (!spoken.some((said) => said.includes(word))) {
-          offences.push(`${primitive.name}: no toned element says "${word}"`);
-        }
-      }
+      offences.push(...toneOffences(primitive.name, container, primitive.says));
     });
     expect(offences).toEqual([]);
   });
@@ -340,25 +418,9 @@ describe("accessibility floor", () => {
     const offences: string[] = [];
     let handlers = 0;
     eachRendering((primitive, container) => {
-      for (const element of container.querySelectorAll<HTMLElement>("*")) {
-        // Solid lands a delegated handler on the node itself, as `$$click`. A
-        // listener added any other way is invisible from here — that is bead
-        // wamn-dggp.16's to see, in a real browser.
-        const handled = Object.keys(element).some((key) => key.startsWith("$$"));
-        const where = `${primitive.name}: <${element.tagName.toLowerCase()}>`;
-        if (handled) {
-          handlers += 1;
-          if (element.tagName !== "BUTTON") {
-            offences.push(`${where} handles events but is not a button`);
-          }
-        }
-        if (element.getAttribute("role") === "button" && element.tagName !== "BUTTON") {
-          offences.push(`${where} plays a button instead of being one`);
-        }
-        if ((element.getAttribute("tabindex") ?? "").startsWith("-")) {
-          offences.push(`${where} is out of the tab order`);
-        }
-      }
+      const scanned = controlOffences(primitive.name, container);
+      offences.push(...scanned.offences);
+      handlers += scanned.handlers;
     });
     expect(offences).toEqual([]);
     // the scan is worth nothing if it never sees a handler at all
@@ -368,23 +430,7 @@ describe("accessibility floor", () => {
   it("names every button by what it acts on", () => {
     const offences: string[] = [];
     eachRendering((primitive, container) => {
-      const named = new Map<string, number>();
-      for (const button of container.querySelectorAll("button")) {
-        const name = reachableText(button);
-        if (!/\p{L}/u.test(name)) {
-          offences.push(`${primitive.name}: a button is named ${JSON.stringify(name)}`);
-        }
-        named.set(name, (named.get(name) ?? 0) + 1);
-      }
-      // Two controls of one screen act on two different things, so a name that
-      // repeats is a name that stopped saying which — the shape a dropped label
-      // takes when every toggle falls back to "expand".
-      for (const [name, count] of named) {
-        if (count > 1) {
-          const spelling = JSON.stringify(name);
-          offences.push(`${primitive.name}: ${count} buttons are all named ${spelling}`);
-        }
-      }
+      offences.push(...nameOffences(primitive.name, container));
     });
     expect(offences).toEqual([]);
   });
@@ -392,12 +438,7 @@ describe("accessibility floor", () => {
   it("captions every table", () => {
     const offences: string[] = [];
     eachRendering((primitive, container) => {
-      for (const table of container.querySelectorAll("table")) {
-        const caption = table.querySelector(":scope > caption");
-        if (caption === null || !/\p{L}/u.test(reachableText(caption))) {
-          offences.push(`${primitive.name}: a table carries no caption`);
-        }
-      }
+      offences.push(...captionOffences(primitive.name, container));
     });
     expect(offences).toEqual([]);
   });
@@ -449,6 +490,86 @@ describe("accessibility floor", () => {
         }
       }
     }
+    expect(offences).toEqual([]);
+  });
+});
+
+// ── the assembled screen ────────────────────────────────────────────────────
+
+/**
+ * Every rendering above is one primitive standing alone. A screen is where they
+ * meet, and one of the four assertions can only bite there: two controls may
+ * carry the same name until a screen puts both of them on at once.
+ *
+ * The screens are mounted the way the route mounts them — an id in, the screen
+ * out — and then opened all the way, because a run with every row disclosed is
+ * the state that puts the most controls on one screen.
+ */
+type Screen = { readonly name: string; readonly id: string; readonly says: readonly string[] };
+
+const screens: readonly Screen[] = [
+  {
+    name: "RunScreen · §2.2's failing run",
+    id: FAILING_RUN_ID,
+    says: ["fail", "FAILED", "error", "success"],
+  },
+  {
+    // the one state §2.2 exists to stop an author misreading
+    name: "RunScreen · the effect-uncertain run",
+    id: EFFECT_UNCERTAIN_RUN_ID,
+    says: ["uncertain", "EFFECT-UNCERTAIN", "started"],
+  },
+];
+
+/** Each screen, settled, then opened — because a floor holds in both states. */
+async function eachScreen(check: (page: Screen, container: HTMLElement) => void): Promise<void> {
+  for (const page of screens) {
+    const { container } = render(() => <RunScreen id={page.id} />);
+    // two ticks settle the reader's promise; `flush` lands the reactive work
+    await Promise.resolve();
+    await Promise.resolve();
+    flush();
+    check(page, container);
+    expandAll(container);
+    check(page, container);
+    cleanup();
+  }
+}
+
+describe("accessibility floor — the assembled screen", () => {
+  it("never leaves a tone to carry a status on its own", async () => {
+    const offences: string[] = [];
+    await eachScreen((page, container) => {
+      offences.push(...toneOffences(page.name, container, page.says));
+    });
+    expect(offences).toEqual([]);
+  });
+
+  it("puts every interactive control in the tab order, as a button", async () => {
+    const offences: string[] = [];
+    let handlers = 0;
+    await eachScreen((page, container) => {
+      const scanned = controlOffences(page.name, container);
+      offences.push(...scanned.offences);
+      handlers += scanned.handlers;
+    });
+    expect(offences).toEqual([]);
+    expect(handlers).toBeGreaterThan(0);
+  });
+
+  it("names every button by what it acts on", async () => {
+    const offences: string[] = [];
+    await eachScreen((page, container) => {
+      offences.push(...nameOffences(page.name, container));
+    });
+    expect(offences).toEqual([]);
+  });
+
+  it("captions every table", async () => {
+    const offences: string[] = [];
+    await eachScreen((page, container) => {
+      offences.push(...captionOffences(page.name, container));
+    });
     expect(offences).toEqual([]);
   });
 });

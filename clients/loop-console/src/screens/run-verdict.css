@@ -1,0 +1,12 @@
+/*
+ * §2.2's identity line. The line inherits `dim` from the verdict bar; the draft
+ * is the one navigable thing on it, so it is the only thing that lifts out of
+ * the line — §1.1's one accent, on one of the three roles it is reserved for.
+ * The underline the browser draws stays, so the link is not signalled by colour
+ * alone, and the author style also covers `:visited`, which must never take the
+ * purple §1.1 reserves for `effect-uncertain`.
+ */
+
+.run-identity-draft {
+  color: var(--signal);
+}

@@ -2,6 +2,7 @@ import type { JSX } from "@solidjs/web";
 
 import { toHash, type Route } from "../routing/route";
 import { parseRevision } from "../routing/revision";
+import { RunScreen } from "../screens/run-screen";
 
 function Screen(props: { name: string; children?: JSX.Element }): JSX.Element {
   return (
@@ -20,17 +21,19 @@ function NotFound(props: { hash: string }): JSX.Element {
   );
 }
 
-/** Step-1 placeholders: each screen names itself and echoes its decoded params. */
+/**
+ * The mounted screens, and step-1 placeholders for the routes steps 5–8 own.
+ *
+ * A mounted screen brings its own heading: §1.3's verdict bar is the screen's
+ * `h1`, so the placeholder's `screen-name` heading goes with the placeholder
+ * rather than standing above the verdict as a second one (wamn-dggp.21).
+ */
 export function routeView(route: Route): JSX.Element {
   switch (route.kind) {
     case "start":
       return <Screen name="start" />;
     case "run":
-      return (
-        <Screen name="run">
-          <p class="screen-params">id {route.id}</p>
-        </Screen>
-      );
+      return <RunScreen id={route.id} />;
     case "report":
       return (
         <Screen name="report">
