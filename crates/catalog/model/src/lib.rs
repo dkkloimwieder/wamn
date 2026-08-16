@@ -7,6 +7,7 @@
 
 mod execution_node_id;
 mod execution_plan;
+mod serving_manifest;
 
 pub use execution_node_id::{ExecutionNodeId, ExecutionNodeIdError};
 pub use execution_plan::{
@@ -17,12 +18,18 @@ pub use execution_plan::{
     HOST_EFFECT_CONTRACT_VERSION, PLAN_COMPILER_REVISION, RootTerminalBehavior,
     entry_input_schema_hash, execution_bundle_hash, read_execution_plan,
 };
+pub use serving_manifest::{
+    RELEASE_IDENTITY_CONFIGMAP_NAME, RELEASE_IDENTITY_DIGEST_KEY, RELEASE_IDENTITY_MOUNT_PATH,
+    RELEASE_IDENTITY_VERSION_KEY, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
+    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
+    ServingManifest, ServingRelease, release_manifest_configmap_name,
+};
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use wamn_flow::node_contract::NodeInterface;
@@ -60,6 +67,8 @@ pub enum CatalogIdentityError {
     ArtifactMismatch,
     UnresolvedSource { source_id: String },
     SourceMismatch { source_id: String },
+    ServingManifestDigestMismatch,
+    UnresolvableManifestFlow { flow_id: String },
 }
 
 impl fmt::Display for CatalogIdentityError {
@@ -154,6 +163,18 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "source {source_id:?} differs from its resolved definition"
+                )
+            }
+            Self::ServingManifestDigestMismatch => {
+                write!(
+                    formatter,
+                    "serving manifest bytes differ from their canonical digest"
+                )
+            }
+            Self::UnresolvableManifestFlow { flow_id } => {
+                write!(
+                    formatter,
+                    "flow {flow_id:?} is absent from the serving manifest"
                 )
             }
         }
@@ -947,7 +968,11 @@ impl Source {
 }
 
 /// An attachment exposure kind.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+///
+/// `Deserialize` is derived so the frozen [`ServingAttachment`] wire shape can
+/// name this kind instead of re-declaring one; the enum is fieldless, so the
+/// derive adds no unvalidated construction path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AttachmentKind {
     Http,
