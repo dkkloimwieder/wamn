@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  /*
+   * `vitest.config.ts` is type-checked in its own program, and this file exists
+   * only to keep it checked rather than excluded.
+   *
+   * Both `@testing-library/jest-dom` and `@vitest/browser` declare a
+   * `TestingLibraryMatchers` interface and both augment vitest's `Assertion`
+   * with it. The two declarations are the same matchers with different generic
+   * parameters, so a program that loads both fails with TS2320 on every matcher
+   * in the set — an error inside node_modules, about a conflict neither package
+   * is wrong to have.
+   *
+   * The browser declarations reach the graph through exactly one edge:
+   * `vitest.config.ts` importing the Playwright provider. Checking that file
+   * apart from `vitest-setup.ts` (the only importer of jest-dom's augmentation)
+   * keeps both sets, both projects, and the type check.
+   */
+  "include": ["vitest.config.ts"]
+}

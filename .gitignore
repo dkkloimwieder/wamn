@@ -14,3 +14,7 @@
 /node_modules/
 /clients/*/node_modules/
 /clients/*/dist/
+# Vitest browser mode captures a screenshot for every failing test; they are
+# evidence of one run, not of the source.
+/clients/*/.vitest-attachments/
+__screenshots__/
