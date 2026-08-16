@@ -4,6 +4,7 @@ import { createSignal, For, Show } from "solid-js";
 import { readStatus, readStatusWord } from "../app/read-status";
 import { proxyTarget } from "../config";
 import { draftAddress } from "../palette/commands";
+import { fixtureIndex, usingFixtures, type IndexEntry } from "../reader/fixture-index";
 import { MAX_ID_LENGTH, toHash, type Route } from "../routing/route";
 import { visitedEntries } from "../store/visited";
 import "./start-screen.css";
@@ -153,12 +154,72 @@ export function StartScreen(): JSX.Element {
         {(reason) => <p class="start-refusal frame">{reason()}</p>}
       </Show>
 
-      {/* §2.1's first-run empty state, in the spec's own words. */}
-      <Show when={nothingVisited()}>
+      {/*
+       * §2.1's first-run empty state, in the spec's own words — but only where
+       * it is true. Against fixtures there IS something, and telling an author
+       * to go and run a draft with the CLI would be the console stating an
+       * absence it is itself holding the contents of.
+       */}
+      <Show when={nothingVisited() && !usingFixtures()}>
         <p class="start-empty frame">
           Nothing yet — run a draft with the CLI, then paste its id.
         </p>
       </Show>
+
+      <Show when={usingFixtures()}>
+        <FixtureIndex />
+      </Show>
     </section>
+  );
+}
+
+/**
+ * The dev index (see `reader/fixture-index.ts`).
+ *
+ * §2.0 is explicit that the console has no list endpoints and that the panel's
+ * tree is what this browser has visited — so this is not that list arriving. It
+ * is the fixture set naming itself, and it is gone the moment the reader is the
+ * real one, which is also when a platform id comes from the CLI that printed it.
+ */
+function FixtureIndex(): JSX.Element {
+  const index = fixtureIndex();
+  const groups = [
+    { name: "runs", entries: index.runs },
+    { name: "reports", entries: index.reports },
+    { name: "drafts", entries: index.drafts },
+  ];
+
+  return (
+    <section class="start-fixtures">
+      <p class="start-fixtures-note frame">
+        reading fixtures — these are the objects this build ships. The platform
+        offers no listing; the side panel keeps what you visit.
+      </p>
+      <For each={groups}>
+        {(group) => (
+          <div class="start-fixture-group">
+            <h2 class="start-fixture-kind label">{group.name}</h2>
+            <ul class="start-fixture-rows" role="list">
+              <For each={group.entries}>
+                {(entry) => (
+                  <li>
+                    <FixtureRow entry={entry} />
+                  </li>
+                )}
+              </For>
+            </ul>
+          </div>
+        )}
+      </For>
+    </section>
+  );
+}
+
+function FixtureRow(props: { entry: IndexEntry }): JSX.Element {
+  return (
+    <a class="start-fixture-row" href={toHash(props.entry.route)}>
+      <span class="start-fixture-address">{props.entry.address}</span>
+      <span class="start-fixture-note frame">{props.entry.note}</span>
+    </a>
   );
 }

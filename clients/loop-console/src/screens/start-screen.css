@@ -78,3 +78,64 @@
   color: var(--dim);
   text-align: center;
 }
+
+/*
+ * The dev fixture index (reader/fixture-index.ts). Quiet on purpose: it is a
+ * development affordance sitting under the one action §2.1 is about, not a
+ * second front door competing with it.
+ */
+.start-fixtures {
+  width: 100%;
+  max-width: 52ch;
+  margin-block-start: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.start-fixtures-note {
+  margin: 0;
+  font-size: var(--size-12);
+  line-height: var(--leading-body);
+  color: var(--dim);
+}
+
+.start-fixture-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.start-fixture-kind {
+  margin: 0 0 var(--space-1);
+  font-size: var(--size-12);
+  font-weight: 400;
+  color: var(--dim);
+  letter-spacing: 0.08em;
+}
+
+.start-fixture-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.start-fixture-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 4px var(--space-1);
+  font-size: var(--size-13);
+  color: var(--text);
+  text-decoration: none;
+  border-radius: 2px;
+}
+
+.start-fixture-row:hover {
+  background: var(--panel);
+}
+
+.start-fixture-note {
+  color: var(--dim);
+  white-space: nowrap;
+}
