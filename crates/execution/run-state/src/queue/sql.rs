@@ -42,6 +42,11 @@ pub fn enqueue_evt_sql() -> String {
 /// effect-attempt row escapes it only so the host can dequeue the run as
 /// `effect-uncertain`. `AS MATERIALIZED` is the evaluation fence that makes
 /// `LIMIT 1` exact under cached prepared-statement plans.
+///
+/// The projection is exactly what the host composer decodes: the run id, the
+/// reset fence, the status it validates, and the authoritative input it hands
+/// the guest. The release identity a claim records is NOT read here — it comes
+/// from the claiming pod, and the lease grant writes it.
 pub fn select_production_claim_sql() -> String {
     format!(
         "WITH candidate AS MATERIALIZED ( \
@@ -68,11 +73,9 @@ pub fn select_production_claim_sql() -> String {
               FOR UPDATE OF selected_run, q SKIP LOCKED \
               LIMIT 1 \
          ) \
-         SELECT candidate.tenant_id, candidate.run_id, \
-                candidate.had_prior_lease, candidate.lease_owner, \
-                candidate.lease_expires_at::text, candidate.lease_generation, \
-                r.status, r.flow_id, r.flow_version, r.catalog_id, \
-                r.catalog_version, r.environment, r.execution_bundle_hash, \
+         SELECT candidate.run_id, candidate.had_prior_lease, \
+                candidate.lease_owner, candidate.lease_expires_at::text, \
+                candidate.lease_generation, r.status, \
                 ({execution_input})::text AS input_json \
            FROM candidate \
            JOIN runs AS r \
@@ -133,10 +136,22 @@ pub fn clear_pre_effect_state_sql() -> String {
         .to_string()
 }
 
-/// Grant a lease after the complete immutable resolution map exists.
+/// Grant a lease and record the claiming pod's release identity on the run.
 ///
-/// Params: run id, host-injected lease owner, TTL milliseconds. Attempts count
-/// crash evidence and increment only when replacing a prior non-NULL lease.
+/// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
+/// release version, the pod's manifest digest. Attempts count crash evidence and
+/// increment only when replacing a prior non-NULL lease.
+///
+/// Runs are never version-pinned: the pair is minted HERE, on the write that
+/// already marks the run running, never at admission and never as a second
+/// statement. It is write-once —
+/// `wamn_run.guard_run_admission_pins_immutable` permits the first write and
+/// refuses any later differing one — so a re-claim carrying the same release is
+/// an accepted no-op and a re-claim carrying a different release refuses. A pod
+/// with no injected release identity binds NULL for both and records nothing.
+/// The status predicate widened from `dispatched` to the two runnable states the
+/// composer already validates, because a re-claim of a `running` row must reach
+/// the record too; `dispatched` still becomes `running` and `running` stays put.
 pub fn grant_production_claim_sql() -> String {
     format!(
         "WITH leased AS ( \
@@ -152,10 +167,13 @@ pub fn grant_production_claim_sql() -> String {
               RETURNING q.tenant_id, q.run_id, q.lease_generation \
          ), \
          marked AS ( \
-             UPDATE runs AS r SET status = '{running}' \
+             UPDATE runs AS r \
+                SET status = '{running}', \
+                    release_version = $4, \
+                    manifest_digest = $5 \
                FROM leased \
               WHERE r.tenant_id = leased.tenant_id AND r.run_id = leased.run_id \
-                AND r.status = '{dispatched}' \
+                AND r.status IN ('{dispatched}', '{running}') \
               RETURNING r.run_id \
          ) \
          SELECT leased.lease_generation \

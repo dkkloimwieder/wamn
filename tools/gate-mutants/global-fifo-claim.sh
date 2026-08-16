@@ -60,11 +60,11 @@ load_mutation() {
       NEEDLE='              FOR UPDATE OF selected_run, q SKIP LOCKED \
               LIMIT 1 \
          ) \
-         SELECT candidate.tenant_id'
+         SELECT candidate.run_id'
       REPLACEMENT='              FOR UPDATE OF selected_run, q NOWAIT \
               LIMIT 1 \
          ) \
-         SELECT candidate.tenant_id'
+         SELECT candidate.run_id'
       EXPECTED_COUNT=1
       GATE="production_claim_live"
       TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)

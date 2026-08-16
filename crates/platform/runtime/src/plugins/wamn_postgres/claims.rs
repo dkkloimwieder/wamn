@@ -48,6 +48,11 @@ pub struct WamnPostgres {
     /// `SET LOCAL app.runner` so a flowrunner replica reads its owner identity to
     /// claim/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the `(release version, manifest digest)` this pod carries.
+    /// Absent (the default) ⇒ the production claim records nothing, so every
+    /// path that never mounted a release identity is byte-unchanged. When set,
+    /// the claim writes the pair onto the run it leases, write-once.
+    release_identities: std::sync::RwLock<HashMap<String, ReleaseIdentity>>,
     /// component id → the causation context {run, root, depth} of the run the
     /// trusted flow-runner is currently driving (l5i9.12.2). Declared through
     /// the `wamn:runner/causation` channel ([`add_runner_causation_to_linker`]),
@@ -60,6 +65,31 @@ pub struct WamnPostgres {
     current_run: std::sync::RwLock<HashMap<String, Causation>>,
     /// Connections destroyed instead of repooled (chaos-gate observability).
     pub(super) destroyed: Arc<AtomicU64>,
+}
+
+/// The release a pod carries — the `(release version, manifest digest)` pair the
+/// platform projects as immutable mounted config
+/// ([`wamn_catalog::RELEASE_IDENTITY_MOUNT_PATH`]).
+///
+/// Runs are never version-pinned: a run executes under the release its CLAIMING
+/// pod carries, and the production claim records this pair onto that run exactly
+/// once. It is host-injected identity like the tenant and the lease owner, never
+/// guest-supplied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseIdentity {
+    /// The release (catalog) version — `runs.release_version`.
+    pub release_version: i32,
+    /// The serving manifest's `sha256:<hex>` digest — `runs.manifest_digest`.
+    pub manifest_digest: String,
+}
+
+/// True for the `sha256:<64 lowercase hex>` shape the run plane's
+/// `runs_release_record_check` admits. Every claim value travels as a bind
+/// parameter, so this is a fail-closed shape check, not an injection boundary.
+fn valid_manifest_digest(digest: &str) -> bool {
+    digest.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    })
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
@@ -407,6 +437,7 @@ impl WamnPostgres {
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
+            release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
             destroyed: Arc::new(AtomicU64::new(0)),
         }
@@ -593,6 +624,47 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Register the release this pod carries for a component id. The production
+    /// claim writes it onto every run it leases, write-once. The bench harness
+    /// and live tests call this directly; the host path feeds it from the
+    /// `wamn.release-version` / `wamn.manifest-digest` workload config, which the
+    /// platform fills from the mounted release-identity ConfigMap. Absent leaves
+    /// the claim recording nothing.
+    pub fn set_release_identity(
+        &self,
+        component_id: &str,
+        release_version: i32,
+        manifest_digest: &str,
+    ) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            release_version > 0,
+            "invalid release version {release_version}: a positive catalog version is required"
+        );
+        anyhow::ensure!(
+            valid_manifest_digest(manifest_digest),
+            "invalid manifest digest {manifest_digest:?}: sha256:<64 lowercase hex> required"
+        );
+        self.release_identities
+            .write()
+            .expect("release identities lock poisoned")
+            .insert(
+                component_id.to_string(),
+                ReleaseIdentity {
+                    release_version,
+                    manifest_digest: manifest_digest.to_string(),
+                },
+            );
+        Ok(())
+    }
+
+    pub(super) fn release_identity_for(&self, component_id: &str) -> Option<ReleaseIdentity> {
+        self.release_identities
+            .read()
+            .expect("release identities lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
     /// Declare (`Some`) or clear (`None`) the causation context of the run a
     /// component is driving (l5i9.12.2). The trusted flow-runner feeds this
     /// through the `wamn:runner/causation` channel; while set, every
@@ -621,7 +693,8 @@ impl WamnPostgres {
 
     /// Reap EVERY per-component-id claim registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
-    /// and the causation run context — all set at workload bind (or via the
+    /// the carried release identity, and the causation run context — all set at
+    /// workload bind (or via the
     /// runner channel) and keyed by component id. Without this a stale claim
     /// survives unbind, the maps grow across workload churn, and a rebound
     /// component id inherits the prior claim. The `pools` map is deliberately NOT
@@ -646,6 +719,10 @@ impl WamnPostgres {
         self.runners
             .write()
             .expect("runners lock poisoned")
+            .retain(|c, _| retain(c));
+        self.release_identities
+            .write()
+            .expect("release identities lock poisoned")
             .retain(|c, _| retain(c));
         self.current_run
             .write()
@@ -1077,6 +1154,29 @@ mod tests {
         assert!(RESOLUTION_PLAN_BYTES_SQL.contains("catalog.execution_bundles"));
         assert!(RESOLUTION_PLAN_BYTES_SQL.contains("ANY($1::text[])"));
         assert!(!RESOLUTION_PLAN_BYTES_SQL.contains("flow_id"));
+    }
+
+    // The claim-time record must match `runs_release_record_check` exactly, or a
+    // claim that would otherwise succeed dies on a CHECK inside the lease grant.
+    #[test]
+    fn manifest_digest_shape_matches_the_run_plane_check() {
+        assert!(valid_manifest_digest(&format!("sha256:{}", "0".repeat(64))));
+        assert!(valid_manifest_digest(&format!(
+            "sha256:{}b",
+            "af9".repeat(21)
+        )));
+        for rejected in [
+            String::new(),
+            "sha256:".to_string(),
+            "deadbeef".to_string(),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha256:{}", "g".repeat(64)),
+            format!("SHA256:{}", "a".repeat(64)),
+        ] {
+            assert!(!valid_manifest_digest(&rejected), "accepted {rejected:?}");
+        }
     }
 
     // wamn-cjv.2 — the in-band claim/role mutation guard.

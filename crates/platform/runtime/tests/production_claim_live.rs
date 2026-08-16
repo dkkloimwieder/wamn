@@ -14,12 +14,24 @@ use wamn_run_state::{
     effect_writer_generation_role, queue::select_production_claim_sql,
 };
 use wamn_runtime::plugins::wamn_postgres::{
-    ProductionClaimResult, ProductionReapResult, WamnPostgres, WamnPostgresConfig,
+    ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult, WamnPostgres,
+    WamnPostgresConfig,
 };
 
 const TENANT: &str = "claim-live";
 const COMPONENT: &str = "claim-live-runner";
+/// A second pod, carrying a DIFFERENT release — the rollout case.
+const ROLLED_COMPONENT: &str = "claim-live-runner-next";
 const SCHEMA: &str = "wamn_claim_live";
+/// The release the claiming pod carries. Deliberately distinct from every
+/// catalog version this fixture publishes, so a recorded pair that matched the
+/// admitted or the republished release instead of the pod would be visible.
+const POD_RELEASE_VERSION: i32 = 7;
+const POD_MANIFEST_DIGEST: &str =
+    "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+const ROLLED_RELEASE_VERSION: i32 = 8;
+const ROLLED_MANIFEST_DIGEST: &str =
+    "sha256:2222222222222222222222222222222222222222222222222222222222222222";
 const RELEASE_ARTIFACT: &str =
     "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const EMPTY_HASH: &str = "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
@@ -149,13 +161,44 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                state_json jsonb, invocation_context jsonb NOT NULL DEFAULT '{{}}', \
                trigger_source text, event_source_run_id text, event_root_run_id text, \
                event_depth int, admission_context_version text, platform_revision text, \
-               capture_mode text, idempotency_key text, response_deadline_at timestamptz, \
+               capture_mode text, release_version int, manifest_digest text, \
+               idempotency_key text, response_deadline_at timestamptz, \
                run_deadline_at timestamptz, \
                fail_kind text, fail_node text, fail_reason text, \
                caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \
                caller_release_node_id text, caller_outcome_hash text, \
                caller_released_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), \
+               CONSTRAINT runs_release_record_check CHECK ( \
+                 (release_version IS NULL AND manifest_digest IS NULL) \
+                 OR (release_version > 0 \
+                     AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
                PRIMARY KEY (tenant_id, run_id)); \
+             CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
+               RETURNS trigger LANGUAGE plpgsql AS $guard$ \
+               BEGIN \
+                 IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id \
+                    OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version \
+                    OR NEW.environment IS DISTINCT FROM OLD.environment \
+                    OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash \
+                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN \
+                   RAISE EXCEPTION USING ERRCODE = '55000', \
+                     MESSAGE = 'run-admission-pin-immutable'; \
+                 END IF; \
+                 IF (OLD.release_version IS NOT NULL \
+                     AND NEW.release_version IS DISTINCT FROM OLD.release_version) \
+                    OR (OLD.manifest_digest IS NOT NULL \
+                        AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN \
+                   RAISE EXCEPTION USING ERRCODE = '55000', \
+                     MESSAGE = 'run-release-record-immutable'; \
+                 END IF; \
+                 RETURN NEW; \
+               END $guard$; \
+             CREATE TRIGGER runs_admission_pins_immutable \
+               BEFORE UPDATE OF catalog_id, catalog_version, environment, \
+                                execution_bundle_hash, capture_mode, \
+                                release_version, manifest_digest \
+               ON {SCHEMA}.runs FOR EACH ROW \
+               EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
              CREATE TABLE {SCHEMA}.run_queue ( \
                tenant_id text NOT NULL, run_id text NOT NULL, priority int NOT NULL DEFAULT 0, \
                available_at timestamptz NOT NULL DEFAULT now(), stream_seq bigint NOT NULL DEFAULT 0, \
@@ -517,6 +560,23 @@ async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyhow::R
     caller_fields(client, run_id).await
 }
 
+/// The claim-time `(release version, manifest digest)` a run carries.
+async fn release_record(
+    client: &Client,
+    run_id: &str,
+) -> anyhow::Result<(Option<i32>, Option<String>)> {
+    let row = client
+        .query_one(
+            &format!(
+                "SELECT release_version, manifest_digest \
+                   FROM {SCHEMA}.runs WHERE tenant_id=$1 AND run_id=$2"
+            ),
+            &[&TENANT, &run_id],
+        )
+        .await?;
+    Ok((row.get(0), row.get(1)))
+}
+
 async fn caller_fields(client: &Client, run_id: &str) -> anyhow::Result<Value> {
     let encoded: String = client
         .query_one(
@@ -617,6 +677,15 @@ async fn production_claim_live() -> anyhow::Result<()> {
     plugin.set_tenant(COMPONENT, TENANT)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
+    plugin.set_release_identity(COMPONENT, POD_RELEASE_VERSION, POD_MANIFEST_DIGEST)?;
+    plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
+    plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
+    plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
+    plugin.set_release_identity(
+        ROLLED_COMPONENT,
+        ROLLED_RELEASE_VERSION,
+        ROLLED_MANIFEST_DIGEST,
+    )?;
 
     let (release_hash, release_bytes) = plan_bytes(RELEASE_ARTIFACT);
     seed_release(&admin, "cat-main", &release_hash, &release_bytes).await?;
@@ -649,7 +718,7 @@ async fn production_claim_live() -> anyhow::Result<()> {
     let locked = first_claimer
         .query_one(&select_production_claim_sql(), &[])
         .await?;
-    assert_eq!(locked.get::<_, String>(1), "double-a");
+    assert_eq!(locked.get::<_, String>(0), "double-a");
     let skipped = ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?);
     assert_eq!(skipped, "double-b");
     first_claimer.batch_execute("ROLLBACK").await?;
@@ -662,6 +731,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
 
     // Expired pre-effect recovery deletes only node projections and NULLs only
     // state_json; every other admitted or lineage column survives the retry.
+    // `status` and the claim-time release record are excluded from the snapshot
+    // because the retry CLAIM writes them; they are asserted separately below.
     admin
         .execute(
             &format!(
@@ -700,7 +771,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
         &admin
         .query_one(
             &format!(
-                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at']::text[])::text \
+                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
+                    'release_version','manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
             ),
             &[&TENANT],
@@ -782,7 +854,8 @@ async fn production_claim_live() -> anyhow::Result<()> {
         &admin
         .query_one(
             &format!(
-                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at']::text[])::text \
+                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
+                    'release_version','manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
             ),
             &[&TENANT],
@@ -791,6 +864,14 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .get::<_, String>(0),
     )?;
     assert_eq!(after, before);
+    assert_eq!(
+        release_record(&admin, "pre-effect").await?,
+        (
+            Some(POD_RELEASE_VERSION),
+            Some(POD_MANIFEST_DIGEST.to_string())
+        ),
+        "the retry claim recorded the claiming pod's release exactly once"
+    );
     let (state, nodes): (Option<String>, i64) = {
         let row = admin
             .query_one(
@@ -1042,6 +1123,87 @@ async fn production_claim_live() -> anyhow::Result<()> {
         &janitor_winner,
     )
     .await?;
+
+    // ---- the claim-time release record (wamn-0h0g.15.11, carrying the two
+    // surviving proof legs of the superseded wamn-0h0g.4.14) -----------------
+    //
+    // MID-RUN REPUBLISH INVISIBILITY. The run is admitted under catalog version
+    // 1; a republish then lands version 2 between admission and claim. The pair
+    // the claim records is the CLAIMING POD's (version 7), so it matches neither
+    // the admitted release nor the republished one, and the run's own admission
+    // identity is untouched.
+    seed_run(&admin, "release-record", "cat-main", &release_hash, 70).await?;
+    assert_eq!(release_record(&admin, "release-record").await?, (None, None));
+    admin
+        .execute(
+            "INSERT INTO catalog.release_flows \
+               (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) \
+             VALUES ($1,'cat-main',2,'root',1,$2)",
+            &[&TENANT, &release_hash],
+        )
+        .await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "release-record"
+    );
+    let recorded = (
+        Some(POD_RELEASE_VERSION),
+        Some(POD_MANIFEST_DIGEST.to_string()),
+    );
+    assert_eq!(release_record(&admin, "release-record").await?, recorded);
+    assert_eq!(
+        admin
+            .query_one(
+                &format!(
+                    "SELECT catalog_version FROM {SCHEMA}.runs \
+                      WHERE tenant_id=$1 AND run_id='release-record'"
+                ),
+                &[&TENANT],
+            )
+            .await?
+            .get::<_, i32>(0),
+        1,
+        "a republish must not move the run's admitted release either"
+    );
+
+    // WRITE-ONCE. Re-claiming under the SAME release rewrites the same pair,
+    // which the guard's `IS DISTINCT FROM` treats as a no-op.
+    expire_effect_run(&admin, "release-record").await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "release-record"
+    );
+    assert_eq!(release_record(&admin, "release-record").await?, recorded);
+
+    // A pod carrying a DIFFERENT release cannot rewrite it: the database guard
+    // refuses and the whole claim rolls back. wamn-0h0g.15.55 owns whether an
+    // expired pre-effect reclaim under a rolled release should instead re-record
+    // — until it rules, refusing loudly is the honest default.
+    expire_effect_run(&admin, "release-record").await?;
+    let refused = plugin
+        .claim_next_production(ROLLED_COMPONENT, 30_000)
+        .await
+        .expect_err("a rolled pod may not rewrite a recorded release");
+    assert_eq!(refused.kind(), ProductionClaimErrorKind::Storage);
+    assert_eq!(refused.operation(), "grant production lease");
+    assert!(
+        refused.to_string().contains("run-release-record-immutable"),
+        "unexpected refusal: {refused}"
+    );
+    assert_eq!(
+        release_record(&admin, "release-record").await?,
+        recorded,
+        "the refused claim left the recorded pair exactly as it was"
+    );
+    admin
+        .execute(
+            &format!(
+                "DELETE FROM {SCHEMA}.run_queue \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
 
     drop(plugin);
     drop(writer);

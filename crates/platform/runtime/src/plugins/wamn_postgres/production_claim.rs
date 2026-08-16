@@ -13,7 +13,7 @@ use wamn_run_state::queue::{
 };
 use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
 
-use super::WamnPostgres;
+use super::{ReleaseIdentity, WamnPostgres};
 
 /// Stable category for a production-claim failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,10 +132,15 @@ struct ExhaustedClaim {
 impl WamnPostgres {
     /// Lock, classify, and lease at most one production run.
     ///
-    /// Tenant, project, schema, and lease owner come only from host-injected
-    /// component identity. A `Ready` result is returned only after COMMIT, so
-    /// the guest's separate plan-supply transactions can observe the committed
-    /// lease.
+    /// Tenant, project, schema, lease owner, and the carried release identity
+    /// come only from host-injected component identity. A `Ready` result is
+    /// returned only after COMMIT, so the guest's separate plan-supply
+    /// transactions can observe the committed lease.
+    ///
+    /// The lease grant also records this pod's `(release version, manifest
+    /// digest)` onto the run, write-once. A component with no injected release
+    /// identity records nothing; one whose release differs from a pair the run
+    /// already carries fails the whole claim at the database guard.
     pub async fn claim_next_production(
         &self,
         component_id: &str,
@@ -162,6 +167,7 @@ impl WamnPostgres {
                 "component has no host-injected runner",
             )
         })?;
+        let release = self.release_identity_for(component_id);
         let project = self.project_for(component_id);
         let schema = self.schema_for(component_id);
         let (connection, policy) = self.checkout(&project).await.map_err(|error| {
@@ -190,7 +196,8 @@ impl WamnPostgres {
             ));
         }
 
-        let result = claim_in_transaction(&connection, &runner, lease_ttl_ms).await;
+        let result =
+            claim_in_transaction(&connection, &runner, lease_ttl_ms, release.as_ref()).await;
         match result {
             Ok(result) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
@@ -308,6 +315,7 @@ async fn claim_in_transaction(
     connection: &Object,
     runner: &str,
     lease_ttl_ms: i64,
+    release: Option<&ReleaseIdentity>,
 ) -> Result<ProductionClaimResult, ProductionClaimError> {
     let select_sql = select_production_claim_sql();
     let select = connection
@@ -400,8 +408,23 @@ async fn claim_in_transaction(
         .prepare_cached(&grant_sql)
         .await
         .map_err(|error| storage("prepare production lease grant", error))?;
+    // The pod's own release identity, or NULL for both when it carries none.
+    // A run that already recorded a DIFFERENT pair refuses here, in the
+    // database, and the whole claim rolls back (wamn-0h0g.15.55 owns whether a
+    // reclaim under a rolled release should instead re-record).
+    let release_version: Option<i32> = release.map(|identity| identity.release_version);
+    let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
     let row = connection
-        .query_opt(&grant, &[&selected.run_id, &runner, &lease_ttl_ms])
+        .query_opt(
+            &grant,
+            &[
+                &selected.run_id,
+                &runner,
+                &lease_ttl_ms,
+                &release_version,
+                &manifest_digest,
+            ],
+        )
         .await
         .map_err(|error| storage("grant production lease", error))?
         .ok_or_else(|| {
@@ -615,7 +638,7 @@ fn generic_failure_outcome(
 }
 
 fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimError> {
-    let status: String = row_value(row, 6, "run status")?;
+    let status: String = row_value(row, 5, "run status")?;
     let status = RunStatus::from_sql(&status).ok_or_else(|| {
         ProductionClaimError::new(
             ProductionClaimErrorKind::Contract,
@@ -624,13 +647,13 @@ fn decode_selected_claim(row: &Row) -> Result<SelectedClaim, ProductionClaimErro
         )
     })?;
     Ok(SelectedClaim {
-        run_id: row_value(row, 1, "run id")?,
-        had_prior_lease: row_value(row, 2, "prior lease evidence")?,
-        prior_lease_owner: row_value(row, 3, "prior lease owner")?,
-        prior_lease_expires_at: row_value(row, 4, "prior lease expiry")?,
-        prior_lease_generation: row_value(row, 5, "prior lease generation")?,
+        run_id: row_value(row, 0, "run id")?,
+        had_prior_lease: row_value(row, 1, "prior lease evidence")?,
+        prior_lease_owner: row_value(row, 2, "prior lease owner")?,
+        prior_lease_expires_at: row_value(row, 3, "prior lease expiry")?,
+        prior_lease_generation: row_value(row, 4, "prior lease generation")?,
         status,
-        payload: row_value(row, 13, "authoritative input")?,
+        payload: row_value(row, 6, "authoritative input")?,
     })
 }
 
@@ -736,6 +759,57 @@ mod tests {
         let lease_sql = grant_production_claim_sql();
         assert!(lease_sql.contains("lease_expires_at = statement_timestamp()"));
         assert!(!lease_sql.contains("lease_expires_at = now()"));
+    }
+
+    #[test]
+    fn lease_grant_mints_the_claim_time_release_record_on_the_existing_write() {
+        let lease_sql = grant_production_claim_sql();
+        for required in [
+            "SET status = 'running'",
+            "release_version = $4",
+            "manifest_digest = $5",
+            "r.status IN ('dispatched', 'running')",
+        ] {
+            assert!(lease_sql.contains(required), "lease grant omits {required}");
+        }
+        assert_eq!(
+            lease_sql.matches("UPDATE runs").count(),
+            1,
+            "the record is minted on the existing claim write, not a second one"
+        );
+
+        // The pair travels from the claiming pod, so the candidate select never
+        // reads it back; a decoder that grew a field would need this to change.
+        let select_sql = select_production_claim_sql();
+        assert!(!select_sql.contains("release_version"));
+        assert!(!select_sql.contains("manifest_digest"));
+    }
+
+    #[test]
+    fn candidate_projection_is_exactly_what_the_decoder_indexes() {
+        let sql = select_production_claim_sql();
+        let start = sql
+            .find("SELECT candidate.run_id")
+            .expect("the outer projection opens on the run id");
+        let projection = &sql[start..];
+        let mut cursor = 0;
+        for (index, column) in [
+            "candidate.run_id",
+            "candidate.had_prior_lease",
+            "candidate.lease_owner",
+            "candidate.lease_expires_at::text",
+            "candidate.lease_generation",
+            "r.status",
+            "AS input_json",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let offset = projection[cursor..].find(column).unwrap_or_else(|| {
+                panic!("projected column {index} ({column}) is absent or out of order")
+            });
+            cursor += offset + column.len();
+        }
     }
 
     #[test]

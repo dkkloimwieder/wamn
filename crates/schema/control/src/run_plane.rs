@@ -83,7 +83,7 @@ const RUNS_RELEASE_INDEX_DEF: &str = "CREATE INDEX runs_release ON wamn_run.runs
 const RUNS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX runs_execution_bundle ON wamn_run.runs USING btree (tenant_id, execution_bundle_hash)";
 const RUNS_ROOT_INDEX_DEF: &str = "CREATE INDEX runs_root ON wamn_run.runs USING btree (tenant_id, root_run_id) WHERE (root_run_id IS NOT NULL)";
 const RELEASE_FLOWS_EXECUTION_BUNDLE_INDEX_DEF: &str = "CREATE INDEX release_flows_execution_bundle ON catalog.release_flows USING btree (tenant_id, execution_bundle_hash)";
-const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
+const RUNS_ADMISSION_PINS_TRIGGER_DEF: &str = "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, release_version, manifest_digest ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable()";
 
 #[derive(Clone, Copy)]
 enum CheckOrigin {
@@ -206,6 +206,15 @@ const CHECK_SPECS: &[CheckSpec] = &[
         // `pg_get_constraintdef` renders `IS NOT DISTINCT FROM` in this
         // equivalent canonical form.
         definition: "CHECK (capture_mode <> 'full'::text OR NOT trigger_source IS DISTINCT FROM 'scenario-draft'::text)",
+        origin: CheckOrigin::Table,
+    },
+    CheckSpec {
+        table: "runs",
+        name: "runs_release_record_check",
+        // The claim-time release record: absent, or complete and well formed.
+        // Table-origin because it names two columns, and explicitly named so it
+        // can never collide with the retired child-run `runs_check3` numbering.
+        definition: "CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -760,7 +769,7 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF (OLD.release_version IS NOT NULL\n        AND NEW.release_version IS DISTINCT FROM OLD.release_version)\n       OR (OLD.manifest_digest IS NOT NULL\n           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-release-record-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-fact-immutable';\nEND\n$function$\n";
 
@@ -825,6 +834,14 @@ BEGIN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
+    END IF;
+    IF (OLD.release_version IS NOT NULL
+        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
+       OR (OLD.manifest_digest IS NOT NULL
+           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-release-record-immutable';
     END IF;
     RETURN NEW;
 END
@@ -998,7 +1015,8 @@ fn trigger_specs() -> Vec<TriggerSpec> {
             name: "runs_admission_pins_immutable".to_string(),
             definition: RUNS_ADMISSION_PINS_TRIGGER_DEF.to_string(),
             sql: "CREATE TRIGGER runs_admission_pins_immutable BEFORE UPDATE OF \
-                  catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode \
+                  catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode, \
+                  release_version, manifest_digest \
                   ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
                   wamn_run.guard_run_admission_pins_immutable();"
                 .to_string(),
@@ -3156,7 +3174,9 @@ DROP INDEX IF EXISTS catalog.release_flows_execution_bundle;
 CREATE INDEX release_flows_execution_bundle
     ON catalog.release_flows (tenant_id, execution_bundle_hash);
 ALTER TABLE {target}.runs
-    ADD COLUMN IF NOT EXISTS execution_bundle_hash text;
+    ADD COLUMN IF NOT EXISTS execution_bundle_hash text,
+    ADD COLUMN IF NOT EXISTS release_version int,
+    ADD COLUMN IF NOT EXISTS manifest_digest text;
 ALTER TABLE {target}.runs
     ALTER COLUMN catalog_id TYPE text USING catalog_id::text,
     ALTER COLUMN catalog_version TYPE integer USING catalog_version::integer,
@@ -3179,7 +3199,8 @@ ALTER TABLE {target}.runs
     ADD CONSTRAINT runs_execution_bundle_fk
         FOREIGN KEY (tenant_id, execution_bundle_hash)
         REFERENCES catalog.execution_bundles (tenant_id, execution_bundle_hash);
-GRANT INSERT (execution_bundle_hash), UPDATE (execution_bundle_hash)
+GRANT INSERT (execution_bundle_hash, release_version, manifest_digest),
+      UPDATE (execution_bundle_hash, release_version, manifest_digest)
     ON {target}.runs TO wamn_app;
 DROP INDEX IF EXISTS {target}.runs_release;
 DROP INDEX IF EXISTS {target}.runs_execution_bundle;
@@ -3199,12 +3220,21 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
+    IF (OLD.release_version IS NOT NULL
+        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
+       OR (OLD.manifest_digest IS NOT NULL
+           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-release-record-immutable';
+    END IF;
     RETURN NEW;
 END
 $execution_pin_guard$;
 DROP TRIGGER IF EXISTS runs_admission_pins_immutable ON {target}.runs;
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
+                 release_version, manifest_digest
 ON {target}.runs
 FOR EACH ROW EXECUTE FUNCTION {target}.guard_run_admission_pins_immutable();"#
     )
@@ -4444,6 +4474,15 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             let record_cols = record_columns(file, "wamn_run", &table);
             for (record_column_index, (col, def)) in record_cols.iter().enumerate() {
                 if table == "runs" && col == "execution_bundle_hash" {
+                    continue;
+                }
+                // The pin cutover installs the claim-time record columns itself,
+                // because the trigger it recreates names them. Skipping here is
+                // what keeps that from colliding with a plain ADD COLUMN.
+                if execution_pin_cutover_needed
+                    && table == "runs"
+                    && matches!(col.as_str(), "release_version" | "manifest_digest")
+                {
                     continue;
                 }
                 if frame_cutover_targets.needed() && frame_identity_column(&table, col) {
@@ -6573,6 +6612,20 @@ CREATE INDEX event_registrations_by_entity
             "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash"
         ));
         assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-admission-pin-immutable'"));
+
+        // The claim-time release record: two nullable columns, one paired
+        // CHECK, and both named in the column-scoped guard's trigger so the
+        // write-once arm can fire at all.
+        assert!(runs.contains("release_version int"));
+        assert!(runs.contains("manifest_digest text"));
+        assert!(runs.contains("CONSTRAINT runs_release_record_check"));
+        assert!(runs.contains(
+            "(release_version IS NULL AND manifest_digest IS NULL)\n      OR (release_version > 0"
+        ));
+        assert!(runs.contains("capture_mode,\n                 release_version, manifest_digest"));
+        assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-release-record-immutable'"));
+        assert!(RUN_STATE_SQL.contains("OLD.release_version IS NOT NULL"));
+        assert!(RUN_STATE_SQL.contains("OLD.manifest_digest IS NOT NULL"));
 
         let release_flows = table_section(CATALOG_SCHEMA_SQL, "catalog", "release_flows");
         assert!(release_flows.contains("execution_bundle_hash text NOT NULL"));

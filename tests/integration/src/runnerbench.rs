@@ -55,6 +55,7 @@ fn runner_ddl(schema: &str) -> String {
               CHECK (status IN ('dispatched','running','completed','failed',\
                                 'infrastructure-failure','effect-uncertain')), \
             trigger_source text, capture_mode text NOT NULL DEFAULT 'off', \
+            release_version int, manifest_digest text, \
             input_json jsonb, result_json jsonb, state_json jsonb, \
             invocation_context jsonb NOT NULL DEFAULT '{{}}'::jsonb, \
             caller_outcome_kind text, caller_outcome_json jsonb, caller_http_status int, \

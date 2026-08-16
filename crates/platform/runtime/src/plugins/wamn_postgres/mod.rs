@@ -50,7 +50,8 @@ mod resources;
 mod types;
 
 pub use claims::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ResolutionPlanBytes, WamnPostgres,
+    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, ResolutionPlanBytes,
+    WamnPostgres,
 };
 pub use pool::{
     CheckoutProbe, CredentialProvider, K8sSecretProvider, ProjectConfig, StaticCredentialProvider,
@@ -131,6 +132,20 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
+/// Per-workload config key carrying the release VERSION this pod is running, as
+/// decimal text. It pairs with [`MANIFEST_DIGEST_CONFIG_KEY`]; the two mirror the
+/// keys of the mounted release-identity ConfigMap
+/// (`wamn_catalog::RELEASE_IDENTITY_MOUNT_PATH`). BOTH must be present or
+/// neither is registered — the run plane's `runs_release_record_check` forbids a
+/// half record, so half a pair is a bind-time refusal. Optional: absent leaves a
+/// production claim recording nothing, so every path that carries no release
+/// identity is byte-unchanged. Set by the platform, never by the guest.
+pub const RELEASE_VERSION_CONFIG_KEY: &str = "wamn.release-version";
+
+/// Per-workload config key carrying this pod's `sha256:<hex>` serving-manifest
+/// digest — the other half of [`RELEASE_VERSION_CONFIG_KEY`].
+pub const MANIFEST_DIGEST_CONFIG_KEY: &str = "wamn.manifest-digest";
+
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
 pub const DEFAULT_PROJECT: &str = "default";
@@ -204,13 +219,49 @@ impl HostPlugin for WamnPostgres {
                 "wamn:postgres runner lease-owner registered"
             );
         }
+        let release_version = item
+            .local_resources()
+            .config
+            .get(RELEASE_VERSION_CONFIG_KEY)
+            .cloned();
+        let manifest_digest = item
+            .local_resources()
+            .config
+            .get(MANIFEST_DIGEST_CONFIG_KEY)
+            .cloned();
+        match (release_version, manifest_digest) {
+            (Some(version), Some(digest)) => {
+                let version = version.parse::<i32>().map_err(|error| {
+                    anyhow::anyhow!("invalid {RELEASE_VERSION_CONFIG_KEY} {version:?}: {error}")
+                })?;
+                self.set_release_identity(item.id(), version, &digest)?;
+                tracing::debug!(
+                    component = item.id(),
+                    release_version = version,
+                    manifest_digest = digest,
+                    "wamn:postgres carried release identity registered"
+                );
+            }
+            (None, None) => {}
+            (version, digest) => {
+                return Err(anyhow::anyhow!(
+                    "component {} sets only half a release identity \
+                     ({RELEASE_VERSION_CONFIG_KEY}={:?}, {MANIFEST_DIGEST_CONFIG_KEY}={:?}); \
+                     a claim would record a half pair the run plane forbids",
+                    item.id(),
+                    version,
+                    digest,
+                ));
+            }
+        }
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
 
     /// R31: on workload teardown, reap the per-component claim registries
     /// (`WamnPostgres::clear_component_claims`) so a stale tenant / project /
-    /// schema / runner / causation claim cannot survive unbind or be inherited by
+    /// schema / runner / release-identity / causation claim cannot survive unbind
+    /// or be inherited by
     /// a rebound component id. The project pools stay — they are project-keyed
     /// (shared, memoized), not per component.
     async fn on_workload_unbind(

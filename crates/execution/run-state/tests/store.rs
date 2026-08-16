@@ -270,8 +270,21 @@ fn run_state_sql_matches_the_model() {
     ));
     assert!(sql.contains("OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode"));
     assert!(sql.contains(
-        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode"
+        "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 release_version, manifest_digest"
     ));
+    // The claim-time release record: NULL at admission, written once by the
+    // claiming worker. The guard needs its own arm because `IS DISTINCT FROM`
+    // would refuse the NULL -> value first write.
+    assert!(sql.contains("    release_version int,"));
+    assert!(sql.contains("    manifest_digest text,"));
+    assert!(sql.contains("CONSTRAINT runs_release_record_check"));
+    assert!(sql.contains(
+        "IF (OLD.release_version IS NOT NULL\n        AND NEW.release_version IS DISTINCT FROM OLD.release_version)"
+    ));
+    assert!(sql.contains(
+        "OR (OLD.manifest_digest IS NOT NULL\n           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest)"
+    ));
+    assert!(sql.contains("MESSAGE = 'run-release-record-immutable'"));
     assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));
     let runs_grants = sql
         .split_once("GRANT SELECT, DELETE ON wamn_run.runs TO wamn_app;")

@@ -119,6 +119,13 @@ BEGIN
 END
 $$;
 
+-- Admission pins never change. The claim-time release record is write-ONCE
+-- rather than immutable-from-admission: it is NULL on the admitted row and the
+-- claiming worker writes it, so the guard must permit exactly the first write.
+-- `IS DISTINCT FROM` alone cannot express that (it treats NULL as a distinct
+-- value and would refuse the first write too), hence the separate arm gated on
+-- `OLD ... IS NOT NULL`. Re-writing the same pair is a permitted no-op (a
+-- same-release re-claim); writing a different pair, or erasing one, refuses.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -132,6 +139,14 @@ BEGIN
         RAISE EXCEPTION USING
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
+    END IF;
+    IF (OLD.release_version IS NOT NULL
+        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
+       OR (OLD.manifest_digest IS NOT NULL
+           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '55000',
+            MESSAGE = 'run-release-record-immutable';
     END IF;
     RETURN NEW;
 END
@@ -171,6 +186,16 @@ CREATE TABLE wamn_run.runs (
     trigger_source  text,
     capture_mode    text NOT NULL DEFAULT 'off'
         CONSTRAINT runs_capture_mode_check CHECK (capture_mode IN ('full', 'off')),
+    -- The claim-time release record. A run is NOT version-pinned at admission:
+    -- it executes under the release its CLAIMING pod carries, and the worker
+    -- writes that pod's own release identity here when it takes the lease,
+    -- exactly once, enforced by `guard_run_admission_pins_immutable`. Both are
+    -- NULL on the admitted row and move together. `release_version` is the
+    -- release (catalog) version; `manifest_digest` is the RFC 8785 digest of
+    -- that release's serving manifest, and therefore the audit link from the
+    -- run to the plan hashes it executed.
+    release_version int,
+    manifest_digest text,
     input_json      jsonb,
     result_json     jsonb,
     state_json      jsonb,
@@ -228,6 +253,11 @@ CREATE TABLE wamn_run.runs (
     CONSTRAINT runs_capture_mode_source_check CHECK (
       capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
     ),
+    CONSTRAINT runs_release_record_check CHECK (
+      (release_version IS NULL AND manifest_digest IS NULL)
+      OR (release_version > 0
+          AND manifest_digest ~ '^sha256:[0-9a-f]{64}$')
+    ),
     PRIMARY KEY (tenant_id, run_id),
     CONSTRAINT runs_release_fk
         FOREIGN KEY (tenant_id, catalog_id, catalog_version)
@@ -262,8 +292,11 @@ CREATE TRIGGER runs_event_lineage_immutable
 BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
+-- The guard is column-scoped, so the claim-time record columns must be named
+-- here or the write-once arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
-BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode
+BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
+                 release_version, manifest_digest
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_run_admission_pins_immutable();
 -- The guest-visible application role may drive the existing run-state columns,
@@ -275,6 +308,7 @@ GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
     environment, execution_bundle_hash, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
+    release_version, manifest_digest,
     input_json, result_json, state_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key,
     caller_outcome_kind, caller_outcome_json,
@@ -285,6 +319,7 @@ GRANT INSERT (
     tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version,
     environment, execution_bundle_hash, attachment_id, registration_id,
     event_source_run_id, event_root_run_id, event_depth, status, trigger_source,
+    release_version, manifest_digest,
     input_json, result_json, state_json, invocation_context,
     admission_context_version, platform_revision, idempotency_key,
     caller_outcome_kind, caller_outcome_json,
