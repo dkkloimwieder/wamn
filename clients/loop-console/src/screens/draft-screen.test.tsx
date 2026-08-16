@@ -52,14 +52,32 @@ const halfFinishedDraft: Draft = {
   provenance: null,
 };
 
+/**
+ * A value a part cannot render, so the screen's fault boundary is the one thing
+ * under test. Every other field is §2.4's own draft's, and only the bytes throw:
+ * the read landed, and it is the source view over them that cannot be drawn.
+ */
+const FAULT_DRAFT_ID = "fault-while-rendering";
+const faultDraft: Draft = {
+  ...parsingDraft,
+  draftId: FAULT_DRAFT_ID,
+  flowId: FAULT_DRAFT_ID,
+  revision: 1,
+  get definition(): string {
+    throw new Error("the stored bytes could not be read");
+  },
+};
+
 const registry = draftFixtures as Map<string, Draft>;
 
 beforeAll(() => {
   registry.set(draftKey(HALF_FINISHED_ID, 1), halfFinishedDraft);
+  registry.set(draftKey(FAULT_DRAFT_ID, 1), faultDraft);
 });
 
 afterAll(() => {
   registry.delete(draftKey(HALF_FINISHED_ID, 1));
+  registry.delete(draftKey(FAULT_DRAFT_ID, 1));
 });
 
 /** Two ticks settle the reader's promise; `flush` lands the reactive work. */
@@ -281,6 +299,19 @@ describe("DraftScreen — the read", () => {
       label: "orders@17",
       verdict: "none",
     });
+  });
+
+  it("states a fault in a part rather than blanking the screen", async () => {
+    const { container } = await screen(FAULT_DRAFT_ID, 1);
+
+    expect(container.querySelector(".draft-fault")).toHaveTextContent(
+      "the draft screen failed to render",
+    );
+    expect(container.querySelector(".draft-fault")).toHaveTextContent(
+      "the stored bytes could not be read",
+    );
+    // the boundary is inside the screen, so the screen itself is still standing
+    expect(container.querySelector(".draft-screen")).toBeInTheDocument();
   });
 
   it("re-issues the one read from the one refresh control", async () => {

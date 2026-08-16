@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render } from "@solidjs/testing-library";
 import { flush } from "solid-js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { readStatus, setReadStatus } from "../app/read-status";
 import { focusAnchor, screenContribution } from "../app/screen-actions";
@@ -14,8 +14,9 @@ import {
   allPassReport,
   finalizedReport,
   pendingReport,
+  reportFixtures,
 } from "../reader/fixtures";
-import type { Report } from "../reader/types";
+import type { Report, ReportCase } from "../reader/types";
 import { clearVisited, visitedOfKind } from "../store/visited";
 import { ReportScreen, reportVerdictLine, reportVerdictTone } from "./report-screen";
 
@@ -32,6 +33,40 @@ afterEach(() => {
   clearVisited();
   // the stale-read test holds the fixture reader open; nothing may leak forward
   vi.restoreAllMocks();
+});
+
+/**
+ * A report state no fixture holds, registered with the reader for the length of
+ * this file. The screen takes an id and reads through `selectReader()` — it has
+ * no reader of its own to stub — so a state that has no fixture is reached by
+ * giving the fixture reader one, as `run-screen.test.tsx` reaches its own.
+ */
+const FAULT_REPORT_ID = "01J9FAULTWHILERENDERING8Q";
+
+/** A value a part cannot render, so the screen's fault boundary is the one thing under test. */
+const faultReport: Report = {
+  state: "finalized",
+  reportId: FAULT_REPORT_ID,
+  testSetHash: finalizedReport.testSetHash,
+  passed: 11,
+  total: 12,
+  // The case list, and only it: everything the screen reads before the list —
+  // the verdict line, the tone, the visited entry — is a field that came back,
+  // so the fault is a part of the screen failing and not a read that did not
+  // land.
+  get cases(): readonly ReportCase[] {
+    throw new Error("the case list could not be read");
+  },
+};
+
+const registry = reportFixtures as Map<string, Report>;
+
+beforeAll(() => {
+  registry.set(FAULT_REPORT_ID, faultReport);
+});
+
+afterAll(() => {
+  registry.delete(FAULT_REPORT_ID);
 });
 
 /** Two ticks settle the reader's promise; `flush` lands the reactive work. */
@@ -131,6 +166,19 @@ describe("ReportScreen — the read", () => {
 
     await screen("refused-authorization");
     expect(readStatus()).toBe("fail");
+  });
+
+  it("states a fault in a part rather than blanking the screen", async () => {
+    const { container } = await screen(FAULT_REPORT_ID);
+
+    expect(container.querySelector(".report-fault")).toHaveTextContent(
+      "the report screen failed to render",
+    );
+    expect(container.querySelector(".report-fault")).toHaveTextContent(
+      "the case list could not be read",
+    );
+    // the boundary is inside the screen, so the screen itself is still standing
+    expect(container.querySelector(".report-screen")).toBeInTheDocument();
   });
 
   it("records the visit only for a report the platform answered with", async () => {

@@ -13,10 +13,13 @@ afterEach(cleanup);
  * `crates/execution/flow-model`'s `Edge` names an edge's ports `from-port` and
  * `to-port` and carries fan-out order as an explicit `ordinal`, all under
  * `deny_unknown_fields` — so these are the only spellings a stored flow
- * document can use. The console's own fixtures spell the ports `out`/`in`
- * (escalated: no flow document can carry those keys), which is why the cases
- * this tab exists for are read off a document written here rather than off a
- * fixture.
+ * document can use, and the fixtures spell them that way too.
+ *
+ * What is written here rather than read off a fixture is the one combination no
+ * fixture draft holds: a source that branches on two *named* ports, one of them
+ * twice, with a named `to-port` on one edge and an ordinal on two of the four.
+ * The ordinary fan-out — two edges leaving one port, ordered against the order
+ * the array lists them in — is the notifications fixture's, and is read off it.
  */
 const platformDocument = `{
   "nodes": [
@@ -228,6 +231,22 @@ describe("readFlow — a document that has a flow's shape", () => {
     expect(groups[0].edges.map((edge) => edge.to)).toEqual(["early", "late"]);
   });
 
+  it("orders the notifications draft's own fan-out by the ordinals that draft names", () => {
+    const groups = groupEdges(readFlow(loopingDraft.definition).edges.items);
+    const fanOut = groups[1];
+
+    // A stored document, not a literal written for this file: the notifications
+    // draft lists `→ next-subscriber` (ordinal 1) ahead of `→ record-delivery`
+    // (ordinal 0), both leaving `notify-subscriber` by the port neither names,
+    // so the engine dispatches them the other way round from the way the array
+    // holds them.
+    expect(fanOut.from).toBe("notify-subscriber");
+    expect(fanOut.edges.map((edge) => [edge.to, edge.position, edge.ordinal])).toEqual([
+      ["record-delivery", 3, 0],
+      ["next-subscriber", 2, 1],
+    ]);
+  });
+
   it("reads a cycle as an ordinary edge of its own source's group", () => {
     const groups = groupEdges(readFlow(loopingDraft.definition).edges.items);
 
@@ -239,7 +258,9 @@ describe("readFlow — a document that has a flow's shape", () => {
     ]);
     expect(groups[2].edges).toEqual([
       {
-        position: 3,
+        // the fourth edge the document lists, which is where the cycle stands
+        // now that `notify-subscriber` fans out above it
+        position: 4,
         from: "next-subscriber",
         // the loop leaves a named branch, which is what makes it a loop rather
         // than the node's ordinary continuation
@@ -565,5 +586,30 @@ describe("DraftStructure", () => {
       "ingress[(main)] ─→ charge-card[(default input)]",
       "charge-card[(main)] ─→ respond[(default input)]",
     ]);
+  });
+
+  it("draws the notifications draft's fan-out in the order the engine will dispatch it", () => {
+    const { container } = render(() => <DraftStructure definition={loopingDraft.definition} />);
+
+    expect(groupHeadings(container)).toEqual([
+      "from ingress",
+      "from notify-subscriber",
+      "from next-subscriber",
+    ]);
+    // `record-delivery` is the *third* edge of the stored document and the
+    // *first* row of its group: the draft gives the two edges leaving
+    // `notify-subscriber` the ordinals 1 and 0 in that order, and the screen
+    // draws the order the engine will dispatch rather than the order the array
+    // holds. An author debugging this branch is reading their own `ordinal`s.
+    expect(edgeRows(container)).toEqual([
+      "ingress[(main)] ─→ notify-subscriber[(default input)]",
+      "notify-subscriber[(main)] ─→ record-delivery[(default input)]",
+      "notify-subscriber[(main)] ─→ next-subscriber[(default input)]",
+      "next-subscriber[more] ─→ notify-subscriber[(default input)]",
+    ]);
+    // and the lane says which of the two the reader is looking at
+    expect(laneNotes(container)).toContain(
+      "within each port, 2 of 4 edges stand in the order their own ordinal names and the rest take their position in the group, as the platform does at parse",
+    );
   });
 });

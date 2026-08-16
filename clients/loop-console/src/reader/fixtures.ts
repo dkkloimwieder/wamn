@@ -699,7 +699,19 @@ export const unattributedDraft: Draft = draft({
   provenance: null,
 });
 
-/** The fan-out flow the truncated run loops in — a second flow, so §2.0's DRAFTS group. */
+/**
+ * The fan-out flow the truncated run loops in — a second flow, so §2.0's DRAFTS
+ * group, and the one fixture that really fans out: `notify-subscriber` leaves by
+ * one port to two nodes.
+ *
+ * Those two edges name their own `ordinal`s, and they name them against the
+ * order the array holds them in. That is the fact §2.4's structure tab exists to
+ * show: `flow-model`'s `Edge::ordinal` is fan-out order and an element's
+ * position in `edges` never is, so a document may list a branch's targets in one
+ * order and dispatch them in another. The other two edges name none — an author
+ * declares an order only where there is one — which is the mixed state the
+ * platform completes at parse.
+ */
 export const loopingDraft: Draft = draft({
   draftId: "notifications",
   flowId: "notifications",
@@ -713,11 +725,17 @@ export const loopingDraft: Draft = draft({
       "type": "http-request",
       "config": { "method": "POST", "url": "https://hooks.internal/v1/notify" }
     },
+    {
+      "id": "record-delivery",
+      "type": "postgres",
+      "config": { "statement": "insert into deliveries (subscriber) values ($1)" }
+    },
     { "id": "next-subscriber", "type": "conditional", "config": { "expr": "ctx.remaining > 0" } }
   ],
   "edges": [
     { "from": "ingress", "to": "notify-subscriber" },
-    { "from": "notify-subscriber", "to": "next-subscriber" },
+    { "from": "notify-subscriber", "to": "next-subscriber", "ordinal": 1 },
+    { "from": "notify-subscriber", "to": "record-delivery", "ordinal": 0 },
     { "from": "next-subscriber", "from-port": "more", "to": "notify-subscriber" }
   ],
   "schema-version": "0.1",
