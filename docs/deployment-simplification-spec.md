@@ -1,0 +1,308 @@
+# Deployment simplification — follow wasmCloud v2: operator-managed hosts, OCI artifacts, GitOps convergence
+
+Status: RATIFIED (owner 2026-08-16, decision `wamn-0h0g.13.43` —
+rulings 1–6 below) · supersedes the affected clauses of
+`.2.4`, `.4.12`, `.8.19`, `.8.22`, `.9.9` (attestation scope), and the
+flow-execution amendment's release-bound-resolution section ·
+owner-directed 2026-08-14, branch `mvp`, tracker `wamn-0h0g`,
+implementation sub-epic `wamn-0h0g.15`.
+
+## Ruling
+
+wamn follows wasmCloud v2's deployment architecture wherever the
+floor permits: the **runtime-operator** manages hosts and component
+workloads as Kubernetes CRDs (state in etcd, reconciled over the NATS
+we already run); everything immutable ships as **OCI artifacts**;
+**GitOps converges** desired state. Runs are never version-pinned; a
+run executes under the release its claiming pod carries and records
+that fact once. The database keeps only tenant-runtime state: the run
+plane, bindings/generations, applied schema, app data, and the
+control-plane gate artifacts.
+
+wamn's embedded `wash-runtime` custom host is the sanctioned v2
+pattern ("substitute your own custom host builds") — adoption is
+substitution, not redesign: our host images enter the operator's
+`Host` CRD.
+
+## The model
+
+**Publish (control plane, unchanged as the gate).** One transaction:
+verify draft + green report → mint immutable release + evidence
+(`tested_resolution_map` included). Then push the content-addressed
+OCI artifacts — plan bytes and the **release manifest** (RFC 8785
+bytes, `sha256:<digest>`; flow → plan-hash / source-artifact /
+callable-contract, call-edge adjacency, attachment + registration
+projections) — and write the environment's desired state to the
+GitOps source: the release-identity ConfigMap
+`(release version, manifest digest)` and any changed CRDs.
+
+**Deploy (cluster, operator-reconciled).** Argo/Flux (plain
+`kubectl apply` in dev) converges; the runtime-operator reconciles
+`Host` CRDs running **our custom host images** (executor, flow-http,
+materializer hosts) and schedules component workloads onto them;
+HTTP exposure rides operator-managed EndpointSlices on standard
+Services (the deprecated gateway is never adopted). Pods surface the
+release identity as immutable mounted config per the v2
+ConfigMap/Secret pattern. Readiness stays ours and gates on:
+manifest + referenced plans fetched and hash-verified, and every
+connection requirement of the release **bound in this environment**.
+Rollback is Git revert; wrong-target protection is
+namespace/context targeting.
+
+**Serve/admit.** flow-http and the materializer read routes and
+registrations from the mounted manifest. Admission validates input
+against the admitting pod's manifest and writes the durable run +
+queue row — the write-ahead row is the crash floor and idempotency
+anchor, and the only reason admission and execution are distinct
+moments. Warm path: milliseconds apart.
+
+**Claim/execute.** A worker claims (lock → classify → lease — the
+never-replay classifier, unchanged) and **records
+`(release version, manifest digest)` from its own pod identity onto
+the run, write-once** under the existing immutability trigger.
+Resolution is a pure read of the pod's manifest (adjacency gives the
+transitive set); plan bytes fetch by digest, verify at transfer,
+cache forever. Effect authority verifies: recorded manifest contains
+`(flow, plan-hash)` → plan contains node → attempt matches
+`(frame, node, occurrence)` → binding → active generation.
+
+**Audit.** run → recorded version → manifest digest → plan hashes →
+bytes; every link content-addressed and immutable. Deployment
+bookkeeping is one control-plane attestation row written by the
+publish pipeline; rollout state itself lives where v2 puts it — etcd,
+inspected with kubectl.
+
+## Version semantics (no pinning)
+
+Runs execute under the **current** release of the claiming pod — the
+standard job-queue semantic. Rollout overlap behaves as for any HTTP
+service behind a load balancer; drain completes it. **Breaking input
+contracts are author versioning events**: publish the new contract
+as a new attachment (`/v2/...`), migrate callers, tombstone the old —
+existing machinery. Additive evolution is the default. No agreement
+knob, no new refusal categories.
+
+## Deleted by this ruling
+
+`run_flow_resolutions` + `resolution.rs` + the five-step claim ·
+release-bound resolution and every version-pinning clause · `.2.4`'s
+admission-time bundle pin (moves to claim-time recording) · `.8.19`'s
+seven project-side relations, head-pointer row, install transaction,
+historical-retry semantics, target-mismatch machinery · the
+deployed-manifest append-only rule · the artifact fetch API +
+dedicated artifact-reader DB role (OCI pulls) ·
+`deployment_attestations`' `deployed_resolution_map` (map-only —
+ruling 5; no state column exists in the DDL) ·
+report-level map-consistency checking · hand-rolled host Deployment
+manifests (operator `Host` CRDs replace them) · **the waker, at M2
+adoption** — host/workload scaling is operator territory
+(`hostReplicas` / workload scalers); the dispatcher's wake signal
+becomes a CRD patch; planned deletion with a named trigger, not
+immediate.
+
+## Retained, each with its consumer
+
+Write-ahead run/queue row + classifier (crash floor) · bindings and
+credential generations in Postgres (per-tenant runtime authorization,
+effect-path-checked) · evidence + command ledger in the control DB
+(the gate) · one deploy attestation row (publish bookkeeping) ·
+claim-time `(version, digest)` recording (audit) · readiness
+prefetch + binding gate (rollout correctness) · dispatcher (queue
+reconciliation is ours) · OCI availability trade as accepted.
+
+## Alignment costs, accepted
+
+Tracking a fast-moving v1alpha1 CRD surface: chart + operator version
+pin per environment, upgraded only on the fork-sync cadence; operator
+PRs reclassified from N/A to tracked; chart carriage verified at
+`v2.7.0` (see Fork sync below).
+
+## Demolition plan — deletion without build/test churn
+
+Inventoried at `mvp@5ae0e3ee`. **Owner-confirmed 2026-08-14:
+intermediate commits on the demolition branch may be red — not
+building, not passing gates.** Green is required exactly once, at the
+merge to `mvp` (the Tier D RC validation is that merge's gate).
+Default branch name `deploy-simplification` unless the owner renames;
+Tier A's freeze list files to the tracker before the branch opens.
+
+**Churn doctrine.** Freeze before demolition — cancel doomed beads so
+no more `.9.10`/`.5.14`-class work lands into the blast radius (the
+artifact-reader plane — 19 files including its 3 guards, across
+`7ac999b4` + `11aa572b` — landed *this week* and is already superseded). Guards die with their subjects in the same
+commit — a surviving guard is what forces a retest. Registries
+(`protected-writes.json`, `state-owners.json`, gate-registry, mutant
+baselines) regenerate **exactly once**, at wave end. No per-commit
+gate runs on the demolition branch; one RC-style validation at merge.
+One bead per subsystem, never per file.
+
+**Tier A — cancel, zero code exists (no churn by construction).**
+`.8.19` step-B relations/install choreography (verified unlanded) ·
+`.8.22` · the plan-bytes/manifest-residency aspects of `.8.18` only —
+the management→control authoring/report move itself proceeds (it is
+the retained gate); its refusal literal re-anchors off `.8.19`/`.8.22`
+· every artifact-fetch follow-on bead · resolution-map evidence
+extensions. Freeze list recorded in the tracker first
+(`wamn-0h0g.15.1`).
+
+**Tier B — pure deletions, no replacement required (red-safe,
+individually mergeable).**
+Report-level map-consistency check (a plpgsql trigger in
+`deploy/sql/authoring-tests.sql` + its scenario-worker orchestration
+caller; the `tested_resolution_map` evidence column is retained) ·
+`deployment_attestations`' `deployed_resolution_map` (map-only per
+ruling 5; store is days old, no consumers) · superseded doc sections
+via one read-through amendment commit · hand-rolled host manifests
+where they exist outside gates (`runner.yaml`, `scenario-worker.yaml`;
+flow-http/materializer are already `WorkloadDeployment`-shaped).
+The waker is NOT in this tier — its deletion is post-wave at M2
+adoption per the Deleted list's named trigger (`wamn-0h0g.15.26`,
+dep the CRD-patch wake replacement `wamn-0h0g.15.19`).
+
+**Tier C — coupled delete+replace, one demolition-then-green wave.**
+These share files and cannot delete independently without churn;
+they land as one branch with a single green-up:
+1. *Claim path*: `resolution.rs`, `run_flow_resolutions` DDL +
+   functions, five-step → lock/classify/lease, map references in
+   `transitions.rs`/`effect_writer.rs`/`sql.rs`, both postgres claim
+   modules (`claims.rs`, `production_claim.rs`), queue tests,
+   `run_plane.rs` carrier rows; also run-state `src/lib.rs` +
+   `tests/run_state_live.rs`, conformance `state_ownership.rs` +
+   `schema_drift.rs`, `runnerbench.rs`, ctl `run_plane_live.rs`, and
+   guard `global-fifo-claim.sh` (`plan-supply.sh` dies in item 3).
+2. *Pin → claim-time recording*: 24 `execution_bundle_hash` sites in
+   `run-state.sql`, trigger arm, admission builders; two write-once
+   columns added on the existing claim write.
+3. *Artifact reader → OCI pull*: the `.9.10`/`.5.14` plane (19
+   files including the `artifact-reader-credential.sh` +
+   `control-artifact-reader.sh` + `plan-supply.sh` guards), the
+   reader DB role and its Secret, readiness rewrite to
+   fetch-by-digest.
+4. *Manifest reads*: flowrunner map-consumption → mounted-manifest
+   resolution; flow-http/materializer route/registration source (the
+   flow-http leg is the *first* host-side `wamn:flow-http-routing`
+   implementation — no host impl exists today; the materializer
+   registration sweep is the real DB-read rewrite).
+Effect authority's verification set is untouched except the map
+lookup rewording — the guards `effect-writer-primitive.sh` and
+`current-plan-effect-authority.sh` survive with a one-line predicate
+update inside wave commit 1.
+
+**Tier D — regenerate once, at wave end.** Registries + mutant
+baselines (inline `EXPECTED_SHA` constants across the 26
+baseline-carrying `tools/gate-mutants/` scripts) + the live-battery
+deltas per ruling 6 (the `.11.13` bootstrap role probes and the
+run-state live suites — reader probes/grants removed, the two
+claim-time columns covered; "p0 battery" as a name retires with the
+archived `p0-*` docs) + the charter read-through amendment
+(`docs/scope-reduction-mvp.md`) + **the fork pin** (below) + the
+single RC validation — including the fork-sync gate subset
+(socketguard, egress-escape, trace, busyloop epoch) — then
+merge to `mvp`.
+
+**Explicitly not deleted in this wave** (floor, unchanged): the
+write-ahead run/queue row, the reclaim classifier, the effect
+ledger + writer generations, bindings/generations, evidence + command
+ledger, the dispatcher, frame execution, budgets.
+
+## Fork sync — wamn/2.7.0 (assessed 2026-08-14; include)
+
+`dkkloimwieder/wasmCloud` branch `wamn/2.7.0` (head `daba602`) is fit
+to pin: one `--no-ff` merge of `v2.7.0`, then re-expression commits
+`g2br.14–19`; `wamn/2.6.1` stays frozen and reachable. Every
+load-bearing patch survived the port — trace seam (`g2br.4`) alive in
+`host/http.rs` + the new pooled `http_client.rs`; epoch/memory policy
+(`g2br.2/3`) in `engine/ctx.rs`; socket denials re-expressed against
+upstream's centralized socket decision point with `g2br.15` re-gating
+the plugin raw-socket path; plugin layer adapted to #5411/#5452.
+`g2br.16`'s per-run isolation kill-switch patches
+`engine/instance_pool.rs` directly — **blocking audit B (instance
+pooling vs per-run isolation) is resolved at the source**. Nothing is
+droppable yet (fork grew 1,266→1,714 lines / 12→27 files);
+`g2br.14` (upstream egress-state leak fix) and `g2br.19` (test
+hygiene) are **upstreamable** — file PRs to shrink the 2.8 sync.
+wasmtime target **47.0.3** — same family as our 47.0.1, patch-level,
+epoch API untouched; `wasmtime_source_identity` re-verifies on pin.
+`charts/runtime-operator` present at the tag (carriage verified).
+
+**The pin rides this wave's green-up** — one `ExecutionRuntimeRevision`
+bump, one provider-manifest regeneration, one
+revalidate→republish→drain loop, instead of two in one week. Gates
+before the pin commit: **(A) pool-partitioning audit** — verify
+`connection_http`'s per-generation credential injection keys or
+bypasses the upstream connection pool (a pooled connection reused
+across generations breaks exact-generation authority silently);
+**(B)** the five native plugins recompile against the changed plugin
+API with the no-trap error-mapping re-audit (#5452). Pin:
+`wash-runtime` rev → `daba602`, lock moves to wasmtime 47.0.3.
+
+## Open verification items
+
+Tracked as spikes `wamn-0h0g.15.2` / `.15.3` / `.15.4`:
+whether the `Artifact` CRD can carry plans/manifest (data, not
+components) or they remain plain OCI pulls in our host code ·
+namespace-per-environment mapping under the operator's tenancy
+assumptions · whether flowrunner ships as an operator-scheduled
+`Workload` (revision changes without host-image rebuilds) or stays
+in-image for MVP (provider changes force rebuilds regardless).
+
+## Ratification rulings (owner, 2026-08-16 — decision `wamn-0h0g.13.43`)
+
+1. **Draft/test execution under no-pinning — platform-primitive
+composition.** Test-set-run materializes the candidate manifest
+(released set + candidate overlay — the ratified bootstrap rule as
+data) as a scratch **ConfigMap**, runs a per-report **Job** whose pods
+mount it, and targets claims via the landed `.5.9` placement seam
+(`execution_target_id` routes the report's cases to the scratch
+claimant — no new routing). "Runs execute under the claiming pod's
+release" holds verbatim: the candidate *is* that pod's release.
+Teardown per the M1 scratch discipline; `draft-run` rides the same
+mount. No pin exception exists; post-publish testing is rejected — it
+inverts the gate ordering.
+
+2. **`catalog.execution_bundles` — keep.** It remains the
+authoritative append-only bytes home; the OCI push is a distribution
+projection, idempotently re-derivable from it. Delta-zero: the control
+DB already holds this artifact class (test-set bytes, evidence) under
+the same append-only + `CHECK` discipline, and the mint transaction
+welds evidence to bytes with local FKs. OCI-as-sole-home is
+demand-gated, not forbidden. `.12.1`/`.12.8`/`.9.11` unchanged.
+
+3. **"Cache forever" = process-lifetime immutability** — the kubelet
+image-cache semantic: no invalidation exists because nothing
+invalidates; the cache dies with the pod; readiness prefetch covers
+cold starts. The disk-cache deferral (`.13.41`) stays held.
+
+4. **Runtime-revision coherence — construction, not detection.** No
+readiness revision-check ships. The release manifest deploys as an
+**immutable ConfigMap named by digest** (`release-manifest-<digest>`),
+referenced by that name in the pod template — manifest and image are
+therefore atomic per pod by definition; skew has no window to exist
+in. Revision-triple coherence inside the artifact is the mint-time
+gate's job. This is the `.2.3`/`.2.7` successor rule: pod
+self-identity suffices *because the manifest is part of it*.
+
+5. **Attestation trim is map-only.** Drop `deployed_resolution_map`
+(derivable: digest → manifest → map). Keep the six-part coordinate
+(the control table observes many targets), `deployed_manifest_hash`
+(the audit anchor), and `attested_at`.
+
+6. **Battery deltas target the two live homes**: the `.11.13`
+bootstrap role-probe check (artifact-reader probes drop with the role)
+and the run-state live suites (`protected_relations_live` +
+effect-writer: reader grants gone; the two claim-time columns under
+the runs immutability arm). "p0 battery" as a name retires with the
+archived `p0-*` artifacts.
+
+Planning decisions folded at ratification: the waker deletion is
+post-wave at M2 adoption (named trigger `wamn-0h0g.15.26`, dep the
+CRD-patch wake replacement `wamn-0h0g.15.19`) · `.8.18` is partial
+(the management→control authoring/report move proceeds as the retained
+gate) · all tiers land on branch `deploy-simplification` with a single
+green-up at the merge · adoption is fresh beads
+(`wamn-0h0g.15.15`–`.15.17`, `.15.19`) superseding
+`wamn-x09`/`wamn-6s1`/`wamn-d8i`/`wamn-fqg.40`.
+
+Net new machinery across the six rulings: one Job kind already in use,
+one ConfigMap-per-digest convention, zero daemons, zero roles, zero
+protocols — and one mechanism deleted (the readiness revision check).
