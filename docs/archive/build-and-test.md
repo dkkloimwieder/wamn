@@ -2270,18 +2270,46 @@ kubectl -n wamn-system wait --for=condition=complete \
 kubectl -n wamn-system logs job/callable-flow-f4
 ```
 
-### [5.14] shared trigger dispatcher
+### [SR-MVP / wamn-0h0g.5.8] dispatcher reconciliation
 
-Docs: docs/archive/execution/run-queue.md
+This debug gate proves three local boundaries: reconciliation reads only the
+tenant-scoped project queue, claiming remains owned by the executor, and the
+dispatcher has project-database access without Kubernetes scale authority while
+the waker has the Kubernetes scale credential without a database credential. The
+`unscoped-literal-queue-scan` mutant is killed by
+`dispatcher_reconciliation_is_tenant_scoped_and_read_only`.
 
 ```bash
-cargo test --locked -p wamn-run-state -p wamn-scheduler -p wamn-dispatcher
-cargo clippy --locked -p wamn-run-state -p wamn-scheduler -p wamn-dispatcher \
+export CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-5-17
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+cargo test --locked --offline -p wamn-dispatcher
+cargo test --locked --offline -p wamn-scheduler
+cargo test --locked --offline -p wamn-run-state --test queue \
+  dispatcher_reconciliation_mirrors_claim_eligibility_and_order -- --exact
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test dispatcher_boundary
+
+cargo clippy --locked --offline \
+  -p wamn-dispatcher -p wamn-scheduler -p wamn-run-state \
   --all-targets -- -D warnings
+cargo clippy --locked --offline -p wamn-proof-conformance \
+  --test dispatcher_boundary -- -D warnings
+
+cargo fmt --manifest-path Cargo.toml \
+  -p wamn-dispatcher -p wamn-scheduler -p wamn-run-state \
+  -p wamn-proof-conformance -- --check
+bash -n tools/gate-mutants/dispatcher-reconciliation-boundary.sh
+tools/gate-mutants/dispatcher-reconciliation-boundary.sh check
+tools/gate-mutants/dispatcher-reconciliation-boundary.sh green
+tools/gate-mutants/dispatcher-reconciliation-boundary.sh run
+git diff --check
 ```
 
-The former dispatchbench CLI, modes, and Job are historical and are not
-runnable proof sources after `wamn-0h0g.4.1`.
+The in-cluster M2 scale-from-zero proof belongs to `wamn-0h0g.11.11`.
+Historical wakeproof absorption belongs to `wamn-0h0g.11.19`; neither is
+claimed by this local gate.
 
 ### [SR-MVP / wamn-0h0g.8.3] admitted full|off capture
 
