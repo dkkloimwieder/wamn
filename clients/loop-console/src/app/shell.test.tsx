@@ -3,14 +3,19 @@ import { flush } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { proxyTarget } from "../config";
-import { FAILING_RUN_ID } from "../reader/fixtures";
+import { FAILING_RUN_ID, FINALIZED_REPORT_ID } from "../reader/fixtures";
 import type { Route } from "../routing/route";
+import { clearVisited } from "../store/visited";
 import { AppShell } from "./app-shell";
 import { setReadStatus } from "./read-status";
 
 afterEach(() => {
   cleanup();
   setReadStatus("never-contacted");
+  // the run route records its read in the visited store, which outlives a test
+  clearVisited();
+  // so does the address bar, and a palette navigation writes it
+  window.location.hash = "";
 });
 
 function shell(route: Route) {
@@ -33,10 +38,14 @@ describe("AppShell", () => {
         route: { kind: "run", id: FAILING_RUN_ID },
         expected: ["FAILED · retry-exhausted at fetch-inventory", "execution", "details"],
       },
-      { route: { kind: "report", id: "01J9X8Q11" }, expected: ["report", "id 01J9X8Q11"] },
+      // and the report and draft routes mount theirs, which do the same
+      {
+        route: { kind: "report", id: FINALIZED_REPORT_ID },
+        expected: ["11 / 12 PASSED", "cases", "backorders-when-out-of-stock"],
+      },
       {
         route: { kind: "draft", id: "orders", revision: "17" },
-        expected: ["draft", "id orders", "revision 17"],
+        expected: ["DRAFT orders @ 17", "source"],
       },
       { route: { kind: "not-found", hash: "#/logs" }, expected: ["not found", "hash #/logs"] },
     ];
@@ -57,24 +66,34 @@ describe("AppShell", () => {
     }
   });
 
-  it("renders not found for a draft revision that is not a revision", () => {
-    // the heading is what tells one screen from another; the not-found body
-    // echoes the hash, so it contains "draft" too
+  it("tells a revision the router cannot read from one the reader cannot find", async () => {
+    /*
+     * Two different absences that a single "not found" would blur. A segment
+     * that names no revision names no draft either, so the router answers and
+     * no read is ever issued. A segment that *does* name a revision addresses a
+     * draft that may simply not exist — which is the platform's answer, reached
+     * through the reader, and the screen shows it as a read that was refused.
+     */
     const opaque = shell({ kind: "draft", id: "orders", revision: "head rev" }).container;
+    await settle();
     expect(opaque.querySelector("main .screen-name")).toHaveTextContent("not found");
     expect(opaque.querySelector("main")).toHaveTextContent("hash #/draft/orders/head%20rev");
     cleanup();
 
     const numeric = shell({ kind: "draft", id: "orders", revision: "17" }).container;
-    expect(numeric.querySelector("main .screen-name")).toHaveTextContent("draft");
-    expect(numeric.querySelector("main")).toHaveTextContent("revision 17");
+    await settle();
+    // the draft screen mounted: its verdict is the heading, and there is no
+    // router placeholder above it
+    expect(numeric.querySelector("main .screen-name")).toBeNull();
+    expect(numeric.querySelector("main h1")).toHaveTextContent("DRAFT orders @ 17");
     cleanup();
 
-    // revision 0 converts, and it is the one revision a truthiness check loses
+    // Revision 0 converts — it is the one revision a truthiness check loses —
+    // so this reaches the reader, which refuses it. The router must not.
     const zero = shell({ kind: "draft", id: "orders", revision: "0" }).container;
-    expect(zero.querySelector("main .screen-name")).toHaveTextContent("draft");
-    expect(zero.querySelector("main")).toHaveTextContent("revision 0");
-    expect(zero.querySelector("main")).not.toHaveTextContent("not found");
+    await settle();
+    expect(zero.querySelector("main .screen-name")).toBeNull();
+    expect(zero.querySelector("main")).toHaveTextContent("draft-revision-not-found");
   });
 
   it("gives the run route one heading, and it is the verdict", async () => {
@@ -95,6 +114,71 @@ describe("AppShell", () => {
     expect(bar).toHaveTextContent(proxyTarget);
     expect(bar).toHaveTextContent("never contacted");
     expect(bar).toHaveTextContent("⌘K");
+  });
+
+  /** ⌘K, sent at the document the way a reader's keyboard reaches the console. */
+  function commandKey(): KeyboardEvent {
+    const event = new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(event);
+    flush();
+    return event;
+  }
+
+  it("mounts the command palette, which draws nothing until ⌘K asks for it", () => {
+    const { container } = shell({ kind: "start" });
+    expect(container.querySelector("[role='dialog']")).toBeNull();
+
+    expect(commandKey().defaultPrevented).toBe(true);
+    const palette = container.querySelector("[role='dialog']");
+    expect(palette).toHaveAttribute("aria-label", "command palette");
+    // §6 step 7: no keybinding column anywhere — the palette teaches no keys
+    // because there are none outside it to teach
+    expect(palette).not.toHaveTextContent("⌘");
+    expect(palette).not.toHaveTextContent("Ctrl");
+  });
+
+  it("offers the mounted screen's own sections and actions, and the run it just read", async () => {
+    const { container } = shell({ kind: "run", id: FAILING_RUN_ID });
+    await settle();
+    commandKey();
+
+    const palette = container.querySelector("[role='dialog']");
+    // §6 step 7's done-check: every navigation and view action reachable here
+    expect(palette).toHaveTextContent("go to execution");
+    expect(palette).toHaveTextContent("expand all execution rows");
+    expect(palette).toHaveTextContent("refresh this screen");
+    expect(palette).toHaveTextContent(`open run ${FAILING_RUN_ID}`);
+  });
+
+  it("leaves a ⌘K navigation's reader in the column, and not on <body>", async () => {
+    const { container } = shell({ kind: "run", id: FAILING_RUN_ID });
+    await settle();
+
+    // stand where a reader actually stands: on a control of the screen the
+    // navigation is about to unmount
+    const control = container.querySelector<HTMLButtonElement>("main button");
+    control?.focus();
+    expect(document.activeElement).toBe(control);
+
+    commandKey();
+    const start = [...container.querySelectorAll<HTMLButtonElement>("[role='dialog'] button")].find(
+      (row) => (row.textContent ?? "").includes("go to start"),
+    );
+    start?.click();
+    flush();
+    expect(window.location.hash).toBe("#/");
+
+    // §6 step 7 promises focus restore on close, and this shell has nothing
+    // focusable outside the column — the top bar is spans and the panel is
+    // empty — so restoring to the unmounted control would put a keyboard reader
+    // on <body>, a full Tab from the top of the screen they just asked for
+    expect(document.activeElement).toBe(container.querySelector("main"));
+    expect(document.activeElement).not.toBe(document.body);
   });
 
   it("states read status in words, and updates them reactively", () => {

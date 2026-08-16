@@ -1,0 +1,80 @@
+/* DraftStructure — §2.4's nodes table, then its edge rows grouped by source. */
+
+.draft-structure {
+  display: flex;
+  flex-direction: column;
+  /* §1.4: 32px between sections, the label on the hairline being the divider. */
+  gap: var(--space-4);
+}
+
+.draft-structure-lane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* An absence is metadata, not a value: it reads at the weight of a label. */
+.draft-structure-absent {
+  color: var(--dim);
+}
+
+/* A config the reader has not opened yet is a summary of one, not data itself. */
+.draft-structure-config {
+  color: var(--dim);
+}
+
+.draft-structure-note {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
+}
+
+.draft-edge-groups,
+.draft-edges {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.draft-edge-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.draft-edge-source {
+  margin: 0;
+  font-size: var(--size-13);
+}
+
+/*
+ * §2.4's `aligned rows`: one grid for the group, and every row a subgrid of it,
+ * so the arrows line up under each other without a padding character entering
+ * the text a reader copies.
+ */
+.draft-edges {
+  display: grid;
+  grid-template-columns: max-content max-content max-content;
+  font-size: var(--size-13);
+  line-height: var(--leading-table);
+}
+
+.draft-edge {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  column-gap: var(--space-1);
+}
+
+.draft-edge-arrow {
+  color: var(--dim);
+}
+
+/*
+ * A port the document does not name is the platform's default, not the
+ * document's word: it reads at the weight of metadata. The parentheses carry
+ * the distinction on their own, so it is never told by colour alone.
+ */
+.draft-edge-port-default {
+  color: var(--dim);
+}

@@ -1,0 +1,70 @@
+/* DraftScreen — §2.4's column: the verdict, what was stored with it, its bytes. */
+
+.draft-screen {
+  display: flex;
+  flex-direction: column;
+  /* §1.4: 32px between sections, and the label on the hairline is the divider. */
+  gap: var(--space-4);
+}
+
+.draft-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/*
+ * §2.4's `saved … · 4,812 bytes · [ source | structure ]` sits in the verdict
+ * bar's identity slot, which already dims it and sets it at 13px, so the line
+ * itself declares nothing and only its controls do.
+ */
+.draft-tabs {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+
+/*
+ * The tabs read as chrome on the identity line, not as data: 13px, no box, and
+ * the showing one underlined — a shape rather than a colour, so which tab stands
+ * is never told by colour alone.
+ */
+.draft-tab {
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: var(--size-13);
+  cursor: pointer;
+}
+
+/* Underlined as well as lifted out of `dim`: a shape, so which tab is showing
+   is never told by colour alone. */
+.draft-tab[aria-pressed="true"] {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.draft-tab:disabled {
+  color: var(--dim);
+  cursor: default;
+}
+
+.draft-tab-refusal {
+  font-size: var(--size-12);
+  color: var(--dim);
+}
+
+/* An absence is metadata, not a value: it reads at the weight of a label. */
+.draft-absent {
+  color: var(--dim);
+}
+
+/* What the screen says *about* its evidence rather than with it (§1.2). */
+.draft-note,
+.draft-fault {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
+}

@@ -1,0 +1,21 @@
+/* ReportCases — what §2.3's run column and disclosed row add to a DataTable. */
+
+/*
+ * §1.1's one accent, on one of the three roles it is reserved for: the handoff
+ * is the only navigable thing on a case row. The underline the browser draws
+ * stays, so the link is never signalled by colour alone.
+ */
+.report-run-link {
+  color: var(--signal);
+}
+
+/* An absence is metadata, not a value: it reads at the weight of a label. */
+.report-case-absent {
+  color: var(--dim);
+}
+
+.report-case-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}

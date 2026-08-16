@@ -1,0 +1,22 @@
+/* ReportScreen — §2.3's column: the verdict, then the cases under it. */
+
+.report-screen {
+  display: flex;
+  flex-direction: column;
+  /* §1.4: 32px between sections, and the label on the hairline is the divider. */
+  gap: var(--space-4);
+}
+
+.report-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* What the screen says *about* its verdict rather than with it (§1.2). */
+.report-note,
+.report-fault {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
+}

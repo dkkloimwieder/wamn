@@ -1,0 +1,45 @@
+/* ReportAssertion — §2.3's expected/observed pair, opened under a case row. */
+
+.report-assertion {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/*
+ * §2.3 stacks the family over its detail under one `expected` key:
+ *
+ *   expected  named-node-terminal
+ *             check-stock → error
+ */
+.report-expected {
+  display: flex;
+  flex-direction: column;
+}
+
+/* The family names which assertion was written; the line below it is the assertion. */
+.report-family {
+  color: var(--dim);
+}
+
+/* The badge sits on the line's baseline rather than starting a block of its own. */
+.report-expected-line {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+/* §1.2: the wire word frames the durable one, so it takes the frame face. */
+.report-gloss,
+.report-absent {
+  color: var(--dim);
+}
+
+/*
+ * Free text, printed as it arrived: the newlines it may carry are kept and the
+ * line wraps rather than scrolling, since this sentence is the whole evidence.
+ */
+.report-observed {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

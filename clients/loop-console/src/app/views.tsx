@@ -2,6 +2,8 @@ import type { JSX } from "@solidjs/web";
 
 import { toHash, type Route } from "../routing/route";
 import { parseRevision } from "../routing/revision";
+import { DraftScreen } from "../screens/draft-screen";
+import { ReportScreen } from "../screens/report-screen";
 import { RunScreen } from "../screens/run-screen";
 
 function Screen(props: { name: string; children?: JSX.Element }): JSX.Element {
@@ -22,7 +24,8 @@ function NotFound(props: { hash: string }): JSX.Element {
 }
 
 /**
- * The mounted screens, and step-1 placeholders for the routes steps 5–8 own.
+ * The mounted screens, and the step-1 placeholder for the one route step 8
+ * still owns.
  *
  * A mounted screen brings its own heading: §1.3's verdict bar is the screen's
  * `h1`, so the placeholder's `screen-name` heading goes with the placeholder
@@ -35,11 +38,7 @@ export function routeView(route: Route): JSX.Element {
     case "run":
       return <RunScreen id={route.id} />;
     case "report":
-      return (
-        <Screen name="report">
-          <p class="screen-params">id {route.id}</p>
-        </Screen>
-      );
+      return <ReportScreen id={route.id} />;
     case "draft": {
       // The route carries the revision opaquely; this is where it becomes the
       // number the reader takes. A segment that cannot name a revision names no
@@ -49,13 +48,7 @@ export function routeView(route: Route): JSX.Element {
       if (revision === null) {
         return <NotFound hash={toHash(route)} />;
       }
-      return (
-        <Screen name="draft">
-          <p class="screen-params">
-            id {route.id} · revision {revision}
-          </p>
-        </Screen>
-      );
+      return <DraftScreen id={route.id} revision={revision} />;
     }
     case "not-found":
       return <NotFound hash={route.hash} />;
