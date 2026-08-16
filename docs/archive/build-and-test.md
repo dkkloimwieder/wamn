@@ -2311,6 +2311,48 @@ The in-cluster M2 scale-from-zero proof belongs to `wamn-0h0g.11.11`.
 Historical wakeproof absorption belongs to `wamn-0h0g.11.19`; neither is
 claimed by this local gate.
 
+### [SR-MVP / wamn-0h0g.3.8] root-frame execution budgets
+
+This debug-only owner gate proves `MAX_CALL_DEPTH = 64` and
+`DEFAULT_ROOT_DISPATCH_BUDGET = 10_000` across one complete root frame stack.
+It pins debit-before-input-guard-before-depth-before-frame-allocation ordering,
+the exact 65th-callee and 10,001st-dispatch refusals, root-global accounting,
+non-catchable terminal propagation, and the persisted `depth-budget` and
+`dispatch-budget` mappings. It does not activate guest execution or claim
+production/get-run visibility; those remain owned by `wamn-0h0g.5.4`. The
+reducer's independent direct-Plan runaway-budget test in the
+`wamn-0h0g.4.1` section remains separate.
+
+```bash
+export CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-3-9
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+cargo test --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner frames::tests::
+cargo test --locked --offline -p wamn-runner -p wamn-run-state
+cargo test --locked --offline -p wamn-run-state --test store \
+  root_budget_failures_map_to_exact_persisted_kinds -- --exact
+
+cargo clippy --locked --offline -p wamn-runner -p wamn-run-state \
+  --all-targets -- -D warnings
+cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner --all-targets -- -D warnings -A dead-code
+cargo clippy --locked --offline --manifest-path components/Cargo.toml \
+  -p flowrunner --target wasm32-wasip2 -- -D warnings -A dead-code
+
+cargo fmt --manifest-path Cargo.toml \
+  -p wamn-runner -p wamn-run-state -- --check
+cargo fmt --manifest-path components/Cargo.toml -p flowrunner -- --check
+bash -n tools/gate-mutants/root-frame-budgets.sh
+tools/gate-mutants/root-frame-budgets.sh check
+tools/gate-mutants/root-frame-budgets.sh green-all
+tools/gate-mutants/root-frame-budgets.sh run-all
+tools/gate-mutants/root-frame-budgets.sh green-all
+tools/gate-mutants/root-frame-budgets.sh check
+git diff --check
+```
+
 ### [SR-MVP / wamn-0h0g.8.3] admitted full|off capture
 
 Docs: docs/archive/execution/run-state.md § *Node-level I/O capture (9.6)*
