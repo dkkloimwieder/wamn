@@ -701,6 +701,128 @@ mod tests {
         );
     }
 
+    /// End offset of the first complete HTTP/1.1 request head in `pending`.
+    fn head_end(pending: &[u8]) -> Option<usize> {
+        pending
+            .windows(4)
+            .position(|window| window == b"\r\n\r\n")
+            .map(|start| start + 4)
+    }
+
+    /// The `authorization` value one probe request carried, or the empty string.
+    fn authorization_of(head: &str) -> String {
+        head.lines()
+            .filter_map(|line| line.split_once(':'))
+            .find(|(name, _)| name.eq_ignore_ascii_case("authorization"))
+            .map_or_else(String::new, |(_, value)| value.trim().to_string())
+    }
+
+    /// Two credential generations must never share one connection.
+    ///
+    /// The trusted effect builds its HTTP client inside `execute` and drops it
+    /// at function exit, so the client's idle pool cannot outlive the single
+    /// invocation whose credential authorized it. The probe answers with a
+    /// keep-alive, fully delimited 204 — exactly the response a pooling client
+    /// would file away and reuse — so a client hoisted into a struct field, a
+    /// process-wide cell, or the wash-runtime pooled egress path (whose pool is
+    /// keyed by `workload_id` alone) would carry generation 8 over the very
+    /// connection generation 7 opened, and this test would see one connection
+    /// instead of two. No database is involved: `execute` is the whole wire.
+    #[tokio::test]
+    async fn credential_generations_never_share_a_connection() {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        const KEEP_ALIVE_204: &[u8] =
+            b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n";
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind credential-generation probe listener");
+        let probe = listener.local_addr().expect("probe listener address");
+
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let observed = Arc::new(Mutex::new(Vec::<(usize, String)>::new()));
+        let server_accepted = Arc::clone(&accepted);
+        let server_observed = Arc::clone(&observed);
+        let server = tokio::spawn(async move {
+            while let Ok((mut stream, _)) = listener.accept().await {
+                let connection = server_accepted.fetch_add(1, Ordering::SeqCst);
+                let observed = Arc::clone(&server_observed);
+                tokio::spawn(async move {
+                    let mut pending = Vec::new();
+                    let mut chunk = [0_u8; 1024];
+                    while let Ok(read) = stream.read(&mut chunk).await {
+                        if read == 0 {
+                            break;
+                        }
+                        pending.extend_from_slice(&chunk[..read]);
+                        while let Some(end) = head_end(&pending) {
+                            let head = String::from_utf8_lossy(&pending[..end]).into_owned();
+                            pending.drain(..end);
+                            observed
+                                .lock()
+                                .expect("probe observation log")
+                                .push((connection, authorization_of(&head)));
+                            if stream.write_all(KEEP_ALIVE_204).await.is_err() {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        let authority =
+            parse_http_connection_authority(&format!("http://{probe}/"), TlsPolicy::Disabled, None)
+                .expect("probe connection authority");
+        let target = normalize_portable_http_target("/probe").expect("probe request target");
+        let allowed_hosts: Arc<[AllowedHost]> =
+            vec![probe.to_string().parse().expect("probe host policy")].into();
+        let decision = resolve_http_request(
+            &authority,
+            &target,
+            &allowed_hosts,
+            &ExternallyEnforcedNetworkPolicy,
+            &TokioDnsResolver,
+        )
+        .await
+        .expect("probe authority decision");
+
+        let request = RelativeRequest {
+            method: "GET".into(),
+            path_and_query: "/probe".into(),
+            headers: Vec::new(),
+            body: None,
+        };
+        for generation in [7, 8] {
+            let credentials = HashMap::from([(
+                "authorization".to_string(),
+                format!("Bearer generation-{generation}"),
+            )]);
+            let response = execute(decision.clone(), &request, credentials)
+                .await
+                .expect("probe response");
+            assert_eq!(response.status, 204);
+        }
+        server.abort();
+
+        let calls = observed.lock().expect("probe observation log").clone();
+        assert_eq!(
+            calls,
+            vec![
+                (0, "Bearer generation-7".to_string()),
+                (1, "Bearer generation-8".to_string()),
+            ],
+            "each credential generation must open its own connection; a client that outlives \
+             one execute call would carry the second generation over the first generation's \
+             keep-alive connection"
+        );
+        assert_eq!(accepted.load(Ordering::SeqCst), 2);
+    }
+
     #[test]
     fn credential_set_is_strict_structured_json() {
         let headers = credential_headers(

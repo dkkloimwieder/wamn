@@ -150,6 +150,35 @@ fn flowrunner_world_imports_match_the_shared_linker_registrations() {
     );
 }
 
+/// `wamn:runner/http-effect` is the runner's only egress, and its host plugin
+/// builds and drops one HTTP client per invocation. The wash-runtime pooled
+/// `wasi:http` path keys its connection pool by `workload_id` alone, so two
+/// credential generations inside one run would silently share a connection if
+/// the world ever imported it. Keeping `wasi:http` out of the world is what
+/// makes that pool unreachable, so pin it here rather than trusting the
+/// registration table above (which maps only imports the world already has).
+#[test]
+fn flowrunner_world_imports_no_wasi_http_interface() {
+    let imports = declared_imports(WORLD_WIT);
+    assert!(
+        !imports.iter().any(|import| import.starts_with("wasi:http")),
+        "flowrunner world imports {imports:?} — a `wasi:http` import reaches the wash-runtime \
+         pooled outgoing-handler, whose pool is keyed by workload_id alone, so one run's \
+         credential generations would share a connection"
+    );
+
+    let mutant = WORLD_WIT.replace(
+        "world flowrunner {",
+        "world flowrunner {\n  import wasi:http/outgoing-handler@0.2.3;",
+    );
+    assert!(
+        declared_imports(&mutant)
+            .iter()
+            .any(|import| import.starts_with("wasi:http")),
+        "the guard must see a `wasi:http` import added to the flowrunner world"
+    );
+}
+
 #[test]
 fn guard_names_a_new_world_import_the_helper_does_not_register() {
     let mutant = WORLD_WIT.replace(

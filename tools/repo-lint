@@ -28,6 +28,23 @@ readonly WAMN_COMPONENT_MANIFEST="$WAMN_REPOSITORY_ROOT/components/Cargo.toml"
 readonly WAMN_CARGO="${CARGO:-cargo}"
 readonly WAMN_CONNECTION_HTTP_NATIVE_RUSTFLAGS='-C panic=abort'
 
+# The trusted HTTP connection effect must construct one client per invocation
+# and drop it at function exit. The wash-runtime pooled egress path keys its
+# connection pool by workload_id alone, so any client that outlives a single
+# invocation would let two credential generations share one connection.
+readonly WAMN_CONNECTION_HTTP_SOURCE="$WAMN_REPOSITORY_ROOT/crates/platform/runtime/src/plugins/connection_http.rs"
+readonly WAMN_CONNECTION_HTTP_BUILDER='reqwest::Client::builder('
+readonly -a WAMN_CONNECTION_HTTP_REFUSED_PATTERN=(
+  '^[[:space:]]+[A-Za-z_]+:[^=]*Client'
+  '(^|[[:space:]])static[[:space:]]|OnceLock|OnceCell|LazyLock|lazy_static|once_cell'
+  'OutgoingHandler|send_request|wasmtime_wasi_http|wasi_http|wasi:http'
+)
+readonly -a WAMN_CONNECTION_HTTP_REFUSED_REASON=(
+  'holds an HTTP client in a struct field'
+  'holds an HTTP client in a process-wide or lazily initialized cell'
+  'reaches the wash-runtime pooled egress path, keyed by workload_id alone'
+)
+
 readonly -a WAMN_ROOT_FORMAT=(
   fmt --manifest-path "$WAMN_ROOT_MANIFEST" --all -- --check
 )
@@ -70,6 +87,7 @@ wamn_print_plan() {
 
 wamn_dry_run() {
   printf 'working-directory: %q\n' "$WAMN_REPOSITORY_ROOT"
+  printf 'connection-http-construction: %q\n' "$WAMN_CONNECTION_HTTP_SOURCE"
   wamn_print_plan 'root-rustfmt' "${WAMN_ROOT_FORMAT[@]}"
   wamn_print_plan 'components-rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
   wamn_print_plan 'root-clippy' "${WAMN_ROOT_CLIPPY[@]}"
@@ -102,6 +120,37 @@ wamn_run() {
   "$WAMN_CARGO" "$@"
 }
 
+# Pin the per-invocation client construction that keeps credentialed HTTP
+# egress free of cross-generation connection reuse.
+wamn_connection_http_construction() {
+  printf 'repo-lint: connection HTTP per-invocation client\n' >&2
+  [[ -r "$WAMN_CONNECTION_HTTP_SOURCE" ]] || {
+    wamn_fail 65 "connection HTTP source is unreadable: $WAMN_CONNECTION_HTTP_SOURCE"
+  }
+
+  local builders
+  builders="$(
+    { grep -o -F -e "$WAMN_CONNECTION_HTTP_BUILDER" -- "$WAMN_CONNECTION_HTTP_SOURCE" || true; } |
+      wc -l
+  )"
+  ((builders == 1)) || {
+    wamn_fail 65 "connection_http.rs must contain exactly one" \
+      "${WAMN_CONNECTION_HTTP_BUILDER}) construction; found $builders"
+  }
+
+  local index found
+  for index in "${!WAMN_CONNECTION_HTTP_REFUSED_PATTERN[@]}"; do
+    found="$({
+      grep -n -E -e "${WAMN_CONNECTION_HTTP_REFUSED_PATTERN[index]}" \
+        -- "$WAMN_CONNECTION_HTTP_SOURCE" || true
+    })"
+    [[ -z "$found" ]] || {
+      wamn_fail 65 "connection_http.rs ${WAMN_CONNECTION_HTTP_REFUSED_REASON[index]}:" \
+        "$found"
+    }
+  done
+}
+
 (($# <= 1)) || wamn_usage_error 'expected at most one command'
 readonly WAMN_COMMAND="${1:-run}"
 
@@ -112,6 +161,7 @@ case "$WAMN_COMMAND" in
   run)
     wamn_require_cargo
     cd -- "$WAMN_REPOSITORY_ROOT"
+    wamn_connection_http_construction
     wamn_run 'root rustfmt' "${WAMN_ROOT_FORMAT[@]}"
     wamn_run 'components rustfmt' "${WAMN_COMPONENT_FORMAT[@]}"
     wamn_run 'root Clippy' "${WAMN_ROOT_CLIPPY[@]}"
