@@ -1,9 +1,9 @@
 import { cleanup, render } from "@solidjs/testing-library";
-import { flush } from "solid-js";
+import { createSignal, flush } from "solid-js";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { finalizedReport } from "../reader/fixtures";
-import type { AssertionFailure, ReportCase } from "../reader/types";
+import type { Assertion, AssertionFailure, ReportCase } from "../reader/types";
 import { AssertionFailureView } from "./report-assertion";
 
 /**
@@ -212,5 +212,39 @@ describe("what a named-node-terminal assertion does not carry", () => {
 
     expect(expected(container)).toContain("orders/check-stock → error");
     expect(expected(container)).toContain("failure kind not recorded");
+  });
+});
+
+describe("the family switch, anchored to the union", () => {
+  it("names a family it has no rendering for, rather than drawing its name over nothing", () => {
+    // Reachable only by a cast: the switch's `default` clause is typed `never`,
+    // so a fifth `AssertionFamily` fails the build instead of arriving here. If a
+    // decoder ever widens ahead of this screen anyway, the family name printed
+    // over an empty line would claim the assertion carried nothing.
+    const { container } = view({
+      expected: { family: "captured-effect" } as unknown as Assertion,
+      observed: "no expected side was rendered",
+    });
+
+    expect(expected(container)).toContain("captured-effect");
+    expect(expected(container)).toContain("this console has no rendering for this family");
+  });
+
+  it("redraws the expected side when the read hands the view another assertion", () => {
+    // the switch runs in a reactive position, not once per component: a refresh
+    // that re-reads the report must not leave the previous family's line up
+    const [failure, setFailure] = createSignal(assertionOf("run-terminal-outcome"));
+    const { container } = render(() => (
+      <AssertionFailureView failure={failure()} subject="case c assertion 1" />
+    ));
+    flush();
+    expect(expected(container)).toContain("completed");
+
+    setFailure(assertionOf("typed-flow-failure"));
+    flush();
+
+    expect(expected(container)).toContain("typed-flow-failure");
+    expect(expected(container)).toContain("retry-exhausted");
+    expect(expected(container)).not.toContain("completed");
   });
 });

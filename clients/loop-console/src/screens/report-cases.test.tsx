@@ -95,6 +95,49 @@ describe("which rows arrive open", () => {
     );
     expect(container).not.toHaveTextContent("this case passed");
   });
+
+  it("says the report carried no failure kind rather than opening onto a blank", () => {
+    // the kind is null exactly when the case passed, so a null on a failed case
+    // is a field the read did not carry — the same absence `report-assertion.tsx`
+    // names on a node error, in the same words
+    const { container } = list([
+      {
+        caseId: "backorders-when-out-of-stock",
+        passed: false,
+        runId: null,
+        failureKind: null,
+        failedAssertions: [
+          {
+            expected: { family: "run-terminal-outcome", status: "completed" },
+            observed: "run terminal status was failed, not completed",
+          },
+        ],
+      },
+    ]);
+
+    expect(disclosed(container)[0]).toHaveTextContent("failure kind not recorded");
+    // and the assertion detail is still drawn under it
+    expect(disclosed(container)[0].querySelectorAll(".report-assertion")).toHaveLength(1);
+  });
+
+  it("keeps the failure pair off a passed case, whose kind is null by contract", () => {
+    const { container, getByLabelText } = list([
+      {
+        caseId: "creates-order",
+        passed: true,
+        runId: "01J9",
+        failureKind: null,
+        failedAssertions: [],
+      },
+    ]);
+
+    fireEvent.click(getByLabelText("expand case creates-order"));
+    flush();
+
+    // a passed case's null is the documented state, not a missing read
+    expect(container).not.toHaveTextContent("failure kind not recorded");
+    expect(container.querySelector(".key-value")).toBeNull();
+  });
 });
 
 describe("the run handoff", () => {

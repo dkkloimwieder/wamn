@@ -68,9 +68,23 @@ function noAssertions(reportCase: ReportCase): string {
 function CaseDetail(props: { reportCase: ReportCase }): JSX.Element {
   return (
     <div class="report-case-detail">
-      {/* Null exactly when the case passed, so the pair appears only on a failure. */}
-      <Show when={props.reportCase.failureKind}>
-        {(kind) => <KeyValue label="failure">{kind()}</KeyValue>}
+      {/*
+       * Null exactly when the case passed, so the pair belongs to a failure and
+       * only to one — but a null on a FAILED case is a field the read did not
+       * carry, not a case that failed of nothing. Dropping the pair there would
+       * leave a blank where the platform said nothing, so a failed case keeps
+       * its `failure` key and names the absence in the words its sibling
+       * `report-assertion.tsx` already uses.
+       */}
+      <Show when={!props.reportCase.passed}>
+        <KeyValue label="failure">
+          <Show
+            when={props.reportCase.failureKind}
+            fallback={<span class="report-case-absent frame">failure kind not recorded</span>}
+          >
+            {(kind) => kind()}
+          </Show>
+        </KeyValue>
       </Show>
       <Show
         when={props.reportCase.failedAssertions.length > 0}

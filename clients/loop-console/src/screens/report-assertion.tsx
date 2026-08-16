@@ -1,5 +1,5 @@
 import type { JSX } from "@solidjs/web";
-import { Match, Show, Switch } from "solid-js";
+import { Show } from "solid-js";
 
 import { wireFailureKind, wireRunStatus } from "../reader/run-vocabulary";
 import type {
@@ -84,71 +84,88 @@ function Gloss(props: { gloss: string | null }): JSX.Element {
   );
 }
 
-/** The expected side, by family. Each renders what its own family carries, and nothing else. */
-function Expected(props: { assertion: Assertion; subject: string }): JSX.Element {
-  return (
-    <Switch>
-      <Match when={props.assertion.family === "run-terminal-outcome" ? props.assertion : null}>
-        {(assertion) => (
-          <span class="report-expected-line">
-            <StatusBadge
-              status={assertion().status}
-              tone={runStatusTone(assertion().status)}
-            />
-            <Gloss gloss={runStatusGloss(assertion().status)} />
-          </span>
-        )}
-      </Match>
-      <Match when={props.assertion.family === "typed-flow-failure" ? props.assertion : null}>
-        {(assertion) => (
-          // No badge: a failure kind is not a status, and the five §1.1 tones are
-          // the status roles. Giving it one would invent a semantics for it.
-          <span class="report-expected-line">
-            {assertion().kind}
-            <Gloss gloss={flowFailureGloss(assertion().kind)} />
-          </span>
-        )}
-      </Match>
-      <Match when={props.assertion.family === "named-node-terminal" ? props.assertion : null}>
-        {(assertion) => (
-          <span class="report-expected-line">
-            {/* §2.3's `check-stock → error`, with the flow the node belongs to:
-                the assertion names a flow/node pair and the node id alone does
-                not identify one. */}
-            {assertion().flowId}/{assertion().nodeId} <span aria-hidden="true">→</span>{" "}
-            <StatusBadge status={assertion().status} tone={nodeRunTone(assertion().status)} />
-            {/* The node vocabulary is one word on both sides — `node_runs.status`
-                and the assertion's `NodeTerminalStatus` are the same set — so
-                nothing is glossed here. */}
-            <Show when={assertion().status === "error" ? assertion() : null}>
-              {(errored) => (
-                <Show
-                  when={errored().failureKind}
-                  fallback={
-                    // Required when the status is `error`, so a missing one is a
-                    // field the read did not carry, not a kind that is absent.
-                    <span class="report-absent frame"> · failure kind not recorded</span>
-                  }
-                >
-                  {(kind) => <> · {kind()}</>}
-                </Show>
-              )}
+/**
+ * The expected side, by family. Each renders what its own family carries, and
+ * nothing else.
+ *
+ * A `switch` rather than §2.3's `Switch`/`Match`, for the reason `runStatusGloss`
+ * and `flowFailureGloss` above are switches: the `default` clause anchors the
+ * arms to the union. `AssertionFailureView` prints the family name
+ * unconditionally over this, so a family with no arm here would draw its own
+ * name above an empty line — a blank where the assertion should be
+ * (wamn-dggp.29).
+ */
+function expectedLine(assertion: Assertion, subject: string): JSX.Element {
+  switch (assertion.family) {
+    case "run-terminal-outcome":
+      return (
+        <span class="report-expected-line">
+          <StatusBadge status={assertion.status} tone={runStatusTone(assertion.status)} />
+          <Gloss gloss={runStatusGloss(assertion.status)} />
+        </span>
+      );
+    case "typed-flow-failure":
+      return (
+        // No badge: a failure kind is not a status, and the five §1.1 tones are
+        // the status roles. Giving it one would invent a semantics for it.
+        <span class="report-expected-line">
+          {assertion.kind}
+          <Gloss gloss={flowFailureGloss(assertion.kind)} />
+        </span>
+      );
+    case "named-node-terminal":
+      return (
+        <span class="report-expected-line">
+          {/* §2.3's `check-stock → error`, with the flow the node belongs to:
+              the assertion names a flow/node pair and the node id alone does
+              not identify one. */}
+          {assertion.flowId}/{assertion.nodeId} <span aria-hidden="true">→</span>{" "}
+          <StatusBadge status={assertion.status} tone={nodeRunTone(assertion.status)} />
+          {/* The node vocabulary is one word on both sides — `node_runs.status`
+              and the assertion's `NodeTerminalStatus` are the same set — so
+              nothing is glossed here. */}
+          <Show when={assertion.status === "error"}>
+            <Show
+              when={assertion.failureKind}
+              fallback={
+                // Required when the status is `error`, so a missing one is a
+                // field the read did not carry, not a kind that is absent.
+                <span class="report-absent frame"> · failure kind not recorded</span>
+              }
+            >
+              {(kind) => <> · {kind()}</>}
             </Show>
-          </span>
-        )}
-      </Match>
-      <Match when={props.assertion.family === "terminal-respond" ? props.assertion : null}>
-        {(assertion) => (
-          <>
-            <span class="report-expected-line">status {assertion().status}</span>
-            {/* The subject names which evidence the copy button acts on: one
-                screen carries a view per terminal-respond assertion. */}
-            <JsonView value={assertion().body} subject={`${props.subject} expected body`} />
-          </>
-        )}
-      </Match>
-    </Switch>
-  );
+          </Show>
+        </span>
+      );
+    case "terminal-respond":
+      return (
+        <>
+          <span class="report-expected-line">status {assertion.status}</span>
+          {/* The subject names which evidence the copy button acts on: one
+              screen carries a view per terminal-respond assertion. */}
+          <JsonView value={assertion.body} subject={`${subject} expected body`} />
+        </>
+      );
+    default:
+      // The anchor, in `run-vocabulary.ts`'s spelling: `assertion` is `never`
+      // while the arms above cover the union, so a fifth family fails to compile
+      // on this line rather than reaching the render. What it draws is for the
+      // cast that gets here anyway — the absence named, since a family printed
+      // over an empty line would claim the assertion carried nothing.
+      assertion satisfies never;
+      return (
+        <span class="report-absent frame">this console has no rendering for this family</span>
+      );
+  }
+}
+
+/**
+ * The expected side, in a reactive position: the fragment is what re-runs the
+ * family switch when the assertion changes, since a component body runs once.
+ */
+function Expected(props: { assertion: Assertion; subject: string }): JSX.Element {
+  return <>{expectedLine(props.assertion, props.subject)}</>;
 }
 
 export function AssertionFailureView(props: {
