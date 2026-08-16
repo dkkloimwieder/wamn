@@ -1,15 +1,15 @@
 import type { JSX } from "@solidjs/web";
 
+import { Glyph } from "./glyph";
 import { type VerdictState, verdictTone } from "./status";
-import "./tone.css";
-import "./verdict-glyph.css";
 
 /**
  * §2.0's tree mark: the verdict an *entity* carries, in the four states the
- * panel draws. Built the way `PassGlyph` is built — the character is decoration
- * and is hidden, the word beside it is the fact, and the tone is set from the
- * vocabulary rather than named here — but kept beside it rather than folded
- * into it, because the two say different things about different objects.
+ * panel draws. Drawn by `Glyph`, the one construction `PassGlyph` is drawn from
+ * too — the character is decoration and is hidden, the word beside it is the
+ * fact, and the tone is set from the vocabulary rather than named here. The
+ * drawing is folded; the vocabulary is not, because the two say different
+ * things about different objects.
  *
  * The words are deliberately not `PassGlyph`'s. That glyph says "passed" /
  * "failed" about one test case, which is a reading only §2.3 has; here the
@@ -33,10 +33,11 @@ import "./verdict-glyph.css";
  * Looked up through maps rather than indexed as records, the way `status.ts`
  * does it: `satisfies` still forces every state to be spelled here, and a state
  * this build has never heard of lands in a stated fallback instead of an
- * undefined. Both stay reactive because both are read inside the JSX — the
- * glyph is cached display text "refreshed whenever the entity is visited", so a
- * `state` frozen at first render would leave a run that has moved on still
- * wearing the verdict it was first seen with.
+ * undefined. Both lookups stay reactive because both are written into `Glyph`'s
+ * props rather than run in this body — the glyph is cached display text
+ * "refreshed whenever the entity is visited", so a `state` frozen at first
+ * render would leave a run that has moved on still wearing the verdict it was
+ * first seen with.
  */
 const marks: ReadonlyMap<string, string> = new Map(
   Object.entries({
@@ -86,9 +87,11 @@ function wordFor(state: VerdictState): string {
  */
 export function VerdictGlyph(props: { state: VerdictState }): JSX.Element {
   return (
-    <span class="verdict-glyph" data-tone={verdictTone(props.state)}>
-      <span aria-hidden="true">{marks.get(props.state) ?? UNRECOGNIZED_MARK}</span>
-      <span class="visually-hidden">{wordFor(props.state)}</span>
-    </span>
+    <Glyph
+      class="verdict-glyph"
+      tone={verdictTone(props.state)}
+      mark={marks.get(props.state) ?? UNRECOGNIZED_MARK}
+      word={wordFor(props.state)}
+    />
   );
 }

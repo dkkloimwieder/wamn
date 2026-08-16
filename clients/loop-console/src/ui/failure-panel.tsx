@@ -9,7 +9,7 @@ import "./failure-panel.css";
 
 /**
  * §2.2's RUN FAILURE section: kind · at · detail, with `▸ raw` on the detail's
- * own line.
+ * own line — one deviation from the wireframe, on the `at` row, recorded there.
  *
  * Only `kind` is always there. The failing node and the reason are `runs`
  * columns the wire `RunFailure` does not carry, so each absence is spelled out
@@ -20,6 +20,31 @@ export function FailurePanel(props: { failure: RunFailure }): JSX.Element {
   return (
     <div class="failure-panel">
       <KeyValue label="kind">{props.failure.kind}</KeyValue>
+      {/*
+       * §2.2 prints this row as `at fetch-inventory (http-request)`. This one
+       * prints the node alone, and that is a decision rather than an omission.
+       *
+       * `RunFailure` is the `runs` row's failure columns and carries no node
+       * type. The type exists only on `ExecutionFact.nodeType`, which the reader
+       * has already joined from the flow definition by node id (STEP-9 RISK), so
+       * the parenthetical would have to be joined a second time here — from the
+       * returned facts, by matching `fail_node`. That second join is not total:
+       * the facts are a bounded window (`FactCount.truncated`, §2.2's `showing
+       * 200 of 3,412`) and `fail_node` need not name a node this read returned a
+       * fact for at all, so a miss cannot be told apart from a node that has no
+       * type. Printing nothing on a miss is the blank this panel's header
+       * forbids, and printing `not recorded` would deny a type the platform does
+       * record. Nor would the join be free: this panel is handed one failure, and
+       * taking the fact list beside it would make a panel over `runs` columns
+       * depend on `node_runs` rows for a parenthetical. The type is not lost in
+       * the meantime — §2.2's execution table prints node · type one section
+       * below, on the failing node's own row.
+       *
+       * What would change it: the reader resolves the failing node's type where
+       * it already resolves `nodeType` for the facts, and hands it over on
+       * `RunFailure`. This panel then keeps taking exactly one value and prints
+       * the parenthetical when the read supplies it, with nothing to join here.
+       */}
       <KeyValue label="at">{recorded(props.failure.node)}</KeyValue>
       {/*
        * §2.2 trails the detail row with `▸ raw` on that same line, so the toggle

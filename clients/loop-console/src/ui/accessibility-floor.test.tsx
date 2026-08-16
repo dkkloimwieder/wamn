@@ -531,9 +531,14 @@ describe("accessibility floor", () => {
    * an http: URL that names no path.
    */
   const uiDirectory = import.meta.dirname;
-  const uiSources = readdirSync(uiDirectory).map(
-    (name) => [name, readFileSync(join(uiDirectory, name), "utf8")] as const,
-  );
+  // Files only. Vitest browser mode writes a `__screenshots__` directory beside
+  // a failing test, so reading every entry as a file meant the first red browser
+  // test in this directory would take the whole floor down with EISDIR — naming
+  // a filesystem error, in a suite about accessibility, for a reason nowhere in
+  // the message. `withFileTypes` costs nothing and removes the trap.
+  const uiSources = readdirSync(uiDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => [entry.name, readFileSync(join(uiDirectory, entry.name), "utf8")] as const);
 
   it("leaves the one focus ring to app.css", () => {
     const ring = readFileSync(join(uiDirectory, "..", "styles", "app.css"), "utf8");
