@@ -55,11 +55,21 @@ use tokio_postgres::{Config as PgConfig, GenericClient, NoTls};
 use url::Url;
 
 use wamn_control_provision::{
-    APP_ROLE, CredentialGeneration, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, compose_url, effect_writer_credential,
-    effect_writer_generation_role, effect_writer_scope_hash, project_env_database_name,
-    project_env_secret_name, render_effect_writer_secret_manifest, render_project_env_database,
-    render_project_env_secret_manifest, sql, validate_project_env,
+    APP_ROLE, ARTIFACT_READER_APPLICATION_NAME, ARTIFACT_READER_CREDENTIAL_KEY,
+    ARTIFACT_READER_VERIFY_APPLICATION_NAME, ArtifactReaderCredential,
+    ArtifactReaderCredentialScope, ArtifactReaderCredentialValidity, ArtifactReaderTenantScope,
+    CredentialGeneration, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
+    EffectWriterCredentialValidity, artifact_reader_credential, artifact_reader_endpoint,
+    artifact_reader_generation_role, artifact_reader_generation_role_marker,
+    artifact_reader_policy_name, artifact_reader_secret_name, artifact_reader_tenant_role,
+    artifact_reader_tenant_role_marker, artifact_reader_tenant_scope_hash, compose_url,
+    effect_writer_credential, effect_writer_generation_role, effect_writer_scope_hash,
+    parse_artifact_reader_credential, project_env_database_name, project_env_secret_name,
+    render_artifact_reader_secret_manifest, render_effect_writer_secret_manifest,
+    render_project_env_database, render_project_env_secret_manifest, sql,
+    validate_artifact_reader_credential, validate_artifact_reader_generation_role_marker,
+    validate_artifact_reader_scope, validate_artifact_reader_tenant_child_role_marker,
+    validate_artifact_reader_tenant_role_marker, validate_project_env,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
@@ -180,6 +190,56 @@ pub struct ProvisionProjectEnvArgs {
     )]
     pub emit_effect_writer_secret: Option<PathBuf>,
 
+    /// Exact tenant identity bound into an artifact-reader credential and RLS policy.
+    #[arg(long, value_name = "TENANT")]
+    pub artifact_reader_tenant_id: Option<String>,
+
+    /// Prepare and authenticate the inactive control artifact-reader generation.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "retire_artifact_reader_generation",
+            "revoke_artifact_reader_credential",
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation"
+        ]
+    )]
+    pub prepare_artifact_reader_generation: Option<CredentialGeneration>,
+
+    /// Retire an old reader generation after replacement executor use is proven.
+    #[arg(
+        long,
+        value_name = "a|b",
+        conflicts_with_all = [
+            "prepare_artifact_reader_generation",
+            "revoke_artifact_reader_credential",
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation"
+        ]
+    )]
+    pub retire_artifact_reader_generation: Option<CredentialGeneration>,
+
+    /// Emergency-revoke both reader slots without requiring a replacement.
+    #[arg(
+        long,
+        conflicts_with_all = [
+            "prepare_artifact_reader_generation",
+            "retire_artifact_reader_generation",
+            "prepare_effect_writer_generation",
+            "retire_effect_writer_generation",
+            "abort_effect_writer_generation"
+        ]
+    )]
+    pub revoke_artifact_reader_credential: bool,
+
+    /// Fixed artifact-reader Secret manifest path. Written only after prepare
+    /// verification and removed only after emergency database revocation.
+    #[arg(long, value_name = "PATH", value_parser = parse_secret_path)]
+    pub emit_artifact_reader_secret: Option<PathBuf>,
+
     /// Write the CNPG `Database` CR (JSON) here; `-` = stdout. Absent ⇒ printed
     /// with a labeled header.
     #[arg(long)]
@@ -205,7 +265,10 @@ pub struct ProvisionProjectEnvArgs {
             "revoke_pat_prefix",
             "prepare_effect_writer_generation",
             "retire_effect_writer_generation",
-            "abort_effect_writer_generation"
+            "abort_effect_writer_generation",
+            "prepare_artifact_reader_generation",
+            "retire_artifact_reader_generation",
+            "revoke_artifact_reader_credential"
         ]
     )]
     pub emit_secret: Option<PathBuf>,
@@ -242,7 +305,42 @@ pub struct ProvisionProjectEnvArgs {
     pub revoke_pat_prefix: Option<String>,
 }
 
+fn validate_artifact_reader_flag_closure(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    let action = args.prepare_artifact_reader_generation.is_some()
+        || args.retire_artifact_reader_generation.is_some()
+        || args.revoke_artifact_reader_credential;
+    let auxiliary =
+        args.artifact_reader_tenant_id.is_some() || args.emit_artifact_reader_secret.is_some();
+    if action {
+        anyhow::ensure!(
+            args.revoke_pat_prefix.is_none()
+                && args.prepare_effect_writer_generation.is_none()
+                && args.retire_effect_writer_generation.is_none()
+                && args.abort_effect_writer_generation.is_none()
+                && args.target_admin_database_url.is_none()
+                && args.emit_effect_writer_secret.is_none()
+                && args.emit_database.is_none()
+                && args.emit_role_sql.is_none()
+                && args.emit_privilege_sql.is_none()
+                && args.emit_secret.is_none()
+                && args.emit_management_author_pat_secret.is_none()
+                && args.emit_route_caller_pat_secret.is_none()
+                && args.secret_namespace.is_none()
+                && args.app_port == 5432
+                && args.app_password == "wamn_app",
+            "artifact-reader generation actions cannot be combined with PAT or effect-writer actions"
+        );
+    } else {
+        anyhow::ensure!(
+            !auxiliary,
+            "artifact-reader tenant and Secret flags require an artifact-reader generation action"
+        );
+    }
+    Ok(())
+}
+
 pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    validate_artifact_reader_flag_closure(&args)?;
     if let Some(prefix) = args.revoke_pat_prefix.as_deref() {
         let system_url = args
             .system_database_url
@@ -259,9 +357,19 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     {
         return run_effect_writer_action(&args).await;
     }
+    if args.prepare_artifact_reader_generation.is_some()
+        || args.retire_artifact_reader_generation.is_some()
+        || args.revoke_artifact_reader_credential
+    {
+        return run_artifact_reader_action(&args).await;
+    }
     anyhow::ensure!(
         args.target_admin_database_url.is_none(),
         "--target-admin-database-url is valid only for an effect-writer generation action"
+    );
+    anyhow::ensure!(
+        args.artifact_reader_tenant_id.is_none() && args.emit_artifact_reader_secret.is_none(),
+        "artifact-reader tenant and Secret flags require an artifact-reader generation action"
     );
 
     let db_secret_path = args
@@ -1136,10 +1244,37 @@ async fn verify_public_access_floor(client: &(impl GenericClient + Sync)) -> any
     Ok(())
 }
 
+async fn verify_artifact_reader_public_access_floor(
+    client: &(impl GenericClient + Sync),
+) -> anyhow::Result<()> {
+    let databases: Vec<String> = client
+        .query(sql::artifact_reader_public_connect_databases_sql(), &[])
+        .await
+        .context("verify artifact-reader PUBLIC CONNECT floor")?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    anyhow::ensure!(
+        databases.is_empty(),
+        "artifact-reader preparation requires PUBLIC CONNECT revoked on every connectable database; still granted on {databases:?}"
+    );
+    let public_temporary: bool = client
+        .query_one(sql::public_temporary_on_current_database_sql(), &[])
+        .await
+        .context("verify artifact-reader target database PUBLIC TEMPORARY floor")?
+        .get(0);
+    anyhow::ensure!(
+        !public_temporary,
+        "artifact-reader actions require PUBLIC TEMPORARY revoked on the exact control database"
+    );
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RoleAclExpectation<'a> {
     None,
     Generation { database: &'a str },
+    ArtifactReaderAclRole { database: &'a str },
     EffectAclRole,
     ProjectionAclRole,
 }
@@ -1177,14 +1312,28 @@ async fn verify_role_acl_inventory(
                 schema_name: row.get("schema_name"),
                 object_name: row.get("object_name"),
                 privilege: row.get("privilege_type"),
+                grantable: row.get("is_grantable"),
             })
             .collect();
+        for acl in &inventory {
+            anyhow::ensure!(
+                !acl.grantable,
+                "role {role:?} may grant {} on {} {}.{} in database {database:?}",
+                acl.privilege,
+                acl.object_kind,
+                acl.schema_name,
+                acl.object_name,
+            );
+        }
         match expectation {
             RoleAclExpectation::EffectAclRole => {
                 verify_effect_writer_acl_role_inventory(role, &database, &inventory)?;
             }
             RoleAclExpectation::ProjectionAclRole => {
                 verify_run_projection_acl_role_inventory(role, &database, &inventory)?;
+            }
+            RoleAclExpectation::ArtifactReaderAclRole { database: expected } => {
+                verify_artifact_reader_acl_role_inventory(role, &database, expected, &inventory)?;
             }
             expectation => {
                 for acl in &inventory {
@@ -1197,7 +1346,10 @@ async fn verify_role_acl_inventory(
                                 && acl.privilege == "CONNECT"
                         }
                         RoleAclExpectation::EffectAclRole
-                        | RoleAclExpectation::ProjectionAclRole => unreachable!("handled above"),
+                        | RoleAclExpectation::ProjectionAclRole
+                        | RoleAclExpectation::ArtifactReaderAclRole { .. } => {
+                            unreachable!("handled above")
+                        }
                     };
                     anyhow::ensure!(
                         allowed,
@@ -1213,6 +1365,55 @@ async fn verify_role_acl_inventory(
         drop(client);
         task.await.context("join cross-database ACL connection")??;
     }
+    Ok(())
+}
+
+fn verify_artifact_reader_acl_role_inventory(
+    role: &str,
+    database: &str,
+    expected_database: &str,
+    inventory: &[RoleAcl],
+) -> anyhow::Result<()> {
+    let actual = inventory
+        .iter()
+        .map(|acl| {
+            (
+                acl.object_kind.clone(),
+                acl.schema_name.clone(),
+                acl.object_name.clone(),
+                acl.privilege.clone(),
+            )
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = if database == expected_database {
+        let mut expected = BTreeSet::from([(
+            "schema".to_string(),
+            "catalog".to_string(),
+            "catalog".to_string(),
+            "USAGE".to_string(),
+        )]);
+        for column in [
+            "tenant_id",
+            "execution_bundle_hash",
+            "format_version",
+            "exact_bytes",
+            "byte_length",
+        ] {
+            expected.insert((
+                "column".to_string(),
+                "catalog".to_string(),
+                format!("execution_bundles.{column}"),
+                "SELECT".to_string(),
+            ));
+        }
+        expected
+    } else {
+        BTreeSet::new()
+    };
+    anyhow::ensure!(
+        actual == expected,
+        "stable artifact-reader role {role:?} has unexpected direct ACLs in database {database:?}"
+    );
     Ok(())
 }
 
@@ -1269,6 +1470,7 @@ struct RoleAcl {
     schema_name: String,
     object_name: String,
     privilege: String,
+    grantable: bool,
 }
 
 fn verify_effect_writer_acl_role_inventory(
@@ -1376,6 +1578,1310 @@ async fn read_effect_writer_role_state(
         sessions: row.get("sessions"),
         owned_objects: row.get("owned_objects"),
     }))
+}
+
+const ARTIFACT_READER_CREDENTIAL_TTL_DAYS: i64 = 30;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtifactReaderRoleState {
+    login: bool,
+    superuser: bool,
+    inherit: bool,
+    create_role: bool,
+    create_db: bool,
+    replication: bool,
+    bypass_rls: bool,
+    password_set: bool,
+    valid_until: Option<String>,
+    valid_until_finite: bool,
+    marker: Option<String>,
+    memberships: Vec<String>,
+    membership_options_exact: bool,
+    member_roles: Vec<String>,
+    member_options_exact: bool,
+    database_settings: Vec<String>,
+    connect_databases: Vec<String>,
+    effective_connect_databases: Vec<String>,
+    sessions: i64,
+    owned_objects: i64,
+}
+
+impl ArtifactReaderRoleState {
+    fn restrictive_attributes(&self) -> bool {
+        !self.superuser
+            && !self.create_role
+            && !self.create_db
+            && !self.replication
+            && !self.bypass_rls
+    }
+
+    fn is_stable_role(&self) -> bool {
+        !self.login
+            && self.restrictive_attributes()
+            && !self.inherit
+            && !self.password_set
+            && self.valid_until.is_none()
+            && !self.valid_until_finite
+            && self.memberships.is_empty()
+            && self.membership_options_exact
+            && self.member_options_exact
+            && self.database_settings.is_empty()
+            && self.connect_databases.is_empty()
+            && self.effective_connect_databases.is_empty()
+            && self.sessions == 0
+            && self.owned_objects == 0
+    }
+
+    fn is_active_for(&self, stable_role: &str, tenant_id: &str, database: &str) -> bool {
+        self.login
+            && self.restrictive_attributes()
+            && self.inherit
+            && self.password_set
+            && self.valid_until.is_some()
+            && self.valid_until_finite
+            && self.memberships == [stable_role]
+            && self.membership_options_exact
+            && self.member_roles.is_empty()
+            && self.member_options_exact
+            && self.database_settings == [format!("{database}:app.tenant={tenant_id}")]
+            && self.connect_databases == [database]
+            && self.effective_connect_databases == [database]
+            && self.owned_objects == 0
+    }
+
+    fn is_inactive(&self) -> bool {
+        !self.login
+            && self.restrictive_attributes()
+            && self.inherit
+            && !self.password_set
+            && self.valid_until.as_deref() == Some("1970-01-01T00:00:00Z")
+            && self.valid_until_finite
+            && self.memberships.is_empty()
+            && self.membership_options_exact
+            && self.member_roles.is_empty()
+            && self.member_options_exact
+            && self.database_settings.is_empty()
+            && self.connect_databases.is_empty()
+            && self.effective_connect_databases.is_empty()
+            && self.sessions == 0
+            && self.owned_objects == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtifactReaderPolicyState {
+    name: String,
+    command: String,
+    permissive: bool,
+    roles: Vec<String>,
+    using_expression: Option<String>,
+    check_expression: Option<String>,
+}
+
+async fn read_artifact_reader_role_state(
+    client: &(impl GenericClient + Sync),
+    role: &str,
+    stable: bool,
+) -> anyhow::Result<Option<ArtifactReaderRoleState>> {
+    let query = if stable {
+        sql::artifact_reader_tenant_role_state_sql()
+    } else {
+        sql::artifact_reader_generation_state_sql()
+    };
+    let row = client
+        .query_opt(query, &[&role])
+        .await
+        .context("read artifact-reader role state")?;
+    Ok(row.map(|row| ArtifactReaderRoleState {
+        login: row.get("rolcanlogin"),
+        superuser: row.get("rolsuper"),
+        inherit: row.get("rolinherit"),
+        create_role: row.get("rolcreaterole"),
+        create_db: row.get("rolcreatedb"),
+        replication: row.get("rolreplication"),
+        bypass_rls: row.get("rolbypassrls"),
+        password_set: row.get("password_set"),
+        valid_until: row.get("valid_until"),
+        valid_until_finite: row.get("valid_until_finite"),
+        marker: row.get("marker"),
+        memberships: row.get("memberships"),
+        membership_options_exact: row.get("membership_options_exact"),
+        member_roles: row.get("member_roles"),
+        member_options_exact: row.get("member_options_exact"),
+        database_settings: row.get("database_settings"),
+        connect_databases: row.get("connect_databases"),
+        effective_connect_databases: row.get("effective_connect_databases"),
+        sessions: row.get("sessions"),
+        owned_objects: row.get("owned_objects"),
+    }))
+}
+
+async fn read_artifact_reader_policy_state(
+    client: &(impl GenericClient + Sync),
+    policy: &str,
+    stable_role: &str,
+    generation_role: Option<&str>,
+) -> anyhow::Result<Vec<ArtifactReaderPolicyState>> {
+    let generation_role = generation_role.unwrap_or("");
+    client
+        .query(
+            sql::artifact_reader_policy_state_sql(),
+            &[&stable_role, &generation_role, &policy],
+        )
+        .await
+        .context("read artifact-reader restrictive policy state")?
+        .into_iter()
+        .map(|row| {
+            Ok(ArtifactReaderPolicyState {
+                name: row.get(0),
+                command: row.get(1),
+                permissive: row.get(2),
+                roles: row.get(3),
+                using_expression: row.get(4),
+                check_expression: row.get(5),
+            })
+        })
+        .collect()
+}
+
+type ArtifactReaderAuthority = (String, String, String, String);
+
+fn expected_artifact_reader_authority(
+    active: bool,
+    connect_database: Option<&str>,
+) -> BTreeSet<ArtifactReaderAuthority> {
+    let mut expected = BTreeSet::new();
+    if !active {
+        return expected;
+    }
+    expected.insert((
+        "schema".to_string(),
+        "catalog".to_string(),
+        "catalog".to_string(),
+        "USAGE".to_string(),
+    ));
+    for column in [
+        "tenant_id",
+        "execution_bundle_hash",
+        "format_version",
+        "exact_bytes",
+        "byte_length",
+    ] {
+        expected.insert((
+            "column".to_string(),
+            "catalog".to_string(),
+            format!("execution_bundles.{column}"),
+            "SELECT".to_string(),
+        ));
+    }
+    if let Some(database) = connect_database {
+        expected.insert((
+            "database".to_string(),
+            String::new(),
+            database.to_string(),
+            "CONNECT".to_string(),
+        ));
+    }
+    expected
+}
+
+async fn read_artifact_reader_authority(
+    client: &(impl GenericClient + Sync),
+    query: &str,
+    parameters: &[&(dyn tokio_postgres::types::ToSql + Sync)],
+) -> anyhow::Result<BTreeSet<ArtifactReaderAuthority>> {
+    Ok(client
+        .query(query, parameters)
+        .await
+        .context("read artifact-reader effective authority")?
+        .into_iter()
+        .map(|row| (row.get(0), row.get(1), row.get(2), row.get(3)))
+        .collect())
+}
+
+async fn verify_artifact_reader_public_authority_floor(
+    client: &(impl GenericClient + Sync),
+    allow_initial_public_schema_usage: bool,
+) -> anyhow::Result<()> {
+    let mut public =
+        read_artifact_reader_authority(client, sql::artifact_reader_public_authority_sql(), &[])
+            .await?;
+    if allow_initial_public_schema_usage {
+        public.remove(&(
+            "schema".to_string(),
+            "public".to_string(),
+            "public".to_string(),
+            "USAGE".to_string(),
+        ));
+    }
+    anyhow::ensure!(
+        public.is_empty(),
+        "PUBLIC carries control application authority outside the artifact-reader contract: {public:?}"
+    );
+    Ok(())
+}
+
+async fn verify_artifact_reader_effective_authority(
+    client: &(impl GenericClient + Sync),
+    role: &str,
+    active: bool,
+    connect_database: Option<&str>,
+) -> anyhow::Result<()> {
+    let actual = read_artifact_reader_authority(
+        client,
+        sql::artifact_reader_effective_authority_sql(),
+        &[&role],
+    )
+    .await?;
+    let expected = expected_artifact_reader_authority(active, connect_database);
+    anyhow::ensure!(
+        actual == expected,
+        "artifact-reader role {role:?} has unexpected effective control authority: {actual:?}"
+    );
+    Ok(())
+}
+
+fn artifact_reader_valid_until_is_future(
+    state: &ArtifactReaderRoleState,
+    now: DateTime<Utc>,
+) -> bool {
+    state
+        .valid_until
+        .as_deref()
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+        .is_some_and(|expires_at| expires_at.with_timezone(&Utc) > now)
+}
+
+async fn verify_artifact_reader_policy(
+    client: &(impl GenericClient + Sync),
+    policy: &str,
+    stable_role: &str,
+    generation_role: Option<&str>,
+    tenant_id: &str,
+    installed: bool,
+) -> anyhow::Result<()> {
+    let rls = client
+        .query_opt(sql::artifact_reader_rls_state_sql(), &[])
+        .await
+        .context("read execution-bundle RLS enforcement state")?
+        .context("catalog.execution_bundles does not exist")?;
+    anyhow::ensure!(
+        rls.get::<_, bool>(0) && rls.get::<_, bool>(1),
+        "catalog.execution_bundles must keep enabled and forced row security"
+    );
+    let policies =
+        read_artifact_reader_policy_state(client, policy, stable_role, generation_role).await?;
+    let generic_qual = Some(
+        "(tenant_id = NULLIF(current_setting('app.tenant'::text, true), ''::text))".to_string(),
+    );
+    let mut expected = vec![ArtifactReaderPolicyState {
+        name: "execution_bundles_tenant".to_string(),
+        command: "*".to_string(),
+        permissive: true,
+        roles: vec!["PUBLIC".to_string()],
+        using_expression: generic_qual.clone(),
+        check_expression: generic_qual,
+    }];
+    let expected_qual = format!("(tenant_id = '{}'::text)", tenant_id.replace('\'', "''"));
+    if installed {
+        expected.push(ArtifactReaderPolicyState {
+            name: policy.to_string(),
+            command: "r".to_string(),
+            permissive: false,
+            roles: vec![stable_role.to_string()],
+            using_expression: Some(expected_qual),
+            check_expression: None,
+        });
+    }
+    expected.sort_by(|left, right| left.name.cmp(&right.name));
+    anyhow::ensure!(
+        policies == expected,
+        "execution-bundle RLS policy set is missing, extra, or drifted"
+    );
+    Ok(())
+}
+
+async fn verify_artifact_reader_tenant_role(
+    client: &(impl GenericClient + Sync),
+    admin_config: &PgConfig,
+    scope: &ArtifactReaderTenantScope,
+) -> anyhow::Result<ArtifactReaderRoleState> {
+    let role = artifact_reader_tenant_role(&scope.tenant_id, &scope.database);
+    let policy = artifact_reader_policy_name(&scope.tenant_id, &scope.database);
+    let state = read_artifact_reader_role_state(client, &role, true)
+        .await?
+        .context("stable artifact-reader tenant role does not exist")?;
+    anyhow::ensure!(
+        state.is_stable_role(),
+        "stable artifact-reader tenant role attributes or authority drifted"
+    );
+    validate_artifact_reader_tenant_role_marker(
+        state
+            .marker
+            .as_deref()
+            .context("stable artifact-reader tenant role has no owner marker")?,
+        scope,
+    )
+    .map_err(|error| anyhow::anyhow!(error))?;
+    verify_artifact_reader_public_authority_floor(client, false).await?;
+    verify_role_acl_inventory(
+        admin_config,
+        &role,
+        RoleAclExpectation::ArtifactReaderAclRole {
+            database: &scope.database,
+        },
+    )
+    .await?;
+    verify_artifact_reader_effective_authority(client, &role, true, None).await?;
+    verify_artifact_reader_policy(client, &policy, &role, None, &scope.tenant_id, true).await?;
+
+    for child in &state.member_roles {
+        let child_state = read_artifact_reader_role_state(client, child, false)
+            .await?
+            .context("artifact-reader tenant role names a missing child")?;
+        anyhow::ensure!(
+            child_state.is_active_for(&role, &scope.tenant_id, &scope.database),
+            "artifact-reader tenant role has an out-of-bounds active child"
+        );
+        validate_artifact_reader_tenant_child_role_marker(
+            child_state
+                .marker
+                .as_deref()
+                .context("artifact-reader child role has no owner marker")?,
+            scope,
+            child,
+        )
+        .map_err(|error| anyhow::anyhow!(error))?;
+        verify_role_acl_inventory(
+            admin_config,
+            child,
+            RoleAclExpectation::Generation {
+                database: &scope.database,
+            },
+        )
+        .await?;
+        verify_artifact_reader_effective_authority(client, child, true, Some(&scope.database))
+            .await?;
+        verify_artifact_reader_policy(client, &policy, &role, Some(child), &scope.tenant_id, true)
+            .await?;
+    }
+    Ok(state)
+}
+
+async fn run_artifact_reader_action(args: &ProvisionProjectEnvArgs) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        args.cluster.is_none()
+            && args.connection_limit.is_none()
+            && args.app_host.is_none()
+            && args.target_admin_database_url.is_none()
+            && args.emit_database.is_none()
+            && args.emit_role_sql.is_none()
+            && args.emit_privilege_sql.is_none()
+            && args.emit_secret.is_none()
+            && args.emit_effect_writer_secret.is_none()
+            && args.emit_management_author_pat_secret.is_none()
+            && args.emit_route_caller_pat_secret.is_none()
+            && args.secret_namespace.is_none()
+            && args.app_port == 5432
+            && args.app_password == "wamn_app",
+        "artifact-reader generation actions cannot render ordinary provisioning, PAT, or effect-writer artifacts"
+    );
+    let tenant_id = args
+        .artifact_reader_tenant_id
+        .as_deref()
+        .context("artifact-reader generation actions require --artifact-reader-tenant-id")?;
+    let org = args
+        .org
+        .as_deref()
+        .context("--org is required for an artifact-reader generation action")?;
+    let project = args
+        .project
+        .as_deref()
+        .context("--project is required for an artifact-reader generation action")?;
+    let environment = args
+        .env
+        .as_deref()
+        .context("--env is required for an artifact-reader generation action")?;
+    validate_project_env(org, project, environment)
+        .map_err(|error| anyhow::anyhow!("project-env names: {error}"))?;
+    let admin_url = args
+        .system_database_url
+        .as_deref()
+        .context("artifact-reader generation actions require --system-database-url")?;
+    let admin_config = PgConfig::from_str(admin_url).context("parse control admin database URL")?;
+    let database = admin_config
+        .get_dbname()
+        .filter(|database| !database.is_empty())
+        .context("--system-database-url must name the exact control database")?;
+    let scope = ArtifactReaderCredentialScope {
+        tenant_id: tenant_id.to_string(),
+        org: org.to_string(),
+        project: project.to_string(),
+        environment: environment.to_string(),
+        database: database.to_string(),
+    };
+    validate_artifact_reader_scope(&scope).map_err(|error| anyhow::anyhow!(error))?;
+
+    if let Some(generation) = args.prepare_artifact_reader_generation {
+        let secret_path = args.emit_artifact_reader_secret.as_deref().context(
+            "--prepare-artifact-reader-generation requires --emit-artifact-reader-secret PATH",
+        )?;
+        ensure_secret_path(secret_path, "--emit-artifact-reader-secret")?;
+        prepare_artifact_reader_generation(
+            args,
+            &admin_config,
+            admin_url,
+            &scope,
+            generation,
+            secret_path,
+            Utc::now(),
+        )
+        .await
+    } else if let Some(generation) = args.retire_artifact_reader_generation {
+        let secret_path = args.emit_artifact_reader_secret.as_deref().context(
+            "--retire-artifact-reader-generation requires --emit-artifact-reader-secret PATH",
+        )?;
+        ensure_secret_path(secret_path, "--emit-artifact-reader-secret")?;
+        let endpoint =
+            artifact_reader_endpoint(admin_url).map_err(|error| anyhow::anyhow!(error))?;
+        let published = read_artifact_reader_secret_credential(
+            secret_path,
+            &args.namespace,
+            &scope,
+            &endpoint,
+            Utc::now(),
+        )?;
+        retire_artifact_reader_generation(&admin_config, &scope, generation, &published).await
+    } else if args.revoke_artifact_reader_credential {
+        let secret_path = args.emit_artifact_reader_secret.as_deref().context(
+            "--revoke-artifact-reader-credential requires --emit-artifact-reader-secret PATH",
+        )?;
+        ensure_secret_path(secret_path, "--emit-artifact-reader-secret")?;
+        revoke_artifact_reader_credential(&admin_config, &scope, secret_path).await
+    } else {
+        anyhow::bail!("no artifact-reader generation action selected")
+    }
+}
+
+fn read_artifact_reader_secret_credential(
+    path: &Path,
+    namespace: &str,
+    scope: &ArtifactReaderCredentialScope,
+    endpoint: &wamn_control_provision::ArtifactReaderEndpoint,
+    now: DateTime<Utc>,
+) -> anyhow::Result<ArtifactReaderCredential> {
+    let manifest: Value =
+        serde_json::from_slice(&std::fs::read(path).with_context(|| {
+            format!("read published artifact-reader Secret {}", path.display())
+        })?)
+        .context("parse published artifact-reader Secret manifest")?;
+    anyhow::ensure!(
+        manifest["apiVersion"] == "v1"
+            && manifest["kind"] == "Secret"
+            && manifest["type"] == "Opaque"
+            && manifest["metadata"]["name"]
+                == artifact_reader_secret_name(
+                    &scope.tenant_id,
+                    &scope.org,
+                    &scope.project,
+                    &scope.environment,
+                    &scope.database,
+                )
+            && manifest["metadata"]["namespace"] == namespace,
+        "published artifact-reader Secret identity does not match this deployment"
+    );
+    anyhow::ensure!(
+        manifest.get("data").is_none(),
+        "published artifact-reader Secret must not contain a data field"
+    );
+    let string_data = manifest["stringData"]
+        .as_object()
+        .context("published artifact-reader Secret has no stringData object")?;
+    anyhow::ensure!(
+        string_data.len() == 1 && string_data.contains_key(ARTIFACT_READER_CREDENTIAL_KEY),
+        "published artifact-reader Secret must contain only credential.json"
+    );
+    let document = string_data[ARTIFACT_READER_CREDENTIAL_KEY]
+        .as_str()
+        .context("published artifact-reader credential.json is not text")?;
+    let credential = parse_artifact_reader_credential(document.as_bytes())
+        .map_err(|error| anyhow::anyhow!(error))?;
+    validate_artifact_reader_credential(&credential, scope, endpoint, now.into())
+        .map_err(|error| anyhow::anyhow!(error))?;
+    Ok(credential)
+}
+
+fn artifact_reader_validity(now: DateTime<Utc>) -> ArtifactReaderCredentialValidity {
+    let expires_at = now + chrono::Duration::days(ARTIFACT_READER_CREDENTIAL_TTL_DAYS);
+    ArtifactReaderCredentialValidity {
+        issued_at: now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        not_before: now.to_rfc3339_opts(SecondsFormat::Secs, true),
+        expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Secs, true),
+        revoked_at: None,
+    }
+}
+
+async fn lock_artifact_reader_scope(
+    client: &(impl GenericClient + Sync),
+    scope: &ArtifactReaderTenantScope,
+) -> anyhow::Result<()> {
+    let key = format!(
+        "artifact-reader:{}",
+        artifact_reader_tenant_scope_hash(&scope.tenant_id, &scope.database)
+    );
+    client
+        .query_one(sql::artifact_reader_scope_lock_sql(), &[&key])
+        .await
+        .context("acquire artifact-reader tenant rotation lock")?;
+    Ok(())
+}
+
+async fn unlock_artifact_reader_scope(
+    client: &(impl GenericClient + Sync),
+    scope: &ArtifactReaderTenantScope,
+) -> anyhow::Result<()> {
+    let key = format!(
+        "artifact-reader:{}",
+        artifact_reader_tenant_scope_hash(&scope.tenant_id, &scope.database)
+    );
+    let unlocked: bool = client
+        .query_one(sql::artifact_reader_scope_unlock_sql(), &[&key])
+        .await
+        .context("release artifact-reader tenant rotation lock")?
+        .get(0);
+    anyhow::ensure!(
+        unlocked,
+        "artifact-reader tenant rotation lock was not held"
+    );
+    Ok(())
+}
+
+fn validate_artifact_reader_generation_state(
+    state: &ArtifactReaderRoleState,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    stable_role: &str,
+    expected_active: bool,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    if expected_active {
+        return validate_artifact_reader_active_generation_state(
+            state,
+            scope,
+            generation,
+            stable_role,
+            true,
+            now,
+        );
+    }
+    let marker = state
+        .marker
+        .as_deref()
+        .context("artifact-reader generation has no owner marker")?;
+    validate_artifact_reader_generation_role_marker(marker, scope, generation)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    anyhow::ensure!(
+        state.is_inactive(),
+        "artifact-reader generation is not exactly inactive"
+    );
+    Ok(())
+}
+
+fn validate_artifact_reader_active_generation_state(
+    state: &ArtifactReaderRoleState,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    stable_role: &str,
+    require_unexpired: bool,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let marker = state
+        .marker
+        .as_deref()
+        .context("artifact-reader generation has no owner marker")?;
+    validate_artifact_reader_generation_role_marker(marker, scope, generation)
+        .map_err(|error| anyhow::anyhow!(error))?;
+    anyhow::ensure!(
+        state.is_active_for(stable_role, &scope.tenant_id, &scope.database)
+            && (!require_unexpired || artifact_reader_valid_until_is_future(state, now)),
+        if require_unexpired {
+            "artifact-reader generation is not an exact unexpired active credential"
+        } else {
+            "artifact-reader generation is not an exact owned active credential"
+        }
+    );
+    Ok(())
+}
+
+async fn terminate_artifact_reader_sessions(
+    client: &(impl GenericClient + Sync),
+    role: &str,
+) -> anyhow::Result<()> {
+    let rows = client
+        .query(
+            &sql::terminate_artifact_reader_generation_sessions_sql(role),
+            &[],
+        )
+        .await
+        .context("terminate artifact-reader generation sessions")?;
+    anyhow::ensure!(
+        rows.iter().all(|row| row.get::<_, bool>(0)),
+        "PostgreSQL refused to terminate an artifact-reader generation session"
+    );
+    Ok(())
+}
+
+async fn prepare_artifact_reader_generation(
+    args: &ProvisionProjectEnvArgs,
+    admin_config: &PgConfig,
+    admin_url: &str,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    secret_path: &Path,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let tenant_scope = scope.tenant_scope();
+    let stable_role = artifact_reader_tenant_role(&scope.tenant_id, &scope.database);
+    let policy = artifact_reader_policy_name(&scope.tenant_id, &scope.database);
+    let role = artifact_reader_generation_role(
+        &scope.tenant_id,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.database,
+        generation,
+    );
+    let other_role = artifact_reader_generation_role(
+        &scope.tenant_id,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.database,
+        generation.other(),
+    );
+    let (mut admin, admin_task) = connect_config(admin_config, "artifact-reader admin").await?;
+    lock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    let transaction = admin
+        .transaction()
+        .await
+        .context("begin artifact-reader generation prepare")?;
+
+    let stable = read_artifact_reader_role_state(&transaction, &stable_role, true).await?;
+    let desired = read_artifact_reader_role_state(&transaction, &role, false).await?;
+    let other = read_artifact_reader_role_state(&transaction, &other_role, false).await?;
+    verify_artifact_reader_public_authority_floor(&transaction, stable.is_none()).await?;
+    verify_artifact_reader_policy(
+        &transaction,
+        &policy,
+        &stable_role,
+        Some(&role),
+        &scope.tenant_id,
+        stable.is_some(),
+    )
+    .await?;
+    if stable.is_some() {
+        verify_artifact_reader_tenant_role(&transaction, admin_config, &tenant_scope).await?;
+    } else {
+        anyhow::ensure!(
+            desired.is_none() && other.is_none(),
+            "artifact-reader generation exists without its stable tenant authority"
+        );
+        anyhow::ensure!(
+            generation == CredentialGeneration::A,
+            "initial artifact-reader credential generation must be a"
+        );
+    }
+
+    if let Some(state) = desired.as_ref() {
+        validate_artifact_reader_generation_state(
+            state,
+            scope,
+            generation,
+            &stable_role,
+            false,
+            now,
+        )?;
+    }
+    if let Some(state) = other.as_ref() {
+        let other_active = !state.is_inactive();
+        validate_artifact_reader_generation_state(
+            state,
+            scope,
+            generation.other(),
+            &stable_role,
+            other_active,
+            now,
+        )?;
+        if generation == CredentialGeneration::B {
+            anyhow::ensure!(
+                other_active,
+                "artifact-reader generation b requires active generation a"
+            );
+        }
+    } else if generation == CredentialGeneration::B {
+        anyhow::bail!("artifact-reader generation b requires active generation a");
+    }
+
+    verify_role_acl_inventory(admin_config, &role, RoleAclExpectation::None).await?;
+    if let Some(state) = other.as_ref() {
+        verify_role_acl_inventory(
+            admin_config,
+            &other_role,
+            if state.is_inactive() {
+                RoleAclExpectation::None
+            } else {
+                RoleAclExpectation::Generation {
+                    database: &scope.database,
+                }
+            },
+        )
+        .await?;
+        verify_artifact_reader_policy(
+            &transaction,
+            &policy,
+            &stable_role,
+            Some(&other_role),
+            &scope.tenant_id,
+            stable.is_some(),
+        )
+        .await?;
+    }
+
+    transaction
+        .batch_execute(sql::artifact_reader_revoke_public_connect_floor_sql())
+        .await
+        .context("converge cluster PUBLIC CONNECT floor")?;
+    if stable.is_none() {
+        transaction
+            .batch_execute(&sql::install_artifact_reader_tenant_role_sql(
+                &stable_role,
+                &policy,
+                &scope.tenant_id,
+                &artifact_reader_tenant_role_marker(&tenant_scope),
+            ))
+            .await
+            .context("install stable artifact-reader tenant authority")?;
+    }
+    let password = random_lower_hex(32)?;
+    let credential_id = random_lower_hex(16)?;
+    let validity = artifact_reader_validity(now);
+    transaction
+        .batch_execute(&sql::prepare_artifact_reader_generation_sql(
+            &scope.database,
+            &stable_role,
+            &role,
+            &scope.tenant_id,
+            &password,
+            &validity.expires_at,
+            &artifact_reader_generation_role_marker(scope, generation),
+        ))
+        .await
+        .context("prepare artifact-reader credential generation")?;
+    transaction
+        .commit()
+        .await
+        .context("commit artifact-reader generation prepare")?;
+
+    let publish_result = publish_artifact_reader_generation(
+        args,
+        &admin,
+        admin_config,
+        admin_url,
+        scope,
+        generation,
+        &role,
+        &stable_role,
+        &password,
+        &credential_id,
+        &validity,
+        secret_path,
+        now,
+    )
+    .await;
+    if let Err(error) = publish_result {
+        let rollback = rollback_artifact_reader_generation(
+            &admin,
+            admin_config,
+            scope,
+            generation,
+            &role,
+            &stable_role,
+        )
+        .await;
+        drop(admin);
+        let _ = admin_task.await;
+        if let Err(rollback_error) = rollback {
+            anyhow::bail!(
+                "artifact-reader prepare failed after LOGIN was enabled: {error:#}; rollback also failed: {rollback_error:#}"
+            );
+        }
+        return Err(error);
+    }
+    unlock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    println!(
+        "prepared and authenticated artifact-reader credential generation {} for tenant {:?} at {}/{}/{}; wrote {}",
+        generation.as_str(),
+        scope.tenant_id,
+        scope.org,
+        scope.project,
+        scope.environment,
+        secret_path.display()
+    );
+    drop(admin);
+    let _ = admin_task.await;
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the post-commit proof binds admin state, trusted endpoint, credential identity, validity, and output atomically"
+)]
+async fn publish_artifact_reader_generation(
+    args: &ProvisionProjectEnvArgs,
+    admin: &(impl GenericClient + Sync),
+    admin_config: &PgConfig,
+    admin_url: &str,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    role: &str,
+    stable_role: &str,
+    password: &str,
+    credential_id: &str,
+    validity: &ArtifactReaderCredentialValidity,
+    secret_path: &Path,
+    now: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    verify_artifact_reader_public_access_floor(admin).await?;
+    let credential_url = artifact_reader_url(admin_url, role, password, &scope.database)?;
+    let reader_config = PgConfig::from_str(&credential_url)
+        .context("parse final artifact-reader credential URL for authentication")?;
+    authenticate_artifact_reader(&reader_config, role, &scope.database, &scope.tenant_id).await?;
+    let prepared = read_artifact_reader_role_state(admin, role, false)
+        .await?
+        .context("prepared artifact-reader generation disappeared")?;
+    validate_artifact_reader_generation_state(
+        &prepared,
+        scope,
+        generation,
+        stable_role,
+        true,
+        now,
+    )?;
+    anyhow::ensure!(
+        prepared.valid_until.as_deref() == Some(validity.expires_at.as_str()),
+        "prepared artifact-reader VALID UNTIL does not match credential expires-at"
+    );
+    verify_artifact_reader_tenant_role(admin, admin_config, &scope.tenant_scope()).await?;
+    verify_role_acl_inventory(
+        admin_config,
+        role,
+        RoleAclExpectation::Generation {
+            database: &scope.database,
+        },
+    )
+    .await?;
+
+    let credential =
+        artifact_reader_credential(scope, credential_id, generation, validity, &credential_url);
+    let endpoint = artifact_reader_endpoint(admin_url).map_err(|error| anyhow::anyhow!(error))?;
+    validate_artifact_reader_credential(&credential, scope, &endpoint, now.into())
+        .map_err(|error| anyhow::anyhow!(error))?;
+    let secret = render_artifact_reader_secret_manifest(&args.namespace, &credential);
+    write_secret_json(secret_path, &secret).context("write authenticated artifact-reader Secret")
+}
+
+async fn rollback_artifact_reader_generation(
+    admin: &(impl GenericClient + Sync),
+    admin_config: &PgConfig,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    role: &str,
+    stable_role: &str,
+) -> anyhow::Result<()> {
+    admin
+        .batch_execute(&sql::retire_artifact_reader_generation_sql(
+            &scope.database,
+            stable_role,
+            role,
+        ))
+        .await
+        .context("revoke prepared artifact-reader generation authority")?;
+    terminate_artifact_reader_sessions(admin, role).await?;
+    let state = read_artifact_reader_role_state(admin, role, false)
+        .await?
+        .context("rolled-back artifact-reader generation disappeared")?;
+    validate_artifact_reader_generation_state(
+        &state,
+        scope,
+        generation,
+        stable_role,
+        false,
+        Utc::now(),
+    )?;
+    verify_role_acl_inventory(admin_config, role, RoleAclExpectation::None).await?;
+    verify_artifact_reader_effective_authority(admin, role, false, None).await
+}
+
+fn artifact_reader_url(
+    admin_url: &str,
+    role: &str,
+    password: &str,
+    database: &str,
+) -> anyhow::Result<String> {
+    let mut url = Url::parse(admin_url).context("parse control admin URL for credential")?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "postgres" | "postgresql"),
+        "control admin URL must use postgres or postgresql"
+    );
+    url.set_username(role)
+        .map_err(|_| anyhow::anyhow!("set artifact-reader URL username"))?;
+    url.set_password(Some(password))
+        .map_err(|_| anyhow::anyhow!("set artifact-reader URL password"))?;
+    url.set_path(&format!("/{database}"));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.into())
+}
+
+async fn authenticate_artifact_reader(
+    config: &PgConfig,
+    role: &str,
+    database: &str,
+    tenant_id: &str,
+) -> anyhow::Result<()> {
+    let mut config = config.clone();
+    config.application_name(ARTIFACT_READER_VERIFY_APPLICATION_NAME);
+    let (client, task) = connect_config(&config, "prepared artifact-reader generation").await?;
+    let row = client
+        .query_one(
+            "SELECT current_user::text, current_database()::text, \
+                    current_setting('app.tenant', true)::text, \
+                    has_database_privilege(current_user, current_database(), 'TEMPORARY'), \
+                    has_schema_privilege(current_user, 'catalog', 'USAGE'), \
+                    has_schema_privilege(current_user, 'catalog', 'CREATE'), \
+                    has_table_privilege(current_user, 'catalog.execution_bundles', 'SELECT'), \
+                    has_column_privilege(current_user, 'catalog.execution_bundles', 'created_at', 'SELECT')",
+            &[],
+        )
+        .await
+        .context("probe prepared artifact-reader generation authority")?;
+    anyhow::ensure!(
+        row.get::<_, String>(0) == role,
+        "artifact reader authenticated as wrong role"
+    );
+    anyhow::ensure!(
+        row.get::<_, String>(1) == database,
+        "artifact reader authenticated to wrong database"
+    );
+    anyhow::ensure!(
+        row.get::<_, String>(2) == tenant_id,
+        "artifact reader inherited the wrong tenant setting"
+    );
+    anyhow::ensure!(
+        !row.get::<_, bool>(3),
+        "artifact reader inherited TEMPORARY database authority"
+    );
+    anyhow::ensure!(
+        row.get::<_, bool>(4)
+            && !row.get::<_, bool>(5)
+            && !row.get::<_, bool>(6)
+            && !row.get::<_, bool>(7),
+        "artifact reader schema, relation, or created-at authority is out of bounds"
+    );
+    client
+        .query(
+            "SELECT tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_length \
+               FROM catalog.execution_bundles WHERE tenant_id=$1 LIMIT 1",
+            &[&tenant_id],
+        )
+        .await
+        .context("read exact artifact-reader five-column projection")?;
+    client
+        .query_one(
+            "SELECT set_config('app.tenant', 'wamn-artifact-reader-cross-tenant-probe', false)",
+            &[],
+        )
+        .await
+        .context("change caller-controlled tenant setting for negative probe")?;
+    let exposed: i64 = client
+        .query_one(
+            "SELECT count(*)::bigint FROM catalog.execution_bundles WHERE tenant_id <> $1",
+            &[&tenant_id],
+        )
+        .await
+        .context("probe cross-tenant artifact-reader visibility")?
+        .get(0);
+    anyhow::ensure!(
+        exposed == 0,
+        "artifact-reader tenant-literal policy exposed cross-tenant bundles"
+    );
+    drop(client);
+    task.await
+        .context("join artifact-reader authentication connection")??;
+    Ok(())
+}
+
+async fn retire_artifact_reader_generation(
+    admin_config: &PgConfig,
+    scope: &ArtifactReaderCredentialScope,
+    generation: CredentialGeneration,
+    published: &ArtifactReaderCredential,
+) -> anyhow::Result<()> {
+    let tenant_scope = scope.tenant_scope();
+    let stable_role = artifact_reader_tenant_role(&scope.tenant_id, &scope.database);
+    let old_role = artifact_reader_generation_role(
+        &scope.tenant_id,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.database,
+        generation,
+    );
+    let replacement_role = artifact_reader_generation_role(
+        &scope.tenant_id,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+        &scope.database,
+        generation.other(),
+    );
+    anyhow::ensure!(
+        published.generation() == generation.other() && published.role() == replacement_role,
+        "normal retirement must preserve the generation named by the published artifact-reader Secret"
+    );
+    let (mut admin, admin_task) = connect_config(admin_config, "artifact-reader admin").await?;
+    lock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    let transaction = admin
+        .transaction()
+        .await
+        .context("begin artifact-reader generation retirement")?;
+    verify_artifact_reader_public_access_floor(&transaction).await?;
+    verify_artifact_reader_tenant_role(&transaction, admin_config, &tenant_scope).await?;
+    let old = read_artifact_reader_role_state(&transaction, &old_role, false)
+        .await?
+        .context("old artifact-reader generation does not exist")?;
+    let replacement = read_artifact_reader_role_state(&transaction, &replacement_role, false)
+        .await?
+        .context("replacement artifact-reader generation does not exist")?;
+    validate_artifact_reader_active_generation_state(
+        &old,
+        scope,
+        generation,
+        &stable_role,
+        false,
+        Utc::now(),
+    )?;
+    validate_artifact_reader_generation_state(
+        &replacement,
+        scope,
+        generation.other(),
+        &stable_role,
+        true,
+        Utc::now(),
+    )?;
+    let replacement_sessions: i64 = transaction
+        .query_one(
+            sql::artifact_reader_replacement_use_sql(),
+            &[
+                &replacement_role,
+                &scope.database,
+                &ARTIFACT_READER_APPLICATION_NAME,
+            ],
+        )
+        .await
+        .context("verify replacement artifact-reader executor use")?
+        .get(0);
+    anyhow::ensure!(
+        replacement_sessions > 0,
+        "replacement artifact-reader generation has no independent executor session"
+    );
+    verify_role_acl_inventory(
+        admin_config,
+        &old_role,
+        RoleAclExpectation::Generation {
+            database: &scope.database,
+        },
+    )
+    .await?;
+    verify_role_acl_inventory(
+        admin_config,
+        &replacement_role,
+        RoleAclExpectation::Generation {
+            database: &scope.database,
+        },
+    )
+    .await?;
+    transaction
+        .batch_execute(&sql::retire_artifact_reader_generation_sql(
+            &scope.database,
+            &stable_role,
+            &old_role,
+        ))
+        .await
+        .context("retire old artifact-reader credential generation")?;
+    transaction
+        .commit()
+        .await
+        .context("commit artifact-reader generation retirement")?;
+    terminate_artifact_reader_sessions(&admin, &old_role).await?;
+    let retired = read_artifact_reader_role_state(&admin, &old_role, false)
+        .await?
+        .context("retired artifact-reader generation disappeared")?;
+    validate_artifact_reader_generation_state(
+        &retired,
+        scope,
+        generation,
+        &stable_role,
+        false,
+        Utc::now(),
+    )?;
+    verify_role_acl_inventory(admin_config, &old_role, RoleAclExpectation::None).await?;
+    verify_artifact_reader_effective_authority(&admin, &old_role, false, None).await?;
+    unlock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    println!(
+        "retired artifact-reader credential generation {} for tenant {:?} at {}/{}/{}",
+        generation.as_str(),
+        scope.tenant_id,
+        scope.org,
+        scope.project,
+        scope.environment
+    );
+    drop(admin);
+    let _ = admin_task.await;
+    Ok(())
+}
+
+async fn revoke_artifact_reader_credential(
+    admin_config: &PgConfig,
+    scope: &ArtifactReaderCredentialScope,
+    secret_path: &Path,
+) -> anyhow::Result<()> {
+    let tenant_scope = scope.tenant_scope();
+    let stable_role = artifact_reader_tenant_role(&scope.tenant_id, &scope.database);
+    let roles = [CredentialGeneration::A, CredentialGeneration::B].map(|generation| {
+        (
+            generation,
+            artifact_reader_generation_role(
+                &scope.tenant_id,
+                &scope.org,
+                &scope.project,
+                &scope.environment,
+                &scope.database,
+                generation,
+            ),
+        )
+    });
+    let (mut admin, admin_task) = connect_config(admin_config, "artifact-reader admin").await?;
+    lock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    let transaction = admin
+        .transaction()
+        .await
+        .context("begin emergency artifact-reader revoke")?;
+    verify_artifact_reader_public_access_floor(&transaction).await?;
+    verify_artifact_reader_tenant_role(&transaction, admin_config, &tenant_scope).await?;
+    let mut existing = Vec::new();
+    for (generation, role) in &roles {
+        let Some(state) = read_artifact_reader_role_state(&transaction, role, false).await? else {
+            continue;
+        };
+        let active = !state.is_inactive();
+        if active {
+            validate_artifact_reader_generation_role_marker(
+                state
+                    .marker
+                    .as_deref()
+                    .context("artifact-reader generation has no owner marker")?,
+                scope,
+                *generation,
+            )
+            .map_err(|error| anyhow::anyhow!(error))?;
+            anyhow::ensure!(
+                state.is_active_for(&stable_role, &scope.tenant_id, &scope.database),
+                "emergency artifact-reader revoke found drifted active authority"
+            );
+        } else {
+            validate_artifact_reader_generation_state(
+                &state,
+                scope,
+                *generation,
+                &stable_role,
+                false,
+                Utc::now(),
+            )?;
+        }
+        verify_role_acl_inventory(
+            admin_config,
+            role,
+            if active {
+                RoleAclExpectation::Generation {
+                    database: &scope.database,
+                }
+            } else {
+                RoleAclExpectation::None
+            },
+        )
+        .await?;
+        if active {
+            transaction
+                .batch_execute(&sql::retire_artifact_reader_generation_sql(
+                    &scope.database,
+                    &stable_role,
+                    role,
+                ))
+                .await
+                .context("remove emergency-revoked artifact-reader authority")?;
+        }
+        existing.push((*generation, role.clone()));
+    }
+    anyhow::ensure!(
+        !existing.is_empty(),
+        "artifact-reader credential scope has no owned generation to revoke"
+    );
+    transaction
+        .commit()
+        .await
+        .context("commit emergency artifact-reader authority removal")?;
+    for (generation, role) in &existing {
+        terminate_artifact_reader_sessions(&admin, role).await?;
+        let inactive = read_artifact_reader_role_state(&admin, role, false)
+            .await?
+            .context("emergency-revoked artifact-reader generation disappeared")?;
+        validate_artifact_reader_generation_state(
+            &inactive,
+            scope,
+            *generation,
+            &stable_role,
+            false,
+            Utc::now(),
+        )?;
+        verify_role_acl_inventory(admin_config, role, RoleAclExpectation::None).await?;
+        verify_artifact_reader_effective_authority(&admin, role, false, None).await?;
+    }
+
+    match std::fs::remove_file(secret_path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "artifact-reader database authority is revoked but Secret file {} could not be deleted",
+                    secret_path.display()
+                )
+            });
+        }
+    }
+    unlock_artifact_reader_scope(&admin, &tenant_scope).await?;
+    println!(
+        "emergency-revoked artifact-reader credential for tenant {:?} at {}/{}/{}; removed {} after database authority",
+        scope.tenant_id,
+        scope.org,
+        scope.project,
+        scope.environment,
+        secret_path.display()
+    );
+    drop(admin);
+    let _ = admin_task.await;
+    Ok(())
 }
 
 const PAT_TTL: Duration = Duration::from_secs(2_592_000);
@@ -2076,6 +3582,144 @@ mod tests {
     }
 
     #[test]
+    fn artifact_reader_generation_flags_are_closed_and_secret_safe() {
+        let prepare = parse_args(&[
+            "--system-database-url",
+            "postgresql://postgres@localhost/wamn_system",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+            "--prepare-artifact-reader-generation",
+            "a",
+            "--emit-artifact-reader-secret",
+            "/tmp/artifact-reader.json",
+        ])
+        .unwrap();
+        assert_eq!(
+            prepare.prepare_artifact_reader_generation,
+            Some(CredentialGeneration::A)
+        );
+        assert_eq!(
+            prepare.artifact_reader_tenant_id.as_deref(),
+            Some("tenant-a")
+        );
+        assert!(prepare.emit_artifact_reader_secret.is_some());
+        assert!(prepare.emit_secret.is_none());
+
+        let retire = parse_args(&[
+            "--system-database-url",
+            "postgresql://postgres@localhost/wamn_system",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+            "--retire-artifact-reader-generation",
+            "a",
+            "--emit-artifact-reader-secret",
+            "/tmp/artifact-reader.json",
+        ])
+        .unwrap();
+        assert_eq!(
+            retire.retire_artifact_reader_generation,
+            Some(CredentialGeneration::A)
+        );
+        assert!(retire.emit_artifact_reader_secret.is_some());
+
+        let revoke = parse_args(&[
+            "--system-database-url",
+            "postgresql://postgres@localhost/wamn_system",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+            "--revoke-artifact-reader-credential",
+            "--emit-artifact-reader-secret",
+            "/tmp/artifact-reader.json",
+        ])
+        .unwrap();
+        assert!(revoke.revoke_artifact_reader_credential);
+        assert!(revoke.emit_secret.is_none());
+
+        assert!(
+            parse_args(&[
+                "--system-database-url",
+                "postgresql://postgres@localhost/wamn_system",
+                "--artifact-reader-tenant-id",
+                "tenant-a",
+                "--prepare-artifact-reader-generation",
+                "a",
+                "--prepare-effect-writer-generation",
+                "a",
+                "--emit-artifact-reader-secret",
+                "/tmp/artifact-reader.json",
+            ])
+            .is_err()
+        );
+        let ignored_auxiliary = parse_args(&[
+            "--emit-secret",
+            "/tmp/db.json",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+        ])
+        .unwrap();
+        assert!(validate_artifact_reader_flag_closure(&ignored_auxiliary).is_err());
+        let mixed_pat = parse_args(&[
+            "--system-database-url",
+            "postgresql://postgres@localhost/wamn_system",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+            "--prepare-artifact-reader-generation",
+            "a",
+            "--emit-artifact-reader-secret",
+            "/tmp/artifact-reader.json",
+            "--emit-management-author-pat-secret",
+            "/tmp/pat.json",
+        ])
+        .unwrap();
+        assert!(validate_artifact_reader_flag_closure(&mixed_pat).is_err());
+        let mixed_effect = parse_args(&[
+            "--target-admin-database-url",
+            "postgresql://postgres@localhost/project",
+            "--prepare-effect-writer-generation",
+            "a",
+            "--artifact-reader-tenant-id",
+            "tenant-a",
+        ])
+        .unwrap();
+        assert!(validate_artifact_reader_flag_closure(&mixed_effect).is_err());
+        for ignored in [
+            &["--secret-namespace", "other"] as &[&str],
+            &["--app-port", "15432"],
+            &["--app-password", "ignored-password"],
+        ] {
+            let mut flags = vec![
+                "--system-database-url",
+                "postgresql://postgres@localhost/wamn_system",
+                "--artifact-reader-tenant-id",
+                "tenant-a",
+                "--prepare-artifact-reader-generation",
+                "a",
+                "--emit-artifact-reader-secret",
+                "/tmp/artifact-reader.json",
+            ];
+            flags.extend_from_slice(ignored);
+            let parsed = parse_args(&flags).unwrap();
+            assert!(
+                validate_artifact_reader_flag_closure(&parsed).is_err(),
+                "artifact-reader action accepted ignored ordinary flags {ignored:?}"
+            );
+        }
+        assert!(
+            parse_args(&[
+                "--system-database-url",
+                "postgresql://postgres@localhost/wamn_system",
+                "--artifact-reader-tenant-id",
+                "tenant-a",
+                "--prepare-artifact-reader-generation",
+                "a",
+                "--emit-artifact-reader-secret",
+                "-",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
     fn every_secret_output_rejects_stdout_and_prefix_is_strict() {
         assert!(
             parse_args(&[]).is_err(),
@@ -2251,6 +3895,7 @@ mod tests {
             schema_name: schema.to_string(),
             object_name: object.to_string(),
             privilege: privilege.to_string(),
+            grantable: false,
         }
     }
 
@@ -2334,5 +3979,141 @@ mod tests {
                 "accepted {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn artifact_reader_acl_inventory_is_exactly_five_columns_in_control() {
+        let mut exact = vec![role_acl("schema", "catalog", "catalog", "USAGE")];
+        for column in [
+            "tenant_id",
+            "execution_bundle_hash",
+            "format_version",
+            "exact_bytes",
+            "byte_length",
+        ] {
+            exact.push(role_acl(
+                "column",
+                "catalog",
+                &format!("execution_bundles.{column}"),
+                "SELECT",
+            ));
+        }
+        verify_artifact_reader_acl_role_inventory(
+            "wamn_artifact_reader_t_example",
+            "wamn_system",
+            "wamn_system",
+            &exact,
+        )
+        .unwrap();
+        verify_artifact_reader_acl_role_inventory(
+            "wamn_artifact_reader_t_example",
+            "unrelated",
+            "wamn_system",
+            &[],
+        )
+        .unwrap();
+
+        let mut created_at = exact.clone();
+        created_at.push(role_acl(
+            "column",
+            "catalog",
+            "execution_bundles.created_at",
+            "SELECT",
+        ));
+        assert!(
+            verify_artifact_reader_acl_role_inventory(
+                "wamn_artifact_reader_t_example",
+                "wamn_system",
+                "wamn_system",
+                &created_at,
+            )
+            .is_err()
+        );
+        assert!(
+            verify_artifact_reader_acl_role_inventory(
+                "wamn_artifact_reader_t_example",
+                "wamn_system",
+                "wamn_system",
+                &exact[..5],
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn artifact_reader_effective_authority_is_closed_over_ambient_and_generation_rows() {
+        let inactive = expected_artifact_reader_authority(false, None);
+        assert!(inactive.is_empty());
+
+        let stable = expected_artifact_reader_authority(true, None);
+        assert_eq!(stable.len(), 6);
+        assert!(stable.contains(&(
+            "schema".to_string(),
+            "catalog".to_string(),
+            "catalog".to_string(),
+            "USAGE".to_string(),
+        )));
+        assert!(stable.contains(&(
+            "column".to_string(),
+            "catalog".to_string(),
+            "execution_bundles.exact_bytes".to_string(),
+            "SELECT".to_string(),
+        )));
+
+        let generation = expected_artifact_reader_authority(true, Some("wamn_system"));
+        assert_eq!(generation.len(), 7);
+        assert!(generation.contains(&(
+            "database".to_string(),
+            String::new(),
+            "wamn_system".to_string(),
+            "CONNECT".to_string(),
+        )));
+    }
+
+    #[test]
+    fn artifact_reader_role_states_pin_set_false_and_inactive_revocation() {
+        let stable_role = "wamn_artifact_reader_t_example";
+        let mut active = ArtifactReaderRoleState {
+            login: true,
+            superuser: false,
+            inherit: true,
+            create_role: false,
+            create_db: false,
+            replication: false,
+            bypass_rls: false,
+            password_set: true,
+            valid_until: Some("2026-09-01T00:00:00Z".to_string()),
+            valid_until_finite: true,
+            marker: Some("marker".to_string()),
+            memberships: vec![stable_role.to_string()],
+            membership_options_exact: true,
+            member_roles: Vec::new(),
+            member_options_exact: true,
+            database_settings: vec!["wamn_system:app.tenant=tenant-a".to_string()],
+            connect_databases: vec!["wamn_system".to_string()],
+            effective_connect_databases: vec!["wamn_system".to_string()],
+            sessions: 0,
+            owned_objects: 0,
+        };
+        assert!(active.is_active_for(stable_role, "tenant-a", "wamn_system"));
+        active.membership_options_exact = false;
+        assert!(!active.is_active_for(stable_role, "tenant-a", "wamn_system"));
+        active.membership_options_exact = true;
+        active
+            .database_settings
+            .push("*:search_path=public".to_string());
+        assert!(!active.is_active_for(stable_role, "tenant-a", "wamn_system"));
+
+        let inactive = ArtifactReaderRoleState {
+            login: false,
+            password_set: false,
+            valid_until: Some("1970-01-01T00:00:00Z".to_string()),
+            memberships: Vec::new(),
+            database_settings: Vec::new(),
+            connect_databases: Vec::new(),
+            effective_connect_databases: Vec::new(),
+            ..active
+        };
+        assert!(inactive.is_inactive());
     }
 }

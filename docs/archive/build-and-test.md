@@ -5880,3 +5880,59 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   tools/repo-lint
 ```
+
+## SR-MVP — control artifact-reader credential (`wamn-0h0g.9.10`)
+
+This Rust-only debug gate proves the tenant-and-control-database stable ACL
+role, project-environment A/B LOGIN generations, tenant-literal restrictive
+RLS, exact five-column bundle projection, authenticated Secret publication,
+Secret-bound replacement use, ordinary retirement, and emergency revoke. The
+credential lifecycle does not mount an executor pool, fetch bundle bytes,
+build an image, touch a cluster, or run a client gate. Use only the disposable
+PostgreSQL 18 instance below.
+
+```bash
+export CARGO_TARGET_DIR=/home/kaalin/dev/wamn/target/plane-wave14-9-10
+export CARGO_INCREMENTAL=0
+export CARGO_BUILD_JOBS=2
+
+docker run -d --name wamn-wave14-9-10-pg18 \
+  -e POSTGRES_PASSWORD=postgres \
+  -p 127.0.0.1:15677:5432 \
+  postgres@sha256:7157393f508fd8eb46119937fab39813783fe3e7d4c6316c45c12ce2ea25e61d
+trap 'docker rm -f -v wamn-wave14-9-10-pg18 >/dev/null 2>&1 || true' EXIT
+until docker exec wamn-wave14-9-10-pg18 \
+  pg_isready -U postgres -d postgres >/dev/null; do sleep 1; done
+
+export WAMN_ARTIFACT_READER_PG18_URL=\
+postgresql://postgres:postgres@127.0.0.1:15677/postgres
+
+cargo test --locked --offline \
+  -p wamn-control-provision -p wamn-ctl --all-targets
+cargo test --locked --offline -p wamn-ctl \
+  --test artifact_reader_generation_live \
+  artifact_reader_generation_lifecycle_is_exact_and_fail_closed \
+  -- --ignored --exact --nocapture --test-threads=1
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test protected_relations --test state_ownership
+
+tools/gate-mutants/artifact-reader-credential.sh check
+tools/gate-mutants/artifact-reader-credential.sh green-all
+tools/gate-mutants/artifact-reader-credential.sh run-all
+tools/gate-mutants/artifact-reader-credential.sh green-all
+tools/gate-mutants/artifact-reader-credential.sh check
+
+cargo clippy --locked --offline \
+  -p wamn-control-provision -p wamn-ctl --all-targets -- -D warnings
+cargo fmt --all -- --check
+bash -n tools/gate-mutants/artifact-reader-credential.sh
+sha256sum -c <<'EOF'
+2a6ea44f1ff31eacd5c472f9bf97684dd07078c6d451d0ff9da9c61e28887d6e  deploy/sql/control-portable-store.sql
+9879ce88df7eccda71acec95aebdd43e0e1972076524ffe95604eea05db59280  architecture/state-owners.json
+a33f31a4e1513b82f35cb5ee91a23f7a0cf5370397e55916af6b29dbb69a1963  architecture/protected-writes.json
+EOF
+git diff --check
+
+docker rm -f -v wamn-wave14-9-10-pg18
+trap - EXIT
+```

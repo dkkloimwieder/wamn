@@ -30,6 +30,10 @@ required-features = ["ops"]
 # as JSON (kubectl apply accepts JSON manifests). No schemars — this is a
 # provisioning tool, not a published contract.
 serde_json = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+sha2 = { workspace = true }
+chrono = { workspace = true, features = ["std"] }
+url = { workspace = true }
 
 # wamn-q3n.6 provision-org: the org Cluster-PAIR renderer takes the registry's
 # Org / Tier / Side vocabulary and derives cluster names via `cluster_name`, so
@@ -47,5 +51,4 @@ wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
 # from the guest-safe wamn-pg-core leaf.
 
 [dev-dependencies]
-chrono = { workspace = true, features = ["std"] }
 wamn-flow = { workspace = true }
