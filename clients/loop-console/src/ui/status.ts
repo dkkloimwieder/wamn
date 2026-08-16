@@ -30,6 +30,29 @@ export function runTone(status: string): Tone {
   return runTones.get(status) ?? "neutral";
 }
 
+/**
+ * §2.0's four tree verdicts: `✓` ok, `✗` fail, `◌` effect-uncertain, `•` none.
+ *
+ * A separate vocabulary from `Tone` even though it maps onto one, because these
+ * are the states an *entity* can be in rather than the five roles a colour can
+ * play — and because `none` is a real verdict state (a draft never has one, and
+ * a report that has not finalized does not have one yet), not a missing tone.
+ */
+export type VerdictState = "ok" | "fail" | "uncertain" | "none";
+
+const verdictTones: ReadonlyMap<string, Tone> = new Map(
+  Object.entries({
+    ok: "ok",
+    fail: "fail",
+    uncertain: "uncertain",
+    none: "neutral",
+  } satisfies Record<VerdictState, Tone>),
+);
+
+export function verdictTone(state: VerdictState): Tone {
+  return verdictTones.get(state) ?? "neutral";
+}
+
 const nodeRunTones: ReadonlyMap<string, Tone> = new Map(
   Object.entries({
     started: "neutral",

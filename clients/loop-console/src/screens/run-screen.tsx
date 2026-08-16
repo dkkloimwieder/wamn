@@ -12,9 +12,11 @@ import {
 } from "solid-js";
 
 import { setReadStatus, type ReadStatus } from "../app/read-status";
+import { contributeScreen } from "../app/screen-actions";
 import type { ReadResult, ReaderError } from "../reader/errors";
 import { selectReader } from "../reader/reader";
 import type { ExecutionFact, JsonValue, Run } from "../reader/types";
+import { recordVisit, visitFromRun } from "../store/visited";
 import { CopyId } from "../ui/copy-id";
 import { ErrorPanel } from "../ui/error-panel";
 import { FailurePanel } from "../ui/failure-panel";
@@ -72,8 +74,20 @@ export function RunScreen(props: { id: string }): JSX.Element {
     }
     setReadStatus(readStatusOf(result));
     setRefreshedAt(new Date());
+    /*
+     * §6's "4–5 write it": the run is in the reader's history from the moment
+     * the platform answers, and a refresh refreshes the cached glyph with it.
+     * Only a run that came back — a refusal names no entity to remember.
+     */
+    if (result.ok) {
+      recordVisit(visitFromRun(result.value, Date.now()));
+    }
     return result;
   });
+
+  const refresh = (): void => {
+    setIssued((count) => count + 1);
+  };
 
   return (
     <section class="run-screen">
@@ -86,11 +100,12 @@ export function RunScreen(props: { id: string }): JSX.Element {
         <Loading fallback={<LoadingBlock region="the run" />}>
           <RunBody
             read={read}
+            onRefresh={refresh}
             refresh={
               <RefreshControl
                 refreshedAt={refreshedAt()}
                 busy={isPending(read)}
-                onRefresh={() => setIssued((count) => count + 1)}
+                onRefresh={refresh}
               />
             }
           />
@@ -125,25 +140,48 @@ function readRefusal(result: ReadResult<Run>): ReaderError | null {
  * typed value the platform answered with, and keeps the refresh control so the
  * one control that could change the answer is still reachable.
  */
-function RunBody(props: { read: () => ReadResult<Run>; refresh: JSX.Element }): JSX.Element {
+function RunBody(props: {
+  read: () => ReadResult<Run>;
+  refresh: JSX.Element;
+  onRefresh: () => void;
+}): JSX.Element {
   return (
     <Switch>
       <Match when={readRun(props.read())}>
-        {(run) => <RunFound run={run()} refresh={props.refresh} />}
+        {(run) => <RunFound run={run()} refresh={props.refresh} onRefresh={props.onRefresh} />}
       </Match>
       <Match when={readRefusal(props.read())}>
-        {(error) => (
-          <div class="run-section">
-            <SectionLabel label="run" trailing={props.refresh} />
-            <ErrorPanel error={error()} />
-          </div>
-        )}
+        {(error) => <RunRefused error={error()} refresh={props.refresh} onRefresh={props.onRefresh} />}
       </Match>
     </Switch>
   );
 }
 
-function RunFound(props: { run: Run; refresh: JSX.Element }): JSX.Element {
+/**
+ * The refused read still offers the one control that could change the answer,
+ * to the palette as well as to the mouse — §6 step 7 leaves the palette as the
+ * keyboard's only route to it, so a screen that withheld it here would leave a
+ * keyboard reader with no way to retry.
+ */
+function RunRefused(props: {
+  error: ReaderError;
+  refresh: JSX.Element;
+  onRefresh: () => void;
+}): JSX.Element {
+  contributeScreen(() => ({
+    anchors: [],
+    actions: [{ id: "refresh", label: "refresh this screen", run: props.onRefresh }],
+  }));
+
+  return (
+    <div class="run-section">
+      <SectionLabel label="run" trailing={props.refresh} />
+      <ErrorPanel error={props.error} />
+    </div>
+  );
+}
+
+function RunFound(props: { run: Run; refresh: JSX.Element; onRefresh: () => void }): JSX.Element {
   /**
    * §6 step 4's trace mode, in `RowDisclosure`'s controlled mode: on, it holds
    * every row open and compresses every inspector; off, it hands each row back
@@ -154,9 +192,40 @@ function RunFound(props: { run: Run; refresh: JSX.Element }): JSX.Element {
    */
   const [trace, setTrace] = createSignal(false);
 
+  /*
+   * What the palette can reach on this screen (§6 step 7). The anchors are read
+   * inside the thunk rather than here, so they answer with what is on the page
+   * at the moment the palette opens: a run that did not fail has no first
+   * section to offer, and offering one would scroll the reader to nothing.
+   */
+  contributeScreen(() => ({
+    anchors: [
+      ...(props.run.uncertainty !== null
+        ? [{ id: "run-failure", label: "uncertainty" }]
+        : props.run.failure !== null
+          ? [{ id: "run-failure", label: "failure" }]
+          : []),
+      { id: "run-execution", label: "execution" },
+      { id: "run-context", label: "context" },
+      { id: "run-details", label: "details" },
+    ],
+    // The screen's own callbacks, so the palette and the visible controls can
+    // never mean two different things by `expand all`.
+    actions: [
+      { id: "expand-all", label: "expand all execution rows", run: () => setTrace(true) },
+      { id: "collapse-all", label: "collapse all execution rows", run: () => setTrace(false) },
+      { id: "refresh", label: "refresh this screen", run: props.onRefresh },
+    ],
+  }));
+
   return (
     <>
       <RunVerdict run={props.run} />
+      {/*
+       * One anchor id for the first section whichever of the two stands there,
+       * because they are the same slot: §2.2 replaces the failure section with
+       * the uncertain panel rather than adding one beside it.
+       */}
       <Switch>
         {/*
          * §2.2, plainly: when the run is effect-uncertain the run-failure
@@ -164,11 +233,15 @@ function RunFound(props: { run: Run; refresh: JSX.Element }): JSX.Element {
          * panel is the section, and it names its own state at head size.
          */}
         <Match when={props.run.uncertainty}>
-          {(uncertainty) => <UncertainPanel uncertainty={uncertainty()} />}
+          {(uncertainty) => (
+            <div id="run-failure" tabindex="-1">
+              <UncertainPanel uncertainty={uncertainty()} />
+            </div>
+          )}
         </Match>
         <Match when={props.run.failure}>
           {(failure) => (
-            <div class="run-section">
+            <div class="run-section" id="run-failure" tabindex="-1">
               <SectionLabel label="run failure" />
               <FailurePanel failure={failure()} />
             </div>
@@ -176,7 +249,7 @@ function RunFound(props: { run: Run; refresh: JSX.Element }): JSX.Element {
         </Match>
       </Switch>
 
-      <div class="run-section">
+      <div class="run-section" id="run-execution" tabindex="-1">
         <SectionLabel
           label="execution"
           trailing={
@@ -240,12 +313,12 @@ function RunFound(props: { run: Run; refresh: JSX.Element }): JSX.Element {
         />
       </div>
 
-      <div class="run-section">
+      <div class="run-section" id="run-context" tabindex="-1">
         <SectionLabel label="context" />
         <RunContextSection run={props.run} />
       </div>
 
-      <div class="run-section">
+      <div class="run-section" id="run-details" tabindex="-1">
         <SectionLabel label="details" />
         <RunDetails run={props.run} />
       </div>

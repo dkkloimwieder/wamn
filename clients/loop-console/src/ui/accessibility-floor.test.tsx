@@ -366,7 +366,21 @@ function controlOffences(
     if (element.getAttribute("role") === "button" && element.tagName !== "BUTTON") {
       offences.push(`${at} plays a button instead of being one`);
     }
-    if ((element.getAttribute("tabindex") ?? "").startsWith("-")) {
+    /*
+     * A negative tabindex is an offence on a *control* — that is a control the
+     * keyboard cannot reach. On a plain container it is the opposite: §2.6's
+     * section anchors have to be focusable so the palette can move a keyboard
+     * reader to one, and giving them a positive tabindex would add four tab
+     * stops per screen to a document that has no reason for them. So the rule
+     * asks what the element is first, and still catches the shape it was
+     * written for — `<div onClick tabindex="-1">` and `<button tabindex="-1">`
+     * are both interactive, and both still fail.
+     */
+    const interactive =
+      handled ||
+      element.getAttribute("role") === "button" ||
+      ["BUTTON", "A", "INPUT", "SELECT", "TEXTAREA"].includes(element.tagName);
+    if (interactive && (element.getAttribute("tabindex") ?? "").startsWith("-")) {
       offences.push(`${at} is out of the tab order`);
     }
   }
