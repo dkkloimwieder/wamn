@@ -62,6 +62,14 @@
 
 .palette-group-name {
   margin: 0 0 2px;
+  /* the heading's weight is the label role's, not the browser's bold */
+  font-weight: 400;
+}
+
+.palette-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .palette-row {
@@ -104,7 +112,19 @@
   text-align: right;
 }
 
-/* The group's note sits where its rows would have been — past the cursor column. */
-.palette-group-note {
+/*
+ * Both of a group's ways of saying something in words line up with its rows'
+ * text — past the cursor column — whether they stand where the rows would have
+ * been or underneath the rows that are there.
+ */
+.palette-group-note,
+.palette-note {
   padding: 2px var(--space-1) 2px calc(var(--space-1) + 1ch + var(--space-1));
+}
+
+/* A note beside rows carries the frame face's dim, as every aside here does. */
+.palette-note {
+  margin: 0;
+  font-size: var(--size-13);
+  color: var(--dim);
 }

@@ -60,6 +60,47 @@ function activeRow(container: HTMLElement): number {
   return rows(container).findIndex((row) => row.getAttribute("aria-current") === "true");
 }
 
+/** Every ranked group in the open palette, in the order they are drawn. */
+function groups(container: HTMLElement): HTMLElement[] {
+  return [...container.querySelectorAll<HTMLElement>("[role='dialog'] [role='group']")];
+}
+
+/**
+ * The heading a group is named by, read through the association rather than by
+ * position: jsdom computes no accessible name, so what is checked is the link
+ * that would produce one.
+ */
+function groupName(group: HTMLElement): string {
+  const heading = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
+  if (heading === null || !group.contains(heading)) {
+    throw new Error("a palette group is not labelled by a heading inside it");
+  }
+  if (heading.tagName !== "H2") {
+    throw new Error(`a palette group is named by a <${heading.tagName.toLowerCase()}>`);
+  }
+  return (heading.textContent ?? "").trim();
+}
+
+/** The one group that goes by this name, by the name a reader would hear. */
+function group(container: HTMLElement, name: string): HTMLElement {
+  const found = groups(container).filter((candidate) => groupName(candidate) === name);
+  if (found.length !== 1) {
+    throw new Error(`the palette draws ${found.length} groups named ${JSON.stringify(name)}`);
+  }
+  return found[0];
+}
+
+/** Types into the palette's one input, as a reader narrowing the list does. */
+function type(container: HTMLElement, text: string): void {
+  const input = container.querySelector("input");
+  if (input === null) {
+    throw new Error("the palette has no input");
+  }
+  input.value = text;
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  flush();
+}
+
 /**
  * The console around the palette: something to focus, an optional screen, and
  * the palette itself.
@@ -349,6 +390,118 @@ describe("typing", () => {
     expect(drawn.join(" ")).not.toContain("clear visited");
     // and the absence a bare id leaves is stated rather than left blank
     expect(dialog(container)).toHaveTextContent("a draft is addressed by an id and a revision");
+  });
+});
+
+describe("the three ranked groups", () => {
+  it("names each group with a heading it is labelled by, in step 7's fixed order", () => {
+    recordVisit(visit({ kind: "run", id: RUN_ID }));
+    const { container } = mount();
+    press("k", { metaKey: true });
+
+    // the ranking is the point of step 7, so it is a thing a reader is told and
+    // not only a thing they can see
+    expect(groups(container).map(groupName)).toEqual(["go to", "this screen", "console"]);
+  });
+
+  it("puts a group's rows in a list of that group's own, still as real buttons", () => {
+    recordVisit(visit({ kind: "run", id: RUN_ID }));
+    recordVisit(visit({ kind: "report", id: REPORT_ID }));
+    const { container } = mount();
+    press("k", { metaKey: true });
+
+    const goTo = group(container, "go to");
+    const list = goTo.querySelector("[role='list']");
+    expect(list?.tagName).toBe("UL");
+    // two recents, and the list says how many there are to walk
+    expect(list?.children).toHaveLength(2);
+    for (const item of [...(list?.children ?? [])]) {
+      expect(item.tagName).toBe("LI");
+    }
+
+    // and every row on the whole palette stands inside the list of the one
+    // group it belongs to — which is what a reader was hearing nothing of
+    for (const row of rows(container)) {
+      expect(row.tagName).toBe("BUTTON");
+      const owner = row.closest("[role='group']");
+      expect(owner).not.toBeNull();
+      expect(row.parentElement?.tagName).toBe("LI");
+      expect(row.parentElement?.parentElement).toBe(owner?.querySelector("[role='list']"));
+    }
+
+    // the console group is the last of the three and holds its own rows
+    expect(group(container, "console").querySelectorAll("button").length).toBeGreaterThan(0);
+  });
+
+  it("leaves the rows reachable and the group semantics off every control", () => {
+    recordVisit(visit({ kind: "run", id: RUN_ID }));
+    const { container } = mount();
+    press("k", { metaKey: true });
+
+    // the floor's rule, restated where the roles were added: nothing that is a
+    // control plays a role it is not, and nothing structural became a control
+    for (const element of container.querySelectorAll<HTMLElement>("[role='dialog'] *")) {
+      const role = element.getAttribute("role");
+      if (role === "group" || role === "list" || role === "note") {
+        expect(["DIV", "UL", "P"]).toContain(element.tagName);
+        expect(element.getAttribute("tabindex")).toBeNull();
+      }
+    }
+    for (const row of rows(container)) {
+      expect(row.getAttribute("tabindex") ?? "0").not.toMatch(/^-/);
+      expect(row.getAttribute("role")).toBeNull();
+    }
+  });
+});
+
+describe("what a group says about what it has not got", () => {
+  it("draws the empty-state primitive only where a group has no rows", () => {
+    recordVisit(visit({ kind: "report", id: REPORT_ID }));
+    const { container } = mount();
+    press("k", { metaKey: true });
+    // an id nothing has been visited under: `go to` offers the two routes it
+    // could name, and says in the same breath why neither is a draft
+    type(container, "01J9NEW");
+
+    const goTo = group(container, "go to");
+    expect(goTo.querySelectorAll("button").length).toBeGreaterThan(0);
+    // the region is not empty, so the region-is-empty primitive is not drawn
+    // over it — the bug this replaced announced the opposite of what is there
+    expect(goTo.querySelector(".empty-state")).toBeNull();
+    expect(goTo.querySelector("[role='note']")).toHaveTextContent(
+      "a draft is addressed by an id and a revision",
+    );
+
+    // and the two groups that really are empty still state it, in words
+    const screen = group(container, "this screen");
+    expect(screen.querySelectorAll("button")).toHaveLength(0);
+    expect(screen.querySelector(".empty-state")).toHaveTextContent("nothing on this screen matches");
+    expect(group(container, "console").querySelector(".empty-state")).toHaveTextContent(
+      "nothing in the console matches",
+    );
+  });
+
+  it("renders a group with no rows as empty, and never as a note", () => {
+    const { container } = mount();
+    press("k", { metaKey: true });
+
+    const goTo = group(container, "go to");
+    expect(goTo.querySelectorAll("button")).toHaveLength(0);
+    expect(goTo.querySelector(".empty-state")).toHaveTextContent("nothing visited yet");
+    // one primitive per absence: the note is what a populated group uses
+    expect(goTo.querySelector("[role='note']")).toBeNull();
+  });
+
+  it("says nothing beside rows that have nothing to explain", () => {
+    recordVisit(visit({ kind: "run", id: RUN_ID }));
+    const { container } = mount();
+    press("k", { metaKey: true });
+
+    // an empty query offers the recent and raises no rule against it
+    const goTo = group(container, "go to");
+    expect(goTo.querySelectorAll("button").length).toBeGreaterThan(0);
+    expect(goTo.querySelector(".empty-state")).toBeNull();
+    expect(goTo.querySelector("[role='note']")).toBeNull();
   });
 });
 

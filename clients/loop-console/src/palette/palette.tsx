@@ -13,7 +13,13 @@ import { focusAnchor, screenContribution } from "../app/screen-actions";
 import { toHash } from "../routing/route";
 import { clearVisited, visitedEntries } from "../store/visited";
 import { EmptyState } from "../ui/states";
-import { flatCommands, paletteGroups, type CommandAction, type PaletteCommand } from "./commands";
+import {
+  flatCommands,
+  paletteGroups,
+  type CommandAction,
+  type CommandGroupName,
+  type PaletteCommand,
+} from "./commands";
 import "./palette.css";
 
 /**
@@ -105,6 +111,12 @@ export function CommandPalette(): JSX.Element {
     const at = activeIndex();
     return at < 0 ? undefined : rowId(at);
   };
+  /**
+   * The id of a group's heading, which is also the group's name — derived from
+   * the name rather than from a counter, so it is the same id on every rebuild
+   * of a list that is live while the palette is up.
+   */
+  const groupNameId = (name: CommandGroupName): string => `${uid}-${name.replace(/ /g, "-")}`;
 
   function openPalette(): void {
     restoreTo =
@@ -342,35 +354,80 @@ export function CommandPalette(): JSX.Element {
           <div class="palette-groups" id={`${uid}-list`}>
             <For each={groups()}>
               {(group) => (
-                <div class="palette-group">
-                  <p class="palette-group-name label">{group.name}</p>
-                  <For each={group.commands}>
-                    {(command) => (
-                      <button
-                        type="button"
-                        class="palette-row"
-                        id={rowId(command.index)}
-                        // The row's own text is its name — there is no aria-label
-                        // to drift from what a reader can see and say.
-                        aria-current={command.index === activeIndex() ? "true" : "false"}
-                        onClick={() => activate(command)}
-                      >
-                        {/* The cursor is a glyph as well as a tint, so the
-                            active row is never told by colour alone. */}
-                        <span class="palette-row-mark" aria-hidden="true">
-                          {command.index === activeIndex() ? "▸" : ""}
-                        </span>
-                        <span class="palette-row-text">{command.text}</span>
-                        <span class="palette-row-detail frame">{command.detail}</span>
-                      </button>
-                    )}
-                  </For>
-                  {/* An empty group states what it has not got, in words. */}
-                  <Show when={group.note}>
+                /*
+                 * §6 step 7's ranking, said rather than only drawn: a named
+                 * `group` a reader is announced into and out of, holding a
+                 * heading, a real list of its rows, and whatever the group has
+                 * to say about what it has not got.
+                 *
+                 * A grouped list of buttons, and deliberately not a
+                 * `listbox`/`option` pair, for the reason the input gives above
+                 * for not being a `combobox`: an `option` is not a tab stop and
+                 * every row here is a button a keyboard reader can reach and
+                 * press. Half a listbox — options that are buttons, or a
+                 * listbox with no combobox controlling it — would be a worse
+                 * claim than the plain one this makes. The list is what carries
+                 * the ranking: `1 of 3` inside `go to` is the step the reader
+                 * would otherwise lose.
+                 */
+                <div class="palette-group" role="group" aria-labelledby={groupNameId(group.name)}>
+                  {/* A heading, at `SectionLabel`'s level: a group name opens a
+                      region of the overlay exactly as a section label opens one
+                      of a screen, and the dialog's own name is above both. */}
+                  <h2 class="palette-group-name label" id={groupNameId(group.name)}>
+                    {group.name}
+                  </h2>
+                  {/* `role="list"` beside the `<ul>`: the rows are drawn with no
+                      markers, and a list styled that way loses its list semantics
+                      in Safari — the same spelling `json-view` and
+                      `draft-structure` use. */}
+                  <Show when={group.commands.length > 0}>
+                    <ul class="palette-rows" role="list">
+                      <For each={group.commands}>
+                        {(command) => (
+                          <li>
+                            <button
+                              type="button"
+                              class="palette-row"
+                              id={rowId(command.index)}
+                              // The row's own text is its name — there is no aria-label
+                              // to drift from what a reader can see and say.
+                              aria-current={command.index === activeIndex() ? "true" : "false"}
+                              onClick={() => activate(command)}
+                            >
+                              {/* The cursor is a glyph as well as a tint, so the
+                                  active row is never told by colour alone. */}
+                              <span class="palette-row-mark" aria-hidden="true">
+                                {command.index === activeIndex() ? "▸" : ""}
+                              </span>
+                              <span class="palette-row-text">{command.text}</span>
+                              <span class="palette-row-detail frame">{command.detail}</span>
+                            </button>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Show>
+                  {/* A group with genuinely no rows is a region that is empty,
+                      which is the one thing `EmptyState` states — in words,
+                      because a blank is a claim. */}
+                  <Show when={group.commands.length === 0 ? group.note : null}>
                     {(note) => (
                       <div class="palette-group-note">
                         <EmptyState region={group.name} reason={note()} />
                       </div>
+                    )}
+                  </Show>
+                  {/* A note *beside* rows is not an emptiness: `go to` explains
+                      why the typed text does not also address a draft while it
+                      is offering rows that do address something. Drawing the
+                      region-is-empty primitive over that announces the opposite
+                      of what a reader can see, so it is rendered as what it is. */}
+                  <Show when={group.commands.length > 0 ? group.note : null}>
+                    {(note) => (
+                      <p class="palette-note frame" role="note">
+                        {note()}
+                      </p>
                     )}
                   </Show>
                 </div>
