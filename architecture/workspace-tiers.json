@@ -268,221 +268,378 @@
     "admission_rule": "Every released package artifact and image digest must join to one immutable source revision and Cargo.lock digest under SR17; every required gate evidence record must name that same source revision and exact artifact/image digests under SR26. Missing or mismatched fields fail closed."
   },
   "measurement": {
-    "status": "historical-pre-mvp-baseline",
-    "profile": "dev",
-    "qualification": "These 2026-07-25 receipts predate the 38-member workspace and 19-member root default cutover. wamn-0h0g.10.6 owns replacement clean and incremental measurements; this change records no new timings.",
-    "target_directory": "/home/kaalin/dev/wamn/target/lanes/wamn-4tob-6-29-20260725",
-    "method": "Uncontended runs on 2026-07-25. Each cold run follows cargo clean in the assigned target directory; each warm run immediately repeats the identical command. /usr/bin/time recorded elapsed, user, sys, maximum RSS, and exit status. Package-selector commands compose one --package argument per package in the named tier.",
+    "status": "accepted-mvp-landing",
+    "bead": "wamn-0h0g.10.6",
+    "measured_on": "2026-08-16",
+    "source_revision": "11aa572be7afdb85ee6cd183ea6270a93ff86931",
+    "cargo_lock_sha256": "60a91d3a0bf6f3cea64eca3ffec81e351c59f19658dea79eb40811906f537997",
+    "receipt_directory": "/home/kaalin/dev/wamn/target/plane-wave16-10-6/raw",
+    "profile": {
+      "bare_root": "Cargo debug/default profile",
+      "retained_images": "Dockerfile-owned release cook/build stages"
+    },
+    "qualification": "Exact-base, serial, local build evidence only. It is neither cluster/Kubernetes proof nor SR17/SR26 release admission. No standalone cargo release command was run; the measured Dockerfile targets own their package-scoped cargo chef cook --release and cargo build --release commands.",
+    "method": {
+      "serialization": "All commands were run serially on k11 with no concurrent measurement lane.",
+      "cargo_cold": "Each command used its own initially absent CARGO_TARGET_DIR and target-backed TMPDIR.",
+      "cargo_warm": "Immediate repeat of the identical Cargo command with the same target and TMPDIR.",
+      "image_cold": "First measured build on one newly created docker-container Buildx builder per retained image; each builder therefore had an empty isolated BuildKit content store and cache mounts.",
+      "image_warm": "Immediate identical docker buildx build command on the same per-image builder; the load-bearing cook/build stages reported CACHED.",
+      "timing": "/usr/bin/time -v measured each top-level command. Docker user/sys/RSS fields describe the local Buildx client, while stage durations come from BuildKit plain progress."
+    },
     "machine": {
       "hostname": "k11",
-      "kernel": "Linux 7.0.0-28-generic x86_64",
+      "kernel": "Linux 7.0.0-29-generic x86_64",
       "cpu": "11th Gen Intel(R) Core(TM) i7-1185G7 @ 3.00GHz",
+      "physical_cores": 4,
       "logical_cpus": 8,
-      "memory_gib": 60,
-      "filesystem": "NVMe /dev/nvme0n1p6",
+      "memory_bytes": 65437429760,
+      "filesystem": "/dev/nvme0n1p6[/home/kaalin/dev/wamn] ext4",
+      "filesystem_available_gib": 393.8,
       "rustc": "1.97.0 (2d8144b78 2026-07-07)",
-      "cargo": "1.97.0 (c980f4866 2026-06-30)"
+      "rustc_host": "x86_64-unknown-linux-gnu",
+      "cargo": "1.97.0 (c980f4866 2026-06-30)",
+      "cargo_host": "x86_64-unknown-linux-gnu"
     },
-    "runs": [
+    "root_default_members": [
       {
-        "id": "fast-check-cold",
-        "working_directory": ".",
-        "command": "cargo check --quiet --locked",
-        "package_selector": "tiers.fast_developer_native.root_packages",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 125.54,
-        "user_seconds": 564.64,
-        "sys_seconds": 70.05,
-        "max_rss_kib": 1266408,
-        "exit_status": 0,
-        "cache_kib": 1663584,
-        "cache_files": 4830
+        "package": "wamn-authoring-model",
+        "path": "crates/authoring/model"
       },
       {
-        "id": "fast-check-warm",
-        "working_directory": ".",
-        "command": "cargo check --quiet --locked",
-        "package_selector": "tiers.fast_developer_native.root_packages",
+        "package": "wamn-catalog",
+        "path": "crates/catalog/model"
+      },
+      {
+        "package": "wamn-entity-access",
+        "path": "crates/data/entity-access"
+      },
+      {
+        "package": "wamn-runner",
+        "path": "crates/execution/flow-engine"
+      },
+      {
+        "package": "wamn-flow-invocation",
+        "path": "crates/execution/flow-invocation"
+      },
+      {
+        "package": "wamn-flow",
+        "path": "crates/execution/flow-model"
+      },
+      {
+        "package": "wamn-execution-host",
+        "path": "crates/execution/host"
+      },
+      {
+        "package": "wamn-run-state",
+        "path": "crates/execution/run-state"
+      },
+      {
+        "package": "wamn-scheduler",
+        "path": "crates/execution/scheduler"
+      },
+      {
+        "package": "wamn-standard-nodes",
+        "path": "crates/execution/standard-nodes"
+      },
+      {
+        "package": "wamn-platform-identity",
+        "path": "crates/identity/platform"
+      },
+      {
+        "package": "wamn-component-policy",
+        "path": "crates/platform/component-policy"
+      },
+      {
+        "package": "wamn-pg-core",
+        "path": "crates/platform/pg-core"
+      },
+      {
+        "package": "wamn-runtime",
+        "path": "crates/platform/runtime"
+      },
+      {
+        "package": "wamn-scenario-model",
+        "path": "crates/scenarios/model"
+      },
+      {
+        "package": "wamn-schema-model",
+        "path": "crates/schema/model"
+      },
+      {
+        "package": "wamn-executor",
+        "path": "services/executor"
+      },
+      {
+        "package": "wamn-host",
+        "path": "services/host"
+      },
+      {
+        "package": "wamn-scenario-worker",
+        "path": "services/scenario-worker"
+      }
+    ],
+    "cargo_runs": [
+      {
+        "id": "bare-root-test-cold",
+        "command": "cargo test --locked",
+        "target_directory": "/home/kaalin/dev/wamn/target/plane-wave16-10-6/root-test",
+        "cache_state": "initially-empty-target",
+        "elapsed_seconds": 702.98,
+        "user_seconds": 3393.75,
+        "sys_seconds": 157.69,
+        "max_rss_kib": 3060648,
+        "exit_status": 0,
+        "cache_kib": 7718424,
+        "cache_files": 33702
+      },
+      {
+        "id": "bare-root-test-warm",
+        "command": "cargo test --locked",
+        "target_directory": "/home/kaalin/dev/wamn/target/plane-wave16-10-6/root-test",
         "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.4,
-        "user_seconds": 0.29,
-        "sys_seconds": 0.11,
-        "max_rss_kib": 130060,
+        "elapsed_seconds": 14.8,
+        "user_seconds": 8.07,
+        "sys_seconds": 3.56,
+        "max_rss_kib": 372952,
         "exit_status": 0
       },
       {
         "id": "bare-root-check-cold",
-        "working_directory": ".",
-        "command": "cargo check --quiet --locked",
-        "package_selector": "bare-default-members",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 136.38,
-        "user_seconds": 576.26,
-        "sys_seconds": 71.24,
-        "max_rss_kib": 1268100,
+        "command": "cargo check --locked",
+        "target_directory": "/home/kaalin/dev/wamn/target/plane-wave16-10-6/root-check",
+        "cache_state": "initially-empty-target",
+        "elapsed_seconds": 408.41,
+        "user_seconds": 1378.7,
+        "sys_seconds": 89.01,
+        "max_rss_kib": 1317944,
         "exit_status": 0,
-        "cache_kib": 1824188,
-        "cache_files": 5024
+        "cache_kib": 1773132,
+        "cache_files": 5673
       },
       {
         "id": "bare-root-check-warm",
-        "working_directory": ".",
-        "command": "cargo check --quiet --locked",
-        "package_selector": "bare-default-members",
+        "command": "cargo check --locked",
+        "target_directory": "/home/kaalin/dev/wamn/target/plane-wave16-10-6/root-check",
         "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.4,
-        "user_seconds": 0.29,
-        "sys_seconds": 0.11,
-        "max_rss_kib": 130652,
-        "exit_status": 0
-      },
-      {
-        "id": "fast-build-cold",
-        "working_directory": ".",
-        "command": "cargo build --quiet --locked",
-        "package_selector": "tiers.fast_developer_native.root_packages",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 221.45,
-        "user_seconds": 1167.92,
-        "sys_seconds": 118.76,
-        "max_rss_kib": 3236280,
-        "exit_status": 0,
-        "cache_kib": 10479512,
-        "cache_files": 9966
-      },
-      {
-        "id": "fast-build-warm",
-        "working_directory": ".",
-        "command": "cargo build --quiet --locked",
-        "package_selector": "tiers.fast_developer_native.root_packages",
-        "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.43,
-        "user_seconds": 0.3,
-        "sys_seconds": 0.13,
-        "max_rss_kib": 129820,
-        "exit_status": 0
-      },
-      {
-        "id": "contract-test-cold",
-        "working_directory": ".",
-        "command": "cargo test --quiet --locked --no-fail-fast",
-        "package_selector": "tiers.contract_conformance.root_packages",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 181.43,
-        "user_seconds": 902.01,
-        "sys_seconds": 93.55,
-        "max_rss_kib": 2916936,
-        "exit_status": 0,
-        "cache_kib": 5896860,
-        "cache_files": 7891
-      },
-      {
-        "id": "contract-test-warm",
-        "working_directory": ".",
-        "command": "cargo test --quiet --locked --no-fail-fast",
-        "package_selector": "tiers.contract_conformance.root_packages",
-        "cache_state": "immediate-repeat",
-        "elapsed_seconds": 2.17,
-        "user_seconds": 2.77,
-        "sys_seconds": 1.06,
-        "max_rss_kib": 186748,
-        "exit_status": 0
-      },
-      {
-        "id": "product-components-build-cold",
-        "working_directory": "components",
-        "command": "cargo build --quiet --locked --target wasm32-wasip2",
-        "package_selector": "tiers.product_components.component_packages",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 22.98,
-        "user_seconds": 112.9,
-        "sys_seconds": 13.85,
-        "max_rss_kib": 566944,
-        "exit_status": 0,
-        "cache_kib": 787536,
-        "cache_files": 2213
-      },
-      {
-        "id": "product-components-build-warm",
-        "working_directory": "components",
-        "command": "cargo build --quiet --locked --target wasm32-wasip2",
-        "package_selector": "tiers.product_components.component_packages",
-        "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.08,
-        "user_seconds": 0.06,
-        "sys_seconds": 0.02,
-        "max_rss_kib": 41296,
-        "exit_status": 0
-      },
-      {
-        "id": "full-components-build-cold",
-        "working_directory": "components",
-        "command": "cargo build --quiet --locked --workspace --target wasm32-wasip2",
-        "package_selector": "all-component-workspace-members",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 23.99,
-        "user_seconds": 123.18,
-        "sys_seconds": 16.67,
-        "max_rss_kib": 552848,
-        "exit_status": 0,
-        "cache_kib": 922840,
-        "cache_files": 3040
-      },
-      {
-        "id": "full-components-build-warm",
-        "working_directory": "components",
-        "command": "cargo build --quiet --locked --workspace --target wasm32-wasip2",
-        "package_selector": "all-component-workspace-members",
-        "cache_state": "immediate-repeat",
-        "elapsed_seconds": 0.08,
-        "user_seconds": 0.05,
-        "sys_seconds": 0.03,
-        "max_rss_kib": 41588,
-        "exit_status": 0
-      },
-      {
-        "id": "full-root-test-cold-sandbox-attempt",
-        "working_directory": ".",
-        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
-        "package_selector": "all-root-workspace-members",
-        "cache_state": "cold-after-cargo-clean",
-        "elapsed_seconds": 293.24,
-        "user_seconds": 1681.31,
-        "sys_seconds": 186.4,
-        "max_rss_kib": 3752728,
-        "exit_status": 101,
-        "cache_kib": 24321132,
-        "cache_files": 20015,
-        "qualification": "Retained as pre-deletion environment evidence; current deleted custom-plane packages are no longer in the workspace."
-      },
-      {
-        "id": "full-root-test-cold",
-        "working_directory": ".",
-        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
-        "package_selector": "all-root-workspace-members",
-        "cache_state": "cold-after-cargo-clean",
-        "execution_environment": "outside the filesystem sandbox so the builder local registry socket could run",
-        "elapsed_seconds": 292.37,
-        "user_seconds": 1676.38,
-        "sys_seconds": 182.01,
-        "max_rss_kib": 3747528,
-        "exit_status": 0,
-        "cache_kib": 24321936,
-        "cache_files": 20017
-      },
-      {
-        "id": "full-root-test-warm",
-        "working_directory": ".",
-        "command": "cargo test --quiet --locked --workspace --all-targets --no-fail-fast",
-        "package_selector": "all-root-workspace-members",
-        "cache_state": "immediate-repeat",
-        "execution_environment": "outside the filesystem sandbox so the builder local registry socket could run",
-        "elapsed_seconds": 3.38,
-        "user_seconds": 3.92,
-        "sys_seconds": 0.86,
-        "max_rss_kib": 134716,
+        "elapsed_seconds": 0.33,
+        "user_seconds": 0.22,
+        "sys_seconds": 0.1,
+        "max_rss_kib": 132228,
         "exit_status": 0
       }
-    ]
+    ],
+    "retained_images": {
+      "command_template": "docker buildx build --builder wamn-0h0g-10-6-<target> --progress=plain --target <target> --load --tag wamn-<target>:0h0g-10-6-11aa572b .",
+      "runs": [
+        {
+          "target": "host",
+          "top_level_package": "wamn-host",
+          "builder": "wamn-0h0g-10-6-host",
+          "cook_stage": "cook-host",
+          "build_stage": "build-host",
+          "cold": {
+            "elapsed_seconds": 490.08,
+            "client_user_seconds": 1.16,
+            "client_sys_seconds": 0.48,
+            "client_max_rss_kib": 73148,
+            "cook_stage_seconds": 239.6,
+            "build_stage_seconds": 176.5,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 2.17,
+            "client_user_seconds": 0.72,
+            "client_sys_seconds": 0.21,
+            "client_max_rss_kib": 75800,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "run-worker",
+          "top_level_package": "wamn-executor",
+          "builder": "wamn-0h0g-10-6-run-worker",
+          "cook_stage": "cook-executor",
+          "build_stage": "build-executor",
+          "cold": {
+            "elapsed_seconds": 873.88,
+            "client_user_seconds": 1.82,
+            "client_sys_seconds": 0.82,
+            "client_max_rss_kib": 71124,
+            "cook_stage_seconds": 500.3,
+            "build_stage_seconds": 233.9,
+            "component_builder_seconds": 108.3,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 1.0,
+            "client_user_seconds": 0.52,
+            "client_sys_seconds": 0.11,
+            "client_max_rss_kib": 71468,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "component_builder": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "scenario-worker",
+          "top_level_package": "wamn-scenario-worker",
+          "builder": "wamn-0h0g-10-6-scenario-worker",
+          "cook_stage": "cook-scenario-worker",
+          "build_stage": "build-scenario-worker",
+          "cold": {
+            "elapsed_seconds": 349.83,
+            "client_user_seconds": 0.89,
+            "client_sys_seconds": 0.39,
+            "client_max_rss_kib": 70156,
+            "cook_stage_seconds": 213.0,
+            "build_stage_seconds": 59.9,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 0.84,
+            "client_user_seconds": 0.35,
+            "client_sys_seconds": 0.07,
+            "client_max_rss_kib": 68328,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "ctl",
+          "top_level_package": "wamn-ctl",
+          "builder": "wamn-0h0g-10-6-ctl",
+          "cook_stage": "cook-ctl",
+          "build_stage": "build-ctl",
+          "qualification": "The Dockerfile-owned build-ctl stage also builds the feature-gated wamn-ctl-ops binary; the retained default binary surface is proved separately below.",
+          "cold": {
+            "elapsed_seconds": 175.53,
+            "client_user_seconds": 0.75,
+            "client_sys_seconds": 0.23,
+            "client_max_rss_kib": 71384,
+            "cook_stage_seconds": 37.9,
+            "build_stage_seconds": 71.5,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 0.75,
+            "client_user_seconds": 0.36,
+            "client_sys_seconds": 0.07,
+            "client_max_rss_kib": 70328,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "dispatcher",
+          "top_level_package": "wamn-dispatcher",
+          "builder": "wamn-0h0g-10-6-dispatcher",
+          "cook_stage": "cook-dispatcher",
+          "build_stage": "build-dispatcher",
+          "cold": {
+            "elapsed_seconds": 166.77,
+            "client_user_seconds": 0.7,
+            "client_sys_seconds": 0.23,
+            "client_max_rss_kib": 72696,
+            "cook_stage_seconds": 66.8,
+            "build_stage_seconds": 33.5,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 0.74,
+            "client_user_seconds": 0.35,
+            "client_sys_seconds": 0.07,
+            "client_max_rss_kib": 70972,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "waker",
+          "top_level_package": "wamn-waker",
+          "builder": "wamn-0h0g-10-6-waker",
+          "cook_stage": "cook-waker",
+          "build_stage": "build-waker",
+          "cold": {
+            "elapsed_seconds": 144.35,
+            "client_user_seconds": 0.66,
+            "client_sys_seconds": 0.21,
+            "client_max_rss_kib": 69696,
+            "cook_stage_seconds": 53.7,
+            "build_stage_seconds": 21.0,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 0.77,
+            "client_user_seconds": 0.34,
+            "client_sys_seconds": 0.08,
+            "client_max_rss_kib": 71824,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        },
+        {
+          "target": "cdc-reader",
+          "top_level_package": "wamn-cdc-reader",
+          "builder": "wamn-0h0g-10-6-cdc-reader",
+          "cook_stage": "cook-cdc-reader",
+          "build_stage": "build-cdc-reader",
+          "cold": {
+            "elapsed_seconds": 158.64,
+            "client_user_seconds": 0.68,
+            "client_sys_seconds": 0.23,
+            "client_max_rss_kib": 71140,
+            "cook_stage_seconds": 62.2,
+            "build_stage_seconds": 30.4,
+            "exit_status": 0
+          },
+          "warm": {
+            "elapsed_seconds": 0.74,
+            "client_user_seconds": 0.34,
+            "client_sys_seconds": 0.08,
+            "client_max_rss_kib": 75228,
+            "cook_stage": "CACHED",
+            "build_stage": "CACHED",
+            "exit_status": 0
+          }
+        }
+      ]
+    },
+    "ctl_default_surface_proof": {
+      "help_command": "docker run --rm wamn-ctl:0h0g-10-6-11aa572b --help",
+      "present_commands": [
+        "publish-catalog",
+        "provision-project",
+        "provision-org",
+        "provision-project-env",
+        "enable-cdc-project-env",
+        "migrate-catalog",
+        "reconcile-replica-identity",
+        "reconcile-run-plane",
+        "terminalize-effect-uncertain"
+      ],
+      "absent_ops_commands": [
+        "dump-project-env",
+        "restore-project-env",
+        "copy-project-env",
+        "prune-run-history",
+        "impact-report",
+        "pin-run"
+      ],
+      "tree_command": "cargo tree --locked --offline -p wamn-ctl --edges features",
+      "absent_default_features": [
+        "wamn-control-provision feature \"ops\"",
+        "wamn-schema-compiler feature \"ops\"",
+        "wamn-schema-control feature \"ops\""
+      ],
+      "exit_status": 0
+    }
   }
 }

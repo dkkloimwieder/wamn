@@ -298,16 +298,128 @@ and artifact/image digests. The exact required fields and fail-closed rule live
 in `architecture/workspace-tiers.json`. Cargo defaults, a mutable tag, or an
 evidence record that names only a test command are not release evidence.
 
+### MVP landing measurement (wamn-0h0g.10.6, 2026-08-16)
+
+The accepted local build receipt is for exact source revision
+`11aa572be7afdb85ee6cd183ea6270a93ff86931` and `Cargo.lock` SHA-256
+`60a91d3a0bf6f3cea64eca3ffec81e351c59f19658dea79eb40811906f537997`.
+The canonical machine-readable result, including the exact 19 default members,
+lives in `architecture/workspace-tiers.json`; raw local receipts live under
+`/home/kaalin/dev/wamn/target/plane-wave16-10-6/raw`.
+
+The commands ran serially on `k11`: Linux 7.0.0-29-generic x86_64, i7-1185G7
+(4 cores / 8 threads), 65,437,429,760 bytes RAM, ext4 on
+`/dev/nvme0n1p6[/home/kaalin/dev/wamn]`, rustc 1.97.0
+(`2d8144b78`, 2026-07-07), and cargo 1.97.0 (`c980f4866`, 2026-06-30).
+Each bare Cargo cold run used its own initially absent target-backed target and
+TMPDIR; warm means the immediate identical Cargo command on that target. Each
+image cold run was the first measured build on its own newly created
+`docker-container` Buildx builder; warm means the immediate identical build on
+that builder, with every load-bearing cook/build stage reporting `CACHED`.
+
+| Command/target | Cold total | Cold cook | Cold build | Warm total |
+|---|---:|---:|---:|---:|
+| `cargo test --locked` | 702.98s | — | — | 14.80s |
+| `cargo check --locked` | 408.41s | — | — | 0.33s |
+| image `host` / `wamn-host` | 490.08s | 239.6s | 176.5s | 2.17s |
+| image `run-worker` / `wamn-executor` | 873.88s | 500.3s | 233.9s | 1.00s |
+| image `scenario-worker` / `wamn-scenario-worker` | 349.83s | 213.0s | 59.9s | 0.84s |
+| image `ctl` / `wamn-ctl` | 175.53s | 37.9s | 71.5s | 0.75s |
+| image `dispatcher` / `wamn-dispatcher` | 166.77s | 66.8s | 33.5s | 0.74s |
+| image `waker` / `wamn-waker` | 144.35s | 53.7s | 21.0s | 0.77s |
+| image `cdc-reader` / `wamn-cdc-reader` | 158.64s | 62.2s | 30.4s | 0.74s |
+
+The retained `run-worker` image also ran the Dockerfile's six-package
+`component-builder` stage in 108.3s cold; it was `CACHED` warm. The `ctl`
+`build-ctl` stage also owns the feature-gated `wamn-ctl-ops` binary. The
+separate default-binary proof below confirmed that the retained default image
+still exposes only the MVP verb surface. These are local build measurements,
+not cluster/Kubernetes proof or SR17/SR26 release admission. No standalone
+`cargo ... --release` command was introduced or measured: the Dockerfile owns
+its package-scoped release cook/build commands.
+
+The following is the exact reproducible recipe. The target and builder names
+must be absent before the cold commands.
+
+```bash
+set -o pipefail
+WAMN_10_6_ROOT=/home/kaalin/dev/wamn/target/plane-wave16-10-6
+WAMN_10_6_RAW="$WAMN_10_6_ROOT/raw"
+mkdir -p "$WAMN_10_6_RAW"
+
+test ! -e "$WAMN_10_6_ROOT/root-test"
+mkdir -p "$WAMN_10_6_ROOT/tmp/root-test"
+TMPDIR="$WAMN_10_6_ROOT/tmp/root-test" \
+  CARGO_TARGET_DIR="$WAMN_10_6_ROOT/root-test" \
+  /usr/bin/time -v -o "$WAMN_10_6_RAW/root-test-cold.time" \
+  cargo test --locked 2>&1 | tee "$WAMN_10_6_RAW/root-test-cold.log"
+TMPDIR="$WAMN_10_6_ROOT/tmp/root-test" \
+  CARGO_TARGET_DIR="$WAMN_10_6_ROOT/root-test" \
+  /usr/bin/time -v -o "$WAMN_10_6_RAW/root-test-warm.time" \
+  cargo test --locked 2>&1 | tee "$WAMN_10_6_RAW/root-test-warm.log"
+
+test ! -e "$WAMN_10_6_ROOT/root-check"
+mkdir -p "$WAMN_10_6_ROOT/tmp/root-check"
+TMPDIR="$WAMN_10_6_ROOT/tmp/root-check" \
+  CARGO_TARGET_DIR="$WAMN_10_6_ROOT/root-check" \
+  /usr/bin/time -v -o "$WAMN_10_6_RAW/root-check-cold.time" \
+  cargo check --locked 2>&1 | tee "$WAMN_10_6_RAW/root-check-cold.log"
+TMPDIR="$WAMN_10_6_ROOT/tmp/root-check" \
+  CARGO_TARGET_DIR="$WAMN_10_6_ROOT/root-check" \
+  /usr/bin/time -v -o "$WAMN_10_6_RAW/root-check-warm.time" \
+  cargo check --locked 2>&1 | tee "$WAMN_10_6_RAW/root-check-warm.log"
+
+for target in host run-worker scenario-worker ctl dispatcher waker cdc-reader; do
+  WAMN_10_6_BUILDER="wamn-0h0g-10-6-$target"
+  WAMN_10_6_IMAGE_ROOT="$WAMN_10_6_ROOT/docker/$target"
+  WAMN_10_6_TAG="wamn-$target:0h0g-10-6-11aa572b"
+  test ! -e "$WAMN_10_6_IMAGE_ROOT"
+  mkdir -p "$WAMN_10_6_IMAGE_ROOT/tmp"
+  docker buildx create --name "$WAMN_10_6_BUILDER" \
+    --driver docker-container --use --bootstrap
+  TMPDIR="$WAMN_10_6_IMAGE_ROOT/tmp" \
+    /usr/bin/time -v -o "$WAMN_10_6_RAW/docker-$target-cold.time" \
+    docker buildx build --builder "$WAMN_10_6_BUILDER" --progress=plain \
+      --target "$target" --load --tag "$WAMN_10_6_TAG" . 2>&1 \
+      | tee "$WAMN_10_6_RAW/docker-$target-cold.log"
+  TMPDIR="$WAMN_10_6_IMAGE_ROOT/tmp" \
+    /usr/bin/time -v -o "$WAMN_10_6_RAW/docker-$target-warm.time" \
+    docker buildx build --builder "$WAMN_10_6_BUILDER" --progress=plain \
+      --target "$target" --load --tag "$WAMN_10_6_TAG" . 2>&1 \
+      | tee "$WAMN_10_6_RAW/docker-$target-warm.log"
+done
+
+docker run --rm wamn-ctl:0h0g-10-6-11aa572b --help 2>&1 \
+  | tee "$WAMN_10_6_RAW/ctl-help.txt"
+test ! -e "$WAMN_10_6_ROOT/ctl-tree"
+mkdir -p "$WAMN_10_6_ROOT/ctl-tree/tmp"
+TMPDIR="$WAMN_10_6_ROOT/ctl-tree/tmp" \
+  CARGO_TARGET_DIR="$WAMN_10_6_ROOT/ctl-tree" \
+  cargo tree --locked --offline -p wamn-ctl --edges features 2>&1 \
+  | tee "$WAMN_10_6_RAW/ctl-default-feature-tree.txt"
+```
+
+The help receipt contained all nine MVP commands: `publish-catalog`,
+`provision-project`, `provision-org`, `provision-project-env`,
+`enable-cdc-project-env`, `migrate-catalog`,
+`reconcile-replica-identity`, `reconcile-run-plane`, and
+`terminalize-effect-uncertain`. It contained none of `dump-project-env`,
+`restore-project-env`, `copy-project-env`, `prune-run-history`,
+`impact-report`, or `pin-run`. The locked/offline default feature tree
+contained none of `wamn-control-provision feature "ops"`,
+`wamn-schema-compiler feature "ops"`, or
+`wamn-schema-control feature "ops"`.
+
 ### Historical measurement (2026-07-25; pre-MVP workspace)
 
 These receipts predate the 38-member workspace and 19-member root default
-cutover. They remain only as historical evidence; this change records no new
-timings. `wamn-0h0g.10.6` owns replacement clean and incremental measurements.
-The historical runs used debug/default profile on `k11` (8 logical CPUs,
-i7-1185G7, 60 GiB RAM, NVMe; rustc/cargo 1.97.0) with the isolated target
-directory recorded in `architecture/workspace-tiers.json`. Each cold row
+cutover. They remain only as historical evidence and are not comparable to the
+accepted exact-base measurement above. The historical runs used debug/default
+profile on `k11` (8 logical CPUs, i7-1185G7, 60 GiB RAM, NVMe; rustc/cargo
+1.97.0) with isolated target directory
+`/home/kaalin/dev/wamn/target/lanes/wamn-4tob-6-29-20260725`. Each cold row
 followed `cargo clean`; each warm row immediately repeated the identical
-command.
+command. The archived table below retains the historical summary.
 
 | Selection and command | Cold | Warm | Cold cache |
 |---|---:|---:|---:|
