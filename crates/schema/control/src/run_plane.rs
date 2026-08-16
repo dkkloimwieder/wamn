@@ -6774,8 +6774,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            14,
-            "all fourteen retained run-plane tables are at target"
+            13,
+            "all thirteen retained run-plane tables are at target"
         );
     }
 
