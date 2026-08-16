@@ -1,8 +1,8 @@
 //! Trusted immutable plan supply for the digest-pinned flowrunner.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::{Display, Write as _};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use sha2::{Digest as _, Sha256};
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -20,124 +20,13 @@ mod bindings {
     });
 }
 
+pub use super::control_artifact_reader::InvalidPlanCacheLimit;
+use super::control_artifact_reader::ResolutionPlanCache;
 use bindings::wamn::runner::plan_supply::{
     self, ResolutionPlan, RunResolutionSnapshot, SupplyError,
 };
 
 pub const RUNNER_PLAN_SUPPLY_ID: &str = "wamn-runner-plan-supply";
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PlanCacheKey {
-    tenant_id: Arc<str>,
-    execution_bundle_hash: Arc<str>,
-}
-
-#[derive(Debug)]
-struct PlanCacheState {
-    entries: HashMap<PlanCacheKey, Arc<[u8]>>,
-    least_to_most_recent: VecDeque<PlanCacheKey>,
-}
-
-/// A deterministic entry-bounded cache keyed by tenant and exact plan identity.
-#[derive(Debug)]
-pub struct ResolutionPlanCache {
-    max_entries: usize,
-    state: Mutex<PlanCacheState>,
-}
-
-impl ResolutionPlanCache {
-    pub fn new(max_entries: usize) -> Result<Self, InvalidPlanCacheLimit> {
-        if max_entries == 0 {
-            return Err(InvalidPlanCacheLimit);
-        }
-        Ok(Self {
-            max_entries,
-            state: Mutex::new(PlanCacheState {
-                entries: HashMap::with_capacity(max_entries),
-                least_to_most_recent: VecDeque::with_capacity(max_entries),
-            }),
-        })
-    }
-
-    fn get(&self, tenant_id: &str, execution_bundle_hash: &str) -> Option<Arc<[u8]>> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("resolution plan cache lock poisoned");
-        let key = PlanCacheKey {
-            tenant_id: Arc::from(tenant_id),
-            execution_bundle_hash: Arc::from(execution_bundle_hash),
-        };
-        let bytes = state.entries.get(&key)?.clone();
-        touch(&mut state.least_to_most_recent, &key);
-        Some(bytes)
-    }
-
-    fn insert_verified(
-        &self,
-        tenant_id: &str,
-        execution_bundle_hash: &str,
-        exact_bytes: Vec<u8>,
-    ) -> Result<Arc<[u8]>, PlanSupplyFailure> {
-        if execution_bundle_hash_of(&exact_bytes) != execution_bundle_hash {
-            return Err(PlanSupplyFailure::new(
-                PlanSupplyFailureKind::HashMismatch,
-                format!("plan bytes do not match {execution_bundle_hash}"),
-            ));
-        }
-        let key = PlanCacheKey {
-            tenant_id: Arc::from(tenant_id),
-            execution_bundle_hash: Arc::from(execution_bundle_hash),
-        };
-        let mut state = self
-            .state
-            .lock()
-            .expect("resolution plan cache lock poisoned");
-        if let Some(bytes) = state.entries.get(&key).cloned() {
-            touch(&mut state.least_to_most_recent, &key);
-            return Ok(bytes);
-        }
-        while state.entries.len() >= self.max_entries {
-            let evicted = state
-                .least_to_most_recent
-                .pop_front()
-                .expect("non-empty cache has an eviction key");
-            state.entries.remove(&evicted);
-        }
-        let bytes: Arc<[u8]> = exact_bytes.into();
-        state.entries.insert(key.clone(), bytes.clone());
-        state.least_to_most_recent.push_back(key);
-        Ok(bytes)
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.state
-            .lock()
-            .expect("resolution plan cache lock poisoned")
-            .entries
-            .len()
-    }
-}
-
-fn touch(order: &mut VecDeque<PlanCacheKey>, key: &PlanCacheKey) {
-    if let Some(position) = order.iter().position(|candidate| candidate == key) {
-        order.remove(position);
-    }
-    order.push_back(key.clone());
-}
-
-/// The cache must retain at least one immutable plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidPlanCacheLimit;
-
-impl Display for InvalidPlanCacheLimit {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("resolution plan cache entry limit must be non-zero")
-    }
-}
-
-impl std::error::Error for InvalidPlanCacheLimit {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlanSupplyFailureKind {
@@ -249,7 +138,8 @@ impl RunnerPlanSupply {
             ));
         }
         for plan in loaded {
-            let bytes = self.cache.insert_verified(
+            let bytes = insert_verified(
+                &self.cache,
                 &metadata.tenant_id,
                 &plan.execution_bundle_hash,
                 plan.exact_bytes,
@@ -324,6 +214,21 @@ fn execution_bundle_hash_of(exact_bytes: &[u8]) -> String {
     hash
 }
 
+fn insert_verified(
+    cache: &ResolutionPlanCache,
+    tenant_id: &str,
+    execution_bundle_hash: &str,
+    exact_bytes: Vec<u8>,
+) -> Result<Arc<[u8]>, PlanSupplyFailure> {
+    if execution_bundle_hash_of(&exact_bytes) != execution_bundle_hash {
+        return Err(PlanSupplyFailure::new(
+            PlanSupplyFailureKind::HashMismatch,
+            format!("plan bytes do not match {execution_bundle_hash}"),
+        ));
+    }
+    Ok(cache.insert_verified(tenant_id, execution_bundle_hash, exact_bytes))
+}
+
 pub fn add_to_linker(linker: &mut Linker<SharedCtx>) -> wash_runtime::wasmtime::Result<()> {
     plan_supply::add_to_linker::<_, SharedCtx>(linker, extract_active_ctx)
 }
@@ -394,17 +299,11 @@ mod tests {
         let a = execution_bundle_hash_of(b"a");
         let b = execution_bundle_hash_of(b"b");
         let c = execution_bundle_hash_of(b"c");
-        cache
-            .insert_verified("tenant-a", &a, b"a".to_vec())
-            .unwrap();
-        cache
-            .insert_verified("tenant-a", &b, b"b".to_vec())
-            .unwrap();
+        insert_verified(&cache, "tenant-a", &a, b"a".to_vec()).unwrap();
+        insert_verified(&cache, "tenant-a", &b, b"b".to_vec()).unwrap();
         assert!(cache.get("tenant-b", &a).is_none());
         assert_eq!(cache.get("tenant-a", &a).as_deref(), Some(b"a".as_slice()));
-        cache
-            .insert_verified("tenant-a", &c, b"c".to_vec())
-            .unwrap();
+        insert_verified(&cache, "tenant-a", &c, b"c".to_vec()).unwrap();
         assert_eq!(cache.len(), 2);
         assert!(cache.get("tenant-a", &b).is_none());
         assert!(cache.get("tenant-a", &a).is_some());
@@ -415,9 +314,7 @@ mod tests {
     fn hash_mismatch_never_enters_the_cache() {
         let cache = ResolutionPlanCache::new(1).unwrap();
         let expected = execution_bundle_hash_of(b"expected");
-        let error = cache
-            .insert_verified("tenant-a", &expected, b"forged".to_vec())
-            .unwrap_err();
+        let error = insert_verified(&cache, "tenant-a", &expected, b"forged".to_vec()).unwrap_err();
         assert_eq!(error.kind, PlanSupplyFailureKind::HashMismatch);
         assert_eq!(cache.len(), 0);
     }

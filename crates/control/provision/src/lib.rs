@@ -67,6 +67,8 @@ pub mod sql;
 #[cfg(feature = "ops")]
 pub mod state;
 
+#[cfg(feature = "postgres-config")]
+pub use artifact_reader::artifact_reader_connection_config;
 pub use artifact_reader::{
     ARTIFACT_READER_APPLICATION_NAME, ARTIFACT_READER_CREDENTIAL_KEY,
     ARTIFACT_READER_CREDENTIAL_PATH, ARTIFACT_READER_CREDENTIAL_SCHEMA_VERSION,

@@ -1,4 +1,5 @@
 pub mod connection_http;
+pub mod control_artifact_reader;
 pub mod runner_egress;
 pub mod runner_plan_supply;
 pub mod wamn_credentials;
@@ -8,6 +9,7 @@ pub mod wamn_logging;
 pub mod wamn_postgres;
 
 pub use connection_http::ConnectionHttp;
+pub use control_artifact_reader::ControlArtifactReader;
 pub use runner_egress::RunnerEgressPolicy;
 pub use runner_plan_supply::RunnerPlanSupply;
 pub use wamn_credentials::WamnCredentials;

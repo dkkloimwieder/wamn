@@ -228,6 +228,33 @@ pub fn parse_artifact_reader_credential(
     })
 }
 
+/// Parse and validate the fixed Secret document, then hand native code an
+/// opaque PostgreSQL configuration without exposing the credential URL.
+///
+/// The expected scope and endpoint are host-held facts. They must never be
+/// derived from the Secret being validated.
+#[cfg(feature = "postgres-config")]
+pub fn artifact_reader_connection_config(
+    document: &[u8],
+    expected: &ArtifactReaderCredentialScope,
+    expected_endpoint: &ArtifactReaderEndpoint,
+    now: SystemTime,
+) -> Result<tokio_postgres::Config, ArtifactReaderCredentialError> {
+    let credential = parse_artifact_reader_credential(document)?;
+    validate_artifact_reader_credential(&credential, expected, expected_endpoint, now)?;
+    let mut config = credential
+        .url
+        .parse::<tokio_postgres::Config>()
+        .map_err(|_| {
+            ArtifactReaderCredentialError::new(
+                ArtifactReaderCredentialErrorKind::Url,
+                "artifact-reader credential URL cannot configure PostgreSQL",
+            )
+        })?;
+    config.application_name(ARTIFACT_READER_APPLICATION_NAME);
+    Ok(config)
+}
+
 /// Extract a non-secret endpoint identity from a trusted control URL.
 pub fn artifact_reader_endpoint(
     value: &str,
@@ -683,6 +710,46 @@ mod tests {
                 "tenant-id".to_string(),
                 "url".to_string(),
             ])
+        );
+    }
+
+    #[cfg(feature = "postgres-config")]
+    #[test]
+    fn native_connection_handoff_validates_first_and_keeps_url_opaque() {
+        let document = serde_json::to_vec(&credential()).unwrap();
+        let config = artifact_reader_connection_config(
+            &document,
+            &scope(),
+            &endpoint(),
+            UNIX_EPOCH + Duration::from_secs(1_767_225_600),
+        )
+        .unwrap();
+        assert_eq!(
+            config.get_application_name(),
+            Some(ARTIFACT_READER_APPLICATION_NAME)
+        );
+        assert_eq!(config.get_dbname(), Some("wamn_system"));
+        assert_eq!(
+            config.get_user(),
+            Some("wamn_artifact_reader_712f6b8bf00afcc873dc1e3eeb23b35f50872082_a")
+        );
+        let debug = format!("{config:?}");
+        assert!(!debug.contains(&"a".repeat(64)));
+
+        let wrong_endpoint = ArtifactReaderEndpoint {
+            host: "attacker.example".to_string(),
+            port: 5432,
+        };
+        assert_eq!(
+            artifact_reader_connection_config(
+                &document,
+                &scope(),
+                &wrong_endpoint,
+                UNIX_EPOCH + Duration::from_secs(1_767_225_600),
+            )
+            .unwrap_err()
+            .kind(),
+            ArtifactReaderCredentialErrorKind::Url
         );
     }
 

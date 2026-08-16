@@ -28,18 +28,18 @@ load_mutation() {
   case "$id" in
     hash-verification-bypass)
       TARGET="crates/platform/runtime/src/plugins/runner_plan_supply.rs"
-      EXPECTED_SHA="a29fe5ffaeaae2d8d2aba23a99889657d871251bbd9b26662d32e00356d4b45f"
+      EXPECTED_SHA="735fb0613ad0ceb5602d2cd0a03c34cd6b7d2dec4e0364446832a61e705ab9b7"
       NEEDLE='if execution_bundle_hash_of(&exact_bytes) != execution_bundle_hash {'
       REPLACEMENT='if false {'
       EXPECTED_COUNT=1
       GATE="plugins::runner_plan_supply::tests::hash_mismatch_never_enters_the_cache"
       ;;
     cache-drops-tenant)
-      TARGET="crates/platform/runtime/src/plugins/runner_plan_supply.rs"
-      EXPECTED_SHA="a29fe5ffaeaae2d8d2aba23a99889657d871251bbd9b26662d32e00356d4b45f"
-      NEEDLE='tenant_id: Arc::from(tenant_id),'
-      REPLACEMENT='tenant_id: Arc::from(""),'
-      EXPECTED_COUNT=2
+      TARGET="crates/platform/runtime/src/plugins/control_artifact_reader.rs"
+      EXPECTED_SHA="b8ccb76cfede49b253355e78f6c5b580c11647cb2cfceebfc403bd57b72acc5b"
+      NEEDLE=$'        let key = PlanCacheKey {\n            tenant_id: Arc::from(tenant_id),\n            execution_bundle_hash: Arc::from(execution_bundle_hash),\n        };\n        let bytes = state.entries.get(&key)?.clone();'
+      REPLACEMENT=$'        let key = PlanCacheKey {\n            tenant_id: Arc::from(""),\n            execution_bundle_hash: Arc::from(execution_bundle_hash),\n        };\n        let bytes = state.entries.get(&key)?.clone();'
+      EXPECTED_COUNT=1
       GATE="plugins::runner_plan_supply::tests::cache_is_entry_bounded_and_tenant_scoped"
       ;;
     moving-head-query)
