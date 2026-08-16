@@ -32,6 +32,7 @@ import { nodeRunTone, runTone } from "./status";
 import { StatusBadge } from "./status-badge";
 import { EmptyState, LoadingBlock } from "./states";
 import { VerdictBar } from "./verdict-bar";
+import { VerdictGlyph } from "./verdict-glyph";
 
 /**
  * §3's accessibility floor, checked here once for every step-3 primitive at
@@ -143,6 +144,18 @@ const primitives: readonly Primitive[] = [
       <For each={reportCases}>{(reportCase) => <PassGlyph passed={reportCase.passed} />}</For>
     ),
     says: ["passed", "failed"],
+  },
+  {
+    // §2.0's entity verdicts, which are not §2.3's pass/fail: an entity can be
+    // uncertain, and a draft has no verdict at all. Held here for the reason
+    // §3 gives — the floor is checked once, for everything downstream.
+    name: "VerdictGlyph",
+    render: () => (
+      <For each={["ok", "fail", "uncertain", "none"] as const}>
+        {(state) => <VerdictGlyph state={state} />}
+      </For>
+    ),
+    says: ["verdict ok", "verdict fail", "verdict effect-uncertain", "no verdict"],
   },
   {
     name: "VerdictBar",
