@@ -120,15 +120,6 @@ pub fn select_test_case_mappings_sql() -> &'static str {
       WHERE tenant_id = $1 AND report_id = $2 ORDER BY ordinal"
 }
 
-/// Project one run's immutable claim-time map to the report wire shape.
-pub fn select_test_resolution_map_sql() -> &'static str {
-    "SELECT COALESCE( \
-         jsonb_object_agg(flow_id, execution_bundle_hash ORDER BY flow_id), \
-         '{}'::jsonb) \
-       FROM run_flow_resolutions \
-      WHERE tenant_id = $1 AND run_id = $2"
-}
-
 /// Project frame-keyed node facts through plan identity to stable named nodes.
 pub fn select_named_node_observations_sql() -> &'static str {
     "SELECT resolution.flow_id, node.local_node_id, node.status, node.error_kind \
@@ -301,54 +292,6 @@ where
     Ok(())
 }
 
-/// Pin the first admitted case's complete map, or report whether it matches.
-pub async fn pin_test_report_resolution_map(
-    client: &mut Client,
-    tenant_id: &str,
-    report_id: &str,
-    run_id: &str,
-) -> anyhow::Result<bool> {
-    let transaction = client.transaction().await?;
-    let actual: Value = transaction
-        .query_one(select_test_resolution_map_sql(), &[&tenant_id, &run_id])
-        .await
-        .context("read test run resolution map")?
-        .get(0);
-    if actual.as_object().is_none_or(|map| map.is_empty()) {
-        bail!("cannot pin an empty claim-time resolution map");
-    }
-    let pinned = transaction
-        .query_opt(
-            "UPDATE authoring_test_run_reservations \
-                SET resolution_map = $3::jsonb, \
-                    resolution_map_hash = \
-                        'sha256:' || encode(sha256(convert_to($3::jsonb::text, 'UTF8')), 'hex') \
-              WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending' \
-                AND resolution_map IS NULL \
-              RETURNING true",
-            &[&tenant_id, &report_id, &actual],
-        )
-        .await
-        .context("pin first test report resolution map")?;
-    let matched = if pinned.is_some() {
-        true
-    } else {
-        transaction
-            .query_opt(
-                "SELECT resolution_map = $3::jsonb \
-                   FROM authoring_test_run_reservations \
-                  WHERE tenant_id = $1 AND report_id = $2 AND state = 'pending'",
-                &[&tenant_id, &report_id, &actual],
-            )
-            .await
-            .context("compare pinned test report resolution map")?
-            .context("pending test report reservation does not exist")?
-            .get(0)
-    };
-    transaction.commit().await?;
-    Ok(matched)
-}
-
 /// Persist one executor-produced terminal result against its immutable mapping.
 pub async fn finalize_test_case(
     client: &Client,
@@ -421,20 +364,9 @@ pub async fn reconcile_test_report(
             "UPDATE authoring_test_case_runs AS test_case \
                 SET state = 'finalized', passed = false, \
                     failure_kind = 'effect-uncertain', \
-                    resolution_map = map.value, \
-                    resolution_map_hash = CASE WHEN map.value IS NULL THEN NULL ELSE \
-                        'sha256:' || encode(sha256(convert_to(map.value::text, 'UTF8')), 'hex') END, \
                     summary = jsonb_build_object('kind', 'effect-uncertain'), \
                     finalized_at = clock_timestamp() \
                FROM runs AS run \
-               LEFT JOIN LATERAL ( \
-                    SELECT CASE WHEN count(*) = 0 THEN NULL ELSE \
-                        jsonb_object_agg(resolution.flow_id, resolution.execution_bundle_hash \
-                                         ORDER BY resolution.flow_id) END AS value \
-                      FROM run_flow_resolutions AS resolution \
-                     WHERE resolution.tenant_id = run.tenant_id \
-                       AND resolution.run_id = run.run_id \
-               ) AS map ON true \
               WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
                 AND test_case.state = 'pending' \
                 AND run.tenant_id = test_case.tenant_id \

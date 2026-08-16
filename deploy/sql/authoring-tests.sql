@@ -230,7 +230,6 @@ DECLARE
     old_row jsonb := CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END;
     new_row jsonb := to_jsonb(NEW);
     reservation record;
-    actual_resolution_map jsonb;
     expected_count bigint;
     finalized_count bigint;
     all_passed boolean;
@@ -265,20 +264,6 @@ BEGIN
                          '{source,report-id}' = NEW.report_id
                      AND run.invocation_context #>>
                          '{source,case-id}' = test_case.case_id
-                     AND EXISTS (
-                         SELECT 1 FROM wamn_run.run_flow_resolutions AS present
-                         WHERE present.tenant_id = test_case.tenant_id
-                           AND present.run_id = test_case.run_id
-                     )
-                     AND NEW.resolution_map = (
-                         SELECT jsonb_object_agg(
-                             map.flow_id, map.execution_bundle_hash
-                             ORDER BY map.flow_id
-                         )
-                         FROM wamn_run.run_flow_resolutions AS map
-                         WHERE map.tenant_id = test_case.tenant_id
-                           AND map.run_id = test_case.run_id
-                     )
                ) THEN
                 NULL;
             ELSIF OLD.state = 'pending' AND NEW.state = 'finalized'
@@ -372,17 +357,6 @@ BEGIN
                 ) THEN
                     RAISE EXCEPTION USING ERRCODE = '23514',
                         MESSAGE = 'authoring-test-case-run-pin-mismatch';
-                END IF;
-                SELECT COALESCE(
-                    jsonb_object_agg(map.flow_id, map.execution_bundle_hash
-                                     ORDER BY map.flow_id), '{}'::jsonb
-                ) INTO actual_resolution_map
-                FROM wamn_run.run_flow_resolutions AS map
-                WHERE map.tenant_id = NEW.tenant_id
-                  AND map.run_id = NEW.run_id;
-                IF NEW.resolution_map <> actual_resolution_map THEN
-                    RAISE EXCEPTION USING ERRCODE = '23514',
-                        MESSAGE = 'authoring-test-case-resolution-map-invalid';
                 END IF;
             END IF;
             IF NEW.passed AND reservation.resolution_map IS DISTINCT FROM NEW.resolution_map THEN

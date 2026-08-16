@@ -3,7 +3,6 @@
 //! Set `WAMN_TEST_ORCHESTRATION_PG_URL` to a superuser URL for a disposable
 //! database. The proof resets dedicated schemas and skips when the URL is absent.
 
-use serde_json::json;
 use tokio_postgres::{Client, NoTls};
 use wamn_authoring_model::TestSetInput;
 use wamn_scenario_model::{NodeFailureKind, NodeTerminalStatus};
@@ -238,8 +237,8 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .get(0);
     assert_eq!(deadline_kind, "deadline-exhausted");
 
-    // Effect uncertainty uses an ordinary run row and its immutable resolution
-    // map. The report copies that exact map and never enters operator recovery.
+    // Effect uncertainty uses an ordinary run row and never enters operator
+    // recovery.
     let plan_bytes = b"{}".as_slice();
     let plan_hash: String = client
         .query_one(
@@ -337,16 +336,6 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
             .expect("reconcile effect uncertainty"),
         TestReportReconciliation::Finalized { passed: false }
     );
-    let report_map = client
-        .query_one(
-            "SELECT resolution_map FROM authoring_test_reports \
-              WHERE tenant_id = $1 AND report_id = 'uncertain-report'",
-            &[&TENANT],
-        )
-        .await
-        .expect("read copied report map")
-        .get::<_, serde_json::Value>(0);
-    assert_eq!(report_map, json!({"flow-a": plan_hash}));
     assert_eq!(
         reserve_test_report(&mut client, &effect_report)
             .await
