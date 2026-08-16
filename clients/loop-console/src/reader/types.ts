@@ -25,6 +25,10 @@ export type JsonValue =
  * `dispatched|running|completed|failed|infrastructure-failure|effect-uncertain`;
  * the wire invents `queued`, renames `completed` to `succeeded`, and drops
  * `infrastructure-failure` entirely even though assertions still assert on it.
+ * The decided answer is `run-vocabulary.ts` (wamn-dggp.14): screens translate
+ * through `wireRunStatus` / `durableRunStatus`, which name the
+ * `completed` ↔ `succeeded` pair and answer `infrastructure-failure` with an
+ * explicit no-wire-form rather than the nearest word.
  */
 export type RunStatus =
   | "queued"
@@ -37,8 +41,13 @@ export type RunStatus =
 /**
  * Wire `RunFailure` kind. STEP-9 RISK — the durable `FailKind` has 12 values;
  * the wire keeps 4 of them, adds `deadline-exhausted` (which is not durable on
- * a run at all, only on a test case), and gives the seven budget/resolution
- * kinds no wire form.
+ * a run at all, only on a test case), and gives the other eight — the three
+ * budget kinds plus the five resolution kinds — no wire form. The decided
+ * answer is `run-vocabulary.ts` (wamn-dggp.14): `wireFailureKind` /
+ * `assertableFailureKind` cross between this set and the assertable
+ * `FlowFailureKind`, naming the three of that set's seven with no wire form
+ * (the budget kinds; the five resolution kinds are not assertable either) and
+ * `deadline-exhausted`, which has no assertable one.
  */
 export type RunFailureKind =
   | "invalid-input"
