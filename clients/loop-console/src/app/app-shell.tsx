@@ -1,6 +1,8 @@
 import type { JSX } from "@solidjs/web";
 
 import { CommandPalette } from "../palette/palette";
+import { panelCollapsed } from "../panel/panel-state";
+import { SidePanel } from "../panel/side-panel";
 import type { Route } from "../routing/route";
 import { TopBar } from "./top-bar";
 import { routeView } from "./views";
@@ -11,8 +13,18 @@ export function AppShell(props: { route: Route }): JSX.Element {
     <div class="shell">
       <TopBar />
       <div class="shell-body">
-        {/* Step 6 fills the panel with the nav tree. */}
-        <aside class="side-panel" aria-label="side panel" />
+        {/*
+         * §2.0's tree. The collapsed state is carried on the region rather than
+         * inside it, because 260px → 44px is the *shell's* layout and §1.4 is
+         * where that pair of widths is written down.
+         */}
+        <aside
+          class="side-panel"
+          aria-label="side panel"
+          data-collapsed={panelCollapsed() ? "true" : "false"}
+        >
+          <SidePanel route={props.route} />
+        </aside>
         {/*
          * `tabindex="-1"`, so the palette can hand a keyboard reader the column
          * after a ⌘K navigation. The screen they were standing on is unmounted

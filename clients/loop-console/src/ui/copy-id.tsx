@@ -11,7 +11,7 @@ export type CopyIdProps = {
 };
 
 /** §2.6's middle-ellipsis: first and last 4. Anything that short is already whole. */
-function ellipsize(id: string): string {
+export function ellipsize(id: string): string {
   return id.length > 8 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id;
 }
 

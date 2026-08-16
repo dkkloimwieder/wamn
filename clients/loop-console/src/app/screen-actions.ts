@@ -17,6 +17,17 @@ export type ScreenAnchor = {
   /** The DOM id of the section, which is what `focusAnchor` moves the reader to. */
   readonly id: string;
   readonly label: string;
+  /**
+   * Why this section cannot be reached, when a screen has one to name — §2.0's
+   * `structure` "dimmed with a tooltip when the draft doesn't parse".
+   *
+   * Optional and additive on purpose: every reader of this type predates it,
+   * and a section that *can* be reached says nothing rather than saying "not
+   * unavailable". The side panel draws such a row dimmed with the reason as its
+   * tooltip and refuses to activate it; a caller that ignores the field is left
+   * exactly where it was.
+   */
+  readonly unavailable?: string;
 };
 
 export type ScreenAction = {

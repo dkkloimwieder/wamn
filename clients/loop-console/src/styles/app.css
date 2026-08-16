@@ -63,10 +63,29 @@
   min-height: 0;
 }
 
+/*
+ * §1.4's fixed side panel, 260px and collapsible to 44px (§2.0).
+ *
+ * Sticky rather than merely tall: the content column scrolls under it, which is
+ * what makes §2.0's "the section in view is marked as you scroll" something a
+ * reader can watch happen. `align-self` keeps it from stretching, so the sticky
+ * box is shorter than the body it is pinned inside.
+ */
 .side-panel {
+  display: flex;
+  position: sticky;
+  top: 0;
   flex: none;
+  flex-direction: column;
+  align-self: flex-start;
   width: 260px;
+  height: calc(100vh - var(--space-4));
+  overflow: hidden;
   border-right: 1px solid var(--line);
+}
+
+.side-panel[data-collapsed="true"] {
+  width: 44px;
 }
 
 .column {

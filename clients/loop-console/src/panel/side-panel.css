@@ -1,0 +1,128 @@
+/*
+ * §2.0's tree. Colours and faces come from tokens.css only; the shapes are
+ * §1.4's — 8px grid, no boxes, nothing that is not doing work.
+ */
+
+.nav-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-1) 0;
+}
+
+/* Each level steps in by one grid unit; §2.0 has exactly three of them. */
+.tree-group {
+  padding-left: var(--space-1);
+}
+
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  padding: 2px var(--space-1);
+  line-height: var(--leading-table);
+  cursor: pointer;
+}
+
+/*
+ * §2.0's active entity: "a 2px signal left edge and panel background". Drawn as
+ * an inset shadow rather than a border — `palette.tsx`'s precedent — so no row
+ * moves sideways when the edge arrives on it.
+ */
+.tree-row[aria-selected="true"] {
+  background: var(--panel);
+  box-shadow: inset 2px 0 0 0 var(--signal);
+}
+
+/*
+ * Level 1 wears §1.2's `label` role — declared in tokens.css and worn by the
+ * class, never restated here: this package may not name a face or a colour
+ * anywhere else (src/styles/token-discipline.test.ts).
+ */
+
+/* Level 3 sits under the entity it belongs to, and reads as its detail. */
+.tree-row[data-type="anchor"] {
+  color: var(--dim);
+}
+
+/* §2.0's dimmed `structure`: the row still says why, in the hint beside it. */
+.tree-row[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* The section a reader has scrolled to, told by a mark as well as by a tint. */
+.tree-row[aria-current="true"] {
+  color: var(--text);
+}
+
+.tree-row-mark {
+  flex: none;
+  width: 1ch;
+  color: var(--dim);
+}
+
+.tree-row[aria-current="true"] .tree-row-mark {
+  color: var(--signal);
+}
+
+/* 260px is not wide, so a long name ends in a clipped tail — never in a
+   middle-ellipsis, which §2.6 reserves for ids and which the model applies. */
+.tree-row-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tree-row-detail {
+  margin-left: auto;
+  padding-left: var(--space-1);
+  font-size: var(--size-12);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* The empty note sits beneath its kind label, past the mark column. */
+.tree-row .empty-state {
+  flex-basis: 100%;
+  margin: 0;
+  padding-left: calc(1ch + var(--space-1));
+  font-size: var(--size-12);
+}
+
+.panel-footer {
+  flex: none;
+  padding: var(--space-1);
+  border-top: 1px solid var(--line);
+}
+
+.panel-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+  width: 100%;
+  padding: 2px var(--space-1);
+  border: none;
+  background: none;
+  color: var(--dim);
+  font-size: var(--size-12);
+  text-align: left;
+  cursor: pointer;
+}
+
+/* ── the 44px rail (§2.0): kind initials and the active entity's glyph only ── */
+
+.side-panel[data-collapsed="true"] .tree-row-mark,
+.side-panel[data-collapsed="true"] .tree-row-detail {
+  display: none;
+}
+
+.side-panel[data-collapsed="true"] .tree-group {
+  padding-left: 0;
+}
+
+.side-panel[data-collapsed="true"] .tree-row,
+.side-panel[data-collapsed="true"] .panel-toggle {
+  justify-content: center;
+  padding-inline: 0;
+}
