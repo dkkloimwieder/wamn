@@ -5,6 +5,7 @@ import { parseRevision } from "../routing/revision";
 import { DraftScreen } from "../screens/draft-screen";
 import { ReportScreen } from "../screens/report-screen";
 import { RunScreen } from "../screens/run-screen";
+import { StartScreen } from "../screens/start-screen";
 
 function Screen(props: { name: string; children?: JSX.Element }): JSX.Element {
   return (
@@ -34,7 +35,7 @@ function NotFound(props: { hash: string }): JSX.Element {
 export function routeView(route: Route): JSX.Element {
   switch (route.kind) {
     case "start":
-      return <Screen name="start" />;
+      return <StartScreen />;
     case "run":
       return <RunScreen id={route.id} />;
     case "report":
