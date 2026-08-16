@@ -1,10 +1,10 @@
 //! Host-only verified reads of immutable execution bundles from the control store.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use async_trait::async_trait;
@@ -16,6 +16,10 @@ use wamn_catalog::CatalogIdentityError;
 use wamn_control_provision::{
     ArtifactReaderCredentialScope, ArtifactReaderEndpoint, artifact_reader_connection_config,
 };
+
+#[cfg(test)]
+use super::runner_plan_supply::InvalidPlanCacheLimit;
+use super::runner_plan_supply::ResolutionPlanCache;
 
 const CONTROL_ARTIFACT_POOL_MAX_SIZE: usize = 16;
 const CONTROL_ARTIFACT_POOL_WAIT: Duration = Duration::from_secs(2);
@@ -31,118 +35,6 @@ SELECT tenant_id, execution_bundle_hash, format_version, exact_bytes, byte_lengt
  WHERE tenant_id = $1 \
    AND execution_bundle_hash = ANY($2::text[]) \
  ORDER BY execution_bundle_hash COLLATE \"C\"";
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct PlanCacheKey {
-    tenant_id: Arc<str>,
-    execution_bundle_hash: Arc<str>,
-}
-
-#[derive(Debug)]
-struct PlanCacheState {
-    entries: HashMap<PlanCacheKey, Arc<[u8]>>,
-    least_to_most_recent: VecDeque<PlanCacheKey>,
-}
-
-/// Deterministic entry-bounded cache keyed by tenant and exact plan identity.
-#[derive(Debug)]
-pub(crate) struct ResolutionPlanCache {
-    max_entries: usize,
-    state: Mutex<PlanCacheState>,
-}
-
-impl ResolutionPlanCache {
-    pub(crate) fn new(max_entries: usize) -> Result<Self, InvalidPlanCacheLimit> {
-        let max_entries = NonZeroUsize::new(max_entries).ok_or(InvalidPlanCacheLimit)?;
-        Ok(Self::from_non_zero(max_entries))
-    }
-
-    fn from_non_zero(max_entries: NonZeroUsize) -> Self {
-        Self {
-            max_entries: max_entries.get(),
-            state: Mutex::new(PlanCacheState {
-                entries: HashMap::with_capacity(max_entries.get()),
-                least_to_most_recent: VecDeque::with_capacity(max_entries.get()),
-            }),
-        }
-    }
-
-    pub(crate) fn get(&self, tenant_id: &str, execution_bundle_hash: &str) -> Option<Arc<[u8]>> {
-        let mut state = self
-            .state
-            .lock()
-            .expect("resolution plan cache lock poisoned");
-        let key = PlanCacheKey {
-            tenant_id: Arc::from(tenant_id),
-            execution_bundle_hash: Arc::from(execution_bundle_hash),
-        };
-        let bytes = state.entries.get(&key)?.clone();
-        touch(&mut state.least_to_most_recent, &key);
-        Some(bytes)
-    }
-
-    /// Insert bytes after the calling owner has completed its verification.
-    /// The control-reader path hash-checks and parses before reaching this seam;
-    /// the legacy project-byte path retains its preexisting SHA-only contract.
-    pub(crate) fn insert_verified(
-        &self,
-        tenant_id: &str,
-        execution_bundle_hash: &str,
-        exact_bytes: Vec<u8>,
-    ) -> Arc<[u8]> {
-        let key = PlanCacheKey {
-            tenant_id: Arc::from(tenant_id),
-            execution_bundle_hash: Arc::from(execution_bundle_hash),
-        };
-        let mut state = self
-            .state
-            .lock()
-            .expect("resolution plan cache lock poisoned");
-        if let Some(bytes) = state.entries.get(&key).cloned() {
-            touch(&mut state.least_to_most_recent, &key);
-            return bytes;
-        }
-        while state.entries.len() >= self.max_entries {
-            let evicted = state
-                .least_to_most_recent
-                .pop_front()
-                .expect("non-empty cache has an eviction key");
-            state.entries.remove(&evicted);
-        }
-        let bytes: Arc<[u8]> = exact_bytes.into();
-        state.entries.insert(key.clone(), bytes.clone());
-        state.least_to_most_recent.push_back(key);
-        bytes
-    }
-
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
-        self.state
-            .lock()
-            .expect("resolution plan cache lock poisoned")
-            .entries
-            .len()
-    }
-}
-
-fn touch(order: &mut VecDeque<PlanCacheKey>, key: &PlanCacheKey) {
-    if let Some(position) = order.iter().position(|candidate| candidate == key) {
-        order.remove(position);
-    }
-    order.push_back(key.clone());
-}
-
-/// The cache must retain at least one immutable plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct InvalidPlanCacheLimit;
-
-impl fmt::Display for InvalidPlanCacheLimit {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("resolution plan cache entry limit must be non-zero")
-    }
-}
-
-impl Error for InvalidPlanCacheLimit {}
 
 /// One immutable control-store row after coordinate, format, length, hash, and
 /// execution-plan validation.
@@ -571,6 +463,7 @@ fn valid_execution_bundle_hash(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use serde_json::Value;
