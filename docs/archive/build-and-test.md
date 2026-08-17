@@ -6107,3 +6107,90 @@ Mutants are recorded rather than scripted (the guard surface is frozen until
 | `weld-after-bind` | move construction below `ClusterHostBuilder::default()` | same |
 | `exec-weld-unreached` | replace `load_plan_release(release)?` with `None` | same |
 | `unusable-mount-degrades` | return `Ok(None)` instead of the weld's error | `a_host_given_an_unusable_root_refuses` |
+
+## SR-MVP — the conformance package as a gate of record (wamn-0h0g.15.116)
+
+`wamn-proof-conformance` is the repository's static-proof floor: 12 library guard
+modules under `tests/conformance/src/` plus 23 integration targets under
+`tests/conformance/tests/`. No guard is `#[ignore]`d, so a whole-package run
+executes every one of them. Individual guards were reachable only through the
+per-bead recipes scattered above, which is how `manifest_dependencies` and
+`version_identity` stayed red from `wamn-0h0g.15.10` to `wamn-0h0g.15.12`
+without anyone noticing — the package did not compile for the whole of waves 5
+and 6, so the workflow could not tell an unrunnable guard from a passing one.
+This entry is the whole-package command those waves lacked.
+
+```bash
+# The gate of record: every lib module and every integration target.
+cargo test --locked --offline -p wamn-proof-conformance --no-fail-fast
+
+# effect_provider_revision must run single-threaded and pins the toolchain
+# exactly, so give it its own invocation rather than the sweep above.
+cargo --version # must report cargo 1.97.0
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test effect_provider_revision -- --test-threads=1
+```
+
+**What the guards actually need.** No guard in this package needs a cluster, a
+Docker daemon, or the network. The kubernetes- and kind-shaped guards are
+hermetic: `kubernetes_gate_runner` and `kind_gate_image_remove` write their own
+deterministic fake `kubectl`/`kind`/`docker` scripts into a scratch directory and
+drive those, so they need `bash` and nothing more. `cranelift_dev` likewise
+drives a fake helper on `PATH` and otherwise parses the `Dockerfile` as text,
+and `docker_component_provenance` only `include_str!`s `.dockerignore`. What the
+package does depend on is a usable toolchain. Eleven guards spawn
+`cargo metadata` or `cargo tree` against the real tree — `effect_provider_revision`,
+`egressbench`, `ip_name_lookup`, `manifest_dependencies`, `package_architecture`,
+`profile_selectors`, `repo_lint`, `runtime_inventory`, `version_identity`,
+`wasmtime_source_identity`, `workspace_tiers` — and therefore need a warm
+registry for `--offline` to resolve. `version_identity` also shells out to
+`git ls-files`, and `contract_diff`, `profile_selectors`, `repo_lint` and
+`workspace_tiers` execute repo-local helpers under `tools/`. Only
+`effect_provider_revision` is both slow and toolchain-pinned: it walks the whole
+`wamn-executor` closure with `cargo tree` and asserts Cargo 1.97.0 exactly.
+
+**Known red, deliberately.** Two integration guards fail on purpose and are
+banked evidence on `wamn-0h0g.15.22`; do not relax either one to make this
+recipe green:
+
+| guard | failure | owner |
+| --- | --- | --- |
+| `effect_provider_revision::locked_effect_provider_closure_matches_manifest` | the checked manifest drifted by exactly two dependency-edge groups | `wamn-0h0g.15.22` |
+| `state_ownership` (three of its tests) | stale `architecture/state-owners.json` rows | `wamn-0h0g.15.22` |
+
+`effect_provider_revision` carries a `WAMN_UPDATE_EFFECT_PROVIDER_MANIFEST`
+regeneration escape hatch. It belongs to `wamn-0h0g.15.22`'s registry
+regeneration, not to a guard run.
+
+**Guards reachable only through the whole-package command.** Twelve guards have
+no named recipe anywhere above; the whole-package sweep is what covers them.
+Their individual selectors, for when one needs to be run alone:
+
+```bash
+# The only src/ module with no recipe reference above. Its own unit tests; the
+# protocol it parses is exercised by --test kubernetes_gate_runner.
+cargo test --locked --offline -p wamn-proof-conformance --lib kubernetes_gate_verdict::
+
+# Integration targets with no named recipe above.
+cargo test --locked --offline -p wamn-proof-conformance \
+  --test component_policy_socket_docs \
+  --test cranelift_dev \
+  --test d23_fork_governance \
+  --test effect_single_dispatch \
+  --test flowrunner_linker_imports \
+  --test fork_build_preamble \
+  --test kind_gate_image_remove \
+  --test retained_root_outcomes \
+  --test security_db_path_socket_policy \
+  --test wasmtime_documentation \
+  --test wasmtime_source_identity \
+  --no-fail-fast
+```
+
+These are commands, not `# recipe-test:` directives, and deliberately so. The
+`gate_registry` guard pins the directive inventory at exactly 36 and requires the
+directive-ID set to equal the `Recipe`-kind entry set in
+`architecture/gate-registry.json`. Adding a directive without the matching
+registry entry fails `gate_registry` with `recipe registry drift`, and that
+registry is frozen until `wamn-0h0g.15.22` regenerates it. Promoting these
+twelve to directives is that bead's work, not this one's.
