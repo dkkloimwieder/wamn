@@ -101,22 +101,8 @@ fn admission_live() {
     let url = std::env::var("WAMN_RUN_STORE_PG_URL")
         .expect("set WAMN_RUN_STORE_PG_URL to the throwaway superuser database");
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
-    let mut catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
+    let catalog = std::fs::read_to_string(format!("{root}/deploy/sql/catalog-schema.sql"))
         .expect("read catalog DDL");
-    // The deadbc8 baseline ends mid-policy at `current_setting('app.t`.
-    // Complete only that already-started DDL in this throwaway fixture; the
-    // tracked canonical-file repair is outside this admission bead.
-    if catalog.trim_end().ends_with("current_setting('app.t") {
-        let trimmed_len = catalog.trim_end().len();
-        catalog.truncate(trimmed_len);
-        catalog.push_str(
-            "enant', true), '')) \
-             WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app; \
-             CREATE INDEX event_registrations_by_entity ON catalog.event_registrations \
-               (tenant_id, catalog_id, entity_id);",
-        );
-    }
     let run_state = std::fs::read_to_string(format!("{root}/deploy/sql/run-state.sql"))
         .expect("read run-state DDL");
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
