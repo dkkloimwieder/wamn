@@ -3,8 +3,33 @@
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
 #     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
 #     -f deploy/infra/values-wamn.yaml
-# (2.5.2 chart == the chart at our pinned runtime rev 8b53285 modulo version
-# strings; no 2.5.1 chart was published.)
+#
+# [wamn-0h0g.15.54] CHART SEAM RECORD — re-verify on every fork sync.
+# Nothing in this repository renders the chart; it is pulled from OCI at
+# install time. These are human-verified facts about the chart carried at the
+# fork rev the workspace pins, and
+# tests/conformance/tests/chart_seam_governance.rs fails the moment that pin
+# moves without this record moving with it.
+#
+# Seam: ruling 4's release-manifest-<digest> ConfigMap mounts through two
+# optional per-host-group passthrough keys the chart renders but never declares
+# in its own values.yaml hostGroups block —
+#   runtime.hostGroups[].volumes      -> {{- with .volumes }}
+#   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
+# in templates/runtime/deployment.yaml. Upstream e256a9f6 added them. The chart
+# ships no values.schema.json, so a rename downgrades our keys to a SILENT
+# no-op instead of an install error — which is why the record exists.
+#
+# Pinned: fork rev 09b1132f = chart 2.6.1. Both expressions verified present
+# and unrenamed there and at 2.5.2, 2.6.0 and 2.7.0 — the 2.6.1 -> 2.7.0 bump
+# rewrote both surrounding blocks and left them byte-identical.
+# The install above pulls chart 2.5.2, one minor behind the pinned host. The
+# seam holds at both; realigning the installed chart is a deploy-procedure
+# change, not a comment fix. (The retired note here claimed rev 8b53285, two
+# fork retargets stale.)
+#
+# Re-verify — the chart ships inside the pinned fork checkout:
+#   grep -n 'with \.volumes\|with \.volumeMounts' ~/.cargo/git/checkouts/wasmcloud-*/09b1132/charts/runtime-operator/templates/runtime/deployment.yaml
 
 # Deprecated HTTP gateway off: its NodePort would collide with workload
 # Services on 30950; routing is EndpointSlice-based now.

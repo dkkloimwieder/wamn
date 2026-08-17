@@ -120,6 +120,12 @@ crates.io `wasmtime-wasi` and `wasmtime-wasi-http` versions to the exact
 release `wash-runtime` resolves, and run
 `cargo update -p wash-runtime`. Before rebuilding, run
 `cargo test -p wamn-proof-conformance --test wasmtime_source_identity`; then
+re-inspect the **chart axis** — the fork tree also carries
+`charts/runtime-operator`, and `deploy/infra/values-wamn.yaml` depends on two
+per-host-group passthrough keys the chart renders but never declares
+(`hostGroups[].volumes`, `.volumeMounts`). Re-grep them at the new rev, update
+that file's seam record, and run
+`cargo test -p wamn-proof-conformance --test chart_seam_governance`; then
 run the **upgrade gate subset** — deliberately not all of P0, just the
 fork-load-bearing behaviors:
 
