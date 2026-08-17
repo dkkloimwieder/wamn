@@ -119,12 +119,16 @@ fn production_lease_uses_a_fresh_post_fence_clock() {
 }
 
 #[test]
-fn app_pre_effect_step_clears_only_state_after_private_projection_reset() {
+fn app_pre_effect_step_replaces_the_dead_attempts_run_projection() {
     let projection = select_pre_effect_projection_sql();
     assert!(projection.contains("SELECT EXISTS"));
     assert!(projection.contains("FROM node_runs"));
     let sql = clear_pre_effect_state_sql();
-    assert!(sql.contains("UPDATE runs SET state_json = NULL"));
+    assert!(sql.contains("SET state_json = NULL"));
+    // The abandoned attempt's release record is projection of that attempt and
+    // joins the replacement set, so the next claim records afresh
+    // (wamn-0h0g.15.55).
+    assert!(sql.contains("release_version = NULL, manifest_digest = NULL"));
     assert!(sql.contains("NOT EXISTS"));
     assert!(!sql.contains("DELETE FROM node_runs"));
     for preserved in [

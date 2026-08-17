@@ -769,7 +769,7 @@ const LOCK_CATALOG_HEAD_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.lock_ca
 
 const GUARD_EVENT_LINEAGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_event_lineage_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.event_source_run_id IS DISTINCT FROM OLD.event_source_run_id\n       OR NEW.event_root_run_id IS DISTINCT FROM OLD.event_root_run_id\n       OR NEW.event_depth IS DISTINCT FROM OLD.event_depth THEN\n        RAISE EXCEPTION 'event causation lineage is immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
-const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF (OLD.release_version IS NOT NULL\n        AND NEW.release_version IS DISTINCT FROM OLD.release_version)\n       OR (OLD.manifest_digest IS NOT NULL\n           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-release-record-immutable';\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
+const GUARD_RUN_ADMISSION_PINS_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.guard_run_admission_pins_immutable()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id\n       OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version\n       OR NEW.environment IS DISTINCT FROM OLD.environment\n       OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash\n       OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN\n        RAISE EXCEPTION USING\n            ERRCODE = '55000',\n            MESSAGE = 'run-admission-pin-immutable';\n    END IF;\n    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN\n            IF NEW.status NOT IN ('dispatched', 'running')\n               OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection\n                           WHERE projection.tenant_id = OLD.tenant_id\n                             AND projection.run_id = OLD.run_id)\n               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect\n                           WHERE effect.tenant_id = OLD.tenant_id\n                             AND effect.run_id = OLD.run_id) THEN\n                RAISE EXCEPTION USING\n                    ERRCODE = '55000',\n                    MESSAGE = 'run-release-record-immutable';\n            END IF;\n        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN\n            RAISE EXCEPTION USING\n                ERRCODE = '55000',\n                MESSAGE = 'run-release-record-immutable';\n        END IF;\n    END IF;\n    RETURN NEW;\nEND\n$function$\n";
 
 const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_effect_fact_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'effect-fact-immutable';\nEND\n$function$\n";
 
@@ -835,13 +835,25 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
-    IF (OLD.release_version IS NOT NULL
-        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
-       OR (OLD.manifest_digest IS NOT NULL
-           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'run-release-record-immutable';
+    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
+        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
+            IF NEW.status NOT IN ('dispatched', 'running')
+               OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection
+                           WHERE projection.tenant_id = OLD.tenant_id
+                             AND projection.run_id = OLD.run_id)
+               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
+                           WHERE effect.tenant_id = OLD.tenant_id
+                             AND effect.run_id = OLD.run_id) THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '55000',
+                    MESSAGE = 'run-release-record-immutable';
+            END IF;
+        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
+           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '55000',
+                MESSAGE = 'run-release-record-immutable';
+        END IF;
     END IF;
     RETURN NEW;
 END
@@ -3220,13 +3232,25 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
-    IF (OLD.release_version IS NOT NULL
-        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
-       OR (OLD.manifest_digest IS NOT NULL
-           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'run-release-record-immutable';
+    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
+        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
+            IF NEW.status NOT IN ('dispatched', 'running')
+               OR EXISTS (SELECT 1 FROM {target}.node_runs AS projection
+                           WHERE projection.tenant_id = OLD.tenant_id
+                             AND projection.run_id = OLD.run_id)
+               OR EXISTS (SELECT 1 FROM {target}.effect_attempts AS effect
+                           WHERE effect.tenant_id = OLD.tenant_id
+                             AND effect.run_id = OLD.run_id) THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '55000',
+                    MESSAGE = 'run-release-record-immutable';
+            END IF;
+        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
+           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '55000',
+                MESSAGE = 'run-release-record-immutable';
+        END IF;
     END IF;
     RETURN NEW;
 END

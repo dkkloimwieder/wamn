@@ -154,9 +154,11 @@ impl WamnPostgres {
     /// transactions can observe the committed lease.
     ///
     /// The lease grant also records this pod's `(release version, manifest
-    /// digest)` onto the run, write-once. A component with no injected release
-    /// identity records nothing; one whose release differs from a pair the run
-    /// already carries fails the whole claim at the database guard.
+    /// digest)` onto the run, write-once per claim attempt. A component with no
+    /// injected release identity records nothing. A pod whose release differs
+    /// from a pair the run already carries succeeds only on the classifier's
+    /// pre-effect reclaim, which clears the abandoned attempt's pair in the same
+    /// transaction; on any other path the database guard refuses the claim.
     pub async fn claim_next_production(
         &self,
         component_id: &str,
@@ -444,8 +446,8 @@ async fn claim_in_transaction(
         .map_err(|error| storage("prepare production lease grant", error))?;
     // The pod's own release identity, or NULL for both when it carries none.
     // A run that already recorded a DIFFERENT pair refuses here, in the
-    // database, and the whole claim rolls back (wamn-0h0g.15.55 owns whether a
-    // reclaim under a rolled release should instead re-record).
+    // database (wamn-0h0g.15.55): the classifier's pre-effect reclaim is the
+    // only path that may clear the pair, and it does so above.
     let release_version: Option<i32> = release.map(|identity| identity.release_version);
     let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
     // The grant is the one abortable write left in this transaction, so it runs

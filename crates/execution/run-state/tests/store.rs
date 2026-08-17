@@ -272,17 +272,23 @@ fn run_state_sql_matches_the_model() {
     assert!(sql.contains(
         "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 release_version, manifest_digest"
     ));
-    // The claim-time release record: NULL at admission, written once by the
-    // claiming worker. The guard needs its own arm because `IS DISTINCT FROM`
-    // would refuse the NULL -> value first write.
+    // The claim-time release record: NULL at admission, written by the claiming
+    // worker, and cleared again by the classifier's pre-effect reclaim. The
+    // guard is transition-constrained rather than write-once — NULL -> value and
+    // value -> NULL are permitted, value -> value' never is (wamn-0h0g.15.55).
     assert!(sql.contains("    release_version int,"));
     assert!(sql.contains("    manifest_digest text,"));
     assert!(sql.contains("CONSTRAINT runs_release_record_check"));
     assert!(sql.contains(
-        "IF (OLD.release_version IS NOT NULL\n        AND NEW.release_version IS DISTINCT FROM OLD.release_version)"
+        "IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN"
     ));
+    // The erasure arm cannot name its caller, so it proves nothing references
+    // the pair being erased: still runnable, no projection, no effect attempt.
+    assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
+    assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection"));
+    assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));
     assert!(sql.contains(
-        "OR (OLD.manifest_digest IS NOT NULL\n           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest)"
+        "ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"
     ));
     assert!(sql.contains("MESSAGE = 'run-release-record-immutable'"));
     assert!(!sql.contains("GRANT SELECT, INSERT, UPDATE, DELETE ON wamn_run.runs TO wamn_app"));

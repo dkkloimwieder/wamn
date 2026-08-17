@@ -173,40 +173,6 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                  OR (release_version > 0 \
                      AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
                PRIMARY KEY (tenant_id, run_id)); \
-             CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
-               RETURNS trigger LANGUAGE plpgsql AS $guard$ \
-               BEGIN \
-                 IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id \
-                    OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version \
-                    OR NEW.environment IS DISTINCT FROM OLD.environment \
-                    OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash \
-                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN \
-                   RAISE EXCEPTION USING ERRCODE = '55000', \
-                     MESSAGE = 'run-admission-pin-immutable'; \
-                 END IF; \
-                 IF (OLD.release_version IS NOT NULL \
-                     AND NEW.release_version IS DISTINCT FROM OLD.release_version) \
-                    OR (OLD.manifest_digest IS NOT NULL \
-                        AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN \
-                   RAISE EXCEPTION USING ERRCODE = '55000', \
-                     MESSAGE = 'run-release-record-immutable'; \
-                 END IF; \
-                 RETURN NEW; \
-               END $guard$; \
-             CREATE TRIGGER runs_admission_pins_immutable \
-               BEFORE UPDATE OF catalog_id, catalog_version, environment, \
-                                execution_bundle_hash, capture_mode, \
-                                release_version, manifest_digest \
-               ON {SCHEMA}.runs FOR EACH ROW \
-               EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
-             CREATE TABLE {SCHEMA}.run_queue ( \
-               tenant_id text NOT NULL, run_id text NOT NULL, priority int NOT NULL DEFAULT 0, \
-               available_at timestamptz NOT NULL DEFAULT now(), stream_seq bigint NOT NULL DEFAULT 0, \
-               lease_owner text, lease_expires_at timestamptz, \
-               lease_generation bigint NOT NULL DEFAULT 0, attempts int NOT NULL DEFAULT 0, \
-               max_attempts int NOT NULL DEFAULT 3, enqueued_at timestamptz NOT NULL DEFAULT now(), \
-               PRIMARY KEY (tenant_id, run_id), \
-               FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
              CREATE TABLE {SCHEMA}.node_runs ( \
                tenant_id text NOT NULL, run_id text NOT NULL, local_node_id text NOT NULL, \
                PRIMARY KEY (tenant_id, run_id, local_node_id)); \
@@ -224,6 +190,52 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                created_at timestamptz NOT NULL DEFAULT clock_timestamp(), \
                PRIMARY KEY (tenant_id, attempt_id), \
                UNIQUE (tenant_id,run_id,frame_id,local_node_id,occurrence)); \
+             CREATE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable() \
+               RETURNS trigger LANGUAGE plpgsql AS $guard$ \
+               BEGIN \
+                 IF NEW.catalog_id IS DISTINCT FROM OLD.catalog_id \
+                    OR NEW.catalog_version IS DISTINCT FROM OLD.catalog_version \
+                    OR NEW.environment IS DISTINCT FROM OLD.environment \
+                    OR NEW.execution_bundle_hash IS DISTINCT FROM OLD.execution_bundle_hash \
+                    OR NEW.capture_mode IS DISTINCT FROM OLD.capture_mode THEN \
+                   RAISE EXCEPTION USING ERRCODE = '55000', \
+                     MESSAGE = 'run-admission-pin-immutable'; \
+                 END IF; \
+                 IF OLD.release_version IS NOT NULL \
+                    OR OLD.manifest_digest IS NOT NULL THEN \
+                   IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN \
+                     IF NEW.status NOT IN ('dispatched', 'running') \
+                        OR EXISTS (SELECT 1 FROM {SCHEMA}.node_runs AS projection \
+                                    WHERE projection.tenant_id = OLD.tenant_id \
+                                      AND projection.run_id = OLD.run_id) \
+                        OR EXISTS (SELECT 1 FROM {SCHEMA}.effect_attempts AS effect \
+                                    WHERE effect.tenant_id = OLD.tenant_id \
+                                      AND effect.run_id = OLD.run_id) THEN \
+                       RAISE EXCEPTION USING ERRCODE = '55000', \
+                         MESSAGE = 'run-release-record-immutable'; \
+                     END IF; \
+                   ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version \
+                      OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN \
+                     RAISE EXCEPTION USING ERRCODE = '55000', \
+                       MESSAGE = 'run-release-record-immutable'; \
+                   END IF; \
+                 END IF; \
+                 RETURN NEW; \
+               END $guard$; \
+             CREATE TRIGGER runs_admission_pins_immutable \
+               BEFORE UPDATE OF catalog_id, catalog_version, environment, \
+                                execution_bundle_hash, capture_mode, \
+                                release_version, manifest_digest \
+               ON {SCHEMA}.runs FOR EACH ROW \
+               EXECUTE FUNCTION {SCHEMA}.guard_run_admission_pins_immutable(); \
+             CREATE TABLE {SCHEMA}.run_queue ( \
+               tenant_id text NOT NULL, run_id text NOT NULL, priority int NOT NULL DEFAULT 0, \
+               available_at timestamptz NOT NULL DEFAULT now(), stream_seq bigint NOT NULL DEFAULT 0, \
+               lease_owner text, lease_expires_at timestamptz, \
+               lease_generation bigint NOT NULL DEFAULT 0, attempts int NOT NULL DEFAULT 0, \
+               max_attempts int NOT NULL DEFAULT 3, enqueued_at timestamptz NOT NULL DEFAULT now(), \
+               PRIMARY KEY (tenant_id, run_id), \
+               FOREIGN KEY (tenant_id, run_id) REFERENCES {SCHEMA}.runs); \
              CREATE TABLE catalog.execution_bundles ( \
                tenant_id text NOT NULL, execution_bundle_hash text NOT NULL, exact_bytes bytea NOT NULL, \
                PRIMARY KEY (tenant_id, execution_bundle_hash)); \
@@ -558,6 +570,17 @@ async fn install_prior_caller_winner(client: &Client, run_id: &str) -> anyhow::R
         )
         .await?;
     caller_fields(client, run_id).await
+}
+
+/// The crash-evidence attempt count a run's queue row carries.
+async fn queue_attempts(client: &Client, run_id: &str) -> anyhow::Result<i32> {
+    Ok(client
+        .query_one(
+            &format!("SELECT attempts FROM {SCHEMA}.run_queue WHERE tenant_id=$1 AND run_id=$2"),
+            &[&TENANT, &run_id],
+        )
+        .await?
+        .get(0))
 }
 
 /// The claim-time `(release version, manifest digest)` a run carries.
@@ -1124,6 +1147,73 @@ async fn production_claim_live() -> anyhow::Result<()> {
     )
     .await?;
 
+    // ---- a refused grant must not starve its own janitor (wamn-0h0g.15.69) --
+    //
+    // `attempts` used to ride the same statement that grants the lease, so any
+    // refusal of that statement rolled the increment back with it: the run
+    // could never reach `max_attempts`, the janitor could never reap it, and
+    // nothing locked it after rollback — one run head-of-line-blocked the
+    // tenant forever. The advance now runs before the grant's subtransaction,
+    // so a refusal still counts as crash evidence. A probe trigger stands in
+    // for any database guard that can refuse the grant.
+    seed_run(&admin, "grant-refused", "cat-main", &release_hash, 65).await?;
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue \
+                    SET lease_owner='dead', lease_expires_at='2000-01-01', \
+                        attempts=max_attempts-1 \
+                  WHERE tenant_id=$1 AND run_id='grant-refused'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .batch_execute(&format!(
+            "CREATE FUNCTION {SCHEMA}.refuse_probed_grant() \
+               RETURNS trigger LANGUAGE plpgsql AS $probe$ \
+               BEGIN \
+                 IF NEW.run_id = 'grant-refused' THEN \
+                   RAISE EXCEPTION USING ERRCODE = '55000', \
+                     MESSAGE = 'probe-grant-refused'; \
+                 END IF; \
+                 RETURN NEW; \
+               END $probe$; \
+             CREATE TRIGGER refuse_probed_grant BEFORE UPDATE OF status \
+               ON {SCHEMA}.runs FOR EACH ROW \
+               EXECUTE FUNCTION {SCHEMA}.refuse_probed_grant();"
+        ))
+        .await?;
+    let starved = plugin
+        .claim_next_production(COMPONENT, 30_000)
+        .await
+        .expect_err("the probed grant refuses");
+    assert_eq!(starved.kind(), ProductionClaimErrorKind::Storage);
+    assert_eq!(starved.operation(), "grant production lease");
+    assert!(
+        starved.to_string().contains("probe-grant-refused"),
+        "unexpected refusal: {starved}"
+    );
+    assert_eq!(
+        queue_attempts(&admin, "grant-refused").await?,
+        3,
+        "the refused claim rolled its own crash evidence back"
+    );
+    admin
+        .batch_execute(&format!(
+            "DROP TRIGGER refuse_probed_grant ON {SCHEMA}.runs; \
+             DROP FUNCTION {SCHEMA}.refuse_probed_grant();"
+        ))
+        .await?;
+    assert_eq!(
+        plugin.reap_one_exhausted_production(COMPONENT, 0).await?,
+        ProductionReapResult::Reaped {
+            run_id: "grant-refused".into()
+        },
+        "the budget the refusal spent must reach the janitor"
+    );
+    assert_terminal_status_dequeued(&admin, "grant-refused", "infrastructure-failure").await?;
+
     // ---- the claim-time release record (wamn-0h0g.15.11, carrying the two
     // surviving proof legs of the superseded wamn-0h0g.4.14) -----------------
     //
@@ -1133,7 +1223,10 @@ async fn production_claim_live() -> anyhow::Result<()> {
     // the admitted release nor the republished one, and the run's own admission
     // identity is untouched.
     seed_run(&admin, "release-record", "cat-main", &release_hash, 70).await?;
-    assert_eq!(release_record(&admin, "release-record").await?, (None, None));
+    assert_eq!(
+        release_record(&admin, "release-record").await?,
+        (None, None)
+    );
     admin
         .execute(
             "INSERT INTO catalog.release_flows \
@@ -1166,8 +1259,9 @@ async fn production_claim_live() -> anyhow::Result<()> {
         "a republish must not move the run's admitted release either"
     );
 
-    // WRITE-ONCE. Re-claiming under the SAME release rewrites the same pair,
-    // which the guard's `IS DISTINCT FROM` treats as a no-op.
+    // SAME-RELEASE RE-CLAIM. The classifier's pre-effect reclaim clears the
+    // abandoned attempt's pair and the grant records this pod's again, so the
+    // observable pair is unchanged.
     expire_effect_run(&admin, "release-record").await?;
     assert_eq!(
         ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
@@ -1175,32 +1269,160 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     assert_eq!(release_record(&admin, "release-record").await?, recorded);
 
-    // A pod carrying a DIFFERENT release cannot rewrite it: the database guard
-    // refuses and the whole claim rolls back. wamn-0h0g.15.55 owns whether an
-    // expired pre-effect reclaim under a rolled release should instead re-record
-    // — until it rules, refusing loudly is the honest default.
+    // RESET PER CLAIM ATTEMPT (wamn-0h0g.15.55). A pod carrying a DIFFERENT
+    // release re-claims an expired pre-effect run successfully: the pair is
+    // write-once per ATTEMPT, and the classifier's reset — not an exception in
+    // the guard — is what lets the next claim record afresh. Under a rollout
+    // this is the normal case, not an edge case.
     expire_effect_run(&admin, "release-record").await?;
-    let refused = plugin
-        .claim_next_production(ROLLED_COMPONENT, 30_000)
-        .await
-        .expect_err("a rolled pod may not rewrite a recorded release");
-    assert_eq!(refused.kind(), ProductionClaimErrorKind::Storage);
-    assert_eq!(refused.operation(), "grant production lease");
-    assert!(
-        refused.to_string().contains("run-release-record-immutable"),
-        "unexpected refusal: {refused}"
+    assert_eq!(
+        ready_run(
+            plugin
+                .claim_next_production(ROLLED_COMPONENT, 30_000)
+                .await?
+        ),
+        "release-record"
+    );
+    let rerecorded = (
+        Some(ROLLED_RELEASE_VERSION),
+        Some(ROLLED_MANIFEST_DIGEST.to_string()),
     );
     assert_eq!(
         release_record(&admin, "release-record").await?,
-        recorded,
-        "the refused claim left the recorded pair exactly as it was"
+        rerecorded,
+        "the reclaiming pod records its own release, not the dead attempt's"
     );
+
+    // THE ERASURE IS NOT A BLANKET HOLE. The guard permits value -> NULL only
+    // while nothing references the identity being erased. A run that executed,
+    // fired an effect, or reached a terminal status keeps its audit link, and
+    // value -> value' is refused on every path.
+    admin
+        .execute(
+            &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'release-record','a-node')"),
+            &[&TENANT],
+        )
+        .await?;
+    let third_pair = format!(
+        "release_version=9, manifest_digest={}",
+        quote_literal(EMPTY_HASH)
+    );
+    for (set, why) in [
+        (
+            "release_version=NULL, manifest_digest=NULL".to_string(),
+            "a run with a node projection may not erase its release record",
+        ),
+        (
+            third_pair,
+            "no path may rewrite a recorded release in place",
+        ),
+    ] {
+        let refused = admin
+            .execute(
+                &format!(
+                    "UPDATE {SCHEMA}.runs SET {set} \
+                      WHERE tenant_id=$1 AND run_id='release-record'"
+                ),
+                &[&TENANT],
+            )
+            .await
+            .expect_err(why);
+        let db = refused.as_db_error().expect("guard refusal is a db error");
+        assert_eq!(db.code().code(), "55000");
+        assert_eq!(db.message(), "run-release-record-immutable", "{why}");
+    }
+    admin
+        .execute(
+            &format!(
+                "DELETE FROM {SCHEMA}.node_runs \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET status='completed' \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let terminal = admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await
+        .expect_err("a terminal run keeps the audit link to the plan hashes it ran");
+    assert_eq!(
+        terminal
+            .as_db_error()
+            .expect("guard refusal is a db error")
+            .message(),
+        "run-release-record-immutable"
+    );
+    assert_eq!(release_record(&admin, "release-record").await?, rerecorded);
     admin
         .execute(
             &format!(
                 "DELETE FROM {SCHEMA}.run_queue \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
+            &[&TENANT],
+        )
+        .await?;
+
+    // PARK/WAKE IS NOT COVERED BY THE CLASSIFIER RESET. `park_sql` releases the
+    // lease (`lease_owner`/`lease_expires_at` to NULL), so a doorbell wake
+    // classifies as `Ordinary` and goes straight to the grant with no reset in
+    // between. A waking pod carrying a different release therefore still hits
+    // the guard, and because a released lease is not crash evidence the refusal
+    // spends no budget — so the janitor cannot retire the run either. This leg
+    // pins the gap the wamn-0h0g.15.55 ruling assumed was already closed.
+    seed_run(&admin, "park-wake", "cat-main", &release_hash, 71).await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "park-wake"
+    );
+    assert_eq!(release_record(&admin, "park-wake").await?, recorded);
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.run_queue \
+                    SET available_at=now(), lease_owner=NULL, lease_expires_at=NULL \
+                  WHERE tenant_id=$1 AND run_id='park-wake'"
+            ),
+            &[&TENANT],
+        )
+        .await?;
+    let woken = plugin
+        .claim_next_production(ROLLED_COMPONENT, 30_000)
+        .await
+        .expect_err("a rolled pod waking a parked run has no classifier reset");
+    assert_eq!(woken.kind(), ProductionClaimErrorKind::Storage);
+    assert_eq!(woken.operation(), "grant production lease");
+    assert!(
+        woken.to_string().contains("run-release-record-immutable"),
+        "unexpected refusal: {woken}"
+    );
+    assert_eq!(
+        release_record(&admin, "park-wake").await?,
+        recorded,
+        "the refused wake left the recorded pair exactly as it was"
+    );
+    assert_eq!(
+        queue_attempts(&admin, "park-wake").await?,
+        0,
+        "a released lease is not crash evidence, so this refusal spends no budget"
+    );
+    admin
+        .execute(
+            &format!("DELETE FROM {SCHEMA}.run_queue WHERE tenant_id=$1 AND run_id='park-wake'"),
             &[&TENANT],
         )
         .await?;

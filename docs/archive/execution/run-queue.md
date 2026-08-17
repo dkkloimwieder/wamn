@@ -16,7 +16,7 @@
 > admitted run's catalog pin and dies instead with `.2.4`'s
 > admission-time bundle pin, which moves to claim-time recording
 > (`docs/deployment-simplification-spec.md:90-91`). The claim becomes
-> **lock → classify → lease** plus one write-once record of
+> **lock → classify → lease** plus one per-attempt record of
 > `(release version, manifest digest)` taken from the claiming pod's
 > identity; resolution is a pure read of that pod's mounted release
 > manifest, and that record is what a reclaim preserves in place of
@@ -87,9 +87,12 @@ The classifications are:
 - **ordinary** — no prior lease. Preserve state, materialize/verify the map,
   then grant the first lease.
 - **expired pre-effect** — a prior lease exists and no immutable effect attempt
-  exists. Delete replaceable `node_runs`, clear `runs.state_json`, preserve all
-  admission, input, context, catalog, event, deadline, idempotency, immutable
-  evidence, and resolution-map facts, then restart from zero.
+  exists. Delete replaceable `node_runs`, clear `runs.state_json` AND the
+  abandoned attempt's `(release_version, manifest_digest)` record, preserve all
+  admission, input, context, catalog, event, deadline, idempotency, and
+  immutable evidence facts, then restart from zero. The release record is
+  re-taken by the next claim under whatever release that pod carries — it is
+  write-once per claim attempt, not per run (wamn-0h0g.15.55).
 - **expired with effect intent** — any immutable attempt wins regardless of
   crash budget. Store the exact `effect-uncertain` caller outcome when still
   releasable, preserve any prior caller winner, and delete the queue row. No

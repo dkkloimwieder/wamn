@@ -119,13 +119,25 @@ BEGIN
 END
 $$;
 
--- Admission pins never change. The claim-time release record is write-ONCE
--- rather than immutable-from-admission: it is NULL on the admitted row and the
--- claiming worker writes it, so the guard must permit exactly the first write.
--- `IS DISTINCT FROM` alone cannot express that (it treats NULL as a distinct
--- value and would refuse the first write too), hence the separate arm gated on
--- `OLD ... IS NOT NULL`. Re-writing the same pair is a permitted no-op (a
--- same-release re-claim); writing a different pair, or erasing one, refuses.
+-- Admission pins never change. The claim-time release record is write-once PER
+-- CLAIM ATTEMPT, not per run-eternity: it is NULL on the admitted row, the
+-- claiming worker writes its own pod identity, and the classifier's pre-effect
+-- reclaim clears it again so the next claim can record afresh. The guard is
+-- therefore TRANSITION-CONSTRAINED:
+--     NULL  -> value    permitted  (a claim records this attempt's pod)
+--     value -> NULL     permitted  (a reclaim abandons the attempt it described)
+--     value -> value'   REFUSED always
+-- A trigger cannot see WHICH statement is updating the row, so the erasure arm
+-- does not try to name its caller; it encodes the property that makes the
+-- erasure safe. The reclaim path is safe because nothing references the
+-- identity being erased: only PRE-EFFECT reclaims reach it (an effect attempt
+-- classifies the run terminal effect-uncertain instead), the abandoned attempt
+-- fired no effect and left no node projection, and the run is still runnable.
+-- So erasure is permitted exactly while the run is runnable and carries neither
+-- a mutable node projection nor an immutable effect attempt. A run that
+-- executed, fired an effect, or reached a terminal status keeps its record —
+-- the audit link from the run to the plan hashes it executed is never erased
+-- out from under an execution that used it.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -140,13 +152,25 @@ BEGIN
             ERRCODE = '55000',
             MESSAGE = 'run-admission-pin-immutable';
     END IF;
-    IF (OLD.release_version IS NOT NULL
-        AND NEW.release_version IS DISTINCT FROM OLD.release_version)
-       OR (OLD.manifest_digest IS NOT NULL
-           AND NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '55000',
-            MESSAGE = 'run-release-record-immutable';
+    IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
+        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
+            IF NEW.status NOT IN ('dispatched', 'running')
+               OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection
+                           WHERE projection.tenant_id = OLD.tenant_id
+                             AND projection.run_id = OLD.run_id)
+               OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
+                           WHERE effect.tenant_id = OLD.tenant_id
+                             AND effect.run_id = OLD.run_id) THEN
+                RAISE EXCEPTION USING
+                    ERRCODE = '55000',
+                    MESSAGE = 'run-release-record-immutable';
+            END IF;
+        ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version
+           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN
+            RAISE EXCEPTION USING
+                ERRCODE = '55000',
+                MESSAGE = 'run-release-record-immutable';
+        END IF;
     END IF;
     RETURN NEW;
 END
@@ -189,11 +213,11 @@ CREATE TABLE wamn_run.runs (
     -- The claim-time release record. A run is NOT version-pinned at admission:
     -- it executes under the release its CLAIMING pod carries, and the worker
     -- writes that pod's own release identity here when it takes the lease,
-    -- exactly once, enforced by `guard_run_admission_pins_immutable`. Both are
-    -- NULL on the admitted row and move together. `release_version` is the
-    -- release (catalog) version; `manifest_digest` is the RFC 8785 digest of
-    -- that release's serving manifest, and therefore the audit link from the
-    -- run to the plan hashes it executed.
+    -- once per claim attempt, enforced by `guard_run_admission_pins_immutable`.
+    -- Both are NULL on the admitted row and move together. `release_version`
+    -- is the release (catalog) version; `manifest_digest` is the RFC 8785
+    -- digest of that release's serving manifest, and therefore the audit link
+    -- from the run to the plan hashes it executed.
     release_version int,
     manifest_digest text,
     input_json      jsonb,
@@ -293,7 +317,7 @@ BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth
 ON wamn_run.runs
 FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable();
 -- The guard is column-scoped, so the claim-time record columns must be named
--- here or the write-once arm never fires for them.
+-- here or the transition arm never fires for them.
 CREATE TRIGGER runs_admission_pins_immutable
 BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,
                  release_version, manifest_digest

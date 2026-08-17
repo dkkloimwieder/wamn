@@ -121,13 +121,20 @@ pub fn serialize_effect_intent_sql() -> String {
         .to_string()
 }
 
-/// Clear replaceable pre-effect checkpoint state only after projection deletion.
-/// `$1` is the selected run id.
+/// Replace the abandoned attempt's run-level projection only after projection
+/// deletion. `$1` is the selected run id.
 ///
-/// `runs.state_json` is the only run column changed; immutable ledgers and the
-/// already-materialized resolution map are preserved.
+/// `state_json` and the claim-time release record are the only run columns
+/// changed; immutable ledgers and the already-materialized resolution map are
+/// preserved. The `(release_version, manifest_digest)` pair is projection of
+/// the DEAD attempt, so it joins that replacement set (wamn-0h0g.15.55): this
+/// clears it in the same transaction that re-opens the run, and the grant below
+/// records the reclaiming pod's own identity fresh. Only pre-effect reclaims
+/// reach this statement, so no execution used the pair being cleared, and the
+/// database guard permits the erasure for exactly that reason.
 pub fn clear_pre_effect_state_sql() -> String {
-    "UPDATE runs SET state_json = NULL \
+    "UPDATE runs \
+        SET state_json = NULL, release_version = NULL, manifest_digest = NULL \
       WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
         AND NOT EXISTS ( \
             SELECT 1 FROM node_runs \
@@ -168,11 +175,13 @@ pub fn advance_claim_attempts_sql() -> String {
 ///
 /// Runs are never version-pinned: the pair is minted HERE, on the write that
 /// already marks the run running, never at admission and never as a second
-/// statement. It is write-once —
-/// `wamn_run.guard_run_admission_pins_immutable` permits the first write and
-/// refuses any later differing one — so a re-claim carrying the same release is
-/// an accepted no-op and a re-claim carrying a different release refuses. A pod
-/// with no injected release identity binds NULL for both and records nothing.
+/// statement. It is write-once PER CLAIM ATTEMPT —
+/// `wamn_run.guard_run_admission_pins_immutable` permits a write over NULL and
+/// refuses any differing one — so a re-claim carrying the same release is an
+/// accepted no-op, and a re-claim carrying a DIFFERENT release only succeeds
+/// because [`clear_pre_effect_state_sql`] already cleared the abandoned
+/// attempt's pair in this transaction. A pod with no injected release identity
+/// binds NULL for both and records nothing.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-claim of a `running` row must reach
 /// the record too; `dispatched` still becomes `running` and `running` stays put.
