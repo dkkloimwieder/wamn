@@ -15,11 +15,63 @@
 # pushing via localhost:5000 and pulling via the Service DNS name at the SAME
 # repo path (wamn/materializer:dev) resolve to the same manifest/blobs.
 #
-# Storage is ephemeral (emptyDir): a proof registry, not a durable one. If the
-# pod restarts, re-push before starting a workload with imagePullPolicy: Always.
+# [15.45] Storage is a PersistentVolumeClaim: a pod restart no longer loses every
+# blob, so readiness prefetch does not fail cluster-wide until someone
+# republishes. Still one replica on one RWO volume — see the WHY on the claim
+# below for what that does and does not buy.
 #
 #   kind load docker-image registry:2 --name wamn   # so the pod starts offline
+#   # [15.45] against a LIVE emptyDir registry this apply is REJECTED; see
+#   # NOT APPLIABLE AS CHECKED IN below for the delete-then-apply rollout
 #   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
+#
+# [15.45] NOT APPLIABLE AS CHECKED IN over a live emptyDir registry. Both
+# reasons force the Deployment to be RECREATED rather than patched in place:
+#   - `kubectl apply` is REJECTED. The live object carries the defaulted
+#     strategy.rollingUpdate block, which a merge does not remove because the
+#     checked-in file never set `strategy`, and rollingUpdate may not be
+#     specified with `type: Recreate`.
+#   - the swap is DESTRUCTIVE. Every blob still living in the old emptyDir goes
+#     with the pod that held it; nothing copies it onto the claim.
+# The adopting rollout is therefore:
+#   kubectl -n wamn-system delete deploy/registry            # DESTRUCTIVE
+#   kubectl -n wamn-system apply -f deploy/platform/registry.yaml
+#   kubectl -n wamn-system rollout status deploy/registry --timeout=120s
+#   # then re-push every artifact (the push flow above) — the claim starts empty
+---
+# [15.45] WHY durable storage and not the re-push reconciler: ruling 2 keeps
+# catalog.execution_bundles the authoritative append-only bytes home and the OCI
+# copy an idempotently re-derivable projection
+# (docs/deployment-simplification-spec.md:352), so a reconciler that republishes
+# missing blobs remains the better eventual answer — it also survives losing the
+# volume, which this does not. It needs a service to live in; a claim does not.
+#
+# What this removes is exactly one failure: restart-loses-everything. It does NOT
+# make the registry available (one replica, one ReadWriteOnce volume — a node
+# drain or reschedule is still a full outage of the pull path, the availability
+# trade the spec accepts at line 142), and it does not make the bytes recoverable
+# if the volume itself is lost.
+#
+# No storageClassName: the cluster default binds. That matches the repo's only
+# other PVC consumers, neither of which names a class
+# (deploy/infra/nats-jetstream.yaml volumeClaimTemplates,
+# deploy/infra/cnpg-cluster.yaml storage.size); nothing in deploy/ names a
+# StorageClass at all. 2Gi is the size those two chose for a small durable store.
+# Which class that turns out to be decides how much durability this buys: a
+# node-local, hostPath-backed default (kind's) pins the pod to the one node
+# holding the volume, so losing that node still loses the blobs; a networked
+# class does not. Name a class here if an environment needs a specific one.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: registry-data
+  namespace: wamn-system
+  labels: { app: registry }
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -31,6 +83,11 @@ spec:
   replicas: 1
   selector:
     matchLabels: { app: registry }
+  # [15.45] The claim is ReadWriteOnce, so the outgoing pod must be gone before
+  # the incoming one can mount it — a rolling update would deadlock waiting for
+  # a volume its predecessor still holds.
+  strategy:
+    type: Recreate
   template:
     metadata:
       labels: { app: registry }
@@ -58,7 +115,8 @@ spec:
               mountPath: /var/lib/registry
       volumes:
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: registry-data
 ---
 apiVersion: v1
 kind: Service
