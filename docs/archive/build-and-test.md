@@ -6032,3 +6032,30 @@ docker rm -f wamn-plan-registry
 CARGO_TARGET_DIR=/tmp/wamn-target-15-12 \
   tools/gate-mutants/plan-supply.sh run-all
 ```
+
+## SR-MVP — the governed-dependency guard admits a self dev-dependency (wamn-0h0g.15.109)
+
+`wamn-0h0g.15.104` gave `wamn-catalog` a dev-dependency on itself by path, which is
+the only construction that lets a crate's `tests/` compilation unit see its own
+`test-util` feature under resolver 2, and therefore what keeps the `M-TEST-UTIL`
+fence intact downstream. The identity guard read it as ungoverned drift.
+
+The exemption is keyed on all three of: a **dev**-dependency table, a name equal to
+the manifest's own package name, and `path = "."` exactly. Its negative half is the
+point — five near-miss fixtures plus two real-tree mutants prove promoting the
+declaration, renaming it, or repointing the path is still refused.
+
+```bash
+cargo test --locked -p wamn-proof-conformance --lib manifest_dependencies
+```
+
+The two real-tree mutants are recorded rather than scripted, because the guard
+surface and its registries are frozen until `wamn-0h0g.15.22` and a new
+`tools/gate-mutants/` entry would drift them. Apply each to
+`crates/catalog/model/Cargo.toml`, confirm the named test fails, restore, and
+verify the sha256 matches:
+
+| mutant | edit | must fail |
+| --- | --- | --- |
+| `self-dep-promoted` | `[dev-dependencies]` → `[dependencies]` above the self declaration | `governed_dependency_identities_are_workspace_owned` |
+| `self-dep-deleted` | remove the self declaration entirely | `the_catalog_self_dev_dependency_is_still_the_construction_this_guard_exempts` |
