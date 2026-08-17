@@ -106,13 +106,12 @@ Almost all code here is Rust — consult the `rust-guidelines` skill when writin
 
 ## Repository structure
 
-- `services/{host,node-host,ctl,dispatcher,executor,scenario-worker,builder,cdc-reader,waker}` — independently deployable binaries and their service-owned integration tests.
-- `crates/{authoring,catalog,control,data,events,execution,identity,node,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
-- `components/{execution,ingress,nodes}` — production wasm32-wasip2 guests; reusable test and example guests live under `components/{fixtures,samples}`.
+- `services/{cdc-reader,ctl,dispatcher,executor,host,scenario-worker,waker}` — independently deployable binaries and their service-owned integration tests. `node-host` and `builder` were **deleted, not deferred**: `wamn-0h0g.6.3` (`f6bc01eb`, "delete custom component plane") removed both along with `crates/node`, and only the archived `docs/archive/platform/builder.md` survives. There is therefore no in-tree OCI push path to reuse.
+- `crates/{authoring,catalog,control,data,events,execution,identity,platform,scenarios,schema}` — bounded-context libraries, organized by domain and then package.
+- `components/{execution,ingress}` — production wasm32-wasip2 guests; reusable test and example guests live under `components/{fixtures,samples}`. `components/nodes` went with the demo/POC surface (`wamn-0h0g.12.2`, `3554f140`).
 - `tests/{orchestrator,conformance,integration,system}` — proof owners, from orchestration helpers and static conformance through integration and system gates.
 - `test-support/{harness,fixtures,infrastructure}` — shared proof support that is not itself a deployable or proof owner.
-- `poc/{f1,dm1,cdc1}` — current POC integration crates.
-- `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, `poc/` POC assets, and `sql/` standalone SQL schemas.
+- `deploy/` — tiered (SR8, `deploy/README.md` holds the rules): `infra/` install-once infrastructure, `platform/` production manifests, `gates/` gate/bench Jobs, and `sql/` standalone SQL schemas. The former `poc/` tier was deleted by `wamn-0h0g.12.2` (`3554f140`); `deploy/mvp/` (bootstrap scripts) exists on disk but is not one of the tiers `deploy/README.md` names.
 - `docs/` — **design source of truth**. Start with `docs/archive/PLAN/PLAN.md` — the authoritative roadmap and decision map; `platform-plan.md` holds the D-number decision table (archive of record); plus WIT contracts and per-subsystem specs.
 - Root `Cargo.toml` pins the `wash-runtime` fork rev in one place (`workspace.dependencies.wash-runtime.rev`).
 
