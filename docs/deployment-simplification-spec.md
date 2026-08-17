@@ -36,8 +36,9 @@ verify draft + green report → mint immutable release + evidence
 (`tested_resolution_map` included). Then push the content-addressed
 OCI artifacts — plan bytes and the **release manifest** (RFC 8785
 bytes, `sha256:<digest>`; flow → flow-version / plan-hash /
-source-artifact / callable-contract, call-edge adjacency, attachment
-+ registration projections) — and write the environment's desired
+source-artifact / binding-base-artifact / callable-contract, call-edge
+adjacency, attachment + registration projections) — and write the
+environment's desired
 state to the GitOps source: the release-identity ConfigMap
 `(release version, manifest digest)` and any changed CRDs. The
 manifest is minted per `(release, environment)` and names that

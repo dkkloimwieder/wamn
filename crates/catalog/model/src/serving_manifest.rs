@@ -115,7 +115,7 @@ pub struct ServingRelease {
     pub environment: String,
 }
 
-/// One release member flow: its plan, its source artifact, its callable
+/// One release member flow: its plan, its artifact hashes, its callable
 /// boundary, and its outgoing call edges.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -131,13 +131,49 @@ pub struct ServingFlow {
     /// [`read_execution_plan`](crate::read_execution_plan); effect authority
     /// verifies that the recorded manifest contains `(flow, plan-hash)`.
     pub plan_hash: String,
-    /// The flow artifact hash — the ruling's *source-artifact*. It is the value
-    /// a fetched plan's `root-artifact-hash` must equal
-    /// (`crates/events/materializer/src/lib.rs:77`), and the key readiness uses
-    /// to prove every connection requirement of the release is bound in this
-    /// environment (`catalog.connection_bindings.artifact_hash`,
-    /// `deploy/sql/catalog-schema.sql:1162`).
+    /// The flow artifact hash — the ruling's *source-artifact*. It is read by
+    /// the plan verifiers and by nothing else: the value a fetched plan's
+    /// `root-artifact-hash` must equal, checked live in exactly two places —
+    /// `components/execution/flowrunner/src/lib.rs:122`, which refuses the
+    /// snapshot with `run-resolution-source-mismatch`, and
+    /// `crates/events/materializer/src/lib.rs:77`.
+    ///
+    /// Binding resolution reads [`ServingFlow::binding_base_artifact`], never
+    /// this field. Until wamn-0h0g.15.62 this one field carried both duties, and
+    /// that bead proved the duties demand *different* values for a candidate: a
+    /// candidate's plan is compiled from the draft's own artifact, so a plan
+    /// verifier forces this field to the draft hash, while its bindings exist
+    /// only under the released base. Do not read this as a binding key again.
     pub source_artifact: String,
+    /// The released artifact hash this flow's connection bindings are keyed
+    /// under — the ruling's *binding-base-artifact*.
+    ///
+    /// Equal to [`ServingFlow::source_artifact`] for a released member, which is
+    /// every flow a plain release mint emits; a candidate overlay instead
+    /// carries the released base it was validated against, the value
+    /// `catalog.validated_flow_drafts.binding_base_artifact_hash`
+    /// (`deploy/sql/catalog-schema.sql:495`) already stores. That default is a
+    /// mint-side rule, not a serde default: the key is required and non-null, so
+    /// a producer cannot construct a flow without deciding which case it is in.
+    ///
+    /// It is the key binding resolution uses — the one readiness proves every
+    /// connection requirement of the release is bound under in this environment
+    /// (`catalog.connection_bindings.artifact_hash`,
+    /// `deploy/sql/catalog-schema.sql:1162`), and the one effect authority joins
+    /// that table on (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`,
+    /// the `binding.artifact_hash` predicate).
+    ///
+    /// # Substituting the base is not an authority hole
+    ///
+    /// A candidate resolving bindings under a *released* artifact cannot borrow
+    /// authority the base did not already grant: the same query compares the
+    /// executing plan node's `source-connection-requirement.descriptor` against
+    /// the stored `requirement_json` of the base
+    /// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs:200-205`),
+    /// so a draft that *changes* a requirement matches no permitted node and
+    /// fails closed as `node-not-permitted` rather than executing under the
+    /// base's binding.
+    pub binding_base_artifact: String,
     /// The flow's intrinsic callable boundary, or `null` when the flow is not
     /// callable. The key is always present: a missing key is a refusal, never a
     /// silent `None`. Replaces the plan-parsing callee-callability check the
@@ -165,9 +201,12 @@ pub struct ServingFlow {
 /// [`AttachmentActivation`](crate::AttachmentActivation) already states that it
 /// "never participates in hashes". It stays in `catalog.attachment_activation`
 /// and is checked inside the admission transaction, which already holds the
-/// connection: `catalog.active_attachments` filters on it
-/// (`crates/execution/run-state/src/admission.rs:243`) and a disabled
-/// attachment classifies as the existing `inactive-definition` refusal. The
+/// connection: the admit statement reads the `catalog.active_attachments` view
+/// (`crates/execution/run-state/src/admission.rs:246`), and it is that view —
+/// not the statement — which joins `catalog.attachment_activation` and filters
+/// `WHERE activation.enabled` (`deploy/sql/catalog-schema.sql:1003`, `:1010`).
+/// A disabled attachment therefore leaves the view and classifies as the
+/// existing `inactive-definition` refusal by row absence. The
 /// serving path therefore gains no read, and an emergency off is one `UPDATE`
 /// effective at the next admission instead of a mint plus a rollout. Disabled
 /// attachments stay in the manifest because routes are immutable per release;
@@ -353,6 +392,7 @@ impl ServingManifest {
             validate_text(flow_id, "flow-id")?;
             validate_digest(&flow.plan_hash, "plan-hash")?;
             validate_digest(&flow.source_artifact, "source-artifact")?;
+            validate_digest(&flow.binding_base_artifact, "binding-base-artifact")?;
             if flow.flow_version == 0 {
                 return Err(CatalogIdentityError::ZeroVersion {
                     field: "flow-version",
@@ -429,6 +469,9 @@ mod tests {
         "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
     const GUARD_HASH: &str =
         "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
+    /// The released base a candidate overlay resolves its bindings under — the
+    /// case where `binding-base-artifact` and `source-artifact` diverge.
+    const BASE_B: &str = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
     fn release() -> ServingRelease {
         ServingRelease {
@@ -439,21 +482,26 @@ mod tests {
         }
     }
 
+    /// A released member: its bindings are keyed under its own artifact.
     fn root_flow() -> ServingFlow {
         ServingFlow {
             flow_version: 3,
             plan_hash: PLAN_A.into(),
             source_artifact: ART_A.into(),
+            binding_base_artifact: ART_A.into(),
             callable_contract: None,
             calls: BTreeSet::from(["callee".to_string()]),
         }
     }
 
+    /// A candidate overlay: its plan is compiled from its own draft artifact,
+    /// but its bindings live under the released base it was validated against.
     fn callee_flow() -> ServingFlow {
         ServingFlow {
             flow_version: 1,
             plan_hash: PLAN_B.into(),
             source_artifact: ART_B.into(),
+            binding_base_artifact: BASE_B.into(),
             callable_contract: Some(CallableContract {
                 version: CALLABLE_CONTRACT_VERSION.into(),
                 input_schema_hash: GUARD_HASH.into(),
@@ -575,6 +623,39 @@ mod tests {
             Err(CatalogIdentityError::UnresolvableManifestFlow {
                 flow_id: "ghost".to_string()
             })
+        );
+    }
+
+    #[test]
+    fn the_binding_base_is_validated_as_its_own_digest() {
+        let mut malformed = root_flow();
+        malformed.binding_base_artifact = "not-a-digest".into();
+        malformed.calls = BTreeSet::new();
+        assert_eq!(
+            ServingManifest::new(
+                release(),
+                BTreeMap::from([("root".to_string(), malformed)]),
+                BTreeMap::new(),
+                BTreeMap::new(),
+            ),
+            Err(CatalogIdentityError::InvalidDigest {
+                field: "binding-base-artifact"
+            }),
+            "the binding base is a digest in its own right, not a copy of source-artifact"
+        );
+
+        // The candidate case — base and source diverging — is valid by design.
+        let mut candidate = root_flow();
+        candidate.binding_base_artifact = ART_B.into();
+        candidate.calls = BTreeSet::new();
+        assert!(
+            ServingManifest::new(
+                release(),
+                BTreeMap::from([("root".to_string(), candidate)]),
+                BTreeMap::new(),
+                BTreeMap::new(),
+            )
+            .is_ok()
         );
     }
 

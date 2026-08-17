@@ -76,7 +76,8 @@ actor that calls the control plane; it owns nothing durable.
 > test-set row by `wamn-0h0g.13.44`).** The plane split stands; eight
 > cells carry a supersession. *Project side:* the deployed release
 > header + manifest hash, the flow → plan-hash / source-artifact /
-> callable-contract references, the call-edge adjacency, and the
+> binding-base-artifact / callable-contract references, the
+> call-edge adjacency, and the
 > **event registration** half of the registration/causation cell are
 > no longer project relations — they are fields of the immutable
 > **release manifest** (RFC 8785 bytes, `sha256:<digest>`), deployed
@@ -111,7 +112,7 @@ actor that calls the control plane; it owns nothing durable.
 |---|---|
 | Principals, roles, PATs | Applied project schema + migration state |
 | Drafts + authoring command ledger | Deployed release header + manifest hash |
-| Test-set bytes, reservations, case map, reports | Flow → plan-hash / source-artifact / callable-contract references |
+| Test-set bytes, reservations, case map, reports | Flow → plan-hash / source-artifact / binding-base-artifact / callable-contract references |
 | Immutable flow/release definitions | **Call-edge adjacency** (flow → callee flows, materialized at deploy) |
 | Tested release evidence (incl. `tested_resolution_map`) | Request-attachment route/auth/limit/input-mapping projections |
 | Execution-plan bytes (`execution_bundles`, the single artifact store) | Event registration + causation projections |

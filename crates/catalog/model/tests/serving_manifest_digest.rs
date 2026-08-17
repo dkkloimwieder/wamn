@@ -11,14 +11,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     AttachmentKind, CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling,
-    CallableReturnContract, ServingAttachment, ServingFlow, ServingManifest, ServingRegistration,
-    ServingRelease,
+    CallableReturnContract, CatalogIdentityError, ServingAttachment, ServingFlow, ServingManifest,
+    ServingRegistration, ServingRelease,
 };
 
 const PLAN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const ART: &str = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const DEF: &str = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 const GUARD: &str = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
+/// A released base that is *not* the flow's own artifact — the candidate
+/// overlay, the only case in which the two artifact hashes diverge.
+const BASE: &str = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 
 fn release() -> ServingRelease {
     ServingRelease {
@@ -29,11 +32,14 @@ fn release() -> ServingRelease {
     }
 }
 
+/// A released member — the ordinary case, in which the binding base is the
+/// flow's own artifact.
 fn flow(calls: BTreeSet<String>) -> ServingFlow {
     ServingFlow {
         flow_version: 3,
         plan_hash: PLAN.to_string(),
         source_artifact: ART.to_string(),
+        binding_base_artifact: ART.to_string(),
         callable_contract: None,
         calls,
     }
@@ -54,6 +60,8 @@ fn minimal() -> ServingManifest {
 fn maximal() -> ServingManifest {
     let mut callee = flow(BTreeSet::from(["root".to_string()]));
     callee.flow_version = 1;
+    // A candidate overlay, so the maximal fixture exercises the diverging case.
+    callee.binding_base_artifact = BASE.to_string();
     callee.callable_contract = Some(CallableContract {
         version: CALLABLE_CONTRACT_VERSION.to_string(),
         input_schema_hash: GUARD.to_string(),
@@ -63,7 +71,10 @@ fn maximal() -> ServingManifest {
     ServingManifest::new(
         release(),
         BTreeMap::from([
-            ("root".to_string(), flow(BTreeSet::from(["callee".to_string()]))),
+            (
+                "root".to_string(),
+                flow(BTreeSet::from(["callee".to_string()])),
+            ),
             ("callee".to_string(), callee),
         ]),
         BTreeMap::from([(
@@ -118,7 +129,9 @@ fn manifest_preimage_bytes_are_pinned() {
         String::from_utf8(minimal().canonical_bytes()).expect("the preimage is UTF-8"),
         concat!(
             r#"{"attachments":{},"#,
-            r#""flows":{"root":{"callable-contract":null,"calls":[],"flow-version":3,"#,
+            r#""flows":{"root":{"#,
+            r#""binding-base-artifact":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","#,
+            r#""callable-contract":null,"calls":[],"flow-version":3,"#,
             r#""plan-hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","#,
             r#""source-artifact":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}},"#,
             r#""format-version":"0.1","#,
@@ -146,6 +159,7 @@ fn document_key_order_cannot_change_the_digest() {
           "flow-version": 3,
           "plan-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "source-artifact": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "binding-base-artifact": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "callable-contract": null,
           "calls": []
         }
@@ -160,6 +174,7 @@ fn document_key_order_cannot_change_the_digest() {
         "root": {
           "calls": [],
           "callable-contract": null,
+          "binding-base-artifact": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "source-artifact": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "plan-hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "flow-version": 3
@@ -208,7 +223,13 @@ fn every_manifest_field_is_pinned_in_the_projection() {
 
     assert_eq!(
         sorted_keys(&document),
-        ["attachments", "flows", "format-version", "registrations", "release"],
+        [
+            "attachments",
+            "flows",
+            "format-version",
+            "registrations",
+            "release"
+        ],
         "a new `ServingManifest` field must be classified here"
     );
     assert_eq!(
@@ -219,18 +240,35 @@ fn every_manifest_field_is_pinned_in_the_projection() {
     assert_eq!(
         sorted_keys(&document["flows"]["callee"]),
         [
+            "binding-base-artifact",
             "callable-contract",
             "calls",
             "flow-version",
             "plan-hash",
             "source-artifact"
         ],
-        "the per-flow projection is plan-hash / source-artifact / callable-contract, plus \
-         the call-edge adjacency and the flow version the run row needs"
+        "the per-flow projection is plan-hash / source-artifact / binding-base-artifact / \
+         callable-contract, plus the call-edge adjacency and the flow version the run row needs"
+    );
+    assert_eq!(
+        document["flows"]["callee"]["binding-base-artifact"], BASE,
+        "the binding base carries its own value: the plan verifiers read source-artifact, \
+         binding resolution reads this, and a candidate's two hashes differ"
+    );
+    assert_eq!(
+        document["flows"]["root"]["binding-base-artifact"],
+        document["flows"]["root"]["source-artifact"],
+        "a released member's binding base is its own artifact — the mint-side default"
     );
     assert_eq!(
         sorted_keys(&document["attachments"]["orders"]),
-        ["auth-policy", "definition", "definition-hash", "flow-id", "kind"],
+        [
+            "auth-policy",
+            "definition",
+            "definition-hash",
+            "flow-id",
+            "kind"
+        ],
         "the attachment projection is release shape only — activation is environment \
          state, checked at admission, and never in these bytes"
     );
@@ -241,6 +279,49 @@ fn every_manifest_field_is_pinned_in_the_projection() {
         "a registration travels as identity only — the condition stays a hot column, \
          read by the materializer at evaluation"
     );
+}
+
+/// The binding base is manifest identity in its own right. Two releases that
+/// agree on every plan and every source artifact but resolve their bindings
+/// under different bases are different documents, so a pod cannot serve one
+/// under the other's digest. This is the clause a `#[serde(skip)]`,
+/// a `skip_serializing_if`, or a projection that echoed `source-artifact` into
+/// both keys would break: each of those collapses the two digests below.
+#[test]
+fn the_binding_base_reaches_the_digest() {
+    let released = minimal();
+    let mut candidate = minimal();
+    candidate
+        .flows
+        .get_mut("root")
+        .expect("the fixture flow")
+        .binding_base_artifact = BASE.to_string();
+
+    assert_ne!(released.canonical_bytes(), candidate.canonical_bytes());
+    assert_ne!(released.digest(), candidate.digest());
+    assert_eq!(
+        ServingManifest::read(&released.digest(), &candidate.canonical_bytes()),
+        Err(CatalogIdentityError::ServingManifestDigestMismatch),
+        "a rebased manifest may not mount under the identity it was not minted with"
+    );
+}
+
+/// The key is required, exactly like `callable-contract`: absence is a refusal,
+/// never a silent fall back to `source-artifact`. A reader-side default would
+/// recreate the double-duty the field exists to end — the mint decides which
+/// case a flow is in, and the wire records that decision.
+#[test]
+fn a_flow_without_a_binding_base_is_refused_at_the_mount() {
+    let mut document = serde_json::to_value(minimal()).expect("the manifest serializes");
+    document["flows"]["root"]
+        .as_object_mut()
+        .expect("a flow is an object")
+        .remove("binding-base-artifact");
+    assert!(serde_json::from_value::<ServingManifest>(document).is_err());
+
+    let mut null_base = serde_json::to_value(minimal()).expect("the manifest serializes");
+    null_base["flows"]["root"]["binding-base-artifact"] = Value::Null;
+    assert!(serde_json::from_value::<ServingManifest>(null_base).is_err());
 }
 
 /// The two fields the release-shape ruling removed. `deny_unknown_fields` is what
