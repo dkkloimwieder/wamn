@@ -1,18 +1,8 @@
-//! Frozen status and failure literals used by MVP test assertions.
+//! Frozen failure literals used by MVP test expectations.
 
 use serde::{Deserialize, Serialize};
 
-/// A terminal run status accepted by `run-terminal-outcome`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum RunTerminalStatus {
-    Completed,
-    Failed,
-    InfrastructureFailure,
-    EffectUncertain,
-}
-
-/// A typed flow failure accepted by `typed-flow-failure`.
+/// A typed flow failure accepted by `failure-code`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlowFailureKind {
@@ -25,30 +15,12 @@ pub enum FlowFailureKind {
     DispatchBudget,
 }
 
-/// A terminal node status accepted by `named-node-terminal`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum NodeTerminalStatus {
-    Success,
-    Error,
-}
-
-/// A typed node failure accepted when a named node terminates with `error`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum NodeFailureKind {
-    Retryable,
-    RateLimited,
-    Terminal,
-    InvalidInput,
-}
-
 #[cfg(test)]
 mod tests {
     use serde::{Serialize, de::DeserializeOwned};
     use serde_json::json;
 
-    use super::{FlowFailureKind, NodeFailureKind, NodeTerminalStatus, RunTerminalStatus};
+    use super::FlowFailureKind;
 
     fn assert_wire<T>(value: T, literal: &str)
     where
@@ -61,17 +33,6 @@ mod tests {
     #[test]
     fn frozen_literals_round_trip_only_the_mvp_sets() {
         for (value, literal) in [
-            (RunTerminalStatus::Completed, "completed"),
-            (RunTerminalStatus::Failed, "failed"),
-            (
-                RunTerminalStatus::InfrastructureFailure,
-                "infrastructure-failure",
-            ),
-            (RunTerminalStatus::EffectUncertain, "effect-uncertain"),
-        ] {
-            assert_wire(value, literal);
-        }
-        for (value, literal) in [
             (FlowFailureKind::Terminal, "terminal"),
             (FlowFailureKind::RetryExhausted, "retry-exhausted"),
             (FlowFailureKind::InvalidInput, "invalid-input"),
@@ -82,25 +43,19 @@ mod tests {
         ] {
             assert_wire(value, literal);
         }
-        for (value, literal) in [
-            (NodeTerminalStatus::Success, "success"),
-            (NodeTerminalStatus::Error, "error"),
-        ] {
-            assert_wire(value, literal);
-        }
-        for (value, literal) in [
-            (NodeFailureKind::Retryable, "retryable"),
-            (NodeFailureKind::RateLimited, "rate-limited"),
-            (NodeFailureKind::Terminal, "terminal"),
-            (NodeFailureKind::InvalidInput, "invalid-input"),
-        ] {
-            assert_wire(value, literal);
-        }
 
-        for removed in ["dispatched", "running", "cancelled"] {
-            assert!(serde_json::from_value::<RunTerminalStatus>(json!(removed)).is_err());
+        for removed in [
+            "dispatched",
+            "running",
+            "cancelled",
+            "completed",
+            "success",
+            "error",
+            "retryable",
+            "rate-limited",
+            "infrastructure-failure",
+        ] {
             assert!(serde_json::from_value::<FlowFailureKind>(json!(removed)).is_err());
-            assert!(serde_json::from_value::<NodeFailureKind>(json!(removed)).is_err());
         }
     }
 

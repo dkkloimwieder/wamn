@@ -31,13 +31,11 @@ load_mutation() {
       EXPECTED_SHA="25f00a4ba18ef08cd05d0b761378a7423801046aa3cf9f70ef772480dce54ae0"
       NEEDLE='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",'
       REPLACEMENT='            record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_reports",'
       GATE="run_plane::tests::record_tables_are_pinned"

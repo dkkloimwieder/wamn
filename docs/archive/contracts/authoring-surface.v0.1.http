@@ -32,7 +32,7 @@ Authorization: Bearer {{$processEnv WAMN_AUTHORING_BEARER_TOKEN}}
 Accept: application/json
 Content-Type: application/json
 
-{"document":"request","body":{"schema-version":"0.1","command-id":"test-set-run-3","command":{"kind":"test-set-run","input":{"scope":{"project-id":"receiving","environment":"dev"},"validated-draft":{"validated-draft-id":"sha256:validated-v4"},"test-set":{"definition":"{\"schema-version\":\"0.1\",\"cases\":[{\"case-id\":\"accepted\",\"input\":{},\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}]}"}}}}}
+{"document":"request","body":{"schema-version":"0.1","command-id":"test-set-run-3","command":{"kind":"test-set-run","input":{"scope":{"project-id":"receiving","environment":"dev"},"validated-draft":{"validated-draft-id":"sha256:validated-v4"}}}}}
 
 ### publish
 POST {{$processEnv WAMN_AUTHORING_ENDPOINT}}

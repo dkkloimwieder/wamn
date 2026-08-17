@@ -223,7 +223,6 @@ fn unmounted_commands() -> Vec<(&'static str, String)> {
             serde_json::json!({
                 "scope": scope.clone(),
                 "validated-draft": validated.clone(),
-                "test-set": {"definition": "{\"schema-version\":\"0.1\",\"cases\":[]}"},
             }),
         ),
         (

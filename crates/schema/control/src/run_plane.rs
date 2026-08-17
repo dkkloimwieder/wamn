@@ -476,42 +476,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
         origin: CheckOrigin::Inline("tenant_id"),
     },
     CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_tenant_id_check",
-        definition: "CHECK (tenant_id <> ''::text)",
-        origin: CheckOrigin::Inline("tenant_id"),
-    },
-    CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_schema_version_check",
-        definition: "CHECK (schema_version = '0.1'::text)",
-        origin: CheckOrigin::Inline("schema_version"),
-    },
-    CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_byte_length_check",
-        definition: "CHECK (byte_length >= 1 AND byte_length <= 1048576)",
-        origin: CheckOrigin::Inline("byte_length"),
-    },
-    CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_check",
-        definition: "CHECK (byte_length = octet_length(exact_bytes))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_check1",
-        definition: "CHECK (test_set_hash = ('sha256:'::text || encode(sha256(exact_bytes), 'hex'::text)))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_sets",
-        name: "authoring_test_sets_check2",
-        definition: "CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
         table: "authoring_test_run_reservations",
         name: "authoring_test_run_reservations_tenant_id_check",
         definition: "CHECK (tenant_id <> ''::text)",
@@ -652,7 +616,7 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "authoring_test_case_runs",
         name: "authoring_test_case_runs_failure_kind_check",
-        definition: "CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text, 'resolution-map-mismatch'::text]))",
+        definition: "CHECK (failure_kind = ANY (ARRAY['assertion-failed'::text, 'deadline-exhausted'::text, 'effect-uncertain'::text]))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -775,8 +739,6 @@ const REJECT_IMMUTABLE_EFFECT_FACT_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTIO
 
 const REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_operator_run_action_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'operator-run-action-immutable';\nEND\n$function$\n";
 
-const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF: &str = "CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\nBEGIN\n    RAISE EXCEPTION USING\n        ERRCODE = '55000',\n        MESSAGE = 'authoring-test-set-immutable';\nEND\n$function$\n";
-
 const RUNS_EVENT_LINEAGE_TRIGGER_DEF: &str = "CREATE TRIGGER runs_event_lineage_immutable BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION wamn_run.guard_event_lineage_immutable()";
 
 const LOCK_CATALOG_HEAD_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
@@ -884,18 +846,6 @@ $$;
 REVOKE ALL ON FUNCTION wamn_run.reject_immutable_operator_run_action_change()
     FROM PUBLIC;"#;
 
-const REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL: &str = r#"CREATE OR REPLACE FUNCTION wamn_run.reject_immutable_authoring_test_set_change()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-BEGIN
-    RAISE EXCEPTION USING
-        ERRCODE = '55000',
-        MESSAGE = 'authoring-test-set-immutable';
-END
-$$;
-REVOKE ALL ON FUNCTION wamn_run.reject_immutable_authoring_test_set_change() FROM PUBLIC;"#;
-
 const RUNS_EVENT_LINEAGE_TRIGGER_SQL: &str = "CREATE TRIGGER runs_event_lineage_immutable \
     BEFORE UPDATE OF event_source_run_id, event_root_run_id, event_depth \
     ON wamn_run.runs FOR EACH ROW EXECUTE FUNCTION \
@@ -979,11 +929,6 @@ fn helper_specs() -> Vec<HelperSpec> {
             "reject_immutable_operator_run_action_change",
             REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_DEF,
             REJECT_IMMUTABLE_OPERATOR_RUN_ACTION_CHANGE_SQL,
-        ),
-        borrowed_helper_spec(
-            "reject_immutable_authoring_test_set_change",
-            REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_DEF,
-            REJECT_IMMUTABLE_AUTHORING_TEST_SET_CHANGE_SQL,
         ),
         HelperSpec {
             name: "reject_immutable_authoring_test_orchestration_change",
@@ -1078,18 +1023,6 @@ fn trigger_specs() -> Vec<TriggerSpec> {
     }
     for (table, name, event, function) in [
         (
-            "authoring_test_sets",
-            "authoring_test_sets_update_immutable",
-            "UPDATE",
-            "reject_immutable_authoring_test_set_change",
-        ),
-        (
-            "authoring_test_sets",
-            "authoring_test_sets_delete_immutable",
-            "DELETE",
-            "reject_immutable_authoring_test_set_change",
-        ),
-        (
             "authoring_test_run_reservations",
             "authoring_test_run_reservations_controlled_insert",
             "INSERT",
@@ -1176,12 +1109,6 @@ const EFFECT_OUTCOME_DISPATCH_FK_SQL: &str = "ALTER TABLE wamn_run.effect_attemp
      FOREIGN KEY (tenant_id, attempt_id, dispatched_at) \
      REFERENCES wamn_run.effect_attempt_dispatches \
          (tenant_id, attempt_id, dispatched_at)";
-const TEST_RESERVATION_TEST_SET_FK_NAME: &str = "authoring_test_reservation_test_set_fk";
-const TEST_RESERVATION_TEST_SET_FK_DEF: &str = "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)";
-const TEST_RESERVATION_TEST_SET_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_run_reservations \
-     ADD CONSTRAINT authoring_test_reservation_test_set_fk \
-     FOREIGN KEY (tenant_id, test_set_hash) \
-     REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash)";
 const TEST_CASE_RESERVATION_FK_NAME: &str = "authoring_test_case_reservation_fk";
 const TEST_CASE_RESERVATION_FK_DEF: &str = "FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)";
 const TEST_CASE_RESERVATION_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_case_runs \
@@ -1195,12 +1122,6 @@ const TEST_REPORT_RESERVATION_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_tes
      ADD CONSTRAINT authoring_test_report_reservation_fk \
      FOREIGN KEY (tenant_id, report_id) \
      REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)";
-const TEST_REPORT_TEST_SET_FK_NAME: &str = "authoring_test_report_test_set_fk";
-const TEST_REPORT_TEST_SET_FK_DEF: &str = "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)";
-const TEST_REPORT_TEST_SET_FK_SQL: &str = "ALTER TABLE wamn_run.authoring_test_reports \
-     ADD CONSTRAINT authoring_test_report_test_set_fk \
-     FOREIGN KEY (tenant_id, test_set_hash) \
-     REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash)";
 
 const FLOW_AUTHOR_CHECK_NAME: &str = "flow_artifacts_verified_author_principal_check";
 const FLOW_AUTHOR_CHECK_DEF: &str =
@@ -2004,12 +1925,6 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
         table: "runs",
         app: &["SELECT", "DELETE"],
         author: &["SELECT"],
-    },
-    AuthoringPrivilegeSpec {
-        schema: AuthoringTableSchema::RunPlane,
-        table: "authoring_test_sets",
-        app: &[],
-        author: &["SELECT", "INSERT"],
     },
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::RunPlane,
@@ -4750,12 +4665,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
     // observed tables.
     for (table, name, definition, sql) in [
         (
-            "authoring_test_run_reservations",
-            TEST_RESERVATION_TEST_SET_FK_NAME,
-            TEST_RESERVATION_TEST_SET_FK_DEF,
-            TEST_RESERVATION_TEST_SET_FK_SQL,
-        ),
-        (
             "authoring_test_case_runs",
             TEST_CASE_RESERVATION_FK_NAME,
             TEST_CASE_RESERVATION_FK_DEF,
@@ -4766,12 +4675,6 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
             TEST_REPORT_RESERVATION_FK_NAME,
             TEST_REPORT_RESERVATION_FK_DEF,
             TEST_REPORT_RESERVATION_FK_SQL,
-        ),
-        (
-            "authoring_test_reports",
-            TEST_REPORT_TEST_SET_FK_NAME,
-            TEST_REPORT_TEST_SET_FK_DEF,
-            TEST_REPORT_TEST_SET_FK_SQL,
         ),
         (
             "effect_attempt_dispatches",
@@ -5356,9 +5259,8 @@ pub fn select_authoring_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (table_schema = $1 AND table_name IN \
-              ('runs', 'authoring_test_sets', \
-               'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports'))) \
+              ('runs', 'authoring_test_run_reservations', \
+               'authoring_test_case_runs', 'authoring_test_reports'))) \
       ORDER BY table_schema, table_name, grantee, privilege_type"
 }
 
@@ -5385,9 +5287,8 @@ pub fn select_authoring_effective_table_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_sets', \
-               'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports'))) \
+              ('runs', 'authoring_test_run_reservations', \
+               'authoring_test_case_runs', 'authoring_test_reports'))) \
         AND pg_catalog.has_table_privilege( \
               actor.oid, relation.oid, privilege.name) \
       ORDER BY namespace.nspname, relation.relname, actor.rolname, privilege.name"
@@ -5414,9 +5315,8 @@ pub fn select_authoring_effective_column_privileges_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_sets', \
-               'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports'))) \
+              ('runs', 'authoring_test_run_reservations', \
+               'authoring_test_case_runs', 'authoring_test_reports'))) \
         AND pg_catalog.has_any_column_privilege( \
               actor.oid, relation.oid, privilege.name) \
       ORDER BY namespace.nspname, relation.relname, actor.rolname, privilege.name"
@@ -5440,9 +5340,8 @@ pub fn select_authoring_table_owners_sql() -> &'static str {
                'connection_generations', 'connection_bindings', \
                'draft_safe_connection_grants', 'authoring_command_audit')) \
           OR (namespace.nspname = $1 AND relation.relname IN \
-              ('runs', 'authoring_test_sets', \
-               'authoring_test_run_reservations', 'authoring_test_case_runs', \
-               'authoring_test_reports'))) \
+              ('runs', 'authoring_test_run_reservations', \
+               'authoring_test_case_runs', 'authoring_test_reports'))) \
       ORDER BY namespace.nspname, relation.relname"
 }
 
@@ -5635,7 +5534,6 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
        AND p.proname IN ('lock_catalog_head', 'guard_event_lineage_immutable', \
                          'reject_immutable_effect_fact_change', \
                          'reject_immutable_operator_run_action_change', \
-                         'reject_immutable_authoring_test_set_change', \
                          'reject_immutable_authoring_test_orchestration_change', \
                          'guard_authoring_test_orchestration_write', \
                          'reject_immutable_authoring_report_change', \
@@ -6330,11 +6228,6 @@ CREATE INDEX event_registrations_by_entity
         );
         for (table, name, definition) in [
             (
-                "authoring_test_run_reservations",
-                TEST_RESERVATION_TEST_SET_FK_NAME,
-                TEST_RESERVATION_TEST_SET_FK_DEF,
-            ),
-            (
                 "authoring_test_case_runs",
                 TEST_CASE_RESERVATION_FK_NAME,
                 TEST_CASE_RESERVATION_FK_DEF,
@@ -6343,11 +6236,6 @@ CREATE INDEX event_registrations_by_entity
                 "authoring_test_reports",
                 TEST_REPORT_RESERVATION_FK_NAME,
                 TEST_REPORT_RESERVATION_FK_DEF,
-            ),
-            (
-                "authoring_test_reports",
-                TEST_REPORT_TEST_SET_FK_NAME,
-                TEST_REPORT_TEST_SET_FK_DEF,
             ),
         ] {
             obs.foreign_keys.insert(
@@ -6477,7 +6365,6 @@ CREATE INDEX event_registrations_by_entity
         assert_eq!(
             record_tables(AUTHORING_TESTS_SQL, "wamn_run"),
             [
-                "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
@@ -6786,10 +6673,15 @@ CREATE INDEX event_registrations_by_entity
         assert!(actions.contains("REVOKE ALL PRIVILEGES"));
         assert!(!actions.contains("REFERENCES"));
 
-        let test_sets = table_section(AUTHORING_TESTS_SQL, "wamn_run", "authoring_test_sets");
-        assert!(test_sets.contains("authoring_test_sets_update_immutable"));
-        assert!(test_sets.contains("GRANT SELECT, INSERT"));
-        assert!(!test_sets.contains("reject_immutable_authoring_report_change"));
+        // Unlike the deleted test-set table, whose triggers sat directly beneath
+        // it, the orchestration tables share one guard function and declare their
+        // triggers after it — so a report's record section carries its RLS and
+        // grant, never its trigger. Trigger presence is proven separately, by the
+        // RepairTrigger leg over `authoring_test_reports_delete_immutable`.
+        let reports = table_section(AUTHORING_TESTS_SQL, "wamn_run", "authoring_test_reports");
+        assert!(reports.contains("authoring_test_reports_tenant"));
+        assert!(reports.contains("GRANT SELECT, INSERT"));
+        assert!(!reports.contains("reject_immutable_authoring_report_change"));
 
         let hdr = header_section(RUN_STATE_SQL, "wamn_run");
         assert!(hdr.contains("CREATE SCHEMA IF NOT EXISTS wamn_run"));
@@ -6851,8 +6743,8 @@ CREATE INDEX event_registrations_by_entity
         assert!(plan.extra_columns.is_empty());
         assert_eq!(
             plan.at_target.len(),
-            13,
-            "all thirteen retained run-plane tables are at target"
+            12,
+            "all twelve retained run-plane tables are at target"
         );
     }
 
@@ -7016,7 +6908,6 @@ CREATE INDEX event_registrations_by_entity
              DROP TABLE IF EXISTS catalog.\"publish_gate_audit\""
         );
         for retained in [
-            "authoring_test_sets",
             "authoring_test_run_reservations",
             "authoring_test_case_runs",
             "authoring_test_reports",
@@ -7481,12 +7372,12 @@ CREATE INDEX event_registrations_by_entity
     }
 
     #[test]
-    fn guest_column_select_on_authoring_test_sets_never_plans_false_clean() {
+    fn guest_column_select_on_authoring_test_reports_never_plans_false_clean() {
         let mut obs = observation_at_record();
         obs.authoring_effective_column_privileges
             .entry((
                 "demo".to_string(),
-                "authoring_test_sets".to_string(),
+                "authoring_test_reports".to_string(),
                 "wamn_app".to_string(),
             ))
             .or_default()
@@ -7498,7 +7389,7 @@ CREATE INDEX event_registrations_by_entity
             .iter()
             .find(|action| {
                 action.kind == RunPlaneActionKind::RepairAuthoringPrivilege
-                    && action.target == "demo.authoring_test_sets"
+                    && action.target == "demo.authoring_test_reports"
             })
             .expect("column-level guest read authority must be surfaced");
         assert!(repair.sql.contains("DO $effective_acl$"));
@@ -7506,7 +7397,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(
             repair
                 .sql
-                .contains("'wamn_app', '\"demo\".\"authoring_test_sets\"', 'SELECT'")
+                .contains("'wamn_app', '\"demo\".\"authoring_test_reports\"', 'SELECT'")
         );
         assert!(
             repair
@@ -8018,7 +7909,7 @@ CREATE INDEX event_registrations_by_entity
         let mut obs = observation_at_record();
         obs.foreign_keys.remove(&(
             "authoring_test_reports".to_string(),
-            TEST_REPORT_TEST_SET_FK_NAME.to_string(),
+            TEST_REPORT_RESERVATION_FK_NAME.to_string(),
         ));
 
         let repair = plan_run_plane(&schema("demo"), &obs)
@@ -8026,10 +7917,15 @@ CREATE INDEX event_registrations_by_entity
             .into_iter()
             .find(|action| {
                 action.kind == RunPlaneActionKind::RepairForeignKey
-                    && action.target == "authoring_test_reports.authoring_test_report_test_set_fk"
+                    && action.target
+                        == "authoring_test_reports.authoring_test_report_reservation_fk"
             })
-            .expect("report-to-test-set FK is repaired");
-        assert!(repair.sql.contains("REFERENCES demo.authoring_test_sets"));
+            .expect("report-to-reservation FK is repaired");
+        assert!(
+            repair
+                .sql
+                .contains("REFERENCES demo.authoring_test_run_reservations")
+        );
     }
 
     #[test]
@@ -8657,7 +8553,6 @@ CREATE INDEX event_registrations_by_entity
                 "effect_attempt_outcomes",
                 "operator_run_actions",
                 "flows",
-                "authoring_test_sets",
                 "authoring_test_run_reservations",
                 "authoring_test_case_runs",
                 "authoring_test_reports",
@@ -8668,26 +8563,6 @@ CREATE INDEX event_registrations_by_entity
             plan.actions
                 .iter()
                 .any(|a| a.kind == RunPlaneActionKind::EnsureCatalogSchema)
-        );
-        let test_set_helper = plan
-            .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::RepairHelperFunction
-                    && action.target == "reject_immutable_authoring_test_set_change"
-            })
-            .expect("authoring test-set helper is provisioned");
-        let test_set_table = plan
-            .actions
-            .iter()
-            .position(|action| {
-                action.kind == RunPlaneActionKind::CreateTable
-                    && action.target == "authoring_test_sets"
-            })
-            .expect("authoring test-set table is provisioned");
-        assert!(
-            test_set_helper < test_set_table,
-            "the standalone run-plane helper must exist before test-set triggers"
         );
         let orchestration_helper = plan
             .actions
@@ -9027,27 +8902,33 @@ CREATE INDEX event_registrations_by_entity
         assert!(!repair.sql.contains("'cancelled'::text"));
     }
 
+    /// The separate test-set store is gone: a draft's own `cases` are the only
+    /// test source, so no relation, privilege, helper, or FK may name one.
     #[test]
-    fn authoring_test_set_checks_and_privileges_are_closed_and_pinned() {
-        let checks: Vec<&CheckSpec> = CHECK_SPECS
-            .iter()
-            .filter(|spec| spec.table == "authoring_test_sets")
-            .collect();
-        assert_eq!(checks.len(), 6);
-        assert!(checks.iter().any(|spec| {
-            spec.name == "authoring_test_sets_check2"
-                && spec.definition == "CHECK (NOT (convert_from(exact_bytes, 'UTF8'::name)::jsonb ->> 'schema-version'::text) IS DISTINCT FROM schema_version)"
-        }));
-
-        let privileges = AUTHORING_PRIVILEGE_SPECS
-            .iter()
-            .find(|spec| {
-                matches!(spec.schema, AuthoringTableSchema::RunPlane)
-                    && spec.table == "authoring_test_sets"
-            })
-            .expect("authoring test-set privilege boundary is observed");
-        assert!(privileges.app.is_empty());
-        assert_eq!(privileges.author, ["SELECT", "INSERT"]);
+    fn the_authoring_test_set_store_is_absent_from_the_record() {
+        assert!(
+            !CHECK_SPECS
+                .iter()
+                .any(|spec| spec.table == "authoring_test_sets")
+        );
+        assert!(
+            !AUTHORING_PRIVILEGE_SPECS
+                .iter()
+                .any(|spec| spec.table == "authoring_test_sets")
+        );
+        assert!(
+            !helper_specs()
+                .iter()
+                .any(|spec| spec.name == "reject_immutable_authoring_test_set_change")
+        );
+        assert!(
+            !trigger_specs()
+                .iter()
+                .any(|trigger| trigger.table == "authoring_test_sets")
+        );
+        for source in [AUTHORING_TESTS_SQL, select_run_plane_helper_functions_sql()] {
+            assert!(!source.contains("authoring_test_sets"), "{source}");
+        }
     }
 
     #[test]
@@ -9099,8 +8980,8 @@ CREATE INDEX event_registrations_by_entity
             assert!(triggers.iter().any(|trigger| trigger.name == name));
         }
         assert_eq!(
-            TEST_REPORT_TEST_SET_FK_DEF,
-            "FOREIGN KEY (tenant_id, test_set_hash) REFERENCES wamn_run.authoring_test_sets(tenant_id, test_set_hash)"
+            TEST_REPORT_RESERVATION_FK_DEF,
+            "FOREIGN KEY (tenant_id, report_id) REFERENCES wamn_run.authoring_test_run_reservations(tenant_id, report_id)"
         );
     }
 
@@ -9139,7 +9020,7 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairHelperFunction)
                 .count(),
-            8
+            7
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
@@ -9158,11 +9039,11 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .filter(|action| action.kind == RunPlaneActionKind::RepairTrigger)
                 .count(),
-            21
+            19
         );
         assert!(plan.actions.iter().any(|action| {
             action.kind == RunPlaneActionKind::RepairTrigger
-                && action.target == "authoring_test_sets.authoring_test_sets_delete_immutable"
+                && action.target == "authoring_test_reports.authoring_test_reports_delete_immutable"
         }));
     }
 
@@ -9617,7 +9498,10 @@ CREATE INDEX event_registrations_by_entity
                 observation.contains("authoring_command_audit"),
                 "{observation}"
             );
-            assert!(observation.contains("authoring_test_sets"), "{observation}");
+            assert!(
+                observation.contains("authoring_test_reports"),
+                "{observation}"
+            );
         }
         assert!(select_authoring_effective_table_privileges_sql().contains("has_table_privilege"));
         assert!(select_authoring_effective_table_privileges_sql().contains("release_manifests"));
@@ -9640,10 +9524,6 @@ CREATE INDEX event_registrations_by_entity
                 .contains("reject_immutable_authoring_report_change")
         );
         assert!(select_run_plane_helper_functions_sql().contains("guard_authoring_report_write"));
-        assert!(
-            select_run_plane_helper_functions_sql()
-                .contains("reject_immutable_authoring_test_set_change")
-        );
         assert!(
             select_run_plane_helper_functions_sql()
                 .contains("reject_immutable_authoring_test_orchestration_change")

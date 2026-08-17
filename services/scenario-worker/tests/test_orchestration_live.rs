@@ -1,14 +1,12 @@
-//! Optional PostgreSQL 18 proof for durable inline-test orchestration.
+//! Optional PostgreSQL 18 proof for durable test-case orchestration.
 //!
 //! Set `WAMN_TEST_ORCHESTRATION_PG_URL` to a superuser URL for a disposable
 //! database. The proof resets dedicated schemas and skips when the URL is absent.
 
 use tokio_postgres::{Client, NoTls};
-use wamn_authoring_model::TestSetInput;
 use wamn_scenario_worker::store::test_orchestration::{
     TestReportReconciliation, TestReportReservation, reconcile_test_report, reserve_test_report,
 };
-use wamn_scenario_worker::store::test_sets::store_test_set;
 use wamn_schema_control::{BareSchemaName, rewrite_schema};
 
 const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
@@ -39,13 +37,12 @@ fn command_hash(marker: char) -> String {
     format!("sha256:{}", marker.to_string().repeat(64))
 }
 
-fn reservation(report_id: &str, test_set_hash: &str) -> TestReportReservation {
+fn reservation(report_id: &str) -> TestReportReservation {
     TestReportReservation {
         tenant_id: TENANT.into(),
         report_id: report_id.into(),
         command_hash: command_hash('a'),
         validated_draft_id: "validated-draft-a".into(),
-        test_set_hash: test_set_hash.into(),
         catalog_id: "catalog-a".into(),
         catalog_version: 1,
         case_ids: vec!["case-a".into()],
@@ -106,26 +103,10 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .await
         .expect("scope orchestration session");
 
-    let test_set = store_test_set(
-        &client,
-        TENANT,
-        &TestSetInput {
-            definition: concat!(
-                "{\"schema-version\":\"0.1\",\"cases\":[",
-                "{\"case-id\":\"case-a\",\"input\":{},",
-                "\"expect\":[{\"run-terminal-outcome\":{\"status\":\"completed\"}}]}",
-                "]}"
-            )
-            .into(),
-        },
-    )
-    .await
-    .expect("store immutable test set");
-
-    let accepted = reserve_test_report(&mut client, &reservation("restart-report", &test_set.hash))
+    let accepted = reserve_test_report(&mut client, &reservation("restart-report"))
         .await
         .expect("reserve accepted report");
-    let retried = reserve_test_report(&mut client, &reservation("restart-report", &test_set.hash))
+    let retried = reserve_test_report(&mut client, &reservation("restart-report"))
         .await
         .expect("retry accepted report");
     assert_eq!(accepted, retried);
@@ -163,45 +144,25 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .await
         .expect_err("a live per-case deadline cannot be fabricated");
     assert_database_code(&premature_deadline, "55000");
-    let mapless_pass = client
-        .execute(
-            "UPDATE authoring_test_case_runs \
-                SET state = 'finalized', passed = true, summary = '{}', \
-                    finalized_at = clock_timestamp() \
-              WHERE tenant_id = $1 AND report_id = $2 AND ordinal = 0",
-            &[&TENANT, &accepted.report_id],
-        )
-        .await
-        .expect_err("a passed case must carry its immutable resolution map");
-    assert_database_code(&mapless_pass, "23514");
 
-    let missing_test_set_fk: bool = client
-        .query_one(
-            "SELECT EXISTS ( \
-               SELECT 1 FROM pg_constraint AS constraint_row \
-               JOIN pg_class AS source ON source.oid = constraint_row.conrelid \
-               JOIN pg_class AS target ON target.oid = constraint_row.confrelid \
-              WHERE source.relname = 'authoring_test_reports' \
-                AND target.relname = 'authoring_test_sets' \
-                AND constraint_row.contype = 'f')",
-            &[],
-        )
+    let test_set_relation: Option<String> = client
+        .query_one("SELECT to_regclass('authoring_test_sets')::text", &[])
         .await
-        .expect("inspect report-to-test-set FK")
+        .expect("probe the deleted test-set store")
         .get(0);
-    assert!(missing_test_set_fk);
+    assert_eq!(test_set_relation, None);
 
     // A second accepted report is made immediately deadline-eligible without
     // mutating any reserved identity; reconciliation must fail/finalize it.
     client
         .execute(
             "INSERT INTO authoring_test_run_reservations \
-               (tenant_id, report_id, command_hash, validated_draft_id, test_set_hash, \
+               (tenant_id, report_id, command_hash, validated_draft_id, \
                 catalog_id, catalog_version, case_count, created_at, whole_deadline_at) \
-             VALUES ($1, 'deadline-report', $2, 'validated-draft-a', $3, \
+             VALUES ($1, 'deadline-report', $2, 'validated-draft-a', \
                      'catalog-a', 1, 1, clock_timestamp() - interval '2 minutes', \
                      clock_timestamp() - interval '1 minute')",
-            &[&TENANT, &command_hash('b'), &test_set.hash],
+            &[&TENANT, &command_hash('b')],
         )
         .await
         .expect("reserve past whole-set deadline");
@@ -273,7 +234,7 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         )
         .await
         .expect("seed exact execution bundle");
-    let effect_report = reservation("uncertain-report", &test_set.hash);
+    let effect_report = reservation("uncertain-report");
     reserve_test_report(&mut client, &effect_report)
         .await
         .expect("reserve uncertain report");

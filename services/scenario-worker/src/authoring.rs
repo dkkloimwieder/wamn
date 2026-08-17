@@ -44,8 +44,7 @@ WITH session_role AS ( \
            ($1::text, 'authoring_test_run_reservations', 'UPDATE'), \
            ($1::text, 'authoring_test_case_runs', 'INSERT'), \
            ($1::text, 'authoring_test_case_runs', 'UPDATE'), \
-           ($1::text, 'authoring_test_reports', 'INSERT'), \
-           ($1::text, 'authoring_test_sets', 'INSERT') \
+           ($1::text, 'authoring_test_reports', 'INSERT') \
 ) \
 SELECT current_user = session_user, \
        COALESCE(NOT session_role.rolsuper AND NOT session_role.rolcreatedb \
@@ -119,8 +118,6 @@ SELECT current_user = session_user, \
                      AND pg_catalog.has_any_column_privilege( \
                          current_user, $6, run_mutation.privilege)) \
          ), \
-       pg_catalog.has_table_privilege(current_user, $7, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $7, 'INSERT'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_roles AS role \
             WHERE role.rolname NOT IN (session_user, 'wamn_scenario_author') \
@@ -237,7 +234,6 @@ impl InternalAuthoringBackend {
         let reservations = qualified("authoring_test_run_reservations");
         let case_runs = qualified("authoring_test_case_runs");
         let reports = qualified("authoring_test_reports");
-        let test_sets = qualified("authoring_test_sets");
         let runs = qualified("runs");
         let lock_catalog_head = format!(
             "{}.lock_catalog_head(text,text,text)",
@@ -253,7 +249,6 @@ impl InternalAuthoringBackend {
                     &reports,
                     &lock_catalog_head,
                     &runs,
-                    &test_sets,
                 ],
             )
             .await
@@ -1124,20 +1119,12 @@ mod tests {
             !AUTHORING_ROLE_PROBE_SQL
                 .contains("('catalog', 'draft_safe_connection_grants', 'UPDATE')")
         );
-        assert!(AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'INSERT')"));
-        assert!(
-            AUTHORING_ROLE_PROBE_SQL
-                .contains("pg_catalog.has_table_privilege(current_user, $7, 'SELECT')")
-        );
-        assert!(
-            AUTHORING_ROLE_PROBE_SQL
-                .contains("pg_catalog.has_table_privilege(current_user, $7, 'INSERT')")
-        );
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("authoring_test_sets"));
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$7"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("pg_catalog.has_table_privilege(current_user, $3, 'UPDATE')")
         );
-        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("($1::text, 'authoring_test_sets', 'UPDATE')"));
         for allowed in [
             "($1::text, 'authoring_test_run_reservations', 'INSERT')",
             "($1::text, 'authoring_test_run_reservations', 'UPDATE')",

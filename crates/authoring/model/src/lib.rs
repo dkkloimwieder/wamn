@@ -22,14 +22,8 @@ pub const SCHEMA_VERSION: &str = "0.1";
 /// human-readable prefix while keeping the trace-only value tightly bounded.
 pub const MAX_QUERY_ID_BYTES: usize = 64;
 
-/// Maximum exact UTF-8 test-set definition size.
-pub const MAX_TEST_SET_BYTES: usize = 1024 * 1024;
-
-/// Maximum number of cases in one inline test set.
+/// Maximum number of cases one flow document may carry.
 pub const MAX_TEST_SET_CASES: usize = 256;
-
-/// Maximum number of expectations in one inline test-set case.
-pub const MAX_TEST_SET_EXPECTATIONS: usize = 64;
 
 /// Largest integer every `format: uint64` field on this contract may carry.
 pub const SAFE_INTEGER_MAX: u64 = 9_007_199_254_740_991;
@@ -455,20 +449,6 @@ pub struct DraftRevisionRef {
     pub revision: SafeUint64,
 }
 
-/// Inline, self-describing test-set document submitted to `test-set-run`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TestSetInput {
-    pub definition: String,
-}
-
-/// Content identity for one immutable inline test set.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct TestSetIdentity {
-    pub hash: String,
-}
-
 /// Validate one exact saved draft revision.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
@@ -504,13 +484,12 @@ pub enum DraftRunCapture {
     Off,
 }
 
-/// Execute one bounded inline test set against an exact validated draft.
+/// Execute the validated draft's own bounded `cases` array.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TestSetRun {
     pub scope: AuthoringScope,
     pub validated_draft: ValidatedDraftRef,
-    pub test_set: TestSetInput,
 }
 
 /// Publish exactly the executable proven by a successful report.
@@ -590,7 +569,6 @@ pub struct DraftRunReceipt {
 pub struct TestSetRunReceipt {
     pub report_id: String,
     pub validated_draft: ValidatedDraftRef,
-    pub test_set: TestSetIdentity,
 }
 
 /// Immutable identity produced by publishing the tested draft.
@@ -685,13 +663,11 @@ pub enum ReportProjection {
     Pending {
         report_id: String,
         validated_draft: ValidatedDraftRef,
-        test_set: TestSetIdentity,
     },
     #[schemars(rename_all = "kebab-case")]
     Finalized {
         report_id: String,
         validated_draft: ValidatedDraftRef,
-        test_set: TestSetIdentity,
         passed: bool,
         summary: Value,
         resolution_map: Value,

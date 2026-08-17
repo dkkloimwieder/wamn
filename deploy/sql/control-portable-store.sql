@@ -7,6 +7,10 @@
 -- During the one-cutover train both databases can therefore carry catalog.*
 -- and wamn_run.authoring_test_*; database residency, not a renamed schema,
 -- distinguishes them.
+--
+-- `control-portable-retained-shape-drift` and the release-evidence constraint
+-- fingerprint below are apply-time digests: they must be regenerated whenever
+-- a retained relation's shape moves (wamn-0h0g.15.22).
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE SCHEMA IF NOT EXISTS catalog AUTHORIZATION wamn_system;
@@ -303,26 +307,11 @@ CREATE TABLE IF NOT EXISTS catalog.authoring_command_audit (
 CREATE INDEX IF NOT EXISTS authoring_command_audit_recorded
     ON catalog.authoring_command_audit (tenant_id, recorded_at);
 
-CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_sets (
-    tenant_id      text NOT NULL CHECK (tenant_id <> ''),
-    test_set_hash  text NOT NULL,
-    schema_version text NOT NULL CHECK (schema_version = '0.1'),
-    exact_bytes    bytea NOT NULL,
-    byte_length    int NOT NULL CHECK (byte_length BETWEEN 1 AND 1048576),
-    created_at     timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (tenant_id, test_set_hash),
-    CHECK (byte_length = octet_length(exact_bytes)),
-    CHECK (test_set_hash = 'sha256:' || encode(sha256(exact_bytes), 'hex')),
-    CHECK ((convert_from(exact_bytes, 'UTF8')::jsonb ->> 'schema-version')
-           IS NOT DISTINCT FROM schema_version)
-);
-
 CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     tenant_id          text NOT NULL CHECK (tenant_id <> ''),
     report_id          text NOT NULL CHECK (report_id <> ''),
     command_hash       text NOT NULL CHECK (command_hash ~ '^sha256:[0-9a-f]{64}$'),
     validated_draft_id text NOT NULL CHECK (validated_draft_id <> ''),
-    test_set_hash      text NOT NULL,
     catalog_id         text NOT NULL CHECK (catalog_id <> ''),
     catalog_version    int NOT NULL CHECK (catalog_version > 0),
     case_count         int NOT NULL CHECK (case_count BETWEEN 1 AND 256),
@@ -339,8 +328,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     finalized_at      timestamptz,
     PRIMARY KEY (tenant_id, report_id),
     UNIQUE (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id),
-    FOREIGN KEY (tenant_id, test_set_hash)
-        REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash),
     CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL)),
     CHECK (
         resolution_map IS NULL
@@ -370,7 +357,7 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_case_runs (
     passed             boolean,
     failure_kind       text CHECK (
         failure_kind IN ('assertion-failed', 'deadline-exhausted',
-                         'effect-uncertain', 'resolution-map-mismatch')
+                         'effect-uncertain')
     ),
     resolution_map      jsonb CHECK (
         resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'
@@ -410,7 +397,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
     tenant_id           text NOT NULL CHECK (tenant_id <> ''),
     report_id           text NOT NULL CHECK (report_id <> ''),
     validated_draft_id  text NOT NULL CHECK (validated_draft_id <> ''),
-    test_set_hash       text NOT NULL,
     catalog_id          text NOT NULL CHECK (catalog_id <> ''),
     catalog_version     int NOT NULL CHECK (catalog_version > 0),
     resolution_map      jsonb NOT NULL CHECK (jsonb_typeof(resolution_map) = 'object'),
@@ -421,8 +407,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
     PRIMARY KEY (tenant_id, report_id),
     FOREIGN KEY (tenant_id, report_id)
         REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id),
-    FOREIGN KEY (tenant_id, test_set_hash)
-        REFERENCES wamn_run.authoring_test_sets (tenant_id, test_set_hash),
     CHECK (
         resolution_map_hash = 'sha256:' || encode(
             sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
@@ -608,7 +592,6 @@ BEGIN
         'catalog.release_attachments', 'catalog.connection_requirements',
         'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
         'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
-        'wamn_run.authoring_test_sets',
         'wamn_run.authoring_test_run_reservations',
         'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
     ]
@@ -644,7 +627,7 @@ BEGIN
         'catalog.release_sources', 'catalog.release_attachments',
         'catalog.connection_requirements', 'catalog.authoring_command_audit',
         'catalog.release_flow_test_evidence', 'catalog.deployment_attestations',
-        'wamn_run.authoring_test_sets', 'wamn_run.authoring_test_reports'
+        'wamn_run.authoring_test_reports'
     ]
     LOOP
         trigger_name := split_part(relation_name, '.', 2) || '_immutable';
@@ -717,7 +700,7 @@ BEGIN
     FROM pg_tables WHERE schemaname = 'wamn_run';
     IF run_tables IS DISTINCT FROM ARRAY[
         'authoring_test_case_runs', 'authoring_test_reports',
-        'authoring_test_run_reservations', 'authoring_test_sets'
+        'authoring_test_run_reservations'
     ]::text[] THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-run-inventory-drift';
@@ -804,7 +787,6 @@ BEGIN
             ('catalog.release_attachments'), ('catalog.connection_requirements'),
             ('catalog.draft_safe_connection_grants'),
             ('catalog.authoring_command_audit'),
-            ('wamn_run.authoring_test_sets'),
             ('wamn_run.authoring_test_run_reservations'),
             ('wamn_run.authoring_test_case_runs'),
             ('wamn_run.authoring_test_reports')

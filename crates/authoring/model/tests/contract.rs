@@ -4,9 +4,8 @@ use serde_json::{Value, json};
 use wamn_authoring_model::{
     AuthoringDocument, AuthoringQueryOutcome, AuthoringQueryResponse, AuthoringQuerySuccess,
     AuthoringResponseEnvelope, ContractDecodeErrorKind, DraftDocument, DraftIdentity,
-    DraftRevisionRef, MAX_QUERY_ID_BYTES, MAX_TEST_SET_BYTES, MAX_TEST_SET_CASES,
-    MAX_TEST_SET_EXPECTATIONS, QueryId, ReadDraftRefusal, SAFE_INTEGER_MAX, SCHEMA_VERSION,
-    SafeUint64, decode_document,
+    DraftRevisionRef, MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId, ReadDraftRefusal,
+    SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, decode_document,
 };
 
 fn scope() -> Value {
@@ -61,10 +60,7 @@ fn exact_five_commands_and_three_queries_round_trip() {
         ),
         command(
             "test-set-run",
-            json!({
-                "scope": scope(), "validated-draft": validated,
-                "test-set": {"definition": "{\"schema-version\":\"0.1\",\"cases\":[]}"}
-            }),
+            json!({"scope": scope(), "validated-draft": validated}),
         ),
         command(
             "publish",
@@ -134,9 +130,7 @@ fn query_id_enforces_exact_utf8_byte_boundary() {
 fn public_numeric_and_test_set_bounds_match_their_owners() {
     assert_eq!(MAX_QUERY_ID_BYTES, 64);
     assert_eq!(SAFE_INTEGER_MAX, 9_007_199_254_740_991);
-    assert_eq!(MAX_TEST_SET_BYTES, 1024 * 1024);
     assert_eq!(MAX_TEST_SET_CASES, 256);
-    assert_eq!(MAX_TEST_SET_EXPECTATIONS, 64);
 }
 
 #[test]
@@ -222,6 +216,8 @@ fn retired_and_forbidden_vocabulary_is_absent() {
         "depth-exceeded",
         "expanded-node-limit",
         "plan-expansion",
+        "TestSetInput",
+        "TestSetIdentity",
     ] {
         assert!(
             !schema.contains(retired),

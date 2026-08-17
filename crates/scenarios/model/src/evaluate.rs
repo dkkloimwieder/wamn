@@ -1,124 +1,88 @@
-//! Pure evaluation of the four MVP test-set assertion families.
+//! Pure evaluation of the flat MVP test-case expectation.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::{Assertion, Captured, TestSetCase};
+use crate::{Captured, Expect, ExpectedOutcome, TestSetCase};
 
-/// One assertion verdict in a finalized test-case result.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct AssertionResult {
-    pub assertion: Assertion,
-    pub passed: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub detail: Option<String>,
-}
-
-/// The pure result of evaluating one test-set case.
+/// The machine-diffable expected/actual result of one test case.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Outcome {
     pub case_id: String,
-    pub results: Vec<AssertionResult>,
+    pub passed: bool,
+    pub expect: Expect,
+    pub actual: Captured,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
-impl Outcome {
-    /// Whether every non-vacuous assertion passed.
-    pub fn passed(&self) -> bool {
-        !self.results.is_empty() && self.results.iter().all(|result| result.passed)
-    }
-
-    /// The assertion verdicts that failed.
-    pub fn failures(&self) -> impl Iterator<Item = &AssertionResult> {
-        self.results.iter().filter(|result| !result.passed)
-    }
-}
-
-/// Evaluate one validated test-set case against captured facts.
+/// Evaluate one validated test case against captured facts.
 pub fn evaluate(case: &TestSetCase, captured: &Captured) -> Outcome {
-    let results = case
-        .expect
-        .iter()
-        .map(|assertion| {
-            let (passed, detail) = evaluate_one(assertion, captured);
-            AssertionResult {
-                assertion: assertion.clone(),
-                passed,
-                detail: (!passed).then_some(detail),
-            }
-        })
-        .collect();
+    let (passed, detail) = evaluate_expect(&case.expect, captured);
     Outcome {
         case_id: case.case_id.clone(),
-        results,
+        passed,
+        expect: case.expect.clone(),
+        actual: captured.clone(),
+        detail: (!passed).then_some(detail),
     }
 }
 
-fn evaluate_one(assertion: &Assertion, captured: &Captured) -> (bool, String) {
-    if let Err(error) = assertion.validate() {
+fn evaluate_expect(expect: &Expect, captured: &Captured) -> (bool, String) {
+    if let Err(error) = expect.validate() {
         return (false, error.to_string());
     }
 
-    match assertion {
-        Assertion::RunTerminalOutcome(expected) => match captured.run_terminal_outcome {
-            Some(actual) if actual == expected.status => (true, String::new()),
-            Some(actual) => (
-                false,
-                format!(
-                    "run terminal status {actual:?} did not match {:?}",
-                    expected.status
-                ),
-            ),
-            None => (false, "no run terminal outcome was captured".to_owned()),
-        },
-        Assertion::TerminalRespond(expected) => match &captured.terminal_respond {
-            Some(actual) if actual == expected => (true, String::new()),
-            Some(actual) => (
-                false,
-                format!("terminal response {actual:?} did not match {expected:?}"),
-            ),
-            None => (false, "no terminal response was captured".to_owned()),
-        },
-        Assertion::TypedFlowFailure(expected) => match captured.typed_flow_failure {
-            Some(actual) if actual == expected.kind => (true, String::new()),
-            Some(actual) => (
-                false,
-                format!(
-                    "typed flow failure {actual:?} did not match {:?}",
-                    expected.kind
-                ),
-            ),
-            None => (false, "no typed flow failure was captured".to_owned()),
-        },
-        Assertion::NamedNodeTerminal(expected) => {
-            let mut observed = 0_usize;
-            let mut mismatches = 0_usize;
-            for actual in captured.named_node_terminals.iter().filter(|actual| {
-                actual.flow_id == expected.flow_id && actual.node_id == expected.node_id
-            }) {
-                observed += 1;
-                if actual.status != expected.status || actual.failure_kind != expected.failure_kind
-                {
-                    mismatches += 1;
-                }
-            }
-            if observed == 0 {
+    match expect.outcome {
+        ExpectedOutcome::Responded => {
+            let Some(actual) = &captured.response else {
+                return (false, "no terminal response was captured".to_owned());
+            };
+            if let Some(expected) = expect.status
+                && expected != actual.status
+            {
                 return (
                     false,
-                    format!(
-                        "flow/node pair ({:?}, {:?}) was not observed",
-                        expected.flow_id, expected.node_id
-                    ),
+                    format!("response status {} did not match {expected}", actual.status),
                 );
             }
-            (
-                mismatches == 0,
-                format!(
-                    "flow/node pair ({:?}, {:?}) had {mismatches} mismatching occurrence(s) out of {observed}",
-                    expected.flow_id, expected.node_id
+            match &expect.body_subset {
+                Some(subset) if !is_subset(subset, &actual.body) => (
+                    false,
+                    format!(
+                        "response body {} does not contain the expected subset {subset}",
+                        actual.body
+                    ),
                 ),
-            )
+                _ => (true, String::new()),
+            }
         }
+        ExpectedOutcome::Failed => match captured.failure_code {
+            None => (false, "no typed flow failure was captured".to_owned()),
+            Some(actual) => match expect.failure_code {
+                Some(expected) if expected != actual => (
+                    false,
+                    format!("flow failure {actual:?} did not match {expected:?}"),
+                ),
+                _ => (true, String::new()),
+            },
+        },
+    }
+}
+
+/// Whether `actual` contains `expected`: objects match key-wise and
+/// recursively, every other JSON value matches only itself exactly.
+fn is_subset(expected: &Value, actual: &Value) -> bool {
+    match (expected, actual) {
+        (Value::Object(expected), Value::Object(actual)) => {
+            expected.iter().all(|(key, expected_field)| {
+                actual
+                    .get(key)
+                    .is_some_and(|actual_field| is_subset(expected_field, actual_field))
+            })
+        }
+        _ => expected == actual,
     }
 }
 
@@ -128,26 +92,10 @@ mod tests {
 
     use super::evaluate;
     use crate::{
-        Assertion, Captured, FlowFailureKind, NamedNodeTerminal, NodeFailureKind,
-        NodeTerminalStatus, RunTerminalOutcome, RunTerminalStatus, TerminalRespond, TestSetCase,
-        TypedFlowFailure,
+        Captured, CapturedResponse, Expect, ExpectedOutcome, FlowFailureKind, TestSetCase,
     };
 
-    fn named_node(
-        flow_id: &str,
-        node_id: &str,
-        status: NodeTerminalStatus,
-        failure_kind: Option<NodeFailureKind>,
-    ) -> NamedNodeTerminal {
-        NamedNodeTerminal {
-            flow_id: flow_id.into(),
-            node_id: node_id.into(),
-            status,
-            failure_kind,
-        }
-    }
-
-    fn case(expect: Vec<Assertion>) -> TestSetCase {
+    fn case(expect: Expect) -> TestSetCase {
         TestSetCase {
             case_id: "case".to_owned(),
             input: json!({}),
@@ -155,154 +103,122 @@ mod tests {
         }
     }
 
-    #[test]
-    fn missing_facts_fail_every_family() {
-        let assertions = vec![
-            Assertion::RunTerminalOutcome(RunTerminalOutcome {
-                status: RunTerminalStatus::Completed,
-            }),
-            Assertion::TerminalRespond(TerminalRespond {
-                status: 200,
-                body: json!({"ok": true}),
-            }),
-            Assertion::TypedFlowFailure(TypedFlowFailure {
-                kind: FlowFailureKind::Terminal,
-            }),
-            Assertion::NamedNodeTerminal(named_node(
-                "orders",
-                "write",
-                NodeTerminalStatus::Success,
-                None,
-            )),
-        ];
-
-        let outcome = evaluate(&case(assertions), &Captured::default());
-        assert!(!outcome.passed());
-        assert_eq!(outcome.failures().count(), 4);
+    fn responded(status: Option<u16>, body_subset: Option<serde_json::Value>) -> Expect {
+        Expect {
+            outcome: ExpectedOutcome::Responded,
+            status,
+            body_subset,
+            failure_code: None,
+        }
     }
 
-    #[test]
-    fn response_requires_both_status_and_exact_parsed_json_body() {
-        let assertion = Assertion::TerminalRespond(TerminalRespond {
-            status: 201,
-            body: json!({"created": {"id": 7}}),
-        });
-        let exact = Captured {
-            terminal_respond: Some(TerminalRespond {
-                status: 201,
-                body: json!({"created": {"id": 7}}),
-            }),
-            ..Captured::default()
-        };
-        assert!(evaluate(&case(vec![assertion.clone()]), &exact).passed());
-
-        for mismatch in [
-            TerminalRespond {
-                status: 200,
-                body: json!({"created": {"id": 7}}),
-            },
-            TerminalRespond {
-                status: 201,
-                body: json!({"created": {"id": 7, "extra": true}}),
-            },
-        ] {
-            let facts = Captured {
-                terminal_respond: Some(mismatch),
-                ..Captured::default()
-            };
-            assert!(!evaluate(&case(vec![assertion.clone()]), &facts).passed());
+    fn captured_response(status: u16, body: serde_json::Value) -> Captured {
+        Captured {
+            response: Some(CapturedResponse { status, body }),
+            failure_code: None,
         }
     }
 
     #[test]
-    fn run_and_typed_failure_match_only_the_exact_literal() {
-        let assertions = vec![
-            Assertion::RunTerminalOutcome(RunTerminalOutcome {
-                status: RunTerminalStatus::Failed,
-            }),
-            Assertion::TypedFlowFailure(TypedFlowFailure {
-                kind: FlowFailureKind::InvalidInput,
-            }),
-        ];
-        let exact = Captured {
-            run_terminal_outcome: Some(RunTerminalStatus::Failed),
-            typed_flow_failure: Some(FlowFailureKind::InvalidInput),
-            ..Captured::default()
-        };
-        assert!(evaluate(&case(assertions.clone()), &exact).passed());
-
-        let wrong_run = Captured {
-            run_terminal_outcome: Some(RunTerminalStatus::Completed),
-            typed_flow_failure: Some(FlowFailureKind::InvalidInput),
-            ..Captured::default()
-        };
-        assert!(!evaluate(&case(assertions.clone()), &wrong_run).passed());
-
-        let wrong_failure = Captured {
-            run_terminal_outcome: Some(RunTerminalStatus::Failed),
-            typed_flow_failure: Some(FlowFailureKind::Terminal),
-            ..Captured::default()
-        };
-        assert!(!evaluate(&case(assertions), &wrong_failure).passed());
+    fn missing_facts_fail_both_outcomes() {
+        for expect in [
+            responded(Some(200), None),
+            Expect {
+                outcome: ExpectedOutcome::Failed,
+                status: None,
+                body_subset: None,
+                failure_code: Some(FlowFailureKind::Terminal),
+            },
+        ] {
+            let outcome = evaluate(&case(expect), &Captured::default());
+            assert!(!outcome.passed);
+            assert!(outcome.detail.is_some());
+        }
     }
 
     #[test]
-    fn named_node_selector_refuses_zero_observations() {
-        let expected = named_node(
-            "orders",
-            "write",
-            NodeTerminalStatus::Error,
-            Some(NodeFailureKind::InvalidInput),
+    fn a_bare_responded_expectation_asserts_only_that_a_response_exists() {
+        let outcome = evaluate(
+            &case(responded(None, None)),
+            &captured_response(503, json!({"error": "down"})),
         );
-        let assertion = Assertion::NamedNodeTerminal(expected.clone());
-
-        assert!(!evaluate(&case(vec![assertion.clone()]), &Captured::default()).passed());
+        assert!(outcome.passed);
+        assert!(outcome.detail.is_none());
     }
 
     #[test]
-    fn named_node_selector_requires_exact_flow_and_node_identity() {
-        let expected = named_node(
-            "orders",
-            "write",
-            NodeTerminalStatus::Error,
-            Some(NodeFailureKind::InvalidInput),
-        );
-        let assertion = Assertion::NamedNodeTerminal(expected.clone());
-
-        let all_match = Captured {
-            named_node_terminals: vec![
-                expected.clone(),
-                named_node("other-flow", "write", NodeTerminalStatus::Success, None),
-                named_node("orders", "other-node", NodeTerminalStatus::Success, None),
-                expected.clone(),
-            ],
-            ..Captured::default()
-        };
-        assert!(evaluate(&case(vec![assertion.clone()]), &all_match).passed());
+    fn status_matches_only_the_exact_literal() {
+        let expect = responded(Some(201), None);
+        assert!(evaluate(&case(expect.clone()), &captured_response(201, json!({}))).passed);
+        assert!(!evaluate(&case(expect), &captured_response(200, json!({}))).passed);
     }
 
     #[test]
-    fn named_node_selector_requires_all_matching_observations() {
-        let expected = named_node(
-            "orders",
-            "write",
-            NodeTerminalStatus::Error,
-            Some(NodeFailureKind::InvalidInput),
+    fn body_subset_ignores_extra_keys_and_recurses() {
+        let expect = responded(None, Some(json!({"created": {"id": 7}})));
+        assert!(
+            evaluate(
+                &case(expect.clone()),
+                &captured_response(201, json!({"created": {"id": 7, "at": "now"}, "trace": 1}))
+            )
+            .passed
         );
-        let assertion = Assertion::NamedNodeTerminal(expected.clone());
+        for mismatch in [
+            json!({"created": {"id": 8}}),
+            json!({"created": {}}),
+            json!({"other": {"id": 7}}),
+            json!([{"created": {"id": 7}}]),
+        ] {
+            assert!(!evaluate(&case(expect.clone()), &captured_response(201, mismatch)).passed);
+        }
+    }
 
-        let mixed = Captured {
-            named_node_terminals: vec![
-                expected,
-                named_node(
-                    "orders",
-                    "write",
-                    NodeTerminalStatus::Error,
-                    Some(NodeFailureKind::Terminal),
-                ),
-            ],
-            ..Captured::default()
+    #[test]
+    fn failure_code_matches_only_the_exact_literal_and_may_be_omitted() {
+        let uncertain = Captured {
+            response: None,
+            failure_code: Some(FlowFailureKind::EffectUncertain),
         };
-        assert!(!evaluate(&case(vec![assertion]), &mixed).passed());
+        let any_failure = Expect {
+            outcome: ExpectedOutcome::Failed,
+            status: None,
+            body_subset: None,
+            failure_code: None,
+        };
+        assert!(evaluate(&case(any_failure), &uncertain).passed);
+
+        let exact = Expect {
+            outcome: ExpectedOutcome::Failed,
+            status: None,
+            body_subset: None,
+            failure_code: Some(FlowFailureKind::EffectUncertain),
+        };
+        assert!(evaluate(&case(exact.clone()), &uncertain).passed);
+        assert!(
+            !evaluate(
+                &case(exact),
+                &Captured {
+                    response: None,
+                    failure_code: Some(FlowFailureKind::Terminal),
+                }
+            )
+            .passed
+        );
+    }
+
+    #[test]
+    fn a_failed_outcome_reports_the_captured_facts_beside_the_expectation() {
+        let expect = responded(Some(200), None);
+        let actual = captured_response(500, json!({"error": "boom"}));
+        let outcome = evaluate(&case(expect.clone()), &actual);
+        assert_eq!(outcome.case_id, "case");
+        assert_eq!(outcome.expect, expect);
+        assert_eq!(outcome.actual, actual);
+        assert!(
+            outcome
+                .detail
+                .expect("a failure carries its detail")
+                .contains("500")
+        );
     }
 }

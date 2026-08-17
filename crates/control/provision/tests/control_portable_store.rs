@@ -40,7 +40,6 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.connection_requirements",
         "catalog.draft_safe_connection_grants",
         "catalog.authoring_command_audit",
-        "wamn_run.authoring_test_sets",
         "wamn_run.authoring_test_run_reservations",
         "wamn_run.authoring_test_case_runs",
         "wamn_run.authoring_test_reports",
@@ -64,6 +63,7 @@ fn portable_store_record_is_exact_and_storage_only() {
         "catalog.entities",
         "catalog.event_registrations",
         "wamn_run.runs",
+        "wamn_run.authoring_test_sets",
     ] {
         assert!(
             !sql.contains(&format!("CREATE TABLE IF NOT EXISTS {excluded}")),
@@ -88,6 +88,10 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("GRANT UPDATE"));
     assert!(!sql.contains("GRANT DELETE"));
     assert!(!sql.contains("guard_authoring_test_orchestration_write"));
+    // The test-set store deletes with its size cap, hash, and FKs
+    // (wamn-0h0g.15.27); a draft's own `cases` are the only test source.
+    assert!(!sql.contains("authoring_test_sets"));
+    assert!(!sql.contains("REFERENCES wamn_run.authoring_test_sets"));
     assert!(sql.contains(
         r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
         E'\n' ORDER BY (con.contype::text || ':'
@@ -220,24 +224,17 @@ VALUES ('tenant-a','draft-a',1,now(),'draft-content','cat',1,'dev','flow-a',1,
         '{{}}','graph','artifact-a',
         'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
         'artifact-a','validated-a');
-INSERT INTO wamn_run.authoring_test_sets
-  (tenant_id,test_set_hash,schema_version,exact_bytes,byte_length)
-SELECT 'tenant-a','sha256:'||encode(sha256(convert_to('{{"schema-version":"0.1"}}','UTF8')),'hex'),
-       '0.1',convert_to('{{"schema-version":"0.1"}}','UTF8'),
-       octet_length(convert_to('{{"schema-version":"0.1"}}','UTF8'));
 INSERT INTO wamn_run.authoring_test_run_reservations
-  (tenant_id,report_id,command_hash,validated_draft_id,test_set_hash,
+  (tenant_id,report_id,command_hash,validated_draft_id,
    catalog_id,catalog_version,case_count,whole_deadline_at)
-SELECT 'tenant-a','report-a','sha256:'||repeat('1',64),'validated-a',test_set_hash,
-       'cat',1,1,clock_timestamp()+interval '1 hour'
-FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a';
+VALUES ('tenant-a','report-a','sha256:'||repeat('1',64),'validated-a',
+        'cat',1,1,clock_timestamp()+interval '1 hour');
 INSERT INTO wamn_run.authoring_test_reports
-  (tenant_id,report_id,validated_draft_id,test_set_hash,catalog_id,
+  (tenant_id,report_id,validated_draft_id,catalog_id,
    catalog_version,resolution_map,resolution_map_hash,passed,summary)
-SELECT 'tenant-a','report-a','validated-a',test_set_hash,'cat',1,
-       '{{}}'::jsonb,'sha256:'||encode(sha256(convert_to('{{}}'::jsonb::text,'UTF8')),'hex'),
-       true,'{{}}'::jsonb
-FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a';
+VALUES ('tenant-a','report-a','validated-a','cat',1,
+        '{{}}'::jsonb,'sha256:'||encode(sha256(convert_to('{{}}'::jsonb::text,'UTF8')),'hex'),
+        true,'{{}}'::jsonb);
 
 DO $$ DECLARE
   first_created_at timestamptz;
@@ -245,12 +242,12 @@ DO $$ DECLARE
 BEGIN
   first_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    (SELECT test_set_hash FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a'),
+    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     decode('{map_hex}','hex'),'{map_hash}');
   retry_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    (SELECT test_set_hash FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a'),
+    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     decode('{map_hex}','hex'),'{map_hash}');
   ASSERT first_created_at = retry_created_at,
@@ -264,7 +261,7 @@ END $$;
 DO $$ BEGIN BEGIN
   PERFORM catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    (SELECT test_set_hash FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a'),
+    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     convert_to('{{"flow-a":"changed"}}','UTF8'),
     'sha256:'||encode(sha256(convert_to('{{"flow-a":"changed"}}','UTF8')),'hex'));
@@ -278,10 +275,10 @@ DO $$ BEGIN BEGIN
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
      test_set_hash,source_artifact_hash,execution_bundle_hash,
      tested_resolution_map_bytes,tested_resolution_map_hash)
-  SELECT 'tenant-a','cat',1,'missing','validated-a','report-a',test_set_hash,
-         'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-         decode('{map_hex}','hex'),'sha256:'||repeat('0',64)
-  FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a';
+  VALUES ('tenant-a','cat',1,'missing','validated-a','report-a',
+          'sha256:'||repeat('3',64),
+          'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
+          decode('{map_hex}','hex'),'sha256:'||repeat('0',64));
   ASSERT false, 'bad tested map hash must fail';
 EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 
@@ -290,10 +287,10 @@ DO $$ BEGIN BEGIN
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
      test_set_hash,source_artifact_hash,execution_bundle_hash,
      tested_resolution_map_bytes,tested_resolution_map_hash)
-  SELECT 'tenant-a','cat',1,'missing-flow','validated-a','report-a',test_set_hash,
-         'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
-         decode('{map_hex}','hex'),'{map_hash}'
-  FROM wamn_run.authoring_test_sets WHERE tenant_id='tenant-a';
+  VALUES ('tenant-a','cat',1,'missing-flow','validated-a','report-a',
+          'sha256:'||repeat('3',64),
+          'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
+          decode('{map_hex}','hex'),'{map_hash}');
   ASSERT false, 'evidence coordinates must retain local foreign keys';
 EXCEPTION WHEN foreign_key_violation THEN NULL; END; END $$;
 

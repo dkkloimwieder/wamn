@@ -19,7 +19,7 @@
     },
     {
       "operation": "test-set-run",
-      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"test-1","outcome":{"status":"completed","value":{"command":"test-set-run","result":{"report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"},"test-set":{"hash":"sha256:test-set"}}}}}},
+      "success": {"document":"response","body":{"schema-version":"0.1","command-id":"test-1","outcome":{"status":"completed","value":{"command":"test-set-run","result":{"report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"}}}}}},
       "refusal": {"document":"response","body":{"schema-version":"0.1","command-id":"test-1","outcome":{"status":"refused","value":{"command":"test-set-run","reason":{"kind":"invalid-test-set","detail":"empty cases"}}}}}
     },
     {
@@ -39,7 +39,7 @@
     },
     {
       "operation": "get-report",
-      "success": {"document":"response","body":{"schema-version":"0.1","query-id":"report-1","outcome":{"status":"completed","value":{"query":"get-report","result":{"state":"pending","report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"},"test-set":{"hash":"sha256:test-set"}}}}}},
+      "success": {"document":"response","body":{"schema-version":"0.1","query-id":"report-1","outcome":{"status":"completed","value":{"query":"get-report","result":{"state":"pending","report-id":"report-1","validated-draft":{"validated-draft-id":"sha256:validated"}}}}}},
       "refusal": {"document":"response","body":{"schema-version":"0.1","query-id":"report-1","outcome":{"status":"refused","value":{"query":"get-report","reason":{"kind":"report-not-found","report-id":"report-1"}}}}}
     }
   ]

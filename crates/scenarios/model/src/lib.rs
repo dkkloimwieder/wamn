@@ -2,22 +2,20 @@
 //!
 //! MVP outcome: publish gate.
 //!
-//! Test-set parsing is closed to four assertion families. Effectful callers
-//! collect the bounded [`Captured`] facts; this crate only evaluates them.
+//! A test case is one golden input and one flat expected observable. Effectful
+//! callers collect the bounded [`Captured`] facts; this crate only evaluates
+//! them.
 
-mod assertion;
 mod captured;
 mod evaluate;
+mod expect;
 mod status;
 mod test_set;
 
-pub use assertion::{
-    Assertion, NamedNodeTerminal, RunTerminalOutcome, TerminalRespond, TypedFlowFailure,
-};
-pub use captured::Captured;
-pub use evaluate::{AssertionResult, Outcome, evaluate};
-pub use status::{FlowFailureKind, NodeFailureKind, NodeTerminalStatus, RunTerminalStatus};
+pub use captured::{Captured, CapturedResponse};
+pub use evaluate::{Outcome, evaluate};
+pub use expect::{Expect, ExpectedOutcome};
+pub use status::FlowFailureKind;
 pub use test_set::{
-    MAX_TEST_SET_BYTES, MAX_TEST_SET_CASES, MAX_TEST_SET_EXPECTATIONS, TEST_SET_SCHEMA_VERSION,
-    TestSetCase, TestSetDocument, TestSetDocumentError, TestSetDocumentErrorKind,
+    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorKind, validate_cases,
 };

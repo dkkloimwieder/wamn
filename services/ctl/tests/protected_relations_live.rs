@@ -340,7 +340,7 @@ async fn install_project_database(client: &Client, url: &str, repository: &Path)
 }
 
 async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, PortableFingerprint> {
-    const RELATIONS: [&str; 18] = [
+    const RELATIONS: [&str; 17] = [
         "catalog.catalogs",
         "catalog.flow_artifacts",
         "catalog.execution_bundles",
@@ -355,7 +355,6 @@ async fn shared_portable_fingerprints(client: &Client) -> BTreeMap<String, Porta
         "catalog.connection_requirements",
         "catalog.draft_safe_connection_grants",
         "catalog.authoring_command_audit",
-        "wamn_run.authoring_test_sets",
         "wamn_run.authoring_test_run_reservations",
         "wamn_run.authoring_test_case_runs",
         "wamn_run.authoring_test_reports",

@@ -1,4 +1,4 @@
-//! Durable orchestration state for inline test-set runs.
+//! Durable orchestration state for a draft's test-case runs.
 //!
 //! This module owns reservations, immutable run mappings, reconciliation, and
 //! report evidence. It deliberately does not admit or execute a case; the
@@ -24,9 +24,9 @@ pub struct TestReportReservation {
     pub tenant_id: String,
     pub report_id: String,
     pub command_hash: String,
-    /// The validated-draft hash is the narrowed candidate-override identity.
+    /// The validated-draft hash is the narrowed candidate-override identity,
+    /// and covers the draft's cases as well as its graph.
     pub validated_draft_id: String,
-    pub test_set_hash: String,
     pub catalog_id: String,
     pub catalog_version: i32,
     pub case_ids: Vec<String>,
@@ -51,7 +51,6 @@ pub enum TestCaseFailure {
     AssertionFailed,
     DeadlineExhausted,
     EffectUncertain,
-    ResolutionMapMismatch,
 }
 
 /// One executor-produced terminal result for an immutable case mapping.
@@ -63,7 +62,6 @@ pub struct TestCaseFinalization {
     pub passed: bool,
     pub failure: Option<TestCaseFailure>,
     pub summary: Value,
-    pub resolution_map: Option<Value>,
 }
 
 impl TestCaseFailure {
@@ -72,7 +70,6 @@ impl TestCaseFailure {
             Self::AssertionFailed => "assertion-failed",
             Self::DeadlineExhausted => "deadline-exhausted",
             Self::EffectUncertain => "effect-uncertain",
-            Self::ResolutionMapMismatch => "resolution-map-mismatch",
         }
     }
 }
@@ -80,10 +77,10 @@ impl TestCaseFailure {
 /// Insert one pending report reservation.
 pub fn insert_test_report_reservation_sql() -> &'static str {
     "INSERT INTO authoring_test_run_reservations \
-       (tenant_id, report_id, command_hash, validated_draft_id, test_set_hash, \
+       (tenant_id, report_id, command_hash, validated_draft_id, \
         catalog_id, catalog_version, case_count, whole_deadline_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, \
-             clock_timestamp() + make_interval(secs => $9::int)) \
+     VALUES ($1, $2, $3, $4, $5, $6, $7, \
+             clock_timestamp() + make_interval(secs => $8::int)) \
      ON CONFLICT (tenant_id, report_id) DO NOTHING"
 }
 
@@ -106,7 +103,7 @@ pub fn insert_test_case_run_sql() -> &'static str {
 
 /// Read an existing reservation and its exact selection after idempotent insert.
 pub fn select_test_report_reservation_sql() -> &'static str {
-    "SELECT command_hash, validated_draft_id, test_set_hash, catalog_id, \
+    "SELECT command_hash, validated_draft_id, catalog_id, \
             catalog_version, case_count, state \
        FROM authoring_test_run_reservations \
       WHERE tenant_id = $1 AND report_id = $2"
@@ -124,7 +121,6 @@ fn validate_reservation(reservation: &TestReportReservation) -> anyhow::Result<(
         (&reservation.tenant_id, "tenant id"),
         (&reservation.report_id, "report id"),
         (&reservation.validated_draft_id, "validated draft id"),
-        (&reservation.test_set_hash, "test-set hash"),
         (&reservation.catalog_id, "catalog id"),
     ] {
         if value.is_empty() {
@@ -187,7 +183,6 @@ pub async fn reserve_test_report(
                 &reservation.report_id,
                 &reservation.command_hash,
                 &reservation.validated_draft_id,
-                &reservation.test_set_hash,
                 &reservation.catalog_id,
                 &reservation.catalog_version,
                 &case_count,
@@ -242,13 +237,12 @@ where
         .context("read test report reservation")?
         .context("test report reservation disappeared")?;
     let expected_count = i32::try_from(expected.case_ids.len()).expect("bounded count fits i32");
-    let state: String = row.get(6);
+    let state: String = row.get(5);
     if row.get::<_, String>(0) != expected.command_hash
         || row.get::<_, String>(1) != expected.validated_draft_id
-        || row.get::<_, String>(2) != expected.test_set_hash
-        || row.get::<_, String>(3) != expected.catalog_id
-        || row.get::<_, i32>(4) != expected.catalog_version
-        || row.get::<_, i32>(5) != expected_count
+        || row.get::<_, String>(2) != expected.catalog_id
+        || row.get::<_, i32>(3) != expected.catalog_version
+        || row.get::<_, i32>(4) != expected_count
         || !matches!(state.as_str(), "pending" | "finalized")
     {
         bail!("report id is reserved for a different test command");
@@ -291,10 +285,7 @@ pub async fn finalize_test_case(
         .execute(
             "UPDATE authoring_test_case_runs \
                 SET state = 'finalized', passed = $4, failure_kind = $5, \
-                    resolution_map = $6::jsonb, \
-                    resolution_map_hash = CASE WHEN $6::jsonb IS NULL THEN NULL ELSE \
-                        'sha256:' || encode(sha256(convert_to($6::jsonb::text, 'UTF8')), 'hex') END, \
-                    summary = $7::jsonb, finalized_at = clock_timestamp() \
+                    summary = $6::jsonb, finalized_at = clock_timestamp() \
               WHERE tenant_id = $1 AND report_id = $2 AND ordinal = $3 \
                 AND state = 'pending'",
             &[
@@ -303,7 +294,6 @@ pub async fn finalize_test_case(
                 &finalization.ordinal,
                 &finalization.passed,
                 &failure,
-                &finalization.resolution_map,
                 &finalization.summary,
             ],
         )
@@ -416,11 +406,11 @@ pub async fn reconcile_test_report(
         .query_one(
             "WITH inserted AS ( \
                 INSERT INTO authoring_test_reports \
-                    (tenant_id, report_id, validated_draft_id, test_set_hash, \
+                    (tenant_id, report_id, validated_draft_id, \
                      catalog_id, catalog_version, resolution_map, resolution_map_hash, \
                      passed, summary) \
                 SELECT reservation.tenant_id, reservation.report_id, \
-                       reservation.validated_draft_id, reservation.test_set_hash, \
+                       reservation.validated_draft_id, \
                        reservation.catalog_id, reservation.catalog_version, \
                        COALESCE(reservation.resolution_map, '{}'::jsonb), \
                        'sha256:' || encode(sha256(convert_to( \
@@ -469,7 +459,6 @@ mod tests {
             report_id: "report-a".into(),
             command_hash: format!("sha256:{}", "a".repeat(64)),
             validated_draft_id: "validated-a".into(),
-            test_set_hash: format!("sha256:{}", "b".repeat(64)),
             catalog_id: "catalog-a".into(),
             catalog_version: 7,
             case_ids: vec!["first".into(), "second".into()],
@@ -521,9 +510,9 @@ mod tests {
             assert!(ddl.contains(&format!("CREATE TABLE wamn_run.{table}")));
         }
         assert!(ddl.contains("UNIQUE (tenant_id, run_id)"));
-        assert!(ddl.contains("REFERENCES wamn_run.authoring_test_sets"));
-        assert!(ddl.contains("resolution-map-mismatch"));
-        assert!(ddl.contains("authoring-test-case-resolution-map-required"));
+        assert!(!ddl.contains("authoring_test_sets"));
+        assert!(!ddl.contains("resolution-map-mismatch"));
+        assert!(!ddl.contains("authoring-test-case-resolution-map-required"));
         assert!(ddl.contains("'{principal,validated-draft-hash}' = NEW.validated_draft_id"));
         assert!(ddl.contains("authoring_test_reports_update_immutable"));
     }

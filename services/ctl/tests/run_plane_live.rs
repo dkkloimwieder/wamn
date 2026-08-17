@@ -2919,7 +2919,6 @@ async fn from_zero_leg(su: &Client) {
         "effect_attempt_outcomes",
         "operator_run_actions",
         "flows",
-        "authoring_test_sets",
         "authoring_test_run_reservations",
         "authoring_test_case_runs",
         "authoring_test_reports",
@@ -3396,7 +3395,6 @@ async fn stored_suite_cutover_leg(su: &Client) {
         "populated retired publish-gate audit is absent"
     );
     for table in [
-        "authoring_test_sets",
         "authoring_test_run_reservations",
         "authoring_test_case_runs",
         "authoring_test_reports",
@@ -3624,7 +3622,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         );
     }
     for table in [
-        "authoring_test_sets",
         "authoring_test_run_reservations",
         "authoring_test_case_runs",
         "authoring_test_reports",
@@ -3722,7 +3719,6 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .await
         .expect("the wamn-ftfc.2 column upgrades are idempotent");
     for table in [
-        "authoring_test_sets",
         "authoring_test_run_reservations",
         "authoring_test_case_runs",
         "authoring_test_reports",
@@ -3959,56 +3955,40 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .expect_err("management cannot mutate an owner-seeded decision");
     assert_db_code(uncontrolled, "42501", "management grant mutation privilege");
 
-    // The retained content-addressed test-set row is author-owned and immutable.
-    let test_set_document = r#"{"schema-version":"0.1","cases":[]}"#;
-    su.execute(
-        &format!(
-            "INSERT INTO {SCHEMA}.authoring_test_sets \
-               (tenant_id,test_set_hash,schema_version,exact_bytes,byte_length) \
-             SELECT 't1', \
-                    'sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'), \
-                    '0.1', convert_to($1,'UTF8'), \
-                    octet_length(convert_to($1,'UTF8'))"
-        ),
-        &[&test_set_document],
-    )
-    .await
-    .expect("host author stores an exact test set");
-    let author_can_update: bool = su
+    // The separate test-set store is gone; a draft carries its own cases, and
+    // the immutable report is the only author-visible test artifact left.
+    let store_relation: Option<String> = su
+        .query_one(
+            &format!("SELECT to_regclass('{SCHEMA}.authoring_test_sets')::text"),
+            &[],
+        )
+        .await
+        .expect("probe the deleted test-set store")
+        .get(0);
+    assert_eq!(store_relation, None, "the test-set store must not exist");
+    let report_privileges: Vec<bool> = su
         .query_one(
             &format!(
-                "SELECT has_table_privilege(current_user, \
-                   '{SCHEMA}.authoring_test_sets', 'UPDATE')"
+                "SELECT ARRAY[ \
+                   has_table_privilege(current_user, \
+                     '{SCHEMA}.authoring_test_reports', 'SELECT'), \
+                   has_table_privilege(current_user, \
+                     '{SCHEMA}.authoring_test_reports', 'INSERT'), \
+                   has_table_privilege(current_user, \
+                     '{SCHEMA}.authoring_test_reports', 'UPDATE'), \
+                   has_table_privilege(current_user, \
+                     '{SCHEMA}.authoring_test_reports', 'DELETE')]"
             ),
             &[],
         )
         .await
-        .expect("probe immutable test-set update authority")
+        .expect("probe immutable report authority")
         .get(0);
-    assert!(
-        !author_can_update,
-        "host author has no test-set update grant"
+    assert_eq!(
+        report_privileges,
+        vec![true, true, false, false],
+        "host author appends reports and never rewrites one"
     );
-    su.batch_execute("RESET ROLE")
-        .await
-        .expect("use the table owner to exercise the immutable trigger");
-    let immutable = su
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.authoring_test_sets SET schema_version='0.1' \
-                 WHERE tenant_id='t1'"
-            ),
-            &[],
-        )
-        .await
-        .expect_err("authoring test sets are immutable");
-    assert_db_code(immutable, "55000", "immutable authoring test set");
-    su.batch_execute(
-        "SET ROLE wamn_scenario_author; \
-         SELECT set_config('app.tenant','t1',false);",
-    )
-    .await
-    .expect("restore host-author role after trigger proof");
 
     // The host author can read release source facts and tenant runs, but has no
     // release publication mutation surface.
@@ -4057,21 +4037,20 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
         .await
         .expect_err("guest cannot forge a draft write");
     assert_db_code(guest_draft, "42501", "guest draft forgery");
-    let guest_test_set = guest
+    let guest_report = guest
         .execute(
             &format!(
-                "INSERT INTO {SCHEMA}.authoring_test_sets \
-                   (tenant_id,test_set_hash,schema_version,exact_bytes,byte_length) \
-                 SELECT 't1', \
-                        'sha256:' || encode(sha256(convert_to($1,'UTF8')),'hex'), \
-                        '0.1', convert_to($1,'UTF8'), \
-                        octet_length(convert_to($1,'UTF8'))"
+                "INSERT INTO {SCHEMA}.authoring_test_reports \
+                   (tenant_id,report_id,validated_draft_id,catalog_id, \
+                    catalog_version,resolution_map,resolution_map_hash,passed,summary) \
+                 VALUES ('t1','forged','validated-a','cat',1,'{{}}'::jsonb, \
+                         'sha256:' || repeat('0',64), true, '{{}}'::jsonb)"
             ),
-            &[&test_set_document],
+            &[],
         )
         .await
-        .expect_err("guest cannot forge a test-set write");
-    assert_db_code(guest_test_set, "42501", "guest test-set forgery");
+        .expect_err("guest cannot forge a report write");
+    assert_db_code(guest_report, "42501", "guest report forgery");
     let assume_author = guest
         .batch_execute("SET ROLE wamn_scenario_author")
         .await
