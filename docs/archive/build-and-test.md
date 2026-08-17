@@ -2498,10 +2498,11 @@ docker stop wamn-cap-pg
 # Retention verb (deployed per project-env; app-role, tenant-scoped DELETE):
 #   wamn-ctl-ops prune-run-history --schema <run-schema> --tenant <t> --retention-days 30 [--dry-run]
 
-# Eleven byte-pinned mutants cover both fail-closed defaults, the draft-only full
+# Nine byte-pinned mutants cover both fail-closed defaults, the draft-only full
 # constraint, admission immutability, author-SQL capture denial, capture-off payload suppression, the
-# write-side output ceiling, derived output-too-large projection, full-capture
-# redaction, async mode loading, and capture-off error-detail suppression.
+# write-side output ceiling, derived output-too-large projection, and full-capture
+# redaction. The draft-capture default is gated by the authoring contract test
+# draft_run_capture_defaults_to_full_and_accepts_only_full_or_off (wamn-0h0g.15.121).
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
   tools/gate-mutants/capture-mode.sh check
 CARGO_TARGET_DIR=/tmp/wamn-target-0h0g-8-3 \
@@ -4514,9 +4515,14 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
   cargo test --locked -p wamn-runner -p wamn-catalog
 CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-20 \
-  tools/gate-mutants/respond-node-abi.sh run
 ```
+
+The `respond-node-abi` mutation runner was retired by `wamn-0h0g.15.122`. Both
+halves of that guard were dead: `ResolvedNode::Standard` and
+`wamn_nodes::is_standard` appear nowhere in the repository — the standard-node
+resolver it guarded was deleted with the custom-component plane, not moved — and
+its gate test no longer exists anywhere. There is no current runnable
+respond-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — request standard-node dispatch (`wamn-ayq7.22`)
 
@@ -4534,9 +4540,12 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
   cargo test --locked -p wamn-ctl --lib publish_catalog
 CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-22 \
-  tools/gate-mutants/request-node-abi.sh run
 ```
+
+The `request-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
+`validate_request_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:801` (commit `e05636b8`) and its gate test no longer exists anywhere, so
+both halves of that guard were dead. There is no current runnable
+request-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — cron standard-node dispatch (`wamn-ayq7.23`)
 
@@ -4579,9 +4588,12 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
   cargo test --locked -p wamn-ctl --lib publish_catalog
 CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-24 \
-  tools/gate-mutants/event-node-abi.sh run
 ```
+
+The `event-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
+`validate_event_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:825` (commit `e05636b8`) and its gate test no longer exists anywhere, so
+both halves of that guard were dead. There is no current runnable
+event-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-2A — fail standard-node dispatch (`wamn-ayq7.25`)
 
@@ -4602,9 +4614,12 @@ CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
   cargo test --locked -p wamn-ctl --lib publish_catalog
 CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
   cargo test --locked --manifest-path components/Cargo.toml -p flowrunner
-CARGO_TARGET_DIR=/tmp/wamn-target-ayq7-25 \
-  tools/gate-mutants/fail-node-abi.sh run
 ```
+
+The `fail-node-abi` mutation runner was retired by `wamn-0h0g.15.122`:
+`validate_fail_outcome` relocated to `crates/execution/flow-engine/src/engine.rs:850` (commit `e05636b8`) and its gate test no longer exists anywhere, so
+both halves of that guard were dead. There is no current runnable
+fail-node-abi command. Successor coverage is `wamn-0h0g.15.124` / `tools/gate-mutants/node-abi-outcome-validation.sh`.
 
 ## PLAN-1 — uniform node-interface pinning (`wamn-4u7p.38`)
 
@@ -5945,7 +5960,9 @@ the runner recorded log SHA-256
 ## SR-MVP — Rust contract-diff (`wamn-0h0g.11.15`)
 
 This repo-local gate runs the landed Rust owners for authoring,
-flow-invocation, flow-schema, flow-http, and the flowrunner world. The roadmap
+flow-invocation, the runtime's vendored copies of `wamn:flow-invocation` and
+`wamn:flow-http-routing`, flow-schema, flow-http, and the flowrunner world —
+seven legs, each stopping the gate where it fails. The roadmap
 revision is 0.2; governed wire/package identities remain 0.1/0.1.0, and the
 owner tests refuse literal schema version 0.2. No generated TypeScript or
 reference-client gate participates in the Rust-only MVP check.
@@ -6162,7 +6179,7 @@ recipe green:
 regeneration escape hatch. It belongs to `wamn-0h0g.15.22`'s registry
 regeneration, not to a guard run.
 
-**Guards reachable only through the whole-package command.** Twelve guards have
+**Guards reachable only through the whole-package command.** Thirteen guards have
 no named recipe anywhere above; the whole-package sweep is what covers them.
 Their individual selectors, for when one needs to be run alone:
 
@@ -6173,6 +6190,7 @@ cargo test --locked --offline -p wamn-proof-conformance --lib kubernetes_gate_ve
 
 # Integration targets with no named recipe above.
 cargo test --locked --offline -p wamn-proof-conformance \
+  --test chart_seam_governance \
   --test component_policy_socket_docs \
   --test cranelift_dev \
   --test d23_fork_governance \
@@ -6193,7 +6211,7 @@ directive-ID set to equal the `Recipe`-kind entry set in
 `architecture/gate-registry.json`. Adding a directive without the matching
 registry entry fails `gate_registry` with `recipe registry drift`, and that
 registry is frozen until `wamn-0h0g.15.22` regenerates it. Promoting these
-twelve to directives is that bead's work, not this one's.
+thirteen to directives is that bead's work, not this one's.
 
 ## SR-MVP — guard-mechanism repairs and ctl kind-filter coverage (wamn-0h0g.15.114, .15.115, .15.108)
 

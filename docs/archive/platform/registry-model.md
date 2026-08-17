@@ -115,7 +115,7 @@ adds envs the org is missing.
 Org        { id, placement: Placement }
 Placement  = Pooled { pool } | Dedicated
 Project    { org, id }
-ProjectEnv { triple: Triple, db_secret: SecretRef }
+ProjectEnv { triple: Triple, db_secret: SecretRef, instance_suffix: String }
 Registry   { schema_version, env_policies: Vec<OrgEnvPolicy>, orgs, projects, project_envs }
 ```
 
@@ -188,6 +188,11 @@ Error codes:
 - `empty-cluster-name` / `invalid-cluster-name` (a pooled org's `pool_cluster`) /
   `empty-secret-name` / `invalid-secret-name` — the placement references are
   DNS-1123 labels.
+- `empty-instance-suffix` / `invalid-instance-suffix` — a project-env's
+  provision-minted instance suffix is exactly 8 bytes of `[a-z0-9]`
+  (wamn-0h0g.15.89), mirroring the storage `project_envs_instance_suffix_check`.
+  The charset is narrower than a slug's: the suffix is appended to a DNS-1123
+  label and decides its last byte, which must be alphanumeric.
 
 The reserved-prefix rule, the env→policy resolution, the `cluster_of` derivation,
 and referential integrity are the load-bearing behaviors; each is mutation-tested
