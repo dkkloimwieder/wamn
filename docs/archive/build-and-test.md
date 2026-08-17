@@ -6039,7 +6039,7 @@ cargo clippy --locked --offline \
 cargo fmt --all -- --check
 bash -n tools/gate-mutants/artifact-reader-credential.sh
 sha256sum -c <<'EOF'
-2a6ea44f1ff31eacd5c472f9bf97684dd07078c6d451d0ff9da9c61e28887d6e  deploy/sql/control-portable-store.sql
+44e1ba802836b90596289f8486b735aab8289c7ce6c383f0d6a96078808a0120  deploy/sql/control-portable-store.sql
 9879ce88df7eccda71acec95aebdd43e0e1972076524ffe95604eea05db59280  architecture/state-owners.json
 a33f31a4e1513b82f35cb5ee91a23f7a0cf5370397e55916af6b29dbb69a1963  architecture/protected-writes.json
 EOF

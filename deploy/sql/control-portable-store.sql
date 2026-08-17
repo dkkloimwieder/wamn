@@ -414,6 +414,10 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
     )
 );
 
+-- No test-set hash column (wamn-0h0g.13.56): after one-document lineage
+-- (wamn-0h0g.15.27) the test-set artifact does not exist, so the column would
+-- hash a sub-artifact nothing else references or can fetch. A hash that names
+-- nothing is not evidence.
 CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
     tenant_id                  text NOT NULL CHECK (tenant_id <> ''),
     catalog_id                 text NOT NULL CHECK (catalog_id <> ''),
@@ -421,7 +425,6 @@ CREATE TABLE IF NOT EXISTS catalog.release_flow_test_evidence (
     flow_id                    text NOT NULL CHECK (flow_id <> ''),
     validated_draft_id         text NOT NULL CHECK (validated_draft_id <> ''),
     report_id                  text NOT NULL CHECK (report_id <> ''),
-    test_set_hash              text NOT NULL CHECK (test_set_hash ~ '^sha256:[0-9a-f]{64}$'),
     source_artifact_hash       text NOT NULL CHECK (source_artifact_hash <> ''),
     execution_bundle_hash      text NOT NULL
         CHECK (execution_bundle_hash ~ '^sha256:[0-9a-f]{64}$'),
@@ -469,7 +472,6 @@ CREATE OR REPLACE FUNCTION catalog.register_release_flow_test_evidence(
     p_flow_id text,
     p_validated_draft_id text,
     p_report_id text,
-    p_test_set_hash text,
     p_source_artifact_hash text,
     p_execution_bundle_hash text,
     p_tested_resolution_map_bytes bytea,
@@ -483,12 +485,12 @@ DECLARE
 BEGIN
     INSERT INTO catalog.release_flow_test_evidence (
         tenant_id, catalog_id, catalog_version, flow_id,
-        validated_draft_id, report_id, test_set_hash, source_artifact_hash,
+        validated_draft_id, report_id, source_artifact_hash,
         execution_bundle_hash, tested_resolution_map_bytes,
         tested_resolution_map_hash
     ) VALUES (
         p_tenant_id, p_catalog_id, p_catalog_version, p_flow_id,
-        p_validated_draft_id, p_report_id, p_test_set_hash,
+        p_validated_draft_id, p_report_id,
         p_source_artifact_hash, p_execution_bundle_hash,
         p_tested_resolution_map_bytes, p_tested_resolution_map_hash
     )
@@ -507,7 +509,6 @@ BEGIN
       AND flow_id = p_flow_id
       AND validated_draft_id = p_validated_draft_id
       AND report_id = p_report_id
-      AND test_set_hash = p_test_set_hash
       AND source_artifact_hash = p_source_artifact_hash
       AND execution_bundle_hash = p_execution_bundle_hash
       AND tested_resolution_map_bytes = p_tested_resolution_map_bytes
@@ -521,7 +522,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_release_flow_test_evidence(
-    text, text, int, text, text, text, text, text, text, bytea, text
+    text, text, int, text, text, text, text, text, bytea, text
 ) FROM PUBLIC;
 
 CREATE OR REPLACE FUNCTION catalog.register_deployment_attestation(
@@ -717,7 +718,7 @@ BEGIN
         'tenant_id:text:true', 'catalog_id:text:true',
         'catalog_version:integer:true', 'flow_id:text:true',
         'validated_draft_id:text:true', 'report_id:text:true',
-        'test_set_hash:text:true', 'source_artifact_hash:text:true',
+        'source_artifact_hash:text:true',
         'execution_bundle_hash:text:true',
         'tested_resolution_map_bytes:bytea:true',
         'tested_resolution_map_hash:text:true',
@@ -755,7 +756,7 @@ BEGIN
     WHERE con.conrelid = 'catalog.release_flow_test_evidence'::regclass
       AND con.contype <> 'n';
     IF evidence_constraints_fingerprint <>
-       '7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed'
+       '8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'release-flow-test-evidence-constraint-drift';
@@ -819,7 +820,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       '91f3ffe851e16145aa96b6e2f1ccf56da70fafa300e238641e74ea524552dfab'
+       'b08e42cb2130ae46ebdcbb7c030f566ce37c29a287a5fdcae2ad6fb30cc82d29'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

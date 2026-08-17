@@ -92,14 +92,18 @@ fn portable_store_record_is_exact_and_storage_only() {
     // (wamn-0h0g.15.27); a draft's own `cases` are the only test source.
     assert!(!sql.contains("authoring_test_sets"));
     assert!(!sql.contains("REFERENCES wamn_run.authoring_test_sets"));
+    // A hash that names nothing is not evidence (wamn-0h0g.13.56): the release
+    // evidence row drops `test_set_hash` with the artifact it used to name.
+    assert!(!sql.contains("test_set_hash"));
     assert!(sql.contains(
         r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
         E'\n' ORDER BY (con.contype::text || ':'
         || pg_get_constraintdef(con.oid, false)) COLLATE "C""#
     ));
-    assert!(sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
+    assert!(sql.contains("8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816"));
     assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
     assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));
+    assert!(!sql.contains("7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed"));
 }
 
 #[test]
@@ -168,12 +172,12 @@ fn control_portable_store_applies_twice_and_enforces_contract_on_postgres() {
 DO $$ BEGIN
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype <> 'n') = 16,
-         'release evidence must retain exactly 16 governed constraints';
+            AND contype <> 'n') = 15,
+         'release evidence must retain exactly 15 governed constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
-            AND contype = 'c') = 11,
-         'release evidence must retain exactly eleven CHECK constraints';
+            AND contype = 'c') = 10,
+         'release evidence must retain exactly ten CHECK constraints';
   ASSERT (SELECT count(*) FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype = 'f') = 4,
@@ -190,7 +194,7 @@ DO $$ BEGIN
           FROM pg_constraint
           WHERE conrelid='catalog.release_flow_test_evidence'::regclass
             AND contype <> 'n') =
-         '7e6f31e287802d22eea4a7320a072471a793b94fe3882e4e8bbc30fd981bd7ed',
+         '8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816',
          'release evidence constraint fingerprint must be version-stable';
 END $$;
 
@@ -242,12 +246,10 @@ DO $$ DECLARE
 BEGIN
   first_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     decode('{map_hex}','hex'),'{map_hash}');
   retry_created_at := catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     decode('{map_hex}','hex'),'{map_hash}');
   ASSERT first_created_at = retry_created_at,
@@ -261,7 +263,6 @@ END $$;
 DO $$ BEGIN BEGIN
   PERFORM catalog.register_release_flow_test_evidence(
     'tenant-a','cat',1,'flow-a','validated-a','report-a',
-    'sha256:'||repeat('3',64),
     'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
     convert_to('{{"flow-a":"changed"}}','UTF8'),
     'sha256:'||encode(sha256(convert_to('{{"flow-a":"changed"}}','UTF8')),'hex'));
@@ -273,10 +274,9 @@ END; END $$;
 DO $$ BEGIN BEGIN
   INSERT INTO catalog.release_flow_test_evidence
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     test_set_hash,source_artifact_hash,execution_bundle_hash,
+     source_artifact_hash,execution_bundle_hash,
      tested_resolution_map_bytes,tested_resolution_map_hash)
   VALUES ('tenant-a','cat',1,'missing','validated-a','report-a',
-          'sha256:'||repeat('3',64),
           'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
           decode('{map_hex}','hex'),'sha256:'||repeat('0',64));
   ASSERT false, 'bad tested map hash must fail';
@@ -285,10 +285,9 @@ EXCEPTION WHEN check_violation THEN NULL; END; END $$;
 DO $$ BEGIN BEGIN
   INSERT INTO catalog.release_flow_test_evidence
     (tenant_id,catalog_id,catalog_version,flow_id,validated_draft_id,report_id,
-     test_set_hash,source_artifact_hash,execution_bundle_hash,
+     source_artifact_hash,execution_bundle_hash,
      tested_resolution_map_bytes,tested_resolution_map_hash)
   VALUES ('tenant-a','cat',1,'missing-flow','validated-a','report-a',
-          'sha256:'||repeat('3',64),
           'artifact-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
           decode('{map_hex}','hex'),'{map_hash}');
   ASSERT false, 'evidence coordinates must retain local foreign keys';
