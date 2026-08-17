@@ -93,8 +93,31 @@ fn portable_store_record_is_exact_and_storage_only() {
     assert!(!sql.contains("authoring_test_sets"));
     assert!(!sql.contains("REFERENCES wamn_run.authoring_test_sets"));
     // A hash that names nothing is not evidence (wamn-0h0g.13.56): the release
-    // evidence row drops `test_set_hash` with the artifact it used to name.
-    assert!(!sql.contains("test_set_hash"));
+    // evidence row drops `test_set_hash` with the artifact it used to name. The
+    // name survives only where the retirement block drops it from an
+    // already-provisioned database (wamn-0h0g.15.91) — never in a declaration
+    // or a function signature.
+    assert!(!sql.contains("p_test_set_hash"));
+    assert!(!sql.contains("'test_set_hash:text:true'"));
+    assert!(
+        !sql.lines()
+            .any(|line| line.trim_start().starts_with("test_set_hash ")),
+        "no relation may declare the retired test_set_hash column"
+    );
+    // The retirement block is the control plane's only cutover path
+    // (wamn-0h0g.15.91); a mutation that stops retiring is invisible to the live
+    // gate, which applies to a fresh database and so never takes a probe's true
+    // branch.
+    for retirement in [
+        "DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(",
+        "DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(",
+        "ALTER TABLE catalog.release_flow_test_evidence DROP COLUMN test_set_hash;",
+        "DROP COLUMN deployed_resolution_map;",
+        "'control-portable-retired-test-set-lineage-requires-reprovision'",
+        "'control-portable-retired-audit-ledger-requires-reprovision'",
+    ] {
+        assert!(sql.contains(retirement), "missing retirement: {retirement}");
+    }
     assert!(sql.contains(
         r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
         E'\n' ORDER BY (con.contype::text || ':'

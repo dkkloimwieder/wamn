@@ -669,6 +669,94 @@ BEGIN
 END
 $triggers$;
 
+-- Retirement is catalog-driven: the retired object is itself the record that a
+-- database predates this artifact, so a converged replay finds nothing to do and
+-- no apply ledger is needed. What can converge in place is fixed by what this
+-- artifact asserts about itself below. The evidence and attestation column
+-- asserts compare name, type and nullability in attnum ORDER but never the
+-- attnum, so a DROP COLUMN reaches the asserted shape;
+-- `control-portable-retained-shape-drift` hashes a.attnum itself, so on a
+-- RETAINED relation no ALTER can — a dropped column keeps its slot and an added
+-- one lands past the tail. Those refuse by name rather than half-migrate, and
+-- they cannot be traded for a data-preserving rebuild here: under FORCE ROW
+-- LEVEL SECURITY with no `app.tenant`, the applying owner reads zero rows from
+-- every retained relation, so an emptiness guard or an `INSERT ... SELECT` copy
+-- would silently treat a populated table as empty (wamn-0h0g.15.91).
+DROP FUNCTION IF EXISTS catalog.register_release_flow_test_evidence(
+    text, text, int, text, text, text, text, text, text, bytea, text
+);
+DROP FUNCTION IF EXISTS catalog.register_deployment_attestation(
+    text, text, int, text, text, text, text, jsonb, timestamptz
+);
+
+DO $retire$
+BEGIN
+    -- wamn-0h0g.15.27 retired the test-set store, leaving both RETAINED record
+    -- tables with a NOT NULL foreign-key column that has no default and
+    -- therefore refuses every reservation and report INSERT.
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('wamn_run.authoring_test_run_reservations')
+          AND attname = 'test_set_hash' AND NOT attisdropped
+    ) OR EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('wamn_run.authoring_test_reports')
+          AND attname = 'test_set_hash' AND NOT attisdropped
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'control-portable-retired-test-set-lineage-requires-reprovision';
+    END IF;
+
+    -- wamn-0h0g.7.3 ratified the audit retry ledger as two NOT NULL columns
+    -- mid-record, which an ALTER can only append past the tail.
+    IF to_regclass('catalog.authoring_command_audit') IS NOT NULL AND (
+        SELECT count(*) FROM pg_attribute
+        WHERE attrelid = to_regclass('catalog.authoring_command_audit')
+          AND attname IN ('request_hash', 'outcome_bytes') AND NOT attisdropped
+    ) <> 2 THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'control-portable-retired-audit-ledger-requires-reprovision';
+    END IF;
+
+    -- A hash that names nothing is not evidence (wamn-0h0g.13.56): the column
+    -- leaves with the artifact it used to name, and its CHECK leaves with it.
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('catalog.release_flow_test_evidence')
+          AND attname = 'test_set_hash' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE catalog.release_flow_test_evidence DROP COLUMN test_set_hash;
+    END IF;
+
+    -- Ruling 5 (wamn-0h0g.15.8): the deployed map is derivable from the digest
+    -- it sat next to, and its superseded overload is dropped above.
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('catalog.deployment_attestations')
+          AND attname = 'deployed_resolution_map' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE catalog.deployment_attestations
+            DROP COLUMN deployed_resolution_map;
+    END IF;
+
+    -- wamn-0h0g.15.27 also narrowed the case outcome domain. ADD CONSTRAINT
+    -- validates the heap directly instead of through the policy, so a surviving
+    -- retired outcome refuses here without a row guard RLS would blind.
+    IF EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid = to_regclass('wamn_run.authoring_test_case_runs')
+          AND conname = 'authoring_test_case_runs_failure_kind_check'
+          AND pg_get_constraintdef(oid, true) LIKE '%resolution-map-mismatch%'
+    ) THEN
+        ALTER TABLE wamn_run.authoring_test_case_runs
+            DROP CONSTRAINT authoring_test_case_runs_failure_kind_check,
+            ADD CONSTRAINT authoring_test_case_runs_failure_kind_check
+            CHECK (failure_kind IN ('assertion-failed', 'deadline-exhausted',
+                                    'effect-uncertain'));
+    END IF;
+END
+$retire$;
+
 -- Replay is a reconcile, not a best-effort `IF NOT EXISTS`: refuse a relation
 -- inventory or either newly ratified record shape that differs from this
 -- artifact. Focused Rust drift guards pin retained-copy columns to the project
