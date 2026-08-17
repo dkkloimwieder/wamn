@@ -32,6 +32,7 @@ use wash_runtime::host::allowed_hosts::AllowedHost;
 use wash_runtime::host::http::{
     DefaultOutgoingHandler, HostHandler, OutgoingHandler as _, check_allowed_hosts,
 };
+use wash_runtime::host::http_p3::{P3Body, P3RequestErrorFuture, P3SendFuture};
 use wash_runtime::plugin::HostPlugin;
 use wash_runtime::wasmtime::Store;
 use wash_runtime::wasmtime::component::{Component as WasmtimeComponent, Linker, TypedFunc};
@@ -39,6 +40,8 @@ use wasmtime_wasi_http::p2::HttpResult;
 use wasmtime_wasi_http::p2::bindings::http::types::ErrorCode;
 use wasmtime_wasi_http::p2::body::HyperOutgoingBody;
 use wasmtime_wasi_http::p2::types::{HostFutureIncomingResponse, OutgoingRequestConfig};
+use wasmtime_wasi_http::p3::RequestOptions;
+use wasmtime_wasi_http::p3::bindings::http::types::ErrorCode as P3ErrorCode;
 
 use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
 use wamn_run_state::{EffectWriterErrorKind, FailKind, ResetProjectionFence, RunStatus};
@@ -337,6 +340,57 @@ impl HostHandler for RunnerEgress {
         }
         self.inner
             .send_request(workload_id, request, bounded_outgoing_config(config))
+    }
+
+    /// The p3 twin of [`Self::outgoing_request`]. The trait default checks
+    /// `allowed_hosts` ALONE and then sends through `wasmtime_wasi_http::p3`
+    /// directly, so inheriting it would drop BOTH the fqg.11 connection-derived
+    /// narrowing and this handler's own `inner` transport — the same authority
+    /// on one protocol version and not the other. Both checks run here in the
+    /// same order, with the same clean-denial (never a trap) semantics.
+    ///
+    /// No production guest reaches this today: the runner's linker registers
+    /// only the p2 `wasi:http` surface (see `instantiate`) and the flowrunner
+    /// world imports no `wasi:http` interface at all (pinned by
+    /// `tests/conformance/tests/flowrunner_linker_imports.rs`). The intersection
+    /// is a property of this handler, not of that linker line.
+    fn outgoing_request_p3(
+        &self,
+        workload_id: &str,
+        request: hyper::Request<P3Body>,
+        options: Option<RequestOptions>,
+        fut: P3RequestErrorFuture,
+        allowed_hosts: &[AllowedHost],
+    ) -> P3SendFuture {
+        if let Err(e) = check_allowed_hosts(&request, allowed_hosts) {
+            tracing::warn!(
+                workload_id,
+                error = %e,
+                "run-worker outbound p3 request denied by the allowed-hosts policy"
+            );
+            return Box::new(async move {
+                Err(wasmtime_wasi::TrappableError::from(
+                    P3ErrorCode::HttpRequestDenied,
+                ))
+            });
+        }
+        // fqg.11, on the same terms as p2: absent and empty are one deny-all `&[]`.
+        let declared = self.policy.declared(workload_id);
+        if let Err(e) = check_allowed_hosts(&request, declared.as_deref().unwrap_or(&[])) {
+            tracing::warn!(
+                workload_id,
+                error = %e,
+                declared = declared.is_some(),
+                "run-worker outbound p3 request denied by connection-derived authority"
+            );
+            return Box::new(async move {
+                Err(wasmtime_wasi::TrappableError::from(
+                    P3ErrorCode::HttpRequestDenied,
+                ))
+            });
+        }
+        self.inner
+            .send_request_p3(workload_id, request, options, fut)
     }
 }
 
@@ -733,6 +787,8 @@ fn claim_guest_input(claim: &ProductionClaimResult) -> Option<(&str, &str)> {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    use wash_runtime::host::http_p3::P3SendResult;
+
     use super::*;
 
     async fn deadline_gate(increments: Arc<[u64]>) -> (ExecutionHost, Arc<AtomicUsize>) {
@@ -987,6 +1043,115 @@ mod tests {
         assert_eq!(bounded.connect_timeout, MAX_HOST_CALL_DURATION);
         assert_eq!(bounded.first_byte_timeout, MAX_HOST_CALL_DURATION);
         assert_eq!(bounded.between_bytes_timeout, MAX_HOST_CALL_DURATION);
+    }
+
+    /// A `RunnerEgress` whose connection-derived set is unset (`None`) or seeded.
+    fn runner_egress(declared: Option<&[&str]>) -> RunnerEgress {
+        let policy = Arc::new(RunnerEgressPolicy::default());
+        if let Some(hosts) = declared {
+            let hosts: Vec<String> = hosts.iter().copied().map(String::from).collect();
+            policy.set_declared("runner", &hosts);
+        }
+        RunnerEgress {
+            inner: DefaultOutgoingHandler::default(),
+            policy,
+        }
+    }
+
+    fn allowed(entry: &str) -> AllowedHost {
+        entry.parse().expect("allowed-host entry")
+    }
+
+    /// Drive one p3 outgoing request through the handler. The target is a closed
+    /// loopback port, so a build that WRONGLY admits the request fails fast at
+    /// the transport instead of denying — and a build that correctly denies
+    /// never opens a socket at all.
+    async fn p3_send(egress: &RunnerEgress, allowed_hosts: &[AllowedHost]) -> P3SendResult {
+        let request = hyper::Request::builder()
+            .uri("http://127.0.0.1:1/hook")
+            .body(P3Body::default())
+            .expect("build p3 outgoing request");
+        let request_error: P3RequestErrorFuture = Box::new(async { Ok(()) });
+        Box::into_pin(egress.outgoing_request_p3(
+            "runner",
+            request,
+            None,
+            request_error,
+            allowed_hosts,
+        ))
+        .await
+    }
+
+    fn assert_p3_denied(outcome: P3SendResult) {
+        let error = outcome
+            .err()
+            .expect("a denied p3 request never reaches the transport");
+        assert!(
+            matches!(error.downcast_ref(), Some(&P3ErrorCode::HttpRequestDenied)),
+            "a p3 denial is a clean HttpRequestDenied, never a trap: {error:?}"
+        );
+    }
+
+    /// fqg.11 on the p3 path: the connection-derived set is consulted even when
+    /// the host-level allowlist would admit the request. Deleting the
+    /// `outgoing_request_p3` override falls back to the fork's trait default,
+    /// which checks `allowed_hosts` ALONE — this request passes that check, so
+    /// the fallback reaches the transport instead of denying.
+    #[tokio::test]
+    async fn p3_egress_denies_a_component_that_declared_no_connection_authority() {
+        let egress = runner_egress(None);
+
+        assert_p3_denied(p3_send(&egress, &[allowed("127.0.0.1")]).await);
+    }
+
+    /// A declared-EMPTY set is deny-all on the raw egress path, not "no
+    /// narrowing" — the opposite of `RunnerEgressPolicy::allows_connection`,
+    /// which is the portable-connection rule. A mutant that only narrows when
+    /// the declaration is `Some(non-empty)` admits this request.
+    #[tokio::test]
+    async fn p3_egress_denies_a_declared_empty_connection_set() {
+        let egress = runner_egress(Some(&[]));
+
+        assert_p3_denied(p3_send(&egress, &[allowed("127.0.0.1")]).await);
+    }
+
+    /// The host-level allowlist stays the OUTER bound on p3: a connection can
+    /// never widen it. A mutant that keeps the override but drops the
+    /// `allowed_hosts` leg admits this request. (This case alone does not
+    /// discriminate override-vs-trait-default — the fork default denies it too.)
+    #[tokio::test]
+    async fn p3_egress_denies_when_the_host_allowlist_rejects_a_declared_host() {
+        let egress = runner_egress(Some(&["127.0.0.1"]));
+
+        assert_p3_denied(p3_send(&egress, &[]).await);
+    }
+
+    /// Both checks precede transport, and transport is THIS handler's `inner` —
+    /// the trait default sends through `wasmtime_wasi_http::p3` directly and
+    /// drops `inner` entirely. Catches an override that denies unconditionally
+    /// (no delegation survives), or one that bypasses `inner`.
+    #[test]
+    fn p3_egress_checks_both_policies_before_delegating_transport() {
+        let source = include_str!("lib.rs");
+        let method = method_source(
+            source,
+            "fn outgoing_request_p3",
+            "/// The host-injected, non-spoofable identity",
+        );
+        let host_bound = method
+            .find("check_allowed_hosts(&request, allowed_hosts)")
+            .expect("p3 keeps the host allowlist as the outer bound");
+        let narrowed = method
+            .find("check_allowed_hosts(&request, declared.as_deref().unwrap_or(&[]))")
+            .expect("p3 applies the connection-derived set, absent/empty = deny-all");
+        let delegate = method
+            .find(".send_request_p3(")
+            .expect("p3 transport is delegated, not denied unconditionally");
+        assert!(host_bound < narrowed && narrowed < delegate);
+        assert!(
+            method.contains("self.inner"),
+            "p3 must delegate to this handler's own inner OutgoingHandler"
+        );
     }
 
     #[test]
