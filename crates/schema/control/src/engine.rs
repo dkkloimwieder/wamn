@@ -154,10 +154,23 @@ pub(crate) fn plan_target_reconciliation(
     Ok(build_apply_plan(req, c, ddl_sql))
 }
 
+/// Narrow a catalog version onto the `int4` the schema plane stores it in.
+///
+/// `as` would wrap silently, and a wrapped version names a DIFFERENT release in
+/// the promoted and history rows — the exact truncation `wamn-0h0g.15.65` exists
+/// to close. This is the last `as` on this value in the tree; every other
+/// crossing already uses a checked conversion. A version past `i32::MAX` is a
+/// data-integrity bug rather than a runtime condition (versions increment by one
+/// per migration), so it stops the program instead of becoming an error variant.
+fn storable_version(version: u32) -> i32 {
+    i32::try_from(version)
+        .expect("a catalog version must fit the int4 the schema plane stores it in")
+}
+
 fn build_apply_plan(req: &MigrationRequest, c: Compiled, ddl_sql: String) -> ApplyPlan {
     let env_str = req.environment.as_str().to_string();
     let catalog_id = req.target.catalog_id.clone();
-    let base_param = Value::NullableInt(c.from_version.map(|v| v as i32));
+    let base_param = Value::NullableInt(c.from_version.map(storable_version));
 
     let mut statements = Vec::new();
 
@@ -190,7 +203,7 @@ fn build_apply_plan(req: &MigrationRequest, c: Compiled, ddl_sql: String) -> App
         params: vec![
             Value::Text(req.tenant.to_string()),
             Value::Text(catalog_id.clone()),
-            Value::Int(req.target.version as i32),
+            Value::Int(storable_version(req.target.version)),
             Value::Text(env_str.clone()),
             Value::Text(req.target.schema_version.clone()),
             Value::NullableText(req.target.name.clone()),
@@ -208,7 +221,7 @@ fn build_apply_plan(req: &MigrationRequest, c: Compiled, ddl_sql: String) -> App
             Value::Text(catalog_id.clone()),
             Value::Text(env_str.clone()),
             base_param,
-            Value::Int(req.target.version as i32),
+            Value::Int(storable_version(req.target.version)),
             Value::Int(c.plan.operations.len() as i32),
             Value::Bool(c.destructive),
             Value::Text(sql::ddl_checksum(&ddl_sql)),

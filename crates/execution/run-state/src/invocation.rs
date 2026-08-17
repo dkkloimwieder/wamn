@@ -6,6 +6,26 @@
 
 use serde_json::Value;
 
+/// One HTTP attachment resolved from the applied release.
+///
+/// # Why the version fields are `i32` here
+///
+/// This is a row projection, not the canonical identity. Both columns are
+/// PostgreSQL `int` — `catalog.catalog_heads.applied_catalog_version` and
+/// `catalog.release_flows.flow_version` (`deploy/sql/catalog-schema.sql:404`,
+/// `:292`) — and `i32` is what tokio-postgres decodes `int4` as, so widening the
+/// field would only move the conversion into the decoder.
+///
+/// The canonical Rust width for a release version is `u32`
+/// (`wamn_catalog::ReleaseId`, `ServingRelease::catalog_version`), and the wire
+/// width on the ingress side is `u64`, frozen by
+/// `wamn-flow-http-routing`'s `route-definition.catalog-version`. The same value
+/// therefore legitimately has three widths, one per boundary, and
+/// `InvocationOutcome::flow_version` below is already the `u32` face of the
+/// second field. What is *not* legitimate is crossing between them with an `as`
+/// cast: every narrowing must be a checked `TryFrom` that refuses rather than
+/// truncating, since a truncated release version names a different release
+/// (wamn-0h0g.15.65).
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationTarget {
     pub catalog_version: i32,
