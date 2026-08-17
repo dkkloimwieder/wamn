@@ -5994,3 +5994,41 @@ CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
 CARGO_TARGET_DIR=/tmp/wamn-target-cleanup-next CARGO_INCREMENTAL=0 \
   tools/repo-lint
 ```
+
+## SR-MVP — plan bytes by digest-verified OCI pull (`wamn-0h0g.15.12`)
+
+Plan supply resolves a run against the mounted serving manifest and pulls the
+reachable plan set by digest. Two verifications stand: `oci-client` refuses a
+blob that does not hash to the layer descriptor it was fetched under, and
+`insert_verified` re-hashes the bytes against the digest the release named before
+they reach the cache or the guest. The second is the load-bearing one and is what
+the `plan-supply` mutant campaign anchors on.
+
+The unit legs need nothing external: the supply logic and the three pre-effect
+dispositions (`unavailable` → release and requeue, `incomplete` → deployment
+invalid, `hash-mismatch` → integrity) run against a stub source, and the weld is
+loaded from a scratch mount because it has exactly one constructor and that
+constructor reads a file.
+
+The transport leg needs a registry. Use a **disposable** one — never the
+in-cluster `registry:5000`, which is frozen. There is no publisher yet
+(`wamn-0h0g.15.97`), so the test pushes its own artifacts and therefore proves
+self-consistency, not agreement with a producer.
+
+```bash
+# Supply logic, dispositions, and the pinned wire literals.
+CARGO_TARGET_DIR=/tmp/wamn-target-15-12 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p wamn-runtime --lib \
+    plugins::runner_plan_supply:: plan_artifact::
+
+# Real oci-client transport against a throwaway registry.
+docker run --rm -d -p 5099:5000 --name wamn-plan-registry registry:2
+CARGO_TARGET_DIR=/tmp/wamn-target-15-12 CARGO_INCREMENTAL=0 \
+  WAMN_PLAN_REGISTRY=localhost:5099 \
+  cargo test --locked -p wamn-runtime --test oci_plan_source_live -- --ignored
+docker rm -f wamn-plan-registry
+
+# Mutation campaign (two mutants; `moving-head-query` died with its subject).
+CARGO_TARGET_DIR=/tmp/wamn-target-15-12 \
+  tools/gate-mutants/plan-supply.sh run-all
+```

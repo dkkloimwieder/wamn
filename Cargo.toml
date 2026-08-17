@@ -60,6 +60,17 @@ hyper-util = "0.1"
 url = "2"
 jmespath = "0.3"
 libc = "0.2"
+# Plan bytes and the release manifest are content-addressed OCI artifacts
+# (wamn-0h0g.15.12). Plain blob/manifest APIs only: `oci-wasm` and
+# `wash_runtime::oci::pull_component` both hardcode wasm layer media types and
+# run `wit_component::decode_reader`, neither of which an execution plan is.
+# Already in the lock transitively via wash-runtime, on the same rustls stack.
+# default-features off deliberately: the default set also carries `test-registry`,
+# an empty feature the crate uses to gate its OWN tests. Naming `rustls-tls` alone
+# resolves oci-client to exactly the feature set wash-runtime already selects, so
+# this direct dependency adds no lock entry AND does not perturb the workspace's
+# shared feature resolution.
+oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
 opentelemetry = { version = "0.31", default-features = false }
 opentelemetry-otlp = { version = "0.31", default-features = false }
 opentelemetry_sdk = { version = "0.31", default-features = false }

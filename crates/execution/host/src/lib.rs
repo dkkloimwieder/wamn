@@ -21,6 +21,7 @@ use effect_writer::load_effect_writer;
 include!(concat!(env!("OUT_DIR"), "/effect_provider_revision.rs"));
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -47,14 +48,18 @@ use wamn_catalog::{ExecutionRuntimeRevision, HOST_EFFECT_CONTRACT_VERSION};
 use wamn_run_state::{EffectWriterErrorKind, FailKind, ResetProjectionFence, RunStatus};
 use wamn_runtime::engine::{DEFAULT_EPOCH_TICK, MAX_HOST_CALL_DURATION};
 use wamn_runtime::memory_metrics::{self, MemoryMeter};
+use wamn_runtime::plan_artifact::OciPlanSource;
 use wamn_runtime::plugins::connection_http::{self, CONNECTION_HTTP_ID, ConnectionHttp};
 use wamn_runtime::plugins::runner_egress::{self, RUNNER_EGRESS_ID, RunnerEgressPolicy};
-use wamn_runtime::plugins::runner_plan_supply::{self, RUNNER_PLAN_SUPPLY_ID, RunnerPlanSupply};
+use wamn_runtime::plugins::runner_plan_supply::{
+    self, PlanRelease, RUNNER_PLAN_SUPPLY_ID, RunnerPlanSupply,
+};
 use wamn_runtime::plugins::wamn_credentials::WamnCredentials;
 use wamn_runtime::plugins::wamn_logging::{self, WAMN_LOGGING_ID, WamnLogging};
 use wamn_runtime::plugins::wamn_postgres::{
     self, ProductionClaimResult, ProductionReapResult, WamnPostgres,
 };
+use wamn_runtime::release_manifest::ReleaseManifestWeld;
 
 /// Stable in-image location of the compiled flowrunner component.
 pub const DEFAULT_FLOWRUNNER_PATH: &str = "/components/flowrunner.wasm";
@@ -394,6 +399,81 @@ impl HostHandler for RunnerEgress {
     }
 }
 
+/// Where a serving process's release comes from: the mounted serving manifest,
+/// and the registry its plan bytes are pulled from.
+///
+/// Passing this to [`ExecutionHost::instantiate`] is what makes a process a
+/// *serving* one. Omitting it is how every other caller — gates, benches, the
+/// pool's own fixtures — keeps working with nothing to mount: they get a host
+/// whose plan supply reports `unavailable` instead of one that resolves plans
+/// from a second, unwelded source.
+#[derive(Debug, Clone, Copy)]
+pub struct ReleaseSupply<'a> {
+    /// Directory the digest-named release-manifest ConfigMap is projected into,
+    /// normally [`wamn_catalog::RELEASE_MANIFEST_MOUNT_PATH`].
+    pub manifest_root: &'a Path,
+    /// `<registry>/<repository>` plan artifacts are published under.
+    pub plan_artifact_base: &'a str,
+    /// Serve the registry over plain HTTP. The dev registry is anonymous plain
+    /// HTTP; the wash host reaches the same one with
+    /// `--allow-insecure-registries`.
+    pub insecure_registry: bool,
+    /// Bound on one plan pull, connect and read alike.
+    pub fetch_timeout: Duration,
+}
+
+/// Load and verify this process's release, or record that it carries none.
+///
+/// This is the flowrunner in-process host's weld construction site: the one place
+/// in this process that reads the mounted manifest. Plan supply and effect
+/// authority both take the result by reference; nobody loads a second copy.
+///
+/// # The absent-mount posture, decided once and recorded here
+///
+/// An absent manifest is a deployment fact, not a fallback, and the two cases are
+/// told apart by the *argument*, never by inspecting a failure:
+///
+/// - **No [`ReleaseSupply`] passed.** This process was never given a release.
+///   There is nothing to mount and nothing to refuse: plan supply reports
+///   `unavailable` for every run. Gates, benches and non-serving callers stay
+///   exactly as they were.
+/// - **Passed, but the mount is absent, unreadable or non-canonical.** This
+///   process was told it serves a release and cannot. Host construction fails, so
+///   the pod never goes ready — the only refusal that means anything, since a pod
+///   that served with an unverified manifest would be resolving plans against
+///   nothing.
+///
+/// Encoding the distinction in the argument is not a style choice.
+/// `wamn-0h0g.15.104` collapsed [`WeldErrorKind`](wamn_runtime::release_manifest::WeldErrorKind)
+/// to two variants, so "no mount" and "corrupt mount" now arrive as the same
+/// `ManifestUnreadable` and cannot be separated after the fact. Whoever wires the
+/// wash host (`wamn-0h0g.15.101`) must make the same call at *its* construction
+/// site or restore a variant; recovering it from an error kind is not available.
+fn load_plan_release(release: Option<ReleaseSupply<'_>>) -> anyhow::Result<Option<PlanRelease>> {
+    let Some(supply) = release else {
+        return Ok(None);
+    };
+    let weld = ReleaseManifestWeld::load_from(supply.manifest_root).map_err(|error| {
+        anyhow::anyhow!(
+            "serving release manifest under {} is unusable ({:?}): {error}",
+            supply.manifest_root.display(),
+            error.kind()
+        )
+    })?;
+    let source = OciPlanSource::new(
+        supply.plan_artifact_base,
+        supply.insecure_registry,
+        supply.fetch_timeout,
+    )?;
+    tracing::info!(
+        release_version = weld.release().release_version,
+        manifest_digest = %weld.release().manifest_digest,
+        plan_artifacts = supply.plan_artifact_base,
+        "execution host welded to its release"
+    );
+    Ok(Some(PlanRelease::new(Arc::new(weld), Arc::new(source))))
+}
+
 /// The host-injected, non-spoofable identity one runner replica carries: the
 /// lease owner (== the component id), the tenant claim, the session
 /// search_path, and — 5.9 — the project whose environment connection
@@ -484,7 +564,7 @@ impl ExecutionHost {
     /// the guest-visible execution transaction capability.
     #[expect(
         clippy::too_many_arguments,
-        reason = "the engine, guest, session plugins, identity, capabilities, and lease TTL are distinct host-injected inputs"
+        reason = "the engine, guest, session plugins, identity, capabilities, release supply, and lease TTL are distinct host-injected inputs"
     )]
     pub async fn instantiate(
         engine: &Engine,
@@ -494,9 +574,11 @@ impl ExecutionHost {
         logging: Arc<WamnLogging>,
         identity: ExecutionIdentity<'_>,
         capabilities: ExecutionCapabilities,
+        release: Option<ReleaseSupply<'_>>,
         ttl_ms: u64,
     ) -> anyhow::Result<Self> {
         let runtime_revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(guest);
+        let plan_release = load_plan_release(release)?;
         let effect_writer = load_effect_writer(&identity).await?;
         let ExecutionIdentity {
             owner,
@@ -559,6 +641,7 @@ impl ExecutionHost {
         ));
         let plan_supply = Arc::new(RunnerPlanSupply::new(
             plugin.clone(),
+            plan_release,
             PLAN_CACHE_MAX_ENTRIES,
         )?);
         let mut plugins: HashMap<&'static str, Arc<dyn HostPlugin + Send + Sync>> = HashMap::new();
@@ -1053,7 +1136,7 @@ mod tests {
             policy.set_declared("runner", &hosts);
         }
         RunnerEgress {
-            inner: DefaultOutgoingHandler::default(),
+            inner: DefaultOutgoingHandler,
             policy,
         }
     }

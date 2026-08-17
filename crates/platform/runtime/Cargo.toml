@@ -26,6 +26,7 @@ deadpool-postgres = "0.14"
 futures-util = { workspace = true }
 hex = { workspace = true }
 hyper = { workspace = true }
+oci-client = { workspace = true }
 url = { workspace = true }
 opentelemetry = { workspace = true, features = ["logs", "metrics"] }
 opentelemetry_sdk = { workspace = true, features = ["logs"] }

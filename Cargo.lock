@@ -4543,6 +4543,7 @@ dependencies = [
  "futures-util",
  "hex",
  "hyper",
+ "oci-client",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",

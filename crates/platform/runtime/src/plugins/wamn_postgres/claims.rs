@@ -125,19 +125,35 @@ pub struct ConnectionEffectSnapshot {
     pub draft_generation_granted: bool,
 }
 
-/// Exact bytes loaded by immutable tenant-scoped execution-bundle identity.
+/// What plan supply needs from a run's own row: which flow it entered at, and
+/// which release it was admitted under.
+///
+/// This is the whole of the run-side input to resolution now that
+/// `run_flow_resolutions` is gone (wamn-0h0g.15.10). The reachable plan set is
+/// derived from the release manifest, not stored per run, so nothing here
+/// mentions a plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ResolutionPlanBytes {
-    pub execution_bundle_hash: String,
-    pub exact_bytes: Vec<u8>,
+pub struct RunReleaseBinding {
+    /// The run's tenant, as recorded — the plan cache's scope key.
+    pub tenant_id: String,
+    /// The run's root flow. Only source left: the `wamn:runner/plan-supply` WIT
+    /// passes a run id and nothing else, and the host is constructed once per
+    /// process, so the root cannot be handed in at construction.
+    pub flow_id: String,
+    /// The serving-manifest digest recorded write-once at claim
+    /// (wamn-0h0g.15.11), or `None` for a row admitted before anything wrote it.
+    pub manifest_digest: Option<String>,
 }
 
-const RESOLUTION_PLAN_BYTES_SQL: &str = "\
-SELECT bundle.execution_bundle_hash, bundle.exact_bytes \
-  FROM catalog.execution_bundles AS bundle \
- WHERE bundle.tenant_id = current_setting('app.tenant', true) \
-   AND bundle.execution_bundle_hash = ANY($1::text[]) \
- ORDER BY bundle.execution_bundle_hash";
+/// `wamn_run.runs` is RLS-scoped by `runs_tenant`
+/// (`deploy/sql/run-state.sql:319`); the tenant predicate is spelled anyway, in
+/// the policy's own `NULLIF` form, so the statement is correct read on its own
+/// and cannot widen if a future grant path arrives with RLS bypassed.
+const RUN_RELEASE_BINDING_SQL: &str = "\
+SELECT r.tenant_id, r.flow_id, r.manifest_digest \
+  FROM wamn_run.runs AS r \
+ WHERE r.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
+   AND r.run_id = $1";
 
 /// SECURITY GAP (wamn-0h0g.15.66) — `authorized_plan` NO LONGER BINDS THE PLAN
 /// TO THE RUN. Its only run-scoped predicate was an EXISTS over
@@ -928,15 +944,15 @@ impl WamnPostgres {
         }
     }
 
-    /// Load exact immutable plan bytes for cache misses under injected tenant RLS.
-    pub async fn resolution_plan_bytes(
+    /// Read a run's root flow and recorded release under injected tenant RLS.
+    ///
+    /// `Ok(None)` is an absent run, not an error: plan supply reports it as
+    /// `not-found` rather than as an unavailable dependency.
+    pub async fn run_release_binding(
         &self,
         component_id: &str,
-        execution_bundle_hashes: &[String],
-    ) -> anyhow::Result<Vec<ResolutionPlanBytes>> {
-        if execution_bundle_hashes.is_empty() {
-            return Ok(Vec::new());
-        }
+        run_id: &str,
+    ) -> anyhow::Result<Option<RunReleaseBinding>> {
         let tenant = self
             .tenant_for(component_id)
             .context("plan supply has no host-injected tenant")?;
@@ -960,28 +976,28 @@ impl WamnPostgres {
             self.destroy(conn);
             return Err(anyhow::anyhow!(error.to_string()));
         }
-        let hashes = execution_bundle_hashes.to_vec();
-        let result: anyhow::Result<Vec<ResolutionPlanBytes>> = async {
-            conn.query(RESOLUTION_PLAN_BYTES_SQL, &[&hashes])
+        let result: anyhow::Result<Option<RunReleaseBinding>> = async {
+            let Some(row) = conn
+                .query_opt(RUN_RELEASE_BINDING_SQL, &[&run_id])
                 .await
-                .context("query immutable resolution plan bytes")?
-                .into_iter()
-                .map(|row| {
-                    Ok(ResolutionPlanBytes {
-                        execution_bundle_hash: row.try_get(0)?,
-                        exact_bytes: row.try_get(1)?,
-                    })
-                })
-                .collect()
+                .context("query run release binding")?
+            else {
+                return Ok(None);
+            };
+            Ok(Some(RunReleaseBinding {
+                tenant_id: row.try_get(0)?,
+                flow_id: row.try_get(1)?,
+                manifest_digest: row.try_get(2)?,
+            }))
         }
         .await;
         match result {
-            Ok(bytes) => {
+            Ok(binding) => {
                 if let Err(error) = conn.batch_execute("COMMIT").await {
                     self.destroy(conn);
-                    return Err(error).context("commit immutable plan-byte read");
+                    return Err(error).context("commit run release binding read");
                 }
-                Ok(bytes)
+                Ok(binding)
             }
             Err(error) => {
                 if conn.batch_execute("ROLLBACK").await.is_err() {
@@ -1144,11 +1160,22 @@ pub(super) enum OneShotResult {
 mod tests {
     use super::*;
 
+    /// Renamed from `plan_supply_reads_only_immutable_run_map_and_bundle_identity`
+    /// (wamn-0h0g.15.12): plan supply no longer reads bundle bytes at all, so the
+    /// old name promised an assertion this statement cannot make. What is pinned
+    /// is what the statement must stay: the run's own row, tenant-scoped in the
+    /// policy's exact form, and read-only.
     #[test]
-    fn plan_supply_reads_only_immutable_run_map_and_bundle_identity() {
-        assert!(RESOLUTION_PLAN_BYTES_SQL.contains("catalog.execution_bundles"));
-        assert!(RESOLUTION_PLAN_BYTES_SQL.contains("ANY($1::text[])"));
-        assert!(!RESOLUTION_PLAN_BYTES_SQL.contains("flow_id"));
+    fn run_release_binding_reads_one_tenant_scoped_run_row() {
+        assert!(RUN_RELEASE_BINDING_SQL.contains("FROM wamn_run.runs AS r"));
+        assert!(
+            RUN_RELEASE_BINDING_SQL
+                .contains("r.tenant_id = NULLIF(current_setting('app.tenant', true), '')")
+        );
+        assert!(RUN_RELEASE_BINDING_SQL.contains("r.run_id = $1"));
+        // Plan bytes reach a run only by digest-verified OCI pull now.
+        assert!(!RUN_RELEASE_BINDING_SQL.contains("execution_bundles"));
+        assert!(!RUN_RELEASE_BINDING_SQL.contains("exact_bytes"));
     }
 
     // The claim-time record must match `runs_release_record_check` exactly, or a

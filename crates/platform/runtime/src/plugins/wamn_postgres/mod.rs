@@ -50,7 +50,7 @@ mod resources;
 mod types;
 
 pub use claims::{
-    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, ResolutionPlanBytes,
+    ConnectionEffectLookup, ConnectionEffectSnapshot, ReleaseIdentity, RunReleaseBinding,
     WamnPostgres,
 };
 pub use pool::{

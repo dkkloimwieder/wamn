@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly OWNER="bd:wamn-0h0g.5.13"
-readonly OUTCOME="plan supply refuses untrusted bytes and never crosses tenant or moving-head boundaries"
+readonly OUTCOME="plan supply refuses untrusted bytes and never crosses tenant boundaries"
 readonly CAMPAIGN="plan-supply"
 readonly BEAD="wamn-0h0g.5.13"
 
@@ -20,7 +20,7 @@ declare TARGET EXPECTED_SHA NEEDLE REPLACEMENT EXPECTED_COUNT GATE
 declare -a TEST_ARGV
 
 mutation_ids() {
-  printf '%s\n' hash-verification-bypass cache-drops-tenant moving-head-query
+  printf '%s\n' hash-verification-bypass cache-drops-tenant
 }
 
 load_mutation() {
@@ -42,14 +42,14 @@ load_mutation() {
       EXPECTED_COUNT=1
       GATE="plugins::runner_plan_supply::tests::cache_is_entry_bounded_and_tenant_scoped"
       ;;
-    moving-head-query)
-      TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
-      EXPECTED_SHA="79e7ab6c4f9140e0c7bde3ad01448cdcbe42ccbb0fbc6747abd73b50018514f8"
-      NEEDLE='JOIN run_flow_resolutions AS resolution'
-      REPLACEMENT='JOIN catalog.release_flows AS resolution'
-      EXPECTED_COUNT=1
-      GATE="plugins::wamn_postgres::claims::tests::plan_supply_reads_only_immutable_run_map_and_bundle_identity"
-      ;;
+    # `moving-head-query` is removed, not repaired (wamn-0h0g.15.12). It anchored
+    # on `JOIN run_flow_resolutions AS resolution` in the plan-bytes statement,
+    # and asserted that plan supply read the run's immutable resolution map rather
+    # than a moving catalog head. Both halves are gone: wamn-0h0g.15.10 deleted the
+    # table, and this bead deleted the statement — plan bytes no longer come from
+    # the database at all, so there is no query left for a moving head to leak
+    # into. Its gate was renamed for the same reason (see
+    # `run_release_binding_reads_one_tenant_scoped_run_row`).
     *)
       echo "unknown mutant: $id" >&2
       return 2
