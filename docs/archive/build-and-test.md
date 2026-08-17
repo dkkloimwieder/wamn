@@ -6194,3 +6194,36 @@ directive-ID set to equal the `Recipe`-kind entry set in
 registry entry fails `gate_registry` with `recipe registry drift`, and that
 registry is frozen until `wamn-0h0g.15.22` regenerates it. Promoting these
 twelve to directives is that bead's work, not this one's.
+
+## SR-MVP — guard-mechanism repairs and ctl kind-filter coverage (wamn-0h0g.15.114, .15.115, .15.108)
+
+Three mechanism fixes over guards whose CONTENT was reconciled by `.15.109` and
+`.15.110`. Content and mechanism are separate concerns and were deliberately kept
+in separate beads.
+
+```bash
+# .15.114 + .15.115 — both guards live in the conformance lib target.
+cargo test --locked -p wamn-proof-conformance --lib version_identity
+cargo test --locked -p wamn-proof-conformance --lib manifest_dependencies
+# .15.108 — provision_project_env is NOT ops-gated, so default features suffice.
+cargo test --locked -p wamn-ctl --lib stable_acl_inventory
+```
+
+Mutants of record:
+
+| mutant | edit | must fail |
+| --- | --- | --- |
+| `absence-masks-occurrence` | restore the `Err` short-circuit in `governed_literal_violations` so a missing file skips the count check | `a_missing_watched_file_still_reports_its_missing_occurrence` |
+| `dotted-table-by-last-segment` | in `dependency_table_kind`, return the LAST dot segment instead of the first dependency keyword | `a_dotted_single_dependency_table_is_scanned_by_the_identity_rule` |
+| `dotted-table-always-dev` | stamp `dev: true` on every dotted declaration | `the_dotted_spelling_does_not_widen_the_self_dev_dependency_exemption` |
+| `writer-acl-kind-widened` | add `\| "database"` to `verify_effect_writer_acl_role_inventory`'s accepted object-kind set | `stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set` |
+
+`writer-acl-kind-widened` is the mutant that SURVIVED at `.15.107`. Note why an
+`is_err()`-only test cannot kill it: under the mutant the fixture still errors, just
+later, on the exact-grant-set comparison. The assertion has to pin the refusal
+MESSAGE (`carries non-writer database ACL`), and that is the load-bearing line.
+
+`.15.114`'s guard walks 50 watch entries, not 44: `GOVERNED_LITERALS` (44) plus
+`GOVERNED_JSON_SCHEMAS` (6). Only the literals carry two independent faults, which
+is why the JSON half deliberately still short-circuits — a missing JSON file has no
+second expectation to report.

@@ -2437,6 +2437,30 @@ mod tests {
     }
 
     #[test]
+    fn stable_acl_inventory_refuses_an_object_kind_outside_the_writer_set() {
+        // The kind filter is this guard's first refusal, and the complete-set test
+        // above cannot observe it: every fixture there is a schema, relation or
+        // column, so admitting one further kind left that test green under the
+        // wamn-0h0g.15.107 mutation run. A database CONNECT ACL is the realistic
+        // out-of-set kind — it is what a scoped generation role is granted — and a
+        // stable role must never hold one. Asserting the named refusal is the
+        // load-bearing part: a widened kind set still fails, but on the exact
+        // grant set instead, and would leave the filter unverified again.
+        let error = verify_effect_writer_acl_role_inventory(
+            EFFECT_WRITER_ROLE,
+            "project_db",
+            &[role_acl("database", "project_db", "project_db", "CONNECT")],
+        )
+        .expect_err("a database ACL is not an effect-writer ACL");
+        assert!(
+            error
+                .to_string()
+                .contains("carries non-writer database ACL"),
+            "refused for the wrong reason: {error}"
+        );
+    }
+
+    #[test]
     fn stable_acl_role_members_are_only_scoped_generation_roles() {
         assert!(is_effect_writer_generation_role(
             "wamn_effect_writer_0123456789abcdef0123456789abcdef01234567_a"
