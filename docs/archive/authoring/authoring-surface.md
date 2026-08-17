@@ -62,7 +62,7 @@ There are exactly five commands and three queries.
 | `save-flow-draft` | command | scope, draft/flow IDs, expected revision, exact definition text, optional provenance | draft identity and new revision |
 | `validate` | command | scope and exact draft revision | one validated executable identity |
 | `draft-run` | command | scope, validated draft, one input, optional `capture: full \| off` | run receipt |
-| `test-set-run` | command | scope, validated draft, inline test-set definition | report/test-set receipt |
+| `test-set-run` | command | scope and validated draft; cases come from the draft's own `cases` array, not a separate inline definition (`wamn-0h0g.15.27`) | report/test-set receipt |
 | `publish` | command | scope, validated draft, successful report ID | immutable published flow identity |
 | `read-draft` | query | scope and exact draft revision | exact stored definition and identity |
 | `get-run` | query | scope and run ID | bounded author-facing run/node projection |
@@ -82,15 +82,21 @@ Cycle/depth/expanded-plan vocabulary, `SuiteRun`, `SuiteProjection`,
 
 ## Public bounds
 
-The named test-set ceilings are:
+The one surviving named test-set ceiling is `MAX_TEST_SET_CASES = 256`, declared
+by this contract's own source of truth (`wamn-authoring-model`) and mirrored by
+the owning `cases` parser in `wamn-flow`.
 
-- `MAX_TEST_SET_BYTES = 1_048_576` exact UTF-8 bytes;
-- `MAX_TEST_SET_CASES = 256`; and
-- `MAX_TEST_SET_EXPECTATIONS = 64`.
+> **`MAX_TEST_SET_BYTES` and `MAX_TEST_SET_EXPECTATIONS` were deleted by
+> `wamn-0h0g.15.27`** (`3a042d96`, "flatten the test contract and delete its
+> store"). Neither name survives anywhere in the tree; they are retained here
+> only so the earlier three-ceiling wording is traceable.
 
 Boundary tests pin exact-at-limit acceptance and first-over-limit refusal in the
-owning parser. Test sets are non-vacuous: the case list and each case's
-expectation list are nonempty.
+owning parser. Test sets are non-vacuous: a caller that requires a test set
+refuses an empty case list, while flow validation applies the bounds only to a
+flow that already carries at least one case (absent and empty `cases` are the
+same bytes). Each case carries exactly one `expect` observable, not an
+expectation list — also `wamn-0h0g.15.27`.
 
 Every `uint64`-formatted authoring integer uses the inclusive wire domain
 `0..=SAFE_INTEGER_MAX`, where `SAFE_INTEGER_MAX = 9_007_199_254_740_991`
