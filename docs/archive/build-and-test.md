@@ -3201,8 +3201,8 @@ gate runs against a throwaway postgres it provisions from scratch:
 1. **Storage.** The adapter's startup authority probe hard-requires
    `catalog.{flow_drafts,validated_flow_drafts,draft_safe_connection_grants,
    authoring_command_audit}` plus
-   `<run-schema>.{authoring_test_sets,authoring_test_run_reservations,
-   authoring_test_case_runs,authoring_test_reports}`. `wamn-ctl reconcile-run-plane` creates all of those
+   `<run-schema>.{authoring_test_run_reservations,authoring_test_case_runs,
+   authoring_test_reports}`. `wamn-ctl reconcile-run-plane` creates all of those
    TABLES additively — the catalog ones included (`CreateCatalogTable` actions).
    `catalog` is one schema shared by every project schema in the database, so one
    run covers them all.
@@ -5156,7 +5156,7 @@ git diff --check
 
 ## SR-MVP — authoring store fold (`wamn-0h0g.8.11`)
 
-The management service now owns the draft, test-set, and report store directly;
+The management service now owns the draft and test-orchestration store directly;
 the standalone scenario catalog and runtime packages no longer exist. The
 public authoring inventory is exactly `save-flow-draft`, `validate`,
 `draft-run`, and `publish`, exposed by the CLI verbs `validate`, `draft-run`,
@@ -5421,10 +5421,8 @@ cargo test --locked --offline -p wamn-proof-conformance \
   --test state_ownership row_lock_clause_is_not_an_update -- --exact
 cargo test --locked --offline -p wamn-scenario-worker \
   store::test_orchestration::tests::
-cargo test --locked --offline -p wamn-scenario-worker \
-  store::test_sets::tests::
 cargo test --locked --offline -p wamn-ctl \
-  publish_catalog::tests::authoring_test_set_provisioning_is_fresh_and_privilege_closed \
+  publish_catalog::tests::authoring_test_orchestration_provisioning_is_fresh_and_privilege_closed \
   -- --exact
 
 cargo clippy --locked --offline \
@@ -5435,7 +5433,6 @@ rustfmt --edition 2024 --check \
   services/ctl/src/publish_catalog.rs \
   services/ctl/tests/run_plane_live.rs \
   services/scenario-worker/src/store/test_orchestration.rs \
-  services/scenario-worker/src/store/test_sets.rs \
   tests/conformance/src/version_identity.rs \
   tests/conformance/tests/state_ownership.rs
 if rg -n --hidden --glob '!.git/**' --glob '!.beads/**' \
