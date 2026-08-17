@@ -251,6 +251,12 @@ async fn run_sockprobe(
         }],
         allowed_hosts: Arc::from(vec![]),
         allowed_ip_name_lookups: Default::default(),
+        // [wamn-0h0g.15.20] New at the wamn/2.7.0 pin. EMPTY = deny every
+        // host-loopback connection, which is what this denial gate must assert;
+        // a non-empty list is inert anyway unless the host was started with
+        // `--allow-host-loopback`. Positive coverage of the grant surface is
+        // wamn-0h0g.15.52.
+        allowed_host_loopback_ports: Default::default(),
     };
     resources.environment.insert(
         "SOCKPROBE_REPORT_PATH".to_string(),
@@ -422,15 +428,15 @@ mod tests {
             .find(|package| package["name"] == "wash-runtime")
             .expect("linked graph must contain wash-runtime");
         assert_eq!(
-            package["version"], "2.6.1",
-            "socket gate must inspect wash-runtime 2.6.1"
+            package["version"], "2.7.0",
+            "socket gate must inspect wash-runtime 2.7.0"
         );
         let source = package["source"]
             .as_str()
             .expect("wash-runtime must retain its git source");
         assert!(
-            source.ends_with("#09b1132f2bab36e6e71f4637bd0e4755e359dd43"),
-            "socket gate must inspect the exact linked wash-runtime 2.6.1 fork revision, got {source}"
+            source.ends_with("#daba602901507338e99f277e07a8e923c61dc557"),
+            "socket gate must inspect the exact linked wash-runtime 2.7.0 fork revision, got {source}"
         );
         Path::new(
             package["manifest_path"]
@@ -584,12 +590,69 @@ mod tests {
         );
     }
 
+    /// Opting out of raw sockets must produce an EMPTY allowlist under
+    /// `Enforce`, and both halves must be pinned together.
+    ///
+    /// Re-pinned at the `wamn/2.7.0` fork bump (wamn-0h0g.15.20). Upstream
+    /// `82e06949` moved every socket decision into one place, so the fork no
+    /// longer answers a per-operation boolean (`SocketAddrUse::TcpConnect =>
+    /// allow_raw_sockets`, the shape these guards used to pin) — it SHAPES the
+    /// guest's policy instead. `EgressMode::Count` is upstream's `#[default]`
+    /// and merely *logs and counts* what it would refuse while allowing it, so
+    /// an empty allowlist ALONE denies nothing. Losing either half reopens raw
+    /// egress silently, which is precisely the plugin-tier hole `wamn-g2br.15`
+    /// found and closed.
+    #[test]
+    fn raw_socket_opt_out_shapes_an_empty_allowlist_under_enforce() {
+        let shaper = fork_source("src/engine/linked_call.rs");
+        assert!(
+            shaper.contains("pub(crate) fn shape_socket_policy("),
+            "the raw-socket shaping entry point must stay crate-visible so the plugin tier \
+             reuses the same gate as workload stores (wamn-g2br.15)"
+        );
+        assert!(
+            shaper.contains("    if allow_raw_sockets {\n        return policy;\n    }\n"),
+            "an opted-in guest must get its policy back untouched"
+        );
+        assert!(
+            shaper.contains(concat!(
+                "        allowed_hosts: Arc::from([]),\n",
+                "        egress_mode: sockets::policy::EgressMode::Enforce,"
+            )),
+            "opting out must empty the allowlist AND force Enforce — the empty list alone is \
+             inert under upstream's Count default"
+        );
+        assert!(
+            shaper.contains(
+                "SocketAddrUse::TcpConnect | SocketAddrUse::UdpConnect | SocketAddrUse::UdpOutgoingDatagram"
+            ),
+            "the three raw-egress operations must stay named together for the warn-once event"
+        );
+
+        let policy = fork_source("src/sockets/policy.rs");
+        assert!(
+            policy.contains("EgressMode::Enforce => Err(reason),"),
+            "Enforce must actually refuse what the policy refuses"
+        );
+        assert!(
+            policy.contains("if !check_allowed_addr(&self.allowed_hosts, addr) {"),
+            "real egress must consult the declared allowlist that shaping emptied"
+        );
+        assert!(
+            policy.contains("if addr.ip().to_canonical().is_loopback() {"),
+            "the guest's own virtual network must stay outside the egress policy — that is why \
+             this denial is scoped to NON-loopback destinations"
+        );
+    }
+
     #[test]
     fn tcp_connect_policy_and_p2_p3_call_sites_are_pinned() {
-        let policy = fork_source("src/engine/linked_call.rs");
+        let policy = fork_source("src/sockets/policy.rs");
         assert!(
-            policy.contains("SocketAddrUse::TcpConnect => allow_raw_sockets,"),
-            "TcpConnect must deny non-loopback P2/P3 egress without opt-in and permit opted-in work"
+            policy
+                .contains("SocketAddrUse::TcpConnect => self.decide_connect(addr, Protocol::Tcp),"),
+            "TcpConnect must route to the connect decision, which the shaped policy denies for \
+             non-loopback without opt-in"
         );
         let p2 = fork_source("src/sockets/host_tcp.rs");
         assert!(
@@ -598,17 +661,21 @@ mod tests {
         );
         let p3 = fork_source("src/sockets/host_tcp_p3.rs");
         assert!(
-            p3.contains("if !check(remote_address, SocketAddrUse::TcpConnect).await"),
-            "P3 TcpConnect mirror must consult the shared socket policy"
+            p3.contains("let allowed = check(remote_address, SocketAddrUse::TcpConnect)")
+                && p3.contains(".into_allowed()"),
+            "P3 TcpConnect mirror must consult the shared socket policy AND consume the decision \
+             fallibly, not discard it"
         );
     }
 
     #[test]
     fn udp_connect_policy_and_p2_p3_call_sites_are_pinned() {
-        let policy = fork_source("src/engine/linked_call.rs");
+        let policy = fork_source("src/sockets/policy.rs");
         assert!(
-            policy.contains("SocketAddrUse::UdpConnect => allow_raw_sockets,"),
-            "UdpConnect must deny non-loopback P2/P3 egress without opt-in and permit opted-in work"
+            policy
+                .contains("SocketAddrUse::UdpConnect => self.decide_connect(addr, Protocol::Udp),"),
+            "UdpConnect must route to the connect decision, which the shaped policy denies for \
+             non-loopback without opt-in"
         );
         let p2 = fork_source("src/sockets/host_udp.rs");
         assert!(
@@ -618,18 +685,22 @@ mod tests {
         let p3 = fork_source("src/sockets/host_udp_p3.rs");
         assert!(
             p3.contains(
-                "(self.ctx.socket_addr_check)(remote_address, SocketAddrUse::UdpConnect).await"
-            ),
-            "P3 UdpConnect mirror must consult the shared socket policy"
+                "let allowed = (self.ctx.socket_addr_check)(remote_address, SocketAddrUse::UdpConnect)"
+            ) && p3.contains(".into_allowed()"),
+            "P3 UdpConnect mirror must consult the shared socket policy AND consume the decision \
+             fallibly"
         );
     }
 
     #[test]
     fn udp_outgoing_datagram_policy_and_p2_p3_call_sites_are_pinned() {
-        let policy = fork_source("src/engine/linked_call.rs");
+        let policy = fork_source("src/sockets/policy.rs");
         assert!(
-            policy.contains("SocketAddrUse::UdpOutgoingDatagram => allow_raw_sockets,"),
-            "UdpOutgoingDatagram must deny non-loopback P2/P3 sends without opt-in and permit opt-in"
+            policy.contains(
+                "SocketAddrUse::UdpOutgoingDatagram => match self.resolve_connect(addr, Protocol::Udp) {"
+            ),
+            "an outgoing datagram must run the same connect resolution as a connect — spending no \
+             quota slot, but taking the same denial"
         );
         let p2 = fork_source("src/sockets/host_udp.rs");
         assert!(
@@ -638,20 +709,64 @@ mod tests {
         );
         let p3 = fork_source("src/sockets/host_udp_p3.rs");
         assert!(
-            p3.contains("check(remote_address, SocketAddrUse::UdpOutgoingDatagram).await"),
-            "P3 UdpOutgoingDatagram mirror must consult the shared socket policy"
+            p3.contains("let allowed = check(remote_address, SocketAddrUse::UdpOutgoingDatagram)")
+                && p3.contains(".into_allowed()"),
+            "P3 UdpOutgoingDatagram mirror must consult the shared socket policy AND consume the \
+             decision fallibly"
         );
     }
 
+    /// `UdpBind` authority as it stands at `wamn/2.7.0` — WIDER than the shape
+    /// this guard pinned at `wamn/2.6.1`, deliberately recorded rather than
+    /// papered over (wamn-0h0g.15.20).
+    ///
+    /// At `09b1132f` the fork answered `TcpBind | UdpBind => is_service &&
+    /// ip_is_loopback`: a component could not bind at all, a service only on
+    /// loopback, and an unspecified address was never permitted (the old
+    /// predicate took `_ip_is_unspecified` and deliberately ignored it). At
+    /// `daba6029` a COMPONENT may `UdpBind` on loopback *or unspecified*, and so
+    /// may a service. Upstream's rationale is that a UDP bind is not listening —
+    /// p2 refuses `stream()` on an unbound socket and std binds explicitly on
+    /// p3, so refusing the bind would refuse outbound datagrams instead of
+    /// refusing a listener. TcpBind stays denied for components.
+    ///
+    /// The unspecified case is a real widening, and upstream's comment in
+    /// `policy.rs` understates it: the OS socket IS bound to the wildcard
+    /// (`sockets/udp.rs`), not rewritten to loopback as the TCP path does —
+    /// binding loopback would make the kernel refuse `send_to` off-box with
+    /// `EADDRNOTAVAIL`. Inbound confinement moves to the RECEIVE path
+    /// (`egress_peers`). That is a different mechanism with a different failure
+    /// mode than a bind refusal, so it is pinned here and owned separately.
     #[test]
-    fn udp_bind_policy_and_p2_p3_call_sites_are_service_loopback_only() {
-        let policy = fork_source("src/engine/linked_call.rs");
+    fn udp_bind_policy_and_p2_p3_call_sites_are_pinned() {
+        let policy = fork_source("src/sockets/policy.rs");
         assert!(
-            policy.contains(
-                "SocketAddrUse::TcpBind | SocketAddrUse::UdpBind => is_service && ip_is_loopback,"
-            ),
-            "UdpBind must allow service-loopback, deny service-non-loopback, and deny \
-             non-service-loopback on P2/P3"
+            policy.contains(concat!(
+                "            GuestKind::Component => match reason {\n",
+                "                SocketAddrUse::UdpBind => ip.is_loopback() || ip.is_unspecified(),\n",
+                "                _ => false,\n",
+                "            },"
+            )),
+            "a component may bind UDP on loopback or unspecified, and NOTHING else — TcpBind in \
+             particular must stay denied"
+        );
+        assert!(
+            policy.contains(concat!(
+                "            GuestKind::Service => match reason {\n",
+                "                SocketAddrUse::UdpBind => ip.is_loopback() || ip.is_unspecified(),\n",
+                "                _ => ip.is_loopback(),\n",
+                "            },"
+            )),
+            "a service may bind UDP on loopback or unspecified, and anything else on loopback only"
+        );
+        assert!(
+            policy.contains("AddrDecision::Deny(DenyReason::BindNotPermitted)"),
+            "a bind outside that authority must be denied, not silently allowed"
+        );
+        assert!(
+            policy.contains("if !self.host_loopback_enabled {"),
+            "host-loopback reach must stay inert unless the host itself enabled it — a workload \
+             grant alone cannot open it (the wamn-0h0g.15.52 surface)"
         );
         let p2 = fork_source("src/sockets/host_udp.rs");
         assert!(
@@ -660,10 +775,10 @@ mod tests {
         );
         let p3 = fork_source("src/sockets/host_udp_p3.rs");
         assert!(
-            p3.contains(
-                "(self.ctx.socket_addr_check)(local_address, SocketAddrUse::UdpBind).await"
-            ),
-            "P3 UdpBind mirror must consult the shared socket policy"
+            p3.contains("(self.ctx.socket_addr_check)(local_address, SocketAddrUse::UdpBind)")
+                && p3.contains(".into_allowed()"),
+            "P3 UdpBind mirror must consult the shared socket policy AND consume the decision \
+             fallibly"
         );
     }
 }

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 const TYPE_UNIVERSE_GATE: &str =
     "cargo test -p wamn-proof-conformance --test wasmtime_source_identity";
 const TYPE_UNIVERSE_GATE_PATH: &str = "tests/conformance/tests/wasmtime_source_identity.rs";
-const WASMTIME_VERSION: &str = "47.0.1";
+const WASMTIME_VERSION: &str = "47.0.3";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -34,7 +34,7 @@ fn current_wasmtime_documentation_matches_executable_type_universe_contract() {
     let dependency_preamble = section(&manifest, "[workspace.dependencies]", "wash-runtime = ");
 
     assert!(
-        dependency_preamble.contains("one crates.io Wasmtime 47.0.1 family"),
+        dependency_preamble.contains("one crates.io Wasmtime 47.0.3 family"),
         "wash-runtime dependency comment must state the current Wasmtime family"
     );
     assert!(
@@ -60,8 +60,8 @@ fn current_wasmtime_documentation_matches_executable_type_universe_contract() {
         "## Carried commits",
     );
     assert!(
-        current_posture.contains("one crates.io\n  Wasmtime 47.0.1 family"),
-        "current fork posture must state the crates.io Wasmtime 47.0.1 family"
+        current_posture.contains("one crates.io\n  Wasmtime 47.0.3 family"),
+        "current fork posture must state the crates.io Wasmtime 47.0.3 family"
     );
     assert!(
         current_posture.contains(TYPE_UNIVERSE_GATE),

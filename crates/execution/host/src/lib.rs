@@ -269,6 +269,10 @@ where
 /// [`RunnerEgressPolicy`]; never-supplied or supplied-empty = deny-all,
 /// both checks must pass = intersection), then delegate transport to
 /// [`DefaultOutgoingHandler`] (which also stamps the 9.2 trace context).
+/// Since the `wamn/2.7.0` pin that handler is a fielded struct owning a
+/// `workload_id`-keyed client pool and a PRIVATE quota registry, so each
+/// `RunnerEgress` built here gets its own — the isolation-first posture ruling
+/// wamn-0h0g.13.48 chose over passing the host's shared registry.
 /// Without a handler on the store's `Ctx`, an outbound call TRAPS ("http
 /// client not available") and poisons the instance — so the runner wires this
 /// unconditionally; a denial is a clean `HttpRequestDenied` the node
@@ -734,7 +738,7 @@ impl ExecutionHost {
                 .build(),
             CapabilityMode::Production { allowed_hosts } => builder
                 .with_http_handler(Arc::new(RunnerEgress {
-                    inner: DefaultOutgoingHandler,
+                    inner: DefaultOutgoingHandler::default(),
                     policy: egress_policy,
                 }))
                 .with_allowed_hosts(allowed_hosts)
@@ -1229,7 +1233,7 @@ mod tests {
             policy.set_declared("runner", &hosts);
         }
         RunnerEgress {
-            inner: DefaultOutgoingHandler,
+            inner: DefaultOutgoingHandler::default(),
             policy,
         }
     }

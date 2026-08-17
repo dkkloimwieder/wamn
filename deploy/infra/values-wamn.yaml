@@ -20,16 +20,19 @@
 # ships no values.schema.json, so a rename downgrades our keys to a SILENT
 # no-op instead of an install error — which is why the record exists.
 #
-# Pinned: fork rev 09b1132f = chart 2.6.1. Both expressions verified present
-# and unrenamed there and at 2.5.2, 2.6.0 and 2.7.0 — the 2.6.1 -> 2.7.0 bump
-# rewrote both surrounding blocks and left them byte-identical.
-# The install above pulls chart 2.5.2, one minor behind the pinned host. The
+# Pinned: fork rev daba6029 = chart 2.7.0. Both expressions verified present
+# and unrenamed there — the grep below was re-run at this pin (wamn-0h0g.15.20),
+# not carried over from the previous record — and they held at 2.5.2, 2.6.0 and
+# 2.6.1 before it; the 2.6.1 -> 2.7.0 bump rewrote both surrounding blocks and
+# left them byte-identical.
+# The install above pulls chart 2.5.2, two minors behind the pinned host. The
 # seam holds at both; realigning the installed chart is a deploy-procedure
-# change, not a comment fix. (The retired note here claimed rev 8b53285, two
-# fork retargets stale.)
+# change owned by wamn-0h0g.15.15 (which pins the chart and operator version
+# and cannot be validated while the kind cluster is frozen), not a comment fix
+# here. (The retired note here claimed rev 8b53285, two fork retargets stale.)
 #
 # Re-verify — the chart ships inside the pinned fork checkout:
-#   grep -n 'with \.volumes\|with \.volumeMounts' ~/.cargo/git/checkouts/wasmcloud-*/09b1132/charts/runtime-operator/templates/runtime/deployment.yaml
+#   grep -n 'with \.volumes\|with \.volumeMounts' ~/.cargo/git/checkouts/wasmcloud-*/daba602/charts/runtime-operator/templates/runtime/deployment.yaml
 
 # Deprecated HTTP gateway off: its NodePort would collide with workload
 # Services on 30950; routing is EndpointSlice-based now.

@@ -1369,7 +1369,7 @@ fn locked_effect_provider_closure_matches_manifest() {
     );
     assert_eq!(
         wash_runtime.revision.as_deref(),
-        Some("09b1132f2bab36e6e71f4637bd0e4755e359dd43")
+        Some("daba602901507338e99f277e07a8e923c61dc557")
     );
     assert!(wash_runtime.checksum.is_none());
 }

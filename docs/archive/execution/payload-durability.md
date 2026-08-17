@@ -146,7 +146,7 @@ through bounded, backpressured `wasi:io/streams` resources. The complete object
 never enters guest linear memory and component-model async is not required.
 
 This choice is grounded in the exact runtime, not only API preference. The
-pinned `wash-runtime` v2.6.1 fork at `09b1132f` supports parallel P2 and P3 host
+pinned `wash-runtime` v2.7.0 fork at `daba6029` supports parallel P2 and P3 host
 surfaces. Its P3 cross-store relocation extracts `stream<T>` into a live
 no-buffering channel pump, keeps the producing store alive while results drain,
 and bounds that drain with a timeout. P3 can therefore bridge a logical stream

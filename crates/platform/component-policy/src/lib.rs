@@ -4,7 +4,7 @@
 //! MVP outcome: egress confinement (import allowlist, mutation-proofed).
 //!
 //! This admission rule rejects every P2 or P3 `wasi:sockets` interface before
-//! publication. It is independent of the pinned wasmCloud v2.6.1 runtime
+//! publication. It is independent of the pinned wasmCloud v2.7.0 runtime
 //! policy: `TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default
 //! and proceed only with explicit raw-socket opt-in. `UdpBind` remains
 //! service-loopback-only, and raw-socket opt-in never widens bind authority.

@@ -23,14 +23,14 @@ fn section<'a>(document: &'a str, start: &str, end: &str) -> &'a str {
 }
 
 #[test]
-fn security_db_path_v2_6_1_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
+fn security_db_path_current_rev_rejects_allow_all_and_pins_p2_p3_tcp_udp() {
     let path = repository_root().join(SECURITY_DB_PATH_DOC);
     let document = fs::read_to_string(&path)
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
 
     assert!(
-        document.contains("wasmCloud v2.6.1"),
-        "DB-path posture must name the v2.6.1 runtime baseline"
+        document.contains("wasmCloud v2.7.0"),
+        "DB-path posture must name the v2.7.0 runtime baseline"
     );
     assert!(
         document.contains("`docs/archive/platform/wash-runtime-fork.md` is authoritative"),

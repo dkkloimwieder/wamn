@@ -10,7 +10,7 @@ dev/test/deploy commands.
 ## Build environment
 
 wamn-host builds against wash-runtime consumed as a **git dependency from our
-fork** (dkkloimwieder/wasmCloud, branch `wamn/2.6.1` = upstream v2.6.1).
+fork** (dkkloimwieder/wasmCloud, branch `wamn/2.7.0` = upstream v2.7.0).
 `docs/archive/platform/wash-runtime-fork.md` is the authoritative carried-policy ledger and
 rev-bump runbook; this preamble does not duplicate its commit or seam
 inventory. The rev is pinned in one place:
@@ -923,8 +923,8 @@ cargo clippy -p wamn-host -p wamn-runtime -p wamn-component-policy \
 # UdpConnect, UdpOutgoingDatagram, and service/non-loopback UdpBind arms through
 # the production host store path. Raw egress is DENIED by default and PERMITTED
 # only under wamn.allow-raw-sockets; UdpBind remains service-loopback-only. The
-# conformance proof resolves exact linked wash-runtime 2.6.1 revision
-# 09b1132f2bab36e6e71f4637bd0e4755e359dd43 and pins the shared policy plus every
+# conformance proof resolves exact linked wash-runtime 2.7.0 revision
+# daba602901507338e99f277e07a8e923c61dc557 and pins the shared policy plus every
 # P2/P3 mirror call site. --reject-tenant asserts a wamn:postgres importer
 # (pgprobe) is refused by the allowlist v1 (E17). Runs locally without a cluster:
 ./target/release/wamn-gates --log-level warn egressbench \

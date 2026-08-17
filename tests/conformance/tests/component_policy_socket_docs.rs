@@ -1,4 +1,4 @@
-//! Guards the component-policy module documentation's layered v2.6.1 socket posture.
+//! Guards the component-policy module documentation's layered v2.7.0 socket posture.
 
 const COMPONENT_POLICY_SOURCE: &str =
     include_str!("../../../crates/platform/component-policy/src/lib.rs");
@@ -34,7 +34,7 @@ fn component_policy_module_docs_match_v2_6_1_socket_enforcement() {
         "Structurally refuses publication",
         "every P2 or P3 `wasi:sockets` interface",
         "before\npublication",
-        "independent of the pinned wasmCloud v2.6.1 runtime",
+        "independent of the pinned wasmCloud v2.7.0 runtime",
         "`TcpConnect`, `UdpConnect`, and `UdpOutgoingDatagram` deny by default",
         "explicit raw-socket opt-in",
         "`UdpBind` remains\nservice-loopback-only",
@@ -45,7 +45,7 @@ fn component_policy_module_docs_match_v2_6_1_socket_enforcement() {
     ] {
         assert!(
             documentation.contains(required),
-            "component-policy module docs lost required v2.6.1 posture {required:?}"
+            "component-policy module docs lost required v2.7.0 posture {required:?}"
         );
     }
 }

@@ -12,8 +12,8 @@ use url::Host;
 use wash_runtime::host::allowed_ip_name::{AllowedIpName, check_allowed_ip_name};
 use wash_runtime::types::LocalResources;
 
-const EXPECTED_VERSION: &str = "2.6.1";
-const EXPECTED_REVISION: &str = "09b1132f2bab36e6e71f4637bd0e4755e359dd43";
+const EXPECTED_VERSION: &str = "2.7.0";
+const EXPECTED_REVISION: &str = "daba602901507338e99f277e07a8e923c61dc557";
 
 #[derive(Debug, Deserialize)]
 struct CargoMetadata {
@@ -36,6 +36,9 @@ struct RuntimePackage {
 
 struct RuntimeSources {
     linked_call: String,
+    /// The one place every socket operation is decided since upstream v2.7.0
+    /// (`82e06949`); the per-operation booleans used to live in `linked_call`.
+    policy: String,
     lookup_p2: String,
     lookup_p3: String,
     tcp_p2: String,
@@ -92,6 +95,7 @@ fn read_source(root: &Path, relative: &str) -> String {
 fn runtime_sources(root: &Path) -> RuntimeSources {
     RuntimeSources {
         linked_call: read_source(root, "src/engine/linked_call.rs"),
+        policy: read_source(root, "src/sockets/policy.rs"),
         lookup_p2: read_source(root, "src/sockets/host_ip_name_lookup.rs"),
         lookup_p3: read_source(root, "src/sockets/host_ip_name_lookup_p3.rs"),
         tcp_p2: read_source(root, "src/sockets/host_tcp.rs"),
@@ -123,17 +127,31 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
         "allowed_ip_name_lookups:Arc::clone(&template.local_resources.allowed_ip_name_lookups)",
         "lookup policy wiring",
     )?;
+    // Re-anchored at the wamn/2.7.0 pin (wamn-0h0g.15.20). Upstream `82e06949`
+    // deleted the per-operation predicate this used to pin
+    // (`socket_addr_permitted(reason, .., is_service, allow_raw_sockets)`) and
+    // replaced it with policy SHAPING: the raw-socket opt-in is consulted once,
+    // and refusing it empties the allowlist and forces Enforce. Pinning the whole
+    // function body — not just its name — is what keeps the fault injection below
+    // meaningful: any extra term smuggled into that decision breaks this marker.
     require(
         &linked_call,
-        "letpermitted=socket_addr_permitted(reason,addr.ip().is_loopback(),addr.ip().is_unspecified(),is_service,allow_raw_sockets,);",
+        "pub(crate)fnshape_socket_policy(policy:sockets::policy::SocketPolicy,allow_raw_sockets:bool,)->sockets::policy::SocketPolicy{ifallow_raw_sockets{returnpolicy;}sockets::policy::SocketPolicy{allowed_hosts:Arc::from([]),egress_mode:sockets::policy::EgressMode::Enforce,..policy}}",
         "fork socket decision",
     )?;
+
+    // The raw-egress operations now dispatch inside the shared policy, and the
+    // shaped empty allowlist only bites because Enforce refuses rather than
+    // counts — upstream's default is Count, which allows what it would refuse.
+    let socket_policy = compact(&sources.policy);
     for operation in [
-        "SocketAddrUse::TcpConnect=>allow_raw_sockets",
-        "SocketAddrUse::UdpConnect=>allow_raw_sockets",
-        "SocketAddrUse::UdpOutgoingDatagram=>allow_raw_sockets",
+        "SocketAddrUse::TcpConnect=>self.decide_connect(addr,Protocol::Tcp),",
+        "SocketAddrUse::UdpConnect=>self.decide_connect(addr,Protocol::Udp),",
+        "SocketAddrUse::UdpOutgoingDatagram=>matchself.resolve_connect(addr,Protocol::Udp)",
+        "EgressMode::Enforce=>Err(reason),",
+        "if!check_allowed_addr(&self.allowed_hosts,addr)",
     ] {
-        require(&linked_call, operation, "fork raw-egress policy")?;
+        require(&socket_policy, operation, "fork raw-egress policy")?;
     }
 
     let lookup_p2 = compact(&sources.lookup_p2);
@@ -167,10 +185,13 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
         "P2 TCP connect",
     )?;
 
+    // The P3 mirrors no longer branch on a bool; they take an `Allowed` and
+    // propagate the denial through `?`. Pinning `.into_allowed().map_err(se)?`
+    // is what proves the decision is still CONSUMED rather than discarded.
     let tcp_p3 = compact(&sources.tcp_p3);
     require(
         &tcp_p3,
-        "if!check(remote_address,SocketAddrUse::TcpConnect).await{returnErr(types::ErrorCode::AccessDenied.into());}",
+        "letallowed=check(remote_address,SocketAddrUse::TcpConnect).await.into_allowed().map_err(se)?;",
         "P3 TCP connect",
     )?;
 
@@ -189,12 +210,12 @@ fn validate_socket_dominance(sources: &RuntimeSources) -> Result<(), String> {
     let udp_p3 = compact(&sources.udp_p3);
     require(
         &udp_p3,
-        "if!(self.ctx.socket_addr_check)(remote_address,SocketAddrUse::UdpConnect).await{returnErr(ErrorCode::AccessDenied.into());}",
+        "letallowed=(self.ctx.socket_addr_check)(remote_address,SocketAddrUse::UdpConnect).await.into_allowed().map_err(se)?;",
         "P3 UDP connect",
     )?;
     require(
         &udp_p3,
-        "if!check(remote_address,SocketAddrUse::UdpOutgoingDatagram).await{returnErr(ErrorCode::AccessDenied.into());}",
+        "letallowed=check(remote_address,SocketAddrUse::UdpOutgoingDatagram).await.into_allowed().map_err(se)?;",
         "P3 UDP outgoing datagram",
     )?;
     Ok(())
@@ -297,8 +318,13 @@ fn pinned_runtime_keeps_lookup_separate_from_p2_and_p3_tcp_udp_authority() {
 fn approved_lookup_must_not_authorize_fork_denied_tcp_or_udp() {
     let package = runtime_package();
     let mut sources = runtime_sources(&package.root);
-    let original = "let permitted = socket_addr_permitted(";
-    let fault = "let permitted = !template.local_resources.allowed_ip_name_lookups.is_empty() || socket_addr_permitted(";
+    // Re-aimed at the wamn/2.7.0 decision point (wamn-0h0g.15.20): the injected
+    // fault makes an approved NAME LOOKUP also satisfy the raw-socket opt-in, so
+    // `shape_socket_policy` would return the guest's policy unshaped — allowlist
+    // intact, Enforce never set. That is exactly the privilege the two authorities
+    // must never share, and the validator has to notice it.
+    let original = "    if allow_raw_sockets {";
+    let fault = "    if allow_raw_sockets || !template.local_resources.allowed_ip_name_lookups.is_empty() {";
     assert!(
         sources.linked_call.contains(original),
         "fault injection target must remain present"

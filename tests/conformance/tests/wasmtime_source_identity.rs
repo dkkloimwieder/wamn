@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-const WASMTIME_VERSION: &str = "47.0.1";
+const WASMTIME_VERSION: &str = "47.0.3";
 const ASYNC_NATS_VERSION: &str = "0.49.1";
 
 const DIRECT_CONSUMERS: [(&str, &[&str]); 5] = [

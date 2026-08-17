@@ -31,15 +31,15 @@ edition = "2024"
 license = "Apache-2.0"
 
 [workspace.dependencies]
-# Upstream v2.6.1 plus the policies recorded in
+# Upstream v2.7.0 plus the policies recorded in
 # docs/archive/platform/wash-runtime-fork.md. The ledger is authoritative.
 # default-features off keeps the excluded `wasi-webgpu` surface disabled.
-# wamn and wash-runtime resolve one crates.io Wasmtime 47.0.1 family; enforce
+# wamn and wash-runtime resolve one crates.io Wasmtime 47.0.3 family; enforce
 # that contract with tests/conformance/tests/wasmtime_source_identity.rs.
-wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "09b1132f2bab36e6e71f4637bd0e4755e359dd43", default-features = false }
+wash-runtime = { git = "https://github.com/dkkloimwieder/wasmCloud", rev = "daba602901507338e99f277e07a8e923c61dc557", default-features = false }
 # Native sandbox hosts and gates must share one Wasmtime type universe.
-wasmtime-wasi = "47.0.1"
-wasmtime-wasi-http = "47.0.1"
+wasmtime-wasi = "47.0.3"
+wasmtime-wasi-http = "47.0.3"
 # pg_walstream is consumed from our fork (dkkloimwieder/pg-walstream). Branch
 # wamn/0.8.0 = upstream v0.8.0 (784e644) + the carried failover-slot-syntax
 # commit (S-CDC-1 finding F1: legacy `… FAILOVER` → 42601 on PG17+; the fork

@@ -276,23 +276,30 @@ gates." Until it holds, every **Done when** below is unfalsifiable.
   added commit. No carried-commit ceiling. *Revisit if a base-version bump conflicts a
   carried commit on consecutive syncs.*
 
-**The v2.6.1 upgrade is complete.** The fork retarget landed ahead of items
-1 and 2A — both build *against* the runtime — as `wamn/2.6.1`, pinned at rev
-`09b1132f`. It was a **policy re-port**, not a dependency bump: upstream
-reworked the same files the fork patches. Surface absorbed: the crates.io
-Wasmtime 47.0.1 family, `HttpServer`→`Ingress`, `AllowedIPNameLookups`, the
-`wasmcloud:host` identity and cancel interfaces, and `host-component-plugins`
-present but feature-disabled. The delta and base records remain in
+**The v2.7.0 upgrade is complete.** The fork is pinned at `wamn/2.7.0`, rev
+`daba6029`. This one is **not** the shape of the retarget before it: v2.6.1 was
+a **policy re-port**, not a dependency bump, absorbing two renames on the files
+the fork patches, at pin `09b1132f`. v2.7.0 is a **78-commit base bump that
+moved dependencies** — the crates.io Wasmtime family 47.0.1 → 47.0.3 — and it
+landed pooled per-workload outbound HTTP, one central socket-decision point, and
+warm pooled instances directly under the surfaces the fork patches. Three new
+carried rows answer that (stopped-workload egress invalidation, the plugin
+raw-socket gate, a per-run isolation kill-switch), taking the ledger to **ten**.
+It was carried by **merge** rather than re-port, so the seven v2.6.1 policy
+commits keep their SHAs. The earlier retarget records remain in
 `docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.1.md` and
-`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.0.md` pending their retirement decision. It
-also put P3 on the table for item 1's streaming decision — taken there, and
-declined in favour of the frozen P2 contract.
+`docs/archive/PLAN/WASMCLOUD-UPGRADE-2.6.0.md` pending their retirement decision.
+The 2.6.1 retarget also put P3 on the table for item 1's streaming decision —
+taken there, and declined in favour of the frozen P2 contract.
 
-**New D23 cost:** v2.6.1 maintains **parallel P2 and P3 host surfaces**, so a policy at a
+**New D23 cost:** the fork maintains **parallel P2 and P3 host surfaces**, so a policy at a
 boundary implemented separately for both generations needs dual coverage — already
 demonstrated by the UDP commit covering `host_udp.rs` *and* `host_udp_p3.rs`. Trace
 injection is the HTTP instance of the same problem, and the strongest argument yet for
-upstreaming that commit.
+upstreaming that commit. v2.7.0 sharpens the cost: pooled egress turned
+`DefaultOutgoingHandler` into a fielded struct, so every host that builds one now
+chooses a quota-registry posture — wamn takes a private per-instance registry per
+ruling wamn-0h0g.13.48 — and that choice is invisible at the call site.
 
 **Failure:** a sync that silently drops a carried commit, or a ledger entry whose exit
 condition nobody can evaluate.
