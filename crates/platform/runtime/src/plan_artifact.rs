@@ -33,6 +33,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use oci_client::client::{ClientConfig, ClientProtocol};
+use oci_client::errors::OciDistributionError;
 use oci_client::manifest::{OciDescriptor, OciImageManifest};
 use oci_client::secrets::RegistryAuth;
 use oci_client::{Client, Reference};
@@ -267,7 +268,7 @@ impl PlanSource for OciPlanSource {
             .await
             .map_err(|error| {
                 PlanFetchError::new(
-                    PlanFetchErrorKind::Unavailable,
+                    transport_kind(&error),
                     &named,
                     format!("pull artifact manifest: {error}"),
                 )
@@ -281,12 +282,29 @@ impl PlanSource for OciPlanSource {
             .await
             .map_err(|error| {
                 PlanFetchError::new(
-                    PlanFetchErrorKind::Unavailable,
+                    transport_kind(&error),
                     &named,
                     format!("pull plan layer: {error}"),
                 )
             })?;
         Ok(exact_bytes)
+    }
+}
+
+/// Classify a transport refusal into one of the two dispositions.
+///
+/// `oci-client` digests every blob it streams against the descriptor it was
+/// fetched under, so a body that disagrees surfaces here as a `DigestError`. That
+/// is not an unreachable registry: the registry answered, and answered wrong.
+/// Re-fetching it only ever yields the same bytes, so calling it `Unavailable`
+/// would release and requeue the run forever instead of refusing it — and
+/// wamn-0h0g.15.12's disposition table assigns a hash mismatch the integrity
+/// refusal. Everything else a pull can fail with really is retryable
+/// (wamn-0h0g.15.127).
+fn transport_kind(error: &OciDistributionError) -> PlanFetchErrorKind {
+    match error {
+        OciDistributionError::DigestError(_) => PlanFetchErrorKind::Mismatched,
+        _ => PlanFetchErrorKind::Unavailable,
     }
 }
 
