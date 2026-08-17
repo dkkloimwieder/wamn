@@ -39,6 +39,12 @@ readonly -a WAMN_RUNTIME_INVOCATION=(
   test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
   -p wamn-runtime --test flow_invocation_wit_coherence
 )
+# wamn-0h0g.15.120: wamn:flow-http-routing has no doc-of-record, only the two
+# vendored copies the host plugin and the flow-http guest each bind.
+readonly -a WAMN_RUNTIME_ROUTING=(
+  test --manifest-path "$WAMN_ROOT_MANIFEST" --locked --offline
+  -p wamn-runtime --test flow_http_routing_wit_coherence
+)
 readonly -a WAMN_FLOW_HTTP=(
   test --manifest-path "$WAMN_COMPONENT_MANIFEST" --locked --offline
   -p flow-http --test adversarial
@@ -65,6 +71,7 @@ wamn_dry_run() {
   wamn_print_plan authoring "${WAMN_AUTHORING[@]}"
   wamn_print_plan flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
   wamn_print_plan runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
+  wamn_print_plan runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
   wamn_print_plan flow-http "${WAMN_FLOW_HTTP[@]}"
   wamn_print_plan flow-schema "${WAMN_FLOW_SCHEMA[@]}"
   wamn_print_plan flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
@@ -102,6 +109,7 @@ case "$WAMN_COMMAND" in
     wamn_run authoring "${WAMN_AUTHORING[@]}"
     wamn_run flow-invocation "${WAMN_FLOW_INVOCATION[@]}"
     wamn_run runtime-vendored-flow-invocation "${WAMN_RUNTIME_INVOCATION[@]}"
+    wamn_run runtime-vendored-flow-http-routing "${WAMN_RUNTIME_ROUTING[@]}"
     wamn_run flow-http "${WAMN_FLOW_HTTP[@]}"
     wamn_run flow-schema "${WAMN_FLOW_SCHEMA[@]}"
     wamn_run flowrunner-world "${WAMN_FLOWRUNNER_WORLD[@]}"
