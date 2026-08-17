@@ -662,6 +662,40 @@ mod tests {
         assert!(sql.contains("xr.event_root_run_id IS DISTINCT FROM i.event_root_run_id"));
     }
 
+    // Enablement is environment-owned operational state, and the admission
+    // transaction is its enforcement point: the classifier's operand is bound
+    // to `catalog.active_attachments`, which exists only to filter on
+    // `catalog.attachment_activation.enabled`. Route bytes may move to a
+    // mounted manifest, but this refusal may not become a document field, a
+    // cached overlay, or an admission parameter — an emergency off has to stay
+    // one `UPDATE` effective at the next admission.
+    #[test]
+    fn attachment_enablement_stays_a_live_catalog_read_inside_the_admission_statement() {
+        let sql = admission_sql().admit().to_string();
+        let catalog_ddl = include_str!("../../../../deploy/sql/catalog-schema.sql");
+
+        assert!(sql.contains("active_definition AS MATERIALIZED"));
+        assert!(sql.contains("FROM catalog.active_attachments AS a"));
+        assert!(sql.contains("LEFT JOIN active_definition AS d ON true"));
+        assert!(sql.contains(
+            "WHEN i.producer = 'http' AND d.attachment_id IS NULL THEN 'inactive-definition'"
+        ));
+
+        assert!(catalog_ddl.contains("CREATE VIEW catalog.active_attachments"));
+        assert!(catalog_ddl.contains("JOIN catalog.attachment_activation activation"));
+        assert!(
+            catalog_ddl.contains("WHERE activation.enabled"),
+            "catalog.active_attachments must remain the enablement filter"
+        );
+
+        // Enablement enters through that relation, never as admission input.
+        assert!(!sql.contains("enabled"));
+        assert_eq!(
+            AdmissionResult::from_parts("inactive-definition", None),
+            Some(AdmissionResult::InactiveDefinition)
+        );
+    }
+
     #[test]
     fn result_codes_decode_without_collapsing_refusals() {
         assert_eq!(

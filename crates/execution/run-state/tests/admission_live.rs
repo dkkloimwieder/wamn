@@ -443,6 +443,66 @@ fn admission_live() {
     );
     success(&url, &negatives);
 
+    // The refusal above uses an attachment id that was never released, so it
+    // only proves an absent route refuses. Enablement is the separate,
+    // environment-owned fact: one UPDATE against catalog.attachment_activation
+    // takes a released, hash-current, tombstone-free attachment out of
+    // catalog.active_attachments, and the byte-identical prepared admission
+    // statement refuses at the very next execution.
+    success(
+        &url,
+        "UPDATE catalog.attachment_activation SET enabled = false \
+          WHERE tenant_id='t1' AND catalog_id='c1' AND environment='dev' \
+            AND attachment_id='http-a'; \
+         DO $$ BEGIN \
+           ASSERT EXISTS (SELECT FROM catalog.release_attachments \
+             WHERE tenant_id='t1' AND catalog_id='c1' AND catalog_version=1 \
+               AND attachment_id='http-a' AND definition_hash='sha256:http'); \
+           ASSERT NOT EXISTS (SELECT FROM catalog.attachment_tombstones \
+             WHERE tenant_id='t1' AND attachment_id='http-a'); \
+           ASSERT NOT EXISTS (SELECT FROM catalog.active_attachments \
+             WHERE tenant_id='t1' AND attachment_id='http-a'); \
+         END $$;",
+    );
+    let switched_off = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_http("emergency-off", "key-emergency", "fp-emergency")
+        ),
+    );
+    assert_eq!(switched_off.trim(), "inactive-definition|");
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id='emergency-off'); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id='emergency-off'); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.invocation_admissions \
+                               WHERE client_key_digest='key-emergency'); \
+         END $$;",
+    );
+
+    // Switching back on restores admission for the byte-identical request:
+    // the refusal reserved no identity, so nothing has to be undone.
+    success(
+        &url,
+        "UPDATE catalog.attachment_activation SET enabled = true \
+          WHERE tenant_id='t1' AND catalog_id='c1' AND environment='dev' \
+            AND attachment_id='http-a';",
+    );
+    let switched_on = success(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared,
+            execute_http("emergency-off", "key-emergency", "fp-emergency")
+        ),
+    );
+    assert_eq!(switched_on.trim(), "admitted|emergency-off");
+
     let invalid_inputs = format!(
         "{} {} \
          CREATE TEMP TABLE bad_http AS EXECUTE admit_stmt(\

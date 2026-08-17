@@ -1099,6 +1099,63 @@ mod tests {
         assert!(backend.admissions.lock().await.is_empty());
     }
 
+    // Enablement is decided inside the admission transaction, so a resolution
+    // that says nothing about activation still refuses with the frozen
+    // `attachment-disabled` literal. This is the leg that has to survive route
+    // bytes moving to a mounted manifest: the pre-admission check above may go
+    // with `InvocationTarget::enabled`, the transaction's refusal may not.
+    #[tokio::test]
+    async fn admission_transaction_refusal_still_reads_attachment_disabled() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend
+            .recoveries
+            .lock()
+            .await
+            .push_back(InvocationRecovery::Missing);
+        backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::InactiveDefinition);
+        let service = InvocationService::new(backend.clone(), config());
+
+        assert_eq!(
+            service.begin(request()).await.unwrap(),
+            rejected(404, "attachment-disabled")
+        );
+        assert_eq!(backend.admitted_versions.lock().await.as_slice(), &[8]);
+    }
+
+    // FLOW-SPEC rev18 §6.2's order, stated without reference to the resolved
+    // target's activation: a released outcome is returned before the admission
+    // transaction runs, so the transaction's enablement refusal can never take
+    // a released run away from its caller.
+    #[tokio::test]
+    async fn released_outcome_precedes_the_admission_transaction_activation_check() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend
+            .recoveries
+            .lock()
+            .await
+            .push_back(InvocationRecovery::Released(outcome("responded", "", 200)));
+        backend
+            .admissions
+            .lock()
+            .await
+            .push_back(AdmissionResult::InactiveDefinition);
+        let service = InvocationService::new(backend.clone(), config());
+
+        assert_eq!(
+            service.begin(request()).await.unwrap(),
+            BeginResult::Admitted(Admitted {
+                run_id: "run-1".to_string()
+            })
+        );
+        assert!(backend.admitted_versions.lock().await.is_empty());
+    }
+
     #[tokio::test]
     async fn unchanged_promotion_retries_admission() {
         let backend = MockBackend::default();
