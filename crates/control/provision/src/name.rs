@@ -55,6 +55,18 @@ pub const MAX_PROJECT_ID_LEN: usize = 40;
 /// full triple, so the assembled length is validated (see [`validate_project_env`]).
 pub const MAX_DB_NAME_LEN: usize = 63;
 
+/// Prefix for the per-project-env Kubernetes **namespace**:
+/// `wamn-<org>--<project>--<env>` (wamn-0h0g.15.3). Under the platform-reserved
+/// `wamn` prefix like every other minted name, and carrying the same `--`
+/// separated triple as `wamn-db-<org>--<project>--<env>`.
+pub const NAMESPACE_PREFIX: &str = "wamn-";
+
+/// Max length (bytes) of the per-project-env namespace: the DNS-1123 **label**
+/// limit a Kubernetes namespace name must satisfy. The triple is NEVER truncated
+/// or hash-suffixed to fit — a breaching triple is refused at provisioning
+/// (see [`validate_project_env`]).
+pub const MAX_NAMESPACE_LEN: usize = 63;
+
 /// Prefix for the per-project-env CDC **credential Secret**:
 /// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9, D19 v3) — the hyphenated K8s
 /// convention, a sibling of the `wamn-db-…` query-credential Secret and the
@@ -163,6 +175,18 @@ pub fn project_env_database_name(org: &str, project: &str, env: &str) -> String 
 /// `SecretRef`.
 pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_name(org, project, env)
+}
+
+/// The per-project-env Kubernetes namespace: `wamn-<org>--<project>--<env>`.
+///
+/// One wamn environment `(org, project, env)` is one namespace (wamn-0h0g.15.3),
+/// so every environment-scoped resource — the credential Secrets, the release
+/// manifest, the environment's hosts — is addressed by DERIVING this name from
+/// the triple. It is never configured alongside the triple and never parsed back
+/// out of a resource. Validate the assembled length with [`validate_project_env`]
+/// before use; a triple that does not fit is refused, not shortened.
+pub fn project_env_namespace(org: &str, project: &str, env: &str) -> String {
+    format!("{NAMESPACE_PREFIX}{org}--{project}--{env}")
 }
 
 /// The fixed-mount effect-writer credential Secret name.
@@ -575,6 +599,37 @@ mod tests {
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
         // A comfortably-sized triple is fine.
         assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), "prod").is_ok());
+    }
+
+    #[test]
+    fn the_environment_namespace_derives_from_the_triple_and_is_bounded() {
+        // One environment = one namespace (wamn-0h0g.15.3): the same `--`
+        // separated triple the database name carries, under the `wamn-` prefix.
+        assert_eq!(
+            project_env_namespace("acme", "billing", "dev"),
+            "wamn-acme--billing--dev"
+        );
+        // canary and prod are distinct namespaces, as they are distinct databases.
+        assert_ne!(
+            project_env_namespace("acme", "billing", "canary"),
+            project_env_namespace("acme", "billing", "prod")
+        );
+
+        // The boundary: the longest triple validate_project_env admits sits
+        // EXACTLY on the database bound, and its namespace clears the DNS-1123
+        // cap — the prefix difference is the whole of the margin.
+        let org = "o".repeat(25);
+        let project = "p".repeat(22);
+        assert!(validate_project_env(&org, &project, "prod").is_ok());
+        assert_eq!(
+            project_env_database_name(&org, &project, "prod").len(),
+            MAX_DB_NAME_LEN
+        );
+        assert_eq!(
+            project_env_namespace(&org, &project, "prod").len(),
+            MAX_NAMESPACE_LEN - 3,
+            "three bytes of margin: `wamn-` against `wamn-db-`"
+        );
     }
 
     #[test]
