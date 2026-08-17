@@ -8,6 +8,7 @@ pub mod engine;
 pub mod flow_invocation;
 pub mod memory_metrics;
 pub mod plugins;
+pub mod release_manifest;
 
 use wash_runtime::engine::Engine;
 use wash_runtime::wasmtime::component::Component;
