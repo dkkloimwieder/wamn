@@ -15,7 +15,6 @@ fn interfaces() -> ResolvedInterfaces {
     BTreeMap::from([
         ("echo".to_string(), vec!["main".to_string()]),
         ("event".to_string(), vec!["main".to_string()]),
-        ("event".to_string(), vec!["main".to_string()]),
         ("fail".to_string(), vec!["main".to_string()]),
         ("request".to_string(), vec!["main".to_string()]),
         ("respond".to_string(), vec!["main".to_string()]),

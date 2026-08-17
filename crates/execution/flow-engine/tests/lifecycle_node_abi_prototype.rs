@@ -80,7 +80,6 @@ fn compile(flow: &Flow) -> Plan<'_> {
             vec![MAIN_PORT.to_string(), "drop".to_string()],
         ),
         ("event".to_string(), vec![MAIN_PORT.to_string()]),
-        ("event".to_string(), vec![MAIN_PORT.to_string()]),
         ("fail".to_string(), vec![MAIN_PORT.to_string()]),
         ("request".to_string(), vec![MAIN_PORT.to_string()]),
         ("respond".to_string(), vec![MAIN_PORT.to_string()]),
@@ -365,4 +364,66 @@ fn malformed_abi_results_cannot_authorize_engine_lifecycle_mutation() {
     );
     assert_eq!(state.step_seq(), 0);
     assert_eq!(plan.next(&mut state, 0), Step::Dispatch(dispatch));
+}
+
+/// The payload clause of the request-entry contract is covered by
+/// `malformed_abi_results_cannot_authorize_engine_lifecycle_mutation`; this covers
+/// its other two clauses — an entry emission may neither replace the run context
+/// nor leave the `main` port, even when the payload is preserved exactly
+/// (wamn-0h0g.15.124).
+#[test]
+fn request_emissions_that_replace_context_or_leave_the_main_port_are_refused() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"request-entry-guard","version":1,
+            "nodes":[
+              {"id":"in","type":"request","config":{"input-schema":{}}},
+              {"id":"out","type":"respond","config":{"status":200}}
+            ],
+            "edges":[{"from":"in","to":"out"}]}"#,
+    );
+    let plan = compile(&flow);
+    let admitted = json!({"admitted": true});
+    let mut state = plan.start("request-entry-guard-run", admitted.clone());
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected request dispatch, got {other:?}"),
+    };
+
+    for smuggled in [
+        NodeOutcome::ok_with_context(admitted.clone(), MAIN_PORT, json!({"escalated": true})),
+        NodeOutcome::ok_on(admitted.clone(), "drop"),
+    ] {
+        let mut candidate = state.clone();
+        let refusal = plan.apply(&mut candidate, &dispatch, smuggled, 0);
+        assert_eq!(refusal, Err(wamn_runner::ApplyError::InvalidRequestEmission));
+        assert_eq!(candidate, state, "a refusal must not mutate lifecycle state");
+    }
+}
+
+/// The event half of the clause above: the externally admitted input crosses the
+/// ABI unchanged or not at all, so an event entry may neither replace the run
+/// context nor leave the `main` port (wamn-0h0g.15.124).
+#[test]
+fn event_emissions_that_replace_context_or_leave_the_main_port_are_refused() {
+    let flow = flow(
+        r#"{"schema-version":"0.1","flow-id":"event-entry-guard","version":1,
+            "nodes":[{"id":"in","type":"event"}],"edges":[]}"#,
+    );
+    let plan = compile(&flow);
+    let admitted = json!({"topic": "orders.created"});
+    let mut state = plan.start("event-entry-guard-run", admitted.clone());
+    let dispatch = match plan.next(&mut state, 0) {
+        Step::Dispatch(dispatch) => dispatch,
+        other => panic!("expected event dispatch, got {other:?}"),
+    };
+
+    for smuggled in [
+        NodeOutcome::ok_with_context(admitted.clone(), MAIN_PORT, json!({"escalated": true})),
+        NodeOutcome::ok_on(admitted.clone(), "drop"),
+    ] {
+        let mut candidate = state.clone();
+        let refusal = plan.apply(&mut candidate, &dispatch, smuggled, 0);
+        assert_eq!(refusal, Err(wamn_runner::ApplyError::InvalidEventEmission));
+        assert_eq!(candidate, state, "a refusal must not mutate lifecycle state");
+    }
 }
