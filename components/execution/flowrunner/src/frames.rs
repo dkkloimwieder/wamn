@@ -17,7 +17,16 @@ use wamn_runner::{
 
 use super::{VerifiedResolutionPlan, VerifiedResolutionSnapshot};
 
-const CALL_INPUT_SCHEMA_URI: &str = "mem://call-flow-input-schema.json";
+/// In-memory document key under which an entry guard is handed to the schema
+/// compiler. Never persisted, compared, or observable outside this module.
+const ENTRY_INPUT_SCHEMA_URI: &str = "mem://entry-input-schema.json";
+
+/// The one classification for a payload refused by a plan's entry input-schema
+/// guard, at either admission boundary.
+///
+/// The spelling predates root-entry enforcement (wamn-0h0g.15.118) and is kept
+/// verbatim: the call-flow boundary already emits it, and a second spelling for
+/// the same refusal would split one classification in two.
 const CALL_INPUT_INVALID: &str = "call-input-invalid";
 
 /// Maximum number of simultaneously active callee frames under one root run.
@@ -471,6 +480,9 @@ impl<'snapshot> FrameStack<'snapshot> {
     }
 
     /// Execute the root graph using only the injected pure-node dispatcher.
+    ///
+    /// The payload must satisfy the root plan's own entry input-schema guard; a
+    /// violation fails the root run before the graph is projected.
     pub fn execute_root(
         &mut self,
         payload: Value,
@@ -488,6 +500,33 @@ impl<'snapshot> FrameStack<'snapshot> {
         // Set before projection, dispatch, or a callee lookup: even a refused
         // first attempt cannot replay the same claimed root through this stack.
         self.started = true;
+        // Nothing upstream can enforce the root entry guard: the guard document
+        // lives only in these plan bytes, which only this process pulls, so the
+        // host-side HTTP routing provider serves the unconstraining schema and
+        // would otherwise admit any shape (wamn-0h0g.15.118). Enforced before the
+        // graph is projected and before any dispatch is debited — an inadmissible
+        // payload buys no root work — and refused with the classification the
+        // call-flow boundary already uses. An event entry's guard is required to
+        // be exactly `true`, so every event payload stays admitted.
+        let root_plan = self.snapshot.root().plan();
+        let entry_id = &root_plan.body.entry_instruction;
+        let entry_refusal = entry_input_error(root_plan, &payload).map_err(|message| {
+            FrameExecutionError::new(
+                FrameExecutionErrorKind::InvalidVerifiedPlan,
+                0,
+                Some(entry_id.as_str()),
+                message,
+            )
+        })?;
+        if let Some(detail) = entry_refusal {
+            return Ok(FrameCompletion::Failed(FrameFailure {
+                frame_id: 0,
+                node_id: entry_id.to_string(),
+                occurrence: 0,
+                kind: ExecutionFailureKind::InvalidInput,
+                detail,
+            }));
+        }
         self.execute_current(payload, dispatcher, fact_sink)
     }
 
@@ -853,7 +892,7 @@ impl<'snapshot> FrameStack<'snapshot> {
             )
         })?;
 
-        if let Some(error) = call_input_error(callee.plan(), &dispatch.payload)
+        if let Some(error) = entry_input_error(callee.plan(), &dispatch.payload)
             .map_err(|message| self.invalid_plan_error(&dispatch.node, message))?
         {
             return Ok(FrameDispatchOutcome::Node(NodeOutcome::Error(
@@ -996,7 +1035,14 @@ impl<'snapshot> FrameStack<'snapshot> {
     }
 }
 
-fn call_input_error(
+/// Verdict of one payload against a verified plan's entry input-schema guard.
+///
+/// Both admission boundaries share this check and its classification: the
+/// call-flow boundary validates a callee's guard before pushing its frame, and
+/// the root boundary validates the root plan's own guard before the graph is
+/// projected (wamn-0h0g.15.118). `Err` means the verified guard itself cannot be
+/// compiled — a plan-integrity refusal, not a payload refusal.
+fn entry_input_error(
     plan: &ExecutionPlanV2,
     payload: &Value,
 ) -> Result<Option<ErrorDetail>, String> {
@@ -1004,19 +1050,19 @@ fn call_input_error(
     compiler.set_default_draft(Draft::V2020_12);
     compiler
         .add_resource(
-            CALL_INPUT_SCHEMA_URI,
+            ENTRY_INPUT_SCHEMA_URI,
             plan.body.entry_input_schema_guard.clone(),
         )
-        .map_err(|error| format!("verified call input guard cannot be loaded: {error}"))?;
+        .map_err(|error| format!("verified entry input guard cannot be loaded: {error}"))?;
     let mut schemas = Schemas::new();
     let schema = compiler
-        .compile(CALL_INPUT_SCHEMA_URI, &mut schemas)
-        .map_err(|error| format!("verified call input guard cannot be compiled: {error}"))?;
+        .compile(ENTRY_INPUT_SCHEMA_URI, &mut schemas)
+        .map_err(|error| format!("verified entry input guard cannot be compiled: {error}"))?;
     Ok(schemas
         .validate(payload, schema)
         .err()
         .map(|_| ErrorDetail {
-            message: "call-flow payload does not satisfy the callee input schema".to_string(),
+            message: "payload does not satisfy the entry input schema".to_string(),
             code: Some(CALL_INPUT_INVALID.to_string()),
             data: None,
         }))
@@ -2166,6 +2212,101 @@ mod tests {
             NodeFactOutcome::Error(NodeError::InvalidInput(detail))
                 if detail.code.as_deref() == Some(CALL_INPUT_INVALID)
         ));
+    }
+
+    fn guarded_entry_plan() -> ExecutionPlanV2 {
+        request_plan(
+            &hash('c'),
+            json!({
+                "type": "object",
+                "required": ["name"],
+                "properties": {"name": {"type": "string"}}
+            }),
+            vec![node(
+                "observe",
+                "test-pure",
+                json!({}),
+                ExecutionEffectPolicy::Pure,
+            )],
+            vec![
+                edge("request", "main", "observe"),
+                edge("observe", "main", RESPOND),
+            ],
+            200,
+        )
+    }
+
+    #[test]
+    fn root_entry_guard_refuses_an_inadmissible_payload_before_projection() {
+        let snapshot = snapshot("root", vec![("root", guarded_entry_plan())]);
+        let mut stack = FrameStack::new("run-root-guard", &snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
+
+        let FrameCompletion::Failed(failure) = stack
+            .execute_root(json!({"name": 7}), &mut dispatcher, &mut fact_sink)
+            .unwrap()
+        else {
+            panic!("a payload violating the root entry guard must fail the root");
+        };
+
+        assert_eq!(failure.kind(), ExecutionFailureKind::InvalidInput);
+        assert_eq!(failure.detail().code.as_deref(), Some(CALL_INPUT_INVALID));
+        assert_eq!(failure.frame_id(), 0);
+        assert_eq!(failure.node_id(), "request");
+        assert_eq!(failure.occurrence(), 0);
+        assert!(
+            dispatcher.seen.is_empty(),
+            "the refused payload never reached a node"
+        );
+        assert!(
+            fact_sink.facts.is_empty(),
+            "the refused payload emits no entry fact"
+        );
+        assert_eq!(stack.dispatched_nodes, 0);
+        assert_eq!(stack.next_fact_sequence, 0);
+        assert_eq!(stack.depth(), 1);
+
+        let replay = stack
+            .execute_root(json!({"name": "ada"}), &mut dispatcher, &mut fact_sink)
+            .unwrap_err();
+
+        assert_eq!(replay.kind(), FrameExecutionErrorKind::RootAlreadyExecuted);
+        assert!(dispatcher.seen.is_empty(), "a refused root cannot replay");
+    }
+
+    #[test]
+    fn root_entry_guard_admits_a_conforming_payload_under_the_same_plan() {
+        let snapshot = snapshot("root", vec![("root", guarded_entry_plan())]);
+        let mut stack = FrameStack::new("run-root-admit", &snapshot, CaptureMode::Off);
+        let mut dispatcher = RecordingDispatcher::default();
+        let mut fact_sink = RecordingFactSink::default();
+
+        assert_eq!(
+            stack
+                .execute_root(json!({"name": "ada"}), &mut dispatcher, &mut fact_sink)
+                .unwrap(),
+            FrameCompletion::Responded {
+                body: json!({"name": "ada"}),
+                status: 200,
+            }
+        );
+        assert_eq!(
+            dispatcher
+                .seen
+                .iter()
+                .map(|seen| seen.node_id.as_str())
+                .collect::<Vec<_>>(),
+            ["observe"]
+        );
+        assert_eq!(
+            fact_sink
+                .facts
+                .iter()
+                .map(|fact| (fact.sequence(), fact.local_node_id().as_str()))
+                .collect::<Vec<_>>(),
+            [(0, "request"), (1, "observe"), (2, RESPOND)]
+        );
     }
 
     #[test]
