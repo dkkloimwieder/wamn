@@ -6059,3 +6059,19 @@ verify the sha256 matches:
 | --- | --- | --- |
 | `self-dep-promoted` | `[dev-dependencies]` → `[dependencies]` above the self declaration | `governed_dependency_identities_are_workspace_owned` |
 | `self-dep-deleted` | remove the self declaration entirely | `the_catalog_self_dev_dependency_is_still_the_construction_this_guard_exempts` |
+
+## SR-MVP — governed version identities reconciled with the demolished surface (wamn-0h0g.15.110)
+
+Four governed first-party identities were watching artifacts earlier waves had
+deleted or moved. Three are retired with the bead and commit that deleted their
+subject cited in place, so the reconcile is auditable rather than a silencing; one
+had legitimately grown and its count was corrected.
+
+Raising the authoring-client envelope count from 2 to 4 is a **tightening**, not a
+relaxation: the count is exact equality, so all four pinned envelopes must now stay.
+Prove it by unpinning one of the four and confirming the guard reports
+`expected 4 occurrence(s) ... found 3`.
+
+```bash
+cargo test --locked -p wamn-proof-conformance --lib version_identity
+```

@@ -57,11 +57,13 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,
     },
-    GovernedLiteral {
-        path: "crates/scenarios/model/src/test_set.rs",
-        exact: r#"pub const TEST_SET_SCHEMA_VERSION: &str = "0.1";"#,
-        expected_count: 1,
-    },
+    // RETIRED `crates/scenarios/model/src/test_set.rs` /
+    // `TEST_SET_SCHEMA_VERSION`: wamn-0h0g.15.27 (3a042d96) deleted the
+    // self-describing test-set document, so the constant has no subject. Cases
+    // now ride the flow document and inherit the `flow-model` SCHEMA_VERSION
+    // identity guarded immediately below. wamn-0h0g.15.76 (eb1c3a88) then moved
+    // the surviving file to crates/execution/flow-model/src/test_set.rs, so
+    // repointing the path alone would not resurrect the constant.
     GovernedLiteral {
         path: "crates/execution/flow-model/src/types.rs",
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
@@ -92,11 +94,10 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: r#"pub const SCHEMA_VERSION: &str = "0.1";"#,
         expected_count: 1,
     },
-    GovernedLiteral {
-        path: "deploy/sql/authoring-tests.sql",
-        exact: "schema_version text NOT NULL CHECK (schema_version = '0.1'),",
-        expected_count: 1,
-    },
+    // RETIRED `deploy/sql/authoring-tests.sql` / the `schema_version` column
+    // CHECK: wamn-0h0g.15.27 (3a042d96) dropped `wamn_run.authoring_test_sets`,
+    // the only relation that carried a governed schema version. The file
+    // retains no `0.1` identity of any form.
     GovernedLiteral {
         path: "deploy/sql/system-schema.sql",
         exact: "INSERT INTO registry.meta (schema_version) VALUES ('0.1');",
@@ -107,15 +108,19 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: "-- schema_version: 0.1",
         expected_count: 1,
     },
-    GovernedLiteral {
-        path: "crates/schema/control/src/run_plane.rs",
-        exact: r#"definition: "CHECK (schema_version = '0.1'::text)","#,
-        expected_count: 1,
-    },
+    // RETIRED `crates/schema/control/src/run_plane.rs` /
+    // `authoring_test_sets_schema_version_check`: the reconciliation CheckSpec
+    // went with its table in wamn-0h0g.15.27 (3a042d96). The admission-context
+    // CheckSpec below is the only governed `0.1` reconciliation identity left in
+    // that file.
     GovernedLiteral {
         path: "clients/authoring-client/src/generated/authoring.ts",
+        // Four pinned envelopes, one per `schema_version` field in
+        // crates/authoring/model/src/lib.rs: AuthoringRequest,
+        // AuthoringResponse, and the AuthoringQuery{Request,Response} pair that
+        // wamn-0h0g.7.3 (ce919195) added to the wire contract.
         exact: r#""schema-version": "0.1";"#,
-        expected_count: 2,
+        expected_count: 4,
     },
     GovernedLiteral {
         path: "clients/authoring-client/src/generated/authoring.ts",
