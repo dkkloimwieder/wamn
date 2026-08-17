@@ -16,6 +16,16 @@
 //!     and the connect proceeds — then fails for an unrelated reason against a
 //!     dead local port → verdict `connected` / `allowed-failed` (NOT `denied`).
 //!
+//! HOST-LOOPBACK ARMS (wamn-0h0g.15.52). `host.wasmcloud.internal` — the fork's
+//! sentinel address — names the *machine's* own loopback, a separate door from
+//! raw egress with its own two-part grant: the workload's
+//! `allowedHostLoopbackPorts` AND the host's own `--allow-host-loopback`. Two
+//! arms dial that sentinel: `host-loopback-listed` at the port the gate's grant
+//! list names when it supplies one, and `host-loopback-unlisted` at a port no
+//! run ever lists. The gate names both addresses in the environment, built from
+//! the linked fork's own sentinel constant, so this fixture never spells the
+//! address and the two cannot drift.
+//!
 //! The verdict for each arm is written to the file named by
 //! `SOCKPROBE_REPORT_PATH` (a mounted host-path volume — the proof report-file
 //! pattern), and echoed to stderr. `denied` is the ONLY token the negative
@@ -26,6 +36,8 @@ use std::io::Write as _;
 use std::net::{SocketAddr, TcpStream, UdpSocket};
 
 const TARGET_ENV: &str = "SOCKPROBE_NON_LOOPBACK_TARGET";
+const HOST_LOOPBACK_LISTED_ENV: &str = "SOCKPROBE_HOST_LOOPBACK_LISTED";
+const HOST_LOOPBACK_UNLISTED_ENV: &str = "SOCKPROBE_HOST_LOOPBACK_UNLISTED";
 
 /// The raw-egress denial the policy raises: `access-denied` on the WIT side maps
 /// to `PermissionDenied` in `std` (fork `network.rs` `error_code_from_io`).
@@ -78,6 +90,23 @@ fn udp_bind_verdict(address: SocketAddr) -> &'static str {
     }
 }
 
+/// Attempt a raw outbound TCP connect to the host sentinel address the gate
+/// names in `var` — the machine's own loopback, reached through the fork's
+/// `host.wasmcloud.internal` zone rather than through `127.0.0.1` (which means
+/// the guest's own virtual network).
+///
+/// `no-target` when the gate named no address: a token no assertion accepts, so
+/// an unset variable can never read as a policy verdict.
+fn host_loopback_verdict(var: &str) -> &'static str {
+    match std::env::var(var)
+        .ok()
+        .and_then(|value| value.parse::<SocketAddr>().ok())
+    {
+        Some(target) => tcp_connect_verdict(target),
+        None => "no-target",
+    }
+}
+
 fn main() {
     let Ok(target) = std::env::var(TARGET_ENV)
         .ok()
@@ -96,12 +125,15 @@ fn main() {
     let non_loopback_bind = SocketAddr::new(target.ip(), 0);
     let out = format!(
         "tcp-connect={}\nudp-connect={}\nudp-outgoing-datagram={}\n\
-         udp-bind-loopback={}\nudp-bind-non-loopback={}\n",
+         udp-bind-loopback={}\nudp-bind-non-loopback={}\n\
+         host-loopback-listed={}\nhost-loopback-unlisted={}\n",
         tcp_connect_verdict(target),
         udp_connect_verdict(target),
         udp_outgoing_datagram_verdict(target),
         udp_bind_verdict(loopback_bind),
         udp_bind_verdict(non_loopback_bind),
+        host_loopback_verdict(HOST_LOOPBACK_LISTED_ENV),
+        host_loopback_verdict(HOST_LOOPBACK_UNLISTED_ENV),
     );
     if let Ok(path) = std::env::var("SOCKPROBE_REPORT_PATH") {
         let _ = std::fs::write(&path, &out);

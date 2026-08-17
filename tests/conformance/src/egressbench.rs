@@ -15,6 +15,19 @@
 //! the fork denies it by default and permits it only under the
 //! `wamn.allow-raw-sockets` opt-in (see `assert_runtime_sockets`).
 //!
+//! HOST-LOOPBACK GRANT SURFACE (wamn-0h0g.15.52). `allowedHostLoopbackPorts` is
+//! a second, independent door: it governs the fork's `host.wasmcloud.internal`
+//! sentinel, which reaches the *machine's* real loopback rather than the guest's
+//! virtual network. It is not raw egress — `shape_socket_policy` leaves it
+//! untouched — so neither the raw-socket opt-in nor its absence decides it. The
+//! runtime phase dials the sentinel in all three runs and asserts every dial is
+//! refused, INCLUDING the run whose workload listed the port it dials: a
+//! workload grant is inert unless the host itself enabled the door, and wamn's
+//! host never does (nothing in this repository installs a host socket policy, so
+//! the engine carries the fork's `host_loopback_enabled: false` default). The
+//! unit gate isolates the two halves against the linked fork's own
+//! `SocketPolicy::decide`, which is the only place they can be separated.
+//!
 //! WHAT IT PROVES. The "plugin is the only DB path" guarantee (docs 2.6) rests
 //! on WIT-world composition: the runtime registers `wasi:sockets` on every
 //! workload linker unconditionally (wash-runtime `engine/mod.rs`), and the fork's
@@ -36,7 +49,7 @@
 //! (`egress_guard::denied_imports`, E13a), and must import the plugin.
 
 use std::collections::BTreeSet;
-use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
+use std::net::{IpAddr, SocketAddr, UdpSocket as StdUdpSocket};
 use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Command;
@@ -45,7 +58,9 @@ use std::time::Duration;
 
 use anyhow::{Context as _, bail};
 use clap::Args;
+use wash_runtime::host::allowed_loopback::AllowedLoopbackPort;
 use wash_runtime::host::{HostApi, HostBuilder};
+use wash_runtime::sockets::internal_names::HOST_SENTINEL;
 use wash_runtime::types::{
     HostPathVolume, LocalResources, Service, Volume, VolumeMount, VolumeType, Workload,
     WorkloadStartRequest,
@@ -67,8 +82,10 @@ pub struct EgressBenchArgs {
     /// RUNTIME raw-socket phase runs: sockprobe is instantiated as a service
     /// through the production host store path — where the fork's `linked_call`
     /// `socket_addr_check` governs raw TCP/UDP egress — with the raw-socket
-    /// opt-in OFF (deny-by-default, E13/E15 negative) then ON (opted-in
-    /// positive). Optional: the static import review runs without it.
+    /// opt-in OFF (deny-by-default, E13/E15 negative), then ON (opted-in
+    /// positive), then a third run carrying a non-empty
+    /// `allowedHostLoopbackPorts` (the grant surface, wamn-0h0g.15.52).
+    /// Optional: the static import review runs without it.
     #[arg(long)]
     sockprobe: Option<PathBuf>,
 }
@@ -82,6 +99,18 @@ const OTHER_EGRESS_PKGS: &[&str] = &[
     "wasi:messaging",
     "wamn:messaging",
 ];
+
+/// The host-loopback port the runtime phase's third run names in
+/// `allowedHostLoopbackPorts`, and dials through the sentinel.
+///
+/// 5432 deliberately: if this door ever opened it would open onto the local
+/// Postgres this whole gate exists to keep behind the `wamn:postgres` plugin, so
+/// a regression reports `connected` rather than something academic.
+const HOST_LOOPBACK_LISTED_PORT: u16 = 5432;
+
+/// A host-loopback port NO run ever lists. Dialed alongside the listed one so
+/// the report distinguishes "this port was refused" from "the arm never ran".
+const HOST_LOOPBACK_UNLISTED_PORT: u16 = 6379;
 
 /// The `namespace:package` of an instance import. Imports look like
 /// `wasi:sockets/tcp@0.2.3`; we key policy on the `ns:pkg` prefix.
@@ -170,9 +199,11 @@ struct SocketVerdicts {
     udp_outgoing_datagram: String,
     udp_bind_loopback: String,
     udp_bind_non_loopback: String,
+    host_loopback_listed: String,
+    host_loopback_unlisted: String,
 }
 
-/// Parse sockprobe's five arm-specific verdicts.
+/// Parse sockprobe's seven arm-specific verdicts.
 fn read_verdicts(report_dir: &Path) -> Option<SocketVerdicts> {
     let contents = std::fs::read_to_string(report_dir.join("outcome")).ok()?;
     let mut tcp_connect = None;
@@ -180,6 +211,8 @@ fn read_verdicts(report_dir: &Path) -> Option<SocketVerdicts> {
     let mut udp_outgoing_datagram = None;
     let mut udp_bind_loopback = None;
     let mut udp_bind_non_loopback = None;
+    let mut host_loopback_listed = None;
+    let mut host_loopback_unlisted = None;
     for line in contents.lines() {
         if let Some(v) = line.strip_prefix("tcp-connect=") {
             tcp_connect = Some(v.trim().to_string());
@@ -191,6 +224,10 @@ fn read_verdicts(report_dir: &Path) -> Option<SocketVerdicts> {
             udp_bind_loopback = Some(v.trim().to_string());
         } else if let Some(v) = line.strip_prefix("udp-bind-non-loopback=") {
             udp_bind_non_loopback = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("host-loopback-listed=") {
+            host_loopback_listed = Some(v.trim().to_string());
+        } else if let Some(v) = line.strip_prefix("host-loopback-unlisted=") {
+            host_loopback_unlisted = Some(v.trim().to_string());
         }
     }
     Some(SocketVerdicts {
@@ -199,6 +236,8 @@ fn read_verdicts(report_dir: &Path) -> Option<SocketVerdicts> {
         udp_outgoing_datagram: udp_outgoing_datagram?,
         udp_bind_loopback: udp_bind_loopback?,
         udp_bind_non_loopback: udp_bind_non_loopback?,
+        host_loopback_listed: host_loopback_listed?,
+        host_loopback_unlisted: host_loopback_unlisted?,
     })
 }
 
@@ -215,6 +254,29 @@ fn runtime_verdicts_pass(deny: &SocketVerdicts, optin: &SocketVerdicts) -> bool 
         && optin.udp_bind_non_loopback == "denied"
 }
 
+/// The host-loopback door, across all three runs.
+///
+/// Every sentinel dial must be refused — including `host_loopback_listed` in the
+/// run whose workload DID list that port, because a workload-level
+/// `allowedHostLoopbackPorts` grant is inert unless the host itself enabled the
+/// door. That is the property the third run exists to show, and it is the only
+/// half of the two-part grant this phase can isolate: the fork answers
+/// `HostLoopbackNotPermitted` for either missing half, so separating them needs
+/// a host that enabled the door, which nothing in this repository configures
+/// (see `host_loopback_needs_the_host_enable_and_the_listed_port_together`).
+///
+/// `denied` is required verbatim rather than "not permitted", so sockprobe's
+/// `no-target` (the gate named no sentinel) can never pass as a refusal.
+fn host_loopback_verdicts_pass(
+    deny: &SocketVerdicts,
+    optin: &SocketVerdicts,
+    loopback: &SocketVerdicts,
+) -> bool {
+    [deny, optin, loopback].into_iter().all(|verdicts| {
+        verdicts.host_loopback_listed == "denied" && verdicts.host_loopback_unlisted == "denied"
+    })
+}
+
 /// Resolve an address on this host's non-loopback interface. Port 9 is
 /// intentionally expected to be closed: opted-in TCP therefore returns quickly
 /// with connection-refused, while the policy check still sees a real
@@ -229,14 +291,29 @@ fn non_loopback_target() -> anyhow::Result<SocketAddr> {
     Ok(SocketAddr::new(ip, 9))
 }
 
+/// The `host.wasmcloud.internal` address for `port`, built from the LINKED
+/// fork's own `HOST_SENTINEL`.
+///
+/// sockprobe is a wasm guest with no access to the fork's constants, so the gate
+/// resolves the sentinel here and passes the whole address through the
+/// environment. Reading the constant rather than spelling `127.255.255.254`
+/// means the fixture cannot drift onto an address the policy no longer gates —
+/// and `the_sentinel_target_handed_to_sockprobe_reaches_the_gated_branch` proves
+/// what this returns still lands on the host-loopback branch.
+fn sentinel_target(port: u16) -> SocketAddr {
+    SocketAddr::new(IpAddr::V4(HOST_SENTINEL), port)
+}
+
 /// Start sockprobe as a SERVICE (so `is_service` is true and its loopback UDP
 /// bind is permitted — the raw-egress connect is the gated op) with a mounted
-/// host-path report volume, optionally opting into raw sockets.
+/// host-path report volume, optionally opting into raw sockets and optionally
+/// granting host-loopback ports.
 async fn run_sockprobe(
     host: &Arc<wash_runtime::host::Host>,
     bytes: &[u8],
     id: &str,
     allow_raw_sockets: bool,
+    host_loopback: &[AllowedLoopbackPort],
     report_dir: &Path,
 ) -> anyhow::Result<()> {
     let mut resources = LocalResources {
@@ -251,12 +328,12 @@ async fn run_sockprobe(
         }],
         allowed_hosts: Arc::from(vec![]),
         allowed_ip_name_lookups: Default::default(),
-        // [wamn-0h0g.15.20] New at the wamn/2.7.0 pin. EMPTY = deny every
-        // host-loopback connection, which is what this denial gate must assert;
-        // a non-empty list is inert anyway unless the host was started with
-        // `--allow-host-loopback`. Positive coverage of the grant surface is
-        // wamn-0h0g.15.52.
-        allowed_host_loopback_ports: Default::default(),
+        // [wamn-0h0g.15.20 / .15.52] New at the wamn/2.7.0 pin. EMPTY = deny
+        // every host-loopback connection. The third run supplies a NON-empty
+        // list naming the port it dials, which must change nothing: the grant is
+        // inert unless the host was started with `--allow-host-loopback`, and
+        // nothing here installs a host socket policy that could enable it.
+        allowed_host_loopback_ports: Arc::from(host_loopback),
     };
     resources.environment.insert(
         "SOCKPROBE_REPORT_PATH".to_string(),
@@ -265,6 +342,14 @@ async fn run_sockprobe(
     resources.environment.insert(
         "SOCKPROBE_NON_LOOPBACK_TARGET".to_string(),
         non_loopback_target()?.to_string(),
+    );
+    resources.environment.insert(
+        "SOCKPROBE_HOST_LOOPBACK_LISTED".to_string(),
+        sentinel_target(HOST_LOOPBACK_LISTED_PORT).to_string(),
+    );
+    resources.environment.insert(
+        "SOCKPROBE_HOST_LOOPBACK_UNLISTED".to_string(),
+        sentinel_target(HOST_LOOPBACK_UNLISTED_PORT).to_string(),
     );
     if allow_raw_sockets {
         // The fork reads this per-component config in build_ctx_from_template
@@ -307,7 +392,13 @@ async fn run_sockprobe(
 /// test — not a re-implementation. Deny-by-default (no opt-in) must refuse both
 /// protocols; the opt-in (`wamn.allow-raw-sockets=true`) must permit both. The
 /// verdict comes from sockprobe's report file (`denied` vs NOT-`denied`), so the
-/// assertion is text-independent. Returns whether the phase passed.
+/// assertion is text-independent.
+///
+/// A THIRD run (wamn-0h0g.15.52) carries a non-empty `allowedHostLoopbackPorts`
+/// naming the port its sentinel arm dials. Its raw-egress verdicts are not
+/// asserted — the grant governs a different door — but every run's host-loopback
+/// arms must be refused, so the listed port shows the workload half of the grant
+/// is inert on its own. Returns whether the phase passed.
 async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
     println!("\n## runtime raw-socket policy (E13 TCP / E15 UDP) — sockprobe as a service");
     let engine = build_engine(&[])?;
@@ -317,34 +408,56 @@ async fn assert_runtime_sockets(sockprobe: &[u8]) -> anyhow::Result<bool> {
     let base = std::env::temp_dir().join(format!("wamn-egress-sock-{}", std::process::id()));
     let deny_dir = base.join("deny");
     let optin_dir = base.join("optin");
+    let loopback_dir = base.join("loopback");
     std::fs::create_dir_all(&deny_dir)?;
     std::fs::create_dir_all(&optin_dir)?;
+    std::fs::create_dir_all(&loopback_dir)?;
 
-    run_sockprobe(&host, sockprobe, "sock-deny", false, &deny_dir).await?;
-    run_sockprobe(&host, sockprobe, "sock-optin", true, &optin_dir).await?;
+    let listed = [AllowedLoopbackPort::tcp(HOST_LOOPBACK_LISTED_PORT)];
+    run_sockprobe(&host, sockprobe, "sock-deny", false, &[], &deny_dir).await?;
+    run_sockprobe(&host, sockprobe, "sock-optin", true, &[], &optin_dir).await?;
+    run_sockprobe(
+        &host,
+        sockprobe,
+        "sock-loopback",
+        false,
+        &listed,
+        &loopback_dir,
+    )
+    .await?;
 
-    // sockprobe writes its verdicts and exits within milliseconds; give both
-    // services time to run before reading the reports.
+    // sockprobe writes its verdicts and exits within milliseconds; give all
+    // three services time to run before reading the reports.
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     let deny = read_verdicts(&deny_dir);
     let optin = read_verdicts(&optin_dir);
+    let loopback = read_verdicts(&loopback_dir);
     let _ = std::fs::remove_dir_all(&base);
 
     println!("  deny-by-default (no wamn.allow-raw-sockets): {deny:?}");
     println!("  opted-in        (wamn.allow-raw-sockets=true): {optin:?}");
+    println!(
+        "  host-loopback   (allowedHostLoopbackPorts=[{HOST_LOOPBACK_LISTED_PORT}]): {loopback:?}"
+    );
 
-    let pass =
-        matches!((&deny, &optin), (Some(deny), Some(optin)) if runtime_verdicts_pass(deny, optin));
+    let pass = matches!(
+        (&deny, &optin, &loopback),
+        (Some(deny), Some(optin), Some(loopback))
+            if runtime_verdicts_pass(deny, optin)
+                && host_loopback_verdicts_pass(deny, optin, loopback)
+    );
     if pass {
         println!(
             "    PASS: TcpConnect, UdpConnect, and UdpOutgoingDatagram deny by default and \
-             permit only on opt-in; UdpBind remains service-loopback-only"
+             permit only on opt-in; UdpBind remains service-loopback-only; every \
+             host.wasmcloud.internal dial is refused, including the port the workload listed"
         );
     } else {
         println!(
-            "    FAIL: expected each raw-egress arm denied/default + permitted/opt-in and \
-             UdpBind service-loopback-only; deny={deny:?}, optin={optin:?}"
+            "    FAIL: expected each raw-egress arm denied/default + permitted/opt-in, UdpBind \
+             service-loopback-only, and every host-loopback arm denied in all three runs; \
+             deny={deny:?}, optin={optin:?}, loopback={loopback:?}"
         );
     }
     Ok(pass)
@@ -357,7 +470,9 @@ pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
     println!("# claim: the wamn:postgres plugin is the only DB path. The first-party");
     println!("#        flow-runner imports it and no raw sockets.");
     println!("#        With --sockprobe, the runtime raw-socket policy (E13/E15) is also");
-    println!("#        exercised: raw TCP/UDP egress denied by default, allowed only on opt-in.");
+    println!("#        exercised: raw TCP/UDP egress denied by default, allowed only on opt-in,");
+    println!("#        and every host.wasmcloud.internal dial refused — a workload's");
+    println!("#        allowedHostLoopbackPorts grant is inert without the host's own enable.");
 
     let engine = build_engine(&[])?;
     let raw: &RawEngine = engine.inner();
@@ -385,6 +500,12 @@ pub async fn run(args: EgressBenchArgs) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    use std::net::Ipv4Addr;
+
+    use wash_runtime::sockets::internal_names::is_host_sentinel;
+    use wash_runtime::sockets::policy::{EgressMode, GuestKind, SocketPolicy};
+    use wash_runtime::sockets::{AddrDecision, DenyReason, Plane, SocketAddrUse};
+
     fn canonical_verdicts() -> (SocketVerdicts, SocketVerdicts) {
         (
             SocketVerdicts {
@@ -393,6 +514,8 @@ mod tests {
                 udp_outgoing_datagram: "denied".to_string(),
                 udp_bind_loopback: "bound".to_string(),
                 udp_bind_non_loopback: "denied".to_string(),
+                host_loopback_listed: "denied".to_string(),
+                host_loopback_unlisted: "denied".to_string(),
             },
             SocketVerdicts {
                 tcp_connect: "allowed-failed".to_string(),
@@ -400,8 +523,50 @@ mod tests {
                 udp_outgoing_datagram: "sent".to_string(),
                 udp_bind_loopback: "bound".to_string(),
                 udp_bind_non_loopback: "denied".to_string(),
+                host_loopback_listed: "denied".to_string(),
+                host_loopback_unlisted: "denied".to_string(),
             },
         )
+    }
+
+    /// The third run's canonical report is the deny-by-default shape exactly:
+    /// listing a host-loopback port must change nothing the report can see.
+    fn canonical_loopback_verdicts() -> SocketVerdicts {
+        canonical_verdicts().0
+    }
+
+    /// A guest policy shaped only around the host-loopback door.
+    ///
+    /// `SocketPolicy::for_kind` supplies the fork's own defaults (permissive
+    /// address ranges, no quota, no host-owned port table), so nothing but the
+    /// two halves under test can decide a sentinel dial.
+    fn loopback_policy(
+        host_enabled: bool,
+        listed: &[AllowedLoopbackPort],
+        mode: EgressMode,
+    ) -> SocketPolicy {
+        SocketPolicy {
+            host_loopback_enabled: host_enabled,
+            host_loopback: Arc::from(listed),
+            egress_mode: mode,
+            ..SocketPolicy::for_kind(GuestKind::Component)
+        }
+    }
+
+    fn deny_reason(decision: &AddrDecision) -> Option<DenyReason> {
+        match decision {
+            AddrDecision::Deny(reason) => Some(*reason),
+            AddrDecision::Allow(_) => None,
+        }
+    }
+
+    /// The address and plane a permitted decision resolved to — the evidence a
+    /// bare "it was allowed" cannot give.
+    fn permitted(decision: &AddrDecision) -> Option<(SocketAddr, Plane)> {
+        match decision {
+            AddrDecision::Allow(a) => Some((a.addr, a.plane)),
+            AddrDecision::Deny(_) => None,
+        }
     }
 
     fn wash_runtime_source() -> PathBuf {
@@ -516,7 +681,8 @@ mod tests {
         std::fs::write(
             dir.join("outcome"),
             "tcp-connect=denied\nudp-connect=connected\nudp-outgoing-datagram=sent\n\
-             udp-bind-loopback=bound\nudp-bind-non-loopback=denied\n",
+             udp-bind-loopback=bound\nudp-bind-non-loopback=denied\n\
+             host-loopback-listed=denied\nhost-loopback-unlisted=denied\n",
         )
         .unwrap();
         assert_eq!(
@@ -527,6 +693,8 @@ mod tests {
                 udp_outgoing_datagram: "sent".to_string(),
                 udp_bind_loopback: "bound".to_string(),
                 udp_bind_non_loopback: "denied".to_string(),
+                host_loopback_listed: "denied".to_string(),
+                host_loopback_unlisted: "denied".to_string(),
             })
         );
         std::fs::write(dir.join("outcome"), "tcp-connect=denied\n").unwrap();
@@ -587,6 +755,48 @@ mod tests {
         assert!(
             !runtime_verdicts_pass(&mutant, &optin),
             "UdpBind service-non-loopback widening mutation survived"
+        );
+    }
+
+    /// The host-loopback classifier, against the three mutations that would make
+    /// the new arms vacuous.
+    #[test]
+    fn host_loopback_arm_rejects_a_workload_only_grant_and_an_unrun_arm() {
+        let (deny, optin) = canonical_verdicts();
+        let loopback = canonical_loopback_verdicts();
+        assert!(host_loopback_verdicts_pass(&deny, &optin, &loopback));
+
+        // A policy that honoured the workload's listed port without the host's
+        // own enable — the inertness the third run exists to assert.
+        let mutant = SocketVerdicts {
+            host_loopback_listed: "connected".to_string(),
+            ..loopback.clone()
+        };
+        assert!(
+            !host_loopback_verdicts_pass(&deny, &optin, &mutant),
+            "a workload-only host-loopback grant survived"
+        );
+
+        // `wamn.allow-raw-sockets` governs raw egress, not the machine's own
+        // loopback; it must not become a second door onto it.
+        let mutant = SocketVerdicts {
+            host_loopback_unlisted: "allowed-failed".to_string(),
+            ..optin.clone()
+        };
+        assert!(
+            !host_loopback_verdicts_pass(&deny, &mutant, &loopback),
+            "wamn.allow-raw-sockets opened the host-loopback door"
+        );
+
+        // `no-target` means the gate never named a sentinel, so the arm never
+        // reached the policy. It must not read as a refusal.
+        let mutant = SocketVerdicts {
+            host_loopback_listed: "no-target".to_string(),
+            ..deny.clone()
+        };
+        assert!(
+            !host_loopback_verdicts_pass(&mutant, &optin, &loopback),
+            "an unconfigured sentinel arm passed as a refusal"
         );
     }
 
@@ -779,6 +989,216 @@ mod tests {
                 && p3.contains(".into_allowed()"),
             "P3 UdpBind mirror must consult the shared socket policy AND consume the decision \
              fallibly"
+        );
+    }
+
+    /// The `allowedHostLoopbackPorts` grant needs BOTH halves — asserted against
+    /// the LINKED fork's own `SocketPolicy::decide`, the only place they can be
+    /// separated (wamn-0h0g.15.52).
+    ///
+    /// `resolve_host_loopback` answers `HostLoopbackNotPermitted` for either
+    /// missing half, so "it was refused" alone cannot say which half refused it:
+    /// each negative case here removes exactly one half and leaves the other in
+    /// place. The runtime phase can only reach the two cases where the host half
+    /// is absent, because nothing in this repository installs a host socket
+    /// policy — so this is where the per-port grant itself is exercised.
+    ///
+    /// The permitted case asserts the EVIDENCE that the grant was consulted, not
+    /// merely that the dial was allowed: the sentinel is rewritten to real
+    /// loopback and forced onto `Plane::Host`. A bare "allowed" would be vacuous,
+    /// because the sentinel lives inside `127.0.0.0/8` and falling through to the
+    /// guest's own virtual network also allows it.
+    #[test]
+    fn host_loopback_needs_the_host_enable_and_the_listed_port_together() {
+        let listed = [AllowedLoopbackPort::tcp(HOST_LOOPBACK_LISTED_PORT)];
+        let target = sentinel_target(HOST_LOOPBACK_LISTED_PORT);
+
+        // Neither half.
+        assert_eq!(
+            deny_reason(
+                &loopback_policy(false, &[], EgressMode::Enforce)
+                    .decide(SocketAddrUse::TcpConnect, target)
+            ),
+            Some(DenyReason::HostLoopbackNotPermitted)
+        );
+        // Host enabled, port NOT listed — isolates the per-port grant, the half
+        // nothing asserted before this bead.
+        assert_eq!(
+            deny_reason(
+                &loopback_policy(true, &[], EgressMode::Enforce)
+                    .decide(SocketAddrUse::TcpConnect, target)
+            ),
+            Some(DenyReason::HostLoopbackNotPermitted),
+            "an unlisted loopback port must be refused even where the host enabled the door"
+        );
+        // Port listed, host NOT enabled — isolates the host-level enable, the
+        // inertness the runtime phase exercises end to end.
+        assert_eq!(
+            deny_reason(
+                &loopback_policy(false, &listed, EgressMode::Enforce)
+                    .decide(SocketAddrUse::TcpConnect, target)
+            ),
+            Some(DenyReason::HostLoopbackNotPermitted),
+            "a workload grant alone must not open the machine's own loopback"
+        );
+        // Both halves.
+        assert_eq!(
+            permitted(
+                &loopback_policy(true, &listed, EgressMode::Enforce)
+                    .decide(SocketAddrUse::TcpConnect, target)
+            ),
+            Some((
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), HOST_LOOPBACK_LISTED_PORT),
+                Plane::Host
+            )),
+            "both halves must reach the machine's REAL loopback, not the guest's virtual network"
+        );
+    }
+
+    /// A listed entry grants one port over one transport — not loopback.
+    ///
+    /// Without this, `allowedHostLoopbackPorts` could degrade into a boolean and
+    /// the gate above would still pass: the port it dials is the one it listed.
+    #[test]
+    fn a_listed_loopback_port_grants_only_that_port_and_transport() {
+        let policy = loopback_policy(
+            true,
+            &[AllowedLoopbackPort::tcp(HOST_LOOPBACK_LISTED_PORT)],
+            EgressMode::Enforce,
+        );
+        let listed = sentinel_target(HOST_LOOPBACK_LISTED_PORT);
+
+        assert!(
+            permitted(&policy.decide(SocketAddrUse::TcpConnect, listed)).is_some(),
+            "the listed port over the listed transport must be reachable"
+        );
+        assert_eq!(
+            deny_reason(&policy.decide(SocketAddrUse::UdpConnect, listed)),
+            Some(DenyReason::HostLoopbackNotPermitted),
+            "a TCP grant must not carry UDP on the same port"
+        );
+        assert_eq!(
+            deny_reason(&policy.decide(
+                SocketAddrUse::TcpConnect,
+                sentinel_target(HOST_LOOPBACK_UNLISTED_PORT)
+            )),
+            Some(DenyReason::HostLoopbackNotPermitted),
+            "granting one local port must not grant the machine's other local ports"
+        );
+    }
+
+    /// Count mode must not soften the host-loopback refusal.
+    ///
+    /// `EgressMode::Count` is upstream's `#[default]`: it logs what it would
+    /// refuse and allows it anyway. If the host-loopback refusal ever routed
+    /// through that gate instead of returning directly, the machine's own
+    /// loopback would stand open on a default-configured host — and this gate's
+    /// opted-in run is exactly such a host, since `shape_socket_policy` returns
+    /// an opted-in guest's policy unshaped.
+    ///
+    /// The second half is the control that makes the first half mean something:
+    /// under the SAME policy an ordinary destination IS allowed, so the refusal
+    /// above is the loopback rule and not a mode that was never in effect.
+    #[test]
+    fn count_mode_cannot_open_the_host_loopback_door() {
+        let policy = loopback_policy(
+            false,
+            &[AllowedLoopbackPort::tcp(HOST_LOOPBACK_LISTED_PORT)],
+            EgressMode::Count,
+        );
+        assert_eq!(
+            deny_reason(&policy.decide(
+                SocketAddrUse::TcpConnect,
+                sentinel_target(HOST_LOOPBACK_LISTED_PORT)
+            )),
+            Some(DenyReason::HostLoopbackNotPermitted),
+            "count mode must keep the machine's own loopback shut"
+        );
+        assert!(
+            permitted(&policy.decide(
+                SocketAddrUse::TcpConnect,
+                "93.184.216.34:443".parse().expect("test address")
+            ))
+            .is_some(),
+            "count mode must allow the ordinary egress it merely counts, or the refusal above \
+             proves nothing about the loopback rule"
+        );
+    }
+
+    /// The address the runtime phase hands sockprobe must land on the
+    /// host-loopback branch.
+    ///
+    /// sockprobe cannot read the fork's constants, so the gate resolves the
+    /// sentinel and passes it through the environment. If that address ever
+    /// stopped being recognised as the sentinel, every `host-loopback-*` arm
+    /// would quietly become an ordinary virtual-loopback connect — permitted, and
+    /// proving nothing. `SocketPolicy::default()` on purpose: that is the
+    /// host-level policy wamn's engine installs, since nothing here calls
+    /// `EngineBuilder::with_socket_policy`.
+    #[test]
+    fn the_sentinel_target_handed_to_sockprobe_reaches_the_gated_branch() {
+        for port in [HOST_LOOPBACK_LISTED_PORT, HOST_LOOPBACK_UNLISTED_PORT] {
+            let target = sentinel_target(port);
+            assert!(
+                is_host_sentinel(target.ip()),
+                "{target} must be the host sentinel, or the arm dials the guest's own network"
+            );
+            assert_eq!(
+                deny_reason(&SocketPolicy::default().decide(SocketAddrUse::TcpConnect, target)),
+                Some(DenyReason::HostLoopbackNotPermitted),
+                "{target} must be refused by the host-loopback rule under the policy this \
+                 repository's engine installs, not allowed onto the virtual plane"
+            );
+        }
+    }
+
+    /// The host-loopback grant surface, pinned on the exact linked fork revision.
+    ///
+    /// Three things must hold for the arms above to mean what they claim, and
+    /// none of them is observable from the guest side:
+    ///
+    /// 1. The sentinel is resolved BEFORE the virtual-loopback shortcut. It lives
+    ///    inside `127.0.0.0/8`, so were the two ever reordered, every dial would
+    ///    match `is_loopback()` first and return `Plane::Virtual` — reaching the
+    ///    guest's own network instead of taking the gate.
+    /// 2. BOTH halves are checked, and each refuses DIRECTLY rather than through
+    ///    `Self::gate`, which `EgressMode::Count` softens.
+    /// 3. The workload's `allowedHostLoopbackPorts` is what becomes
+    ///    `SocketPolicy::host_loopback`. Were that plumbing dropped, the list the
+    ///    third run supplies would not be the list the policy consults.
+    #[test]
+    fn host_loopback_grant_surface_is_pinned() {
+        let policy = fork_source("src/sockets/policy.rs");
+        assert!(
+            policy.contains(concat!(
+                "        if internal_names::is_host_sentinel(addr.ip()) {\n",
+                "            return self.resolve_host_loopback(addr, protocol);\n",
+                "        }\n"
+            )),
+            "the host sentinel must resolve before the virtual-loopback shortcut, or an address \
+             inside 127.0.0.0/8 bypasses the host-loopback gate entirely"
+        );
+        assert!(
+            policy.contains(concat!(
+                "        if !self.host_loopback_enabled {\n",
+                "            return Err(DenyReason::HostLoopbackNotPermitted);\n",
+                "        }\n",
+                "        if !check_allowed_loopback(&self.host_loopback, addr, protocol) {\n",
+                "            return Err(DenyReason::HostLoopbackNotPermitted);\n",
+                "        }\n"
+            )),
+            "both halves of the host-loopback grant must be checked, and each must refuse \
+             directly rather than through the EgressMode gate that count mode softens"
+        );
+
+        let shaper = fork_source("src/engine/linked_call.rs");
+        assert!(
+            shaper.contains(concat!(
+                "            host_loopback: Arc::clone",
+                "(&template.local_resources.allowed_host_loopback_ports),"
+            )),
+            "the workload's allowedHostLoopbackPorts must be what the guest's policy carries, or \
+             the grant surface this gate configures is not the one the policy consults"
         );
     }
 }
