@@ -329,6 +329,17 @@ impl HostHandler for RunnerEgress {
     fn port(&self) -> u16 {
         0
     }
+
+    /// `inner`'s bind counterpart — `OutgoingHandler::on_workload_bind`, which
+    /// sizes its pool for the burst a component declared — is deliberately NOT
+    /// forwarded from here. `HostHandler` has no bind hook at all, and the
+    /// `pool_size` × `max_concurrency` figure that one takes is not reachable
+    /// from a [`ResolvedWorkload`] through the fork's public API: the decoded
+    /// instance policy is consumed into a `pub(crate)` pool, and
+    /// `WorkloadMetadata::component()` hands back the *wasmtime* component, not
+    /// the `types::Component` that carries the limits. Passing a number we made
+    /// up would size the pool off a fiction, so wamn-0h0g.15.37 forwarded the
+    /// unbind half only and left this one to the fork.
     async fn on_workload_resolved(
         &self,
         _resolved: &ResolvedWorkload,
@@ -336,7 +347,24 @@ impl HostHandler for RunnerEgress {
     ) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn on_workload_unbind(&self, _workload_id: &str) -> anyhow::Result<()> {
+
+    /// Release `inner`'s per-workload egress state — pooled connections, TLS
+    /// session store, pinned connection permits — when the workload stops,
+    /// instead of leaving it to sit out the pool's idle window. The fork's hook
+    /// is sync and infallible, so there is nothing to await and nothing to
+    /// propagate.
+    ///
+    /// Nothing reaches this today, and why is the part that matters: this
+    /// handler is installed on the store's `Ctx` (see
+    /// [`ExecutionHost::instantiate`]), and that path only ever calls
+    /// `outgoing_request`/`outgoing_request_p3` — the workload lifecycle hooks
+    /// fire for a handler registered as the ENGINE's HTTP handler, which the
+    /// runner has none of. Per-instance ownership is what keeps the gap
+    /// harmless: `inner` and its pool are dropped with the store. The forward
+    /// is what keeps it harmless if this handler is ever hoisted to engine
+    /// scope or shared between stores.
+    async fn on_workload_unbind(&self, workload_id: &str) -> anyhow::Result<()> {
+        self.inner.on_workload_unbind(workload_id);
         Ok(())
     }
 
@@ -1332,6 +1360,40 @@ mod tests {
             method.contains("self.inner"),
             "p3 must delegate to this handler's own inner OutgoingHandler"
         );
+    }
+
+    /// wamn-0h0g.15.37: workload stop RELEASES `inner`'s per-workload egress
+    /// state rather than leaving it to the pool's idle window. A mutant that
+    /// restores the bare `Ok(())` fails here. Pinned at the source, not driven:
+    /// `DefaultOutgoingHandler` publishes no readback of its client cache, so
+    /// observing the release would take a live server.
+    #[test]
+    fn workload_unbind_releases_the_pooled_handler_state() {
+        let source = include_str!("lib.rs");
+        let method = method_source(
+            source,
+            "async fn on_workload_unbind",
+            "fn outgoing_request(",
+        );
+
+        assert!(
+            method.contains("self.inner.on_workload_unbind(workload_id);"),
+            "unbind must forward to this handler's own inner OutgoingHandler"
+        );
+    }
+
+    /// The forward is safe on a handler that never sent a request: the fork's
+    /// hook reads its client cache with `get()`, so a cold handler has nothing
+    /// to release and nothing to lazily build — stopping a workload that never
+    /// made an outbound call must not read a trust store or fail.
+    #[tokio::test]
+    async fn workload_unbind_is_a_no_op_on_a_handler_that_never_sent_a_request() {
+        let egress = runner_egress(None);
+
+        egress
+            .on_workload_unbind("runner")
+            .await
+            .expect("unbinding a cold egress handler cannot fail");
     }
 
     #[test]
