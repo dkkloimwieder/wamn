@@ -2,13 +2,26 @@
 set -euo pipefail
 
 readonly OWNER="bd:wamn-2jdm.5.10"
-readonly OUTCOME="runner lookup fails closed on mismatched authoritative catalog identity"
+readonly OUTCOME="connection-binding resolution in effect authority is scoped to the run's own catalog version"
 
-readonly TARGET="components/execution/flowrunner/src/lib.rs"
+# RE-ANCHORED by wamn-0h0g.15.122 (owner ruling), absorbed into wamn-0h0g.15.66's
+# lane. The subject is ALIVE, it moved: the authoritative-identity SQL left
+# components/execution/flowrunner/src/lib.rs for the host-side effect-authority
+# statement, and the alias changed from `d` to `binding`. Re-anchored against the
+# post-wamn-0h0g.15.66 predicate so it is not re-anchored twice.
+#
+# The killing test is a source-text guard over the statement, not a behavioural
+# one: the live effect-authority proof seeds exactly one connection binding, so it
+# observes no difference when the version predicate is dropped. A behavioural
+# negative for catalog-version scoping is filed as follow-up, not faked here.
+readonly TARGET="crates/platform/runtime/src/plugins/wamn_postgres/claims.rs"
 readonly MUTATION="runner-accepts-wrong-catalog-version"
-readonly TEST="tests::production_lookup_fail_closes_missing_or_mismatched_authoritative_identity"
-readonly NEEDLE="AND d.catalog_version = r.catalog_version \\"
-readonly REPLACEMENT="AND d.catalog_version = r.flow_version \\"
+readonly TEST="plugins::wamn_postgres::claims::tests::effect_authority_resolves_the_current_binding_and_draft_grant"
+readonly NEEDLE="AND binding.catalog_version = r.catalog_version \\"
+readonly REPLACEMENT="AND true \\"
+# Still the digest of the FORMER target. wamn-0h0g.15.22 owns re-deriving every
+# baseline in this wave from the file the script actually points at; no lane
+# re-baselines mid-wave.
 readonly EXPECTED_SHA="1bc244bb02f9a872e2e9ba204972683a0cf521058a79d693f41279ece75cb2c4"
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -40,8 +53,7 @@ check() {
 }
 
 gate() {
-  cargo test --locked --manifest-path components/Cargo.toml -p flowrunner \
-    "$TEST" -- --exact
+  cargo test --locked -p wamn-runtime --lib "$TEST" -- --exact
 }
 
 run_mutant() (

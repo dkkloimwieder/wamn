@@ -40,8 +40,8 @@ load_mutation() {
       GATE="frames::tests::sixty_fifth_valid_recursive_call_fails_before_frame_id_allocation"
       ;;
     input-guard-bypass-at-depth)
-      NEEDLE='if let Some(error) = call_input_error(callee.plan(), &dispatch.payload)'
-      REPLACEMENT='if false && let Some(error) = call_input_error(callee.plan(), &dispatch.payload)'
+      NEEDLE='if let Some(error) = entry_input_error(callee.plan(), &dispatch.payload)'
+      REPLACEMENT='if false && let Some(error) = entry_input_error(callee.plan(), &dispatch.payload)'
       GATE="frames::tests::invalid_sixty_fifth_call_input_wins_before_depth_budget"
       ;;
     per-frame-counter-reset)
