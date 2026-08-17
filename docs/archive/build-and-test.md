@@ -287,6 +287,43 @@ workspace has none. Consequently:
 - Neither local full CI nor a successful Cargo build substitutes for the
   owning deployed Job below. Gate-of-record semantics are unchanged.
 
+#### Per-wave sweep bar (wamn-0h0g.15.131)
+
+A wave's clean baseline is not `--lib`. `cargo test --workspace --lib` selects
+only library unit targets, so **no integration-test binary under any `tests/`
+directory executes at all** — such a test does not fail, it is never run and
+never reported. Wave 8's recorded baseline was
+`cargo check --workspace --all-targets` plus `cargo test --workspace --lib`;
+`crates/platform/runtime/tests/flow_invocation_wit_coherence.rs` went red at
+`09498e17` and stayed green-*looking* for a full wave, and the file was edited
+twice afterwards — `b405694e`, then `7da5a70d` editing the guard file itself —
+without anyone observing the failure. `--all-targets` on the `check` leg does
+not rescue this: it compiles the test target, it does not run it.
+
+The bar for a wave sweep is, verbatim:
+
+```bash
+cargo test --workspace --all-targets --no-fail-fast
+```
+
+- `--all-targets` is mandatory, not an optimization. It is the only thing that
+  puts `tests/*.rs` binaries into the run set.
+- `--no-fail-fast` reports every failing suite in one pass. It does **not** cover
+  compile failures: a package that fails to build still truncates the sweep, so a
+  compile break must be cleared before a sweep result means anything.
+- Run it **unpiped**. `cargo test … | tee log` reports `tee`'s exit status, not
+  cargo's, so a red sweep reads as exit 0. If a log is required, redirect
+  (`> log 2>&1`) or set `-o pipefail`, and read cargo's own status.
+- Bare `cargo test` is not a substitute: from the repository root it selects the
+  19 `default-members` and only each one's *default* test targets.
+- The component workspace is outside root `--workspace` and needs its own leg.
+- Contract-owning guards additionally have a runner of record,
+  `tools/contract-diff run`, whose legs include
+  `cargo test -p wamn-runtime --test flow_invocation_wit_coherence`. Its own
+  conformance test proves that argv against a **fake cargo**, so a green
+  `contract_diff` is evidence the plan is right, never evidence the guards are
+  green (wamn-0h0g.15.138). The tool must actually be run.
+
 ### Release identity
 
 Release membership is the 11 `deployable: true` packages in
@@ -949,7 +986,7 @@ Docs: docs/archive/data-path/security-db-path.md · Manifest: deploy/gates/socke
 # adversarial worlds for both ABIs.
 # Conformance proof: egressbench and socketguard live behind the router in the
 # conformance library. The shared classifier itself lives in component-policy.
-# recipe-test: H5-EGRESSBENCH | conformance | wamn-proof-conformance | lib | - | egressbench::tests:: | 14 | tests/conformance/src/egressbench.rs arm-specific P2 runtime denial/opt-in assertions and exact linked-fork P2/P3 mirror guards
+# recipe-test: H5-EGRESSBENCH | conformance | wamn-proof-conformance | lib | - | egressbench::tests:: | 21 | tests/conformance/src/egressbench.rs arm-specific P2 runtime denial/opt-in assertions, exact linked-fork P2/P3 mirror guards, and the allowedHostLoopbackPorts grant surface (wamn-0h0g.15.52) — both halves isolated against the linked SocketPolicy::decide, count-mode non-softening with its own control, and the sentinel-first/no-gate/plumbing pins
 cargo test -p wamn-proof-conformance --lib egressbench::tests::
 # recipe-test: H5-SOCKETGUARD | conformance | wamn-proof-conformance | lib | - | socketguard::tests:: | 3 | tests/conformance/src/socketguard.rs P2/P3 publish refusal and standard-workload control
 cargo test -p wamn-proof-conformance --lib socketguard::tests::
@@ -3767,10 +3804,17 @@ kubectl -n wamn-system rollout status deploy/registry --timeout=60s
 kubectl -n wamn-system port-forward svc/registry 5000:5000 &
 wash push localhost:5000/wamn/api-gateway:dev \
   components/target/wasm32-wasip2/release/api_gateway.wasm --insecure
-# The host group gains --allow-insecure-registries + WAMN_PG_URL:
+# The host group gains --allow-insecure-registries + WAMN_PG_URL. TWO releases
+# from ONE chart (wamn-0h0g.15.15), and the ORDER matters: hostgroup-default is
+# named after the host GROUP, not the release, so the operator release must be
+# upgraded first (its `hostGroups: []` deletes the old objects) or Helm refuses
+# on ownership metadata. A fresh namespace has nothing to collide with.
 helm upgrade --install -n wamn-system wamn \
-  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
   -f deploy/infra/values-wamn.yaml
+helm upgrade --install -n wamn-system wamn-host \
+  oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
+  -f deploy/platform/values-host-default.yaml
 kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
 # Provision the project schema/floor + seed + publish the snapshot:
 kubectl -n wamn-system create configmap proof-catalog \
@@ -5090,10 +5134,22 @@ bash -n tools/gate-mutants/test-orchestration.sh \
 git diff --check
 ```
 
-The three test-orchestration mutants remove the plan-hash join, omit a durable
-case table from schema-control, and recreate the from-zero bug where triggers
-located after a shared helper never install. Each must fail its named owner
-test, then restore the exact source hash.
+The six test-orchestration mutants omit a durable case table from
+schema-control, recreate the from-zero bug where triggers located after a shared
+helper never install, drop the reservation insert's idempotency, unbound the case
+deadline, rejoin the case-run insert onto the run plane, and turn the report
+verdict from a conjunction of its cases into a disjunction — a report with a
+failed case reporting `passed = true`. Each must fail its named owner test, then
+restore the exact source hash.
+
+The campaign **cannot run today**: its `EXPECTED_SHA` baselines are stale in two
+files, and the `run_plane.rs` cases come first in `mutation_ids()`, so `check`
+and `run-all` abort on mutant 1 before reaching the rest. `2dc1ee0e…` was already
+five file-revisions stale when it was introduced, so three of these mutants have
+never executed once. Every needle still anchors exactly once and every gate test
+name exists, so a pure digest re-baseline revives all six — that is
+`wamn-0h0g.15.22`'s, along with the wider finding that 109 of 135 baselines
+across 31 of 37 campaigns are stale (`wamn-0h0g.15.136`).
 
 ## SR-MVP — unconditional publish gate (`wamn-0h0g.8.8`)
 
