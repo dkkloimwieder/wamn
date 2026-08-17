@@ -104,14 +104,23 @@ pub fn select_org_project_envs_sql() -> &'static str {
 
 /// Upsert a provisioned project-env row into `registry.project_envs`. Idempotent
 /// and additive — re-provisioning refreshes the credential Secret reference.
-/// Params: `$1` org, `$2` project, `$3` env, `$4` secret_name, and `$5`
-/// secret_namespace (nullable — `NULL` = the resolving component's own namespace).
+/// Params: `$1` org, `$2` project, `$3` env, `$4` secret_name, `$5`
+/// secret_namespace (nullable — `NULL` = the resolving component's own namespace),
+/// and `$6` the freshly minted instance_suffix.
+///
+/// READ-OR-MINT: `instance_suffix` is set on INSERT and deliberately NOT
+/// refreshed on conflict, and the statement RETURNS the stored value — a
+/// re-provision gets back the EXISTING instance identity and keeps deriving the
+/// names of the resources that already exist (wamn-0h0g.13.57). A recreated
+/// environment is a new INSERT (its old row cascaded away) and gets a new one.
 pub fn upsert_project_env_sql() -> &'static str {
-    "INSERT INTO registry.project_envs (org, project, env, secret_name, secret_namespace) \
-     VALUES ($1, $2, $3, $4, $5) \
+    "INSERT INTO registry.project_envs \
+       (org, project, env, secret_name, secret_namespace, instance_suffix) \
+     VALUES ($1, $2, $3, $4, $5, $6) \
      ON CONFLICT (org, project, env) DO UPDATE SET \
        secret_name = EXCLUDED.secret_name, \
-       secret_namespace = EXCLUDED.secret_namespace"
+       secret_namespace = EXCLUDED.secret_namespace \
+     RETURNING instance_suffix"
 }
 
 // --- event readers (wamn-l5i9.9, D19 v3) ------------------------------------
@@ -307,13 +316,24 @@ mod tests {
     fn upsert_project_env_targets_the_project_envs_columns_and_upserts() {
         let sql = upsert_project_env_sql();
         assert!(sql.contains("INSERT INTO registry.project_envs"));
-        for col in ["org", "project", "env", "secret_name", "secret_namespace"] {
+        for col in [
+            "org",
+            "project",
+            "env",
+            "secret_name",
+            "secret_namespace",
+            "instance_suffix",
+        ] {
             assert!(sql.contains(col), "missing column {col}");
         }
-        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5)"));
+        assert!(sql.contains("VALUES ($1, $2, $3, $4, $5, $6)"));
         // Idempotent + additive: refreshes the Secret reference on the triple PK.
         assert!(sql.contains("ON CONFLICT (org, project, env) DO UPDATE"));
         assert!(sql.contains("secret_name = EXCLUDED.secret_name"));
+        // Read-or-mint: the instance identity is never refreshed, and the stored
+        // value comes back so a re-provision keeps deriving the existing names.
+        assert!(!sql.contains("instance_suffix = EXCLUDED.instance_suffix"));
+        assert!(sql.contains("RETURNING instance_suffix"));
     }
 
     #[test]

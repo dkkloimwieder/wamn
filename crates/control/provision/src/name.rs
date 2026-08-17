@@ -56,9 +56,9 @@ pub const MAX_PROJECT_ID_LEN: usize = 40;
 pub const MAX_DB_NAME_LEN: usize = 63;
 
 /// Prefix for the per-project-env Kubernetes **namespace**:
-/// `wamn-<org>--<project>--<env>` (wamn-0h0g.15.3). Under the platform-reserved
-/// `wamn` prefix like every other minted name, and carrying the same `--`
-/// separated triple as `wamn-db-<org>--<project>--<env>`.
+/// `wamn-<org>--<project>--<env>--<instance>` (wamn-0h0g.15.3). Under the
+/// platform-reserved `wamn` prefix like every other minted name, and carrying the
+/// same `--` separated triple as `wamn-db-<org>--<project>--<env>`.
 pub const NAMESPACE_PREFIX: &str = "wamn-";
 
 /// Max length (bytes) of the per-project-env namespace: the DNS-1123 **label**
@@ -66,6 +66,32 @@ pub const NAMESPACE_PREFIX: &str = "wamn-";
 /// or hash-suffixed to fit — a breaching triple is refused at provisioning
 /// (see [`validate_project_env`]).
 pub const MAX_NAMESPACE_LEN: usize = 63;
+
+/// Length (bytes) of the provision-minted **instance suffix** every per-project-env
+/// namespace carries: 8 characters over `[a-z0-9]` — the form settled in
+/// `docs/archive/PLAN/PLAN.md`, ~41 bits.
+///
+/// It exists for REUSE AFTER DELETION: delete an environment and recreate it
+/// under the same triple, and without a fresh suffix the new one inherits the old
+/// namespace and whatever survived inside it. Randomness is the whole uniqueness
+/// mechanism — no naming registry, no retry loop, no derivation (wamn-0h0g.13.57).
+/// The mint belongs to the effect driver (`wamn-ctl provision-project-env`, which
+/// stores it on `registry.project_envs`); this crate is pure and only derives.
+pub const INSTANCE_SUFFIX_LEN: usize = 8;
+
+/// Separator between the identity triple and the instance suffix — the same `--`
+/// the triple's own components use. Components admit no `--` run and the suffix
+/// admits no hyphen at all, so the assembled namespace stays an unambiguous
+/// `--`-joined sequence.
+const INSTANCE_SUFFIX_SEPARATOR: &str = "--";
+
+/// Max length (bytes) of the namespace's identity **stem**
+/// `wamn-<org>--<project>--<env>`: [`MAX_NAMESPACE_LEN`] less the separator and
+/// the [`INSTANCE_SUFFIX_LEN`] suffix every provisioned namespace carries. This —
+/// not [`MAX_NAMESPACE_LEN`] — is what a triple is refused against, because the
+/// triple never gets the whole label.
+pub const MAX_NAMESPACE_STEM_LEN: usize =
+    MAX_NAMESPACE_LEN - INSTANCE_SUFFIX_SEPARATOR.len() - INSTANCE_SUFFIX_LEN;
 
 /// Prefix for the per-project-env CDC **credential Secret**:
 /// `wamn-cdc-<org>--<project>--<env>` (wamn-l5i9.9, D19 v3) — the hyphenated K8s
@@ -177,16 +203,58 @@ pub fn project_env_secret_name(org: &str, project: &str, env: &str) -> String {
     project_env_database_name(org, project, env)
 }
 
-/// The per-project-env Kubernetes namespace: `wamn-<org>--<project>--<env>`.
+/// The per-project-env Kubernetes namespace:
+/// `wamn-<org>--<project>--<env>--<instance>`.
 ///
 /// One wamn environment `(org, project, env)` is one namespace (wamn-0h0g.15.3),
 /// so every environment-scoped resource — the credential Secrets, the release
 /// manifest, the environment's hosts — is addressed by DERIVING this name from
-/// the triple. It is never configured alongside the triple and never parsed back
-/// out of a resource. Validate the assembled length with [`validate_project_env`]
-/// before use; a triple that does not fit is refused, not shortened.
-pub fn project_env_namespace(org: &str, project: &str, env: &str) -> String {
+/// the triple and the environment's minted instance suffix. It is never
+/// configured alongside the triple and never parsed back out of a resource.
+///
+/// `instance` is the environment's stored `registry.project_envs.instance_suffix`,
+/// NOT a fresh draw: minting is the effect driver's job, and re-deriving under a
+/// new suffix would orphan every resource the old one named. The suffix is what
+/// makes delete-and-recreate safe — the recreated environment lands in a
+/// different namespace and cannot inherit the deleted one's contents.
+///
+/// Validate the triple's assembled length with [`validate_project_env`] and the
+/// suffix with [`validate_instance_suffix`] before use; a triple that does not
+/// fit is refused, not shortened.
+pub fn project_env_namespace(org: &str, project: &str, env: &str, instance: &str) -> String {
+    format!(
+        "{}{INSTANCE_SUFFIX_SEPARATOR}{instance}",
+        project_env_namespace_stem(org, project, env)
+    )
+}
+
+/// The namespace's identity stem `wamn-<org>--<project>--<env>` — the part the
+/// triple contributes, bounded by [`MAX_NAMESPACE_STEM_LEN`].
+fn project_env_namespace_stem(org: &str, project: &str, env: &str) -> String {
     format!("{NAMESPACE_PREFIX}{org}--{project}--{env}")
+}
+
+/// Validate a minted instance suffix: exactly [`INSTANCE_SUFFIX_LEN`] bytes over
+/// `[a-z0-9]`.
+///
+/// The charset is narrower than a component slug's on purpose. The suffix is
+/// APPENDED to a DNS-1123 label, so it decides that label's last byte and a
+/// DNS-1123 label must end alphanumeric; admitting `-` would let a stored suffix
+/// mint a namespace Kubernetes refuses. Call it on the value read back from
+/// `registry.project_envs` — the registry is a trust boundary, not the minter.
+pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
+    let reason = if instance.len() != INSTANCE_SUFFIX_LEN {
+        "must be exactly 8 bytes"
+    } else if !instance.bytes().all(is_alnum) {
+        "only lowercase letters and digits are allowed"
+    } else {
+        return Ok(());
+    };
+    Err(ProvisionError::InvalidComponent {
+        component: "instance",
+        value: instance.to_string(),
+        reason,
+    })
 }
 
 /// The fixed-mount effect-writer credential Secret name.
@@ -295,17 +363,26 @@ fn frame_artifact_reader_identity(output: &mut Vec<u8>, value: &[u8]) {
 }
 
 /// Validate that a `(org, project, env)` yields safe provisioned names: **all
-/// three** identity components are slugs, the assembled namespace fits
-/// [`MAX_NAMESPACE_LEN`], and the assembled database / Secret name fits
-/// [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal DNS-1123 label
-/// for the CNPG `Database` resource.
+/// three** identity components are slugs, the assembled database / Secret name
+/// fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal DNS-1123
+/// label for the CNPG `Database` resource — and the namespace's identity stem
+/// fits [`MAX_NAMESPACE_STEM_LEN`], the budget left once the instance suffix
+/// takes its share of the DNS-1123 label.
 ///
 /// Both assembled names are bounded here, and neither is ever truncated or
 /// hash-suffixed to fit: a triple that does not fit is REFUSED, at the one point
 /// that can mint it. The namespace carries its own bound rather than inheriting
-/// the database one — the two differ only by the `wamn-` / `wamn-db-` prefix
-/// today, and the namespace-per-environment mapping must not rest on that
-/// coincidence.
+/// the database one — the two are not related by a fixed offset, and the
+/// namespace-per-environment mapping must not rest on a coincidence.
+///
+/// ORDER IS LOAD-BEARING, and it is the LOOSER bound that goes first: check the
+/// tighter one first and the other branch is dead code, so its bound is never
+/// enforced in its own right (wamn-0h0g.15.72). The instance suffix INVERTED
+/// which bound is looser — it spends 10 of the namespace's 63 bytes, leaving the
+/// triple 53 there against 51 in the database name — so the database name is now
+/// checked FIRST and the namespace second. Both branches stay reachable: a triple
+/// of 52 or more combined bytes trips the database bound, one of 45 to 51 trips
+/// the namespace bound.
 ///
 /// Every component is slug-checked (wamn-R27): the org and env — not only the
 /// project — separate on `--`/`__` into the derived database and CDC object
@@ -330,18 +407,18 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
             reason,
         });
     }
-    let namespace = project_env_namespace(org, project, env);
-    if namespace.len() > MAX_NAMESPACE_LEN {
-        return Err(ProvisionError::NameTooLong {
-            name: namespace,
-            max: MAX_NAMESPACE_LEN,
-        });
-    }
     let name = project_env_database_name(org, project, env);
     if name.len() > MAX_DB_NAME_LEN {
         return Err(ProvisionError::NameTooLong {
             name,
             max: MAX_DB_NAME_LEN,
+        });
+    }
+    let stem = project_env_namespace_stem(org, project, env);
+    if stem.len() > MAX_NAMESPACE_STEM_LEN {
+        return Err(ProvisionError::NameTooLong {
+            name: stem,
+            max: MAX_NAMESPACE_STEM_LEN,
         });
     }
     Ok(())
@@ -389,6 +466,12 @@ pub fn event_stream_name(org: &str, env: &str) -> String {
 /// `wamn_cdc_…` object name — one byte per component longer than the database
 /// name — fitting Postgres's 63-byte limit (a slot/publication/role name; the
 /// like-sized `wamn-cdc-…` Secret name is comfortably within the K8s bound).
+///
+/// The extra bound is currently SUBSUMED: it admits a 50-byte triple where the
+/// base validation's namespace stem admits only 44, so the base always refuses
+/// first. It stays because it bounds a name the base does not, and it binds again
+/// the moment the CDC objects carry the instance suffix — they are cluster-global
+/// Postgres names, so they need it as much as the namespace does.
 pub fn validate_project_env_cdc(org: &str, project: &str, env: &str) -> Result<(), ProvisionError> {
     validate_project_env(org, project, env)?;
     let name = cdc_object_name(org, project, env);
@@ -612,65 +695,167 @@ mod tests {
         let long_proj = "p".repeat(40);
         let err = validate_project_env(&long_org, &long_proj, "canary").unwrap_err();
         assert!(matches!(err, ProvisionError::NameTooLong { max: 63, .. }));
-        // A comfortably-sized triple is fine.
+        // 44 combined bytes — the longest triple the namespace stem admits once
+        // the instance suffix has taken its 10 bytes of the DNS-1123 label.
         assert!(validate_project_env(&"o".repeat(20), &"p".repeat(20), "prod").is_ok());
     }
 
     #[test]
-    fn the_environment_namespace_derives_from_the_triple_and_is_bounded() {
+    fn the_environment_namespace_carries_the_minted_instance_suffix() {
         // One environment = one namespace (wamn-0h0g.15.3): the same `--`
-        // separated triple the database name carries, under the `wamn-` prefix.
+        // separated triple the database name carries, under the `wamn-` prefix,
+        // plus the provision-minted instance suffix (wamn-0h0g.13.57).
         assert_eq!(
-            project_env_namespace("acme", "billing", "dev"),
-            "wamn-acme--billing--dev"
+            project_env_namespace("acme", "billing", "dev", "k3m9x2p7"),
+            "wamn-acme--billing--dev--k3m9x2p7"
         );
         // canary and prod are distinct namespaces, as they are distinct databases.
         assert_ne!(
-            project_env_namespace("acme", "billing", "canary"),
-            project_env_namespace("acme", "billing", "prod")
+            project_env_namespace("acme", "billing", "canary", "k3m9x2p7"),
+            project_env_namespace("acme", "billing", "prod", "k3m9x2p7")
         );
+        // THE POINT OF THE SUFFIX: the SAME triple provisioned a second time
+        // lands in a DIFFERENT namespace, so a recreated environment cannot
+        // inherit whatever survived the deleted one. Drop the suffix from the
+        // derivation and these two collide.
+        assert_ne!(
+            project_env_namespace("acme", "billing", "prod", "k3m9x2p7"),
+            project_env_namespace("acme", "billing", "prod", "q80zdw41")
+        );
+    }
 
-        // The boundary: the longest triple validate_project_env admits sits
-        // EXACTLY on the database bound, and its namespace clears the DNS-1123
-        // cap — the prefix difference is the whole of the margin.
-        let org = "o".repeat(25);
-        let project = "p".repeat(22);
-        assert!(validate_project_env(&org, &project, "prod").is_ok());
-        assert_eq!(
-            project_env_database_name(&org, &project, "prod").len(),
-            MAX_DB_NAME_LEN
+    #[test]
+    fn the_environment_namespace_is_a_valid_dns_1123_label() {
+        // A Kubernetes namespace name is a DNS-1123 LABEL: at most 63 bytes,
+        // `[a-z0-9-]`, starting and ending alphanumeric. Take the LONGEST triple
+        // the validator admits (44 combined bytes) so the assembled label sits
+        // exactly on the cap.
+        let org = "o".repeat(40);
+        assert!(validate_project_env(&org, "pp", "de").is_ok());
+        let namespace = project_env_namespace(&org, "pp", "de", "0z9a8b7c");
+        assert_eq!(namespace.len(), MAX_NAMESPACE_LEN);
+        assert!(
+            namespace
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+            "a DNS-1123 label admits only [a-z0-9-]: {namespace:?}"
         );
-        assert_eq!(
-            project_env_namespace(&org, &project, "prod").len(),
-            MAX_NAMESPACE_LEN - 3,
-            "three bytes of margin: `wamn-` against `wamn-db-`"
+        assert!(
+            !namespace.starts_with('-') && !namespace.ends_with('-'),
+            "a DNS-1123 label starts and ends alphanumeric: {namespace:?}"
         );
+        // The suffix decides the label's LAST byte, which is why a hyphen in it
+        // is refused before it can name anything.
+        assert!(validate_instance_suffix("k3m9x2p-").is_err());
+    }
 
-        // One byte more and provisioning REFUSES — no truncation, no hash
-        // suffix. At this size the database name is the binding bound.
-        let over_org = "o".repeat(26);
-        match validate_project_env(&over_org, &project, "prod") {
+    #[test]
+    fn instance_suffix_discipline_is_the_dns_label_tail() {
+        assert!(validate_instance_suffix("k3m9x2p7").is_ok());
+        assert!(validate_instance_suffix("00000000").is_ok());
+        for bad in [
+            "",
+            "k3m9x2p",
+            "k3m9x2p78",
+            "K3M9X2P7",
+            "k3m9x2p-",
+            "k3m9x2p_",
+        ] {
+            assert!(
+                matches!(
+                    validate_instance_suffix(bad),
+                    Err(ProvisionError::InvalidComponent {
+                        component: "instance",
+                        ..
+                    })
+                ),
+                "{bad:?} should be rejected"
+            );
+        }
+        // The two rejection reasons are distinct and stable.
+        assert!(matches!(
+            validate_instance_suffix("short"),
+            Err(ProvisionError::InvalidComponent {
+                reason: "must be exactly 8 bytes",
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_instance_suffix("k3m9x2p-"),
+            Err(ProvisionError::InvalidComponent {
+                reason: "only lowercase letters and digits are allowed",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn the_namespace_bound_accounts_for_the_instance_suffix() {
+        // The refusal formula must budget for the suffix, not just the triple.
+        // org(40) + project(2) + env(3) = 45 combined bytes: the stem is 54 bytes
+        // and would fit the 63-byte label on its own, but the namespace it
+        // actually names is 64. Drop INSTANCE_SUFFIX_LEN from
+        // MAX_NAMESPACE_STEM_LEN and this triple is wrongly admitted.
+        let org = "o".repeat(40);
+        let stem = project_env_namespace_stem(&org, "pp", "dev");
+        assert_eq!(stem.len(), 54);
+        assert!(stem.len() <= MAX_NAMESPACE_LEN, "fits WITHOUT the suffix");
+        assert_eq!(
+            project_env_namespace(&org, "pp", "dev", "k3m9x2p7").len(),
+            MAX_NAMESPACE_LEN + 1,
+            "and does NOT fit WITH it"
+        );
+        match validate_project_env(&org, "pp", "dev") {
             Err(ProvisionError::NameTooLong { name, max }) => {
-                assert_eq!(name, project_env_database_name(&over_org, &project, "prod"));
+                assert_eq!(name, stem);
+                assert_eq!(max, MAX_NAMESPACE_STEM_LEN);
+            }
+            other => panic!("the suffixed namespace bound must refuse this triple, got {other:?}"),
+        }
+        // One byte shorter and the assembled namespace sits exactly on the cap.
+        assert!(validate_project_env(&org, "pp", "de").is_ok());
+        assert_eq!(
+            project_env_namespace(&org, "pp", "de", "k3m9x2p7").len(),
+            MAX_NAMESPACE_LEN
+        );
+    }
+
+    #[test]
+    fn both_assembled_name_bounds_stay_reachable() {
+        // wamn-0h0g.15.72's property, preserved through the suffix: the LOOSER
+        // bound is checked FIRST, so neither branch is dead code. The suffix
+        // inverted which is looser — the namespace stem leaves the triple 53
+        // bytes, the database name 51 — so the database check now runs first.
+        let org = "o".repeat(40);
+
+        // 52 combined bytes: the database name is 64 and refuses. Under a
+        // namespace-first order this would report the stem instead.
+        let over_db = "p".repeat(9);
+        match validate_project_env(&org, &over_db, "dev") {
+            Err(ProvisionError::NameTooLong { name, max }) => {
+                assert_eq!(name, project_env_database_name(&org, &over_db, "dev"));
                 assert_eq!(max, MAX_DB_NAME_LEN);
             }
-            other => panic!("the database bound must refuse this triple, got {other:?}"),
+            other => panic!("the database bound must refuse a 52-byte triple, got {other:?}"),
         }
 
-        // The namespace bound is enforced in its own right, not inherited from
-        // the database one: a triple whose NAMESPACE breaches the DNS-1123 cap
-        // is refused naming the namespace.
-        let long_org = "o".repeat(40);
-        let long_project = "p".repeat(40);
-        match validate_project_env(&long_org, &long_project, "prod") {
+        // 51 combined bytes: the database name is exactly 63 and PASSES, so only
+        // the namespace can refuse — the branch that goes dead if the order is
+        // chosen wrongly.
+        let over_namespace = "p".repeat(8);
+        assert_eq!(
+            project_env_database_name(&org, &over_namespace, "dev").len(),
+            MAX_DB_NAME_LEN
+        );
+        match validate_project_env(&org, &over_namespace, "dev") {
             Err(ProvisionError::NameTooLong { name, max }) => {
                 assert_eq!(
                     name,
-                    project_env_namespace(&long_org, &long_project, "prod")
+                    project_env_namespace_stem(&org, &over_namespace, "dev")
                 );
-                assert_eq!(max, MAX_NAMESPACE_LEN);
+                assert_eq!(max, MAX_NAMESPACE_STEM_LEN);
             }
-            other => panic!("the namespace bound must refuse this triple, got {other:?}"),
+            other => panic!("the namespace bound must refuse a 51-byte triple, got {other:?}"),
         }
     }
 
@@ -834,22 +1019,26 @@ mod tests {
             Err(ProvisionError::InvalidProjectId { .. })
         ));
         // The CDC object name is one byte per component longer than the db name
-        // ("wamn_cdc_" = 9 vs "wamn-db-" = 8): a triple whose db name is exactly
-        // at the 63-byte limit overflows the CDC name and is rejected.
+        // ("wamn_cdc_" = 9 vs "wamn-db-" = 8), so it bounds a 50-byte triple
+        // where the db name bounds a 51-byte one. Since the namespace stem
+        // refuses anything over 44 (wamn-0h0g.13.57), the base validation always
+        // fires first and this extra branch is SUBSUMED — it binds again once the
+        // CDC objects carry the instance suffix too. Pin what is true: a triple
+        // whose db name sits exactly on the limit is still refused…
         let org = "o".repeat(25);
         let project = "p".repeat(22);
         assert_eq!(
             project_env_database_name(&org, &project, "prod").len(),
             MAX_DB_NAME_LEN
         );
-        assert!(validate_project_env(&org, &project, "prod").is_ok());
         assert!(matches!(
             validate_project_env_cdc(&org, &project, "prod"),
-            Err(ProvisionError::NameTooLong { max: 63, .. })
+            Err(ProvisionError::NameTooLong { .. })
         ));
-        // One byte shorter fits both.
-        let org_ok = "o".repeat(24);
-        assert!(validate_project_env_cdc(&org_ok, &project, "prod").is_ok());
+        // …and every triple the base validation admits has a legal CDC name.
+        let org_ok = "o".repeat(40);
+        assert!(validate_project_env_cdc(&org_ok, "pp", "de").is_ok());
+        assert!(cdc_object_name(&org_ok, "pp", "de").len() <= MAX_DB_NAME_LEN);
     }
 
     #[test]

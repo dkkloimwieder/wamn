@@ -28,7 +28,8 @@ pub enum ProvisionError {
     /// (wamn-R27). Validated here since only `project` has its own
     /// [`ProvisionError::InvalidProjectId`].
     InvalidComponent {
-        /// Which component (`"org"` or `"env"`).
+        /// Which component (`"org"`, `"env"`, or `"instance"` — the minted
+        /// 8-character suffix, wamn-0h0g.13.57).
         component: &'static str,
         /// The offending value.
         value: String,
@@ -49,9 +50,13 @@ pub enum ProvisionError {
         /// The owner env slug with no policy.
         name: String,
     },
-    /// The assembled per-project-env name `wamn-db-<org>--<project>--<env>`
-    /// (wamn-q3n.7) exceeds the Postgres identifier / DNS-1123 label limit.
-    /// Shorten the org or project id.
+    /// An assembled per-project-env name exceeds the Postgres identifier /
+    /// DNS-1123 label limit. Either `wamn-db-<org>--<project>--<env>`
+    /// (wamn-q3n.7, bounded by `MAX_DB_NAME_LEN`) or the namespace stem
+    /// `wamn-<org>--<project>--<env>`, which is bounded by
+    /// `MAX_NAMESPACE_STEM_LEN` rather than 63 because the minted instance
+    /// suffix and its separator are appended after it (wamn-0h0g.13.57).
+    /// `name` says which one. Shorten the org or project id.
     NameTooLong {
         /// The over-long assembled name.
         name: String,

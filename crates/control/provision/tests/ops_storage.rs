@@ -251,8 +251,8 @@ fn ops_schema_applies_idempotently_after_core_on_postgres() {
              (org,name,recovery_domain,promotion_rank,instances,storage,cpu,memory,image) \
            VALUES ('acme','dev','\"own\"'::jsonb,10,1,'2Gi','200m','256Mi','postgres:18');\n\
          INSERT INTO registry.projects (org,id) VALUES ('acme','app');\n\
-         INSERT INTO registry.project_envs (org,project,env,secret_name) \
-           VALUES ('acme','app','dev','wamn-db-acme--app--dev');\n\
+         INSERT INTO registry.project_envs (org,project,env,secret_name,instance_suffix) \
+           VALUES ('acme','app','dev','wamn-db-acme--app--dev','k3m9x2p7');\n\
          RESET ROLE;\n\
          SET ROLE wamn_ops;\n",
     );

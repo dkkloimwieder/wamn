@@ -59,17 +59,18 @@ use wamn_control_provision::{
     ARTIFACT_READER_VERIFY_APPLICATION_NAME, ArtifactReaderCredential,
     ArtifactReaderCredentialScope, ArtifactReaderCredentialValidity, ArtifactReaderTenantScope,
     CredentialGeneration, EFFECT_WRITER_ROLE, EffectWriterCredentialScope,
-    EffectWriterCredentialValidity, artifact_reader_credential, artifact_reader_endpoint,
-    artifact_reader_generation_role, artifact_reader_generation_role_marker,
-    artifact_reader_policy_name, artifact_reader_secret_name, artifact_reader_tenant_role,
-    artifact_reader_tenant_role_marker, artifact_reader_tenant_scope_hash, compose_url,
-    effect_writer_credential, effect_writer_generation_role, effect_writer_scope_hash,
-    parse_artifact_reader_credential, project_env_database_name, project_env_secret_name,
+    EffectWriterCredentialValidity, INSTANCE_SUFFIX_LEN, artifact_reader_credential,
+    artifact_reader_endpoint, artifact_reader_generation_role,
+    artifact_reader_generation_role_marker, artifact_reader_policy_name,
+    artifact_reader_secret_name, artifact_reader_tenant_role, artifact_reader_tenant_role_marker,
+    artifact_reader_tenant_scope_hash, compose_url, effect_writer_credential,
+    effect_writer_generation_role, effect_writer_scope_hash, parse_artifact_reader_credential,
+    project_env_database_name, project_env_namespace, project_env_secret_name,
     render_artifact_reader_secret_manifest, render_effect_writer_secret_manifest,
     render_project_env_database, render_project_env_secret_manifest, sql,
     validate_artifact_reader_credential, validate_artifact_reader_generation_role_marker,
     validate_artifact_reader_scope, validate_artifact_reader_tenant_child_role_marker,
-    validate_artifact_reader_tenant_role_marker, validate_project_env,
+    validate_artifact_reader_tenant_role_marker, validate_instance_suffix, validate_project_env,
 };
 use wamn_control_registry::{Org, Placement, Triple, cluster_of};
 use wamn_platform_identity::{
@@ -478,11 +479,24 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
     match &args.system_database_url {
         Some(url) => {
             let secret_name = project_env_secret_name(org, project, env);
-            record_project_env(url, &triple, &secret_name, args.secret_namespace.as_deref())
-                .await?;
+            // The instance suffix is minted here and recorded read-or-mint: a
+            // re-provision of an existing environment keeps the stored one, so
+            // the derived names stay pointed at the resources that already exist.
+            let instance = record_project_env(
+                url,
+                &triple,
+                &secret_name,
+                args.secret_namespace.as_deref(),
+                &mint_instance_suffix()?,
+            )
+            .await?;
             println!(
                 "recorded project {:?} + project-env {} in the registry (wamn_system)",
                 project, triple
+            );
+            println!(
+                "environment namespace {:?} (instance suffix {instance:?})",
+                project_env_namespace(org, project, env, &instance)
             );
 
             if issues_pat {
@@ -1122,6 +1136,47 @@ fn random_lower_hex(bytes: usize) -> anyhow::Result<String> {
         .fill(&mut material)
         .map_err(|_| anyhow::anyhow!("operating system could not supply credential entropy"))?;
     Ok(hex::encode(material))
+}
+
+/// Alphabet of the provision-minted instance suffix: `[a-z0-9]`, 36 symbols, so
+/// eight of them carry ~41 bits. Narrower than an identity slug's on purpose —
+/// the suffix is the LAST bytes of a DNS-1123 label, which must end alphanumeric.
+const INSTANCE_SUFFIX_ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789";
+
+/// Largest multiple of the alphabet size that fits in a byte (252). A draw at or
+/// above it is redrawn rather than folded: a plain `% 36` would over-weight the
+/// first four symbols, and the suffix's uniform randomness IS the non-reuse
+/// mechanism (wamn-0h0g.13.57) — nothing else keeps a recreated environment off
+/// a deleted one's names.
+const INSTANCE_SUFFIX_REJECT_AT: usize = 256 - 256 % INSTANCE_SUFFIX_ALPHABET.len();
+
+/// Mint one environment's instance suffix. The randomness is the whole
+/// uniqueness mechanism: no naming registry, no collision-retry loop, no
+/// derivation from the triple (an owner ruling of wamn-0h0g.13.57).
+///
+/// The mint lives HERE and not in `wamn-control-provision` because that crate is
+/// deliberately pure — no DB, no K8s client, no clock, and no entropy. It takes
+/// the suffix as a parameter and derives names from it.
+fn mint_instance_suffix() -> anyhow::Result<String> {
+    let random = SystemRandom::new();
+    let mut suffix = String::with_capacity(INSTANCE_SUFFIX_LEN);
+    let mut draw = [0_u8; INSTANCE_SUFFIX_LEN];
+    while suffix.len() < INSTANCE_SUFFIX_LEN {
+        random.fill(&mut draw).map_err(|_| {
+            anyhow::anyhow!("operating system could not supply instance-suffix entropy")
+        })?;
+        for byte in draw {
+            if usize::from(byte) >= INSTANCE_SUFFIX_REJECT_AT {
+                continue;
+            }
+            let index = usize::from(byte) % INSTANCE_SUFFIX_ALPHABET.len();
+            suffix.push(char::from(INSTANCE_SUFFIX_ALPHABET[index]));
+            if suffix.len() == INSTANCE_SUFFIX_LEN {
+                break;
+            }
+        }
+    }
+    Ok(suffix)
 }
 
 fn exact_project_database_config(admin_url: &str, database: &str) -> anyhow::Result<PgConfig> {
@@ -3295,17 +3350,22 @@ async fn do_resolve_cluster(
 /// Record the project and the provisioned project-env in the registry (idempotent).
 /// Connects as superuser and `SET ROLE wamn_system` (the registry owner — the
 /// wamn-q3n.3 apply pattern), then runs the pure `wamn-control-registry` builders.
+///
+/// Returns the environment's STORED instance suffix, which is `minted` only on a
+/// first provision — see [`do_record_project_env`].
 async fn record_project_env(
     system_url: &str,
     triple: &Triple,
     secret_name: &str,
     secret_namespace: Option<&str>,
-) -> anyhow::Result<()> {
+    minted: &str,
+) -> anyhow::Result<String> {
     let (client, conn) = tokio_postgres::connect(system_url, NoTls)
         .await
         .context("system db connect")?;
     let conn_task = tokio::spawn(conn);
-    let result = do_record_project_env(&client, triple, secret_name, secret_namespace).await;
+    let result =
+        do_record_project_env(&client, triple, secret_name, secret_namespace, minted).await;
     drop(client);
     let _ = conn_task.await;
     result
@@ -3316,7 +3376,8 @@ async fn do_record_project_env(
     triple: &Triple,
     secret_name: &str,
     secret_namespace: Option<&str>,
-) -> anyhow::Result<()> {
+    minted: &str,
+) -> anyhow::Result<String> {
     client
         .batch_execute("SET ROLE wamn_system")
         .await
@@ -3329,8 +3390,8 @@ async fn do_record_project_env(
         .await
         .context("upsert registry.projects row")?;
     let env = triple.env.as_str();
-    client
-        .execute(
+    let row = client
+        .query_one(
             wamn_control_registry::sql::upsert_project_env_sql(),
             &[
                 &triple.org,
@@ -3338,11 +3399,21 @@ async fn do_record_project_env(
                 &env,
                 &secret_name,
                 &secret_namespace,
+                &minted,
             ],
         )
         .await
         .context("upsert registry.project_envs row")?;
-    Ok(())
+    // Read-or-mint: the upsert RETURNS the STORED suffix, which is the freshly
+    // minted one on a first provision and the EXISTING one when this triple was
+    // already provisioned — the upsert deliberately never refreshes it, because
+    // re-minting would orphan every resource the old suffix named. The registry
+    // is a trust boundary, so the value is re-checked before any name derives
+    // from it.
+    let stored: String = row.get(0);
+    validate_instance_suffix(&stored)
+        .map_err(|error| anyhow::anyhow!("registry instance suffix: {error}"))?;
+    Ok(stored)
 }
 
 /// Print a JSON document to a path, or to stdout with a labeled header when the
@@ -3385,6 +3456,36 @@ mod tests {
         ];
         argv.extend_from_slice(extra);
         TestCli::try_parse_from(argv).map(|cli| cli.args)
+    }
+
+    /// The mint is the whole non-reuse mechanism (wamn-0h0g.13.57): every draw
+    /// must satisfy the pure crate's rule, and the draws must actually differ.
+    /// A constant, a counter, or a triple-derived suffix collapses `seen`.
+    #[test]
+    fn the_minted_instance_suffix_is_a_fresh_valid_dns_label_tail() {
+        // A duplicated symbol would bias the `% len()` fold; a symbol outside
+        // `[a-z0-9]` would leave the namespace an illegal DNS-1123 label.
+        assert_eq!(INSTANCE_SUFFIX_ALPHABET.len(), 36);
+        assert_eq!(
+            INSTANCE_SUFFIX_ALPHABET
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len(),
+            INSTANCE_SUFFIX_ALPHABET.len()
+        );
+        assert!(
+            INSTANCE_SUFFIX_ALPHABET
+                .iter()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        );
+
+        let mut seen = BTreeSet::new();
+        for _ in 0..64 {
+            let suffix = mint_instance_suffix().expect("mint an instance suffix");
+            validate_instance_suffix(&suffix).expect("a minted suffix satisfies the pure rule");
+            seen.insert(suffix);
+        }
+        assert_eq!(seen.len(), 64, "64 draws collapsed to {}", seen.len());
     }
 
     #[test]

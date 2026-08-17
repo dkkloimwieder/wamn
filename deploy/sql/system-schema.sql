@@ -287,6 +287,19 @@ CREATE INDEX pats_principal_idx ON identity.pats (principal_id);
 -- K8s Secret resolved by a component holding the matching RBAC. There is NO
 -- url/password/dsn column here; compromise of this DB yields the org/placement
 -- *list*, never the keys to any org's data.
+--
+-- `instance_suffix` is the provision-minted INSTANCE identity (wamn-0h0g.13.57):
+-- 8 characters of `[a-z0-9]` randomness, drawn once by `provision-project-env`
+-- and never refreshed. The triple names the environment; the suffix distinguishes
+-- THIS provisioning of it from an earlier one. Physical names derive from
+-- `<triple>--<instance_suffix>` (the Kubernetes namespace today), so deleting an
+-- environment and recreating it under the same triple yields different physical
+-- names and the new environment cannot inherit whatever survived the delete.
+-- Randomness is the whole mechanism — no naming registry, no retry loop, no
+-- derivation. It is deliberately NOT part of the PRIMARY KEY: the triple stays
+-- the identity every FK here points at (`registry.event_readers`, and the
+-- separately installed ops relations), and a re-provisioned environment must
+-- REPLACE its row rather than accumulate one per instance.
 -- ---------------------------------------------------------------------------
 CREATE TABLE registry.project_envs (
     org              text NOT NULL,
@@ -294,10 +307,13 @@ CREATE TABLE registry.project_envs (
     env              text NOT NULL,
     secret_name      text NOT NULL,
     secret_namespace text,
+    instance_suffix  text NOT NULL,
     PRIMARY KEY (org, project, env),
     FOREIGN KEY (org, project) REFERENCES registry.projects (org, id) ON DELETE CASCADE,
     FOREIGN KEY (org, env) REFERENCES registry.env_policies (org, name)
-        DEFERRABLE INITIALLY IMMEDIATE
+        DEFERRABLE INITIALLY IMMEDIATE,
+    CONSTRAINT project_envs_instance_suffix_check
+        CHECK (instance_suffix ~ '^[a-z0-9]{8}$')
 );
 
 -- The env_policies → orgs CASCADE is added HERE, after projects/project_envs
