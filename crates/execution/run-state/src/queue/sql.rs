@@ -136,11 +136,35 @@ pub fn clear_pre_effect_state_sql() -> String {
         .to_string()
 }
 
+/// Advance the crash-evidence attempt count for the selected run.
+///
+/// `$1` is the selected run id. This is deliberately its OWN statement, taken
+/// BEFORE the lease grant and OUTSIDE the grant's subtransaction: the grant can
+/// abort (a database guard on the run row refuses the write), and an increment
+/// that shared the aborted statement rolled back with it — so the run could
+/// never reach `max_attempts`, the janitor could never reap it, and it stayed
+/// the FIFO head forever (wamn-0h0g.15.69).
+///
+/// What is counted is unchanged: attempts are CRASH EVIDENCE only, so replacing
+/// a prior non-NULL lease increments and a first claim or a released
+/// (queue-parked) row does not. Reading `q.lease_expires_at` before the grant
+/// overwrites it is what keeps that identical to the fused statement it left.
+pub fn advance_claim_attempts_sql() -> String {
+    "UPDATE run_queue AS q \
+        SET attempts = q.attempts \
+            + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
+      WHERE q.tenant_id = current_setting('app.tenant', true) \
+        AND q.run_id = $1 \
+      RETURNING q.attempts"
+        .to_string()
+}
+
 /// Grant a lease and record the claiming pod's release identity on the run.
 ///
 /// Params: run id, host-injected lease owner, TTL milliseconds, the pod's
-/// release version, the pod's manifest digest. Attempts count crash evidence and
-/// increment only when replacing a prior non-NULL lease.
+/// release version, the pod's manifest digest. The crash-evidence attempt count
+/// is NOT advanced here — [`advance_claim_attempts_sql`] owns it, outside this
+/// statement's abort scope.
 ///
 /// Runs are never version-pinned: the pair is minted HERE, on the write that
 /// already marks the run running, never at admission and never as a second
@@ -159,9 +183,7 @@ pub fn grant_production_claim_sql() -> String {
                 SET lease_owner = $2, \
                     lease_expires_at = statement_timestamp() \
                         + ($3::bigint * interval '1 millisecond'), \
-                    lease_generation = q.lease_generation + 1, \
-                    attempts = q.attempts \
-                        + CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END \
+                    lease_generation = q.lease_generation + 1 \
               WHERE q.tenant_id = current_setting('app.tenant', true) \
                 AND q.run_id = $1 \
               RETURNING q.tenant_id, q.run_id, q.lease_generation \

@@ -6,10 +6,11 @@ use deadpool_postgres::Object;
 use tokio_postgres::Row;
 use tokio_postgres::types::FromSql;
 use wamn_run_state::queue::{
-    ProductionClaimClass, classify_production_claim, clear_pre_effect_state_sql,
-    grant_production_claim_sql, select_claim_effect_attempt_sql, select_exhausted_production_sql,
-    select_pre_effect_projection_sql, select_production_claim_sql, serialize_effect_intent_sql,
-    terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
+    ProductionClaimClass, advance_claim_attempts_sql, classify_production_claim,
+    clear_pre_effect_state_sql, grant_production_claim_sql, select_claim_effect_attempt_sql,
+    select_exhausted_production_sql, select_pre_effect_projection_sql, select_production_claim_sql,
+    serialize_effect_intent_sql, terminalize_effect_uncertain_claim_sql,
+    terminalize_exhausted_production_sql,
 };
 use wamn_run_state::{EffectUncertainFailure, FailKind, RunStatus};
 
@@ -110,6 +111,21 @@ pub enum ProductionReapResult {
     Reaped { run_id: String },
 }
 
+/// The composed outcome of one claim transaction, decided before COMMIT.
+#[derive(Debug)]
+enum ClaimTurn {
+    /// The transaction may commit and report this result.
+    Claimed(ProductionClaimResult),
+    /// The lease grant was refused inside its own subtransaction, which the
+    /// composer already rolled back. The transaction is still live and MUST
+    /// commit so the crash-evidence attempt advance taken before the savepoint
+    /// survives — a refusal that rolls its own attempt counter back can never
+    /// reach `max_attempts`, so the janitor can never reap the run and it stays
+    /// the tenant's FIFO head forever (wamn-0h0g.15.69). The claim itself still
+    /// fails with this error.
+    GrantRefused(ProductionClaimError),
+}
+
 #[derive(Debug)]
 struct SelectedClaim {
     run_id: String,
@@ -199,7 +215,7 @@ impl WamnPostgres {
         let result =
             claim_in_transaction(&connection, &runner, lease_ttl_ms, release.as_ref()).await;
         match result {
-            Ok(result) => {
+            Ok(turn) => {
                 if let Err(error) = connection.batch_execute("COMMIT").await {
                     self.destroy(connection);
                     return Err(ProductionClaimError::new(
@@ -208,7 +224,10 @@ impl WamnPostgres {
                         error.to_string(),
                     ));
                 }
-                Ok(result)
+                match turn {
+                    ClaimTurn::Claimed(result) => Ok(result),
+                    ClaimTurn::GrantRefused(error) => Err(error),
+                }
             }
             Err(error) => {
                 if let Err(rollback_error) = connection.batch_execute("ROLLBACK").await {
@@ -316,7 +335,7 @@ async fn claim_in_transaction(
     runner: &str,
     lease_ttl_ms: i64,
     release: Option<&ReleaseIdentity>,
-) -> Result<ProductionClaimResult, ProductionClaimError> {
+) -> Result<ClaimTurn, ProductionClaimError> {
     let select_sql = select_production_claim_sql();
     let select = connection
         .prepare_cached(&select_sql)
@@ -327,7 +346,7 @@ async fn claim_in_transaction(
         .await
         .map_err(|error| storage("select production candidate", error))?
     else {
-        return Ok(ProductionClaimResult::Empty);
+        return Ok(ClaimTurn::Claimed(ProductionClaimResult::Empty));
     };
     let selected = decode_selected_claim(&row)?;
     if !matches!(selected.status, RunStatus::Dispatched | RunStatus::Running) {
@@ -357,7 +376,9 @@ async fn claim_in_transaction(
 
     match classify_production_claim(selected.had_prior_lease, has_effect_attempt) {
         ProductionClaimClass::ExpiredWithAttempt => {
-            return terminalize_effect_uncertain(connection, &selected).await;
+            return terminalize_effect_uncertain(connection, &selected)
+                .await
+                .map(ClaimTurn::Claimed);
         }
         ProductionClaimClass::ExpiredPreEffect => {
             let projection_sql = select_pre_effect_projection_sql();
@@ -371,7 +392,7 @@ async fn claim_in_transaction(
                 .map_err(|error| storage("classify pre-effect projection", error))?;
             let has_projection = row_value(&projection_row, 0, "pre-effect projection")?;
             if has_projection {
-                return Ok(ProductionClaimResult::ResetRequired {
+                return Ok(ClaimTurn::Claimed(ProductionClaimResult::ResetRequired {
                     run_id: selected.run_id,
                     prior_lease_owner: selected.prior_lease_owner.ok_or_else(|| {
                         ProductionClaimError::new(
@@ -388,7 +409,7 @@ async fn claim_in_transaction(
                         )
                     })?,
                     prior_lease_generation: selected.prior_lease_generation,
-                });
+                }));
             }
             let clear_sql = clear_pre_effect_state_sql();
             let clear = connection
@@ -403,6 +424,19 @@ async fn claim_in_transaction(
         ProductionClaimClass::Ordinary => {}
     }
 
+    // Crash evidence advances on every path that reaches the grant, in its own
+    // statement OUTSIDE the grant's subtransaction. Terminalization and the
+    // projection-reset handoff return above and still do not count.
+    let advance_sql = advance_claim_attempts_sql();
+    let advance = connection
+        .prepare_cached(&advance_sql)
+        .await
+        .map_err(|error| storage("prepare crash-evidence advance", error))?;
+    connection
+        .query_one(&advance, &[&selected.run_id])
+        .await
+        .map_err(|error| storage("advance crash evidence", error))?;
+
     let grant_sql = grant_production_claim_sql();
     let grant = connection
         .prepare_cached(&grant_sql)
@@ -414,7 +448,14 @@ async fn claim_in_transaction(
     // reclaim under a rolled release should instead re-record).
     let release_version: Option<i32> = release.map(|identity| identity.release_version);
     let manifest_digest: Option<&str> = release.map(|identity| identity.manifest_digest.as_str());
-    let row = connection
+    // The grant is the one abortable write left in this transaction, so it runs
+    // in its own subtransaction: a database refusal rolls back to the savepoint
+    // instead of the whole transaction, leaving the advance above committable.
+    connection
+        .batch_execute("SAVEPOINT wamn_production_grant")
+        .await
+        .map_err(|error| storage("open production lease savepoint", error))?;
+    let granted = connection
         .query_opt(
             &grant,
             &[
@@ -425,21 +466,33 @@ async fn claim_in_transaction(
                 &manifest_digest,
             ],
         )
-        .await
-        .map_err(|error| storage("grant production lease", error))?
-        .ok_or_else(|| {
-            ProductionClaimError::new(
-                ProductionClaimErrorKind::Contract,
+        .await;
+    let granted = match granted {
+        Ok(granted) => granted,
+        Err(error) => {
+            connection
+                .batch_execute("ROLLBACK TO SAVEPOINT wamn_production_grant")
+                .await
+                .map_err(|rollback| storage("roll back refused production lease", rollback))?;
+            return Ok(ClaimTurn::GrantRefused(storage(
                 "grant production lease",
-                "selected queue row disappeared while locked",
-            )
-        })?;
+                error,
+            )));
+        }
+    };
+    let row = granted.ok_or_else(|| {
+        ProductionClaimError::new(
+            ProductionClaimErrorKind::Contract,
+            "grant production lease",
+            "selected queue row disappeared while locked",
+        )
+    })?;
     let lease_generation = row_value(&row, 0, "lease generation")?;
-    Ok(ProductionClaimResult::Ready {
+    Ok(ClaimTurn::Claimed(ProductionClaimResult::Ready {
         run_id: selected.run_id,
         payload: selected.payload,
         lease_generation,
-    })
+    }))
 }
 
 async fn reap_in_transaction(
@@ -752,6 +805,28 @@ mod tests {
         let helper = &source[fence_helper..tests_start];
         assert!(helper.contains("let sql = serialize_effect_intent_sql();"));
         assert!(!helper.contains("SELECT true"));
+    }
+
+    #[test]
+    fn crash_evidence_advances_outside_the_grants_subtransaction() {
+        let source = include_str!("production_claim.rs");
+        let start = source.find("async fn claim_in_transaction(").unwrap();
+        let end = source.find("async fn reap_in_transaction(").unwrap();
+        let body = &source[start..end];
+        let advance = body.find("advance_claim_attempts_sql()").unwrap();
+        let savepoint = body.find("\"SAVEPOINT wamn_production_grant\"").unwrap();
+        let rollback = body
+            .find("\"ROLLBACK TO SAVEPOINT wamn_production_grant\"")
+            .unwrap();
+        assert!(advance < savepoint && savepoint < rollback);
+        assert!(body.contains("ClaimTurn::GrantRefused"));
+
+        // The counted event is unchanged; only the statement it rides moved.
+        assert!(!grant_production_claim_sql().contains("attempts"));
+        assert!(
+            advance_claim_attempts_sql()
+                .contains("CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END")
+        );
     }
 
     #[test]

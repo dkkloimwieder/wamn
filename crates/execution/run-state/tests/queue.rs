@@ -1,9 +1,9 @@
 use serde_json::json;
 use wamn_run_state::queue::{
-    ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, claim_state,
-    classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql, enqueue_sql,
-    grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline, lease_live,
-    mint_evt_run_id, park_sql, parked_due_sql, plan_claim, production_claim_state,
+    ClaimState, JanitorVerdict, ProductionClaimClass, QueueEntry, advance_claim_attempts_sql,
+    claim_state, classify_production_claim, clear_pre_effect_state_sql, enqueue_evt_sql,
+    enqueue_sql, grant_production_claim_sql, janitor_verdict_with_attempt, lease_deadline,
+    lease_live, mint_evt_run_id, park_sql, parked_due_sql, plan_claim, production_claim_state,
     select_claim_effect_attempt_sql, select_exhausted_production_sql,
     select_pre_effect_projection_sql, select_production_claim_sql, serialize_effect_intent_sql,
     should_renew, terminalize_effect_uncertain_claim_sql, terminalize_exhausted_production_sql,
@@ -146,8 +146,25 @@ fn lease_grant_is_a_separate_final_statement() {
     assert!(!select.contains("lease_generation ="));
     assert!(grant.contains("SET lease_owner = $2"));
     assert!(grant.contains("lease_generation = q.lease_generation + 1"));
-    assert!(grant.contains("CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"));
     assert!(grant.contains("status = 'running'"));
+}
+
+#[test]
+fn crash_evidence_advances_in_a_statement_the_grant_cannot_roll_back() {
+    // The grant can abort at a database guard on the run row. An `attempts`
+    // increment fused into it rolled back with it, so the run never reached
+    // `max_attempts` and the janitor could never reap it (wamn-0h0g.15.69).
+    let grant = grant_production_claim_sql();
+    assert!(!grant.contains("attempts"));
+
+    let advance = advance_claim_attempts_sql();
+    assert!(advance.contains("UPDATE run_queue AS q"));
+    assert!(advance.contains("SET attempts = q.attempts"));
+    // Crash evidence only: a released (queue-parked) or never-leased row is free.
+    assert!(advance.contains("CASE WHEN q.lease_expires_at IS NOT NULL THEN 1 ELSE 0 END"));
+    assert!(!advance.contains("lease_owner"));
+    assert!(!advance.contains("lease_expires_at ="));
+    assert!(!advance.contains("UPDATE runs"));
 }
 
 #[test]
