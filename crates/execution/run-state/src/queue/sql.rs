@@ -130,8 +130,15 @@ pub fn serialize_effect_intent_sql() -> String {
 /// the DEAD attempt, so it joins that replacement set (wamn-0h0g.15.55): this
 /// clears it in the same transaction that re-opens the run, and the grant below
 /// records the reclaiming pod's own identity fresh. Only pre-effect reclaims
-/// reach this statement, so no execution used the pair being cleared, and the
-/// database guard permits the erasure for exactly that reason.
+/// reach this statement, so no effect was ever attributed to the pair being
+/// cleared, and the database guard permits the erasure for exactly that reason.
+///
+/// The `NOT EXISTS` on `node_runs` is this statement's OWN precondition — the
+/// composer routes a projection-carrying run to the private reset handoff
+/// instead — and since wamn-0h0g.15.82 it is the only place that precondition
+/// is enforced. The guard no longer refuses an erasure over an executed
+/// projection, because the record names the CLAIM CURRENTLY EXECUTING the run,
+/// not the run's history (wamn-0h0g.13.55).
 pub fn clear_pre_effect_state_sql() -> String {
     "UPDATE runs \
         SET state_json = NULL, release_version = NULL, manifest_digest = NULL \
@@ -179,8 +186,10 @@ pub fn advance_claim_attempts_sql() -> String {
 /// `wamn_run.guard_run_admission_pins_immutable` permits a write over NULL and
 /// refuses any differing one — so a re-claim carrying the same release is an
 /// accepted no-op, and a re-claim carrying a DIFFERENT release only succeeds
-/// because [`clear_pre_effect_state_sql`] already cleared the abandoned
-/// attempt's pair in this transaction. A pod with no injected release identity
+/// because the arm that reopened this run's claimability already cleared the
+/// abandoned attempt's pair: [`clear_pre_effect_state_sql`] in this same
+/// transaction on an expired pre-effect reclaim, or [`park_sql`] in the earlier
+/// transaction that released the lease. A pod with no injected release identity
 /// binds NULL for both and records nothing.
 /// The status predicate widened from `dispatched` to the two runnable states the
 /// composer already validates, because a re-claim of a `running` row must reach
@@ -297,12 +306,44 @@ pub fn dequeue_sql() -> String {
         .to_string()
 }
 
-/// Wait until a later queue time and release the current lease.
+/// Wait until a later queue time, release the current lease, and clear the
+/// release record the released claim was executing under.
+///
+/// Params: run id, delay milliseconds. Releasing the lease REOPENS
+/// CLAIMABILITY, and the record names "the release of the claim currently
+/// executing this run" (wamn-0h0g.13.55) — so the park that ends that claim
+/// clears the pair exactly as the classifier's pre-effect reclaim does, and the
+/// waking pod's grant records its own identity fresh. Without this a wake
+/// classifies `Ordinary` (a released lease makes `had_prior_lease` false), no
+/// arm resets, and a pod carrying a different release refuses at the database
+/// guard — permanently, because a released lease is not crash evidence, so the
+/// refusal spends no budget and the janitor can never reap the run off the head
+/// of its tenant's FIFO (wamn-0h0g.15.82).
+///
+/// The erasure is skipped for a run that already carries an immutable effect
+/// attempt. That run is never re-claimed for execution — any attempt classifies
+/// it terminal `effect-uncertain` on the next claim — so there is no fresh
+/// record to take, and the audit link from the attributed effect to the release
+/// that fired it must outlive the park.
+/// `wamn_run.guard_run_admission_pins_immutable` refuses that erasure for the
+/// same reason, so this predicate is also what keeps the park from ever
+/// aborting on the guard.
 pub fn park_sql() -> String {
-    "UPDATE run_queue \
-        SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
-            lease_owner = NULL, lease_expires_at = NULL \
-      WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1"
+    "WITH parked AS ( \
+         UPDATE run_queue \
+            SET available_at = now() + ($2::bigint * interval '1 millisecond'), \
+                lease_owner = NULL, lease_expires_at = NULL \
+          WHERE tenant_id = current_setting('app.tenant', true) AND run_id = $1 \
+          RETURNING tenant_id, run_id \
+     ) \
+     UPDATE runs AS r \
+        SET release_version = NULL, manifest_digest = NULL \
+       FROM parked \
+      WHERE r.tenant_id = parked.tenant_id AND r.run_id = parked.run_id \
+        AND NOT EXISTS ( \
+            SELECT 1 FROM effect_attempts AS effect \
+             WHERE effect.tenant_id = parked.tenant_id \
+               AND effect.run_id = parked.run_id)"
         .to_string()
 }
 

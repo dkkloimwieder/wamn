@@ -84,8 +84,9 @@ The host performs the following in one tenant-bound transaction:
 
 The classifications are:
 
-- **ordinary** — no prior lease. Preserve state, materialize/verify the map,
-  then grant the first lease.
+- **ordinary** — no prior lease: a never-claimed row, or one whose lease a queue
+  park released. Preserve state, materialize/verify the map, then grant the
+  lease.
 - **expired pre-effect** — a prior lease exists and no immutable effect attempt
   exists. Delete replaceable `node_runs`, clear `runs.state_json` AND the
   abandoned attempt's `(release_version, manifest_digest)` record, preserve all
@@ -101,6 +102,32 @@ The classifications are:
 A typed resolution refusal similarly stores the exact generic failed caller
 envelope when applicable, marks the run failed, and dequeues it before any
 lease grant.
+
+## The release record and claimability
+
+The record names **the release of the claim currently executing this run**
+(`wamn-0h0g.13.55`). Every arm that REOPENS claimability clears it; every claim
+acquisition writes it. The classifier's expired pre-effect reclaim is one such
+arm. So is the **queue park**: it releases the lease, so its wake classifies
+**ordinary** and no classifier arm runs — the park therefore clears
+`runs.(release_version, manifest_digest)` itself, and the waking pod's grant
+records its own identity fresh (`wamn-0h0g.15.82`). Without that, a wake on a
+different release refused at the guard permanently: a released lease is not
+crash evidence, so the refusal spent no `attempts`, the janitor could never reap
+the run, and it stayed its tenant's FIFO head.
+
+The one run that keeps its record across a park is one already carrying an
+immutable effect attempt. That run is terminalized `effect-uncertain` by its
+next claim rather than re-executed, so there is no fresh record to take and the
+link from the attributed effect to the release that fired it must survive.
+
+`wamn_run.guard_run_admission_pins_immutable` is transition-constrained to
+match: `NULL -> value` and `value -> NULL` are permitted, `value -> value'`
+never is, and the erasure requires only that the run is still runnable and
+carries no effect attempt. A node projection does NOT block it — the record
+names the current claim, not the run's history, and what nodes 1..k ran under is
+a per-segment audit question whose home is per-claim, deliberately not built
+here.
 
 `attempts` counts crash evidence only: granting over a prior non-NULL lease
 increments it; first claim and park/wake reclaim do not. An expired pre-effect
@@ -171,8 +198,8 @@ No compatibility reader or data-rewrite path exists.
   terminalization, janitor, and SQL shapes.
 - `production_claim_live` runs the real PostgreSQL 18 transaction path and
   proves FIFO concurrency, double-claimer exclusion, map identity/refusal,
-  candidate override, pre-effect preservation, exact caller replay, and the
-  private-writer/claim/reaper fence race.
+  candidate override, pre-effect preservation, the park/wake release-record
+  reset, exact caller replay, and the private-writer/claim/reaper fence race.
 - `run_plane_live` proves locked refusal/rollback, partial legacy shapes,
   empty convergence, exact writer ACL repair, and idempotence.
 - `tools/gate-mutants/global-fifo-claim.sh` mutation-pins the load-bearing

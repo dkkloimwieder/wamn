@@ -273,7 +273,8 @@ fn run_state_sql_matches_the_model() {
         "BEFORE UPDATE OF catalog_id, catalog_version, environment, execution_bundle_hash, capture_mode,\n                 release_version, manifest_digest"
     ));
     // The claim-time release record: NULL at admission, written by the claiming
-    // worker, and cleared again by the classifier's pre-effect reclaim. The
+    // worker, and cleared again by EVERY arm that reopens claimability — the
+    // classifier's pre-effect reclaim and the queue park (wamn-0h0g.15.82). The
     // guard is transition-constrained rather than write-once — NULL -> value and
     // value -> NULL are permitted, value -> value' never is (wamn-0h0g.15.55).
     assert!(sql.contains("    release_version int,"));
@@ -283,9 +284,11 @@ fn run_state_sql_matches_the_model() {
         "IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN\n        IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN"
     ));
     // The erasure arm cannot name its caller, so it proves nothing references
-    // the pair being erased: still runnable, no projection, no effect attempt.
+    // the pair being erased: still runnable and no effect attempt. A node
+    // projection is history, not a current-claim fact, so it does NOT refuse —
+    // that leg is what made the queue park unable to clear (wamn-0h0g.15.82).
     assert!(sql.contains("IF NEW.status NOT IN ('dispatched', 'running')"));
-    assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection"));
+    assert!(!sql.contains("wamn_run.node_runs AS projection"));
     assert!(sql.contains("OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect"));
     assert!(sql.contains(
         "ELSIF NEW.release_version IS DISTINCT FROM OLD.release_version\n           OR NEW.manifest_digest IS DISTINCT FROM OLD.manifest_digest THEN"

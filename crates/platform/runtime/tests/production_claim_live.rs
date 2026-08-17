@@ -11,7 +11,8 @@ use wamn_run_state::{
     BeginEffectAttempt, CredentialGeneration, EffectAttempt, EffectWriterClient,
     EffectWriterCredentialScope, EffectWriterCredentialValidity, EffectWriterErrorKind,
     EffectWriterScope, FailKind, ResetProjectionFence, RunStatus, effect_writer_credential,
-    effect_writer_generation_role, queue::select_production_claim_sql,
+    effect_writer_generation_role,
+    queue::{park_sql, select_production_claim_sql},
 };
 use wamn_runtime::plugins::wamn_postgres::{
     ProductionClaimErrorKind, ProductionClaimResult, ProductionReapResult, WamnPostgres,
@@ -205,9 +206,6 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                     OR OLD.manifest_digest IS NOT NULL THEN \
                    IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN \
                      IF NEW.status NOT IN ('dispatched', 'running') \
-                        OR EXISTS (SELECT 1 FROM {SCHEMA}.node_runs AS projection \
-                                    WHERE projection.tenant_id = OLD.tenant_id \
-                                      AND projection.run_id = OLD.run_id) \
                         OR EXISTS (SELECT 1 FROM {SCHEMA}.effect_attempts AS effect \
                                     WHERE effect.tenant_id = OLD.tenant_id \
                                       AND effect.run_id = OLD.run_id) THEN \
@@ -792,16 +790,16 @@ async fn production_claim_live() -> anyhow::Result<()> {
         .await?;
     let before: Value = serde_json::from_str(
         &admin
-        .query_one(
-            &format!(
-                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
+            .query_one(
+                &format!(
+                    "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
                     'release_version','manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
-            ),
-            &[&TENANT],
-        )
-        .await?
-        .get::<_, String>(0),
+                ),
+                &[&TENANT],
+            )
+            .await?
+            .get::<_, String>(0),
     )?;
     let reset_required = plugin.claim_next_production(COMPONENT, 30_000).await?;
     let reset_fence = match &reset_required {
@@ -875,16 +873,16 @@ async fn production_claim_live() -> anyhow::Result<()> {
     );
     let after: Value = serde_json::from_str(
         &admin
-        .query_one(
-            &format!(
-                "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
+            .query_one(
+                &format!(
+                    "SELECT (to_jsonb(r) - ARRAY['state_json','status','updated_at',\
                     'release_version','manifest_digest']::text[])::text \
                    FROM {SCHEMA}.runs AS r WHERE tenant_id=$1 AND run_id='pre-effect'"
-            ),
-            &[&TENANT],
-        )
-        .await?
-        .get::<_, String>(0),
+                ),
+                &[&TENANT],
+            )
+            .await?
+            .get::<_, String>(0),
     )?;
     assert_eq!(after, before);
     assert_eq!(
@@ -1293,10 +1291,13 @@ async fn production_claim_live() -> anyhow::Result<()> {
         "the reclaiming pod records its own release, not the dead attempt's"
     );
 
-    // THE ERASURE IS NOT A BLANKET HOLE. The guard permits value -> NULL only
-    // while nothing references the identity being erased. A run that executed,
-    // fired an effect, or reached a terminal status keeps its audit link, and
-    // value -> value' is refused on every path.
+    // THE ERASURE IS NOT A BLANKET HOLE — BUT ITS PRECONDITION IS NO LONGER THE
+    // RUN'S HISTORY. The record names the CLAIM currently executing the run
+    // (wamn-0h0g.13.55), so an executed node no longer pins it: a parked run has
+    // generally executed nodes and must still be able to reopen its
+    // claimability (wamn-0h0g.15.82). What still pins it is an ATTRIBUTED
+    // EFFECT and a TERMINAL STATUS, and value -> value' is refused on every
+    // path.
     admin
         .execute(
             &format!("INSERT INTO {SCHEMA}.node_runs VALUES ($1,'release-record','a-node')"),
@@ -1307,34 +1308,88 @@ async fn production_claim_live() -> anyhow::Result<()> {
         "release_version=9, manifest_digest={}",
         quote_literal(EMPTY_HASH)
     );
-    for (set, why) in [
-        (
-            "release_version=NULL, manifest_digest=NULL".to_string(),
-            "a run with a node projection may not erase its release record",
-        ),
-        (
-            third_pair,
-            "no path may rewrite a recorded release in place",
-        ),
-    ] {
-        let refused = admin
-            .execute(
-                &format!(
-                    "UPDATE {SCHEMA}.runs SET {set} \
-                      WHERE tenant_id=$1 AND run_id='release-record'"
-                ),
-                &[&TENANT],
-            )
-            .await
-            .expect_err(why);
-        let db = refused.as_db_error().expect("guard refusal is a db error");
-        assert_eq!(db.code().code(), "55000");
-        assert_eq!(db.message(), "run-release-record-immutable", "{why}");
-    }
+    let rewritten = admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET {third_pair} \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await
+        .expect_err("no path may rewrite a recorded release in place");
+    let db = rewritten
+        .as_db_error()
+        .expect("guard refusal is a db error");
+    assert_eq!(db.code().code(), "55000");
+    assert_eq!(db.message(), "run-release-record-immutable");
+
+    // A NODE PROJECTION NO LONGER REFUSES THE ERASURE. This is the exact leg
+    // that made the queue park the one claimability-reopening arm which could
+    // not clear.
     admin
         .execute(
             &format!(
-                "DELETE FROM {SCHEMA}.node_runs \
+                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await
+        .expect("a runnable, effect-free run may reopen its claimability");
+    assert_eq!(
+        release_record(&admin, "release-record").await?,
+        (None, None)
+    );
+    admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs \
+                    SET release_version=$2, manifest_digest=$3 \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT, &ROLLED_RELEASE_VERSION, &ROLLED_MANIFEST_DIGEST],
+        )
+        .await?;
+    assert_eq!(release_record(&admin, "release-record").await?, rerecorded);
+
+    // AN ATTRIBUTED EFFECT STILL DOES REFUSE IT. The attempt names the release
+    // that fired it, and that link is never rewritten out from under it.
+    admin
+        .execute(
+            &format!(
+                "INSERT INTO {SCHEMA}.effect_attempts \
+                   (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id, \
+                    local_node_id,source_artifact_hash,requirement_name,occurrence,seq, \
+                    generation_fact_kind,attempt_deadline_at,attempt_input_ref) \
+                 VALUES ($1,'release-record',$2,$2,0,'a-node',$2,'manager',0,1, \
+                         'not-required','2099-01-01T00:00:00Z','sha256:claim-live-effect-input')"
+            ),
+            &[&TENANT, &EMPTY_HASH],
+        )
+        .await?;
+    let mid_effect = admin
+        .execute(
+            &format!(
+                "UPDATE {SCHEMA}.runs SET release_version=NULL, manifest_digest=NULL \
+                  WHERE tenant_id=$1 AND run_id='release-record'"
+            ),
+            &[&TENANT],
+        )
+        .await
+        .expect_err("an attributed effect pins the release that fired it");
+    assert_eq!(
+        mid_effect
+            .as_db_error()
+            .expect("guard refusal is a db error")
+            .message(),
+        "run-release-record-immutable"
+    );
+    assert_eq!(release_record(&admin, "release-record").await?, rerecorded);
+    admin
+        .execute(
+            &format!(
+                "DELETE FROM {SCHEMA}.effect_attempts \
                   WHERE tenant_id=$1 AND run_id='release-record'"
             ),
             &[&TENANT],
@@ -1377,48 +1432,55 @@ async fn production_claim_live() -> anyhow::Result<()> {
         )
         .await?;
 
-    // PARK/WAKE IS NOT COVERED BY THE CLASSIFIER RESET. `park_sql` releases the
-    // lease (`lease_owner`/`lease_expires_at` to NULL), so a doorbell wake
-    // classifies as `Ordinary` and goes straight to the grant with no reset in
-    // between. A waking pod carrying a different release therefore still hits
-    // the guard, and because a released lease is not crash evidence the refusal
-    // spends no budget — so the janitor cannot retire the run either. This leg
-    // pins the gap the wamn-0h0g.15.55 ruling assumed was already closed.
+    // PARK/WAKE IS COVERED BY THE PARK'S OWN RESET (wamn-0h0g.15.82). `park_sql`
+    // releases the lease (`lease_owner`/`lease_expires_at` to NULL), so a
+    // doorbell wake classifies `Ordinary` and no classifier arm runs — which is
+    // exactly why the PARK, the arm that reopens claimability, clears the pair
+    // itself. A pod carrying a different release therefore wakes the run and
+    // records its own identity. Before this, the wake refused at the guard
+    // forever: a released lease is not crash evidence, so the refusal spent no
+    // budget, the janitor could never reap the run, and it stayed its tenant's
+    // FIFO head.
     seed_run(&admin, "park-wake", "cat-main", &release_hash, 71).await?;
     assert_eq!(
         ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
         "park-wake"
     );
     assert_eq!(release_record(&admin, "park-wake").await?, recorded);
+    // The SHIPPED park statement, not a hand-written stand-in: a mutation that
+    // dropped its reset fails exactly here.
+    let tenant_literal = quote_literal(TENANT);
     admin
-        .execute(
-            &format!(
-                "UPDATE {SCHEMA}.run_queue \
-                    SET available_at=now(), lease_owner=NULL, lease_expires_at=NULL \
-                  WHERE tenant_id=$1 AND run_id='park-wake'"
-            ),
-            &[&TENANT],
-        )
+        .batch_execute(&format!(
+            "SET search_path = {SCHEMA}; SET app.tenant = {tenant_literal};"
+        ))
         .await?;
-    let woken = plugin
-        .claim_next_production(ROLLED_COMPONENT, 30_000)
-        .await
-        .expect_err("a rolled pod waking a parked run has no classifier reset");
-    assert_eq!(woken.kind(), ProductionClaimErrorKind::Storage);
-    assert_eq!(woken.operation(), "grant production lease");
-    assert!(
-        woken.to_string().contains("run-release-record-immutable"),
-        "unexpected refusal: {woken}"
+    admin.execute(&park_sql(), &[&"park-wake", &0_i64]).await?;
+    admin
+        .batch_execute("RESET search_path; RESET app.tenant;")
+        .await?;
+    assert_eq!(
+        release_record(&admin, "park-wake").await?,
+        (None, None),
+        "the park cleared the record of the claim it released"
+    );
+    assert_eq!(
+        ready_run(
+            plugin
+                .claim_next_production(ROLLED_COMPONENT, 30_000)
+                .await?
+        ),
+        "park-wake"
     );
     assert_eq!(
         release_record(&admin, "park-wake").await?,
-        recorded,
-        "the refused wake left the recorded pair exactly as it was"
+        rerecorded,
+        "the waking pod records its own release, not the parked claim's"
     );
     assert_eq!(
         queue_attempts(&admin, "park-wake").await?,
         0,
-        "a released lease is not crash evidence, so this refusal spends no budget"
+        "a released lease is not crash evidence, so the wake spends no budget"
     );
     admin
         .execute(

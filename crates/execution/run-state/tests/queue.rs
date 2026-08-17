@@ -251,6 +251,39 @@ fn lease_and_park_arithmetic_remains_stable() {
 }
 
 #[test]
+fn park_clears_the_release_record_of_the_claim_it_releases() {
+    // Releasing the lease REOPENS claimability, and the record names the claim
+    // currently executing the run (wamn-0h0g.13.55). Without the clear, the
+    // wake classifies `Ordinary` — `had_prior_lease` is `lease_expires_at IS
+    // NOT NULL` — no arm resets, and a pod on a different release refuses at
+    // the guard while spending no crash budget: the run is then unreapable AND
+    // permanently its tenant's FIFO head (wamn-0h0g.15.82).
+    let park = park_sql();
+    assert!(park.contains("UPDATE runs AS r"));
+    assert!(park.contains("SET release_version = NULL, manifest_digest = NULL"));
+    assert!(park.contains("lease_owner = NULL, lease_expires_at = NULL"));
+
+    // The one run that KEEPS its record: an attributed effect names the release
+    // that fired it, and that run is terminalized `effect-uncertain` by its
+    // next claim rather than re-executed under a second release. The database
+    // guard refuses that erasure, so this predicate is also what keeps the park
+    // from aborting on it.
+    assert!(park.contains("AND NOT EXISTS"));
+    assert!(park.contains("FROM effect_attempts AS effect"));
+
+    // A park changes visibility, the lease, and the record — nothing else.
+    for untouched in [
+        "state_json",
+        "status =",
+        "SET attempts",
+        "lease_generation",
+        "DELETE FROM",
+    ] {
+        assert!(!park.contains(untouched), "park must not touch {untouched}");
+    }
+}
+
+#[test]
 fn queue_entry_round_trips_without_partition_plane() {
     let entry = QueueEntry::ready("tenant", "run", 42, 5).with_stream_seq(17);
     let value = serde_json::to_value(&entry).unwrap();

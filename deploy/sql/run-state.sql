@@ -120,24 +120,35 @@ END
 $$;
 
 -- Admission pins never change. The claim-time release record is write-once PER
--- CLAIM ATTEMPT, not per run-eternity: it is NULL on the admitted row, the
--- claiming worker writes its own pod identity, and the classifier's pre-effect
--- reclaim clears it again so the next claim can record afresh. The guard is
--- therefore TRANSITION-CONSTRAINED:
+-- CLAIM ATTEMPT, not per run-eternity: it names THE RELEASE OF THE CLAIM
+-- CURRENTLY EXECUTING THIS RUN (wamn-0h0g.13.55). It is NULL on the admitted
+-- row, the claiming worker writes its own pod identity, and EVERY arm that
+-- REOPENS CLAIMABILITY — the classifier's pre-effect reclaim and the queue park
+-- that releases a lease — clears it again so the next claim records afresh. The
+-- guard is therefore TRANSITION-CONSTRAINED:
 --     NULL  -> value    permitted  (a claim records this attempt's pod)
---     value -> NULL     permitted  (a reclaim abandons the attempt it described)
+--     value -> NULL     permitted  (an arm reopens claimability)
 --     value -> value'   REFUSED always
 -- A trigger cannot see WHICH statement is updating the row, so the erasure arm
 -- does not try to name its caller; it encodes the property that makes the
--- erasure safe. The reclaim path is safe because nothing references the
--- identity being erased: only PRE-EFFECT reclaims reach it (an effect attempt
--- classifies the run terminal effect-uncertain instead), the abandoned attempt
--- fired no effect and left no node projection, and the run is still runnable.
--- So erasure is permitted exactly while the run is runnable and carries neither
--- a mutable node projection nor an immutable effect attempt. A run that
--- executed, fired an effect, or reached a terminal status keeps its record —
--- the audit link from the run to the plan hashes it executed is never erased
--- out from under an execution that used it.
+-- erasure safe. Two legs remain, and each defends a distinct thing:
+--   * STILL RUNNABLE. A terminal run keeps the audit link to the plan hashes it
+--     finished under. Nothing reopens a terminal run's claimability, so nothing
+--     needs to erase it.
+--   * NO IMMUTABLE EFFECT ATTEMPT. An attributed effect names the release that
+--     fired it, and that link is never rewritten out from under it. This is the
+--     leg that refuses a mid-effect release rewrite; a run carrying an attempt
+--     is classified terminal effect-uncertain by its next claim and never
+--     re-executes under a second release.
+-- The `node_runs` leg that stood beside them was dropped by wamn-0h0g.15.82. It
+-- encoded the OLD contract, "the release this RUN executed under"; under the
+-- redefined contract an executed node is a HISTORY fact, not a current-claim
+-- fact. Keeping it made the queue park the one claimability-reopening arm that
+-- could not clear (a parked run has generally executed nodes), so a pod waking
+-- that run on a different release refused — and because a released lease is not
+-- crash evidence the run was then both unreapable and permanently its tenant's
+-- FIFO head. What nodes 1..k ran under is a per-segment audit question whose
+-- honest home is per-claim, and nothing is built for it here.
 CREATE FUNCTION wamn_run.guard_run_admission_pins_immutable()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -155,9 +166,6 @@ BEGIN
     IF OLD.release_version IS NOT NULL OR OLD.manifest_digest IS NOT NULL THEN
         IF NEW.release_version IS NULL AND NEW.manifest_digest IS NULL THEN
             IF NEW.status NOT IN ('dispatched', 'running')
-               OR EXISTS (SELECT 1 FROM wamn_run.node_runs AS projection
-                           WHERE projection.tenant_id = OLD.tenant_id
-                             AND projection.run_id = OLD.run_id)
                OR EXISTS (SELECT 1 FROM wamn_run.effect_attempts AS effect
                            WHERE effect.tenant_id = OLD.tenant_id
                              AND effect.run_id = OLD.run_id) THEN

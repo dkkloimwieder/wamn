@@ -156,9 +156,11 @@ impl WamnPostgres {
     /// The lease grant also records this pod's `(release version, manifest
     /// digest)` onto the run, write-once per claim attempt. A component with no
     /// injected release identity records nothing. A pod whose release differs
-    /// from a pair the run already carries succeeds only on the classifier's
-    /// pre-effect reclaim, which clears the abandoned attempt's pair in the same
-    /// transaction; on any other path the database guard refuses the claim.
+    /// from a pair the run already carries succeeds because the arm that
+    /// reopened the run's claimability already cleared it — the classifier's
+    /// pre-effect reclaim, in this same transaction, or the queue park that
+    /// released the lease; on any other path the database guard refuses the
+    /// claim.
     pub async fn claim_next_production(
         &self,
         component_id: &str,
@@ -423,6 +425,10 @@ async fn claim_in_transaction(
                 .await
                 .map_err(|error| storage("clear pre-effect state", error))?;
         }
+        // Nothing to reset here. A never-leased row carries no record, and a
+        // queue-parked one had its record cleared by the park that released
+        // the lease: the arm that REOPENS claimability owns the clear
+        // (wamn-0h0g.15.82), so the grant below always writes over NULL.
         ProductionClaimClass::Ordinary => {}
     }
 
