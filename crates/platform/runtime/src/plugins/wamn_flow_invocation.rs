@@ -12,7 +12,8 @@ use wash_runtime::wasmtime::component::Linker;
 use wash_runtime::wit::{WitInterface, WitWorld};
 
 use crate::flow_invocation::{
-    InvocationService, InvocationServiceConfig, PostgresInvocationBackend, SharedOutcomeListener,
+    InvocationFailure, InvocationService, InvocationServiceConfig, PostgresInvocationBackend,
+    SharedOutcomeListener,
 };
 
 mod bindings {
@@ -163,7 +164,8 @@ impl invocation::Host for ActiveCtx<'_> {
     async fn begin(
         &mut self,
         request: invocation::InvokeRequest,
-    ) -> wash_runtime::wasmtime::Result<invocation::BeginResult> {
+    ) -> wash_runtime::wasmtime::Result<Result<invocation::BeginResult, invocation::InvocationError>>
+    {
         let plugin = self.try_get_plugin::<WamnFlowInvocation>(WAMN_FLOW_INVOCATION_ID)?;
         let service = plugin.service(&self.component_id).ok_or_else(|| {
             wash_runtime::wasmtime::Error::msg("flow invocation component is not registered")
@@ -184,26 +186,51 @@ impl invocation::Host for ActiveCtx<'_> {
                     tracestate: trace.tracestate,
                 }),
         };
-        Ok(map_begin(service.begin(request).await.map_err(
-            |error| wash_runtime::wasmtime::Error::msg(error.to_string()),
-        )?))
+        Ok(service
+            .begin(request)
+            .await
+            .map(map_begin)
+            .map_err(map_invocation_error))
     }
 
     async fn wait(
         &mut self,
         run_id: String,
         timeout_ms: u32,
-    ) -> wash_runtime::wasmtime::Result<Option<invocation::InvokeResult>> {
+    ) -> wash_runtime::wasmtime::Result<
+        Result<Option<invocation::InvokeResult>, invocation::InvocationError>,
+    > {
         let plugin = self.try_get_plugin::<WamnFlowInvocation>(WAMN_FLOW_INVOCATION_ID)?;
         let service = plugin.service(&self.component_id).ok_or_else(|| {
             wash_runtime::wasmtime::Error::msg("flow invocation component is not registered")
         })?;
-        service
+        Ok(service
             .wait(run_id, timeout_ms)
             .await
-            .map_err(|error| wash_runtime::wasmtime::Error::msg(error.to_string()))?
-            .map(map_result)
-            .transpose()
+            .map(|outcome| outcome.map(map_result))
+            .map_err(map_invocation_error))
+    }
+}
+
+/// The one translation from the host's contextual failure to the frozen
+/// contract's error arm (wamn-0h0g.15.40). The operation, field, run and source
+/// chain are logged here and stop here: a guest learns the category only, never
+/// run-store internals.
+fn map_invocation_error(failure: InvocationFailure) -> invocation::InvocationError {
+    tracing::warn!(error = %failure, "flow invocation could not answer");
+    match failure.kind() {
+        wamn_flow_invocation::InvocationError::StoreUnavailable => {
+            invocation::InvocationError::StoreUnavailable
+        }
+        wamn_flow_invocation::InvocationError::StoreCorrupt => {
+            invocation::InvocationError::StoreCorrupt
+        }
+        wamn_flow_invocation::InvocationError::UnknownRun => {
+            invocation::InvocationError::UnknownRun
+        }
+        wamn_flow_invocation::InvocationError::InvalidRequest => {
+            invocation::InvocationError::InvalidRequest
+        }
     }
 }
 
@@ -223,10 +250,8 @@ fn map_begin(result: wamn_flow_invocation::BeginResult) -> invocation::BeginResu
     }
 }
 
-fn map_result(
-    result: wamn_flow_invocation::InvokeResult,
-) -> wash_runtime::wasmtime::Result<invocation::InvokeResult> {
-    Ok(match result {
+fn map_result(result: wamn_flow_invocation::InvokeResult) -> invocation::InvokeResult {
+    match result {
         wamn_flow_invocation::InvokeResult::Responded(response) => {
             invocation::InvokeResult::Responded(invocation::Response {
                 run_id: response.run_id,
@@ -237,7 +262,7 @@ fn map_result(
         wamn_flow_invocation::InvokeResult::Failed(failure) => {
             invocation::InvokeResult::Failed(map_failure(failure))
         }
-    })
+    }
 }
 
 fn map_failure(failure: wamn_flow_invocation::Failure) -> invocation::Failure {

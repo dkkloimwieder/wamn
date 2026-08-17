@@ -15,7 +15,8 @@ use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 use tokio_postgres::{AsyncMessage, NoTls, Row, Transaction};
 use wamn_flow_invocation::{
-    Admitted, BeginResult, Failure, FlowError, InvokeRequest, InvokeResult, Rejection, Response,
+    Admitted, BeginResult, Failure, FlowError, InvocationError, InvokeRequest, InvokeResult,
+    Rejection, Response,
 };
 use wamn_run_state::EffectUncertainFailure;
 use wamn_run_state::admission::{
@@ -207,6 +208,97 @@ pub struct HttpAdmission {
     pub run_deadline_at: DateTime<Utc>,
 }
 
+/// A host-side invocation failure and the context that produced it.
+///
+/// [`InvocationFailure::kind`] is the WIT-shaped arm the plugin boundary answers
+/// with; `operation`, `field`, `run_id` and `source` stay host-side for the log
+/// and never reach the caller, so a failure cannot leak run-store internals
+/// (wamn-0h0g.15.40). This is not a second wire taxonomy: `kind` is the frozen
+/// contract's own [`InvocationError`], translated exactly once at the plugin.
+#[derive(Debug)]
+pub struct InvocationFailure {
+    kind: InvocationError,
+    operation: &'static str,
+    field: Option<&'static str>,
+    run_id: Option<String>,
+    source: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+
+impl InvocationFailure {
+    /// The contract arm this failure is answered with.
+    pub fn kind(&self) -> InvocationError {
+        self.kind
+    }
+
+    fn new(kind: InvocationError, operation: &'static str) -> Self {
+        Self {
+            kind,
+            operation,
+            field: None,
+            run_id: None,
+            source: None,
+        }
+    }
+
+    fn with_field(mut self, field: &'static str) -> Self {
+        self.field = Some(field);
+        self
+    }
+
+    fn with_run(mut self, run_id: impl Into<String>) -> Self {
+        self.run_id = Some(run_id.into());
+        self
+    }
+
+    fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        self.source = Some(Box::new(source));
+        self
+    }
+}
+
+impl std::fmt::Display for InvocationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "flow invocation {} failed: {:?}",
+            self.operation, self.kind
+        )?;
+        if let Some(field) = self.field {
+            write!(formatter, " (field {field})")?;
+        }
+        if let Some(run_id) = &self.run_id {
+            write!(formatter, " (run {run_id})")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for InvocationFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+/// The run store is unreachable or refused the transaction; retryable.
+fn store_unavailable(
+    operation: &'static str,
+    source: impl std::error::Error + Send + Sync + 'static,
+) -> InvocationFailure {
+    InvocationFailure::new(InvocationError::StoreUnavailable, operation).with_source(source)
+}
+
+/// A stored row cannot be decoded into the versioned contract; terminal.
+fn store_corrupt(operation: &'static str) -> InvocationFailure {
+    InvocationFailure::new(InvocationError::StoreCorrupt, operation)
+}
+
+/// The arguments as presented are refused rather than truncated; terminal.
+fn invalid_request(operation: &'static str) -> InvocationFailure {
+    InvocationFailure::new(InvocationError::InvalidRequest, operation)
+}
+
 #[async_trait]
 pub trait InvocationBackend: Clone + Send + Sync + 'static {
     async fn resolve_target(
@@ -215,7 +307,7 @@ pub trait InvocationBackend: Clone + Send + Sync + 'static {
         catalog: &str,
         environment: &str,
         attachment: &str,
-    ) -> anyhow::Result<Option<InvocationTarget>>;
+    ) -> Result<Option<InvocationTarget>, InvocationFailure>;
 
     #[allow(clippy::too_many_arguments)]
     async fn recover(
@@ -228,15 +320,15 @@ pub trait InvocationBackend: Clone + Send + Sync + 'static {
         client_key_digest: &str,
         definition_hash: &str,
         fingerprint: &str,
-    ) -> anyhow::Result<InvocationRecovery>;
+    ) -> Result<InvocationRecovery, InvocationFailure>;
 
     async fn admit(
         &self,
         config: &InvocationServiceConfig,
         admission: &HttpAdmission,
-    ) -> anyhow::Result<AdmissionResult>;
+    ) -> Result<AdmissionResult, InvocationFailure>;
 
-    async fn poll(&self, tenant: &str, run_id: &str) -> anyhow::Result<InvocationPoll>;
+    async fn poll(&self, tenant: &str, run_id: &str) -> Result<InvocationPoll, InvocationFailure>;
 }
 
 #[derive(Clone)]
@@ -267,7 +359,7 @@ impl<B: InvocationBackend> InvocationService<B> {
         }
     }
 
-    pub async fn begin(&self, request: InvokeRequest) -> anyhow::Result<BeginResult> {
+    pub async fn begin(&self, request: InvokeRequest) -> Result<BeginResult, InvocationFailure> {
         let Some(target) = self
             .backend
             .resolve_target(
@@ -315,7 +407,7 @@ impl<B: InvocationBackend> InvocationService<B> {
             return Ok(rejected(409, "admission-retry"));
         }
         let expected_catalog_version = i32::try_from(request.expected_catalog_version)
-            .map_err(|_| anyhow!("catalog version exceeds PostgreSQL int"))?;
+            .map_err(|_| invalid_request("narrow expected catalog version"))?;
         if target.catalog_version != expected_catalog_version {
             // A promotion carrying an unchanged attachment is safe to retry:
             // the definition hash includes the resolved auth source.
@@ -325,7 +417,7 @@ impl<B: InvocationBackend> InvocationService<B> {
         }
 
         let input: Value = serde_json::from_str(&request.payload)
-            .context("mapped invocation payload is not JSON")?;
+            .map_err(|source| invalid_request("parse mapped payload").with_source(source))?;
         let (response_deadline_at, run_deadline_at) = deadlines(&target, &request)?;
         let invocation_context = invocation_context(&request);
         let mut admission = HttpAdmission {
@@ -403,15 +495,17 @@ impl<B: InvocationBackend> InvocationService<B> {
         &self,
         run_id: String,
         timeout_ms: u32,
-    ) -> anyhow::Result<Option<InvokeResult>> {
+    ) -> Result<Option<InvokeResult>, InvocationFailure> {
         // Subscribe before the first poll so a completion between observation
         // and waiting cannot be lost. Hints only shorten the bounded wait.
         let mut notifications = self
             .outcome_listener
             .as_ref()
             .map(SharedOutcomeListener::subscribe);
-        if let Some(outcome) = released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
-        {
+        if let Some(outcome) = released(
+            self.backend.poll(&self.config.tenant_id, &run_id).await?,
+            &run_id,
+        )? {
             return Ok(Some(to_invoke_result(outcome)?));
         }
 
@@ -438,9 +532,12 @@ impl<B: InvocationBackend> InvocationService<B> {
 
         // Notifications are hints. This final poll is the lost-notification
         // fallback and the only source of outcome truth.
-        released(self.backend.poll(&self.config.tenant_id, &run_id).await?)?
-            .map(to_invoke_result)
-            .transpose()
+        released(
+            self.backend.poll(&self.config.tenant_id, &run_id).await?,
+            &run_id,
+        )?
+        .map(to_invoke_result)
+        .transpose()
     }
 }
 
@@ -461,18 +558,22 @@ impl PostgresInvocationBackend {
         Ok(Self::new(pool))
     }
 
-    async fn transaction(&self) -> anyhow::Result<deadpool_postgres::Object> {
+    async fn transaction(&self) -> Result<deadpool_postgres::Object, InvocationFailure> {
         self.pool
             .get()
             .await
-            .context("checkout invocation database")
+            .map_err(|source| store_unavailable("checkout invocation database", source))
     }
 }
 
-async fn set_tenant(transaction: &Transaction<'_>, tenant: &str) -> anyhow::Result<()> {
+async fn set_tenant(
+    transaction: &Transaction<'_>,
+    tenant: &str,
+) -> Result<(), InvocationFailure> {
     transaction
         .query_one("SELECT set_config('app.tenant', $1, true)", &[&tenant])
-        .await?;
+        .await
+        .map_err(|source| store_unavailable("set tenant scope", source))?;
     Ok(())
 }
 
@@ -484,17 +585,24 @@ impl InvocationBackend for PostgresInvocationBackend {
         catalog: &str,
         environment: &str,
         attachment: &str,
-    ) -> anyhow::Result<Option<InvocationTarget>> {
+    ) -> Result<Option<InvocationTarget>, InvocationFailure> {
         let mut client = self.transaction().await?;
-        let transaction = client.transaction().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|source| store_unavailable("open resolve transaction", source))?;
         set_tenant(&transaction, tenant).await?;
         let row = transaction
             .query_opt(
                 resolve_invocation_target_sql(),
                 &[&catalog, &environment, &attachment],
             )
-            .await?;
-        transaction.commit().await?;
+            .await
+            .map_err(|source| store_unavailable("resolve invocation target", source))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|source| store_unavailable("commit resolve transaction", source))?;
         row.map(decode_target).transpose()
     }
 
@@ -508,9 +616,12 @@ impl InvocationBackend for PostgresInvocationBackend {
         client_key_digest: &str,
         definition_hash: &str,
         fingerprint: &str,
-    ) -> anyhow::Result<InvocationRecovery> {
+    ) -> Result<InvocationRecovery, InvocationFailure> {
         let mut client = self.transaction().await?;
-        let transaction = client.transaction().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|source| store_unavailable("open recovery transaction", source))?;
         set_tenant(&transaction, tenant).await?;
         let row = transaction
             .query_one(
@@ -525,8 +636,12 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &fingerprint,
                 ],
             )
-            .await?;
-        transaction.commit().await?;
+            .await
+            .map_err(|source| store_unavailable("look up invocation recovery", source))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|source| store_unavailable("commit recovery transaction", source))?;
         decode_recovery(&row)
     }
 
@@ -534,13 +649,17 @@ impl InvocationBackend for PostgresInvocationBackend {
         &self,
         config: &InvocationServiceConfig,
         admission: &HttpAdmission,
-    ) -> anyhow::Result<AdmissionResult> {
+    ) -> Result<AdmissionResult, InvocationFailure> {
         let mut client = self.transaction().await?;
-        let transaction = client.transaction().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|source| store_unavailable("open admission transaction", source))?;
         set_tenant(&transaction, &config.tenant_id).await?;
         let run_id: String = transaction
             .query_one("SELECT gen_random_uuid()::text", &[])
-            .await?
+            .await
+            .map_err(|source| store_unavailable("mint run id", source))?
             .get(0);
         let run_schema = RunStateSchema::default();
         let recipe = admission_transaction(AdmissionTransition::CallableFlow {
@@ -551,13 +670,16 @@ impl InvocationBackend for PostgresInvocationBackend {
                 recipe.lock_head(),
                 &[&config.catalog_id, &config.environment],
             )
-            .await?;
+            .await
+            .map_err(|source| store_unavailable("lock catalog head", source))?;
 
         let producer = AdmissionProducer::Http.as_sql();
         let catalog_version = admission.target.catalog_version;
         let flow_version = admission.target.flow_version;
-        let input = serde_json::to_string(&admission.input)?;
-        let context = serde_json::to_string(&admission.invocation_context)?;
+        let input = serde_json::to_string(&admission.input)
+            .map_err(|source| invalid_request("serialize admission input").with_source(source))?;
+        let context = serde_json::to_string(&admission.invocation_context)
+            .map_err(|source| invalid_request("serialize admission context").with_source(source))?;
         let none_text: Option<&str> = None;
         let none_i64: Option<i64> = None;
         let none_i32: Option<i32> = None;
@@ -591,26 +713,37 @@ impl InvocationBackend for PostgresInvocationBackend {
                     &none_i32,
                 ],
             )
-            .await?;
+            .await
+            .map_err(|source| store_unavailable("admit callable run", source))?;
         let result = AdmissionResult::from_parts(row.get(0), row.get(1))
-            .ok_or_else(|| anyhow!("invalid admission result row"))?;
-        transaction.commit().await?;
+            .ok_or_else(|| store_corrupt("read admission result").with_field("result-code"))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|source| store_unavailable("commit admission transaction", source))?;
         Ok(result)
     }
 
-    async fn poll(&self, tenant: &str, run_id: &str) -> anyhow::Result<InvocationPoll> {
+    async fn poll(&self, tenant: &str, run_id: &str) -> Result<InvocationPoll, InvocationFailure> {
         let mut client = self.transaction().await?;
-        let transaction = client.transaction().await?;
+        let transaction = client
+            .transaction()
+            .await
+            .map_err(|source| store_unavailable("open poll transaction", source))?;
         set_tenant(&transaction, tenant).await?;
         let row = transaction
             .query_one(poll_invocation_outcome_sql(), &[&run_id])
-            .await?;
-        transaction.commit().await?;
+            .await
+            .map_err(|source| store_unavailable("poll invocation outcome", source))?;
+        transaction
+            .commit()
+            .await
+            .map_err(|source| store_unavailable("commit poll transaction", source))?;
         decode_poll(&row)
     }
 }
 
-fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
+fn decode_target(row: Row) -> Result<InvocationTarget, InvocationFailure> {
     let execution_bundle_hash: String = row.get(7);
     let exact_bytes: Option<Vec<u8>> = row.get(8);
     Ok(InvocationTarget {
@@ -618,8 +751,16 @@ fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
         definition_hash: row.get(1),
         flow_id: row.get(2),
         flow_version: row.get(3),
-        definition: serde_json::from_str(row.get(4))?,
-        auth_policy: serde_json::from_str(row.get(5))?,
+        definition: serde_json::from_str(row.get(4)).map_err(|source| {
+            store_corrupt("decode resolved target")
+                .with_field("definition-json")
+                .with_source(source)
+        })?,
+        auth_policy: serde_json::from_str(row.get(5)).map_err(|source| {
+            store_corrupt("decode resolved target")
+                .with_field("auth-policy-json")
+                .with_source(source)
+        })?,
         enabled: row.get(6),
         idempotency_required: exact_bytes.as_deref().is_none_or(|exact_bytes| {
             invocation_idempotency_required(&execution_bundle_hash, exact_bytes)
@@ -627,67 +768,84 @@ fn decode_target(row: Row) -> anyhow::Result<InvocationTarget> {
     })
 }
 
-fn decode_outcome(row: &Row) -> anyhow::Result<InvocationOutcome> {
-    let body: String = row
-        .get::<_, Option<String>>(3)
-        .ok_or_else(|| anyhow!("released outcome missing body"))?;
+fn decode_outcome(row: &Row) -> Result<InvocationOutcome, InvocationFailure> {
+    let missing = |field: &'static str| store_corrupt("decode released outcome").with_field(field);
+    let body: String = row.get::<_, Option<String>>(3).ok_or_else(|| missing("body"))?;
     let status = row
         .get::<_, Option<i32>>(4)
         .map(u16::try_from)
         .transpose()
-        .context("stored HTTP status exceeds u16")?;
+        .map_err(|_| store_corrupt("narrow released outcome").with_field("caller-http-status"))?;
     Ok(InvocationOutcome {
         run_id: row
             .get::<_, Option<String>>(1)
-            .ok_or_else(|| anyhow!("released outcome missing run id"))?,
+            .ok_or_else(|| missing("run-id"))?,
         kind: row
             .get::<_, Option<String>>(2)
-            .ok_or_else(|| anyhow!("released outcome missing kind"))?,
-        body: serde_json::from_str(&body)?,
+            .ok_or_else(|| missing("kind"))?,
+        body: serde_json::from_str(&body).map_err(|source| missing("body").with_source(source))?,
         http_status: status,
         hash: row
             .get::<_, Option<String>>(5)
-            .ok_or_else(|| anyhow!("released outcome missing hash"))?,
+            .ok_or_else(|| missing("hash"))?,
         flow_id: row
             .get::<_, Option<String>>(6)
-            .ok_or_else(|| anyhow!("released outcome missing flow id"))?,
+            .ok_or_else(|| missing("flow-id"))?,
         flow_version: u32::try_from(
             row.get::<_, Option<i32>>(7)
-                .ok_or_else(|| anyhow!("released outcome missing flow version"))?,
+                .ok_or_else(|| missing("flow-version"))?,
         )
-        .context("stored flow version is negative")?,
+        .map_err(|_| store_corrupt("narrow released outcome").with_field("flow-version"))?,
     })
 }
 
-fn decode_recovery(row: &Row) -> anyhow::Result<InvocationRecovery> {
+fn decode_recovery(row: &Row) -> Result<InvocationRecovery, InvocationFailure> {
     Ok(match row.get::<_, &str>(0) {
         "missing" => InvocationRecovery::Missing,
         "in-flight" => InvocationRecovery::InFlight {
             run_id: row
                 .get::<_, Option<String>>(1)
-                .ok_or_else(|| anyhow!("in-flight admission missing run id"))?,
+                .ok_or_else(|| store_corrupt("decode in-flight admission").with_field("run-id"))?,
         },
         "released" => InvocationRecovery::Released(decode_outcome(row)?),
         "idempotency-key-reused" => InvocationRecovery::IdempotencyKeyReused,
         "idempotency-scope-changed" => InvocationRecovery::IdempotencyScopeChanged,
-        code => return Err(anyhow!("invalid invocation recovery result {code:?}")),
+        // The offending literal is logged rather than returned: the contract's
+        // failure arms deliberately carry no detail (wamn-0h0g.15.40).
+        code => {
+            tracing::warn!(code = %code, "invalid invocation recovery result");
+            return Err(store_corrupt("decode invocation recovery").with_field("result-code"));
+        }
     })
 }
 
-fn decode_poll(row: &Row) -> anyhow::Result<InvocationPoll> {
+fn decode_poll(row: &Row) -> Result<InvocationPoll, InvocationFailure> {
     Ok(match row.get::<_, &str>(0) {
         "running" => InvocationPoll::Running,
         "released" => InvocationPoll::Released(decode_outcome(row)?),
         "not-found" => InvocationPoll::NotFound,
-        code => return Err(anyhow!("invalid invocation poll result {code:?}")),
+        code => {
+            tracing::warn!(code = %code, "invalid invocation poll result");
+            return Err(store_corrupt("decode invocation poll").with_field("result-code"));
+        }
     })
 }
 
-fn released(poll: InvocationPoll) -> anyhow::Result<Option<InvocationOutcome>> {
+/// A poll that names no run is the caller's `unknown-run`, not a host defect:
+/// the run id came from the caller, and inventing a still-unreleased `none` for
+/// it would make the adapter wait out its whole budget for nothing.
+fn released(
+    poll: InvocationPoll,
+    run_id: &str,
+) -> Result<Option<InvocationOutcome>, InvocationFailure> {
     match poll {
         InvocationPoll::Running => Ok(None),
         InvocationPoll::Released(outcome) => Ok(Some(outcome)),
-        InvocationPoll::NotFound => Err(anyhow!("invocation run not found")),
+        InvocationPoll::NotFound => Err(InvocationFailure::new(
+            InvocationError::UnknownRun,
+            "poll invocation outcome",
+        )
+        .with_run(run_id)),
     }
 }
 
@@ -709,12 +867,14 @@ fn invocation_context(request: &InvokeRequest) -> Value {
 fn deadlines(
     target: &InvocationTarget,
     request: &InvokeRequest,
-) -> anyhow::Result<(Option<DateTime<Utc>>, DateTime<Utc>)> {
+) -> Result<(Option<DateTime<Utc>>, DateTime<Utc>), InvocationFailure> {
     let run_ms = target
         .definition
         .get("run-deadline-ms")
         .and_then(Value::as_u64)
-        .ok_or_else(|| anyhow!("attachment definition missing run-deadline-ms"))?;
+        .ok_or_else(|| {
+            store_corrupt("read stored attachment definition").with_field("run-deadline-ms")
+        })?;
     let run_ms = request
         .deadline_override
         .map_or(run_ms, |limit| limit.min(run_ms));
@@ -724,10 +884,17 @@ fn deadlines(
         .and_then(Value::as_u64)
         .map(|value| value.min(run_ms));
     let now = Utc::now();
-    let run = now + TimeDelta::milliseconds(i64::try_from(run_ms)?);
+    let run = now
+        + TimeDelta::milliseconds(i64::try_from(run_ms).map_err(|_| {
+            store_corrupt("narrow stored attachment definition").with_field("run-deadline-ms")
+        })?);
     let response = response_ms
         .map(i64::try_from)
-        .transpose()?
+        .transpose()
+        .map_err(|_| {
+            store_corrupt("narrow stored attachment definition")
+                .with_field("response-deadline-ms")
+        })?
         .map(|milliseconds| now + TimeDelta::milliseconds(milliseconds));
     Ok((response, run))
 }
@@ -769,20 +936,26 @@ fn admission_refusal(result: AdmissionResult) -> BeginResult {
     rejected(status, code)
 }
 
-fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> {
+fn to_invoke_result(outcome: InvocationOutcome) -> Result<InvokeResult, InvocationFailure> {
     match outcome.kind.as_str() {
         "responded" => Ok(InvokeResult::Responded(Response {
             run_id: outcome.run_id,
-            body: serde_json::to_string(&outcome.body)?,
+            body: serde_json::to_string(&outcome.body).map_err(|source| {
+                store_corrupt("re-encode stored response")
+                    .with_field("caller-outcome-json")
+                    .with_source(source)
+            })?,
             status_hint: outcome.http_status,
         })),
         "failed" => {
             if outcome.body.get("code").and_then(Value::as_str) == Some("effect-uncertain") {
-                let stored = serde_json::from_value::<EffectUncertainFailure>(outcome.body)?;
+                let stored = serde_json::from_value::<EffectUncertainFailure>(outcome.body)
+                    .map_err(|source| {
+                        store_corrupt("decode stored effect uncertainty").with_source(source)
+                    })?;
                 if stored.run_id() != outcome.run_id {
-                    return Err(anyhow!(
-                        "stored effect-uncertain run id does not match outcome"
-                    ));
+                    return Err(store_corrupt("decode stored effect uncertainty")
+                        .with_field("run-id"));
                 }
                 return Ok(InvokeResult::Failed(Failure {
                     status: EFFECT_UNCERTAIN_HTTP_STATUS,
@@ -798,7 +971,7 @@ fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> 
             let error = outcome
                 .body
                 .get("error")
-                .ok_or_else(|| anyhow!("stored failure missing error envelope"))?;
+                .ok_or_else(|| stored_failure_missing("error"))?;
             let flow_error = FlowError {
                 code: required_string(error, "code")?,
                 message: error
@@ -810,26 +983,38 @@ fn to_invoke_result(outcome: InvocationOutcome) -> anyhow::Result<InvokeResult> 
                 flow_version: error
                     .get("flow-version")
                     .and_then(Value::as_u64)
-                    .ok_or_else(|| anyhow!("stored failure missing flow-version"))?
-                    .try_into()?,
+                    .ok_or_else(|| stored_failure_missing("flow-version"))?
+                    .try_into()
+                    .map_err(|_| {
+                        store_corrupt("narrow stored failure").with_field("flow-version")
+                    })?,
             };
             Ok(InvokeResult::Failed(Failure {
                 status: outcome
                     .http_status
-                    .ok_or_else(|| anyhow!("stored failure missing HTTP status"))?,
+                    .ok_or_else(|| stored_failure_missing("caller-http-status"))?,
                 error: flow_error,
             }))
         }
-        kind => Err(anyhow!("unknown stored caller outcome kind {kind:?}")),
+        // The offending literal is logged rather than returned: the contract's
+        // failure arms deliberately carry no detail (wamn-0h0g.15.40).
+        kind => {
+            tracing::warn!(kind = %kind, "unknown stored caller outcome kind");
+            Err(store_corrupt("decode stored caller outcome").with_field("caller-outcome-kind"))
+        }
     }
 }
 
-fn required_string(value: &Value, key: &str) -> anyhow::Result<String> {
+fn stored_failure_missing(field: &'static str) -> InvocationFailure {
+    store_corrupt("read stored failure").with_field(field)
+}
+
+fn required_string(value: &Value, key: &'static str) -> Result<String, InvocationFailure> {
     value
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| anyhow!("stored failure missing {key}"))
+        .ok_or_else(|| stored_failure_missing(key))
 }
 
 #[cfg(test)]
@@ -926,7 +1111,7 @@ mod tests {
             _catalog: &str,
             _environment: &str,
             _attachment: &str,
-        ) -> anyhow::Result<Option<InvocationTarget>> {
+        ) -> Result<Option<InvocationTarget>, InvocationFailure> {
             Ok(self.targets.lock().await.pop_front().flatten())
         }
 
@@ -940,19 +1125,20 @@ mod tests {
             _client_key_digest: &str,
             _definition_hash: &str,
             _fingerprint: &str,
-        ) -> anyhow::Result<InvocationRecovery> {
-            self.recoveries
+        ) -> Result<InvocationRecovery, InvocationFailure> {
+            Ok(self
+                .recoveries
                 .lock()
                 .await
                 .pop_front()
-                .ok_or_else(|| anyhow!("missing recovery fixture"))
+                .expect("missing recovery fixture"))
         }
 
         async fn admit(
             &self,
             _config: &InvocationServiceConfig,
             admission: &HttpAdmission,
-        ) -> anyhow::Result<AdmissionResult> {
+        ) -> Result<AdmissionResult, InvocationFailure> {
             self.admitted_versions
                 .lock()
                 .await
@@ -961,19 +1147,73 @@ mod tests {
                 .lock()
                 .await
                 .push(admission.client_key_digest.clone());
-            self.admissions
+            Ok(self
+                .admissions
                 .lock()
                 .await
                 .pop_front()
-                .ok_or_else(|| anyhow!("missing admission fixture"))
+                .expect("missing admission fixture"))
         }
 
-        async fn poll(&self, _tenant: &str, _run_id: &str) -> anyhow::Result<InvocationPoll> {
-            self.polls
+        async fn poll(
+            &self,
+            _tenant: &str,
+            _run_id: &str,
+        ) -> Result<InvocationPoll, InvocationFailure> {
+            Ok(self
+                .polls
                 .lock()
                 .await
                 .pop_front()
-                .ok_or_else(|| anyhow!("missing poll fixture"))
+                .expect("missing poll fixture"))
+        }
+    }
+
+    /// A backend that cannot answer at all — the case that used to trap the
+    /// guest, because the contract had nowhere to report it (wamn-0h0g.15.40).
+    #[derive(Clone)]
+    struct FailingBackend(InvocationError);
+
+    #[async_trait]
+    impl InvocationBackend for FailingBackend {
+        async fn resolve_target(
+            &self,
+            _tenant: &str,
+            _catalog: &str,
+            _environment: &str,
+            _attachment: &str,
+        ) -> Result<Option<InvocationTarget>, InvocationFailure> {
+            Err(InvocationFailure::new(self.0, "test resolve target"))
+        }
+
+        async fn recover(
+            &self,
+            _tenant: &str,
+            _catalog: &str,
+            _environment: &str,
+            _attachment: &str,
+            _principal_digest: &str,
+            _client_key_digest: &str,
+            _definition_hash: &str,
+            _fingerprint: &str,
+        ) -> Result<InvocationRecovery, InvocationFailure> {
+            Err(InvocationFailure::new(self.0, "test recover"))
+        }
+
+        async fn admit(
+            &self,
+            _config: &InvocationServiceConfig,
+            _admission: &HttpAdmission,
+        ) -> Result<AdmissionResult, InvocationFailure> {
+            Err(InvocationFailure::new(self.0, "test admit"))
+        }
+
+        async fn poll(
+            &self,
+            _tenant: &str,
+            _run_id: &str,
+        ) -> Result<InvocationPoll, InvocationFailure> {
+            Err(InvocationFailure::new(self.0, "test poll"))
         }
     }
 
@@ -1521,5 +1761,79 @@ mod tests {
         assert_eq!(failure.error.code, "effect-uncertain");
         assert_eq!(failure.error.run_id, "run-1");
         assert_eq!(failure.error.message, None);
+    }
+
+    // The gap wamn-0h0g.15.40 closes: a store outage had nowhere to go, so both
+    // operations converted it into a wasm trap that poisoned the flow-http
+    // instance. It must now answer, and answer as a retryable outage — never as
+    // a `rejection`, which would hand the caller a decision nobody made.
+    #[tokio::test]
+    async fn a_store_outage_answers_both_operations_instead_of_trapping() {
+        let service =
+            InvocationService::new(FailingBackend(InvocationError::StoreUnavailable), config());
+
+        let begin = service
+            .begin(request())
+            .await
+            .expect_err("a store outage must not read as a decided outcome");
+        assert_eq!(begin.kind(), InvocationError::StoreUnavailable);
+        let wait = service
+            .wait("run-1".to_string(), 0)
+            .await
+            .expect_err("a store outage must not read as a decided outcome");
+        assert_eq!(wait.kind(), InvocationError::StoreUnavailable);
+    }
+
+    // A run the store does not hold is the caller's `unknown-run`. Reporting it
+    // as a still-unreleased `none` would spend the adapter's whole wait budget
+    // and end in a 504 inviting a retry under the same idempotency key.
+    #[tokio::test]
+    async fn a_poll_that_names_no_run_is_unknown_run_not_still_waiting() {
+        let backend = MockBackend::default();
+        backend
+            .polls
+            .lock()
+            .await
+            .push_back(InvocationPoll::NotFound);
+        let service = InvocationService::new(backend, config());
+
+        let failure = service
+            .wait("run-missing".to_string(), 0)
+            .await
+            .expect_err("an absent run must not read as unreleased");
+        assert_eq!(failure.kind(), InvocationError::UnknownRun);
+    }
+
+    // The adapter serializes the mapped payload itself, so a payload that is not
+    // JSON means a defective or hostile guest. That is terminal: classifying it
+    // as an outage would advertise a retry that can only fail again.
+    #[tokio::test]
+    async fn a_payload_that_is_not_json_is_refused_terminally_before_admission() {
+        let backend = MockBackend::default();
+        backend.targets.lock().await.push_back(Some(target(true)));
+        backend
+            .recoveries
+            .lock()
+            .await
+            .push_back(InvocationRecovery::Missing);
+        let service = InvocationService::new(backend.clone(), config());
+        let mut malformed = request();
+        malformed.payload = "not json".to_string();
+
+        let failure = service
+            .begin(malformed)
+            .await
+            .expect_err("a non-JSON payload must be refused");
+        assert_eq!(failure.kind(), InvocationError::InvalidRequest);
+        assert!(backend.admissions.lock().await.is_empty());
+    }
+
+    // A stored outcome kind this contract cannot name is corruption, not an
+    // outage: the same row will decode the same way on every retry.
+    #[test]
+    fn an_unnameable_stored_outcome_kind_is_terminal_corruption() {
+        let failure = to_invoke_result(outcome("cancelled", "", 200))
+            .expect_err("an unknown stored kind must not decode");
+        assert_eq!(failure.kind(), InvocationError::StoreCorrupt);
     }
 }

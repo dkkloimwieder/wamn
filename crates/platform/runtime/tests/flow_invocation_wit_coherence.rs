@@ -15,8 +15,15 @@ const HOST_MANIFEST: &str = include_str!("../../../../services/host/Cargo.toml")
 fn host_copy_preserves_the_frozen_interface_surface() {
     for anchor in [
         "package wamn:flow-invocation@0.1.0;",
-        "begin: func(req: invoke-request) -> begin-result;",
-        "wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;",
+        // Both operations carry the wamn-0h0g.15.40 error channel in every copy,
+        // so a host failure answers rather than trapping the ingress instance.
+        "begin: func(req: invoke-request) -> result<begin-result, invocation-error>;",
+        "wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;",
+        "variant invocation-error {",
+        "store-unavailable,",
+        "store-corrupt,",
+        "unknown-run,",
+        "invalid-request,",
         "expected-catalog-version: u64,",
         "expected-definition-hash: string,",
         "client-request-fingerprint: string,",
@@ -60,6 +67,34 @@ fn runtime_world_and_plugin_register_the_exact_import() {
     assert!(WORLD.contains("import wamn:flow-invocation/invocation@0.1.0;"));
     assert!(PLUGIN.contains("\"wamn:flow-invocation/invocation@0.1.0\""));
     assert!(PLUGIN.contains("invocation::add_to_linker"));
+}
+
+// wamn-0h0g.15.40: before the error channel existed the plugin converted every
+// host-side failure with `Error::msg(error.to_string())`, which is a wasm trap —
+// a transient store outage poisoned the flow-http instance and leaked the host's
+// error text to the guest. Both halves must stay gone: the trap conversion, and
+// any second place that decides an arm.
+#[test]
+fn host_failures_are_translated_once_and_never_trap_the_guest() {
+    assert!(
+        !PLUGIN.contains("Error::msg(error.to_string())"),
+        "a host-side invocation failure must not be converted into a trap"
+    );
+    assert!(PLUGIN.contains("fn map_invocation_error(failure: InvocationFailure)"));
+    // One definition plus exactly two uses: `begin` and `wait`, nowhere else.
+    assert_eq!(PLUGIN.matches("map_invocation_error").count(), 3);
+    for arm in [
+        "invocation::InvocationError::StoreUnavailable",
+        "invocation::InvocationError::StoreCorrupt",
+        "invocation::InvocationError::UnknownRun",
+        "invocation::InvocationError::InvalidRequest",
+    ] {
+        assert!(PLUGIN.contains(arm), "plugin never answers {arm}");
+    }
+    assert!(
+        SERVICE.contains("pub fn kind(&self) -> InvocationError"),
+        "the service must classify its own failures, not the plugin"
+    );
 }
 
 #[test]

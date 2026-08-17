@@ -5,6 +5,14 @@ package wamn:flow-invocation@0.1.0;
 /// STATUS: FROZEN 0.1.0 (wamn-5wd1.38). This is the caller-facing flow
 /// invocation protocol from FLOW-SPEC rev18 §8, §§9.1-9.7, and §11. It is
 /// categorically separate from node execution internals.
+///
+/// AMENDED IN PLACE at 0.1.0 by wamn-0h0g.15.40: `begin` and `wait` gained the
+/// `invocation-error` channel. The freeze governs the caller-facing vocabulary,
+/// which is unchanged — every admitted, rejected and stored outcome is spelled
+/// exactly as before. What the amendment adds is the one thing the frozen shape
+/// could not express: a host that failed to reach a decision. Without it every
+/// such failure became a wasm trap that poisoned the ingress instance, so the
+/// freeze was protecting a hole rather than a contract.
 interface invocation {
   /// A mapped, validated JSON document encoded as UTF-8 text.
   type json = string;
@@ -77,9 +85,26 @@ interface invocation {
     failed(failure),
   }
 
+  /// A host-side failure that produced no caller outcome (wamn-0h0g.15.40).
+  /// Deliberately separate from `rejection`: a rejection is a decided pre-run
+  /// refusal a caller can act on, while this is the host declining to decide at
+  /// all. `store-unavailable` is transient — the run store is unreachable or
+  /// refused the transaction, and the same request may be retried under its
+  /// idempotency key. `store-corrupt` is terminal — a stored row cannot be
+  /// decoded into this contract, and retrying cannot repair it. `unknown-run`
+  /// says `wait` named a run this store does not hold. `invalid-request`
+  /// refuses arguments as presented rather than truncating them. No arm carries
+  /// detail: a caller must not learn run-store internals from a failure.
+  variant invocation-error {
+    store-unavailable,
+    store-corrupt,
+    unknown-run,
+    invalid-request,
+  }
+
   /// Admit a new run or return a typed pre-run rejection.
-  begin: func(req: invoke-request) -> begin-result;
+  begin: func(req: invoke-request) -> result<begin-result, invocation-error>;
 
   /// Wait at most `timeout-ms`; `none` means the run is still unreleased.
-  wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;
+  wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;
 }

@@ -22,10 +22,17 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(WIT.contains("package wamn:flow-invocation@0.1.0;"));
-        assert!(WIT.contains("begin: func(req: invoke-request) -> begin-result;"));
-        assert!(
-            WIT.contains("wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;")
-        );
+        // Both operations carry the wamn-0h0g.15.40 host-failure channel, so a
+        // store outage answers the caller instead of trapping the flow-http
+        // instance. The channel is separate from `rejection`, which stays the
+        // decided pre-run refusal.
+        assert!(WIT.contains(
+            "begin: func(req: invoke-request) -> result<begin-result, invocation-error>;"
+        ));
+        assert!(WIT.contains(
+            "wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;"
+        ));
+        assert!(WIT.contains("variant invocation-error {"));
         assert!(!WIT.contains("cancel:"));
         assert!(!WIT.contains("cancelled(failure)"));
         assert!(!code.contains("outcome-expired"));

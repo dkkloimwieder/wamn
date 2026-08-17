@@ -99,7 +99,13 @@ impl Backend for GuestBackend {
                 tracestate: trace.tracestate,
             }),
         };
-        Ok(match invocation::begin(&request) {
+        // A typed host failure collapses into `ProviderError` (wamn-0h0g.15.40).
+        // The adapter's caller-facing answer is the same bounded 503 for every
+        // category, and the host has already logged which one it was; what the
+        // error channel buys here is that the failure *answers* at all instead
+        // of trapping this instance. A pre-run `rejection` stays what it always
+        // was — a decided outcome the caller is told verbatim.
+        Ok(match invocation::begin(&request).map_err(|_| ProviderError)? {
             invocation::BeginResult::Admitted(admitted) => BeginResult::Admitted(Admitted {
                 run_id: admitted.run_id,
             }),
@@ -117,8 +123,9 @@ impl Backend for GuestBackend {
     ) -> Result<Option<InvokeResult>, ProviderError> {
         use wamn::flow_invocation::invocation;
 
-        Ok(
-            invocation::wait(run_id, timeout_ms).map(|result| match result {
+        Ok(invocation::wait(run_id, timeout_ms)
+            .map_err(|_| ProviderError)?
+            .map(|result| match result {
                 invocation::InvokeResult::Responded(response) => {
                     InvokeResult::Responded(Response {
                         run_id: response.run_id,
@@ -129,8 +136,7 @@ impl Backend for GuestBackend {
                 invocation::InvokeResult::Failed(failure) => {
                     InvokeResult::Failed(convert_failure(failure))
                 }
-            }),
-        )
+            }))
     }
 }
 

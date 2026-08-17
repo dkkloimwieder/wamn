@@ -48,6 +48,13 @@ interface invocation {
     failed(failure),
   }
 
-  begin: func(req: invoke-request) -> begin-result;
-  wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;
+  variant invocation-error {
+    store-unavailable,
+    store-corrupt,
+    unknown-run,
+    invalid-request,
+  }
+
+  begin: func(req: invoke-request) -> result<begin-result, invocation-error>;
+  wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;
 }

@@ -88,11 +88,34 @@ pub enum InvokeResult {
     Failed(Failure),
 }
 
+/// A host-side failure that produced no caller outcome (wamn-0h0g.15.40).
+///
+/// Deliberately separate from [`Rejection`]: a rejection is a decided pre-run
+/// refusal a caller can act on, while this is the host declining to decide at
+/// all. No arm carries detail — a caller must not learn run-store internals
+/// from a failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvocationError {
+    /// Transient: the run store is unreachable or refused the transaction, so
+    /// the same request may be retried under its idempotency key.
+    StoreUnavailable,
+    /// Terminal: a stored row cannot be decoded into this contract.
+    StoreCorrupt,
+    /// `wait` named a run this store does not hold.
+    UnknownRun,
+    /// Terminal: the arguments as presented are refused rather than truncated.
+    InvalidRequest,
+}
+
 /// The application-level mirror of the WIT `invocation` interface.
 pub trait FlowInvocation {
     /// Admit a new run or return a typed pre-run rejection.
-    fn begin(&mut self, request: InvokeRequest) -> BeginResult;
+    fn begin(&mut self, request: InvokeRequest) -> Result<BeginResult, InvocationError>;
 
     /// Wait at most `timeout_ms`; `None` means the run is still unreleased.
-    fn wait(&mut self, run_id: String, timeout_ms: u32) -> Option<InvokeResult>;
+    fn wait(
+        &mut self,
+        run_id: String,
+        timeout_ms: u32,
+    ) -> Result<Option<InvokeResult>, InvocationError>;
 }

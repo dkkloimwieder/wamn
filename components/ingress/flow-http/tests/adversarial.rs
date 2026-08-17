@@ -370,6 +370,10 @@ fn every_typed_rejection_is_adapted_without_a_run() {
         (401, "unauthenticated"),
         (403, "forbidden"),
         (404, "attachment-not-found"),
+        // The refusal an operator's emergency-off actually produces
+        // (wamn-0h0g.15.71); the host emits it at 404 from both the
+        // pre-admission check and the admission transaction's own refusal.
+        (404, "attachment-disabled"),
         (409, "idempotency-key-reused"),
         (413, "payload-too-large"),
         (503, "admission-retry"),

@@ -1,6 +1,14 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Both operations carry the wamn-0h0g.15.40 error channel, so a host failure
+// answers the caller instead of trapping the ingress instance. Pinned once here
+// and reused, so a signature edit cannot pass by updating only one assertion.
+const BEGIN_SIGNATURE: &str =
+    "begin: func(req: invoke-request) -> result<begin-result, invocation-error>;";
+const WAIT_SIGNATURE: &str =
+    "wait: func(run-id: string, timeout-ms: u32) -> result<option<invoke-result>, invocation-error>;";
+
 fn crate_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).to_path_buf()
 }
@@ -51,13 +59,7 @@ fn functions(lines: &[String]) -> Vec<String> {
 fn positive_wit_package_and_operations_are_versioned_and_complete() {
     let lines = wit_lines();
     assert_eq!(lines[0], "package wamn:flow-invocation@0.1.0;");
-    assert_eq!(
-        functions(&lines),
-        [
-            "begin: func(req: invoke-request) -> begin-result;",
-            "wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;",
-        ]
-    );
+    assert_eq!(functions(&lines), [BEGIN_SIGNATURE, WAIT_SIGNATURE]);
 }
 
 #[test]
@@ -68,10 +70,7 @@ fn negative_wait_has_one_mandatory_bounded_timeout_and_no_unbounded_form() {
         .filter(|function| function.starts_with("wait:"))
         .collect();
 
-    assert_eq!(
-        waits,
-        [&"wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;".to_string()]
-    );
+    assert_eq!(waits, [&WAIT_SIGNATURE.to_string()]);
 }
 
 #[test]
@@ -92,6 +91,56 @@ fn negative_result_and_rejection_variants_are_not_ambiguous() {
             "variant invoke-result {",
             "responded(response),",
             "failed(failure),",
+            "}",
+        ]
+    );
+}
+
+// A host failure and a pre-run rejection are different answers: the rejection
+// arm is a decided business outcome carrying `status`/`code`, the error channel
+// is the host declining to decide (wamn-0h0g.15.40). Collapsing either into the
+// other would report a transient store outage as a caller's fault, or a real
+// refusal as an outage the caller should retry.
+#[test]
+fn negative_host_failure_channel_never_impersonates_a_pre_run_rejection() {
+    let arms = definition(&wit_lines(), "variant invocation-error {");
+    for arm in &arms[1..arms.len() - 1] {
+        assert!(
+            !arm.contains('('),
+            "an invocation-error arm must carry no detail: {arm:?}"
+        );
+    }
+    let rejection = definition(&wit_lines(), "record rejection {");
+    assert!(rejection.contains(&"status: u16,".to_string()));
+    assert!(rejection.contains(&"code: string,".to_string()));
+    assert!(
+        definition(&wit_lines(), "variant begin-result {")
+            .contains(&"rejected(rejection),".to_string()),
+        "the pre-run rejection must stay a begin outcome, not a host failure"
+    );
+}
+
+#[test]
+fn fault_invocation_error_wit_rust_coherence_detects_drift() {
+    assert_eq!(
+        definition(&wit_lines(), "variant invocation-error {"),
+        [
+            "variant invocation-error {",
+            "store-unavailable,",
+            "store-corrupt,",
+            "unknown-run,",
+            "invalid-request,",
+            "}",
+        ]
+    );
+    assert_eq!(
+        definition(&rust_lines(), "pub enum InvocationError {"),
+        [
+            "pub enum InvocationError {",
+            "StoreUnavailable,",
+            "StoreCorrupt,",
+            "UnknownRun,",
+            "InvalidRequest,",
             "}",
         ]
     );
@@ -288,14 +337,22 @@ fn fault_timeout_wit_rust_coherence_detects_drift() {
         definition(&wit, "record invoke-request {")
             .contains(&"deadline-override: option<u64>,".to_string())
     );
-    assert!(functions(&wit).contains(
-        &"wait: func(run-id: string, timeout-ms: u32) -> option<invoke-result>;".to_string()
-    ));
+    assert!(functions(&wit).contains(&WAIT_SIGNATURE.to_string()));
     assert!(
         definition(&rust, "pub struct InvokeRequest {")
             .contains(&"pub deadline_override: Option<u64>,".to_string())
     );
-    assert!(definition(&rust, "pub trait FlowInvocation {").contains(
-        &"fn wait(&mut self, run_id: String, timeout_ms: u32) -> Option<InvokeResult>;".to_string()
-    ));
+    assert_eq!(
+        definition(&rust, "pub trait FlowInvocation {"),
+        [
+            "pub trait FlowInvocation {",
+            "fn begin(&mut self, request: InvokeRequest) -> Result<BeginResult, InvocationError>;",
+            "fn wait(",
+            "&mut self,",
+            "run_id: String,",
+            "timeout_ms: u32,",
+            ") -> Result<Option<InvokeResult>, InvocationError>;",
+            "}",
+        ]
+    );
 }
