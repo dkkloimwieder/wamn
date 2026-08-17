@@ -10,9 +10,28 @@
 #   RUNNER_CONNECTION_EGRESS_POLICY=/path/to/runner-connection-egress.yaml # render from the checked-in .example
 #   test -n "$RUNNER_CONNECTION_EGRESS_POLICY" # REQUIRED; omission denies all business egress
 #   kubectl -n wamn-system apply -f "$RUNNER_CONNECTION_EGRESS_POLICY"
+#   # [15.49] the release-manifest ConfigMap this pod template NAMES must exist
+#   # first — minted by wamn-0h0g.15.98; see NOT APPLIABLE AS CHECKED IN below
 #   kubectl -n wamn-system apply -f deploy/platform/runner.yaml
 #   kubectl -n wamn-system rollout status deploy/runner --timeout=120s
 #   kubectl -n wamn-system logs -l app=runner --tail=20
+#
+# [15.49] NOT APPLIABLE AS CHECKED IN. The release-manifest volume below names a
+# placeholder ConfigMap (64 zeros) that nothing mints yet: wamn-0h0g.15.98 owns
+# the desired-state source that writes `release-manifest-<64hex>` and rewrites
+# that ONE line per release. Applying this file before then leaves the pod in
+# ContainerCreating, by design. The two ways this can fail are distinct and both
+# are loud; there is deliberately no third, silently-degraded state:
+#   ConfigMap object absent   -> kubelet cannot mount it   -> ContainerCreating
+#   mounted but unusable      -> host construction refuses -> CrashLoopBackOff
+# What decides SERVING vs NON-SERVING is the ROOT ARGUMENT, never the state of
+# the mount (owner posture R2, recorded at the construction site,
+# crates/execution/host/src/lib.rs:431-451): omit WAMN_RELEASE_MANIFEST_ROOT and
+# the executor starts and reports `unavailable` for every run; pass it and leave
+# it unusable and the executor refuses to start. `WeldErrorKind` was collapsed to
+# two variants by wamn-0h0g.15.104, so "no mount" and "corrupt mount" arrive
+# identically and cannot be told apart after the fact — which is why the
+# distinction has to live in whether the knob below is set at all.
 #
 # SINGLE-PROJECT (one Deployment per project): the project's DB URL + tenant +
 # schema are this Deployment's config. Real per-
@@ -118,6 +137,32 @@ spec:
           secret:
             secretName: wamn-effect-writer-demo--demo--dev
             defaultMode: 256 # 0400
+        # [15.49] The release this replica serves. The mount is the SOLE carrier
+        # of the release-identity pair (wamn-0h0g.15.102): the digest-named map's
+        # name and its content are one fact, so there is no second carrier to
+        # keep in agreement — wamn-0h0g.15.104 deleted the release-identity
+        # ConfigMap for exactly that reason.
+        #
+        # THE NAME BELOW IS THE ONLY PER-RELEASE LINE IN THIS TEMPLATE — the
+        # ruling's "one thing to roll, nothing to keep in agreement". (The rest
+        # of this file's deployment-specific values — the image tag, the
+        # effect-writer Secret, --tenant, --schema, --allowed-hosts — vary per
+        # ENVIRONMENT, and no release rolls them.)
+        # wamn-0h0g.15.98 rewrites it per release to
+        # `release-manifest-<64hex>` — the sha256 of the manifest's RFC 8785
+        # canonical bytes with the `sha256:` prefix stripped, because a
+        # Kubernetes object name cannot carry a colon
+        # (release_manifest_configmap_name,
+        # crates/catalog/model/src/serving_manifest.rs:76). The 64 zeros are a
+        # PLACEHOLDER and name nothing that exists.
+        #
+        # NOT optional, stated explicitly rather than left to the default: a
+        # missing map has to leave the pod loudly un-startable. Whole-directory
+        # projection, never subPath — the weld joins the file name itself.
+        - name: release-manifest
+          configMap:
+            name: release-manifest-0000000000000000000000000000000000000000000000000000000000000000
+            optional: false
       containers:
         - name: runner
           image: wamn-run-worker:dev
@@ -146,6 +191,41 @@ spec:
             # (optional Secret absent) = empty vault, warned at startup.
             - name: WAMN_CREDENTIALS_FILE
               value: /etc/wamn/credentials/credentials.json
+            # [15.49] The mounted release, handed to the binary — passing it is
+            # what makes this replica a SERVING one. The weld reads
+            # <root>/manifest.json, admits ONLY the canonical encoding, and
+            # derives the digest from the bytes actually shipped rather than
+            # checking them against an expectation
+            # (RELEASE_MANIFEST_MOUNT_PATH / RELEASE_MANIFEST_FILE_NAME,
+            # crates/catalog/model/src/serving_manifest.rs:67, :73). Env, not
+            # args, to match WAMN_CREDENTIALS_FILE directly above: this file
+            # passes a path knob as env whenever ExecutorArgs binds one
+            # (services/executor/src/lib.rs:103), and this is that knob's exact
+            # sibling — an optional path into a mounted volume whose presence
+            # decides the process's posture.
+            - name: WAMN_RELEASE_MANIFEST_ROOT
+              value: /etc/wamn/release-manifest
+            # [15.49] Plan bytes are pulled by digest from the in-cluster dev
+            # registry (deploy/platform/registry.yaml), which is anonymous plain
+            # HTTP — the same posture the wash host takes with
+            # `--allow-insecure-registries`, and scoped to that one registry
+            # rather than globally (crates/platform/runtime/src/plan_artifact.rs:213).
+            # REQUIRED here, not tuning: OciPlanSource::new never connects, so an
+            # https-only client fails at the FIRST PULL instead of at startup —
+            # a pod welded to its release that cannot supply a single plan.
+            # `"true"` exactly: clap's SetTrue action implies ValueParser::bool(),
+            # so `"1"` is a startup parse error rather than an enable.
+            # --plan-artifact-base is left at its default
+            # (registry:5000/wamn/execution-plans, services/executor/src/lib.rs:38),
+            # which already names that Service.
+            #
+            # STILL BLOCKED, and not by this file: this pull is HOST egress, so
+            # it is subject to runner-netpol.yaml, which admits only DNS,
+            # postgres, NATS and the collector. No policy anywhere admits
+            # app: registry on TCP 5000, so every plan pull is denied at the
+            # network before it is denied at the registry. runner-netpol.yaml
+            # needs that peer added; it is a separate owner.
+            - { name: WAMN_INSECURE_PLAN_REGISTRY, value: "true" }
             # [wamn-yf3] Run-path observability. The flowrunner emits a few
             # structured wasi:logging records per run (node/run lifecycle) that
             # the wamn:logging plugin enriches (host-injected tenant/project +
@@ -177,6 +257,11 @@ spec:
               readOnly: true
             - name: effect-writer
               mountPath: /etc/wamn/effect-writer
+              readOnly: true
+            # [15.49] RELEASE_MANIFEST_MOUNT_PATH verbatim — the weld joins the
+            # file name onto this root, so the path is a contract, not a choice.
+            - name: release-manifest
+              mountPath: /etc/wamn/release-manifest
               readOnly: true
           args:
             - "--log-level"
