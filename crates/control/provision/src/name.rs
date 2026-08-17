@@ -7,11 +7,6 @@
 //! path, so one slug serves both the K8s (hyphen) and Postgres (quoted) domains
 //! without translation.
 
-use std::fmt::Write as _;
-
-use sha2::{Digest as _, Sha256};
-use wamn_run_state::CredentialGeneration;
-
 use crate::error::ProvisionError;
 
 /// The single shared, cluster-global application role. Every generated tenant
@@ -22,23 +17,6 @@ pub const APP_ROLE: &str = "wamn_app";
 
 /// Prefix for the fixed-mount effect-writer credential Secret.
 pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
-
-/// Prefix for stable, tenant-scoped artifact-reader ACL roles.
-pub const ARTIFACT_READER_TENANT_ROLE_PREFIX: &str = "wamn_artifact_reader_t_";
-
-/// Prefix for project-environment artifact-reader LOGIN generations.
-pub const ARTIFACT_READER_GENERATION_ROLE_PREFIX: &str = "wamn_artifact_reader_";
-
-/// Prefix for the stable role's tenant-literal restrictive policy.
-pub const ARTIFACT_READER_POLICY_PREFIX: &str = "artifact_reader_t_";
-
-/// Prefix for the fixed-mount artifact-reader credential Secret.
-pub const ARTIFACT_READER_SECRET_PREFIX: &str = "wamn-artifact-reader-";
-
-const ARTIFACT_READER_TENANT_SCOPE_DOMAIN: &[u8] = b"wamn.artifact-reader.tenant-scope.v0.1";
-const ARTIFACT_READER_GENERATION_SCOPE_DOMAIN: &[u8] =
-    b"wamn.artifact-reader.generation-scope.v0.1";
-const ARTIFACT_READER_SCOPE_HASH_HEX_LEN: usize = 40;
 
 /// Prefix for the per-project database **and** Secret name: `wamn-db-<project>`.
 /// It is under the platform-reserved `wamn` prefix (wamn-66x) on purpose — the
@@ -260,106 +238,6 @@ pub fn validate_instance_suffix(instance: &str) -> Result<(), ProvisionError> {
 /// The fixed-mount effect-writer credential Secret name.
 pub fn project_env_effect_writer_secret_name(org: &str, project: &str, env: &str) -> String {
     format!("{EFFECT_WRITER_SECRET_PREFIX}{org}--{project}--{env}")
-}
-
-/// Deterministic 160-bit suffix for one tenant's authority in one control
-/// database. Every field and the frozen domain are length-framed.
-pub fn artifact_reader_tenant_scope_hash(tenant_id: &str, database: &str) -> String {
-    artifact_reader_scope_digest(
-        ARTIFACT_READER_TENANT_SCOPE_DOMAIN,
-        [("tenant-id", tenant_id), ("database", database)],
-    )
-}
-
-/// Deterministic 160-bit suffix for one artifact-reader deployment scope.
-/// Every field and the frozen domain are length-framed.
-pub fn artifact_reader_generation_scope_hash(
-    tenant_id: &str,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
-) -> String {
-    artifact_reader_scope_digest(
-        ARTIFACT_READER_GENERATION_SCOPE_DOMAIN,
-        [
-            ("tenant-id", tenant_id),
-            ("org", org),
-            ("project", project),
-            ("environment", environment),
-            ("database", database),
-        ],
-    )
-}
-
-/// Stable NOLOGIN role carrying one tenant's artifact-read authority.
-pub fn artifact_reader_tenant_role(tenant_id: &str, database: &str) -> String {
-    format!(
-        "{ARTIFACT_READER_TENANT_ROLE_PREFIX}{}",
-        artifact_reader_tenant_scope_hash(tenant_id, database)
-    )
-}
-
-/// Tenant-literal restrictive policy paired with one stable ACL role.
-pub fn artifact_reader_policy_name(tenant_id: &str, database: &str) -> String {
-    format!(
-        "{ARTIFACT_READER_POLICY_PREFIX}{}",
-        artifact_reader_tenant_scope_hash(tenant_id, database)
-    )
-}
-
-/// Scoped PostgreSQL LOGIN role for one credential-generation slot.
-pub fn artifact_reader_generation_role(
-    tenant_id: &str,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
-    generation: CredentialGeneration,
-) -> String {
-    format!(
-        "{ARTIFACT_READER_GENERATION_ROLE_PREFIX}{}_{}",
-        artifact_reader_generation_scope_hash(tenant_id, org, project, environment, database),
-        generation.as_str()
-    )
-}
-
-/// Fixed credential Secret for one artifact-reader deployment scope.
-pub fn artifact_reader_secret_name(
-    tenant_id: &str,
-    org: &str,
-    project: &str,
-    environment: &str,
-    database: &str,
-) -> String {
-    format!(
-        "{ARTIFACT_READER_SECRET_PREFIX}{}",
-        artifact_reader_generation_scope_hash(tenant_id, org, project, environment, database)
-    )
-}
-
-fn artifact_reader_scope_digest<'a>(
-    domain: &[u8],
-    fields: impl IntoIterator<Item = (&'a str, &'a str)>,
-) -> String {
-    let mut preimage = Vec::new();
-    frame_artifact_reader_identity(&mut preimage, domain);
-    for (tag, value) in fields {
-        frame_artifact_reader_identity(&mut preimage, tag.as_bytes());
-        frame_artifact_reader_identity(&mut preimage, value.as_bytes());
-    }
-    let digest = Sha256::digest(preimage);
-    let mut encoded = String::with_capacity(ARTIFACT_READER_SCOPE_HASH_HEX_LEN);
-    for byte in &digest[..ARTIFACT_READER_SCOPE_HASH_HEX_LEN / 2] {
-        write!(&mut encoded, "{byte:02x}").expect("writing to a String cannot fail");
-    }
-    encoded
-}
-
-fn frame_artifact_reader_identity(output: &mut Vec<u8>, value: &[u8]) {
-    let length = u64::try_from(value.len()).expect("identity field length fits u64");
-    output.extend_from_slice(&length.to_be_bytes());
-    output.extend_from_slice(value);
 }
 
 /// Validate that a `(org, project, env)` yields safe provisioned names: **all
@@ -1105,94 +983,6 @@ mod tests {
         ] {
             assert_ne!(base, changed);
             assert_eq!(changed.len(), 40);
-            assert!(
-                changed
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-            );
-        }
-    }
-
-    #[test]
-    fn artifact_reader_scope_identities_and_names_are_frozen() {
-        let tenant_hash = artifact_reader_tenant_scope_hash("tenant-a", "wamn_system");
-        let generation_hash = artifact_reader_generation_scope_hash(
-            "tenant-a",
-            "acme",
-            "billing",
-            "dev",
-            "wamn_system",
-        );
-        assert_eq!(tenant_hash, "17a6d6807940d2a0d5589537a4c9a77c5b9eee6f");
-        assert_eq!(generation_hash, "712f6b8bf00afcc873dc1e3eeb23b35f50872082");
-
-        let tenant_role = artifact_reader_tenant_role("tenant-a", "wamn_system");
-        let policy = artifact_reader_policy_name("tenant-a", "wamn_system");
-        let generation_a = artifact_reader_generation_role(
-            "tenant-a",
-            "acme",
-            "billing",
-            "dev",
-            "wamn_system",
-            CredentialGeneration::A,
-        );
-        let generation_b = artifact_reader_generation_role(
-            "tenant-a",
-            "acme",
-            "billing",
-            "dev",
-            "wamn_system",
-            CredentialGeneration::B,
-        );
-        let secret =
-            artifact_reader_secret_name("tenant-a", "acme", "billing", "dev", "wamn_system");
-        assert_eq!(
-            tenant_role,
-            "wamn_artifact_reader_t_17a6d6807940d2a0d5589537a4c9a77c5b9eee6f"
-        );
-        assert_eq!(
-            policy,
-            "artifact_reader_t_17a6d6807940d2a0d5589537a4c9a77c5b9eee6f"
-        );
-        assert_eq!(
-            generation_a,
-            "wamn_artifact_reader_712f6b8bf00afcc873dc1e3eeb23b35f50872082_a"
-        );
-        assert_eq!(
-            generation_b,
-            "wamn_artifact_reader_712f6b8bf00afcc873dc1e3eeb23b35f50872082_b"
-        );
-        assert_eq!(
-            secret,
-            "wamn-artifact-reader-712f6b8bf00afcc873dc1e3eeb23b35f50872082"
-        );
-        assert_eq!(tenant_role.len(), MAX_DB_NAME_LEN);
-        assert_eq!(policy.len(), 58);
-        assert_eq!(generation_a.len(), MAX_DB_NAME_LEN);
-        assert_eq!(generation_b.len(), MAX_DB_NAME_LEN);
-        assert_eq!(secret.len(), 61);
-    }
-
-    #[test]
-    fn artifact_reader_hashes_frame_every_authority_component() {
-        let tenant = artifact_reader_tenant_scope_hash("tenant-a", "db");
-        assert_ne!(tenant, artifact_reader_tenant_scope_hash("tenant-b", "db"));
-        assert_ne!(
-            tenant,
-            artifact_reader_tenant_scope_hash("tenant-a", "db-b")
-        );
-
-        let generation =
-            artifact_reader_generation_scope_hash("tenant-a", "acme", "billing", "dev", "db");
-        for changed in [
-            artifact_reader_generation_scope_hash("tenant-b", "acme", "billing", "dev", "db"),
-            artifact_reader_generation_scope_hash("tenant-a", "other", "billing", "dev", "db"),
-            artifact_reader_generation_scope_hash("tenant-a", "acme", "other", "dev", "db"),
-            artifact_reader_generation_scope_hash("tenant-a", "acme", "billing", "prod", "db"),
-            artifact_reader_generation_scope_hash("tenant-a", "acme", "billing", "dev", "db-b"),
-        ] {
-            assert_ne!(generation, changed);
-            assert_eq!(changed.len(), ARTIFACT_READER_SCOPE_HASH_HEX_LEN);
             assert!(
                 changed
                     .bytes()

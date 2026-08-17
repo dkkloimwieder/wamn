@@ -83,7 +83,7 @@ impl ResolutionPlanCache {
         Ok(Self::from_non_zero(max_entries))
     }
 
-    pub(crate) fn from_non_zero(max_entries: NonZeroUsize) -> Self {
+    fn from_non_zero(max_entries: NonZeroUsize) -> Self {
         Self {
             max_entries: max_entries.get(),
             state: Mutex::new(PlanCacheState {
@@ -108,8 +108,7 @@ impl ResolutionPlanCache {
     }
 
     /// Insert bytes after the calling owner has completed its verification.
-    /// The control-reader path hash-checks and parses before reaching this seam;
-    /// the legacy project-byte path retains its preexisting SHA-only contract.
+    /// The project-byte path carries a SHA-only contract.
     pub(crate) fn insert_verified(
         &self,
         tenant_id: &str,

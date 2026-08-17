@@ -16,10 +16,9 @@ use serde_json::{Value, json};
 use wamn_control_registry::Triple;
 use wamn_run_state::{EFFECT_WRITER_CREDENTIAL_KEY, EffectWriterCredential};
 
-use crate::artifact_reader::{ARTIFACT_READER_CREDENTIAL_KEY, ArtifactReaderCredential};
 use crate::name::{
-    APP_ROLE, artifact_reader_secret_name, cdc_object_name, project_env_cdc_secret_name,
-    project_env_effect_writer_secret_name, project_env_secret_name, secret_name,
+    APP_ROLE, cdc_object_name, project_env_cdc_secret_name, project_env_effect_writer_secret_name,
+    project_env_secret_name, secret_name,
 };
 
 /// The `WAMN_PG_PROJECTS_FILE` entry for one project: `{ "url": <url> }`.
@@ -168,82 +167,6 @@ pub fn render_effect_writer_secret_manifest(
     })
 }
 
-/// Render the fixed-mount artifact-reader Secret for one deployment scope.
-///
-/// The Secret carries exactly one key, `credential.json`. Consumers mount the
-/// whole Secret directory read-only, without `subPath`, so replacement remains
-/// an atomic Kubernetes Secret projection.
-pub fn render_artifact_reader_secret_manifest(
-    namespace: &str,
-    credential: &ArtifactReaderCredential,
-) -> Value {
-    let document = serde_json::to_value(credential).expect("artifact-reader credential serializes");
-    let field = |name: &str| {
-        document[name]
-            .as_str()
-            .unwrap_or_else(|| panic!("artifact-reader credential {name} is a string"))
-    };
-    let mut annotations = serde_json::Map::from_iter([
-        (
-            "wamn.io/credential-id".to_string(),
-            Value::String(credential.credential_id().to_string()),
-        ),
-        (
-            "wamn.io/credential-generation".to_string(),
-            Value::String(credential.generation().as_str().to_string()),
-        ),
-        (
-            "wamn.io/database-role".to_string(),
-            Value::String(credential.role().to_string()),
-        ),
-        (
-            "wamn.io/issued-at".to_string(),
-            Value::String(field("issued-at").to_string()),
-        ),
-        (
-            "wamn.io/not-before".to_string(),
-            Value::String(field("not-before").to_string()),
-        ),
-        (
-            "wamn.io/expires-at".to_string(),
-            Value::String(field("expires-at").to_string()),
-        ),
-    ]);
-    if let Some(revoked_at) = document["revoked-at"].as_str() {
-        annotations.insert(
-            "wamn.io/revoked-at".to_string(),
-            Value::String(revoked_at.to_string()),
-        );
-    }
-    json!({
-        "apiVersion": "v1",
-        "kind": "Secret",
-        "metadata": {
-            "name": artifact_reader_secret_name(
-                credential.tenant_id(),
-                credential.org(),
-                credential.project(),
-                credential.environment(),
-                credential.database(),
-            ),
-            "namespace": namespace,
-            "labels": {
-                "app.kubernetes.io/managed-by": "wamn",
-                "app.kubernetes.io/component": "artifact-reader-credentials",
-                "wamn.org": credential.org(),
-                "wamn.project": credential.project(),
-                "wamn.env": credential.environment(),
-            },
-            "annotations": annotations,
-        },
-        "type": "Opaque",
-        "stringData": {
-            (ARTIFACT_READER_CREDENTIAL_KEY): serde_json::to_string(credential)
-                .expect("artifact-reader credential serializes"),
-        },
-    })
-}
-
 /// Render the per-project-env **CDC** credential `Secret` (wamn-l5i9.9). Name
 /// `wamn-cdc-<org>--<project>--<env>` — the reference the reader registration
 /// records as `replication_secret_name`, DISTINCT from the `wamn-db-…` query
@@ -286,11 +209,6 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
 
-    use crate::artifact_reader::{
-        ArtifactReaderCredentialScope, ArtifactReaderCredentialValidity,
-        artifact_reader_credential, parse_artifact_reader_credential,
-    };
-    use crate::name::artifact_reader_generation_role;
     use chrono::{DateTime, Utc};
     use wamn_run_state::{
         CredentialGeneration, EFFECT_WRITER_CREDENTIAL_PATH, EffectWriterCredentialScope,
@@ -339,39 +257,6 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc)
             .into()
-    }
-
-    fn artifact_reader_fixture() -> ArtifactReaderCredential {
-        let scope = ArtifactReaderCredentialScope {
-            tenant_id: "tenant-a".to_string(),
-            org: "acme".to_string(),
-            project: "billing".to_string(),
-            environment: "dev".to_string(),
-            database: "wamn_system".to_string(),
-        };
-        let role = artifact_reader_generation_role(
-            &scope.tenant_id,
-            &scope.org,
-            &scope.project,
-            &scope.environment,
-            &scope.database,
-            CredentialGeneration::B,
-        );
-        artifact_reader_credential(
-            &scope,
-            "0123456789abcdef0123456789abcdef",
-            CredentialGeneration::B,
-            &ArtifactReaderCredentialValidity {
-                issued_at: "2026-01-01T00:00:00Z".to_string(),
-                not_before: "2026-01-01T00:00:00Z".to_string(),
-                expires_at: "2026-02-01T00:00:00Z".to_string(),
-                revoked_at: None,
-            },
-            &format!(
-                "postgres://{role}:{}@wamn-sysdb-rw:5432/wamn_system",
-                "b".repeat(64)
-            ),
-        )
     }
 
     #[test]
@@ -500,70 +385,5 @@ mod tests {
             "/etc/wamn/effect-writer/credential.json"
         );
         assert!(!format!("{credential:?}").contains(&"a".repeat(64)));
-    }
-
-    #[test]
-    fn artifact_reader_secret_and_document_are_fixed_mount_exact() {
-        let credential = artifact_reader_fixture();
-        let secret = render_artifact_reader_secret_manifest("wamn-system", &credential);
-        assert_eq!(
-            secret["metadata"]["name"],
-            "wamn-artifact-reader-712f6b8bf00afcc873dc1e3eeb23b35f50872082"
-        );
-        assert_eq!(secret["kind"], "Secret");
-        assert_eq!(secret["metadata"]["namespace"], "wamn-system");
-        assert_eq!(
-            secret["metadata"]["labels"]["app.kubernetes.io/component"],
-            "artifact-reader-credentials"
-        );
-        assert!(secret["metadata"]["labels"].get("wamn.tenant").is_none());
-        assert_eq!(secret["metadata"]["labels"]["wamn.org"], "acme");
-        assert_eq!(secret["metadata"]["labels"]["wamn.project"], "billing");
-        assert_eq!(secret["metadata"]["labels"]["wamn.env"], "dev");
-        assert_eq!(
-            secret["metadata"]["annotations"].as_object().unwrap().len(),
-            6
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/credential-id"],
-            "0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/credential-generation"],
-            "b"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/database-role"],
-            "wamn_artifact_reader_712f6b8bf00afcc873dc1e3eeb23b35f50872082_b"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/issued-at"],
-            "2026-01-01T00:00:00Z"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/not-before"],
-            "2026-01-01T00:00:00Z"
-        );
-        assert_eq!(
-            secret["metadata"]["annotations"]["wamn.io/expires-at"],
-            "2026-02-01T00:00:00Z"
-        );
-        assert!(
-            secret["metadata"]["annotations"]
-                .get("wamn.io/revoked-at")
-                .is_none()
-        );
-        assert_eq!(secret["type"], "Opaque");
-        let data = secret["stringData"].as_object().unwrap();
-        assert_eq!(data.len(), 1);
-        assert_eq!(data.keys().next().unwrap(), ARTIFACT_READER_CREDENTIAL_KEY);
-        let parsed = parse_artifact_reader_credential(
-            data[ARTIFACT_READER_CREDENTIAL_KEY]
-                .as_str()
-                .unwrap()
-                .as_bytes(),
-        )
-        .unwrap();
-        assert_eq!(parsed, credential);
     }
 }

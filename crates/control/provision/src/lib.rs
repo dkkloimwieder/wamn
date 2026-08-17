@@ -50,7 +50,6 @@
 //! pure tests do NOT cover; the live half is the throwaway-PG gates over the
 //! real prepared-statement path (SR12b).
 
-mod artifact_reader;
 #[cfg(feature = "ops")]
 pub mod backup;
 #[cfg(feature = "ops")]
@@ -69,20 +68,6 @@ pub mod sql;
 #[cfg(feature = "ops")]
 pub mod state;
 
-#[cfg(feature = "postgres-config")]
-pub use artifact_reader::artifact_reader_connection_config;
-pub use artifact_reader::{
-    ARTIFACT_READER_APPLICATION_NAME, ARTIFACT_READER_CREDENTIAL_KEY,
-    ARTIFACT_READER_CREDENTIAL_PATH, ARTIFACT_READER_CREDENTIAL_SCHEMA_VERSION,
-    ARTIFACT_READER_ROLE_MARKER_SCHEMA, ARTIFACT_READER_VERIFY_APPLICATION_NAME,
-    ArtifactReaderCredential, ArtifactReaderCredentialError, ArtifactReaderCredentialErrorKind,
-    ArtifactReaderCredentialScope, ArtifactReaderCredentialValidity, ArtifactReaderEndpoint,
-    ArtifactReaderTenantScope, artifact_reader_credential, artifact_reader_endpoint,
-    artifact_reader_generation_role_marker, artifact_reader_tenant_role_marker,
-    parse_artifact_reader_credential, validate_artifact_reader_credential,
-    validate_artifact_reader_generation_role_marker, validate_artifact_reader_scope,
-    validate_artifact_reader_tenant_child_role_marker, validate_artifact_reader_tenant_role_marker,
-};
 #[cfg(feature = "ops")]
 pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
@@ -102,13 +87,9 @@ pub use dump::{
 };
 pub use error::ProvisionError;
 pub use name::{
-    APP_ROLE, ARTIFACT_READER_GENERATION_ROLE_PREFIX, ARTIFACT_READER_POLICY_PREFIX,
-    ARTIFACT_READER_SECRET_PREFIX, ARTIFACT_READER_TENANT_ROLE_PREFIX, CDC_OBJECT_PREFIX,
-    CDC_SECRET_PREFIX, DB_PREFIX, EFFECT_WRITER_SECRET_PREFIX, INSTANCE_SUFFIX_LEN,
-    MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN,
-    NAMESPACE_PREFIX, artifact_reader_generation_role, artifact_reader_generation_scope_hash,
-    artifact_reader_policy_name, artifact_reader_secret_name, artifact_reader_tenant_role,
-    artifact_reader_tenant_scope_hash, cdc_object_name, compose_url, database_name,
+    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_PREFIX, EFFECT_WRITER_SECRET_PREFIX,
+    INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN, MAX_NAMESPACE_STEM_LEN,
+    MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url, database_name,
     event_stream_name, project_env_cdc_secret_name, project_env_database_name,
     project_env_effect_writer_secret_name, project_env_namespace, project_env_secret_name,
     secret_name, validate_instance_suffix, validate_project_env, validate_project_env_cdc,
@@ -118,8 +99,8 @@ pub use org::{OrgClusters, render_org_cluster_set};
 #[cfg(feature = "ops")]
 pub use restore::{pg_restore_argv, restore_scratch_db_name, validate_restore_scratch_name};
 pub use secret::{
-    render_artifact_reader_secret_manifest, render_effect_writer_secret_manifest,
-    render_project_env_cdc_secret_manifest, render_project_env_secret_manifest,
+    render_effect_writer_secret_manifest, render_project_env_cdc_secret_manifest,
+    render_project_env_secret_manifest,
 };
 pub use wamn_run_state::{
     CredentialGeneration, EFFECT_WRITER_CREDENTIAL_KEY, EFFECT_WRITER_CREDENTIAL_PATH,

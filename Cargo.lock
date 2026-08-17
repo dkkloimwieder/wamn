@@ -4184,11 +4184,7 @@ name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
  "chrono",
- "serde",
  "serde_json",
- "sha2 0.11.0",
- "tokio-postgres",
- "url",
  "wamn-control-registry",
  "wamn-flow",
  "wamn-pg-core",
@@ -4561,7 +4557,6 @@ dependencies = [
  "url",
  "wamn-catalog",
  "wamn-component-policy",
- "wamn-control-provision",
  "wamn-control-registry",
  "wamn-event-wire",
  "wamn-flow",

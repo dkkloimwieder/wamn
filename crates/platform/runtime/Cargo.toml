@@ -9,7 +9,6 @@ license.workspace = true
 wash-runtime = { workspace = true }
 wamn-component-policy = { workspace = true }
 wamn-catalog = { workspace = true }
-wamn-control-provision = { workspace = true, features = ["postgres-config"] }
 wamn-control-registry = { workspace = true }
 wamn-event-wire = { workspace = true }
 wamn-flow = { workspace = true }
