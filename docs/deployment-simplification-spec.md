@@ -26,8 +26,8 @@ boundary applied again.
 
 wamn's embedded `wash-runtime` custom host is the sanctioned v2
 pattern ("substitute your own custom host builds") — adoption is
-substitution, not redesign: our host images enter the operator's
-`Host` CRD.
+substitution, not redesign: our host images enter the operator
+chart's `runtime.hostGroups[]` host tier.
 
 ## The model
 
@@ -48,10 +48,10 @@ release content, so the two documents for one release in two
 environments differ by that label alone.
 
 **Deploy (cluster, operator-reconciled).** Argo/Flux (plain
-`kubectl apply` in dev) converges; the runtime-operator reconciles
-`Host` CRDs running **our custom host images** (executor, flow-http,
-materializer hosts) and schedules component workloads onto them;
-HTTP exposure rides operator-managed EndpointSlices on standard
+`kubectl apply` in dev) converges; the chart's `runtime.hostGroups[]`
+run **our custom host images** (executor, flow-http, materializer
+hosts) and the runtime-operator schedules component workloads onto
+them; HTTP exposure rides operator-managed EndpointSlices on standard
 Services (the deprecated gateway is never adopted). Pods surface the
 release identity as immutable mounted config per the v2
 ConfigMap/Secret pattern. Readiness stays ours and gates on:
@@ -121,14 +121,15 @@ dedicated artifact-reader DB role (OCI pulls) ·
 `deployment_attestations`' `deployed_resolution_map` (map-only —
 ruling 5; no state column exists in the DDL) ·
 report-level map-consistency checking · hand-rolled **wasmCloud
-host** Deployment manifests (operator `Host` CRDs replace them) —
-wamn-run-worker is not one of them and is retained as a plain
-Deployment: no `ClusterHost`, no heartbeat, and pretending otherwise
-would be adoption theater · **the waker, at M2
-adoption** — host/workload scaling is operator territory
-(`hostReplicas` / workload scalers); the dispatcher's wake signal
-becomes a CRD patch; planned deletion with a named trigger, not
-immediate.
+host** Deployment manifests (the chart's `runtime.hostGroups[]` carry
+them; `Host` CRs are operator-written observed state and carry no
+image, replicas, or podTemplate) — wamn-run-worker is not one of
+them and is retained as a plain Deployment: no `ClusterHost`, no
+heartbeat, and pretending otherwise would be adoption theater ·
+**the waker, at M2 adoption** — host/workload scaling is operator
+territory (`hostReplicas` / workload scalers); the dispatcher's wake
+signal becomes a CRD patch; planned deletion with a named trigger,
+not immediate.
 
 ## Retained, each with its consumer
 
