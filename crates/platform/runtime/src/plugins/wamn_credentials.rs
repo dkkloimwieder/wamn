@@ -83,6 +83,27 @@ impl WamnCredentials {
     /// vault (the deploy manifest mounts the Secret `optional`, so a
     /// credential-less project deploys cleanly); a present-but-malformed file
     /// is a hard error (a real misconfiguration must be loud).
+    ///
+    /// # Rotation is a pod roll, not a reload — decided once, recorded here
+    ///
+    /// This reads once, at startup, so material rotated under an UNCHANGED
+    /// handle is not observed until the process restarts. An unchanged handle is
+    /// exactly what a rotation keeps: a rotation mints a new credential
+    /// GENERATION and leaves the portable artifact — and therefore the
+    /// connection definition that names the handle — untouched
+    /// (`docs/archive/data-path/credential-vault.md`). Snapshotting is
+    /// nonetheless the correct posture, not an omission, because an attempt's
+    /// durable facts pin the `credential_generation` that authorized it
+    /// (`wamn_run.effect_attempts`), which recovery must reuse or explicitly
+    /// refuse. This file's `{project: {handle: secret}}` shape carries no
+    /// generation, so a watcher could not tell rotated material from the pinned
+    /// material and would silently substitute credentials under a recovering
+    /// attempt. A process-lifetime snapshot cannot.
+    ///
+    /// Supporting rotation therefore means making the generation part of the
+    /// source, not adding a reload here. Until then the rotation procedure is a
+    /// roll: `deploy/mvp/bootstrap.sh` already rolls the runner Deployment after
+    /// it publishes replacement credential material.
     pub fn from_file(path: &Path) -> anyhow::Result<Self> {
         if !path.exists() {
             tracing::warn!(
@@ -181,5 +202,25 @@ mod tests {
         assert!(WamnCredentials::projects_from_json("[]").is_err());
         assert!(WamnCredentials::projects_from_json(r#"{"p": "flat"}"#).is_err());
         assert!(WamnCredentials::projects_from_json(r#"{"p": {"n": 7}}"#).is_err());
+    }
+
+    /// Material is a PROCESS-LIFETIME snapshot: rotating the mount under the
+    /// same handle is not observed. A later reload would resolve material no
+    /// pinned `credential_generation` names, so it has to fail here rather than
+    /// land as a silent behaviour change.
+    #[test]
+    fn from_file_snapshots_material_for_the_process_lifetime() {
+        let path = std::env::temp_dir().join(format!(
+            "wamn-credentials-snapshot-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"{"proj-a": {"token": "generation-1"}}"#)
+            .expect("write the mounted credentials file");
+        let vault = WamnCredentials::from_file(&path).expect("snapshot the mount");
+        std::fs::write(&path, r#"{"proj-a": {"token": "generation-2"}}"#)
+            .expect("rotate the material under the same handle");
+        let resolved = vault.lookup("proj-a", "token");
+        std::fs::remove_file(&path).expect("remove the test mount");
+        assert_eq!(resolved.as_deref(), Some("generation-1"));
     }
 }
