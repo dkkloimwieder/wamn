@@ -109,9 +109,9 @@ pub struct ServingRelease {
     /// `RouteDefinition::catalog_version`
     /// (`components/ingress/flow-http/src/lib.rs:61`).
     pub catalog_version: u32,
-    /// The environment this manifest was minted for. The manifest is
-    /// environment-scoped because [`ServingAttachment::enabled`] is, and the run
-    /// row carries it (`crates/execution/run-state/src/admission.rs:419`).
+    /// The environment this manifest was minted for. The run row carries it
+    /// (`crates/execution/run-state/src/admission.rs:419`), and it names the
+    /// catalog head admission locks.
     pub environment: String,
 }
 
@@ -151,13 +151,27 @@ pub struct ServingFlow {
     pub calls: BTreeSet<String>,
 }
 
-/// One release attachment with its environment activation.
+/// One release attachment — the route shape this release exposes.
 ///
 /// The definition and the resolved source travel as the exact JSON documents
 /// the columns `catalog.release_attachments.definition_json` and
 /// `catalog.release_sources.definition_json` hold today, so this projection adds
 /// no parallel declaration of a shape another crate already owns
 /// (`wamn_schema_control::exposure::Attachment` is the decoder).
+///
+/// # Activation is deliberately absent
+///
+/// Enablement is environment-owned operational state, and
+/// [`AttachmentActivation`](crate::AttachmentActivation) already states that it
+/// "never participates in hashes". It stays in `catalog.attachment_activation`
+/// and is checked inside the admission transaction, which already holds the
+/// connection: `catalog.active_attachments` filters on it
+/// (`crates/execution/run-state/src/admission.rs:243`) and a disabled
+/// attachment classifies as the existing `inactive-definition` refusal. The
+/// serving path therefore gains no read, and an emergency off is one `UPDATE`
+/// effective at the next admission instead of a mint plus a rollout. Disabled
+/// attachments stay in the manifest because routes are immutable per release;
+/// tombstoned ones are absent from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingAttachment {
@@ -171,13 +185,6 @@ pub struct ServingAttachment {
     /// (`components/ingress/flow-http/src/lib.rs:62`) and the value transparent
     /// recovery compares against.
     pub definition_hash: String,
-    /// Whether this attachment is activated in this environment —
-    /// `RouteDefinition::enabled` (`components/ingress/flow-http/src/lib.rs:66`)
-    /// and `InvocationTarget::enabled`
-    /// (`crates/execution/run-state/src/invocation.rs:17`). Disabled
-    /// attachments stay in the manifest so released admissions remain
-    /// recoverable; tombstoned ones are absent from it.
-    pub enabled: bool,
     /// The attachment definition document — route host/path/method, input
     /// mappings, and deadlines. `InvocationTarget::definition`
     /// (`crates/execution/run-state/src/invocation.rs:15`) is this value.
@@ -188,6 +195,43 @@ pub struct ServingAttachment {
     /// (`crates/execution/run-state/src/invocation.rs:16`) is this value, and it
     /// is the policy flow-http hands to `routing::authenticate`.
     pub auth_policy: Value,
+}
+
+/// One event registration's release identity — its source, and the flow it runs.
+///
+/// # The condition is deliberately absent
+///
+/// A registration's `condition` is a hot-editable filter by design
+/// (`crates/events/registration/src/model.rs:70`): a filtered-out event stays on
+/// the stream, so correcting a mis-filtered predicate is one `UPDATE` and a
+/// replay. It stays a column on `catalog.event_registrations` — a table with no
+/// `catalog_version` at all (`deploy/sql/catalog-schema.sql:1742`) — read by the
+/// materializer at evaluation, inside the per-event transaction it already opens
+/// (`crates/events/materializer/src/sql.rs:12`). Freezing it into these
+/// canonical bytes would turn seconds-scale filter repair into a mint plus a
+/// rollout, so it does not travel here. The stored document's `schema-version`,
+/// `registration-id` and `catalog-id` do not travel either:
+/// [`ServingManifest::format_version`], the map key, and
+/// [`ServingRelease::catalog_id`] already carry them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ServingRegistration {
+    /// The subscribing flow — the durable consumer the materializer opens and
+    /// the `<flow>:evt:<seq>` run-id prefix
+    /// (`crates/events/materializer/src/decide.rs:50`). It is *not* required to
+    /// be a member of [`ServingManifest::flows`]: registrations attach to the
+    /// live catalog rather than a catalog version, so one may name a flow this
+    /// release does not carry, and the materializer holds that event.
+    pub flow_id: String,
+    /// The stable catalog entity id whose row events fire it — the value the CDC
+    /// envelope carries in its `entity` segment, so a table rename never orphans
+    /// a registration (EVT-OIDMAP).
+    pub entity: String,
+    /// The row ops that fire it — non-empty, since a registration matching no op
+    /// is inert. `wamn_event_wire::Op` owns the spelling and stays its only
+    /// decoder, so this projection re-declares no op taxonomy; a `BTreeSet`
+    /// because the same op set written in two orders is one registration.
+    pub ops: BTreeSet<String>,
 }
 
 /// The complete document a pod mounts and resolves every run against.
@@ -203,14 +247,10 @@ pub struct ServingManifest {
     pub flows: BTreeMap<String, ServingFlow>,
     /// Every non-tombstoned release attachment, keyed by attachment id.
     pub attachments: BTreeMap<String, ServingAttachment>,
-    /// Every event registration, keyed by registration id. The value is the
-    /// stored `catalog.event_registrations.registration` document verbatim;
-    /// `wamn_event_reg::EventRegistration::from_json` is the decoder, and the
-    /// materializer's registration sweep
-    /// (`crates/events/materializer/src/sql.rs:12`) is the read this projection
-    /// replaces. Carrying the document rather than a re-declared struct keeps
-    /// one owner for the frozen registration shape.
-    pub registrations: BTreeMap<String, Value>,
+    /// Every event registration's release identity, keyed by registration id.
+    /// The stored `catalog.event_registrations.registration` document does not
+    /// travel whole — see [`ServingRegistration`] for what stays in Postgres.
+    pub registrations: BTreeMap<String, ServingRegistration>,
 }
 
 impl ServingManifest {
@@ -219,7 +259,7 @@ impl ServingManifest {
         release: ServingRelease,
         flows: BTreeMap<String, ServingFlow>,
         attachments: BTreeMap<String, ServingAttachment>,
-        registrations: BTreeMap<String, Value>,
+        registrations: BTreeMap<String, ServingRegistration>,
     ) -> Result<Self, CatalogIdentityError> {
         let manifest = Self {
             format_version: SERVING_MANIFEST_FORMAT_VERSION.to_string(),
@@ -348,8 +388,13 @@ impl ServingManifest {
 
         for (registration_id, registration) in &self.registrations {
             validate_text(registration_id, "registration-id")?;
-            if !registration.is_object() {
-                return invalid("registration document must be a JSON object");
+            validate_text(&registration.flow_id, "flow-id")?;
+            validate_text(&registration.entity, "entity")?;
+            if registration.ops.is_empty() {
+                return invalid("a registration matching no op is inert");
+            }
+            for op in &registration.ops {
+                validate_text(op, "op")?;
             }
         }
         Ok(())
@@ -425,7 +470,6 @@ mod tests {
             kind: AttachmentKind::Http,
             flow_id: "root".into(),
             definition_hash: DEF_HASH.into(),
-            enabled: true,
             definition: serde_json::json!({
                 "id": "orders",
                 "kind": "http",
@@ -438,15 +482,12 @@ mod tests {
         }
     }
 
-    fn registration() -> Value {
-        serde_json::json!({
-            "schema-version": "0.1",
-            "registration-id": "orders-changed",
-            "catalog-id": "cat",
-            "flow-id": "callee",
-            "entity": "orders",
-            "ops": ["insert"]
-        })
+    fn registration() -> ServingRegistration {
+        ServingRegistration {
+            flow_id: "callee".into(),
+            entity: "orders".into(),
+            ops: BTreeSet::from(["insert".to_string()]),
+        }
     }
 
     fn manifest() -> ServingManifest {
@@ -501,13 +542,13 @@ mod tests {
     #[test]
     fn content_change_moves_the_digest() {
         let baseline = manifest().digest();
-        let mut toggled = manifest();
-        toggled
-            .attachments
-            .get_mut("orders")
-            .expect("fixture attachment")
-            .enabled = false;
-        assert_ne!(baseline, toggled.digest());
+        let mut retargeted = manifest();
+        retargeted
+            .registrations
+            .get_mut("orders-changed")
+            .expect("fixture registration")
+            .flow_id = "root".into();
+        assert_ne!(baseline, retargeted.digest());
     }
 
     #[test]

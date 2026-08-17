@@ -22,7 +22,7 @@ pub use serving_manifest::{
     RELEASE_IDENTITY_CONFIGMAP_NAME, RELEASE_IDENTITY_DIGEST_KEY, RELEASE_IDENTITY_MOUNT_PATH,
     RELEASE_IDENTITY_VERSION_KEY, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
     RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
-    ServingManifest, ServingRelease, release_manifest_configmap_name,
+    ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
 
 use std::cmp::Ordering;

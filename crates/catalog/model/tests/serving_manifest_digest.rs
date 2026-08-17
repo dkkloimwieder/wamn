@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     AttachmentKind, CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling,
-    CallableReturnContract, ServingAttachment, ServingFlow, ServingManifest, ServingRelease,
+    CallableReturnContract, ServingAttachment, ServingFlow, ServingManifest, ServingRegistration,
+    ServingRelease,
 };
 
 const PLAN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -71,7 +72,6 @@ fn maximal() -> ServingManifest {
                 kind: AttachmentKind::Http,
                 flow_id: "root".to_string(),
                 definition_hash: DEF.to_string(),
-                enabled: true,
                 definition: json!({
                     "id": "orders",
                     "kind": "http",
@@ -85,14 +85,11 @@ fn maximal() -> ServingManifest {
         )]),
         BTreeMap::from([(
             "orders-changed".to_string(),
-            json!({
-                "schema-version": "0.1",
-                "registration-id": "orders-changed",
-                "catalog-id": "cat",
-                "flow-id": "callee",
-                "entity": "orders",
-                "ops": ["insert"]
-            }),
+            ServingRegistration {
+                flow_id: "callee".to_string(),
+                entity: "orders".to_string(),
+                ops: BTreeSet::from(["insert".to_string()]),
+            },
         )]),
     )
     .expect("the maximal manifest is valid")
@@ -233,19 +230,29 @@ fn every_manifest_field_is_pinned_in_the_projection() {
     );
     assert_eq!(
         sorted_keys(&document["attachments"]["orders"]),
-        [
-            "auth-policy",
-            "definition",
-            "definition-hash",
-            "enabled",
-            "flow-id",
-            "kind"
-        ],
-        "the attachment projection carries exactly what `InvocationTarget` reads"
+        ["auth-policy", "definition", "definition-hash", "flow-id", "kind"],
+        "the attachment projection is release shape only — activation is environment \
+         state, checked at admission, and never in these bytes"
     );
     assert_eq!(document["attachments"]["orders"]["kind"], "http");
-    assert!(
-        document["registrations"]["orders-changed"].is_object(),
-        "a registration travels as the stored document, decoded by wamn-event-reg"
+    assert_eq!(
+        sorted_keys(&document["registrations"]["orders-changed"]),
+        ["entity", "flow-id", "ops"],
+        "a registration travels as identity only — the condition stays a hot column, \
+         read by the materializer at evaluation"
     );
+}
+
+/// The two fields the release-shape ruling removed. `deny_unknown_fields` is what
+/// keeps them out for good: a mount carrying either is refused rather than
+/// silently ignored, so a manifest minted by a pre-ruling writer cannot serve.
+#[test]
+fn the_removed_environment_state_is_refused_at_the_mount() {
+    let mut with_enabled = serde_json::to_value(maximal()).expect("the manifest serializes");
+    with_enabled["attachments"]["orders"]["enabled"] = json!(true);
+    assert!(serde_json::from_value::<ServingManifest>(with_enabled).is_err());
+
+    let mut with_condition = serde_json::to_value(maximal()).expect("the manifest serializes");
+    with_condition["registrations"]["orders-changed"]["condition"] = json!("new.total > `10`");
+    assert!(serde_json::from_value::<ServingManifest>(with_condition).is_err());
 }
