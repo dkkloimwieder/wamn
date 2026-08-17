@@ -5,6 +5,7 @@ use std::process::{Command, Output, Stdio};
 use std::thread;
 use std::time::Duration;
 
+use wamn_run_state::queue::grant_production_claim_sql;
 use wamn_run_state::transitions::{release_caller_sql, terminalize_sql};
 
 fn psql(url: &str, script: &str) -> Output {
@@ -52,12 +53,18 @@ fn run_state_live() {
     let run_queue = std::fs::read_to_string(format!("{root}/deploy/sql/run-queue.sql"))
         .expect("read run-queue DDL");
 
+    // `wamn_app` is re-stated rather than only created: the claim-time legs below
+    // prove the DDL's column grants by executing under this role, and a leftover
+    // role from an earlier database carrying SUPERUSER or BYPASSRLS would pass them
+    // with no grants at all (wamn-0h0g.15.23).
     success(
         &url,
         &format!(
             "DO $$ BEGIN \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_app') THEN \
                  CREATE ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
+               ELSE \
+                 ALTER ROLE wamn_app LOGIN PASSWORD 'wamn_app' NOSUPERUSER NOCREATEDB NOBYPASSRLS; \
                END IF; \
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_scenario_author') THEN \
                  CREATE ROLE wamn_scenario_author NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
@@ -361,4 +368,206 @@ fn run_state_live() {
                   'fault rolled back queue deletion'; \
          END $$;",
     );
+
+    // The claim-time release record (wamn-0h0g.15.23). `(release_version,
+    // manifest_digest)` is minted on the EXISTING claim write from the claiming
+    // pod's own release identity, so the installed grants must admit the pair, the
+    // named paired CHECK must refuse half of it, and
+    // `guard_run_admission_pins_immutable` must refuse a rewrite. It is not blanket
+    // write-once: NULL -> value is the claim, value -> NULL is how a runnable,
+    // effect-free run reopens its claimability (the queue park, wamn-0h0g.15.82),
+    // and value -> value' is refused on every path. Covered here against the
+    // INSTALLED DDL, which is the guard the composed statements actually meet.
+    success(
+        &url,
+        "INSERT INTO wamn_run.runs \
+           (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version,environment, \
+            execution_bundle_hash,status) VALUES \
+           ('t1','record-claim','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'dispatched'), \
+           ('t1','record-unpaired','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'running'), \
+           ('t1','record-effect','f',1,'cat',1,'prod', \
+            'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+            'dispatched'); \
+         INSERT INTO wamn_run.run_queue (tenant_id,run_id) VALUES \
+           ('t1','record-claim'),('t1','record-effect');",
+    );
+
+    let claim = grant_production_claim_sql();
+    let record_script = format!(
+        "{} PREPARE claim_stmt (text,text,bigint,int,text) AS {}; \
+         EXECUTE claim_stmt('record-claim','worker-record',30000,4, \
+           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
+         EXECUTE claim_stmt('record-effect','worker-effect',30000,4, \
+           'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'); \
+         DO $$ BEGIN \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-claim') = 4, \
+                  'the claim records the claiming release version'; \
+           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') \
+                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
+                  'the claim records the claiming manifest digest'; \
+           ASSERT (SELECT status FROM runs WHERE run_id='record-claim') = 'running', \
+                  'the record rides the claim write, not a second statement'; \
+           ASSERT (SELECT lease_generation FROM run_queue WHERE run_id='record-claim') = 1, \
+                  'the recording claim is the one that took the lease'; \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-effect') = 4, \
+                  'each claim records its own pair'; \
+         END $$; COMMIT;",
+        app_preamble(),
+        claim
+    );
+    success(&url, &record_script);
+
+    // A recorded pair is rewritten by neither half.
+    let refusal_script = format!(
+        "{} \
+         DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE runs SET release_version = 5 WHERE run_id = 'record-claim'; \
+             ASSERT false, 'a recorded release version was rewritten in place'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-release-record-immutable', refusal; \
+           END; \
+           BEGIN \
+             UPDATE runs SET manifest_digest = \
+               'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+              WHERE run_id = 'record-claim'; \
+             ASSERT false, 'a recorded manifest digest was rewritten in place'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-release-record-immutable', refusal; \
+           END; \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-claim') = 4, \
+                  'the refused rewrites left the recorded version exactly as claimed'; \
+           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') \
+                  = 'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', \
+                  'the refused rewrites left the recorded digest exactly as claimed'; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &refusal_script);
+
+    // Erasure is the park/wake arm, and it is conditional: a runnable, effect-free
+    // run may reopen its claimability, but a terminal run keeps the audit link to
+    // the plan hashes it executed.
+    let erasure_script = format!(
+        "{} \
+         UPDATE runs SET release_version = NULL, manifest_digest = NULL \
+          WHERE run_id = 'record-claim'; \
+         DO $$ BEGIN \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-claim') IS NULL, \
+                  'a runnable, effect-free run may reopen its claimability'; \
+           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-claim') IS NULL, \
+                  'a runnable, effect-free run may reopen its claimability'; \
+         END $$; \
+         UPDATE runs SET release_version = 6, \
+                manifest_digest = \
+                  'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a' \
+          WHERE run_id = 'record-claim'; \
+         UPDATE runs SET status = 'completed' WHERE run_id = 'record-claim'; \
+         DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE runs SET release_version = NULL, manifest_digest = NULL \
+              WHERE run_id = 'record-claim'; \
+             ASSERT false, 'a terminal run erased the release it executed under'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-release-record-immutable', refusal; \
+           END; \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-claim') = 6, \
+                  'the re-recorded pair survives the refused erasure'; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &erasure_script);
+
+    // The other erasure precondition: an attributed effect names the release that
+    // fired it, and that link is never rewritten out from under it. `record-effect`
+    // is still `running`, so only the effect evidence can refuse here.
+    success(
+        &url,
+        "INSERT INTO wamn_run.effect_attempts \
+           (tenant_id,run_id,root_plan_hash,current_plan_hash,frame_id,local_node_id, \
+            source_artifact_hash,requirement_name,occurrence,seq,generation_fact_kind, \
+            attempt_deadline_at,attempt_input_ref) \
+         VALUES ('t1','record-effect', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',0, \
+           'effect-node', \
+           'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
+           'manager',0,1,'not-required','2099-01-01T00:00:00Z','record-effect-input');",
+    );
+    let effect_script = format!(
+        "{} \
+         DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE runs SET release_version = NULL, manifest_digest = NULL \
+              WHERE run_id = 'record-effect'; \
+             ASSERT false, 'an attributed effect lost the release that fired it'; \
+           EXCEPTION WHEN object_not_in_prerequisite_state THEN \
+             GET STACKED DIAGNOSTICS refusal = MESSAGE_TEXT; \
+             ASSERT refusal = 'run-release-record-immutable', refusal; \
+           END; \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-effect') = 4, \
+                  'the release the effect fired under is intact'; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &effect_script);
+
+    // Half a record never reaches the guard — its record arms do not fire while
+    // both OLD values are NULL — so `runs_release_record_check` is the only thing
+    // that can refuse it, under either column.
+    //
+    // The two half-pair legs are why the CHECK needs its `IS NOT NULL` conjuncts:
+    // with only `release_version > 0 AND manifest_digest ~ '…'`, the disjunct
+    // evaluates to NULL — not false — when exactly one half is present and well
+    // formed, and a CHECK whose expression is NULL is SATISFIED. The pair is then
+    // not actually paired: `(7, NULL)` and `(NULL, '<digest>')` are both admitted,
+    // on a table that is author-reachable. These legs assert the contract, so they
+    // are red against a CHECK that has lost those conjuncts, and they are last so
+    // every leg above still proves out before this one can abort the suite.
+    let paired_script = format!(
+        "{} \
+         DO $$ DECLARE refusal text; BEGIN \
+           BEGIN \
+             UPDATE runs SET release_version = 0, \
+                    manifest_digest = \
+                      'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+              WHERE run_id = 'record-unpaired'; \
+             ASSERT false, 'runs_release_record_check admitted release version 0'; \
+           EXCEPTION WHEN check_violation THEN \
+             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
+             ASSERT refusal = 'runs_release_record_check', refusal; \
+           END; \
+           BEGIN \
+             UPDATE runs SET release_version = 7 WHERE run_id = 'record-unpaired'; \
+             ASSERT false, \
+                    'runs_release_record_check admitted a version with no digest'; \
+           EXCEPTION WHEN check_violation THEN \
+             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
+             ASSERT refusal = 'runs_release_record_check', refusal; \
+           END; \
+           BEGIN \
+             UPDATE runs SET manifest_digest = \
+               'sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+              WHERE run_id = 'record-unpaired'; \
+             ASSERT false, \
+                    'runs_release_record_check admitted a digest with no version'; \
+           EXCEPTION WHEN check_violation THEN \
+             GET STACKED DIAGNOSTICS refusal = CONSTRAINT_NAME; \
+             ASSERT refusal = 'runs_release_record_check', refusal; \
+           END; \
+           ASSERT (SELECT release_version FROM runs WHERE run_id='record-unpaired') IS NULL, \
+                  'the unclaimed run carries no release record'; \
+           ASSERT (SELECT manifest_digest FROM runs WHERE run_id='record-unpaired') IS NULL, \
+                  'the unclaimed run carries no release record'; \
+         END $$; COMMIT;",
+        app_preamble()
+    );
+    success(&url, &paired_script);
 }
