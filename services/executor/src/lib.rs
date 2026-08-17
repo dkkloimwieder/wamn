@@ -185,6 +185,7 @@ fn outcome_label(outcome: DriveOutcome) -> &'static str {
 struct RunMetrics {
     executions: Counter<u64>,
     drive_ms: Histogram<f64>,
+    drain_failures: Counter<u64>,
     tenant: String,
     project: String,
 }
@@ -206,16 +207,36 @@ impl RunMetrics {
                      non-execution terminalization",
                 )
                 .build(),
+            drain_failures: meter
+                .u64_counter("wamn.run.drain.failures")
+                .with_description(
+                    "drain turns that failed before any run was handled (claim refusal, \
+                     lost database, missing private writer)",
+                )
+                .build(),
             tenant: tenant.to_string(),
             project: project.to_string(),
         }
     }
 
-    fn record_drive(&self, elapsed: Duration, outcome: DriveOutcome) {
-        let base = [
+    /// This replica's bounded attribute pair, shared by every run instrument.
+    fn identity(&self) -> [KeyValue; 2] {
+        [
             KeyValue::new("wamn.tenant", self.tenant.clone()),
             KeyValue::new("wamn.project", self.project.clone()),
-        ];
+        ]
+    }
+
+    /// A refused claim never reaches a drive observation, so `wamn.run.executions`
+    /// stays FLAT while one run head-of-line-blocks its tenant. This is the series
+    /// to alert on, and deliberately not another `outcome` bucket — that would
+    /// fold refusals into the counter dashboards derive the success ratio from.
+    fn record_drain_failure(&self) {
+        self.drain_failures.add(1, &self.identity());
+    }
+
+    fn record_drive(&self, elapsed: Duration, outcome: DriveOutcome) {
+        let base = self.identity();
         self.drive_ms.record(elapsed.as_secs_f64() * 1000.0, &base);
         self.executions.add(
             1,
@@ -275,6 +296,7 @@ async fn serve(
                     return Err(error)
                         .context("run-worker execution instance was interrupted and disposed");
                 }
+                metrics.record_drain_failure();
                 tracing::warn!(
                     error = %error,
                     "run-worker: drain failed (retrying after backoff)"
@@ -500,6 +522,23 @@ mod tests {
             outcome_label(DriveOutcome::InfrastructureFailure),
             "infrastructure-failure"
         );
+    }
+
+    /// The refusal signal is its OWN instrument, recorded on the non-fatal drain
+    /// arm. `wamn.run.executions` is the terminal-outcome counter dashboards
+    /// divide by, so folding a failed turn into it would corrupt the ratio.
+    #[test]
+    fn a_failed_drain_turn_records_its_own_instrument_before_it_warns() {
+        let source = include_str!("lib.rs")
+            .split_once("#[cfg(test)]")
+            .expect("test module marker")
+            .0;
+        let before_warn = source
+            .split_once("run-worker: drain failed")
+            .expect("the non-fatal drain-failure arm")
+            .0;
+        assert!(before_warn.contains("metrics.record_drain_failure()"));
+        assert!(source.contains("u64_counter(\"wamn.run.drain.failures\")"));
     }
 
     #[test]

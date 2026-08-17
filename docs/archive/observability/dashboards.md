@@ -58,6 +58,7 @@ drifting). Panels, over the REAL 9.8 names:
 | Panel | Query |
 |---|---|
 | Run throughput by outcome | `sum(rate(wamn_run_executions[5m])) by (outcome)` |
+| Refusing / failing drains | `sum(rate(wamn_run_drain_failures[5m])) by (wamn_project)` |
 | Run success ratio | `…{outcome="completed"} / …{outcome=~"completed\|failed"}` (clamped) |
 | Run-drive duration p50/p99 | `histogram_quantile(q, sum(rate(wamn_run_drive_duration_ms_bucket[5m])) by (le))` |
 | Run-queue depth by project | `sum(wamn_run_queue_depth) by (wamn_project)` |

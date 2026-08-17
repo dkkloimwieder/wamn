@@ -36,8 +36,9 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
 
 | Metric | Kind | Attributes | Emitted by (file) |
 |---|---|---|---|
-| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | execution-host `drain` (`crates/execution/host/src/lib.rs`) |
+| `wamn.run.executions` | counter | `outcome` (completed/parked/failed), `wamn.tenant`, `wamn.project` | run-worker `RunMetrics::record_drive` (`services/executor/src/lib.rs`) |
 | `wamn.run.drive.duration_ms` | histogram | `wamn.tenant`, `wamn.project` | run-worker around one `ExecutionHost::drain` turn |
+| `wamn.run.drain.failures` | counter (u64) | `wamn.tenant`, `wamn.project` | run-worker non-fatal drain-error arm (`services/executor/src/lib.rs`) |
 | `wamn.run_queue.depth` | observable gauge (i64) | `wamn.tenant`, `wamn.project` | dispatcher `tick_project` (`services/dispatcher/src/lib.rs`, `RUN_QUEUE_DEPTH_SQL`) |
 | `wamn.postgres.pool.{size,available,waiting}` | observable gauge (u64) | `wamn.project` | `WamnPostgres::register_pool_metrics` (deadpool `Pool::status()`) |
 | `wamn.postgres.query.duration_ms` | histogram | `db.operation` (query/execute/txn.query/txn.execute), `wamn.project` | the `db_span` sites (`crates/platform/runtime/src/plugins/wamn_postgres/resources.rs`) |
@@ -52,6 +53,15 @@ added (histograms keep their structural `_count`/`_sum`/`_bucket`).
   claimed drive with the terminal `outcome`; the success ratio is
   `completed / (completed+failed)` computed at query time. The `outcome` fold
   (0→completed, 1→parked, else→failed) is the SAME one `DrainReport` uses.
+- **Drain failures.** One per drain turn that errored before any run was
+  handled. A refused claim never reaches a drive observation, so
+  `wamn.run.executions` stays FLAT while runs pile up — an operator watching
+  throughput sees nothing (wamn-0h0g.15.81). Alert on its rate. Deliberately its
+  own instrument rather than another `outcome` bucket: folding it in would
+  corrupt the `completed/(completed+failed)` success ratio above. Starvation is
+  NOT a drain failure — an empty queue returns `Ok` with `claimed == 0`, and is
+  already derivable from a non-zero `wamn_run_queue_depth` against flat
+  executions.
 - **Run-drive duration.** One host drain turn, including claim-time
   non-execution terminalization or the guest `run` call. True **per-node**
   p50/p99 is guest-side (node_runs timestamps), like
