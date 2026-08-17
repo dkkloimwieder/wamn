@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use wamn_catalog::{
     AttachmentKind, CALLABLE_CONTRACT_VERSION, CallableContract, CallableEffectCeiling,
-    CallableReturnContract, CatalogIdentityError, ServingAttachment, ServingFlow, ServingManifest,
-    ServingRegistration, ServingRelease,
+    CallableReturnContract, ServingAttachment, ServingFlow, ServingManifest, ServingRegistration,
+    ServingRelease,
 };
 
 const PLAN: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -120,9 +120,9 @@ fn sorted_keys(value: &Value) -> Vec<String> {
 /// Drift guard: the exact RFC 8785 preimage bytes of the minimal manifest. Any
 /// silent change to the projection — a field entering or leaving it, a key
 /// spelling moving — fails here with a readable diff. Every already-published
-/// manifest digest moves with these bytes; a pod carrying a pre-change identity
-/// then fails closed in [`ServingManifest::read`], and republishing the release
-/// is the migration story.
+/// manifest digest moves with these bytes; a pod carrying pre-change bytes then
+/// derives a different name than the one its release was published under, and
+/// republishing the release is the migration story.
 #[test]
 fn manifest_preimage_bytes_are_pinned() {
     assert_eq!(
@@ -140,6 +140,38 @@ fn manifest_preimage_bytes_are_pinned() {
         ),
         "manifest keys are UTF-16 ordered and no field is omitted"
     );
+}
+
+/// The golden vector, reader side: the derived digest of the pinned preimage.
+///
+/// This is the producer-coupling proof. The weld derives identity by calling
+/// [`ServingManifest::digest`], which is
+/// [`wamn_flow::canonical_json_sha256`] and nothing else — never the workspace's
+/// second canonicalizer (`crate::canonical_serialized`, ryu-js, for
+/// identity-frame hashing), and never a local re-implementation of RFC 8785. So a
+/// producer revision cannot silently fork reader-side identity: it would move
+/// this literal.
+///
+/// The mint (`wamn-0h0g.15.14`) owns the other side and must record exactly this
+/// digest for exactly this manifest. Until the mint exists there is nothing to
+/// compare against, so THIS is the vector it has to match; do not weaken it to a
+/// shape assertion.
+#[test]
+fn the_golden_vector_digest_is_pinned() {
+    assert_eq!(
+        minimal().digest().as_str(),
+        "sha256:9eccdfb279fef3993b75e41b1f5ad622022d896db78ac5f74a954435daf3795e",
+        "the derived digest of the pinned preimage moved — either the projection \
+         changed (see manifest_preimage_bytes_are_pinned) or the canonicalizer did"
+    );
+    // And the identity is a plain SHA-256 over those bytes with NO framing. This
+    // crate's other hashing path deliberately frames its input with a domain
+    // tag (`wamn.catalog.identity.v0.1`), so routing the manifest through it —
+    // the exact silent fork the producer-coupling rider forbids — would break
+    // here rather than quietly renaming every release.
+    let raw = <sha2::Sha256 as sha2::Digest>::digest(minimal().canonical_bytes());
+    let hex: String = raw.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(minimal().digest().as_str(), format!("sha256:{hex}"));
 }
 
 /// The digest is taken over the projection, not over the bytes it arrived in:
@@ -211,7 +243,7 @@ fn map_insertion_order_cannot_change_the_digest() {
 
     assert_eq!(baseline.canonical_bytes(), permuted.canonical_bytes());
     assert_eq!(baseline.digest(), permuted.digest());
-    assert!(baseline.digest().starts_with("sha256:"));
+    assert!(baseline.digest().as_str().starts_with("sha256:"));
 }
 
 /// The classification guard behind the projection. A field added to any manifest
@@ -299,9 +331,18 @@ fn the_binding_base_reaches_the_digest() {
 
     assert_ne!(released.canonical_bytes(), candidate.canonical_bytes());
     assert_ne!(released.digest(), candidate.digest());
-    assert_eq!(
-        ServingManifest::read(&released.digest(), &candidate.canonical_bytes()),
-        Err(CatalogIdentityError::ServingManifestDigestMismatch),
+
+    // The republish-safety property, stated against the derived identity rather
+    // than against a comparison parameter: a rebased manifest is admitted — it is
+    // valid content — but it derives its OWN name, so it can never be served
+    // under the released one. A shifted digest is not a masquerade; it is a
+    // correct name for different content.
+    let (_, derived) = ServingManifest::from_canonical_bytes(&candidate.canonical_bytes())
+        .expect("a rebased manifest is valid content in its own right");
+    assert_eq!(derived, candidate.digest());
+    assert_ne!(
+        derived,
+        released.digest(),
         "a rebased manifest may not mount under the identity it was not minted with"
     );
 }

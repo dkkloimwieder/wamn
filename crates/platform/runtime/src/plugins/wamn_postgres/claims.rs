@@ -15,6 +15,7 @@ use tokio_postgres::types::ToSql;
 
 use wamn_event_wire::Causation;
 
+use wamn_catalog::ManifestDigest;
 use wamn_control_registry::identifiers::{valid_project, valid_runner, valid_schema, valid_tenant};
 
 use super::pool::{
@@ -67,9 +68,9 @@ pub struct WamnPostgres {
     pub(super) destroyed: Arc<AtomicU64>,
 }
 
-/// The release a pod carries — the `(release version, manifest digest)` pair the
-/// platform projects as immutable mounted config
-/// ([`wamn_catalog::RELEASE_IDENTITY_MOUNT_PATH`]).
+/// The release a pod carries — the `(release version, manifest digest)` pair
+/// derived from the verified content of its mounted serving manifest
+/// ([`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld)).
 ///
 /// Runs are never version-pinned: a run executes under the release its CLAIMING
 /// pod carries, and the production claim records this pair onto that run exactly
@@ -79,17 +80,11 @@ pub struct WamnPostgres {
 pub struct ReleaseIdentity {
     /// The release (catalog) version — `runs.release_version`.
     pub release_version: i32,
-    /// The serving manifest's `sha256:<hex>` digest — `runs.manifest_digest`.
-    pub manifest_digest: String,
-}
-
-/// True for the `sha256:<64 lowercase hex>` shape the run plane's
-/// `runs_release_record_check` admits. Every claim value travels as a bind
-/// parameter, so this is a fail-closed shape check, not an injection boundary.
-fn valid_manifest_digest(digest: &str) -> bool {
-    digest.strip_prefix("sha256:").is_some_and(|hex| {
-        hex.len() == 64 && hex.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
-    })
+    /// The serving manifest's digest — `runs.manifest_digest`. The
+    /// `sha256:<64 lowercase hex>` shape the run plane's
+    /// `runs_release_record_check` admits is carried by the type, so there is no
+    /// hand-rolled shape check on this path.
+    pub manifest_digest: ManifestDigest,
 }
 
 /// Host-only identity used to load one HTTP effect authorization snapshot.
@@ -626,23 +621,23 @@ impl WamnPostgres {
 
     /// Register the release this pod carries for a component id. The production
     /// claim writes it onto every run it leases, write-once. The bench harness
-    /// and live tests call this directly; the host path feeds it from the
-    /// `wamn.release-version` / `wamn.manifest-digest` workload config, which the
-    /// platform fills from the mounted release-identity ConfigMap. Absent leaves
-    /// the claim recording nothing.
+    /// and live tests call this directly; the host path feeds it from the loaded
+    /// [`ReleaseManifestWeld`](crate::release_manifest::ReleaseManifestWeld),
+    /// whose pair is derived from verified manifest content. Absent leaves the
+    /// claim recording nothing.
+    ///
+    /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
+    /// only the version still needs a check, and `wamn-0h0g.15.65` owns giving
+    /// that value a type too.
     pub fn set_release_identity(
         &self,
         component_id: &str,
         release_version: i32,
-        manifest_digest: &str,
+        manifest_digest: ManifestDigest,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             release_version > 0,
             "invalid release version {release_version}: a positive catalog version is required"
-        );
-        anyhow::ensure!(
-            valid_manifest_digest(manifest_digest),
-            "invalid manifest digest {manifest_digest:?}: sha256:<64 lowercase hex> required"
         );
         self.release_identities
             .write()
@@ -651,7 +646,7 @@ impl WamnPostgres {
                 component_id.to_string(),
                 ReleaseIdentity {
                     release_version,
-                    manifest_digest: manifest_digest.to_string(),
+                    manifest_digest,
                 },
             );
         Ok(())
@@ -1158,13 +1153,13 @@ mod tests {
 
     // The claim-time record must match `runs_release_record_check` exactly, or a
     // claim that would otherwise succeed dies on a CHECK inside the lease grant.
+    // The hand-rolled shape check this used to exercise is retired: the invariant
+    // now rides `ManifestDigest`, so what is pinned here is that the TYPE admits
+    // exactly what the run-plane CHECK admits. Same coupling, one owner.
     #[test]
     fn manifest_digest_shape_matches_the_run_plane_check() {
-        assert!(valid_manifest_digest(&format!("sha256:{}", "0".repeat(64))));
-        assert!(valid_manifest_digest(&format!(
-            "sha256:{}b",
-            "af9".repeat(21)
-        )));
+        assert!(ManifestDigest::parse(format!("sha256:{}", "0".repeat(64))).is_ok());
+        assert!(ManifestDigest::parse(format!("sha256:{}b", "af9".repeat(21))).is_ok());
         for rejected in [
             String::new(),
             "sha256:".to_string(),
@@ -1175,7 +1170,10 @@ mod tests {
             format!("sha256:{}", "g".repeat(64)),
             format!("SHA256:{}", "a".repeat(64)),
         ] {
-            assert!(!valid_manifest_digest(&rejected), "accepted {rejected:?}");
+            assert!(
+                ManifestDigest::parse(rejected.clone()).is_err(),
+                "accepted {rejected:?}"
+            );
         }
     }
 

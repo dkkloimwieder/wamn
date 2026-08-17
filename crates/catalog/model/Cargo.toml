@@ -5,6 +5,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+# M-TEST-UTIL: from-parts construction of identity documents is reachable only
+# under this feature, so misuse from production code is a compile error rather
+# than a convention. Visibility is keyed to build configuration, not module
+# geography: `pub(crate)` would leave from-parts construction open to every
+# future in-crate production module on nothing but discipline.
+#
+# NEVER move this onto a normal dependency of any crate. That silently deletes
+# the fence for the whole dependency graph.
+[features]
+test-util = []
+
 [dependencies]
 boon = { workspace = true }
 ryu-js = { workspace = true }
@@ -14,3 +25,13 @@ serde_json = { workspace = true, features = ["float_roundtrip"] }
 sha2 = { workspace = true }
 url = { workspace = true }
 wamn-flow = { workspace = true }
+
+# A self dev-dependency, so this crate's own `tests/` directory — a separate
+# compilation unit that cannot see its parent's features — builds with
+# `test-util` under a plain `cargo test -p wamn-catalog`. Requiring
+# `--features test-util` on every invocation instead would break every existing
+# sweep command and gate recipe. Under resolver 2 a dev-dependency feature does
+# not reach a lib-only build, so `cargo check -p wamn-catalog` remains the
+# production configuration.
+[dev-dependencies]
+wamn-catalog = { path = ".", features = ["test-util"] }

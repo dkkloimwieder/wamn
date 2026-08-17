@@ -133,13 +133,15 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
 /// Per-workload config key carrying the release VERSION this pod is running, as
-/// decimal text. It pairs with [`MANIFEST_DIGEST_CONFIG_KEY`]; the two mirror the
-/// keys of the mounted release-identity ConfigMap
-/// (`wamn_catalog::RELEASE_IDENTITY_MOUNT_PATH`). BOTH must be present or
-/// neither is registered — the run plane's `runs_release_record_check` forbids a
-/// half record, so half a pair is a bind-time refusal. Optional: absent leaves a
-/// production claim recording nothing, so every path that carries no release
-/// identity is byte-unchanged. Set by the platform, never by the guest.
+/// decimal text. It pairs with [`MANIFEST_DIGEST_CONFIG_KEY`]. BOTH must be
+/// present or neither is registered — the run plane's `runs_release_record_check`
+/// forbids a half record, so half a pair is a bind-time refusal. Optional: absent
+/// leaves a production claim recording nothing, so every path that carries no
+/// release identity is byte-unchanged. Set by the platform, never by the guest.
+///
+/// RULED REDUNDANT by `wamn-0h0g.15.102`: these keys are an *asserted* carrier of
+/// a pair the mounted manifest already welds, and `wamn-0h0g.15.103` deletes them
+/// along with the half-a-pair refusal below. Do not build anything new on them.
 pub const RELEASE_VERSION_CONFIG_KEY: &str = "wamn.release-version";
 
 /// Per-workload config key carrying this pod's `sha256:<hex>` serving-manifest
@@ -234,7 +236,11 @@ impl HostPlugin for WamnPostgres {
                 let version = version.parse::<i32>().map_err(|error| {
                     anyhow::anyhow!("invalid {RELEASE_VERSION_CONFIG_KEY} {version:?}: {error}")
                 })?;
-                self.set_release_identity(item.id(), version, &digest)?;
+                let parsed =
+                    wamn_catalog::ManifestDigest::parse(digest.clone()).map_err(|error| {
+                        anyhow::anyhow!("invalid {MANIFEST_DIGEST_CONFIG_KEY} {digest:?}: {error}")
+                    })?;
+                self.set_release_identity(item.id(), version, parsed)?;
                 tracing::debug!(
                     component = item.id(),
                     release_version = version,

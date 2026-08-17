@@ -30,8 +30,17 @@
 //! computed by the single canonicalizer ([`wamn_flow::canonical_json_bytes`] /
 //! [`wamn_flow::canonical_json_sha256`]). Every collection is a `BTreeMap` or
 //! `BTreeSet` keyed by its identity, so map iteration order and document key
-//! order cannot reach the digest by construction, and [`ServingManifest::read`]
-//! admits only the canonical encoding.
+//! order cannot reach the digest by construction, and
+//! [`ServingManifest::from_canonical_bytes`] admits only the canonical encoding.
+//!
+//! # One constructor from bytes
+//!
+//! [`ServingManifest::from_canonical_bytes`] is the only way to build a manifest
+//! from bytes, and it *derives* the digest rather than checking bytes against a
+//! caller-supplied expectation. A caller that holds an expectation asserts
+//! against the derived value itself. Two entry points with different verification
+//! semantics on one type would be a fork in the trust model; one entry point plus
+//! external assertions is a trust model with call sites.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -40,7 +49,7 @@ use serde_json::Value;
 
 use crate::{
     AttachmentKind, CALLABLE_CONTRACT_VERSION, CallableContract, CatalogIdentityError, HASH_PREFIX,
-    validate_digest, validate_text,
+    ManifestDigest, validate_digest, validate_text,
 };
 
 /// The only serving-manifest format shipped by the MVP.
@@ -60,23 +69,8 @@ pub const RELEASE_MANIFEST_MOUNT_PATH: &str = "/etc/wamn/release-manifest";
 /// The manifest ConfigMap's single key, and therefore the file name under
 /// [`RELEASE_MANIFEST_MOUNT_PATH`]. Its value is
 /// [`ServingManifest::canonical_bytes`] byte for byte — no trailing newline, or
-/// [`ServingManifest::read`] refuses the mount.
+/// [`ServingManifest::from_canonical_bytes`] refuses the mount.
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "manifest.json";
-
-/// Name of the stable-named release-identity ConfigMap the GitOps source
-/// rewrites per release — the `(release version, manifest digest)` pair.
-pub const RELEASE_IDENTITY_CONFIGMAP_NAME: &str = "release-identity";
-
-/// Directory the release-identity ConfigMap is projected into on every pod.
-pub const RELEASE_IDENTITY_MOUNT_PATH: &str = "/etc/wamn/release-identity";
-
-/// Release-identity key holding the release version — the catalog version, as
-/// decimal text. Recorded write-once onto the run at claim.
-pub const RELEASE_IDENTITY_VERSION_KEY: &str = "release-version";
-
-/// Release-identity key holding the manifest digest (`sha256:<hex>`). Recorded
-/// write-once onto the run at claim; the audit link to the plan hashes.
-pub const RELEASE_IDENTITY_DIGEST_KEY: &str = "manifest-digest";
 
 /// The name of the ConfigMap carrying the manifest with this digest.
 pub fn release_manifest_configmap_name(
@@ -278,7 +272,8 @@ pub struct ServingRegistration {
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ServingManifest {
     /// The manifest format version. A foreign version fails closed at
-    /// [`ServingManifest::read`] rather than being partially understood.
+    /// [`ServingManifest::from_canonical_bytes`] rather than being partially
+    /// understood.
     pub format_version: String,
     /// Release identity, and the environment the projection was minted for.
     pub release: ServingRelease,
@@ -293,7 +288,18 @@ pub struct ServingManifest {
 }
 
 impl ServingManifest {
-    /// Build and validate one complete manifest.
+    /// Build and validate one complete manifest from its parts.
+    ///
+    /// M-TEST-UTIL: gated behind `test-util` so production code cannot assemble a
+    /// manifest that no canonical bytes ever carried. The release mint is the only
+    /// legitimate producer, and it builds through this path with the feature on;
+    /// every reader arrives through [`Self::from_canonical_bytes`], where the
+    /// digest is derived from the bytes actually shipped.
+    ///
+    /// If this fails to resolve in your crate, the fix is a *dev-dependency* on
+    /// `wamn-catalog` with `features = ["test-util"]`. Do not add the feature to a
+    /// normal dependency: that deletes the fence for the whole dependency graph.
+    #[cfg(feature = "test-util")]
     pub fn new(
         release: ServingRelease,
         flows: BTreeMap<String, ServingFlow>,
@@ -316,21 +322,35 @@ impl ServingManifest {
         wamn_flow::canonical_json_bytes(&self.as_value())
     }
 
-    /// The manifest digest, `sha256:<hex>`, over [`Self::canonical_bytes`].
-    pub fn digest(&self) -> String {
-        wamn_flow::canonical_json_sha256(&self.as_value())
+    /// The manifest digest over [`Self::canonical_bytes`].
+    ///
+    /// Producer-coupled by construction: this is the shared RFC 8785 canonicalizer
+    /// ([`wamn_flow::canonical_json_sha256`]) that the mint uses, never a second
+    /// implementation, so a producer revision cannot fork reader-side identity.
+    /// The workspace's other canonicalizer (`crate::canonical_serialized`, ryu-js,
+    /// for identity-frame hashing) must never be substituted here.
+    pub fn digest(&self) -> ManifestDigest {
+        ManifestDigest::parse(wamn_flow::canonical_json_sha256(&self.as_value()))
+            .expect("the shared canonicalizer emits a canonical sha256 digest")
     }
 
-    /// Verify mounted bytes against the digest the pod's release identity names,
-    /// then validate the document.
+    /// Parse, validate, and require canonical bytes, then *derive* the identity.
+    ///
+    /// The only way to build a manifest from bytes. It takes no expected digest:
+    /// the digest returned is computed from the bytes that were actually supplied,
+    /// so it always names the content that will be served.
     ///
     /// Unlike [`read_execution_plan`](crate::read_execution_plan), which accepts
     /// any bytes matching their hash, a manifest is identified by its *canonical*
-    /// bytes: the parsed document is re-canonicalized and compared, so a
-    /// re-indented, key-permuted, or duplicate-bearing encoding of the same
-    /// content is refused instead of being served under a foreign digest.
-    pub fn read(expected_digest: &str, bytes: &[u8]) -> Result<Self, CatalogIdentityError> {
-        validate_digest(expected_digest, "manifest-digest")?;
+    /// bytes: the parsed document is re-canonicalized and compared. Non-canonical
+    /// input is a refusal, never a repair — a manifest arriving re-indented,
+    /// key-permuted, or duplicate-bearing is evidence of a producer or transport
+    /// fault, and the digest of repaired bytes would name content nobody shipped.
+    /// Parse-then-re-serialize *is* the check, and the identity is always
+    /// `sha256(input bytes)`, which under that requirement equals the round-trip.
+    pub fn from_canonical_bytes(
+        bytes: &[u8],
+    ) -> Result<(Self, ManifestDigest), CatalogIdentityError> {
         let manifest = serde_json::from_slice::<Self>(bytes).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
@@ -340,19 +360,17 @@ impl ServingManifest {
         if manifest.canonical_bytes() != bytes {
             return Err(CatalogIdentityError::NonCanonicalJson);
         }
-        if manifest.digest() != expected_digest {
-            return Err(CatalogIdentityError::ServingManifestDigestMismatch);
-        }
-        Ok(manifest)
+        let digest = manifest.digest();
+        Ok((manifest, digest))
     }
 
     /// The finite reachable call-flow set from `root`, inclusive.
     ///
     /// This is the pure read that replaces `resolve_run_flow_resolutions`' walk
     /// over plan bytes. It terminates on cycles, and it is total because
-    /// [`Self::new`] and [`Self::read`] have already proved every call edge
-    /// names a member flow. An absent `root` yields the empty set; a member root
-    /// with no callees yields exactly `{root}`.
+    /// [`Self::from_canonical_bytes`] has already proved every call edge names a
+    /// member flow. An absent `root` yields the empty set; a member root with no
+    /// callees yields exactly `{root}`.
     pub fn reachable_flows(&self, root: &str) -> BTreeSet<String> {
         let mut reached = BTreeSet::new();
         let mut stack = Vec::new();
@@ -567,8 +585,8 @@ mod tests {
 
         assert_eq!(forward.canonical_bytes(), reversed.canonical_bytes());
         assert_eq!(forward.digest(), reversed.digest());
-        assert!(forward.digest().starts_with(HASH_PREFIX));
-        assert_eq!(forward.digest().len(), HASH_PREFIX.len() + 64);
+        assert!(forward.digest().as_str().starts_with(HASH_PREFIX));
+        assert_eq!(forward.digest().as_str().len(), HASH_PREFIX.len() + 64);
     }
 
     #[test]
@@ -576,14 +594,18 @@ mod tests {
         let manifest = manifest();
         let digest = manifest.digest();
         let canonical = manifest.canonical_bytes();
-        assert_eq!(ServingManifest::read(&digest, &canonical), Ok(manifest));
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&canonical),
+            Ok((manifest, digest))
+        );
 
         let value: Value = serde_json::from_slice(&canonical).expect("canonical bytes are JSON");
         let indented = serde_json::to_vec_pretty(&value).expect("the document re-serializes");
         assert_eq!(
-            ServingManifest::read(&digest, &indented),
+            ServingManifest::from_canonical_bytes(&indented),
             Err(CatalogIdentityError::NonCanonicalJson),
-            "whitespace is not identity, so it may not travel under this digest"
+            "whitespace is not identity; re-canonicalizing and proceeding would name \
+             content nobody shipped"
         );
     }
 
@@ -660,19 +682,109 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_format_version_and_a_mismatched_digest_fail_closed() {
+    fn a_foreign_format_version_fails_closed() {
         let mut foreign = manifest();
         foreign.format_version = "0.2".into();
         let bytes = foreign.canonical_bytes();
         assert!(matches!(
-            ServingManifest::read(&foreign.digest(), &bytes),
+            ServingManifest::from_canonical_bytes(&bytes),
             Err(CatalogIdentityError::InvalidDefinition { .. })
         ));
+    }
 
-        assert_eq!(
-            ServingManifest::read(PLAN_A, &manifest().canonical_bytes()),
-            Err(CatalogIdentityError::ServingManifestDigestMismatch)
+    /// The silent-fork alarm behind the producer-coupling rider.
+    ///
+    /// [`ServingManifest::digest`] is required to go through the shared
+    /// canonicalizer the mint uses, never a second implementation. Measured
+    /// 2026-08-17: a mutant swapping it onto this crate's private ryu-js
+    /// canonicalizer (`canonical_serialized`) leaves every other test green,
+    /// because the two implementations agree byte-for-byte on manifest-shaped
+    /// documents — every field is a string, an integer, or a map of them, and
+    /// there is no value in that shape the two format differently.
+    ///
+    /// So the rider cannot be enforced by pinning the digest; it is enforced by
+    /// pinning the AGREEMENT. If either implementation ever diverges on this
+    /// projection — a `ryu-js` bump, a string-escaping change, a number path
+    /// opening up — this fails, and it fails BEFORE a forked identity can ship.
+    /// `wamn-0h0g.15.63` owns removing the duplication that makes this necessary.
+    #[test]
+    fn the_two_canonicalizers_cannot_diverge_on_this_projection() {
+        let mut bare = manifest();
+        bare.attachments.clear();
+        bare.registrations.clear();
+        for (label, document) in [("bare", bare), ("populated", manifest())] {
+            let value = document.as_value();
+            assert_eq!(
+                wamn_flow::canonical_json_bytes(&value),
+                crate::canonical_json(&value),
+                "the two RFC 8785 implementations disagree on the {label} manifest — \
+                 identity now depends on WHICH producer ran"
+            );
+        }
+    }
+
+    #[test]
+    fn different_content_derives_a_different_name() {
+        // What the deleted expected-digest parameter used to assert, stated as
+        // the fact it was standing in for: a foreign expectation is not a
+        // property of the bytes. The bytes always derive their own correct name,
+        // and a caller holding an expectation compares against that.
+        let (_, derived) = ServingManifest::from_canonical_bytes(&manifest().canonical_bytes())
+            .expect("the fixture's canonical bytes are admitted");
+        assert_ne!(derived.as_str(), PLAN_A);
+        assert_eq!(derived, manifest().digest());
+    }
+
+    /// Drift guard on the M-TEST-UTIL fence, which is a property of the workspace
+    /// dependency graph rather than of any one crate — so it is guarded here, at
+    /// the crate that declares the feature, because that is the only place in the
+    /// graph that currently compiles.
+    ///
+    /// That the fence *works* is a compile-time fact, proven by the
+    /// `manifest-from-parts-in-production` mutant: add a production reference to
+    /// [`ServingManifest::new`] and `cargo check -p wamn-catalog` stops resolving
+    /// it. What this test catches is the regression that would silently disarm it
+    /// — promoting `test-util` onto a normal dependency, which enables from-parts
+    /// construction for every crate downstream of that edge.
+    #[test]
+    fn the_test_util_feature_is_never_enabled_by_a_normal_dependency() {
+        let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(3)
+            .expect("crates/catalog/model sits three levels below the workspace root")
+            .to_path_buf();
+
+        let own = std::fs::read_to_string(workspace.join("crates/catalog/model/Cargo.toml"))
+            .expect("this crate's manifest is readable");
+        assert!(
+            own.contains("\n[features]\ntest-util = []\n"),
+            "the fence's feature declaration is gone; from-parts construction is \
+             unconditionally public again"
         );
+
+        for manifest in [
+            "crates/catalog/model/Cargo.toml",
+            "crates/platform/runtime/Cargo.toml",
+        ] {
+            let text = std::fs::read_to_string(workspace.join(manifest))
+                .unwrap_or_else(|error| panic!("{manifest} is readable: {error}"));
+            let (normal, dev) = text
+                .split_once("\n[dev-dependencies]")
+                .expect("both manifests declare dev-dependencies");
+            assert!(
+                !normal
+                    .lines()
+                    .any(|line| line.starts_with("wamn-catalog") && line.contains("test-util")),
+                "{manifest} enables test-util on a NORMAL dependency — that is not a fix \
+                 for a missing-feature compile error, it deletes the fence"
+            );
+            assert!(
+                dev.lines()
+                    .any(|line| line.starts_with("wamn-catalog") && line.contains("test-util")),
+                "{manifest} lost its test-util dev-dependency, so its tests cannot reach \
+                 from-parts construction"
+            );
+        }
     }
 
     #[test]

@@ -19,10 +19,9 @@ pub use execution_plan::{
     entry_input_schema_hash, execution_bundle_hash, read_execution_plan,
 };
 pub use serving_manifest::{
-    RELEASE_IDENTITY_CONFIGMAP_NAME, RELEASE_IDENTITY_DIGEST_KEY, RELEASE_IDENTITY_MOUNT_PATH,
-    RELEASE_IDENTITY_VERSION_KEY, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
-    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
-    ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
+    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
+    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow, ServingManifest,
+    ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
 
 use std::cmp::Ordering;
@@ -67,7 +66,6 @@ pub enum CatalogIdentityError {
     ArtifactMismatch,
     UnresolvedSource { source_id: String },
     SourceMismatch { source_id: String },
-    ServingManifestDigestMismatch,
     UnresolvableManifestFlow { flow_id: String },
 }
 
@@ -165,12 +163,6 @@ impl fmt::Display for CatalogIdentityError {
                     "source {source_id:?} differs from its resolved definition"
                 )
             }
-            Self::ServingManifestDigestMismatch => {
-                write!(
-                    formatter,
-                    "serving manifest bytes differ from their canonical digest"
-                )
-            }
             Self::UnresolvableManifestFlow { flow_id } => {
                 write!(
                     formatter,
@@ -231,6 +223,45 @@ impl ArtifactHash {
 }
 
 impl fmt::Display for ArtifactHash {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// The digest of a serving manifest's RFC 8785 canonical bytes.
+///
+/// This is the one *derived* identity in the family: it is never asserted by a
+/// carrier and never read from an object name, only computed from verified
+/// content by [`ServingManifest::from_canonical_bytes`]. From there it travels
+/// further than any other hash in the system — through the claim-time run
+/// recording, effect-authority equality, and the deployment attestation, across
+/// two host processes and four manifest readers. Every flow-level hash it could
+/// be mistaken for (`plan-hash`, `source-artifact`, `binding-base-artifact`,
+/// `definition-hash`) is a bare `String`, so the type is what keeps them apart.
+///
+/// Like [`DefinitionHash`] and [`ArtifactHash`] it derives `Serialize` but *not*
+/// `Deserialize`: a derived `Deserialize` would bypass [`Self::parse`] at exactly
+/// the boundary where validation matters, which is the reasoning
+/// [`ServingRelease`] already records for not reusing `ReleaseId` on the wire.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct ManifestDigest(String);
+
+impl ManifestDigest {
+    /// Parse a canonical SHA-256 serving-manifest digest.
+    pub fn parse(value: impl Into<String>) -> Result<Self, CatalogIdentityError> {
+        let value = value.into();
+        validate_digest(&value, "manifest-digest")?;
+        Ok(Self(value))
+    }
+
+    /// The `sha256:<hex>` representation.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ManifestDigest {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
     }
@@ -1437,7 +1468,32 @@ fn ecma_number(value: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{digest, frames};
+    use super::{ManifestDigest, digest, frames};
+
+    /// The invariant that retired `valid_manifest_digest` in the claim path: the
+    /// newtype admits exactly the `sha256:<64 lowercase hex>` shape the run
+    /// plane's `runs_release_record_check` admits, so a parsed value can never
+    /// die on that CHECK inside a lease grant.
+    #[test]
+    fn a_manifest_digest_admits_exactly_the_run_plane_shape() {
+        assert!(ManifestDigest::parse(format!("sha256:{}", "0".repeat(64))).is_ok());
+        assert!(ManifestDigest::parse(format!("sha256:{}b", "af9".repeat(21))).is_ok());
+        for rejected in [
+            String::new(),
+            "sha256:".to_string(),
+            "deadbeef".to_string(),
+            format!("sha256:{}", "a".repeat(63)),
+            format!("sha256:{}", "a".repeat(65)),
+            format!("sha256:{}", "A".repeat(64)),
+            format!("sha256:{}", "g".repeat(64)),
+            format!("SHA256:{}", "a".repeat(64)),
+        ] {
+            assert!(
+                ManifestDigest::parse(rejected.clone()).is_err(),
+                "accepted {rejected:?}"
+            );
+        }
+    }
 
     #[test]
     fn named_removal_and_reordering_mutants_change_every_hash_frame() {

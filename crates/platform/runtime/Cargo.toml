@@ -42,3 +42,12 @@ wasmtime-wasi-http = { workspace = true }
 
 [dev-dependencies]
 wamn-run-state = { workspace = true, features = ["native"] }
+# M-TEST-UTIL: the release-manifest weld's test fixtures build manifests from
+# parts, which wamn-catalog gates behind `test-util`. A DEV-dependency feature
+# does not reach the production graph, so this crate's own build still cannot
+# assemble a manifest no canonical bytes ever carried.
+#
+# NEVER "fix" a missing-feature compile error by adding this feature to the
+# normal wamn-catalog dependency above. That deletes the fence for every crate
+# downstream of it.
+wamn-catalog = { workspace = true, features = ["test-util"] }

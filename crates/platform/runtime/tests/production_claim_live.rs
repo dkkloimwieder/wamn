@@ -698,14 +698,18 @@ async fn production_claim_live() -> anyhow::Result<()> {
     plugin.set_tenant(COMPONENT, TENANT)?;
     plugin.set_schema(COMPONENT, SCHEMA)?;
     plugin.set_runner(COMPONENT, COMPONENT)?;
-    plugin.set_release_identity(COMPONENT, POD_RELEASE_VERSION, POD_MANIFEST_DIGEST)?;
+    plugin.set_release_identity(
+        COMPONENT,
+        POD_RELEASE_VERSION,
+        wamn_catalog::ManifestDigest::parse(POD_MANIFEST_DIGEST)?,
+    )?;
     plugin.set_tenant(ROLLED_COMPONENT, TENANT)?;
     plugin.set_schema(ROLLED_COMPONENT, SCHEMA)?;
     plugin.set_runner(ROLLED_COMPONENT, ROLLED_COMPONENT)?;
     plugin.set_release_identity(
         ROLLED_COMPONENT,
         ROLLED_RELEASE_VERSION,
-        ROLLED_MANIFEST_DIGEST,
+        wamn_catalog::ManifestDigest::parse(ROLLED_MANIFEST_DIGEST)?,
     )?;
 
     let (release_hash, release_bytes) = plan_bytes(RELEASE_ARTIFACT);
