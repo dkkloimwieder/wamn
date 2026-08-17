@@ -17,12 +17,16 @@ fn sample() -> Registry {
         env_policies.extend(Template::standard().stamp(org, "wamn-pg").1);
     }
 
+    // Each env carries the instance suffix provisioning minted for it — 8 bytes of
+    // `[a-z0-9]`, the part of a derived physical name the triple cannot supply.
+    let envs = [("dev", "k3m9x2p7"), ("prod", "q80zdw41"), ("canary", "0z9a8b7c")];
     let mut project_envs = Vec::new();
     for (org, project, secret_prefix) in [("acme", "billing", "acme"), ("try", "demo", "try")] {
-        for env in ["dev", "prod", "canary"] {
+        for (env, instance) in envs {
             project_envs.push(ProjectEnv {
                 triple: Triple::new(org, project, env),
                 db_secret: SecretRef::new(format!("wamn-db-{secret_prefix}-{env}")),
+                instance_suffix: instance.into(),
             });
         }
     }
@@ -62,6 +66,9 @@ fn json_round_trip_is_structurally_stable() {
     assert!(json.contains("\"env-policies\""));
     assert!(json.contains("\"project-envs\""));
     assert!(json.contains("\"db-secret\""));
+    // The instance identity is on the wire (wamn-0h0g.15.89) — a consumer that
+    // derives the environment namespace reads it from the exported document.
+    assert!(json.contains("\"instance-suffix\": \"k3m9x2p7\""));
     // env serializes as a bare lowercase string; placement is a tagged object.
     assert!(json.contains("\"env\": \"prod\""));
     assert!(json.contains("\"kind\": \"dedicated\""));
@@ -78,6 +85,59 @@ fn minimal_registry_round_trips_minimally() {
     assert!(!json.contains("env-policies"));
     let back = Registry::from_json(&json).expect("parses");
     assert_eq!(back, Registry::empty());
+}
+
+/// The instance suffix is a REQUIRED wire field and the export contract is closed
+/// in BOTH directions (wamn-0h0g.15.89).
+///
+/// * **Missing** — a document exported before the field existed carries no
+///   `instance-suffix`, and with no `serde(default)` it FAILS to parse. That is
+///   the intended ruling: the storage column is `NOT NULL` under a
+///   `^[a-z0-9]{8}$` CHECK, so an absent suffix is not an older-but-usable row
+///   but a project-env with NO instance identity, and a defaulted empty string
+///   would derive the namespace `wamn-acme--billing--prod--`, which is not a
+///   DNS-1123 label. Refusing loudly beats manufacturing a handle that addresses
+///   the wrong resources.
+/// * **Unknown** — `deny_unknown_fields` is intact, so a field a NEWER writer
+///   adds is refused rather than silently dropped. That is the direction this
+///   field addition itself breaks, and `SCHEMA_VERSION` cannot signal it (the
+///   `0.1` literal is pinned by `deploy/sql/system-schema.sql` and a frozen
+///   conformance literal), so the parse failure is the entire signal.
+#[test]
+fn the_instance_suffix_is_a_required_wire_field_in_both_directions() {
+    let pe = ProjectEnv {
+        triple: Triple::new("acme", "billing", "prod"),
+        db_secret: SecretRef::new("wamn-db-acme--billing--prod"),
+        instance_suffix: "k3m9x2p7".into(),
+    };
+    let json = serde_json::to_string(&pe).expect("serializes");
+    assert!(json.contains("\"instance-suffix\":\"k3m9x2p7\""));
+    assert_eq!(serde_json::from_str::<ProjectEnv>(&json).expect("parses"), pe);
+
+    // A pre-field document: refused, and the refusal names the missing field.
+    let older = r#"{"triple":{"org":"acme","project":"billing","env":"prod"},
+        "db-secret":{"name":"wamn-db-acme--billing--prod"}}"#;
+    let missing = serde_json::from_str::<ProjectEnv>(older)
+        .expect_err("an absent instance suffix must not default");
+    assert!(
+        missing.to_string().contains("instance-suffix"),
+        "the refusal must name the missing field: {missing}"
+    );
+    // …and it is refused through the whole-registry import path too, for the same
+    // named reason (nothing upstream defaults it in).
+    let doc = format!("{{\"schema-version\":\"0.1\",\"project-envs\":[{older}]}}");
+    let imported = Registry::from_json(&doc).expect_err("the import path refuses it too");
+    assert!(
+        imported.to_string().contains("instance-suffix"),
+        "the import refusal must name the missing field: {imported}"
+    );
+
+    // deny_unknown_fields is intact: an extra field is refused, not ignored.
+    let fat = json.replace(
+        "\"instance-suffix\":\"k3m9x2p7\"",
+        "\"instance-suffix\":\"k3m9x2p7\",\"retired-suffix\":\"q80zdw41\"",
+    );
+    assert!(serde_json::from_str::<ProjectEnv>(&fat).is_err());
 }
 
 #[test]
@@ -158,10 +218,12 @@ fn t2_and_t4_orgs_coexist_via_org_scoped_policies() {
         ProjectEnv {
             triple: Triple::new("acme", "billing", "canary"),
             db_secret: SecretRef::new("wamn-db-acme-canary"),
+            instance_suffix: "k3m9x2p7".into(),
         },
         ProjectEnv {
             triple: Triple::new("bigco", "ledger", "canary"),
             db_secret: SecretRef::new("wamn-db-bigco-canary"),
+            instance_suffix: "q80zdw41".into(),
         },
     ];
     let r = Registry {
@@ -238,6 +300,7 @@ fn resolve_reports_each_missing_level() {
     r.project_envs.push(ProjectEnv {
         triple: Triple::new("acme", "billing", "ghostenv"),
         db_secret: SecretRef::new("wamn-db-acme-ghost"),
+        instance_suffix: "0z9a8b7c".into(),
     });
     assert_eq!(
         r.resolve(&Triple::new("acme", "billing", "ghostenv")),

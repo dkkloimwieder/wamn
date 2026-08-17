@@ -399,14 +399,30 @@ pub struct Project {
     pub id: ProjectId,
 }
 
-/// A provisioned `(org, project, env)` database: the [`Triple`] plus a reference
-/// to its credential Secret. The registry's leaf row — what a triple resolves
-/// to.
+/// A provisioned `(org, project, env)` database: the [`Triple`], a reference to
+/// its credential Secret, and the instance identity that provisioning minted for
+/// it. The registry's leaf row — what a triple resolves to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct ProjectEnv {
     pub triple: Triple,
     pub db_secret: SecretRef,
+    /// The stored `registry.project_envs.instance_suffix` — 8 characters of
+    /// `[a-z0-9]` drawn once at provisioning and never refreshed
+    /// (wamn-0h0g.13.57). The triple names the environment; this distinguishes
+    /// THIS provisioning of it from an earlier one, and physical names derive
+    /// from `<triple>--<instance_suffix>` (the Kubernetes namespace today). A
+    /// consumer that needs the environment's namespace reads it here rather than
+    /// re-deriving from the triple alone (wamn-0h0g.15.89).
+    ///
+    /// **Required on the wire, with no `serde(default)`.** The storage column is
+    /// `NOT NULL` under a `^[a-z0-9]{8}$` CHECK, so an absent suffix is not an
+    /// older-but-usable row: it is a project-env with no instance identity, and a
+    /// defaulted empty string would derive the namespace
+    /// `wamn-<org>--<project>--<env>--`, which is not a DNS-1123 label. A
+    /// document predating the field therefore fails to parse — loudly — instead
+    /// of manufacturing a handle that points at the wrong resources.
+    pub instance_suffix: String,
 }
 
 /// A registered **CDC event reader** for a provisioned project-env (D19 v3,

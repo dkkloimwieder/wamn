@@ -65,6 +65,13 @@ const MAX_ID_LEN: usize = 40;
 /// Max K8s resource-name length (a DNS-1123 label).
 const MAX_NAME_LEN: usize = 63;
 
+/// Length (bytes) of a project-env's provision-minted instance suffix: 8
+/// characters over `[a-z0-9]`. Mirrors the storage
+/// `project_envs_instance_suffix_check` and `wamn-control-provision`'s
+/// `validate_instance_suffix` — inlined for the same reason [`is_slug`] is, to
+/// keep this crate's dep closure `{serde, serde_json}`.
+const INSTANCE_SUFFIX_LEN: usize = 8;
+
 fn is_alnum(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit()
 }
@@ -209,6 +216,35 @@ fn check_name(
             invalid,
             path,
             format!("name {name:?} must be a DNS-1123 label [a-z0-9-]"),
+        ));
+    }
+}
+
+/// Validate a project-env's **instance suffix**: exactly [`INSTANCE_SUFFIX_LEN`]
+/// bytes over `[a-z0-9]`. Narrower than a slug on purpose — the suffix is appended
+/// to a DNS-1123 label and decides its last byte, which must be alphanumeric, so
+/// admitting `-` would let a stored suffix mint a namespace Kubernetes refuses.
+///
+/// Held here and not only at DB insert (wamn-0h0g.15.89), because
+/// [`Registry::from_json`](crate::Registry::from_json) is an import path a
+/// document arrives on without passing the storage CHECK.
+fn check_instance_suffix(
+    issues: &mut Vec<Issue>,
+    path: String,
+    suffix: &str,
+    empty: &'static str,
+    invalid: &'static str,
+) {
+    if suffix.is_empty() {
+        issues.push(Issue::error(empty, path, "instance suffix is required"));
+    } else if suffix.len() != INSTANCE_SUFFIX_LEN || !suffix.bytes().all(is_alnum) {
+        issues.push(Issue::error(
+            invalid,
+            path,
+            format!(
+                "instance suffix {suffix:?} must be exactly {INSTANCE_SUFFIX_LEN} bytes \
+                 of [a-z0-9] — it is the last byte of a DNS-1123 label"
+            ),
         ));
     }
 }
@@ -433,6 +469,13 @@ pub fn validate(reg: &Registry) -> Vec<Issue> {
             "empty-secret-name",
             "invalid-secret-name",
         );
+        check_instance_suffix(
+            &mut issues,
+            format!("project-envs[{i}].instance-suffix"),
+            &pe.instance_suffix,
+            "empty-instance-suffix",
+            "invalid-instance-suffix",
+        );
     }
 
     issues
@@ -518,6 +561,7 @@ mod tests {
             project_envs: vec![ProjectEnv {
                 triple: Triple::new("acme", "billing", "prod"),
                 db_secret: SecretRef::new("wamn-db-billing"),
+                instance_suffix: "k3m9x2p7".into(),
             }],
         }
     }
@@ -707,10 +751,13 @@ mod tests {
         });
         assert!(codes(&r).contains(&"duplicate-project"));
 
+        // A DIFFERENT instance suffix does not make it a different project-env —
+        // the triple is the identity (the suffix is deliberately not in the PK).
         let mut r = minimal();
         r.project_envs.push(ProjectEnv {
             triple: Triple::new("acme", "billing", "prod"),
             db_secret: SecretRef::new("wamn-db-billing"),
+            instance_suffix: "q80zdw41".into(),
         });
         assert!(codes(&r).contains(&"duplicate-project-env"));
     }
@@ -757,6 +804,47 @@ mod tests {
         assert!(!c.contains(&"unknown-env"));
     }
 
+    /// The instance suffix carries the DNS-1123-tail discipline on the IMPORT
+    /// path (wamn-0h0g.15.89), mirroring the storage
+    /// `project_envs_instance_suffix_check`: exactly 8 bytes of `[a-z0-9]`, empty
+    /// reported under its own code. `from_json` bypasses the storage CHECK, and a
+    /// malformed suffix mints a namespace Kubernetes refuses.
+    #[test]
+    fn the_project_env_instance_suffix_must_be_eight_alphanumerics() {
+        for good in ["k3m9x2p7", "00000000", "abcdefgh", "12345678"] {
+            let mut r = minimal();
+            r.project_envs[0].instance_suffix = good.into();
+            assert!(r.is_valid(), "{good:?} should be valid: {:?}", r.issues());
+        }
+
+        let mut r = minimal();
+        r.project_envs[0].instance_suffix = String::new();
+        let c = codes(&r);
+        assert!(c.contains(&"empty-instance-suffix"), "{:?}", r.issues());
+        assert!(!c.contains(&"invalid-instance-suffix"));
+
+        // Short / long / uppercase, and — the reason the charset is narrower than
+        // a slug's — a hyphen, which would end the DNS-1123 label on a non-alnum.
+        for bad in ["k3m9x2p", "k3m9x2p78", "K3M9X2P7", "k3m9x2p-", "k3m9x2p_"] {
+            let mut r = minimal();
+            r.project_envs[0].instance_suffix = bad.into();
+            assert!(
+                codes(&r).contains(&"invalid-instance-suffix"),
+                "{bad:?} should be rejected"
+            );
+        }
+
+        // The issue names the offending element (the `Issue::path` convention).
+        let mut r = minimal();
+        r.project_envs[0].instance_suffix = "nope".into();
+        let issue = r
+            .issues()
+            .into_iter()
+            .find(|i| i.code == "invalid-instance-suffix")
+            .expect("the malformed suffix is reported");
+        assert_eq!(issue.path, "project-envs[0].instance-suffix");
+    }
+
     #[test]
     fn policies_are_org_scoped_not_shared_across_orgs() {
         // ANOTHER org's policy row does not satisfy this org's project-env: a
@@ -799,6 +887,7 @@ mod tests {
         r.project_envs.push(ProjectEnv {
             triple: Triple::new("acme", "billing", "canary"),
             db_secret: SecretRef::new("wamn-db-billing-canary"),
+            instance_suffix: "0z9a8b7c".into(),
         });
         assert!(r.is_valid(), "{:?}", r.issues());
     }

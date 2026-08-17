@@ -92,14 +92,37 @@ pub fn upsert_project_sql() -> &'static str {
      ON CONFLICT (org, id) DO NOTHING"
 }
 
-/// List an org's provisioned project-envs (`project`, `env`, and the Secret
-/// reference), so a tier move (wamn-q3n.13) can plan one dump/restore per
-/// project-env without loading the whole registry. Ordered by `project, env` for a
-/// stable plan. Param: `$1` org id.
-pub fn select_org_project_envs_sql() -> &'static str {
-    "SELECT project, env, secret_name, secret_namespace \
-     FROM registry.project_envs WHERE org = $1 \
-     ORDER BY project, env"
+/// The `registry.project_envs` column list, in the order both reads return and a
+/// row-mapper reads by index. `org` is the caller's key in both reads, so it is
+/// not returned; the remaining columns are exactly what a
+/// [`ProjectEnv`](crate::ProjectEnv) needs (the triple's `org` comes from the
+/// parameter). `instance_suffix` is here because nothing else can supply it — it
+/// is the one part of a derived physical name that the triple does not carry
+/// (wamn-0h0g.15.89).
+const PROJECT_ENV_COLUMNS: &str = "project, env, secret_name, secret_namespace, instance_suffix";
+
+/// List an org's provisioned project-envs, so a tier move (wamn-q3n.13) can plan
+/// one dump/restore per project-env — and so a consumer that derives an
+/// environment's physical names can enumerate the org's instances — without
+/// loading the whole registry. Ordered by `project, env` for a stable plan.
+/// Param: `$1` org id. Columns: `PROJECT_ENV_COLUMNS`.
+pub fn select_org_project_envs_sql() -> String {
+    format!(
+        "SELECT {PROJECT_ENV_COLUMNS} FROM registry.project_envs \
+         WHERE org = $1 ORDER BY project, env"
+    )
+}
+
+/// Read ONE provisioned project-env by its identity triple — the read a consumer
+/// that derives physical names needs, since a triple alone cannot yield the
+/// environment's `instance_suffix` and only the provisioner sees it come back
+/// from [`upsert_project_env_sql`]. Params: `$1` org, `$2` project, `$3` env.
+/// Columns: `PROJECT_ENV_COLUMNS`.
+pub fn select_project_env_sql() -> String {
+    format!(
+        "SELECT {PROJECT_ENV_COLUMNS} FROM registry.project_envs \
+         WHERE org = $1 AND project = $2 AND env = $3"
+    )
 }
 
 /// Upsert a provisioned project-env row into `registry.project_envs`. Idempotent
@@ -304,12 +327,35 @@ mod tests {
     fn select_org_project_envs_lists_an_orgs_envs_ordered() {
         let sql = select_org_project_envs_sql();
         assert!(sql.contains("FROM registry.project_envs"));
-        for col in ["project", "env", "secret_name", "secret_namespace"] {
+        for col in [
+            "project",
+            "env",
+            "secret_name",
+            "secret_namespace",
+            "instance_suffix",
+        ] {
             assert!(sql.contains(col), "missing column {col}");
         }
         // Keyed by the org id as a $n param (never interpolated); stable order.
         assert!(sql.contains("WHERE org = $1"));
         assert!(sql.contains("ORDER BY project, env"));
+    }
+
+    /// The single-triple read (wamn-0h0g.15.89) returns the SAME columns as the
+    /// org listing — one row-mapper serves both — and is keyed by the whole triple
+    /// as `$n` params. Without `instance_suffix` here, a consumer that derives an
+    /// environment's physical names has no way to read the instance identity.
+    #[test]
+    fn select_project_env_reads_one_row_by_triple_with_the_instance_suffix() {
+        let one = select_project_env_sql();
+        let all = select_org_project_envs_sql();
+        assert!(one.contains("FROM registry.project_envs"));
+        assert!(one.contains(PROJECT_ENV_COLUMNS), "shares the column list");
+        assert!(all.contains(PROJECT_ENV_COLUMNS), "shares the column list");
+        assert!(one.contains("instance_suffix"));
+        assert!(one.contains("WHERE org = $1 AND project = $2 AND env = $3"));
+        // A single row is not an org listing — no ordering, no org-only key.
+        assert!(!one.contains("ORDER BY"));
     }
 
     #[test]
