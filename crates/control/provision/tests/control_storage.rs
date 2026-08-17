@@ -249,6 +249,42 @@ fn upsert_project_and_project_env_sql_match_the_columns() {
         );
     }
 
+    // The project-env READS target the same DDL columns, so one row-mapper can
+    // build a whole ProjectEnv — instance suffix included (wamn-0h0g.15.89).
+    // This closes a pre-existing gap: the guard covered only the upsert.
+    for reader in [
+        wamn_control_registry::sql::select_org_project_envs_sql(),
+        wamn_control_registry::sql::select_project_env_sql(),
+    ] {
+        assert!(reader.contains("FROM registry.project_envs"));
+        for col in [
+            "project",
+            "env",
+            "secret_name",
+            "secret_namespace",
+            "instance_suffix",
+        ] {
+            assert!(reader.contains(col), "project-env read builder missing {col}");
+        }
+    }
+    assert!(
+        wamn_control_registry::sql::select_project_env_sql()
+            .contains("WHERE org = $1 AND project = $2 AND env = $3"),
+        "the single read is keyed by the whole triple"
+    );
+
+    // The superseded-instance handle (wamn-0h0g.15.90) is a separate relation the
+    // retention trigger writes; the builder must name it and not `project_envs`,
+    // or an operator enumerating orphans would read the LIVE rows instead.
+    let retired = wamn_control_registry::sql::select_retired_project_envs_sql();
+    assert!(sql.contains("CREATE TABLE registry.retired_project_envs"));
+    assert!(sql.contains("CREATE TRIGGER project_envs_retire_instance"));
+    assert!(retired.contains("FROM registry.retired_project_envs"));
+    assert!(!retired.contains("FROM registry.project_envs"));
+    for col in ["instance_suffix", "retired_at"] {
+        assert!(retired.contains(col), "retired read builder missing {col}");
+    }
+
     // The placement read targets the orgs placement columns (so provision-project-env
     // can derive the cluster per-env via cluster_of).
     let sel = wamn_control_registry::sql::select_org_placement_sql();
@@ -944,7 +980,7 @@ DO $$ DECLARE tbls text; BEGIN
   SELECT string_agg(table_schema||'.'||table_name, ',' ORDER BY table_schema, table_name)
     INTO tbls FROM information_schema.tables
     WHERE table_schema IN ('registry','provisioning','identity') AND table_type='BASE TABLE';
-  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects',
+  ASSERT tbls = 'identity.pats,identity.principals,identity.project_roles,provisioning.sagas,registry.env_policies,registry.event_readers,registry.meta,registry.orgs,registry.project_envs,registry.projects,registry.retired_project_envs',
     format('unexpected control-plane table set (invariant 3): %s', tbls);
 END $$;
 
@@ -968,5 +1004,13 @@ DO $$ BEGIN
   ASSERT (SELECT count(*) FROM registry.projects WHERE org='acme')=0, 'projects cascade';
   ASSERT (SELECT count(*) FROM registry.project_envs WHERE org='acme')=0, 'project-envs cascade';
   ASSERT (SELECT count(*) FROM registry.env_policies WHERE org='acme')=0, 'env-policies cascade';
+  -- wamn-0h0g.15.90: the CASCADE that erases the live rows is exactly the path
+  -- that loses the instance identity, so the retention trigger must have caught
+  -- all three before they went. Drop the trigger and this is 0.
+  ASSERT (SELECT count(*) FROM registry.retired_project_envs WHERE org='acme')=3,
+    'a cascaded-away project-env leaves a retired-instance handle';
+  ASSERT (SELECT instance_suffix FROM registry.retired_project_envs
+            WHERE org='acme' AND project='billing' AND env='prod')='k3m9x2p7',
+    'the retained handle is the dead instance suffix, verbatim';
 END $$;
 "#;

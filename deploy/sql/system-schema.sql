@@ -328,6 +328,51 @@ ALTER TABLE registry.env_policies
     FOREIGN KEY (org) REFERENCES registry.orgs (id) ON DELETE CASCADE;
 
 -- ---------------------------------------------------------------------------
+-- Retired project-envs — the handle a SUPERSEDED instance would otherwise not
+-- have (wamn-0h0g.15.90). `registry.project_envs` holds exactly one row per
+-- triple and a re-provision must REPLACE it, so the instant an environment is
+-- deleted the only record of its `instance_suffix` is gone — and with it every
+-- name derived from it (the Kubernetes namespace above all). The orphaned
+-- namespace and whatever survived inside it then have NO handle: nothing can
+-- enumerate them, so nothing can reclaim them.
+--
+-- This is RECLAIM, not collision-prevention. Randomness remains the entire
+-- uniqueness mechanism (wamn-0h0g.13.57) and nothing here is ever consulted when
+-- a suffix is minted; this table only remembers what was.
+--
+-- Deliberately NOT FK'd to registry.project_envs (the `provisioning.sagas.target`
+-- precedent): the whole point is to OUTLIVE the row, and the org/project CASCADE
+-- that removes it, so an FK would erase the record at exactly the moment it
+-- becomes the only copy. Keyed by (triple, instance_suffix) so a triple
+-- accumulates one row per superseded instance and a repeated delete is idempotent.
+--
+-- Written by a BEFORE DELETE trigger, not by application code: every removal path
+-- in the platform is a CASCADE from an org or project DELETE, which runs no
+-- application code at all. A trigger is the only place that sees these rows.
+-- ---------------------------------------------------------------------------
+CREATE TABLE registry.retired_project_envs (
+    org             text NOT NULL,
+    project         text NOT NULL,
+    env             text NOT NULL,
+    instance_suffix text NOT NULL,
+    retired_at      timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (org, project, env, instance_suffix)
+);
+
+CREATE FUNCTION registry.retire_project_env() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO registry.retired_project_envs (org, project, env, instance_suffix)
+      VALUES (OLD.org, OLD.project, OLD.env, OLD.instance_suffix)
+      ON CONFLICT (org, project, env, instance_suffix) DO NOTHING;
+    RETURN OLD;
+END $$;
+
+CREATE TRIGGER project_envs_retire_instance
+    BEFORE DELETE ON registry.project_envs
+    FOR EACH ROW EXECUTE FUNCTION registry.retire_project_env();
+
+-- ---------------------------------------------------------------------------
 -- Event readers — the CDC capture registrations (D19 v3, wamn-l5i9.9). One row
 -- per project-env with CDC enabled: the publication + failover replication slot
 -- the reader streams from (the `wamn_cdc_…` Postgres objects the

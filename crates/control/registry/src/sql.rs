@@ -125,6 +125,18 @@ pub fn select_project_env_sql() -> String {
     )
 }
 
+/// List the SUPERSEDED instances of a triple, newest first — the handle a
+/// reclaim pass or an operator enumeration needs (wamn-0h0g.15.90). A live
+/// project-env's suffix comes from [`select_project_env_sql`]; these are the ones
+/// whose row is already gone, captured by the `project_envs_retire_instance`
+/// trigger. Params: `$1` org, `$2` project, `$3` env. Columns:
+/// `instance_suffix, retired_at`.
+pub fn select_retired_project_envs_sql() -> &'static str {
+    "SELECT instance_suffix, retired_at FROM registry.retired_project_envs \
+     WHERE org = $1 AND project = $2 AND env = $3 \
+     ORDER BY retired_at DESC, instance_suffix"
+}
+
 /// Upsert a provisioned project-env row into `registry.project_envs`. Idempotent
 /// and additive — re-provisioning refreshes the credential Secret reference.
 /// Params: `$1` org, `$2` project, `$3` env, `$4` secret_name, `$5`
