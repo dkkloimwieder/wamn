@@ -180,7 +180,7 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .await
         .expect("reserve past per-case deadline");
     assert_eq!(
-        reconcile_test_report(&mut client, TENANT, "deadline-report")
+        reconcile_test_report(&mut client, TENANT, "deadline-report", &[])
             .await
             .expect("reconcile expired report"),
         TestReportReconciliation::Finalized { passed: false }
@@ -196,44 +196,12 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .get(0);
     assert_eq!(deadline_kind, "deadline-exhausted");
 
-    // Effect uncertainty uses an ordinary run row and never enters operator
-    // recovery.
-    let plan_bytes = b"{}".as_slice();
-    let plan_hash: String = client
-        .query_one(
-            "SELECT 'sha256:' || encode(sha256($1::bytea), 'hex')",
-            &[&plan_bytes],
-        )
-        .await
-        .expect("hash exact plan bytes")
-        .get(0);
-    client
-        .execute(
-            "INSERT INTO catalog.catalogs \
-               (tenant_id,catalog_id,version,environment,schema_version,state) \
-             VALUES ($1,'catalog-a',1,'dev','0.1','applied')",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed pinned catalog");
-    client
-        .execute(
-            "INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ($1,'catalog-a',1,'[]')",
-            &[&TENANT],
-        )
-        .await
-        .expect("seed pinned release");
-    client
-        .execute(
-            "INSERT INTO catalog.execution_bundles \
-               (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
-             VALUES ($1,$2,'0.1',$3,octet_length($3::bytea))",
-            &[&TENANT, &plan_hash, &plan_bytes],
-        )
-        .await
-        .expect("seed exact execution bundle");
+    // Effect uncertainty is an ALREADY-OBSERVED project fact (wamn-0h0g.8.18):
+    // reservations, case maps, and reports live in the control database while
+    // `runs` stays project-local, so a terminal run status arrives as an argument
+    // rather than as a join this store could not perform. Observing it in the
+    // first place stays with wamn-0h0g.8.5, so this proof no longer seeds a run
+    // row — there is no run plane in the store under test.
     let effect_report = reservation("uncertain-report");
     reserve_test_report(&mut client, &effect_report)
         .await
@@ -247,37 +215,47 @@ async fn durable_test_orchestration_enforces_restart_deadline_and_report_invaria
         .await
         .expect("read uncertain run mapping")
         .get(0);
-    client
-        .execute(
-            "INSERT INTO runs \
-               (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
-                environment,execution_bundle_hash,status,trigger_source,invocation_context) \
-             VALUES ($1,$2,'flow-a',1,'catalog-a',1,'dev',$3, \
-                     'effect-uncertain','scenario-draft',jsonb_build_object( \
-                         'principal', jsonb_build_object( \
-                             'validated-draft-hash', 'validated-draft-a'), \
-                         'source', jsonb_build_object( \
-                             'report-id', 'uncertain-report', 'case-id', 'case-a'))) ",
-            &[&TENANT, &run_id, &plan_hash],
-        )
-        .await
-        .expect("seed effect-uncertain run");
-    client
-        .execute(
-            "INSERT INTO node_runs \
-               (tenant_id,run_id,frame_id,current_plan_hash,local_node_id, \
-                occurrence,seq,status,error_kind,ended_at) \
-             VALUES ($1,$2,0,$3,'write',0,0,'error','terminal',clock_timestamp())",
-            &[&TENANT, &run_id, &plan_hash],
-        )
-        .await
-        .expect("seed frame-keyed terminal fact");
+    // Nothing observed: the case stays pending. Without this the positive
+    // assertion below could pass for a reason other than the observed identity.
     assert_eq!(
-        reconcile_test_report(&mut client, TENANT, "uncertain-report")
+        reconcile_test_report(&mut client, TENANT, "uncertain-report", &[])
             .await
-            .expect("reconcile effect uncertainty"),
+            .expect("reconcile with nothing observed"),
+        TestReportReconciliation::Pending
+    );
+    // An identity that names no reserved ordinal changes nothing either.
+    assert_eq!(
+        reconcile_test_report(
+            &mut client,
+            TENANT,
+            "uncertain-report",
+            &["not-a-reserved-run".to_owned()],
+        )
+        .await
+        .expect("reconcile with an unrelated identity"),
+        TestReportReconciliation::Pending
+    );
+    assert_eq!(
+        reconcile_test_report(
+            &mut client,
+            TENANT,
+            "uncertain-report",
+            std::slice::from_ref(&run_id),
+        )
+        .await
+        .expect("reconcile effect uncertainty"),
         TestReportReconciliation::Finalized { passed: false }
     );
+    let uncertain_kind: String = client
+        .query_one(
+            "SELECT failure_kind FROM authoring_test_case_runs \
+              WHERE tenant_id = $1 AND report_id = 'uncertain-report'",
+            &[&TENANT],
+        )
+        .await
+        .expect("read effect-uncertain outcome")
+        .get(0);
+    assert_eq!(uncertain_kind, "effect-uncertain");
     assert_eq!(
         reserve_test_report(&mut client, &effect_report)
             .await

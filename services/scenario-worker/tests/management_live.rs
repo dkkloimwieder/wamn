@@ -30,27 +30,33 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio_postgres::{Client, NoTls};
 
+use wamn_control_provision::{
+    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL,
+    control_author_generation_role,
+};
 use wamn_platform_identity::{
     IssuedPat, PAT_TOKEN_PREFIX, assign_project_role, create_human, create_service, issue_pat,
     resolve_subject, revoke_pat,
 };
-use wamn_scenario_worker::authoring::{InternalAuthoringBackend, SaveFlowDraft};
+use wamn_scenario_worker::authoring::{
+    ControlAuthoringScope, InternalAuthoringBackend, SaveFlowDraft,
+};
 use wamn_scenario_worker::management::{CommandScope, authorize, save_flow_draft};
-use wamn_schema_control::{BareSchemaName, rewrite_schema};
-
-const SYSTEM_SQL: &str = include_str!("../../../deploy/sql/system-schema.sql");
-const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
 
 const TENANT: &str = "management-live-tenant";
-const SOURCE_SCHEMA: &str = "management_live_source";
+/// Fixed by the control store (wamn-0h0g.8.18): both the identity registry this
+/// gate authenticates against and the authoring store it writes to live in the
+/// one control database, so there is no schema to rewrite.
+const SOURCE_SCHEMA: &str = "wamn_run";
 const ORG: &str = "acme";
 const PROJECT: &str = "receiving";
 const OTHER_PROJECT: &str = "shipping";
-const AUTHOR_LOGIN: &str = "wamn_management_live_author";
+const ENVIRONMENT: &str = "dev";
 const AUTHOR_PASSWORD: &str = "wamn-management-live";
+/// Bytes standing in for the in-image flowrunner (wamn-0h0g.15.50). This gate
+/// mounts no `validate` route, so their content is inert here; what matters is
+/// that the process refuses to start without them.
+const FLOWRUNNER_BYTES: &[u8] = b"management-live-flowrunner";
 /// Fixed loopback port for the gate. The gate is serial and env-gated, so a
 /// fixed port is simpler than plumbing an ephemeral one out of the listener.
 const BIND: &str = "127.0.0.1:18088";
@@ -371,54 +377,97 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-fn author_url(admin_url: &str) -> String {
-    // Same server and database, a different login: the adapter refuses a
-    // credential it shares with the runtime.
-    let (scheme, rest) = admin_url.split_once("://").expect("a postgres url");
-    let tail = rest.split_once('@').expect("a credentialed url").1;
-    format!("{scheme}://{AUTHOR_LOGIN}:{AUTHOR_PASSWORD}@{tail}")
+/// The database the admin URL names — half of the author generation's scope.
+fn database_of(url: &str) -> String {
+    let parsed = url::Url::parse(url).expect("the admin PG URL parses");
+    let database = parsed.path().trim_start_matches('/').to_owned();
+    assert!(!database.is_empty(), "the admin PG URL names no database");
+    database
 }
 
-async fn provision(admin: &mut Client) -> anyhow::Result<()> {
+/// The exact scoped generation the credential contract mints for this gate.
+///
+/// Derived rather than hand-written: the role name binds `(org, project,
+/// environment, database)`, so a constant would silently drift out of scope.
+fn author_role(admin_url: &str) -> String {
+    control_author_generation_role(
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        &database_of(admin_url),
+        CredentialGeneration::A,
+    )
+}
+
+fn author_url(admin_url: &str) -> String {
+    // Same server and database, a different LOGIN: the adapter refuses a
+    // credential it shares with the runtime, and the tenant mapping resolves on
+    // `session_user`, so the gate must authenticate as the author.
+    let mut parsed = url::Url::parse(admin_url).expect("the admin PG URL parses");
+    parsed
+        .set_username(&author_role(admin_url))
+        .expect("a postgres URL carries a username");
+    parsed
+        .set_password(Some(AUTHOR_PASSWORD))
+        .expect("a postgres URL carries a password");
+    parsed.to_string()
+}
+
+fn authoring_scope() -> ControlAuthoringScope {
+    ControlAuthoringScope {
+        org: ORG.to_owned(),
+        project: PROJECT.to_owned(),
+        environment: ENVIRONMENT.to_owned(),
+        tenant_id: TENANT.to_owned(),
+        source_schema: SOURCE_SCHEMA.to_owned(),
+    }
+}
+
+async fn provision(admin: &mut Client, admin_url: &str) -> anyhow::Result<()> {
+    let database = database_of(admin_url);
+    let role = author_role(admin_url);
     admin
         .batch_execute(&format!(
             "DROP SCHEMA IF EXISTS {SOURCE_SCHEMA} CASCADE; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
              DROP SCHEMA IF EXISTS identity CASCADE; \
              DROP SCHEMA IF EXISTS provisioning CASCADE; \
              DROP SCHEMA IF EXISTS registry CASCADE; \
-             DROP ROLE IF EXISTS {AUTHOR_LOGIN}; \
-             DROP ROLE IF EXISTS wamn_scenario_author; \
-             DROP ROLE IF EXISTS wamn_app; \
              DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
-             THEN CREATE ROLE wamn_system; END IF; END $$; \
-             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_effect_writer') \
-             THEN CREATE ROLE wamn_effect_writer NOLOGIN; END IF; END $$; \
-             CREATE ROLE wamn_app LOGIN PASSWORD 'wamn-app-live' \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE {AUTHOR_LOGIN} LOGIN PASSWORD '{AUTHOR_PASSWORD}' \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-             GRANT wamn_scenario_author TO {AUTHOR_LOGIN};"
+             THEN CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$; \
+             {prepare_generation} \
+             DO $$ BEGIN EXECUTE format( \
+               'GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;",
+            // Mints the stable NOLOGIN ACL role AND this scope's generation, using
+            // exactly the text ctl applies.
+            prepare_generation = wamn_control_provision::sql::prepare_control_author_generation_sql(
+                &database,
+                &role,
+                AUTHOR_PASSWORD,
+                "2099-01-01T00:00:00Z",
+            ),
         ))
         .await
-        .context("reset management-live schemas and roles")?;
+        .context("reset management-live schemas and mint the control-author generation")?;
+    // The fresh-control bootstrap record: identity registry AND portable store in
+    // the one control database, applied as its documented owner.
     admin
-        .batch_execute(SYSTEM_SQL)
+        .batch_execute(&format!(
+            "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;"
+        ))
         .await
-        .context("apply deploy/sql/system-schema.sql")?;
+        .context("apply the control system schema and portable store")?;
     admin
-        .batch_execute(CATALOG_SQL)
+        .execute(
+            "INSERT INTO wamn_authority.author_login_tenants \
+               (login_identity, tenant_id, org_id, project_id, environment) \
+             VALUES ($1, $2, $3, $4, $5)",
+            &[&role, &TENANT, &ORG, &PROJECT, &ENVIRONMENT],
+        )
         .await
-        .context("apply deploy/sql/catalog-schema.sql")?;
-    let schema = BareSchemaName::new(SOURCE_SCHEMA).expect("a valid bare schema");
-    for record in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL] {
-        admin
-            .batch_execute(&rewrite_schema(record, &schema))
-            .await
-            .context("apply the run-plane records the authority probe reads")?;
-    }
+        .context("map the control-author login to its one tenant")?;
     admin
         .batch_execute(&format!(
             "INSERT INTO registry.orgs (id, placement_kind, pool_cluster) \
@@ -485,7 +534,6 @@ async fn authoring_durable_counts(admin: &Client) -> Vec<i64> {
             &format!(
                 "SELECT (SELECT count(*) FROM catalog.flow_drafts), \
                         (SELECT count(*) FROM catalog.authoring_command_audit), \
-                        (SELECT count(*) FROM {SOURCE_SCHEMA}.runs), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_run_reservations), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_case_runs), \
                         (SELECT count(*) FROM {SOURCE_SCHEMA}.authoring_test_reports)"
@@ -571,7 +619,16 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     };
 
     let (mut admin, admin_task) = connect(&url).await.expect("connect as the gate admin");
-    provision(&mut admin).await.expect("provision the gate");
+    provision(&mut admin, &url)
+        .await
+        .expect("provision the gate");
+
+    // The minting pod's flowrunner source (wamn-0h0g.15.50). In production it is
+    // the component the image ships; here it is a file, because the surface must
+    // refuse to start without one and this gate proves it can start.
+    let flowrunner_fixture = std::env::temp_dir().join("wamn-management-live-flowrunner.wasm");
+    std::fs::write(&flowrunner_fixture, FLOWRUNNER_BYTES)
+        .expect("stage the in-image flowrunner fixture");
 
     // Two admitted principals for the same project, one service principal, one
     // principal admitted only for a different project, and one with no role.
@@ -632,11 +689,13 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         wamn_scenario_worker::management::ManagementServeArgs {
             bind: BIND.to_owned(),
             system_url: url.clone(),
-            authoring_database_url: author_url(&url),
+            control_authoring_database_url: author_url(&url),
             org: ORG.to_owned(),
             project: PROJECT.to_owned(),
+            environment: ENVIRONMENT.to_owned(),
             tenant: TENANT.to_owned(),
             source_schema: SOURCE_SCHEMA.to_owned(),
+            flowrunner: flowrunner_fixture.clone(),
         },
     ));
     // The listener binds inside the spawned task; give it the connection.
@@ -1125,12 +1184,12 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
         .expect("alice is admitted");
     let mut backend = InternalAuthoringBackend::connect(
         &author_url(&url),
-        TENANT.to_owned(),
-        SOURCE_SCHEMA.to_owned(),
+        &authoring_scope(),
+        FLOWRUNNER_BYTES.to_vec(),
     )
     .await
     .expect("connect the canonical authoring backend");
-    let scope = CommandScope::new(TENANT, ORG, PROJECT, "dev");
+    let scope = CommandScope::new(TENANT, ORG, PROJECT, ENVIRONMENT);
     let request = |draft: &str| SaveFlowDraft {
         tenant_id: TENANT.to_owned(),
         draft_id: draft.to_owned(),
@@ -1208,8 +1267,8 @@ async fn management_surface_authenticates_and_attributes_authoring_commands() {
     // row, then both callers receive the exact same stored envelope bytes.
     let mut concurrent_backend = InternalAuthoringBackend::connect(
         &author_url(&url),
-        TENANT.to_owned(),
-        SOURCE_SCHEMA.to_owned(),
+        &authoring_scope(),
+        FLOWRUNNER_BYTES.to_vec(),
     )
     .await
     .expect("connect the concurrent authoring backend");

@@ -916,6 +916,269 @@ BEGIN
 END
 $drift$;
 
+-- ---------------------------------------------------------------------------
+-- Author authority (wamn-0h0g.8.18). This store stops being dormant for exactly
+-- ONE principal: `wamn_control_author`, the stable NOLOGIN ACL role the
+-- management service reaches through a scoped A/B LOGIN generation. ctl creates
+-- and hardens the role and its generations
+-- (crates/control/provision/src/sql.rs); this artifact owns only what the role
+-- may touch once it exists, so the GRANTs below are unconditional exactly like
+-- run-state.sql's grants to `wamn_scenario_author`. Applying this file therefore
+-- requires the NOLOGIN role to already exist.
+--
+-- Deliberately placed AFTER the retirement and drift blocks: a store whose shape
+-- has drifted refuses before any authority is granted on it.
+--
+-- Author, publisher/deployer, artifact reader, and effect writer stay four
+-- separate principals. Nothing here grants evidence or deployment-attestation
+-- publication (`catalog.release_flow_test_evidence`,
+-- `catalog.deployment_attestations` and their register_* routines stay
+-- owner-only), project run or binding authority, artifact-reader authority,
+-- effect-writer authority, or UPDATE/DELETE over any immutable fact.
+-- `wamn_scenario_author` is never granted anything here and is never granted
+-- CONNECT on this database: it is the project plane's author role.
+-- ---------------------------------------------------------------------------
+
+-- Tenant authority is DATABASE-AUTHORITATIVE. `app.tenant` is a caller-set GUC,
+-- so it can only ever be a consistency assertion; the row filter an author
+-- cannot influence is this owner-maintained mapping from an exact login identity
+-- to its one tenant. One management instance serves exactly one
+-- (org_id, project_id, environment), and both of that scope's A/B generations map
+-- to that scope's single tenant.
+--
+-- It deliberately carries NO row-level security. The resolver below is SECURITY
+-- DEFINER and runs as the owner, and FORCE ROW LEVEL SECURITY applies to the
+-- owner too — an enabled policy here would make every author session resolve
+-- NULL and deny everything. Confinement is by ACL instead: nothing but the owner
+-- reaches this relation, and the author is granted only EXECUTE on the resolver.
+CREATE SCHEMA IF NOT EXISTS wamn_authority AUTHORIZATION wamn_system;
+REVOKE ALL ON SCHEMA wamn_authority FROM PUBLIC;
+
+CREATE TABLE IF NOT EXISTS wamn_authority.author_login_tenants (
+    login_identity text NOT NULL CHECK (login_identity <> ''),
+    tenant_id      text NOT NULL CHECK (tenant_id <> ''),
+    org_id         text NOT NULL CHECK (org_id <> ''),
+    project_id     text NOT NULL CHECK (project_id <> ''),
+    environment    text NOT NULL CHECK (environment <> ''),
+    created_at     timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (login_identity)
+);
+REVOKE ALL ON TABLE wamn_authority.author_login_tenants FROM PUBLIC;
+
+-- Fixed search path: the resolved tenant must not depend on a caller's
+-- `search_path`, and the author has no privilege on the mapping relation itself.
+-- An unmapped login resolves NULL, so `tenant_id = NULL` is NULL, so every
+-- restrictive policy below refuses — absence of a mapping fails closed.
+CREATE OR REPLACE FUNCTION wamn_authority.session_author_tenant()
+RETURNS text
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog, wamn_authority
+AS $$
+    SELECT mapping.tenant_id
+      FROM wamn_authority.author_login_tenants AS mapping
+     WHERE mapping.login_identity = session_user
+$$;
+REVOKE ALL ON FUNCTION wamn_authority.session_author_tenant() FROM PUBLIC;
+
+-- Draft validation must share-lock the applied catalog head without the author
+-- ever gaining UPDATE on that row. Identical in shape to the project bridge in
+-- deploy/sql/run-state.sql; the control copy additionally rechecks the mapping,
+-- because a SECURITY DEFINER routine runs outside the caller's row policies and
+-- would otherwise be a way to lock another tenant's head.
+CREATE OR REPLACE FUNCTION wamn_run.lock_catalog_head(
+    p_tenant_id text,
+    p_catalog_id text,
+    p_environment text
+)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, catalog
+AS $$
+DECLARE
+    applied_version int;
+BEGIN
+    SELECT head.applied_catalog_version INTO applied_version
+    FROM catalog.catalog_heads AS head
+    WHERE p_tenant_id = wamn_authority.session_author_tenant()
+      AND p_tenant_id = NULLIF(current_setting('app.tenant', true), '')
+      AND head.tenant_id = p_tenant_id
+      AND head.catalog_id = p_catalog_id
+      AND head.environment = p_environment
+    FOR SHARE OF head;
+    RETURN applied_version;
+END
+$$;
+REVOKE ALL ON FUNCTION wamn_run.lock_catalog_head(text, text, text) FROM PUBLIC;
+
+-- Every author-accessed relation carries an APPLICABLE restrictive policy.
+-- RESTRICTIVE means it can only narrow: the permissive `app.tenant` policy above
+-- still has to pass as well, so a caller that rewrites `app.tenant` can only
+-- turn its own access OFF — it can never widen it, and it can never reach a row
+-- its login is not mapped to. `TO wamn_control_author` is what makes the policy
+-- applicable to the author without denying the owner, which still applies the
+-- store as `wamn_system` under its own `app.tenant` claim.
+DO $author_policies$
+DECLARE
+    relation_name text;
+    policy_name text;
+BEGIN
+    FOREACH relation_name IN ARRAY ARRAY[
+        'catalog.flow_artifacts', 'catalog.execution_bundles',
+        'catalog.release_manifests', 'catalog.release_flows',
+        'catalog.catalog_heads', 'catalog.flow_drafts',
+        'catalog.validated_flow_drafts', 'catalog.connection_requirements',
+        'catalog.draft_safe_connection_grants', 'catalog.authoring_command_audit',
+        'wamn_run.authoring_test_run_reservations',
+        'wamn_run.authoring_test_case_runs', 'wamn_run.authoring_test_reports'
+    ]
+    LOOP
+        policy_name := split_part(relation_name, '.', 2) || '_author_tenant';
+        IF NOT EXISTS (
+            SELECT 1
+            FROM pg_policy
+            WHERE polrelid = relation_name::regclass
+              AND polname = policy_name
+        ) THEN
+            EXECUTE format(
+                'CREATE POLICY %I ON %s AS RESTRICTIVE TO wamn_control_author USING (tenant_id = wamn_authority.session_author_tenant()) WITH CHECK (tenant_id = wamn_authority.session_author_tenant())',
+                policy_name,
+                relation_name
+            );
+        END IF;
+    END LOOP;
+END
+$author_policies$;
+
+-- The exact authority class. Explicit REVOKE-then-GRANT per relation so an
+-- inherited or previously granted privilege cannot widen the set on replay.
+REVOKE ALL PRIVILEGES ON SCHEMA catalog, wamn_run, wamn_authority
+    FROM wamn_control_author;
+GRANT USAGE ON SCHEMA catalog, wamn_run, wamn_authority TO wamn_control_author;
+GRANT EXECUTE ON FUNCTION wamn_authority.session_author_tenant()
+    TO wamn_control_author;
+GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text)
+    TO wamn_control_author;
+
+-- Portable catalog and draft-base facts the author only ever reads.
+REVOKE ALL PRIVILEGES ON catalog.flow_artifacts, catalog.release_manifests,
+    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
+    catalog.draft_safe_connection_grants FROM wamn_control_author;
+GRANT SELECT ON catalog.flow_artifacts, catalog.release_manifests,
+    catalog.release_flows, catalog.catalog_heads, catalog.connection_requirements,
+    catalog.draft_safe_connection_grants TO wamn_control_author;
+
+-- The one mutable authored document: optimistic revision control, guarded by
+-- flow_drafts_controlled_update, with DELETE structurally refused.
+REVOKE ALL PRIVILEGES ON catalog.flow_drafts FROM wamn_control_author;
+GRANT SELECT, INSERT, UPDATE ON catalog.flow_drafts TO wamn_control_author;
+
+-- Append-only facts: immutable after append, enforced by their own triggers as
+-- well as by the absence of UPDATE and DELETE here.
+REVOKE ALL PRIVILEGES ON catalog.validated_flow_drafts, catalog.execution_bundles,
+    catalog.authoring_command_audit, wamn_run.authoring_test_reports
+    FROM wamn_control_author;
+GRANT SELECT, INSERT ON catalog.validated_flow_drafts, catalog.execution_bundles,
+    catalog.authoring_command_audit, wamn_run.authoring_test_reports
+    TO wamn_control_author;
+
+-- Reservation and case-map state machines: exactly the transitions they landed
+-- with, never DELETE.
+REVOKE ALL PRIVILEGES ON wamn_run.authoring_test_run_reservations,
+    wamn_run.authoring_test_case_runs FROM wamn_control_author;
+GRANT SELECT, INSERT, UPDATE ON wamn_run.authoring_test_run_reservations,
+    wamn_run.authoring_test_case_runs TO wamn_control_author;
+
 -- Owner-only is an explicit contract, not merely an absence of grants inherited
 -- from a fresh database. Default PUBLIC function execution is revoked above.
 REVOKE ALL ON ALL TABLES IN SCHEMA catalog, wamn_run FROM PUBLIC;
+
+-- The author's bounded set is granted above; every other relation in these
+-- schemas — release evidence, deployment attestations, the release exposure /
+-- source / attachment records, and the catalog registry itself — stays
+-- owner-only for it too. Asserted rather than assumed, because a stray GRANT
+-- here is exactly the mistake that would hand one principal another's plane.
+DO $author_bounds$
+DECLARE
+    unexpected text;
+BEGIN
+    SELECT string_agg(format('%s:%s', relation, privilege), ', ' ORDER BY relation, privilege)
+      INTO unexpected
+      FROM (
+        SELECT (quote_ident(namespace.nspname) || '.' || quote_ident(relation.relname))
+                 AS relation,
+               candidate.privilege
+          FROM pg_class AS relation
+          JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+          CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE',
+                                  'TRUNCATE', 'REFERENCES', 'TRIGGER'])
+               AS candidate(privilege)
+         WHERE relation.relkind IN ('r', 'p')
+           AND namespace.nspname IN ('catalog', 'wamn_run', 'wamn_authority')
+           AND (has_table_privilege('wamn_control_author', relation.oid,
+                                    candidate.privilege)
+                OR (candidate.privilege IN ('INSERT', 'UPDATE', 'REFERENCES')
+                    AND has_any_column_privilege('wamn_control_author', relation.oid,
+                                                 candidate.privilege)))
+           AND NOT EXISTS (
+             SELECT 1
+               FROM (VALUES
+                 ('catalog', 'flow_artifacts', 'SELECT'),
+                 ('catalog', 'release_manifests', 'SELECT'),
+                 ('catalog', 'release_flows', 'SELECT'),
+                 ('catalog', 'catalog_heads', 'SELECT'),
+                 ('catalog', 'connection_requirements', 'SELECT'),
+                 ('catalog', 'draft_safe_connection_grants', 'SELECT'),
+                 ('catalog', 'flow_drafts', 'SELECT'),
+                 ('catalog', 'flow_drafts', 'INSERT'),
+                 ('catalog', 'flow_drafts', 'UPDATE'),
+                 ('catalog', 'validated_flow_drafts', 'SELECT'),
+                 ('catalog', 'validated_flow_drafts', 'INSERT'),
+                 ('catalog', 'execution_bundles', 'SELECT'),
+                 ('catalog', 'execution_bundles', 'INSERT'),
+                 ('catalog', 'authoring_command_audit', 'SELECT'),
+                 ('catalog', 'authoring_command_audit', 'INSERT'),
+                 ('wamn_run', 'authoring_test_reports', 'SELECT'),
+                 ('wamn_run', 'authoring_test_reports', 'INSERT'),
+                 ('wamn_run', 'authoring_test_run_reservations', 'SELECT'),
+                 ('wamn_run', 'authoring_test_run_reservations', 'INSERT'),
+                 ('wamn_run', 'authoring_test_run_reservations', 'UPDATE'),
+                 ('wamn_run', 'authoring_test_case_runs', 'SELECT'),
+                 ('wamn_run', 'authoring_test_case_runs', 'INSERT'),
+                 ('wamn_run', 'authoring_test_case_runs', 'UPDATE')
+               ) AS allowed(schema_name, table_name, privilege)
+              WHERE allowed.schema_name = namespace.nspname
+                AND allowed.table_name = relation.relname
+                AND allowed.privilege = candidate.privilege
+           )
+      ) AS excess;
+    IF unexpected IS NOT NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '42501',
+            MESSAGE = 'control-author-effective-privilege-out-of-bounds',
+            DETAIL = unexpected;
+    END IF;
+    IF pg_catalog.has_schema_privilege('wamn_control_author', 'catalog', 'CREATE')
+       OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_run', 'CREATE')
+       OR pg_catalog.has_schema_privilege('wamn_control_author', 'wamn_authority',
+                                          'CREATE')
+       OR pg_catalog.has_function_privilege(
+            'wamn_control_author',
+            'catalog.register_release_flow_test_evidence(text,text,int,text,text,text,text,text,bytea,text)',
+            'EXECUTE')
+       OR pg_catalog.has_function_privilege(
+            'wamn_control_author',
+            'catalog.register_deployment_attestation(text,text,int,text,text,text,text,timestamptz)',
+            'EXECUTE')
+       OR pg_catalog.pg_has_role('wamn_control_author', 'wamn_system', 'USAGE')
+       OR EXISTS (SELECT FROM pg_catalog.pg_roles
+                   WHERE rolname = 'wamn_scenario_author'
+                     AND pg_catalog.has_database_privilege(
+                           oid, pg_catalog.current_database(), 'CONNECT'))
+    THEN
+        RAISE EXCEPTION USING ERRCODE = '42501',
+            MESSAGE = 'control-author-authority-boundary-violated';
+    END IF;
+END
+$author_bounds$;

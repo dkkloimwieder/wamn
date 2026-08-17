@@ -7,6 +7,7 @@
 //! `wamn_app` role name is a pinned constant. Values that vary (a probe's
 //! database name, a role password) travel as `$n` params or quoted literals.
 
+use crate::control_author::CONTROL_AUTHOR_ROLE;
 use crate::name::{APP_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
@@ -389,6 +390,129 @@ pub fn effect_writer_scope_lock_sql() -> &'static str {
     "SELECT pg_advisory_lock(hashtextextended($1::text, 0))"
 }
 
+// --- Control-database author provisioning (wamn-0h0g.8.18) --------------------
+//
+// The management service's authoring/report store moved to the control database.
+// Its principal is a scoped A/B LOGIN generation of the stable NOLOGIN
+// [`CONTROL_AUTHOR_ROLE`]; `deploy/sql/control-portable-store.sql` owns what that
+// role may touch, and these builders own the role identities themselves.
+//
+// Deliberately parallel to the effect-writer builders above rather than shared
+// with them: author, publisher/deployer, artifact reader, and effect writer are
+// four separate principals, and a shared builder would be one edit away from
+// granting one plane's authority to another. `wamn_scenario_author` never
+// appears here — it is the project plane's author role and is never granted
+// control-database CONNECT.
+
+/// Idempotently create or harden the stable control-author ACL role as NOLOGIN.
+///
+/// Create-or-*harden* under the shared `wamn_role_bootstrap` advisory lock, the
+/// same shape as `wamn_ops` and `wamn_scenario_author`: a replay that finds the
+/// role with a drifted attribute re-ALTERs it instead of reporting success.
+/// Table and schema grants deliberately do not live here — the control
+/// portable-store artifact owns them, applied as its owner after this role
+/// exists.
+pub fn ensure_control_author_acl_role_sql() -> &'static str {
+    "DO $control_author$ BEGIN \
+       PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+       IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
+                      WHERE rolname = 'wamn_control_author') THEN \
+         CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
+           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+       ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                     WHERE rolname = 'wamn_control_author' \
+                       AND (rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                            OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+         ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
+           NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+       END IF; \
+     END $control_author$;"
+}
+
+/// Prepare one inactive scoped control-author generation for authenticated use.
+///
+/// `role` is the validated deterministic generation name from
+/// [`crate::control_author_generation_role`]; `database` is the control
+/// database. Create-then-`ALTER … LOGIN` in that order so a crash between the two
+/// statements leaves an inert role and the same batch converges on replay.
+/// Membership is exactly the one stable ACL role, and direct database authority
+/// is solely `CONNECT` on the control database — never on a project database.
+pub fn prepare_control_author_generation_sql(
+    database: &str,
+    role: &str,
+    password: &str,
+    expires_at: &str,
+) -> String {
+    let role_ident = quote_ident(role);
+    let role_lit = quote_literal(role);
+    format!(
+        "{ensure} \
+         DO $$ BEGIN \
+           IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role_ident} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               INHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $$; \
+         ALTER ROLE {role_ident} LOGIN PASSWORD {password} VALID UNTIL {expires_at}; \
+         GRANT {acl_role} TO {role_ident} \
+           WITH ADMIN FALSE, INHERIT TRUE, SET TRUE; \
+         GRANT CONNECT ON DATABASE {database} TO {role_ident};",
+        ensure = ensure_control_author_acl_role_sql(),
+        password = quote_literal(password),
+        expires_at = quote_literal(expires_at),
+        acl_role = quote_ident(CONTROL_AUTHOR_ROLE),
+        database = quote_ident(database),
+    )
+}
+
+/// Retire one old control-author generation after replacement use was verified.
+///
+/// Authority leaves before authentication does, so a session that survives the
+/// first statement still cannot read or write. The caller commits this batch
+/// before terminating sessions with
+/// [`terminate_control_author_generation_sessions_sql`].
+pub fn retire_control_author_generation_sql(database: &str, role: &str) -> String {
+    let role_ident = quote_ident(role);
+    format!(
+        "REVOKE {acl_role} FROM {role_ident}; \
+         REVOKE CONNECT ON DATABASE {database} FROM {role_ident}; \
+         ALTER ROLE {role_ident} NOLOGIN PASSWORD NULL VALID UNTIL 'epoch';",
+        acl_role = quote_ident(CONTROL_AUTHOR_ROLE),
+        database = quote_ident(database),
+    )
+}
+
+/// Terminate sessions only after control-author authority removal has committed.
+pub fn terminate_control_author_generation_sessions_sql(role: &str) -> String {
+    let role_lit = quote_literal(role);
+    format!(
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+           WHERE usename = {role_lit} AND pid <> pg_backend_pid();"
+    )
+}
+
+/// Record the owner-maintained login-identity-to-tenant mapping for one scope.
+///
+/// `$1` login identity, `$2` tenant, `$3` org, `$4` project, `$5` environment.
+/// Tenant authority is database-authoritative: this row, not a caller-set
+/// `app.tenant`, is what every author-accessed relation's restrictive policy
+/// resolves through, so the statement is deliberately an owner statement with no
+/// grant to the author. `DO UPDATE` is restricted to a row whose tenant already
+/// matches, so a replay converges while a re-point to a different tenant returns
+/// **zero rows** instead of widening one login's reach — the caller must read an
+/// empty result as a refusal, not as a no-op.
+pub fn upsert_control_author_tenant_mapping_sql() -> &'static str {
+    "INSERT INTO wamn_authority.author_login_tenants \
+       (login_identity, tenant_id, org_id, project_id, environment) \
+     VALUES ($1, $2, $3, $4, $5) \
+     ON CONFLICT (login_identity) DO UPDATE \
+       SET org_id = EXCLUDED.org_id, \
+           project_id = EXCLUDED.project_id, \
+           environment = EXCLUDED.environment \
+       WHERE author_login_tenants.tenant_id = EXCLUDED.tenant_id \
+     RETURNING tenant_id"
+}
+
 // --- CDC capture provisioning (wamn-l5i9.9, D19 v3 §4) -----------------------
 //
 // The per-project-env CDC substrate: a REPLICATION role (the R8b credential
@@ -704,6 +828,120 @@ mod tests {
         assert!(terminate.contains("pid <> pg_backend_pid()"));
         for authority_change in ["REVOKE ", "ALTER ROLE"] {
             assert!(!terminate.contains(authority_change));
+        }
+    }
+
+    /// wamn-0h0g.8.18: the stable control-author role is host-only, hardens on
+    /// replay, and never becomes a member of another plane's role.
+    #[test]
+    fn control_author_acl_role_is_nologin_and_hardens_on_replay() {
+        let sql = ensure_control_author_acl_role_sql();
+        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
+        assert!(sql.contains(
+            "CREATE ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+        ));
+        // A replay that finds a drifted attribute must repair it, not succeed.
+        assert!(sql.contains("ELSIF EXISTS"));
+        assert!(sql.contains(
+            "ALTER ROLE wamn_control_author NOLOGIN NOSUPERUSER NOCREATEDB \
+             NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS"
+        ));
+        for other_plane in [
+            "wamn_scenario_author",
+            "wamn_effect_writer",
+            "wamn_run_projection_writer",
+            "wamn_app",
+        ] {
+            assert!(!sql.contains(other_plane), "control author touched {other_plane}");
+        }
+    }
+
+    /// The prepared generation may authenticate and connect to exactly the
+    /// control database, inheriting exactly the one stable ACL role.
+    #[test]
+    fn control_author_prepare_has_only_control_connect_and_one_membership() {
+        let role = "wamn_control_author_2222222222222222222222222222222222222222_b";
+        let sql = prepare_control_author_generation_sql(
+            "wamn-system",
+            role,
+            "0123456789abcdef",
+            "2026-09-15T12:00:00Z",
+        );
+        assert!(sql.contains(ensure_control_author_acl_role_sql()));
+        // NOLOGIN create precedes the LOGIN flip, so a crash between them leaves
+        // an inert role rather than a passwordless login.
+        let created = sql.find("CREATE ROLE \"wamn_control_author_2").unwrap();
+        let login = sql.find("LOGIN PASSWORD '0123456789abcdef'").unwrap();
+        assert!(created < login);
+        assert!(sql[created..login].contains("NOLOGIN"));
+        assert!(sql.contains("VALID UNTIL '2026-09-15T12:00:00Z'"));
+        assert!(sql.contains(&format!(
+            "GRANT \"wamn_control_author\" TO \"{role}\" \
+             WITH ADMIN FALSE, INHERIT TRUE, SET TRUE;"
+        )));
+        assert_eq!(sql.matches("GRANT CONNECT ON DATABASE").count(), 1);
+        assert!(sql.contains("GRANT CONNECT ON DATABASE \"wamn-system\""));
+        // Never the project plane's author role, and never another plane's ACL.
+        for forbidden in [
+            "wamn_scenario_author",
+            "wamn_effect_writer",
+            "wamn_run_projection_writer",
+            "SUPERUSER TO",
+            "WITH ADMIN TRUE",
+            "WITH GRANT OPTION",
+        ] {
+            assert!(!sql.contains(forbidden), "prepare granted {forbidden}");
+        }
+    }
+
+    /// Retirement removes authority before authentication and never terminates a
+    /// session in the same batch; the terminate builder changes no authority.
+    #[test]
+    fn control_author_retire_commits_authority_removal_before_termination() {
+        let role = "wamn_control_author_3333333333333333333333333333333333333333_a";
+        let sql = retire_control_author_generation_sql("wamn-system", role);
+        let membership = sql.find("REVOKE \"wamn_control_author\"").unwrap();
+        let connect = sql.find("REVOKE CONNECT ON DATABASE").unwrap();
+        let no_login = sql.find("NOLOGIN PASSWORD NULL").unwrap();
+        assert!(membership < connect && connect < no_login);
+        assert!(sql.contains("VALID UNTIL 'epoch'"));
+        assert!(!sql.contains("pg_terminate_backend"));
+        assert!(!sql.contains("DROP ROLE"), "slots are reused, never dropped");
+
+        let terminate = terminate_control_author_generation_sessions_sql(role);
+        assert!(terminate.contains(&format!("WHERE usename = '{role}'")));
+        assert!(terminate.contains("pid <> pg_backend_pid()"));
+        for authority_change in ["REVOKE ", "GRANT ", "ALTER ROLE"] {
+            assert!(!terminate.contains(authority_change));
+        }
+    }
+
+    /// The mapping is owner-maintained and cannot be re-pointed to another
+    /// tenant: a converging replay updates the scope columns, a tenant change
+    /// matches no row and therefore returns nothing.
+    #[test]
+    fn tenant_mapping_upsert_converges_but_never_repoints_a_tenant() {
+        let sql = upsert_control_author_tenant_mapping_sql();
+        assert!(sql.starts_with("INSERT INTO wamn_authority.author_login_tenants"));
+        for parameter in ["$1", "$2", "$3", "$4", "$5"] {
+            assert!(sql.contains(parameter), "mapping upsert drops {parameter}");
+        }
+        assert_eq!(sql.matches('$').count(), 5);
+        assert!(sql.contains("ON CONFLICT (login_identity) DO UPDATE"));
+        assert!(
+            sql.contains("WHERE author_login_tenants.tenant_id = EXCLUDED.tenant_id"),
+            "a mapping row's tenant must not be re-pointed: {sql}"
+        );
+        // The tenant column is never in the SET list, so even a matching row
+        // cannot have its tenant rewritten.
+        let set_list = sql.split("DO UPDATE").nth(1).expect("an upsert body");
+        let set_list = set_list.split("WHERE").next().expect("a SET clause");
+        assert!(!set_list.contains("tenant_id"), "{set_list}");
+        assert!(sql.contains("RETURNING tenant_id"));
+        // Owner-maintained: the statement grants nothing and names no author role.
+        for forbidden in ["GRANT", "wamn_control_author", "app.tenant"] {
+            assert!(!sql.contains(forbidden), "mapping upsert names {forbidden}");
         }
     }
 

@@ -52,6 +52,7 @@
 
 #[cfg(feature = "ops")]
 pub mod backup;
+pub mod control_author;
 #[cfg(feature = "ops")]
 pub mod copy;
 pub mod database;
@@ -72,6 +73,11 @@ pub mod state;
 pub use backup::{
     BACKUP_PLUGIN_NAME, MINIO_ENDPOINT, OBJECT_STORE_SECRET, WAL_BUCKET, cluster_backup_plugin,
     object_store_name, render_object_store, render_scheduled_backup, scheduled_backup_name,
+};
+pub use control_author::{
+    CONTROL_AUTHOR_ROLE, ControlAuthoringConnection, ControlAuthoringUrlError,
+    ControlAuthoringUrlErrorKind, control_author_generation_role, control_author_scope_hash,
+    parse_control_authoring_url,
 };
 #[cfg(feature = "ops")]
 pub use copy::{

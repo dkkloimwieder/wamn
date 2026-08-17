@@ -99,9 +99,36 @@ pub struct PublishCatalogArgs {
     pub skip_reconcile_replica_identity: bool,
 }
 
+/// Publish one catalog snapshot — CLOSED by the wamn-0h0g.8.18 cutover.
+///
+/// The authoring, draft, and report store this verb published against moved to
+/// the control database, so a project-database release would name a definition
+/// nothing reads. Every invocation refuses with
+/// [`crate::CONTROL_DEFINITION_PUBLISH_REFUSAL`] **before any filesystem read or
+/// admin connection**: the refusal sits after the pure schema-name validator
+/// (which already refused before any effect and keeps doing so) and before the
+/// first `std::fs::read_to_string`.
+///
+/// The publication body below stays in the tree deliberately. wamn-0h0g.15.14
+/// owns the replacement path and rewrites it against the control store; deleting
+/// it here would throw away the landed release/journal/head ordering that
+/// replacement has to preserve.
+#[expect(
+    unreachable_code,
+    // `schema` is validated before the refusal on purpose — the pre-I/O guard
+    // proves a malformed schema name is refused without opening a file — and it
+    // is consumed only by the unreachable body below. When wamn-0h0g.15.14
+    // removes the refusal, both expectations go unfulfilled and this attribute
+    // must come off with it; that unfulfilled-expectation warning is the point.
+    unused_variables,
+    reason = "wamn-0h0g.8.18 closes the verb without deleting the publication \
+              body wamn-0h0g.15.14 rewrites"
+)]
 pub async fn run(args: PublishCatalogArgs) -> anyhow::Result<()> {
     let schema = BareSchemaName::new(args.schema.clone())
         .with_context(|| format!("invalid schema name {:?}", args.schema))?;
+
+    anyhow::bail!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
 
     // Parse (and thereby validate) the catalog; this is the snapshot document.
     let catalog_src = std::fs::read_to_string(&args.catalog)
@@ -1990,6 +2017,51 @@ mod tests {
         );
         assert!(!message.contains("read catalog"), "{message}");
         assert!(!message.contains("admin connect"), "{message}");
+    }
+
+    /// The wamn-0h0g.8.18 cutover: a fully valid invocation refuses, and refuses
+    /// before it opens a file or dials a server.
+    ///
+    /// Every path argument names a file that does not exist and the admin URL is
+    /// unroutable, so any I/O this verb performed would surface as its own
+    /// context literal — `read catalog`, `read project config`, `read seed
+    /// dataset`, or `admin connect` — instead of the refusal. An unroutable host
+    /// also means a connection attempt would stall rather than return promptly.
+    #[tokio::test]
+    async fn a_valid_publication_refuses_before_any_file_or_connection() {
+        let missing = |name: &str| std::env::temp_dir().join(name);
+        let error = run(PublishCatalogArgs {
+            catalog: missing("control-publish-closed-catalog-8-18.json"),
+            admin_database_url: Some("postgresql://invalid.invalid/never".to_string()),
+            tenant: "t1".to_string(),
+            project_config: Some(missing("control-publish-closed-config-8-18.json")),
+            schema: "wamn_app".to_string(),
+            provision: true,
+            runstate: true,
+            seed_dataset: Some(missing("control-publish-closed-seed-8-18.json")),
+            flow: vec![missing("control-publish-closed-flow-8-18.json")],
+            exposure: Some(missing("control-publish-closed-exposure-8-18.json")),
+            skip_reconcile_replica_identity: false,
+        })
+        .await
+        .expect_err("the closed definition-publish path must refuse");
+        let message = format!("{error:#}");
+        assert_eq!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
+        for io in [
+            "read catalog",
+            "read project config",
+            "read seed dataset",
+            "read flow",
+            "read exposure",
+            "admin connect",
+        ] {
+            assert!(!message.contains(io), "publish reached {io}: {message}");
+        }
+        // The refusal names the replacement path, not the superseded pair the
+        // pre-amendment ruling wrote down.
+        assert!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.ends_with("wamn-0h0g.15.14"));
+        assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.19"));
+        assert!(!crate::CONTROL_DEFINITION_PUBLISH_REFUSAL.contains("8.22"));
     }
 
     #[test]

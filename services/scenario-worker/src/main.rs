@@ -48,17 +48,21 @@ mod tests {
 
     use super::*;
 
-    const SERVE: [&str; 12] = [
+    /// wamn-0h0g.8.18: the authoring input is the control-database one, and the
+    /// environment is fixed configuration rather than a per-request choice.
+    const SERVE: [&str; 14] = [
         "wamn-scenario-worker",
         "serve",
         "--system-url",
         "postgres://system.invalid/system",
-        "--authoring-database-url",
-        "postgres://project.invalid/project",
+        "--control-authoring-database-url",
+        "postgres://control.invalid/wamn-system",
         "--org",
         "acme",
         "--project",
         "receiving",
+        "--environment",
+        "dev",
         "--tenant",
         "tenant-a",
     ];
@@ -74,10 +78,44 @@ mod tests {
         let Command::Serve(args) = cli.command;
         assert_eq!(args.org, "acme");
         assert_eq!(args.project, "receiving");
+        assert_eq!(args.environment, "dev");
         assert_eq!(args.tenant, "tenant-a");
         assert_eq!(args.system_url, "postgres://system.invalid/system");
+        assert_eq!(
+            args.control_authoring_database_url,
+            "postgres://control.invalid/wamn-system"
+        );
+        // The in-image component the minting pod derives its runtime revision
+        // from defaults to the same path the executor loads (wamn-0h0g.15.50).
+        assert_eq!(
+            args.flowrunner,
+            std::path::Path::new(wamn_execution_host::DEFAULT_FLOWRUNNER_PATH)
+        );
 
         assert!(Cli::try_parse_from(["wamn-scenario-worker"]).is_err());
         assert!(Cli::try_parse_from(["wamn-scenario-worker", "--tenant", "tenant-a"]).is_err());
+        // Every scope component is required: none of them has a default that
+        // would silently bind this process to a scope nobody chose.
+        for omitted in [
+            "--control-authoring-database-url",
+            "--org",
+            "--project",
+            "--environment",
+            "--tenant",
+        ] {
+            let partial: Vec<&str> = SERVE
+                .iter()
+                .copied()
+                .enumerate()
+                .filter(|(index, argument)| {
+                    *argument != omitted && SERVE.get(index.wrapping_sub(1)) != Some(&omitted)
+                })
+                .map(|(_, argument)| argument)
+                .collect();
+            assert!(
+                Cli::try_parse_from(partial).is_err(),
+                "serve parsed without {omitted}"
+            );
+        }
     }
 }

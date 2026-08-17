@@ -30,3 +30,17 @@ pub mod reconcile_run_plane;
 #[cfg(feature = "ops")]
 pub mod restore_project_env;
 pub mod terminalize_effect_uncertain;
+
+/// Exact literal every closed definition-publish path returns (wamn-0h0g.8.18).
+///
+/// The management authoring and report store moved to the control database, so a
+/// project-database definition publish would write a release nothing reads. Both
+/// closed verbs refuse with this one literal **before any network, database, or
+/// filesystem I/O**, so a refusal cannot be mistaken for a partial publish.
+///
+/// The bead it names is the replacement publish path, not this closure: the
+/// original ruling named `.8.19`/`.8.22`, and the deployment-simplification
+/// amendment (rulings wamn-0h0g.13.43/.13.44) superseded both and re-anchored the
+/// literal on wamn-0h0g.15.14. Data-only `copy-project-env` is unaffected.
+pub const CONTROL_DEFINITION_PUBLISH_REFUSAL: &str =
+    "control-definition-publish-requires-wamn-0h0g.15.14";

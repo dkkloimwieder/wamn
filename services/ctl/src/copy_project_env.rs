@@ -186,6 +186,19 @@ pub async fn run(args: CopyProjectEnvArgs) -> anyhow::Result<()> {
     let src = Triple::new(&args.src_org, &args.src_project, args.src_env.as_str());
     let dst = Triple::new(&args.dst_org, &args.dst_project, args.dst_env.as_str());
     let include: CopyInclude = args.include.into();
+    // wamn-0h0g.8.18 cutover: a definition copy writes the catalog, flow, and
+    // release records whose durable owner is now the control database, so it would
+    // promote a definition nothing reads. Refused for `definition` AND `both`
+    // before ANY I/O — everything above this line is pure name validation, so no
+    // plan has been printed, no dump directory touched, no cluster dialled.
+    //
+    // Matched explicitly rather than through `CopyInclude::wants_definition`,
+    // which is FALSE for `Both`: `both` carries the definition implicitly through
+    // a full `pg_restore` instead of a separate definition pass, so the helper
+    // would have let exactly the widest case through.
+    if matches!(include, CopyInclude::Definition | CopyInclude::Both) {
+        bail!(crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
+    }
     let request = CopyRequest {
         src: src.clone(),
         dst: dst.clone(),
@@ -1490,6 +1503,119 @@ mod tests {
         );
         assert_eq!(CopyInclude::from(IncludeArg::Data).as_str(), "data");
         assert_eq!(CopyInclude::from(IncludeArg::Both).as_str(), "both");
+    }
+
+    /// The one axis value that still copies, and the two that no longer do.
+    ///
+    /// `Both` is the trap: `wants_definition()` is FALSE for it, so a guard
+    /// written on that helper would have let the widest case through.
+    #[test]
+    fn only_the_data_axis_asks_for_a_definition_this_plane_no_longer_owns() {
+        assert!(CopyInclude::Definition.wants_definition());
+        assert!(
+            !CopyInclude::Both.wants_definition(),
+            "the refusal must not be written on wants_definition()"
+        );
+        assert!(CopyInclude::Both.wants_data() && CopyInclude::Data.wants_data());
+        assert!(!CopyInclude::Definition.wants_data());
+        // Flag closure: every representable axis is classified, and exactly one is
+        // still available.
+        let closed = |include: CopyInclude| {
+            matches!(include, CopyInclude::Definition | CopyInclude::Both)
+        };
+        assert!(closed(CopyInclude::from(IncludeArg::Definition)));
+        assert!(closed(CopyInclude::from(IncludeArg::Both)));
+        assert!(!closed(CopyInclude::from(IncludeArg::Data)));
+        // `--include` defaults to `both`, so a bare invocation refuses too.
+        let source = include_str!("copy_project_env.rs");
+        assert!(source.contains(r#"#[arg(long, value_enum, default_value = "both")]"#));
+    }
+
+    /// wamn-0h0g.8.18: the closed axes refuse before ANY I/O, and the open one
+    /// still gets past the refusal.
+    ///
+    /// Every URL is unroutable and the dump root does not exist, so any I/O would
+    /// surface as its own context literal instead of the refusal — and a
+    /// connection attempt would stall rather than return promptly.
+    #[tokio::test]
+    async fn definition_and_both_refuse_before_any_connection_or_file() {
+        let args = |include: IncludeArg| CopyProjectEnvArgs {
+            src_org: "acme".to_owned(),
+            src_project: "receiving".to_owned(),
+            src_env: "dev".to_owned(),
+            dst_org: "acme".to_owned(),
+            dst_project: "receiving".to_owned(),
+            dst_env: "prod".to_owned(),
+            include,
+            cutover: false,
+            deprovision_old: false,
+            confirm: false,
+            src_admin_url: Some("postgresql://invalid.invalid/never".to_owned()),
+            dst_admin_url: None,
+            system_database_url: Some("postgresql://invalid.invalid/never".to_owned()),
+            tenant: Some("tenant-a".to_owned()),
+            data_schema: "public".to_owned(),
+            flow_schema: "wamn_run".to_owned(),
+            dump_root: std::env::temp_dir().join("control-copy-closed-8-18"),
+            confirm_with_backup: false,
+            plan: false,
+            saga_id: None,
+        };
+        for closed in [IncludeArg::Definition, IncludeArg::Both] {
+            let error = run(args(closed))
+                .await
+                .expect_err("a definition-bearing copy must refuse");
+            let message = format!("{error:#}");
+            assert_eq!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
+            for io in [
+                "postgres connect",
+                "system db connect",
+                "create the copy saga",
+                "spawn ",
+                "pg_dump",
+            ] {
+                assert!(!message.contains(io), "the copy reached {io}: {message}");
+            }
+        }
+        // Data-only still works: it must fail LATER, on the connection, not here.
+        let error = run(args(IncludeArg::Data))
+            .await
+            .expect_err("an unroutable data copy fails at its connection");
+        let message = format!("{error:#}");
+        assert_ne!(message, crate::CONTROL_DEFINITION_PUBLISH_REFUSAL);
+        assert!(
+            !message.contains("control-definition-publish-requires"),
+            "data-only copy was refused: {message}"
+        );
+    }
+
+    /// The refusal precedes every effect in `run`, measured on the source itself:
+    /// no plan is printed, no clock read, no connection opened.
+    #[test]
+    fn the_copy_refusal_precedes_every_effect_in_run() {
+        let source = include_str!("copy_project_env.rs");
+        let run_body = source
+            .split("pub async fn run(args: CopyProjectEnvArgs)")
+            .nth(1)
+            .expect("the copy verb exists")
+            .split("\n/// ")
+            .next()
+            .expect("the verb body ends");
+        let refusal = run_body
+            .find("CONTROL_DEFINITION_PUBLISH_REFUSAL")
+            .expect("the verb refuses");
+        for effect in [
+            "plan_copy(",
+            "println!(",
+            "unix_seconds()",
+            "SagaRecorder::connect(",
+            "execute_steps(",
+        ] {
+            let at = run_body
+                .find(effect)
+                .unwrap_or_else(|| panic!("the verb performs {effect}"));
+            assert!(refusal < at, "{effect} runs before the refusal");
+        }
     }
 
     #[test]

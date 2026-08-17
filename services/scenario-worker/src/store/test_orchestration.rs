@@ -3,6 +3,14 @@
 //! This module owns reservations, immutable run mappings, reconciliation, and
 //! report evidence. It deliberately does not admit or execute a case; the
 //! sequential executor composes those operations later against these rows.
+//!
+//! Residency (wamn-0h0g.8.18): these relations live in the CONTROL database, and
+//! the statements here name nothing else. The relation names are unqualified and
+//! resolve through the pinned `search_path`, so residency — not a renamed schema
+//! — is what distinguishes this store from the project copy. A project fact this
+//! module needs, such as a run that ended effect-uncertain, arrives as an
+//! already-observed argument rather than as a join, because a transaction cannot
+//! span the two databases and nothing here may claim it can.
 
 use std::collections::BTreeSet;
 
@@ -305,10 +313,26 @@ pub async fn finalize_test_case(
 }
 
 /// Reconcile deadline/effect-uncertain cases and finalize a ready report.
+///
+/// `effect_uncertain_run_ids` are project run identities the caller has ALREADY
+/// OBSERVED as effect-uncertain, named by the producer-idempotency coordinate
+/// they were reserved under ([`test_case_run_id`]).
+///
+/// They arrive as an argument because the reservation, case-map, and report
+/// relations moved to the control database (wamn-0h0g.8.18) while `runs` stayed
+/// project-local. The statement this replaced joined `runs` in the same
+/// transaction; across two databases that join cannot exist, and writing one
+/// would be a claim of atomicity the platform does not have. An already-observed
+/// terminal run status is an immutable fact, so consuming it as an input loses
+/// nothing: re-observing it inside this transaction could only produce the same
+/// answer. Observing project runs in the first place stays with wamn-0h0g.8.5.
+///
+/// An empty slice is the ordinary case and finalizes nothing on that leg.
 pub async fn reconcile_test_report(
     client: &mut Client,
     tenant_id: &str,
     report_id: &str,
+    effect_uncertain_run_ids: &[String],
 ) -> anyhow::Result<TestReportReconciliation> {
     let transaction = client.transaction().await?;
     let Some(reservation) = transaction
@@ -341,13 +365,10 @@ pub async fn reconcile_test_report(
                     failure_kind = 'effect-uncertain', \
                     summary = jsonb_build_object('kind', 'effect-uncertain'), \
                     finalized_at = clock_timestamp() \
-               FROM runs AS run \
               WHERE test_case.tenant_id = $1 AND test_case.report_id = $2 \
                 AND test_case.state = 'pending' \
-                AND run.tenant_id = test_case.tenant_id \
-                AND run.run_id = test_case.run_id \
-                AND run.status = 'effect-uncertain'",
-            &[&tenant_id, &report_id],
+                AND test_case.run_id = ANY($3::text[])",
+            &[&tenant_id, &report_id, &effect_uncertain_run_ids],
         )
         .await
         .context("reconcile effect-uncertain test cases")?;
@@ -496,6 +517,48 @@ mod tests {
         assert!(case.contains("(($3 + 1) * $6)::int"));
         assert!(!case.contains("FROM runs"));
         assert!(!case.contains("JOIN runs"));
+    }
+
+    /// wamn-0h0g.8.18: no statement here names a project-local relation, so none
+    /// of them can be a cross-database join.
+    #[test]
+    fn no_statement_reaches_the_project_run_plane() {
+        let source = include_str!("test_orchestration.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        for project_local in ["FROM runs", "JOIN runs", " runs AS ", "run.status", "run.run_id"] {
+            assert!(
+                !implementation.contains(project_local),
+                "a statement reaches the project run plane via {project_local}"
+            );
+        }
+        // The already-observed terminal status arrives as a bound parameter.
+        assert!(implementation.contains("test_case.run_id = ANY($3::text[])"));
+        assert!(implementation.contains("effect_uncertain_run_ids"));
+    }
+
+    /// The store these statements now run against.
+    #[test]
+    fn the_control_store_owns_the_relations_these_statements_name() {
+        let ddl = include_str!("../../../../deploy/sql/control-portable-store.sql");
+        for table in [
+            "authoring_test_run_reservations",
+            "authoring_test_case_runs",
+            "authoring_test_reports",
+        ] {
+            assert!(
+                ddl.contains(&format!("CREATE TABLE IF NOT EXISTS wamn_run.{table}")),
+                "the control store does not own {table}"
+            );
+        }
+        // The ordinal-to-run mapping's uniqueness is what makes a retry converge.
+        assert!(ddl.contains("UNIQUE (tenant_id, run_id)"));
+        // The project run plane is absent here, which is exactly why the
+        // effect-uncertain leg takes observed identities as a parameter.
+        assert!(!ddl.contains("CREATE TABLE IF NOT EXISTS wamn_run.runs"));
+        assert!(!ddl.contains("authoring_test_sets"));
     }
 
     #[test]

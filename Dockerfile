@@ -224,6 +224,15 @@ ENTRYPOINT ["/usr/local/bin/wamn-run-worker"]
 FROM debian:trixie-slim AS scenario-worker
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=build-scenario-worker /native-output/wamn-scenario-worker /usr/local/bin/wamn-scenario-worker
+# The MINTING pod's flowrunner source (wamn-0h0g.15.50). Draft validation pins a
+# trusted runtime revision derived from the exact flowrunner bytes the host
+# loaded, so the pod that mints that pin has to carry them locally — it cannot be
+# handed them by a transport without pinning a digest that names no real
+# executable. Per the wamn-0h0g.15.4 verdict flowrunner stays IN-IMAGE, so this is
+# the same locked-builder artifact and the same stable path the run-worker above
+# loads; the two images therefore agree on the digest by construction rather than
+# by a skew detector.
+COPY --from=component-builder /component-output/flowrunner.wasm /components/flowrunner.wasm
 ENV HOME=/tmp
 ENTRYPOINT ["/usr/local/bin/wamn-scenario-worker"]
 

@@ -1,27 +1,35 @@
-//! Real-PostgreSQL acceptance gate for flow-draft save and validation.
+//! Real-PostgreSQL acceptance gate for flow-draft save and validation, against
+//! the CONTROL database (wamn-0h0g.8.18).
 //!
 //! The ignored recipe in `docs/archive/build-and-test.md` supplies one disposable
-//! database, a dedicated author credential, and the flowrunner component built
-//! from this checkout.
+//! database and the flowrunner component built from this checkout. The author
+//! credential is no longer a separate input: the scoped A/B generation role is
+//! derived from the fixed `(org, project, environment)` plus the database the
+//! admin URL names, so the gate mints exactly the identity the credential
+//! contract requires and a hand-written role can no longer drift from it.
 
 use anyhow::Context as _;
 use tokio_postgres::{Client, NoTls};
 
 use wamn_catalog::Artifact;
-use wamn_scenario_worker::authoring::{
-    InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult, ValidateFlowDraft,
+use wamn_control_provision::{
+    CONTROL_PORTABLE_STORE_SQL, CredentialGeneration, SYSTEM_SCHEMA_SQL,
+    control_author_generation_role,
 };
-use wamn_schema_control::{BareSchemaName, rewrite_schema};
+use wamn_scenario_worker::authoring::{
+    ControlAuthoringScope, InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
+    ValidateFlowDraft,
+};
 
 const TENANT: &str = "authoring-loop-tenant";
-const SOURCE_SCHEMA: &str = "authoring_loop_source";
+/// Fixed by the control store: residency, not a renamed schema, distinguishes it.
+const SOURCE_SCHEMA: &str = "wamn_run";
+const ORG: &str = "acme";
+const PROJECT: &str = "receiving";
+const ENVIRONMENT: &str = "dev";
 const FLOW_ID: &str = "authoring-loop-flow";
 const DRAFT_ID: &str = "authoring-loop-draft";
-
-const CATALOG_SQL: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
-const RUN_STATE_SQL: &str = include_str!("../../../deploy/sql/run-state.sql");
-const FLOWS_SQL: &str = include_str!("../../../deploy/sql/flows.sql");
-const AUTHORING_TESTS_SQL: &str = include_str!("../../../deploy/sql/authoring-tests.sql");
+const AUTHOR_PASSWORD: &str = "wamn-authoring-loop-live";
 
 const RELEASE_GRAPH: &str = r#"{
   "schema-version":"0.1",
@@ -62,9 +70,27 @@ async fn connect(url: &str) -> anyhow::Result<(Client, tokio::task::JoinHandle<(
     Ok((client, task))
 }
 
-fn schema_sql(record: &str) -> String {
-    let schema = BareSchemaName::new(SOURCE_SCHEMA).expect("gate schema is a valid identifier");
-    rewrite_schema(record, &schema)
+/// The database the admin URL names — half of the author generation's scope.
+fn database_of(url: &str) -> anyhow::Result<String> {
+    let parsed = url::Url::parse(url).context("admin URL is not a URL")?;
+    let database = parsed.path().trim_start_matches('/').to_owned();
+    anyhow::ensure!(!database.is_empty(), "admin URL names no database");
+    Ok(database)
+}
+
+/// Rewrite one connection URL's identity, keeping host, port, and database.
+///
+/// The gate has to AUTHENTICATE as the author, not `SET ROLE` to it: the tenant
+/// mapping resolves on `session_user`.
+fn as_role(url: &str, role: &str, password: &str) -> anyhow::Result<String> {
+    let mut parsed = url::Url::parse(url).context("admin URL is not a URL")?;
+    parsed
+        .set_username(role)
+        .map_err(|()| anyhow::anyhow!("admin URL carries no username"))?;
+    parsed
+        .set_password(Some(password))
+        .map_err(|()| anyhow::anyhow!("admin URL carries no password"))?;
+    Ok(parsed.to_string())
 }
 
 fn release_artifact() -> anyhow::Result<(wamn_flow::Flow, Artifact)> {
@@ -81,34 +107,58 @@ fn release_artifact() -> anyhow::Result<(wamn_flow::Flow, Artifact)> {
     Ok((flow, artifact))
 }
 
-async fn reset_and_provision(admin: &mut Client) -> anyhow::Result<String> {
+async fn reset_and_provision(
+    admin: &mut Client,
+    database: &str,
+    author_role: &str,
+) -> anyhow::Result<String> {
     admin
-        .batch_execute(
-            "DROP SCHEMA IF EXISTS authoring_loop_source CASCADE; \
-             DROP SCHEMA IF EXISTS catalog CASCADE; \
-             DROP ROLE IF EXISTS wamn_authoring_loop_author; \
-             DROP ROLE IF EXISTS wamn_scenario_author; \
-             DROP ROLE IF EXISTS wamn_app; \
-             CREATE ROLE wamn_app NOLOGIN \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_scenario_author NOLOGIN \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
-             CREATE ROLE wamn_authoring_loop_author LOGIN PASSWORD 'wamn-author-live' \
-               NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS; \
-             GRANT wamn_scenario_author TO wamn_authoring_loop_author;",
+        .batch_execute(&format!(
+            "DROP SCHEMA IF EXISTS catalog CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_run CASCADE; \
+             DROP SCHEMA IF EXISTS wamn_authority CASCADE; \
+             DROP SCHEMA IF EXISTS registry CASCADE; \
+             DROP SCHEMA IF EXISTS provisioning CASCADE; \
+             DROP SCHEMA IF EXISTS identity CASCADE; \
+             DO $$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='wamn_system') \
+             THEN CREATE ROLE wamn_system NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+               NOINHERIT NOREPLICATION NOBYPASSRLS; END IF; END $$; \
+             {prepare_generation} \
+             DO $$ BEGIN EXECUTE format( \
+               'GRANT CREATE ON DATABASE %I TO wamn_system', current_database()); END $$;",
+            // Mints the stable NOLOGIN ACL role AND this scope's generation, using
+            // exactly the text ctl applies.
+            prepare_generation = wamn_control_provision::sql::prepare_control_author_generation_sql(
+                database,
+                author_role,
+                AUTHOR_PASSWORD,
+                "2099-01-01T00:00:00Z",
+            ),
+        ))
+        .await
+        .context("reset authoring-loop schemas and mint the control-author generation")?;
+    // Exactly the fresh-control bootstrap record, applied as its documented owner.
+    admin
+        .batch_execute(&format!(
+            "SET ROLE wamn_system;\n{SYSTEM_SCHEMA_SQL}\n{CONTROL_PORTABLE_STORE_SQL}\nRESET ROLE;"
+        ))
+        .await
+        .context("provision the control system schema and portable store")?;
+    // The owner-maintained login-identity-to-tenant mapping is the authority the
+    // restrictive policies resolve through; without it the author reads nothing.
+    admin
+        .execute(
+            "INSERT INTO wamn_authority.author_login_tenants \
+               (login_identity, tenant_id, org_id, project_id, environment) \
+             VALUES ($1, $2, $3, $4, $5)",
+            &[&author_role, &TENANT, &ORG, &PROJECT, &ENVIRONMENT],
         )
         .await
-        .context("reset authoring-loop schema and roles")?;
+        .context("map the control-author login to its one tenant")?;
     admin
-        .batch_execute(CATALOG_SQL)
+        .batch_execute(&format!("SELECT set_config('app.tenant', '{TENANT}', false);"))
         .await
-        .context("provision catalog schema")?;
-    for record in [RUN_STATE_SQL, FLOWS_SQL, AUTHORING_TESTS_SQL] {
-        admin
-            .batch_execute(&schema_sql(record))
-            .await
-            .context("provision authoring-loop source schema")?;
-    }
+        .context("scope the seeding session")?;
 
     let (release_flow, release_artifact) = release_artifact()?;
     let graph_json = release_flow.to_json();
@@ -199,18 +249,52 @@ async fn release_counts(admin: &Client) -> anyhow::Result<(i64, i64, i64)> {
 #[ignore = "requires the exact disposable-PostgreSQL + compiled-flowrunner recipe"]
 async fn authoring_loop_live() -> anyhow::Result<()> {
     let admin_url = env("WAMN_AUTHORING_LOOP_ADMIN_PG_URL")?;
-    let author_url = env("WAMN_AUTHORING_LOOP_AUTHOR_PG_URL")?;
     let flowrunner = env("WAMN_AUTHORING_LOOP_FLOWRUNNER")?;
     let flowrunner_bytes = std::fs::read(&flowrunner)
         .with_context(|| format!("read compiled flowrunner {flowrunner}"))?;
     anyhow::ensure!(!flowrunner_bytes.is_empty(), "compiled flowrunner is empty");
 
+    // The credential contract, not an operator, names the author identity.
+    let database = database_of(&admin_url)?;
+    let author_role = control_author_generation_role(
+        ORG,
+        PROJECT,
+        ENVIRONMENT,
+        &database,
+        CredentialGeneration::A,
+    );
+    let author_url = as_role(&admin_url, &author_role, AUTHOR_PASSWORD)?;
+
     let (mut admin, admin_task) = connect(&admin_url).await?;
-    let release_artifact_hash = reset_and_provision(&mut admin).await?;
+    let release_artifact_hash = reset_and_provision(&mut admin, &database, &author_role).await?;
     let baseline_release_counts = release_counts(&admin).await?;
     assert_eq!(baseline_release_counts, (1, 1, 1));
 
-    let mut backend = InternalAuthoringBackend::connect(&author_url, TENANT, SOURCE_SCHEMA).await?;
+    let scope = ControlAuthoringScope {
+        org: ORG.to_string(),
+        project: PROJECT.to_string(),
+        environment: ENVIRONMENT.to_string(),
+        tenant_id: TENANT.to_string(),
+        source_schema: SOURCE_SCHEMA.to_string(),
+    };
+    // An out-of-scope input refuses before any I/O: the same URL under a different
+    // environment derives a different generation name and is not admitted.
+    let wrong_environment = ControlAuthoringScope {
+        environment: "prod".to_string(),
+        ..scope.clone()
+    };
+    assert!(
+        InternalAuthoringBackend::connect(
+            &author_url,
+            &wrong_environment,
+            flowrunner_bytes.clone(),
+        )
+        .await
+        .is_err(),
+        "an out-of-scope authoring connection input was admitted"
+    );
+    let mut backend =
+        InternalAuthoringBackend::connect(&author_url, &scope, flowrunner_bytes.clone()).await?;
     let saved = backend
         .save_flow_draft(&SaveFlowDraft {
             tenant_id: TENANT.to_string(),
@@ -228,20 +312,41 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
         SaveFlowDraftResult::RevisionConflict => anyhow::bail!("fresh draft save conflicted"),
     };
 
+    // The flowrunner bytes are the ones the process loaded, not a call argument
+    // (wamn-0h0g.15.50), so the trusted runtime revision cannot be chosen here.
     let pin = backend
-        .validate_flow_draft(
-            &ValidateFlowDraft {
-                tenant_id: TENANT.to_string(),
-                draft_id: DRAFT_ID.to_string(),
-                draft_revision: revision,
-                catalog_id: "authoring-loop-catalog".to_string(),
-                catalog_version: 1,
-                environment: "dev".to_string(),
-            },
-            &flowrunner_bytes,
-        )
+        .validate_flow_draft(&ValidateFlowDraft {
+            tenant_id: TENANT.to_string(),
+            draft_id: DRAFT_ID.to_string(),
+            draft_revision: revision,
+            catalog_id: "authoring-loop-catalog".to_string(),
+            catalog_version: 1,
+            environment: ENVIRONMENT.to_string(),
+        })
         .await?
         .map_err(anyhow::Error::new)?;
+    // The persisted plan pins the digest of the bytes THIS PROCESS loaded, so the
+    // in-image component is genuinely the minting pod's flowrunner source.
+    let persisted_plan: serde_json::Value = serde_json::from_slice(
+        &admin
+            .query_one(
+                "SELECT exact_bytes FROM catalog.execution_bundles \
+                  WHERE tenant_id = $1 AND execution_bundle_hash = $2",
+                &[&TENANT, &pin.execution_bundle_hash],
+            )
+            .await?
+            .get::<_, Vec<u8>>(0),
+    )?;
+    assert_eq!(
+        persisted_plan["header"]["runtime-revision"]["flowrunner-component-digest"]
+            .as_str()
+            .context("the persisted plan pins a flowrunner digest")?,
+        wamn_execution_host::TrustedExecutionRuntimeRevision::from_flowrunner_bytes(
+            &flowrunner_bytes
+        )
+        .flowrunner_component_digest(),
+        "the persisted pin names bytes this process did not load"
+    );
 
     assert_eq!(pin.draft_revision, 1);
     assert_eq!(pin.runtime_flow_version, 2);
@@ -260,16 +365,25 @@ async fn authoring_loop_live() -> anyhow::Result<()> {
     assert_eq!(release_counts(&admin).await?, baseline_release_counts);
 
     drop(backend);
+    // Retirement returns the generation slot to inert; slots are reused, never
+    // dropped, so the role survives with no authority and no authentication.
     admin
         .batch_execute(
-            "DROP SCHEMA authoring_loop_source CASCADE; \
-             DROP SCHEMA catalog CASCADE; \
-             DROP ROLE wamn_authoring_loop_author; \
-             DROP ROLE wamn_scenario_author; \
-             DROP ROLE wamn_app;",
+            &wamn_control_provision::sql::retire_control_author_generation_sql(
+                &database,
+                &author_role,
+            ),
         )
         .await
-        .context("clean authoring-loop schema and roles")?;
+        .context("retire the authoring-loop control-author generation")?;
+    admin
+        .batch_execute(
+            "DROP SCHEMA catalog CASCADE; \
+             DROP SCHEMA wamn_run CASCADE; \
+             DROP SCHEMA wamn_authority CASCADE;",
+        )
+        .await
+        .context("clean the authoring-loop control store")?;
     admin_task.abort();
     Ok(())
 }

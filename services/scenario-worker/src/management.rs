@@ -16,6 +16,7 @@
 use std::convert::Infallible;
 use std::fmt;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context as _;
@@ -40,7 +41,11 @@ use wamn_platform_identity::{
     AuthenticatedPrincipal, PrincipalKind, ProjectRole, authenticate_pat, project_roles,
 };
 
-use crate::authoring::{InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult};
+use wamn_control_provision::parse_control_authoring_url;
+
+use crate::authoring::{
+    ControlAuthoringScope, InternalAuthoringBackend, SaveFlowDraft, SaveFlowDraftResult,
+};
 
 /// The append-only ledger row every authorized management command writes.
 ///
@@ -481,12 +486,23 @@ pub struct ManagementServeArgs {
     pub bind: String,
 
     /// T1 system database holding first-party principals, tokens, and roles.
+    ///
+    /// A SEPARATE identity-read connection (wamn-0h0g.8.18): it is never the
+    /// authoring or report store, and the authoring credential is never used to
+    /// read identity.
     #[arg(long = "system-url", env = "WAMN_SYSTEM_URL")]
     pub system_url: String,
 
-    /// Dedicated host-author credential for the project database.
-    #[arg(long = "authoring-database-url", env = "WAMN_AUTHORING_PG_URL")]
-    pub authoring_database_url: String,
+    /// The SOLE authoring and report connection input: a scoped A/B generation of
+    /// `wamn_control_author` on the CONTROL database (wamn-0h0g.8.18).
+    ///
+    /// There is no project-URL fallback, no dual read, and no dual write. An
+    /// absent or out-of-scope value refuses before any I/O.
+    #[arg(
+        long = "control-authoring-database-url",
+        env = "WAMN_CONTROL_AUTHORING_PG_URL"
+    )]
+    pub control_authoring_database_url: String,
 
     /// Organization whose project roles admit a caller.
     #[arg(long, env = "WAMN_MANAGEMENT_ORG")]
@@ -496,13 +512,48 @@ pub struct ManagementServeArgs {
     #[arg(long, env = "WAMN_MANAGEMENT_PROJECT")]
     pub project: String,
 
+    /// The single environment this surface serves.
+    ///
+    /// One management instance serves exactly one `(org, project, environment)`,
+    /// so this is fixed configuration rather than a per-request choice, and it is
+    /// half of what names the control-author generation this process may use.
+    #[arg(long, env = "WAMN_MANAGEMENT_ENVIRONMENT")]
+    pub environment: String,
+
     /// Fixed authoring tenant the adapter is scoped to.
     #[arg(long, env = "WAMN_MANAGEMENT_TENANT")]
     pub tenant: String,
 
-    /// Project schema containing authoring and run state.
+    /// Control-store schema containing the reservation, case-map, and report
+    /// relations. Unchanged by the residency move.
     #[arg(long, default_value = "wamn_run")]
     pub source_schema: String,
+
+    /// Exact flowrunner component this image ships (wamn-0h0g.15.50).
+    ///
+    /// The minting pod derives the trusted runtime revision every validation pins
+    /// from these bytes, so it must carry them locally. Per the wamn-0h0g.15.4
+    /// verdict flowrunner stays in-image; this is the same stable in-image path
+    /// the executor loads from.
+    #[arg(
+        long = "flowrunner",
+        env = "WAMN_FLOWRUNNER_PATH",
+        default_value = wamn_execution_host::DEFAULT_FLOWRUNNER_PATH
+    )]
+    pub flowrunner: PathBuf,
+}
+
+impl ManagementServeArgs {
+    /// The single management scope this process is bound to.
+    fn control_authoring_scope(&self) -> ControlAuthoringScope {
+        ControlAuthoringScope {
+            org: self.org.clone(),
+            project: self.project.clone(),
+            environment: self.environment.clone(),
+            tenant_id: self.tenant.clone(),
+            source_schema: self.source_schema.clone(),
+        }
+    }
 }
 
 /// Everything one running management surface owns.
@@ -512,31 +563,83 @@ struct Surface {
     query_adapter: UnmountedAuthoringQueryAdapter,
     org: Box<str>,
     project: Box<str>,
+    environment: Box<str>,
     tenant: Box<str>,
 }
 
 impl Surface {
     /// Reconcile a client-selected scope with the fixed scope this surface
-    /// serves. A different project is refused exactly like a bad token.
+    /// serves. A different project or environment is refused exactly like a bad
+    /// token.
+    ///
+    /// The environment is pinned rather than accepted (wamn-0h0g.8.18): one
+    /// management instance serves exactly one `(org, project, environment)`, and
+    /// its control-author generation is named for that triple, so admitting
+    /// another environment would attribute a command to a scope this process
+    /// holds no credential for.
     fn command_scope(&self, project_id: &str, environment: &str) -> Option<CommandScope> {
-        if project_id != self.project.as_ref() || environment.is_empty() {
-            return None;
-        }
-        Some(CommandScope {
-            tenant_id: self.tenant.clone(),
-            org: self.org.clone(),
-            project: self.project.clone(),
-            environment: environment.into(),
-        })
+        reconcile_command_scope(
+            &self.tenant,
+            &self.org,
+            &self.project,
+            &self.environment,
+            project_id,
+            environment,
+        )
     }
 }
 
+/// The scope reconciliation, free of the live connections a [`Surface`] owns so
+/// it can be exercised without one.
+fn reconcile_command_scope(
+    tenant: &str,
+    org: &str,
+    project: &str,
+    environment: &str,
+    requested_project: &str,
+    requested_environment: &str,
+) -> Option<CommandScope> {
+    if requested_project != project || requested_environment != environment {
+        return None;
+    }
+    Some(CommandScope {
+        tenant_id: tenant.into(),
+        org: org.into(),
+        project: project.into(),
+        environment: environment.into(),
+    })
+}
+
 /// Serve the authenticated management authoring surface until the process ends.
+///
+/// The authoring connection input is settled FIRST and PURELY: an absent or
+/// out-of-scope `WAMN_CONTROL_AUTHORING_PG_URL` refuses before this function
+/// opens a file or a socket (wamn-0h0g.8.18).
 pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
+    let scope = args.control_authoring_scope();
+    // The accepted value is deliberately discarded: this call exists to establish
+    // the ORDER, and the backend re-derives it so an in-process caller that never
+    // goes through `serve` is held to the same gate.
+    parse_control_authoring_url(
+        &args.control_authoring_database_url,
+        &scope.org,
+        &scope.project,
+        &scope.environment,
+    )?;
     let address: SocketAddr = args
         .bind
         .parse()
         .with_context(|| format!("invalid management bind address {:?}", args.bind))?;
+    // The first I/O of the process. Reading the component this image ships is
+    // what makes the minting pod able to derive a trusted runtime revision at all
+    // (wamn-0h0g.15.50); an image without it refuses at startup rather than at
+    // the first validate.
+    let flowrunner_bytes = std::fs::read(&args.flowrunner).with_context(|| {
+        format!(
+            "read the in-image flowrunner component {}",
+            args.flowrunner.display()
+        )
+    })?;
     let (identity, connection) = tokio_postgres::connect(&args.system_url, NoTls)
         .await
         .context("connect the T1 system database for identity")?;
@@ -546,9 +649,9 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
         }
     });
     let backend = InternalAuthoringBackend::connect(
-        &args.authoring_database_url,
-        args.tenant.clone(),
-        args.source_schema.clone(),
+        &args.control_authoring_database_url,
+        &scope,
+        flowrunner_bytes,
     )
     .await?;
     let surface = Arc::new(Surface {
@@ -557,6 +660,7 @@ pub async fn serve(args: ManagementServeArgs) -> anyhow::Result<()> {
         query_adapter: UnmountedAuthoringQueryAdapter,
         org: args.org.into_boxed_str(),
         project: args.project.into_boxed_str(),
+        environment: args.environment.into_boxed_str(),
         tenant: args.tenant.into_boxed_str(),
     });
     let listener = TcpListener::bind(address)
@@ -689,11 +793,14 @@ const fn query_kind(query: &AuthoringQuery) -> &'static str {
 /// `wamn-ftfc.22` re-checked each remaining kind against this tree instead of
 /// inheriting the reasons recorded when the route landed:
 ///
-/// - `validate` has a backend, but this surface does not carry the exact loaded
-///   flowrunner bytes from which the host must derive the trusted runtime
-///   revision, and the applied catalog identity is absent from the contract
-///   request. Supplying either from a transport would persist a content-addressed
-///   pin that names no real executable.
+/// - `validate` has a backend, and since wamn-0h0g.15.50 this process does carry
+///   the exact loaded flowrunner bytes the host derives the trusted runtime
+///   revision from — they come from the component this image ships, held on the
+///   backend as process configuration precisely so no transport can choose them.
+///   What is still missing is the applied catalog identity, which the contract
+///   request does not carry; supplying that from a transport would persist a
+///   content-addressed pin against a catalog version nobody observed. Mounting the
+///   route is wamn-0h0g.7.4's.
 /// - `draft-run` has no backend for admitting one arbitrary authored input.
 /// - `publish` has no backend.
 async fn dispatch_command(
@@ -852,6 +959,87 @@ mod tests {
             Some("wamn_pat_abc"),
         ] {
             assert!(bearer(&build(absent)).is_none(), "accepted {absent:?}");
+        }
+    }
+
+    /// wamn-0h0g.8.18: the authoring connection input is settled PURELY, before
+    /// this process opens a file or a socket, and there is no second input it
+    /// could fall back to.
+    #[test]
+    fn the_authoring_connection_input_is_settled_before_any_io() {
+        let source = include_str!("management.rs");
+        let serve = between(source, "pub async fn serve(", "async fn route(");
+        let checked = serve
+            .find("parse_control_authoring_url(")
+            .expect("serve settles the authoring scope");
+        for io in [
+            "std::fs::read(",
+            "tokio_postgres::connect(",
+            "InternalAuthoringBackend::connect(",
+            "TcpListener::bind(",
+        ] {
+            let at = serve
+                .find(io)
+                .unwrap_or_else(|| panic!("serve performs {io}"));
+            assert!(
+                checked < at,
+                "{io} runs before the fail-closed scope check"
+            );
+        }
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        // Exactly one connection is opened here, and it is the identity read. The
+        // authoring credential is the backend's, and there is no third.
+        assert_eq!(
+            implementation.matches("tokio_postgres::connect(").count(),
+            1
+        );
+        assert!(implementation.contains("connect(&args.system_url, NoTls)"));
+        // No fallback, no dual read, no dual write. The project-residency
+        // environment variable and flag are gone, not aliased.
+        for fallback in [
+            "WAMN_AUTHORING_PG_URL",
+            r#""authoring-database-url""#,
+            "unwrap_or(&args.system_url",
+            "unwrap_or_else(|| args.system_url",
+        ] {
+            assert!(!implementation.contains(fallback), "retained {fallback}");
+        }
+    }
+
+    /// One management instance serves exactly one `(org, project, environment)`,
+    /// so a client-selected environment is reconciled, never accepted.
+    #[test]
+    fn one_surface_serves_exactly_one_project_environment() {
+        let admitted =
+            reconcile_command_scope("tenant-a", "acme", "receiving", "dev", "receiving", "dev")
+                .expect("the fixed scope is admitted");
+        assert_eq!(admitted.tenant_id.as_ref(), "tenant-a");
+        assert_eq!(admitted.org.as_ref(), "acme");
+        assert_eq!(admitted.project.as_ref(), "receiving");
+        assert_eq!(admitted.environment.as_ref(), "dev");
+
+        for (project, environment) in [
+            ("receiving", "prod"),
+            ("receiving", "Dev"),
+            ("receiving", ""),
+            ("shipping", "dev"),
+            ("", "dev"),
+        ] {
+            assert!(
+                reconcile_command_scope(
+                    "tenant-a",
+                    "acme",
+                    "receiving",
+                    "dev",
+                    project,
+                    environment
+                )
+                .is_none(),
+                "admitted {project:?}/{environment:?}"
+            );
         }
     }
 
@@ -1284,7 +1472,11 @@ mod tests {
             "/// Everything one running management surface owns",
         );
         assert!(args.contains("WAMN_SYSTEM_URL"));
-        assert!(args.contains("WAMN_AUTHORING_PG_URL"));
+        // wamn-0h0g.8.18: the sole authoring/report input, control database only.
+        // The project-residency variable is gone, not aliased.
+        assert!(args.contains("WAMN_CONTROL_AUTHORING_PG_URL"));
+        assert!(!implementation.contains("WAMN_AUTHORING_PG_URL"));
+        assert_eq!(args.matches("_PG_URL").count(), 1);
         let dispatch = between(
             source,
             "async fn dispatch_command(",

@@ -39,6 +39,14 @@ wamn-control-registry = { workspace = true }
 wamn-pg-core = { workspace = true }
 wamn-run-state = { workspace = true, features = ["effect-writer-credential"] }
 
+# wamn-0h0g.8.18 control_author: the scoped A/B generation role name is a
+# domain-separated digest of (org, project, environment, database), and the
+# fail-closed connection-input check parses that URL without opening it. Pure
+# text and pure hashing — still no DB / K8s / tokio / clock dependency.
+hex = { workspace = true }
+sha2 = { workspace = true }
+url = { workspace = true }
+
 # NO DB / K8s / tokio / clock dependency: the builders are pure text and the
 # renderers are pure JSON. The `provision-project` driver (wamn-ctl) holds the
 # tokio_postgres connection; the optional live-apply gate (tests/provision.rs)

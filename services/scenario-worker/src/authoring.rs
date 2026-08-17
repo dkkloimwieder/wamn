@@ -20,6 +20,7 @@ use wamn_catalog::{
     ValidatedDraftIdentity, ValidatedDraftIdentityInput, execution_bundle_hash,
     read_execution_plan,
 };
+use wamn_control_provision::parse_control_authoring_url;
 use wamn_execution_host::TrustedExecutionRuntimeRevision;
 use wamn_schema_control::BareSchemaName;
 
@@ -27,13 +28,40 @@ use crate::store::drafts;
 #[cfg(test)]
 use crate::store::sha256;
 
+/// Startup authority probe for the CONTROL database's author credential
+/// (wamn-0h0g.8.18).
+///
+/// Every column must be true. The authority CLASS is unchanged from the project
+/// residency this replaced — the same reads, the same
+/// `flow_drafts` SELECT/INSERT/UPDATE, the same append-only facts, the same
+/// reservation and case-map transitions — but the principal is
+/// `wamn_control_author` and the relations live in the control database.
+///
+/// Three legs of the project-residency probe are gone because the relations they
+/// named do not exist in the control store: `catalog.connection_bindings`,
+/// `catalog.connection_instances`, and `catalog.connection_generations` are
+/// project-local after the plane split, and there is no `runs` relation to read
+/// at all — project run observation stays with wamn-0h0g.8.5.
+///
+/// Two legs are new: `wamn_authority` is the third schema this credential may
+/// use (for the tenant resolver alone), and the mapping relation that decides its
+/// tenant must be completely unreachable, so an author cannot re-point itself.
+///
+/// Naming `wamn_authority.author_login_tenants` and
+/// `catalog.release_flow_test_evidence` here also makes the probe structurally
+/// unable to pass against a project database: those relations are absent there,
+/// so the statement errors and the process refuses instead of quietly authoring
+/// into the wrong plane.
+///
+/// Params: `$1` run schema, `$2` reservations, `$3` case runs, `$4` reports,
+/// `$5` the catalog-head bridge signature.
 const AUTHORING_ROLE_PROBE_SQL: &str = "\
 WITH session_role AS ( \
     SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
       FROM pg_catalog.pg_roles WHERE rolname = session_user \
 ), author_role AS ( \
     SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls \
-      FROM pg_catalog.pg_roles WHERE rolname = 'wamn_scenario_author' \
+      FROM pg_catalog.pg_roles WHERE rolname = 'wamn_control_author' \
 ), allowed_mutation(schema_name, table_name, privilege) AS ( \
     VALUES ('catalog', 'flow_drafts', 'INSERT'), \
            ('catalog', 'flow_drafts', 'UPDATE'), \
@@ -53,27 +81,34 @@ SELECT current_user = session_user, \
        COALESCE(NOT author_role.rolcanlogin AND NOT author_role.rolsuper \
                 AND NOT author_role.rolcreatedb AND NOT author_role.rolcreaterole \
                 AND NOT author_role.rolreplication AND NOT author_role.rolbypassrls, false), \
-       pg_catalog.pg_has_role(session_user, 'wamn_scenario_author', 'MEMBER'), \
-       pg_catalog.pg_has_role(session_user, 'wamn_scenario_author', 'USAGE'), \
-       NOT pg_catalog.pg_has_role(session_user, 'wamn_app', 'MEMBER'), \
-       NOT pg_catalog.pg_has_role(session_user, 'wamn_app', 'USAGE'), \
+       pg_catalog.pg_has_role(session_user, 'wamn_control_author', 'MEMBER'), \
+       pg_catalog.pg_has_role(session_user, 'wamn_control_author', 'USAGE'), \
+       NOT COALESCE((SELECT pg_catalog.pg_has_role(session_user, guest.oid, 'USAGE') \
+                       FROM pg_catalog.pg_roles AS guest \
+                      WHERE guest.rolname = 'wamn_app'), false), \
+       NOT COALESCE((SELECT pg_catalog.pg_has_role(session_user, project_author.oid, 'USAGE') \
+                       FROM pg_catalog.pg_roles AS project_author \
+                      WHERE project_author.rolname = 'wamn_scenario_author'), false), \
        pg_catalog.has_schema_privilege(current_user, 'catalog', 'USAGE'), \
        pg_catalog.has_schema_privilege(current_user, $1, 'USAGE'), \
+       pg_catalog.has_schema_privilege(current_user, 'wamn_authority', 'USAGE'), \
        NOT pg_catalog.has_schema_privilege(current_user, 'catalog', 'CREATE'), \
        NOT pg_catalog.has_schema_privilege(current_user, $1, 'CREATE'), \
+       NOT pg_catalog.has_schema_privilege(current_user, 'wamn_authority', 'CREATE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.catalog_heads', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.release_flows', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.release_manifests', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_artifacts', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.connection_requirements', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.connection_bindings', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.connection_instances', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.connection_generations', 'SELECT'), \
+         AND pg_catalog.has_table_privilege(current_user, 'catalog.connection_requirements', 'SELECT'), \
+       NOT pg_catalog.has_table_privilege(current_user, 'catalog.catalog_heads', 'UPDATE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'UPDATE'), \
+         AND pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.flow_drafts', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'INSERT'), \
+         AND pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.validated_flow_drafts', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'INSERT') \
          AND NOT pg_catalog.has_table_privilege(current_user, 'catalog.execution_bundles', 'UPDATE') \
@@ -99,28 +134,42 @@ SELECT current_user = session_user, \
              current_user, 'catalog.authoring_command_audit', 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, $2, 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, $2, 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, $2, 'UPDATE'), \
+         AND pg_catalog.has_table_privilege(current_user, $2, 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, $2, 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, $3, 'SELECT') \
          AND pg_catalog.has_table_privilege(current_user, $3, 'INSERT') \
-         AND pg_catalog.has_table_privilege(current_user, $3, 'UPDATE'), \
+         AND pg_catalog.has_table_privilege(current_user, $3, 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, $3, 'DELETE'), \
        pg_catalog.has_table_privilege(current_user, $4, 'SELECT') \
-         AND pg_catalog.has_table_privilege(current_user, $4, 'INSERT'), \
+         AND pg_catalog.has_table_privilege(current_user, $4, 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege(current_user, $4, 'UPDATE') \
+         AND NOT pg_catalog.has_table_privilege(current_user, $4, 'DELETE'), \
        pg_catalog.has_function_privilege(current_user, $5, 'EXECUTE'), \
-       pg_catalog.has_table_privilege(current_user, $6, 'SELECT') \
-         AND NOT EXISTS ( \
-             SELECT 1 \
-               FROM pg_catalog.unnest( \
-                   ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
-                    AS run_mutation(privilege) \
-              WHERE pg_catalog.has_table_privilege( \
-                  current_user, $6, run_mutation.privilege) \
-                 OR (run_mutation.privilege IN ('INSERT','UPDATE','REFERENCES') \
-                     AND pg_catalog.has_any_column_privilege( \
-                         current_user, $6, run_mutation.privilege)) \
-         ), \
+       pg_catalog.has_function_privilege( \
+           current_user, 'wamn_authority.session_author_tenant()', 'EXECUTE'), \
+       NOT EXISTS ( \
+           SELECT 1 FROM pg_catalog.unnest( \
+               ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
+                AS mapping_privilege(privilege) \
+            WHERE pg_catalog.has_table_privilege( \
+                current_user, 'wamn_authority.author_login_tenants', \
+                mapping_privilege.privilege) \
+               OR (mapping_privilege.privilege IN ('SELECT','INSERT','UPDATE','REFERENCES') \
+                   AND pg_catalog.has_any_column_privilege( \
+                       current_user, 'wamn_authority.author_login_tenants', \
+                       mapping_privilege.privilege)) \
+       ), \
+       NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.release_flow_test_evidence', 'SELECT') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.release_flow_test_evidence', 'INSERT') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.deployment_attestations', 'SELECT') \
+         AND NOT pg_catalog.has_table_privilege( \
+             current_user, 'catalog.deployment_attestations', 'INSERT'), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_roles AS role \
-            WHERE role.rolname NOT IN (session_user, 'wamn_scenario_author') \
+            WHERE role.rolname NOT IN (session_user, 'wamn_control_author') \
               AND pg_catalog.pg_has_role(session_user, role.oid, 'MEMBER') \
        ), \
        NOT EXISTS ( \
@@ -130,7 +179,7 @@ SELECT current_user = session_user, \
              CROSS JOIN pg_catalog.unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']) \
                   AS candidate(privilege) \
             WHERE relation.relkind IN ('r','p') \
-              AND namespace.nspname IN ('catalog', $1) \
+              AND namespace.nspname IN ('catalog', $1, 'wamn_authority') \
               AND (pg_catalog.has_table_privilege(current_user, relation.oid, candidate.privilege) \
                    OR (candidate.privilege IN ('INSERT','UPDATE','REFERENCES') \
                        AND pg_catalog.has_any_column_privilege( \
@@ -148,23 +197,38 @@ SELECT current_user = session_user, \
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_namespace \
-            WHERE nspname IN ('catalog', $1) AND nspowner = session_role.oid \
+            WHERE nspname IN ('catalog', $1, 'wamn_authority') \
+              AND nspowner = session_role.oid \
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_class AS relation \
            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace \
-            WHERE namespace.nspname IN ('catalog', $1) \
+            WHERE namespace.nspname IN ('catalog', $1, 'wamn_authority') \
               AND relation.relkind IN ('r', 'p') \
               AND relation.relowner = session_role.oid \
        ), \
        NOT EXISTS ( \
            SELECT 1 FROM pg_catalog.pg_proc AS routine \
            JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = routine.pronamespace \
-            WHERE namespace.nspname IN ('catalog', $1) \
+            WHERE namespace.nspname IN ('catalog', $1, 'wamn_authority') \
               AND routine.proowner = session_role.oid \
        ) \
   FROM session_role CROSS JOIN author_role";
 
+/// The database-authoritative tenant binding, checked separately from the
+/// authority probe so each refusal is attributable.
+///
+/// The mapping — not the caller-set `app.tenant` — decides which tenant this
+/// login may reach. An unmapped login resolves NULL, so the comparison is NULL
+/// and the process refuses.
+const AUTHORING_TENANT_BINDING_SQL: &str =
+    "SELECT wamn_authority.session_author_tenant() = $1";
+
+/// `app.tenant` is retained as a CONSISTENCY ASSERTION ONLY (wamn-0h0g.8.18).
+///
+/// It still has to agree with the mapping for any row to be visible, because the
+/// permissive tenant policy reads it, but it cannot widen anything: the
+/// restrictive author policy is ANDed on top and resolves through `session_user`.
 const AUTHORING_SCOPE_SQL: &str = "SELECT \
     pg_catalog.set_config('app.tenant', $1, false), \
     pg_catalog.set_config('search_path', $2, false)";
@@ -185,42 +249,85 @@ impl InternalDevAdmin {
     }
 }
 
+/// The one management scope a control authoring connection is admitted for.
+///
+/// One management process serves exactly one `(org, project, environment)`
+/// (wamn-0h0g.8.18), and that scope together with the database the connection
+/// input names fully determines the A/B generation role it must authenticate as.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ControlAuthoringScope {
+    pub org: String,
+    pub project: String,
+    pub environment: String,
+    /// The tenant this process authors for. The database mapping is
+    /// authoritative; this is the value the mapping has to agree with, and
+    /// disagreement refuses at startup rather than authoring for someone else.
+    pub tenant_id: String,
+    /// Schema carrying the reservation, case-map, and report relations. The
+    /// qualified names are unchanged by the residency move: database residency,
+    /// not a renamed schema, distinguishes the two stores.
+    pub source_schema: String,
+}
+
 /// Trusted process-local adapter for the typed authoring commands and queries.
 ///
-/// It owns a dedicated host-author database connection, a fixed tenant, and a
-/// validated run-plane schema. The private capability token is never returned
-/// to callers.
+/// It owns a dedicated CONTROL-database author connection, a fixed tenant, a
+/// validated run-plane schema, and the exact flowrunner bytes this image ships.
+/// The private capability token is never returned to callers.
 pub struct InternalAuthoringBackend {
     authority: InternalDevAdmin,
     client: Client,
     connection_task: tokio::task::JoinHandle<()>,
     tenant_id: Box<str>,
     source_schema: BareSchemaName,
+    /// Exact flowrunner bytes loaded once from this process's own image
+    /// (wamn-0h0g.15.50). They are process configuration, not a per-command
+    /// input: a transport that supplied them could pin a content-addressed
+    /// revision naming no real executable.
+    flowrunner_bytes: Vec<u8>,
 }
 
 impl InternalAuthoringBackend {
-    /// Connect using a credential that has only the inherited, host-side
-    /// `wamn_scenario_author` authority for one fixed tenant/run schema.
+    /// Connect the sole authoring/report credential: a scoped A/B generation of
+    /// `wamn_control_author` on the CONTROL database.
+    ///
+    /// Fails closed BEFORE ANY I/O when the connection input is absent or out of
+    /// scope: [`parse_control_authoring_url`] is pure, and it runs before the
+    /// tenant and schema validators and before `tokio_postgres::connect`. There is
+    /// no project-URL fallback, no dual read, and no dual write — this is the one
+    /// connection, and `WAMN_SYSTEM_URL` remains a separate identity-read
+    /// connection the caller owns.
     pub async fn connect(
-        authoring_database_url: &str,
-        tenant_id: impl Into<String>,
-        source_schema: impl Into<String>,
+        control_authoring_database_url: &str,
+        scope: &ControlAuthoringScope,
+        flowrunner_bytes: Vec<u8>,
     ) -> anyhow::Result<Self> {
-        if authoring_database_url.is_empty() {
-            bail!("authoring database URL must not be empty");
-        }
-        let tenant_id = tenant_id.into();
-        if !wamn_control_registry::identifiers::valid_tenant(&tenant_id) {
+        let connection = parse_control_authoring_url(
+            control_authoring_database_url,
+            &scope.org,
+            &scope.project,
+            &scope.environment,
+        )?;
+        if !wamn_control_registry::identifiers::valid_tenant(&scope.tenant_id) {
             bail!("invalid fixed authoring tenant identity");
         }
-        let source_schema = BareSchemaName::new(source_schema.into())
+        let source_schema = BareSchemaName::new(scope.source_schema.clone())
             .context("invalid fixed authoring run schema")?;
-        let (client, connection) = tokio_postgres::connect(authoring_database_url, NoTls)
+        if flowrunner_bytes.is_empty() {
+            bail!("flowrunner component bytes must not be empty");
+        }
+        tracing::info!(
+            database = connection.database(),
+            role = connection.role(),
+            generation = connection.generation().as_str(),
+            "control authoring credential accepted"
+        );
+        let (client, driver) = tokio_postgres::connect(control_authoring_database_url, NoTls)
             .await
-            .context("connect dedicated authoring database credential")?;
+            .context("connect dedicated control authoring database credential")?;
         let connection_task = tokio::spawn(async move {
-            if let Err(error) = connection.await {
-                tracing::error!(%error, "authoring database connection failed");
+            if let Err(error) = driver.await {
+                tracing::error!(%error, "control authoring database connection failed");
             }
         });
         client
@@ -234,7 +341,6 @@ impl InternalAuthoringBackend {
         let reservations = qualified("authoring_test_run_reservations");
         let case_runs = qualified("authoring_test_case_runs");
         let reports = qualified("authoring_test_reports");
-        let runs = qualified("runs");
         let lock_catalog_head = format!(
             "{}.lock_catalog_head(text,text,text)",
             source_schema.as_str()
@@ -248,11 +354,10 @@ impl InternalAuthoringBackend {
                     &case_runs,
                     &reports,
                     &lock_catalog_head,
-                    &runs,
                 ],
             )
             .await
-            .context("verify effective dedicated authoring authority")?;
+            .context("verify effective dedicated control authoring authority")?;
         for index in 0..role_row.len() {
             if !role_row
                 .try_get::<_, Option<bool>>(index)
@@ -265,12 +370,24 @@ impl InternalAuthoringBackend {
                 );
             }
         }
+        // Tenant authority is the owner-maintained mapping, never `app.tenant`.
+        let bound = client
+            .query_one(AUTHORING_TENANT_BINDING_SQL, &[&scope.tenant_id])
+            .await
+            .context("resolve the control author's mapped tenant")?
+            .try_get::<_, Option<bool>>(0)
+            .context("decode the control author's mapped tenant")?;
+        if bound != Some(true) {
+            connection_task.abort();
+            bail!("control author login is not mapped to this process's fixed tenant");
+        }
         let backend = Self {
             authority: InternalDevAdmin::at_process_boundary(),
             client,
             connection_task,
-            tenant_id: tenant_id.into_boxed_str(),
+            tenant_id: scope.tenant_id.clone().into_boxed_str(),
             source_schema,
+            flowrunner_bytes,
         };
         backend.scope().await?;
         Ok(backend)
@@ -438,14 +555,26 @@ impl InternalAuthoringBackend {
     }
 
     /// Validate one exact draft revision and persist its executable identity.
+    ///
+    /// The flowrunner bytes the trusted runtime revision is derived from are the
+    /// ones this process loaded from its own image at startup (wamn-0h0g.15.50),
+    /// not a per-call input: a caller that could choose them could pin a
+    /// content-addressed revision naming no real executable.
     pub async fn validate_flow_draft(
         &mut self,
         request: &ValidateFlowDraft,
-        flowrunner_bytes: &[u8],
     ) -> anyhow::Result<Result<ValidatedDraftPin, DraftRunRefusal>> {
         self.require_tenant(&request.tenant_id)?;
         self.scope().await?;
-        validate_flow_draft(&self.authority, &mut self.client, request, flowrunner_bytes).await
+        // Split the borrow: the statement path needs `&mut self.client` while the
+        // immutable bytes are read from the same `self`.
+        let Self {
+            authority,
+            client,
+            flowrunner_bytes,
+            ..
+        } = self;
+        validate_flow_draft(authority, client, request, flowrunner_bytes.as_slice()).await
     }
 }
 
@@ -1093,16 +1222,96 @@ mod tests {
         assert!(!token.contains("subject"));
     }
 
+    /// wamn-0h0g.8.18: the probe targets the CONTROL author, and structurally
+    /// cannot pass against a project database or admit another plane's role.
     #[test]
-    fn authoring_probe_rejects_app_authority_and_every_protected_ownership_plane() {
+    fn authoring_probe_targets_the_control_author_and_no_other_plane() {
+        // The principal moved; the authority class did not.
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("rolname = 'wamn_control_author'"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
-                .contains("NOT pg_catalog.pg_has_role(session_user, 'wamn_app', 'MEMBER')")
+                .contains("pg_catalog.pg_has_role(session_user, 'wamn_control_author', 'MEMBER')")
         );
         assert!(
             AUTHORING_ROLE_PROBE_SQL
-                .contains("NOT pg_catalog.pg_has_role(session_user, 'wamn_app', 'USAGE')")
+                .contains("role.rolname NOT IN (session_user, 'wamn_control_author')")
         );
+        // The project plane's author role is never reused here, and the guest role
+        // is denied. Both checks are existence-safe, because roles are
+        // cluster-global and a control-only cluster need not carry either.
+        for denied in ["'wamn_app'", "'wamn_scenario_author'"] {
+            assert!(
+                AUTHORING_ROLE_PROBE_SQL.contains(&format!("WHERE guest.rolname = {denied}"))
+                    || AUTHORING_ROLE_PROBE_SQL
+                        .contains(&format!("WHERE project_author.rolname = {denied}")),
+                "the probe stopped denying {denied}"
+            );
+        }
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("pg_has_role(session_user, 'wamn_app'"));
+        assert!(
+            !AUTHORING_ROLE_PROBE_SQL.contains("pg_has_role(session_user, 'wamn_scenario_author'")
+        );
+
+        // Relations that only a PROJECT database has are gone: reading them would
+        // have made the control credential impossible to admit.
+        for project_local in [
+            "catalog.connection_bindings",
+            "catalog.connection_instances",
+            "catalog.connection_generations",
+            "'runs'",
+            ".runs",
+        ] {
+            assert!(
+                !AUTHORING_ROLE_PROBE_SQL.contains(project_local),
+                "the control probe still reads project-local {project_local}"
+            );
+        }
+        // Conversely, relations only a CONTROL database has are named, so the probe
+        // errors rather than admitting a project connection.
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.author_login_tenants'")
+                && AUTHORING_ROLE_PROBE_SQL.contains("'catalog.release_flow_test_evidence'")
+        );
+        // Tenant authority is not self-service: no privilege at all on the mapping.
+        assert!(AUTHORING_ROLE_PROBE_SQL.contains("mapping_privilege.privilege"));
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL.contains(
+                "ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER']"
+            )
+        );
+        // The resolver is reachable; the mapped tenant is checked separately so a
+        // missing mapping and a missing privilege are distinguishable failures.
+        assert!(
+            AUTHORING_ROLE_PROBE_SQL.contains("'wamn_authority.session_author_tenant()', 'EXECUTE'")
+        );
+        assert_eq!(
+            AUTHORING_TENANT_BINDING_SQL,
+            "SELECT wamn_authority.session_author_tenant() = $1"
+        );
+        assert!(!AUTHORING_TENANT_BINDING_SQL.contains("app.tenant"));
+        // Neither publisher relation is readable, let alone writable. Compared on
+        // whitespace-normalized text so line wrapping is not load-bearing.
+        let probe = AUTHORING_ROLE_PROBE_SQL
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for withheld in [
+            "'catalog.release_flow_test_evidence', 'SELECT'",
+            "'catalog.release_flow_test_evidence', 'INSERT'",
+            "'catalog.deployment_attestations', 'SELECT'",
+            "'catalog.deployment_attestations', 'INSERT'",
+        ] {
+            assert!(
+                probe.contains(&format!(
+                    "NOT pg_catalog.has_table_privilege( current_user, {withheld})"
+                )),
+                "the probe stopped denying {withheld}"
+            );
+        }
+        // The head pointer moves only through the narrow bridge.
+        assert!(probe.contains(
+            "NOT pg_catalog.has_table_privilege(current_user, 'catalog.catalog_heads', 'UPDATE')"
+        ));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_database"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("pg_catalog.pg_namespace"));
         assert!(AUTHORING_ROLE_PROBE_SQL.contains("relation.relowner = session_role.oid"));
@@ -1120,7 +1329,9 @@ mod tests {
                 .contains("('catalog', 'draft_safe_connection_grants', 'UPDATE')")
         );
         assert!(!AUTHORING_ROLE_PROBE_SQL.contains("authoring_test_sets"));
-        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$7"));
+        // The `runs` leg went with project residency: there is no sixth parameter.
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("$6"));
+        assert!(!AUTHORING_ROLE_PROBE_SQL.contains("run_mutation"));
         assert!(
             AUTHORING_ROLE_PROBE_SQL
                 .contains("pg_catalog.has_table_privilege(current_user, $3, 'UPDATE')")

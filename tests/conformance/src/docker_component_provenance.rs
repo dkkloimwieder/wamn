@@ -58,6 +58,13 @@ fn every_embedded_component_comes_from_the_locked_builder() {
             "/component-output/flowrunner.wasm",
             "/components/flowrunner.wasm",
         ),
+        // wamn-0h0g.15.50: the MINTING pod carries the same locked-builder
+        // component at the same path, so the executor and the scenario-worker
+        // agree on the digest by construction.
+        (
+            "/component-output/flowrunner.wasm",
+            "/components/flowrunner.wasm",
+        ),
         (
             "/component-output/materializer.wasm",
             "/bench/materializer.wasm",

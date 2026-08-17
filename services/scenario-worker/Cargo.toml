@@ -8,6 +8,11 @@ license.workspace = true
 [dependencies]
 wamn-authoring-model = { workspace = true }
 wamn-catalog = { workspace = true }
+# wamn-0h0g.8.18: the scoped control-author credential contract. Default features
+# only — the pure naming and connection-input validators, no `ops` surface, no DB
+# or K8s client. Both sides of the credential must derive the same generation
+# name, so the contract lives in one crate rather than being restated here.
+wamn-control-provision = { workspace = true }
 wamn-control-registry = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-platform-identity = { workspace = true }
@@ -31,3 +36,7 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["io-util", "time"] }
+# The live gates authenticate AS the scoped control-author generation (the tenant
+# mapping resolves on `session_user`, which `SET ROLE` does not change), so they
+# rewrite the admin URL's identity rather than taking a second URL input.
+url = { workspace = true }
