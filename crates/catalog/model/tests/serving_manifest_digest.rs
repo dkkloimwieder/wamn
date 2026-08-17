@@ -146,11 +146,11 @@ fn manifest_preimage_bytes_are_pinned() {
 ///
 /// This is the producer-coupling proof. The weld derives identity by calling
 /// [`ServingManifest::digest`], which is
-/// [`wamn_flow::canonical_json_sha256`] and nothing else — never the workspace's
-/// second canonicalizer (`crate::canonical_serialized`, ryu-js, for
-/// identity-frame hashing), and never a local re-implementation of RFC 8785. So a
-/// producer revision cannot silently fork reader-side identity: it would move
-/// this literal.
+/// [`wamn_flow::canonical_json_sha256`] and nothing else — and since
+/// `wamn-0h0g.15.63` collapsed the workspace's second RFC 8785 implementation
+/// into that one, there is no other producer left to reach for. So a producer
+/// revision cannot silently fork reader-side identity: it would move this
+/// literal.
 ///
 /// The mint (`wamn-0h0g.15.14`) owns the other side and must record exactly this
 /// digest for exactly this manifest. Until the mint exists there is nothing to

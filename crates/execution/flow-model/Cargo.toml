@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+serde_json = { workspace = true, features = ["float_roundtrip"] }
 # The published JSON Schema contract (docs/archive/contracts/flow-schema.schema.json) is GENERATED
 # from these types (single source of truth); a drift test keeps them in lockstep.
 schemars = { workspace = true }

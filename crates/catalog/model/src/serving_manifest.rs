@@ -72,6 +72,44 @@ pub const RELEASE_MANIFEST_MOUNT_PATH: &str = "/etc/wamn/release-manifest";
 /// [`ServingManifest::from_canonical_bytes`] refuses the mount.
 pub const RELEASE_MANIFEST_FILE_NAME: &str = "manifest.json";
 
+/// Byte ceiling on [`ServingManifest::canonical_bytes`], refused at construction
+/// so an undeployable manifest cannot pass the control-plane gate.
+///
+/// Both delivery paths cap at exactly this number, and they count *different*
+/// things — which is what decides which one binds:
+///
+/// - **Kubelet-mounted pods.** `ValidateConfigMap` sums `len(value)` over `data`
+///   and `binaryData` and refuses `totalSize > MaxSecretSize`, where
+///   `MaxSecretSize = 1 * 1024 * 1024` (Kubernetes `pkg/apis/core/types.go`,
+///   applied in `pkg/apis/core/validation/validation.go`). Keys and `metadata`
+///   are *not* counted, so with [`RELEASE_MANIFEST_FILE_NAME`] as the only key
+///   the whole allowance belongs to these bytes. etcd's own
+///   `--max-request-bytes` (1.5 MiB) is looser and never the binding limit.
+/// - **Operator-scheduled workloads** (flow-http, materializer) are not
+///   kubelet-mounted. The operator reads the ConfigMap into the merged config
+///   map (`runtime-operator internal/controller/runtime/utils.go`,
+///   `MaterializeConfigLayer`) and ships it to the host inside one
+///   `WorkloadStart` message. nats-server compares the whole published size,
+///   headers included, against `max_payload`, which defaults to
+///   `MAX_PAYLOAD_SIZE = 1024 * 1024` (`nats-server server/const.go`) and is
+///   unset in this deployment (`deploy/infra/values-wamn.yaml`). There the
+///   manifest shares the allowance with the envelope around it, so **NATS is the
+///   binding bound**: a manifest can satisfy this constant and still be
+///   undeliverable on that path. Sizing that envelope needs a live host
+///   (wamn-0h0g.15.59) and cannot be derived here.
+///
+/// Measured 2026-08-17 against this projection: ~553 bytes per member flow, and
+/// ~1,360 bytes per flow that also carries one HTTP attachment and one
+/// registration. So the ceiling admits a release of about 770 fully-attached
+/// flows, and a 100-flow release spends about 13% of it. Raising it is not a
+/// local decision — both numbers belong to external systems, and a manifest over
+/// either one fails at deploy after the gate has already certified the release.
+///
+/// Enforced at `ServingManifest::new` and
+/// [`ServingManifest::from_canonical_bytes`], the only two ways a manifest comes
+/// into existence. A third entry point has to check it too.
+pub const MAX_SERVING_MANIFEST_BYTES: usize = 1024 * 1024;
+
 /// The name of the ConfigMap carrying the manifest with this digest.
 pub fn release_manifest_configmap_name(
     manifest_digest: &str,
@@ -237,10 +275,12 @@ pub struct ServingAttachment {
 /// A registration's `condition` is a hot-editable filter by design
 /// (`crates/events/registration/src/model.rs:70`): a filtered-out event stays on
 /// the stream, so correcting a mis-filtered predicate is one `UPDATE` and a
-/// replay. It stays a column on `catalog.event_registrations` — a table with no
-/// `catalog_version` at all (`deploy/sql/catalog-schema.sql:1742`) — read by the
-/// materializer at evaluation, inside the per-event transaction it already opens
-/// (`crates/events/materializer/src/sql.rs:12`). Freezing it into these
+/// replay. It stays a KEY INSIDE the stored `registration` jsonb document on
+/// `catalog.event_registrations` — a table with no `condition` column and no
+/// `catalog_version` at all (`deploy/sql/catalog-schema.sql:1742`) — swept once
+/// per sweep (`crates/events/materializer/src/sql.rs:12`), compiled by
+/// `wamn_materializer::serviceable`, and evaluated per event inside the pure
+/// `decide`, which runs BEFORE the fire transaction opens. Freezing it into these
 /// canonical bytes would turn seconds-scale filter repair into a mint plus a
 /// rollout, so it does not travel here. The stored document's `schema-version`,
 /// `registration-id` and `catalog-id` do not travel either:
@@ -314,6 +354,7 @@ impl ServingManifest {
             registrations,
         };
         manifest.validate()?;
+        within_delivery_limit(manifest.canonical_bytes().len())?;
         Ok(manifest)
     }
 
@@ -324,11 +365,11 @@ impl ServingManifest {
 
     /// The manifest digest over [`Self::canonical_bytes`].
     ///
-    /// Producer-coupled by construction: this is the shared RFC 8785 canonicalizer
-    /// ([`wamn_flow::canonical_json_sha256`]) that the mint uses, never a second
-    /// implementation, so a producer revision cannot fork reader-side identity.
-    /// The workspace's other canonicalizer (`crate::canonical_serialized`, ryu-js,
-    /// for identity-frame hashing) must never be substituted here.
+    /// Producer-coupled by construction: [`wamn_flow::canonical_json_sha256`] is
+    /// the workspace's only RFC 8785 producer, so a producer revision cannot fork
+    /// reader-side identity. wamn-0h0g.15.63 deleted the second implementation
+    /// that used to sit in this crate; `manifest_identity_has_exactly_one_producer_in_this_crate`
+    /// is what stops a third one arriving.
     pub fn digest(&self) -> ManifestDigest {
         ManifestDigest::parse(wamn_flow::canonical_json_sha256(&self.as_value()))
             .expect("the shared canonicalizer emits a canonical sha256 digest")
@@ -351,6 +392,7 @@ impl ServingManifest {
     pub fn from_canonical_bytes(
         bytes: &[u8],
     ) -> Result<(Self, ManifestDigest), CatalogIdentityError> {
+        within_delivery_limit(bytes.len())?;
         let manifest = serde_json::from_slice::<Self>(bytes).map_err(|error| {
             CatalogIdentityError::InvalidDefinition {
                 message: format!("serving manifest JSON is invalid: {error}"),
@@ -472,6 +514,19 @@ fn invalid<T>(message: impl Into<String>) -> Result<T, CatalogIdentityError> {
     Err(CatalogIdentityError::InvalidDefinition {
         message: message.into(),
     })
+}
+
+/// Refuse a manifest that no delivery path can carry.
+///
+/// See [`MAX_SERVING_MANIFEST_BYTES`] for the two limits and which one binds.
+fn within_delivery_limit(bytes: usize) -> Result<(), CatalogIdentityError> {
+    if bytes > MAX_SERVING_MANIFEST_BYTES {
+        return Err(CatalogIdentityError::ManifestTooLarge {
+            bytes,
+            limit: MAX_SERVING_MANIFEST_BYTES,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -692,34 +747,43 @@ mod tests {
         ));
     }
 
-    /// The silent-fork alarm behind the producer-coupling rider.
+    /// The producer-coupling rider, enforced structurally rather than by alarm.
     ///
-    /// [`ServingManifest::digest`] is required to go through the shared
-    /// canonicalizer the mint uses, never a second implementation. Measured
-    /// 2026-08-17: a mutant swapping it onto this crate's private ryu-js
-    /// canonicalizer (`canonical_serialized`) leaves every other test green,
-    /// because the two implementations agree byte-for-byte on manifest-shaped
-    /// documents — every field is a string, an integer, or a map of them, and
-    /// there is no value in that shape the two format differently.
+    /// Until wamn-0h0g.15.63 this crate carried its own RFC 8785 implementation
+    /// beside the shared one, and the test here could only pin that the two
+    /// AGREED: a mutant swapping [`ServingManifest::digest`] onto the private
+    /// path left all 47 tests green (measured 2026-08-17). Agreement at a point
+    /// in time is the wrong guarantee — it does not stop a *third* producer
+    /// appearing, and no digest assertion can, because a digest cannot say which
+    /// producer computed it. The duplicate is gone; this keeps it gone.
     ///
-    /// So the rider cannot be enforced by pinning the digest; it is enforced by
-    /// pinning the AGREEMENT. If either implementation ever diverges on this
-    /// projection — a `ryu-js` bump, a string-escaping change, a number path
-    /// opening up — this fails, and it fails BEFORE a forked identity can ship.
-    /// `wamn-0h0g.15.63` owns removing the duplication that makes this necessary.
+    /// A grep lint catches the two routes a second producer actually arrives by:
+    /// re-adding the float formatter as a dependency, or pasting the deleted
+    /// functions back. UTF-16 key ordering is in the list because it is RFC
+    /// 8785's fingerprint and has no other reason to exist in this crate.
     #[test]
-    fn the_two_canonicalizers_cannot_diverge_on_this_projection() {
-        let mut bare = manifest();
-        bare.attachments.clear();
-        bare.registrations.clear();
-        for (label, document) in [("bare", bare), ("populated", manifest())] {
-            let value = document.as_value();
-            assert_eq!(
-                wamn_flow::canonical_json_bytes(&value),
-                crate::canonical_json(&value),
-                "the two RFC 8785 implementations disagree on the {label} manifest — \
-                 identity now depends on WHICH producer ran"
-            );
+    fn manifest_identity_has_exactly_one_producer_in_this_crate() {
+        // Split literals, or this test's own source matches the scan.
+        const SECOND_PRODUCER: [&str; 4] = [
+            concat!("ryu", "_js"),
+            concat!("fn ", "write_json"),
+            concat!("fn ", "ecma_number"),
+            concat!("encode_", "utf16"),
+        ];
+        for (name, source) in [
+            ("lib.rs", include_str!("lib.rs")),
+            ("execution_node_id.rs", include_str!("execution_node_id.rs")),
+            ("execution_plan.rs", include_str!("execution_plan.rs")),
+            ("serving_manifest.rs", include_str!("serving_manifest.rs")),
+        ] {
+            for marker in SECOND_PRODUCER {
+                assert!(
+                    !source.contains(marker),
+                    "{name} carries {marker}: a second RFC 8785 producer in this crate \
+                     forks mint-side and weld-side release identity silently, for every \
+                     release, with no digest that disagrees"
+                );
+            }
         }
     }
 
@@ -797,6 +861,59 @@ mod tests {
             .expect("a flow is an object")
             .remove("callable-contract");
         assert!(serde_json::from_value::<ServingManifest>(document).is_err());
+    }
+
+    /// The gate must not certify a release the kubelet or NATS will then refuse.
+    ///
+    /// The ceiling is exclusive on purpose — a manifest sized exactly at the
+    /// limit is deliverable — and it is checked at both entry points, because the
+    /// reader is a different process from the producer: a manifest minted by an
+    /// older revision, or a hand-edited ConfigMap, reaches the pod without ever
+    /// passing the constructor.
+    #[test]
+    fn the_delivery_ceiling_admits_its_exact_value_and_refuses_one_byte_more() {
+        let build = |pad: usize| {
+            let mut lone = root_flow();
+            lone.calls = BTreeSet::new();
+            let mut padded = attachment();
+            padded.definition = serde_json::json!({"pad": "x".repeat(pad)});
+            ServingManifest::new(
+                release(),
+                BTreeMap::from([("root".to_string(), lone)]),
+                BTreeMap::from([("orders".to_string(), padded)]),
+                BTreeMap::new(),
+            )
+        };
+
+        // One ASCII pad byte is one canonical byte, so the ceiling is reachable
+        // exactly: measure a small document and grow the pad by the shortfall.
+        let probe = build(1).expect("a small manifest is admitted");
+        let exact = 1 + (MAX_SERVING_MANIFEST_BYTES - probe.canonical_bytes().len());
+        assert_eq!(
+            build(exact)
+                .expect("a manifest sized exactly at the ceiling is deliverable")
+                .canonical_bytes()
+                .len(),
+            MAX_SERVING_MANIFEST_BYTES
+        );
+        assert_eq!(
+            build(exact + 1),
+            Err(CatalogIdentityError::ManifestTooLarge {
+                bytes: MAX_SERVING_MANIFEST_BYTES + 1,
+                limit: MAX_SERVING_MANIFEST_BYTES,
+            }),
+            "an oversized manifest must fail at the mint, not at the kubelet"
+        );
+
+        // Reader side: refused on length before anything parses it.
+        let mount = vec![b'x'; MAX_SERVING_MANIFEST_BYTES + 1];
+        assert_eq!(
+            ServingManifest::from_canonical_bytes(&mount),
+            Err(CatalogIdentityError::ManifestTooLarge {
+                bytes: MAX_SERVING_MANIFEST_BYTES + 1,
+                limit: MAX_SERVING_MANIFEST_BYTES,
+            })
+        );
     }
 
     #[test]

@@ -243,6 +243,30 @@ mod tests {
         assert_eq!(ecma_number(4.50), "4.5");
     }
 
+    /// Digit *generation*, as distinct from the fixed/scientific shape rules
+    /// above.
+    ///
+    /// [`ecma_number`] rearranges the digits `serde_json` produced rather than
+    /// generating its own, so RFC 8785 conformance rests on that formatter
+    /// emitting the shortest digits that round-trip. `serde_json` swapped
+    /// implementations underneath this (`ryu` to `zmij`) in a patch release, and
+    /// this crate is now the workspace's only RFC 8785 producer
+    /// (wamn-0h0g.15.63), so the vector is values a not-quite-shortest formatter
+    /// renders differently. `1e23` is the classic — its nearest double is
+    /// 99999999999999991611392, which a naive search prints as
+    /// `9.999999999999999e+22`.
+    #[test]
+    fn ecmascript_digits_are_the_shortest_that_round_trip() {
+        for (value, expected) in [
+            (1e23, "1e+23"),
+            (0.30000000000000004, "0.30000000000000004"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (5e-324, "5e-324"),
+        ] {
+            assert_eq!(ecma_number(value), expected, "{value:?}");
+        }
+    }
+
     #[test]
     fn sha256_matches_nist_abc_vector() {
         assert_eq!(

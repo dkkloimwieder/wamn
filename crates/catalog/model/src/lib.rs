@@ -19,9 +19,9 @@ pub use execution_plan::{
     entry_input_schema_hash, execution_bundle_hash, read_execution_plan,
 };
 pub use serving_manifest::{
-    RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME, RELEASE_MANIFEST_MOUNT_PATH,
-    SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow, ServingManifest,
-    ServingRegistration, ServingRelease, release_manifest_configmap_name,
+    MAX_SERVING_MANIFEST_BYTES, RELEASE_MANIFEST_CONFIGMAP_PREFIX, RELEASE_MANIFEST_FILE_NAME,
+    RELEASE_MANIFEST_MOUNT_PATH, SERVING_MANIFEST_FORMAT_VERSION, ServingAttachment, ServingFlow,
+    ServingManifest, ServingRegistration, ServingRelease, release_manifest_configmap_name,
 };
 
 use std::cmp::Ordering;
@@ -67,6 +67,7 @@ pub enum CatalogIdentityError {
     UnresolvedSource { source_id: String },
     SourceMismatch { source_id: String },
     UnresolvableManifestFlow { flow_id: String },
+    ManifestTooLarge { bytes: usize, limit: usize },
 }
 
 impl fmt::Display for CatalogIdentityError {
@@ -167,6 +168,12 @@ impl fmt::Display for CatalogIdentityError {
                 write!(
                     formatter,
                     "flow {flow_id:?} is absent from the serving manifest"
+                )
+            }
+            Self::ManifestTooLarge { bytes, limit } => {
+                write!(
+                    formatter,
+                    "serving manifest is {bytes} bytes, over the {limit}-byte delivery limit"
                 )
             }
         }
@@ -439,7 +446,7 @@ impl CanonicalJson {
                 });
             }
         }
-        let bytes = canonical_json(&value).into_boxed_slice();
+        let bytes = wamn_flow::canonical_json_bytes(&value).into_boxed_slice();
         Ok(Self { value, bytes })
     }
 
@@ -528,7 +535,7 @@ impl Artifact {
         let graph_bytes = flow.canonical_bytes();
         let graph_hash = digest(&graph_bytes);
         let mut owned = Vec::new();
-        let id_bytes = canonical_json(&serde_json::to_value(&id).expect("artifact id serializes"));
+        let id_bytes = canonical_serialized(&id);
         owned.push(("artifact-id", id_bytes));
         owned.push(("schema-version", flow.schema_version.as_bytes().to_vec()));
         owned.push(("graph", graph_bytes));
@@ -1189,7 +1196,7 @@ impl Release {
             }
         }
 
-        let id_bytes = canonical_json(&serde_json::to_value(&id).expect("release id serializes"));
+        let id_bytes = canonical_serialized(&id);
         let mut owned = vec![("release-id", id_bytes)];
         for artifact in &artifacts {
             owned.push(("artifact", artifact.canonical_bytes()));
@@ -1404,66 +1411,16 @@ fn write_frame(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-fn canonical_json(value: &Value) -> Vec<u8> {
-    let mut output = Vec::new();
-    write_json(value, &mut output);
-    output
-}
-
+/// Canonical identity-frame bytes for one serializable identity input.
+///
+/// Routes through `wamn_flow::canonical_json_bytes`, the workspace's only RFC
+/// 8785 producer. Until wamn-0h0g.15.63 this crate carried a second, `ryu-js`
+/// based implementation of the same spec beside it, which left release identity
+/// depending on *which* producer a call site happened to reach for.
 fn canonical_serialized(value: &impl Serialize) -> Vec<u8> {
-    canonical_json(&serde_json::to_value(value).expect("identity input serializes"))
-}
-
-fn write_json(value: &Value, output: &mut Vec<u8>) {
-    match value {
-        Value::Null => output.extend_from_slice(b"null"),
-        Value::Bool(true) => output.extend_from_slice(b"true"),
-        Value::Bool(false) => output.extend_from_slice(b"false"),
-        Value::Number(number) => {
-            let number = number
-                .as_f64()
-                .expect("serde_json numbers are finite IEEE-754 values");
-            output.extend_from_slice(ecma_number(number).as_bytes());
-        }
-        Value::String(value) => output.extend_from_slice(
-            serde_json::to_string(value)
-                .expect("string serializes")
-                .as_bytes(),
-        ),
-        Value::Array(values) => {
-            output.push(b'[');
-            for (index, value) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push(b',');
-                }
-                write_json(value, output);
-            }
-            output.push(b']');
-        }
-        Value::Object(values) => {
-            output.push(b'{');
-            let mut entries: Vec<_> = values.iter().collect();
-            entries.sort_by(|(left, _), (right, _)| left.encode_utf16().cmp(right.encode_utf16()));
-            for (index, (key, value)) in entries.into_iter().enumerate() {
-                if index != 0 {
-                    output.push(b',');
-                }
-                output.extend_from_slice(
-                    serde_json::to_string(key)
-                        .expect("object key serializes")
-                        .as_bytes(),
-                );
-                output.push(b':');
-                write_json(value, output);
-            }
-            output.push(b'}');
-        }
-    }
-}
-
-fn ecma_number(value: f64) -> String {
-    let mut buffer = ryu_js::Buffer::new();
-    buffer.format(value).to_string()
+    wamn_flow::canonical_json_bytes(
+        &serde_json::to_value(value).expect("identity input serializes"),
+    )
 }
 
 #[cfg(test)]
