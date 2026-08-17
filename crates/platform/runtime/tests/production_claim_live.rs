@@ -171,7 +171,8 @@ async fn install_schema(client: &Client) -> anyhow::Result<()> {
                caller_released_at timestamptz, updated_at timestamptz NOT NULL DEFAULT now(), \
                CONSTRAINT runs_release_record_check CHECK ( \
                  (release_version IS NULL AND manifest_digest IS NULL) \
-                 OR (release_version > 0 \
+                 OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL \
+                     AND release_version > 0 \
                      AND manifest_digest ~ '^sha256:[0-9a-f]{{64}}$')), \
                PRIMARY KEY (tenant_id, run_id)); \
              CREATE TABLE {SCHEMA}.node_runs ( \
@@ -1492,6 +1493,30 @@ async fn production_claim_live() -> anyhow::Result<()> {
             &[&TENANT],
         )
         .await?;
+
+    // WHERE THE FIVE RESOLUTION FAIL KINDS WENT (wamn-0h0g.15.67). Until
+    // wamn-0h0g.15.10 the claim resolved the run's release here and a bundle whose
+    // bytes did not hash to their name was terminalized `hash-invalid-bytes`
+    // before any lease was granted. Resolution left the claim with that commit, so
+    // `unresolvable-name`, `hash-invalid-bytes`, `foreign-revision`,
+    // `incompatible-contract` and `unbound-requirement` have no producer anywhere
+    // in the tree — deliberately, not by omission: the claim is
+    // lock/classify/lease and reads no catalog at all. Hash-at-transfer
+    // verification lives on the supply path now
+    // (`plugins::runner_plan_supply`'s `insert_verified`), refuses as
+    // `SupplyError::HashMismatch`, and is proven live in
+    // `tests/oci_plan_source_live.rs`.
+    //
+    // So this claims a run whose named bundle was never published to the catalog
+    // at all, and it must LEASE. That is the deleted assertion restored inverted,
+    // which is the point of keeping it: a reintroduced claim-time verification
+    // fails right here rather than silently re-pinning runs to a release.
+    let unpublished = digest(b"a bundle no catalog row carries");
+    seed_run(&admin, "unpublished", "cat-main", &unpublished, 72).await?;
+    assert_eq!(
+        ready_run(plugin.claim_next_production(COMPONENT, 30_000).await?),
+        "unpublished"
+    );
 
     drop(plugin);
     drop(writer);
