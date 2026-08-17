@@ -2193,21 +2193,52 @@ fn partition_plane_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservatio
     statements.join("; ")
 }
 
-/// Stored-suite persistence removed by wamn-0h0g.8.10, ordered child first.
-const RETIRED_STORED_SUITE_TABLES: [&str; 5] = [
+/// Retired authoring-test persistence, ordered child first. Two distinct
+/// retirements share this cutover because they share one drop ordering:
+///
+/// * wamn-0h0g.8.10 removed the stored-suite plane (`test_suites` through
+///   `authoring_suite_reports`).
+/// * wamn-0h0g.15.27 removed `authoring_test_sets`; a draft carries its own
+///   cases, so the separate content-addressed store has no producer. It is the
+///   PARENT of the two FKs below, so it drops last.
+const RETIRED_STORED_SUITE_TABLES: [&str; 6] = [
     "authoring_suite_reports",
     "authoring_suite_case_facts",
     "authoring_report_reservations",
     "test_cases",
     "test_suites",
+    "authoring_test_sets",
 ];
 
-/// Helper functions retained only long enough for the stored-suite cutover.
-const RETIRED_STORED_SUITE_FUNCTIONS: [&str; 2] = [
+/// Helper functions retained only long enough for the cutovers above:
+/// the first two by wamn-0h0g.8.10, the third by wamn-0h0g.15.27.
+const RETIRED_STORED_SUITE_FUNCTIONS: [&str; 3] = [
     "guard_authoring_report_write",
     "reject_immutable_authoring_report_change",
+    "reject_immutable_authoring_test_set_change",
 ];
 const RETIRED_STORED_SUITE_CATALOG_TABLE: &str = "publish_gate_audit";
+
+/// The RETAINED record tables that referenced `authoring_test_sets`. Their
+/// `test_set_hash` column carries the FK, so the parent cannot be dropped while
+/// it stands — and nothing else in the planner would ever remove it: the FK
+/// reconciler repairs a fixed record list and has no drop-extra arm, and the
+/// column is `NOT NULL` with no default, so leaving it would refuse every
+/// reservation and report INSERT. `DROP COLUMN` takes the dependent FK with it.
+const RETIRED_TEST_SET_REFERENCE_TABLES: [&str; 2] =
+    ["authoring_test_run_reservations", "authoring_test_reports"];
+const RETIRED_TEST_SET_REFERENCE_COLUMN: &str = "test_set_hash";
+
+fn retired_test_set_reference_columns(obs: &RunPlaneObservation) -> Vec<&'static str> {
+    RETIRED_TEST_SET_REFERENCE_TABLES
+        .into_iter()
+        .filter(|table| {
+            obs.tables
+                .get(*table)
+                .is_some_and(|columns| columns.contains(RETIRED_TEST_SET_REFERENCE_COLUMN))
+        })
+        .collect()
+}
 
 fn authoring_retry_ledger_ready(obs: &RunPlaneObservation) -> bool {
     let Some(columns) = obs.catalog_columns.get("authoring_command_audit") else {
@@ -2265,6 +2296,7 @@ fn stored_suite_cutover_needed(obs: &RunPlaneObservation) -> bool {
         || obs
             .catalog_tables
             .contains(RETIRED_STORED_SUITE_CATALOG_TABLE)
+        || !retired_test_set_reference_columns(obs).is_empty()
         || obs
             .catalog_columns
             .get("validated_flow_drafts")
@@ -2354,6 +2386,18 @@ fn stored_suite_cutover_sql(schema: &BareSchemaName, obs: &RunPlaneObservation) 
                    CHECK (octet_length(outcome_bytes) > 0)"
                 .to_string(),
         );
+    }
+    // The FK-carrying columns go FIRST: `authoring_test_sets` is the parent of
+    // both, and a plain DROP TABLE on a referenced relation refuses. Dropping
+    // the column takes its dependent FK with it, so no separate constraint drop
+    // is emitted.
+    for table in retired_test_set_reference_columns(obs) {
+        statements.push(format!(
+            "ALTER TABLE {}.{} DROP COLUMN IF EXISTS {}",
+            schema.quoted(),
+            quote_ident(table),
+            quote_ident(RETIRED_TEST_SET_REFERENCE_COLUMN)
+        ));
     }
     statements.extend(
         RETIRED_STORED_SUITE_TABLES
@@ -3449,7 +3493,8 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
         });
     }
 
-    if stored_suite_cutover_needed(obs) {
+    let stored_suite_cutover_needed = stored_suite_cutover_needed(obs);
+    if stored_suite_cutover_needed {
         plan.actions.push(RunPlaneAction {
             kind: RunPlaneActionKind::StoredSuiteCutover,
             target: "stored-suite-persistence".to_string(),
@@ -4541,6 +4586,12 @@ pub fn plan_run_plane(schema: &BareSchemaName, obs: &RunPlaneObservation) -> Run
                 {
                     continue;
                 }
+                if stored_suite_cutover_needed
+                    && RETIRED_TEST_SET_REFERENCE_TABLES.contains(&table.as_str())
+                    && col == RETIRED_TEST_SET_REFERENCE_COLUMN
+                {
+                    continue;
+                }
                 if !known.contains(col.as_str()) {
                     plan.extra_columns.push((table.clone(), col.clone()));
                 }
@@ -5518,8 +5569,10 @@ pub fn select_schema_triggers_sql() -> &'static str {
      ORDER BY c.relname, t.tgname"
 }
 
-/// Retained helper definitions plus the two names needed to observe the
-/// stored-suite cutover in `$1`.
+/// Retained helper definitions plus the three retired names needed to observe
+/// the stored-suite cutover in `$1`. A retired helper the observation cannot
+/// name is a helper the cutover can never be planned for, so every entry of
+/// `RETIRED_STORED_SUITE_FUNCTIONS` must appear here too.
 pub fn select_run_plane_helper_functions_sql() -> &'static str {
     "SELECT p.proname, pg_get_functiondef(p.oid) \
      FROM pg_proc p \
@@ -5532,6 +5585,7 @@ pub fn select_run_plane_helper_functions_sql() -> &'static str {
                          'guard_authoring_test_orchestration_write', \
                          'reject_immutable_authoring_report_change', \
                          'guard_authoring_report_write', \
+                         'reject_immutable_authoring_test_set_change', \
                          'guard_effect_disposition_append', \
                          'guard_run_admission_pins_immutable') \
      ORDER BY p.proname"
@@ -6897,8 +6951,10 @@ CREATE INDEX event_registrations_by_entity
              DROP TABLE IF EXISTS \"demo\".\"authoring_report_reservations\"; \
              DROP TABLE IF EXISTS \"demo\".\"test_cases\"; \
              DROP TABLE IF EXISTS \"demo\".\"test_suites\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_test_sets\"; \
              DROP FUNCTION IF EXISTS \"demo\".\"guard_authoring_report_write\"(); \
              DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_report_change\"(); \
+             DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_test_set_change\"(); \
              DROP TABLE IF EXISTS catalog.\"publish_gate_audit\""
         );
         for retained in [
@@ -6914,6 +6970,80 @@ CREATE INDEX event_registrations_by_entity
         }
         for function in RETIRED_STORED_SUITE_FUNCTIONS {
             legacy.helper_functions.remove(function);
+        }
+        assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
+    }
+
+    /// A schema provisioned before wamn-0h0g.15.27 still carries the FK columns
+    /// that reference `authoring_test_sets`. Nothing else in the planner removes
+    /// them — the FK reconciler repairs a fixed record list and has no
+    /// drop-extra arm — so the cutover must, and must do it BEFORE the parent
+    /// drop or the `DROP TABLE` refuses on the dependency.
+    #[test]
+    fn the_test_set_cutover_drops_its_fk_columns_before_the_parent_table() {
+        let mut legacy = observation_at_record();
+        legacy
+            .tables
+            .insert("authoring_test_sets".to_string(), BTreeSet::new());
+        for table in RETIRED_TEST_SET_REFERENCE_TABLES {
+            legacy
+                .tables
+                .get_mut(table)
+                .expect("retained record table is observed")
+                .insert(RETIRED_TEST_SET_REFERENCE_COLUMN.to_string());
+        }
+
+        let plan = plan_run_plane(&schema("demo"), &legacy);
+        let cutover = plan
+            .actions
+            .iter()
+            .find(|action| action.kind == RunPlaneActionKind::StoredSuiteCutover)
+            .expect("a stale test-set store plans its cutover");
+        let reservations = cutover
+            .sql
+            .find(
+                "ALTER TABLE \"demo\".\"authoring_test_run_reservations\" \
+                 DROP COLUMN IF EXISTS \"test_set_hash\"",
+            )
+            .expect("the reservation FK column drops");
+        let reports = cutover
+            .sql
+            .find(
+                "ALTER TABLE \"demo\".\"authoring_test_reports\" \
+                 DROP COLUMN IF EXISTS \"test_set_hash\"",
+            )
+            .expect("the report FK column drops");
+        let parent = cutover
+            .sql
+            .find("DROP TABLE IF EXISTS \"demo\".\"authoring_test_sets\"")
+            .expect("the parent store drops");
+        let helper = cutover
+            .sql
+            .find(
+                "DROP FUNCTION IF EXISTS \
+                 \"demo\".\"reject_immutable_authoring_test_set_change\"()",
+            )
+            .expect("the immutability helper drops");
+        assert!(reservations < parent && reports < parent);
+        assert!(parent < helper, "the triggers die with their table first");
+        // The columns are cutover-owned, so they are physically removed rather
+        // than reported and preserved as unknown extras.
+        assert!(
+            !plan.extra_columns.iter().any(|(table, column)| {
+                column == RETIRED_TEST_SET_REFERENCE_COLUMN
+                    && RETIRED_TEST_SET_REFERENCE_TABLES.contains(&table.as_str())
+            }),
+            "extras: {:#?}",
+            plan.extra_columns
+        );
+
+        legacy.tables.remove("authoring_test_sets");
+        for table in RETIRED_TEST_SET_REFERENCE_TABLES {
+            legacy
+                .tables
+                .get_mut(table)
+                .expect("retained record table is observed")
+                .remove(RETIRED_TEST_SET_REFERENCE_COLUMN);
         }
         assert!(plan_run_plane(&schema("demo"), &legacy).is_noop());
     }
@@ -6939,8 +7069,10 @@ CREATE INDEX event_registrations_by_entity
              DROP TABLE IF EXISTS \"demo\".\"authoring_report_reservations\"; \
              DROP TABLE IF EXISTS \"demo\".\"test_cases\"; \
              DROP TABLE IF EXISTS \"demo\".\"test_suites\"; \
+             DROP TABLE IF EXISTS \"demo\".\"authoring_test_sets\"; \
              DROP FUNCTION IF EXISTS \"demo\".\"guard_authoring_report_write\"(); \
              DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_report_change\"(); \
+             DROP FUNCTION IF EXISTS \"demo\".\"reject_immutable_authoring_test_set_change\"(); \
              DROP TABLE IF EXISTS catalog.\"publish_gate_audit\""
         );
 
@@ -8898,8 +9030,34 @@ CREATE INDEX event_registrations_by_entity
 
     /// The separate test-set store is gone: a draft's own `cases` are the only
     /// test source, so no relation, privilege, helper, or FK may name one.
+    ///
+    /// Absent from the record is only half of it. A relation dropped from the
+    /// record but not RETIRED survives with live grants on every schema
+    /// provisioned before the change, and `ensure_authoring_run_privileges` no
+    /// longer REVOKEs on it — a privilege the reconciler can no longer see
+    /// (wamn-0h0g.15.78). So the store must also be named by the retirement
+    /// mechanism, together with the FK columns that would block its drop.
     #[test]
     fn the_authoring_test_set_store_is_absent_from_the_record() {
+        assert!(RETIRED_STORED_SUITE_TABLES.contains(&"authoring_test_sets"));
+        assert!(
+            RETIRED_STORED_SUITE_FUNCTIONS.contains(&"reject_immutable_authoring_test_set_change")
+        );
+        assert_eq!(
+            RETIRED_STORED_SUITE_TABLES
+                .iter()
+                .position(|table| *table == "authoring_test_sets"),
+            Some(RETIRED_STORED_SUITE_TABLES.len() - 1),
+            "the FK parent drops last"
+        );
+        for table in RETIRED_TEST_SET_REFERENCE_TABLES {
+            assert!(
+                !record_columns(AUTHORING_TESTS_SQL, "wamn_run", table)
+                    .iter()
+                    .any(|(column, _)| column == RETIRED_TEST_SET_REFERENCE_COLUMN),
+                "{table} still records {RETIRED_TEST_SET_REFERENCE_COLUMN}"
+            );
+        }
         assert!(
             !CHECK_SPECS
                 .iter()
@@ -8920,6 +9078,14 @@ CREATE INDEX event_registrations_by_entity
                 .iter()
                 .any(|trigger| trigger.table == "authoring_test_sets")
         );
+        // A retired helper the observation cannot NAME is one the cutover can
+        // never be planned for: the driver reads a fixed `proname IN (...)`.
+        for function in RETIRED_STORED_SUITE_FUNCTIONS {
+            assert!(
+                select_run_plane_helper_functions_sql().contains(&format!("'{function}'")),
+                "retired helper {function} is unobservable"
+            );
+        }
         for source in [AUTHORING_TESTS_SQL, select_run_plane_helper_functions_sql()] {
             assert!(!source.contains("authoring_test_sets"), "{source}");
         }

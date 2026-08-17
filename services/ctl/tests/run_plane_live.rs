@@ -3341,6 +3341,33 @@ async fn stored_suite_cutover_leg(su: &Client) {
     ))
     .await
     .expect("install retired stored-suite persistence");
+    // The pre-wamn-0h0g.15.27 test-set store, with the live grant that made it
+    // invisible to the privilege reconciler once the relation left the record,
+    // and the two FK columns on RETAINED tables that block its drop.
+    su.batch_execute(&format!(
+        "CREATE FUNCTION {SCHEMA}.reject_immutable_authoring_test_set_change() RETURNS trigger \
+           LANGUAGE plpgsql AS $guard$ BEGIN RETURN NEW; END $guard$; \
+         CREATE TABLE {SCHEMA}.authoring_test_sets ( \
+           tenant_id text NOT NULL, test_set_hash text NOT NULL, \
+           PRIMARY KEY (tenant_id, test_set_hash)); \
+         CREATE TRIGGER authoring_test_sets_update_immutable \
+           BEFORE UPDATE ON {SCHEMA}.authoring_test_sets \
+           FOR EACH ROW EXECUTE FUNCTION \
+             {SCHEMA}.reject_immutable_authoring_test_set_change(); \
+         GRANT SELECT, INSERT ON {SCHEMA}.authoring_test_sets TO wamn_scenario_author; \
+         ALTER TABLE {SCHEMA}.authoring_test_run_reservations \
+           ADD COLUMN test_set_hash text NOT NULL, \
+           ADD CONSTRAINT authoring_test_reservation_test_set_fk \
+             FOREIGN KEY (tenant_id, test_set_hash) \
+             REFERENCES {SCHEMA}.authoring_test_sets (tenant_id, test_set_hash); \
+         ALTER TABLE {SCHEMA}.authoring_test_reports \
+           ADD COLUMN test_set_hash text NOT NULL, \
+           ADD CONSTRAINT authoring_test_report_test_set_fk \
+             FOREIGN KEY (tenant_id, test_set_hash) \
+             REFERENCES {SCHEMA}.authoring_test_sets (tenant_id, test_set_hash);"
+    ))
+    .await
+    .expect("install the retired test-set store and its FK columns");
     su.batch_execute(
         "ALTER TABLE catalog.validated_flow_drafts \
            DROP CONSTRAINT validated_flow_drafts_exact_pin, \
@@ -3384,10 +3411,20 @@ async fn stored_suite_cutover_leg(su: &Client) {
         "authoring_report_reservations",
         "test_cases",
         "test_suites",
+        "authoring_test_sets",
     ] {
         assert!(
             !table_exists(su, SCHEMA, table).await,
             "retired table {table} is absent"
+        );
+    }
+    // The FK columns had to go first, or the parent DROP TABLE would have
+    // refused on the dependency — and a surviving NOT NULL orphan would have
+    // refused every reservation and report INSERT (wamn-0h0g.15.78).
+    for table in ["authoring_test_run_reservations", "authoring_test_reports"] {
+        assert!(
+            !column_exists(su, table, "test_set_hash").await,
+            "{table}.test_set_hash survived the test-set retirement"
         );
     }
     assert!(
@@ -3411,7 +3448,8 @@ async fn stored_suite_cutover_leg(su: &Client) {
              WHERE namespace.nspname = $1 \
                AND proc.proname IN \
                  ('guard_authoring_report_write', \
-                  'reject_immutable_authoring_report_change')",
+                  'reject_immutable_authoring_report_change', \
+                  'reject_immutable_authoring_test_set_change')",
             &[&SCHEMA],
         )
         .await
