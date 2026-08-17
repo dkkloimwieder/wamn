@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use wamn_run_state::admission::{
-    AdmissionTransition, RunStateSchema, admission_transaction, registration_evidence,
+    AdmissionTransition, ManagementProducerKey, RunStateSchema, admission_transaction,
+    registration_evidence,
 };
 
 fn psql(url: &str, script: &str) -> Output {
@@ -41,12 +42,43 @@ fn app_preamble() -> &'static str {
     "BEGIN; SET LOCAL ROLE wamn_app; SET LOCAL app.tenant = 't1';"
 }
 
+/// The private management authority `wamn-0h0g.7.5` ratified.
+fn management_preamble() -> &'static str {
+    "BEGIN; SET LOCAL ROLE wamn_management_admitter; SET LOCAL app.tenant = 't1';"
+}
+
 fn prepare(sql: &str) -> String {
     format!(
         "PREPARE admit_stmt \
          (text,text,text,int,text,text,text,int,text,text,text,text, \
           timestamptz,timestamptz,text,text,text, \
           text,bigint,text,text,text,text,int) AS {sql};"
+    )
+}
+
+fn prepare_management(sql: &str) -> String {
+    format!(
+        "PREPARE admit_management \
+         (text,text,text,int,text,int,text,text,text,text, \
+          timestamptz,text,text,int) AS {sql};"
+    )
+}
+
+fn execute_draft(run_id: &str, command_id: &str, input: &str) -> String {
+    format!(
+        "EXECUTE admit_management(\
+         'draft-run','c1','dev',1,'flow-http',1,\
+         '{run_id}','{input}','{{\"request-id\":\"draft-1\"}}','rev-test',\
+         now()+interval '1 minute','{command_id}',NULL,NULL)"
+    )
+}
+
+fn execute_case(run_id: &str, report_id: &str, ordinal: i32, context: &str) -> String {
+    format!(
+        "EXECUTE admit_management(\
+         'test-case','c1','dev',1,'flow-http',1,\
+         '{run_id}','{{\"case\":{ordinal}}}','{context}','rev-test',\
+         now()+interval '1 minute',NULL,'{report_id}',{ordinal})"
     )
 }
 
@@ -121,6 +153,16 @@ fn admission_live() {
                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'wamn_effect_writer') THEN \
                  CREATE ROLE wamn_effect_writer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
                    NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles \
+                               WHERE rolname = 'wamn_run_projection_writer') THEN \
+                 CREATE ROLE wamn_run_projection_writer NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+               END IF; \
+               IF NOT EXISTS (SELECT FROM pg_roles \
+                               WHERE rolname = 'wamn_management_admitter') THEN \
+                 CREATE ROLE wamn_management_admitter NOLOGIN NOSUPERUSER NOCREATEDB \
+                   NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
                END IF; \
              END $$; \
              DROP SCHEMA IF EXISTS catalog CASCADE; \
@@ -754,6 +796,348 @@ fn admission_live() {
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race run'; \
            ASSERT (SELECT count(*) FROM wamn_run.run_queue \
                    WHERE run_id IN ('race-a','race-b')) = 1, 'one race queue'; \
+         END $$;",
+    );
+
+    // -----------------------------------------------------------------------
+    // Private management admission (wamn-0h0g.8.20). A draft run and a test
+    // case cross a durable CONTROL reservation into this SEPARATE project
+    // transaction, so a crash between the two commits must never mint a second
+    // run. The grants below are the exact narrow authority the private
+    // `wamn_management_admitter` role needs; issuing them from provisioning is
+    // deferred, and deploy/sql/run-state.sql deliberately still names no
+    // management role.
+    success(
+        &url,
+        "GRANT USAGE ON SCHEMA wamn_run TO wamn_management_admitter; \
+         GRANT USAGE ON SCHEMA catalog TO wamn_management_admitter; \
+         GRANT EXECUTE ON FUNCTION wamn_run.lock_catalog_head(text, text, text) \
+           TO wamn_management_admitter; \
+         GRANT SELECT ON catalog.catalog_heads, catalog.release_flows, \
+           catalog.flow_artifacts, catalog.execution_bundles TO wamn_management_admitter; \
+         GRANT SELECT (tenant_id, run_id, idempotency_key, trigger_source, capture_mode, \
+           flow_id, flow_version, catalog_id, catalog_version, environment, \
+           execution_bundle_hash, input_json) ON wamn_run.runs TO wamn_management_admitter; \
+         GRANT INSERT (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, \
+           environment, execution_bundle_hash, status, trigger_source, capture_mode, input_json, \
+           invocation_context, admission_context_version, platform_revision, idempotency_key, \
+           run_deadline_at) ON wamn_run.runs TO wamn_management_admitter; \
+         GRANT SELECT (tenant_id, run_id), INSERT (tenant_id, run_id, available_at, stream_seq) \
+           ON wamn_run.run_queue TO wamn_management_admitter;",
+    );
+
+    let management = admission_transaction(AdmissionTransition::ManagementRun { schema: &schema });
+    let management_admit = management.admit().to_string();
+    let prepared_management = prepare_management(&management_admit);
+    let draft_coordinate = ManagementProducerKey::DraftRun {
+        command_id: "cmd-1",
+    };
+    let case_coordinate = ManagementProducerKey::TestCase {
+        report_id: "report-a",
+        ordinal: 0,
+    };
+    let draft_key = draft_coordinate.idempotency_key();
+    let case_key = case_coordinate.idempotency_key();
+
+    // A first admission under each coordinate creates exactly one ordinary run
+    // and one unleased queue row, with the capture value the producer receives
+    // rather than presents.
+    for (execution, expected) in [
+        (
+            execute_draft("draft-run-1", "cmd-1", "{\"draft\":1}"),
+            "admitted|draft-run-1",
+        ),
+        (
+            execute_case("case-run-0", "report-a", 0, "{\"case-id\":\"first\"}"),
+            "admitted|case-run-0",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!(
+                "{} {} {}; COMMIT;",
+                management_preamble(),
+                prepared_management,
+                execution
+            ),
+        );
+        assert_eq!(result.trim(), expected);
+    }
+    success(
+        &url,
+        &format!(
+            "DO $$ BEGIN \
+               ASSERT (SELECT trigger_source FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                        = 'scenario-draft'; \
+               ASSERT (SELECT capture_mode FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                        = 'full'; \
+               ASSERT (SELECT idempotency_key FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                        = '{draft_key}'; \
+               ASSERT (SELECT invocation_context #>> '{{source,producer}}' FROM wamn_run.runs \
+                        WHERE run_id='draft-run-1') = 'draft-scenario'; \
+               ASSERT (SELECT status FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                        = 'dispatched'; \
+               ASSERT (SELECT run_deadline_at IS NOT NULL FROM wamn_run.runs \
+                        WHERE run_id='draft-run-1'); \
+               ASSERT (SELECT execution_bundle_hash FROM wamn_run.runs \
+                        WHERE run_id='draft-run-1') \
+                        = (SELECT execution_bundle_hash FROM catalog.release_flows \
+                            WHERE tenant_id='t1' AND catalog_id='c1' AND flow_id='flow-http'); \
+               ASSERT (SELECT lease_owner FROM wamn_run.run_queue WHERE run_id='draft-run-1') \
+                        IS NULL; \
+               ASSERT (SELECT stream_seq FROM wamn_run.run_queue WHERE run_id='draft-run-1') = 0; \
+               ASSERT (SELECT trigger_source FROM wamn_run.runs WHERE run_id='case-run-0') \
+                        = 'test-case'; \
+               ASSERT (SELECT capture_mode FROM wamn_run.runs WHERE run_id='case-run-0') = 'off'; \
+               ASSERT (SELECT idempotency_key FROM wamn_run.runs WHERE run_id='case-run-0') \
+                        = '{case_key}'; \
+               ASSERT (SELECT invocation_context #>> '{{source,producer}}' FROM wamn_run.runs \
+                        WHERE run_id='case-run-0') IS NULL; \
+               ASSERT (SELECT count(*) FROM wamn_run.invocation_admissions \
+                        WHERE run_id IN ('draft-run-1','case-run-0')) = 0; \
+             END $$;"
+        ),
+    );
+
+    // The crash-recovery leg: the control reservation records the run id BEFORE
+    // this transaction, so a crash after the project commit re-drives the
+    // identical admission. It returns the SAME run without a second row, and
+    // the coordinate alone recovers the run id the producer never recorded.
+    for (execution, expected) in [
+        (
+            execute_draft("draft-run-1", "cmd-1", "{\"draft\":1}"),
+            "duplicate|draft-run-1",
+        ),
+        (
+            execute_case("case-run-0", "report-a", 0, "{\"case-id\":\"first\"}"),
+            "duplicate|case-run-0",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!(
+                "{} {} {}; COMMIT;",
+                management_preamble(),
+                prepared_management,
+                execution
+            ),
+        );
+        assert_eq!(result.trim(), expected);
+    }
+    success(
+        &url,
+        &format!(
+            "DO $$ BEGIN \
+               ASSERT (SELECT count(*) FROM wamn_run.runs \
+                        WHERE run_id IN ('draft-run-1','case-run-0')) = 2; \
+               ASSERT (SELECT count(*) FROM wamn_run.run_queue \
+                        WHERE run_id IN ('draft-run-1','case-run-0')) = 2; \
+               ASSERT (SELECT run_id FROM wamn_run.runs \
+                        WHERE tenant_id='t1' AND idempotency_key='{draft_key}') = 'draft-run-1'; \
+               ASSERT (SELECT run_id FROM wamn_run.runs \
+                        WHERE tenant_id='t1' AND idempotency_key='{case_key}') = 'case-run-0'; \
+             END $$;"
+        ),
+    );
+
+    // The same coordinate with any different admitted fact refuses ATOMICALLY
+    // and names the run already holding it. Coordinate and run id move
+    // together, so pointing either half somewhere else is also a divergence.
+    for (execution, expected) in [
+        (
+            execute_draft("draft-run-1", "cmd-1", "{\"draft\":2}"),
+            "conflicting-run-identity|draft-run-1",
+        ),
+        (
+            execute_draft("draft-run-2", "cmd-1", "{\"draft\":1}"),
+            "conflicting-run-identity|draft-run-1",
+        ),
+        (
+            execute_case("case-run-9", "report-a", 0, "{\"case-id\":\"first\"}"),
+            "conflicting-run-identity|case-run-0",
+        ),
+        (
+            execute_case("case-run-0", "report-a", 1, "{\"case-id\":\"first\"}"),
+            "conflicting-run-identity|case-run-0",
+        ),
+    ] {
+        let result = success(
+            &url,
+            &format!(
+                "{} {} {}; COMMIT;",
+                management_preamble(),
+                prepared_management,
+                execution
+            ),
+        );
+        assert_eq!(result.trim(), expected, "{execution}");
+    }
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
+             WHERE run_id IN ('draft-run-2','case-run-9')); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue \
+             WHERE run_id IN ('draft-run-2','case-run-9')); \
+           ASSERT (SELECT input_json FROM wamn_run.runs WHERE run_id='draft-run-1') \
+                    = '{\"draft\":1}'::jsonb; \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
+             WHERE idempotency_key = 'case:report-a:1'); \
+         END $$;",
+    );
+
+    // Every non-draft management admission stays capture-off: the draft marker
+    // cannot be presented, a callable producer cannot enter here, an absent
+    // coordinate refuses, and a stale head refuses.
+    let management_negatives = format!(
+        "{} {} \
+         CREATE TEMP TABLE forged_marker AS {}; \
+         CREATE TEMP TABLE wrong_producer AS EXECUTE admit_management(\
+           'http','c1','dev',1,'flow-http',1,'mgmt-http','{{}}','{{}}','rev-test',\
+           now()+interval '1 minute',NULL,NULL,NULL); \
+         CREATE TEMP TABLE missing_coordinate AS EXECUTE admit_management(\
+           'test-case','c1','dev',1,'flow-http',1,'mgmt-nokey','{{}}','{{}}','rev-test',\
+           now()+interval '1 minute',NULL,NULL,NULL); \
+         CREATE TEMP TABLE stale_head AS EXECUTE admit_management(\
+           'draft-run','c1','dev',99,'flow-http',1,'mgmt-stale','{{}}','{{}}','rev-test',\
+           now()+interval '1 minute','cmd-stale',NULL,NULL); \
+         CREATE TEMP TABLE no_deadline AS EXECUTE admit_management(\
+           'draft-run','c1','dev',1,'flow-http',1,'mgmt-forever','{{}}','{{}}','rev-test',\
+           NULL,'cmd-forever',NULL,NULL); \
+         DO $$ BEGIN \
+           ASSERT (SELECT result_code FROM forged_marker) = 'invalid-input'; \
+           ASSERT (SELECT result_code FROM wrong_producer) = 'invalid-producer'; \
+           ASSERT (SELECT result_code FROM missing_coordinate) = 'invalid-input'; \
+           ASSERT (SELECT result_code FROM stale_head) = 'head-drift'; \
+           ASSERT (SELECT result_code FROM no_deadline) = 'invalid-input'; \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id IN (\
+             'case-forged','mgmt-http','mgmt-nokey','mgmt-stale','mgmt-forever')); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE capture_mode='full' \
+             AND trigger_source <> 'scenario-draft'); \
+         END $$; COMMIT;",
+        management_preamble(),
+        prepared_management,
+        execute_case(
+            "case-forged",
+            "report-b",
+            0,
+            "{\"producer\":\"draft-scenario\"}"
+        ),
+    );
+    success(&url, &management_negatives);
+
+    // `wamn_app` drives run state but must never author the admission-owned
+    // capture carrier. The management statement NAMES `capture_mode`, and
+    // PostgreSQL checks column privileges per named column, so the
+    // guest-visible role is refused before any row is considered.
+    let denied = psql(
+        &url,
+        &format!(
+            "{} {} {}; COMMIT;",
+            app_preamble(),
+            prepared_management,
+            execute_case("app-denied", "report-c", 0, "{}")
+        ),
+    );
+    assert!(
+        !denied.status.success(),
+        "wamn_app must not admit a management run"
+    );
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("permission denied"),
+        "the refusal must be a privilege refusal; stderr:\n{}",
+        String::from_utf8_lossy(&denied.stderr)
+    );
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id='app-denied'); \
+         END $$;",
+    );
+
+    // A queue fault rolls the run insert back with it: a management admission
+    // is one atomic run-plus-queue fact or none, and the coordinate stays free.
+    let management_fault = psql(
+        &url,
+        &format!(
+            "BEGIN; \
+             CREATE FUNCTION pg_temp.reject_management() RETURNS trigger LANGUAGE plpgsql AS \
+             $fault$ BEGIN RAISE EXCEPTION 'injected-management-fault'; END $fault$; \
+             CREATE TRIGGER reject_management BEFORE INSERT ON wamn_run.run_queue \
+             FOR EACH ROW EXECUTE FUNCTION pg_temp.reject_management(); \
+             {} SET LOCAL ROLE wamn_management_admitter; SET LOCAL app.tenant = 't1'; \
+             {}; COMMIT;",
+            prepared_management,
+            execute_draft("draft-fault", "cmd-fault", "{\"draft\":3}")
+        ),
+    );
+    assert!(
+        !management_fault.status.success(),
+        "a queue fault must abort management admission"
+    );
+    assert!(
+        String::from_utf8_lossy(&management_fault.stderr).contains("injected-management-fault"),
+        "the fault must reach the injected trigger; stderr:\n{}",
+        String::from_utf8_lossy(&management_fault.stderr)
+    );
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs WHERE run_id='draft-fault'); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.run_queue WHERE run_id='draft-fault'); \
+           ASSERT NOT EXISTS (SELECT FROM wamn_run.runs \
+                               WHERE idempotency_key='draft:cmd-fault'); \
+         END $$;",
+    );
+
+    // Two identical management admissions race with no row lock between them.
+    // The run key and the producer key's partial unique index choose the
+    // winner; the loser conflicts out of the insert and reports `duplicate`
+    // with the committed run id when it observed the row and with none when it
+    // raced. Either way one coordinate names exactly one run and queue row.
+    let mut management_racers = Vec::new();
+    for _ in 0..2 {
+        let race_url = url.clone();
+        let race_sql = management_admit.clone();
+        management_racers.push(thread::spawn(move || {
+            success(
+                &race_url,
+                &format!(
+                    "{} {} {}; COMMIT;",
+                    management_preamble(),
+                    prepare_management(&race_sql),
+                    execute_case("case-race", "report-race", 0, "{\"case-id\":\"race\"}")
+                ),
+            )
+        }));
+    }
+    let management_results: Vec<String> = management_racers
+        .into_iter()
+        .map(|racer| racer.join().expect("management admission racer"))
+        .collect();
+    assert_eq!(
+        management_results
+            .iter()
+            .filter(|result| result.trim() == "admitted|case-race")
+            .count(),
+        1,
+        "{management_results:?}"
+    );
+    assert_eq!(
+        management_results
+            .iter()
+            .filter(|result| result.trim().starts_with("duplicate|"))
+            .count(),
+        1,
+        "{management_results:?}"
+    );
+    success(
+        &url,
+        "DO $$ BEGIN \
+           ASSERT (SELECT count(*) FROM wamn_run.runs WHERE run_id='case-race') = 1; \
+           ASSERT (SELECT count(*) FROM wamn_run.run_queue WHERE run_id='case-race') = 1; \
+           ASSERT (SELECT count(*) FROM wamn_run.runs \
+                    WHERE idempotency_key='case:report-race:0') = 1; \
          END $$;",
     );
 

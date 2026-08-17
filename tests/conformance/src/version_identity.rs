@@ -147,10 +147,17 @@ const GOVERNED_LITERALS: &[GovernedLiteral] = &[
         exact: r#"definition: "CHECK (admission_context_version = '0.1'::text)","#,
         expected_count: 1,
     },
+    // Three sites, and the count is per admission STATEMENT, not per producer:
+    // the callable statement, the management statement wamn-0h0g.8.20 added, and
+    // the pure test that pins the literal. A new admission producer that builds
+    // its own statement raises this; it must never LOWER it, and a new statement
+    // emitting anything but `0.1` is rejected by the database anyway --
+    // `runs_admission_context_version_check` is
+    // `CHECK (admission_context_version = '0.1'::text)`.
     GovernedLiteral {
         path: "crates/execution/run-state/src/admission.rs",
         exact: "'version', '0.1'",
-        expected_count: 2,
+        expected_count: 3,
     },
     GovernedLiteral {
         path: "tests/conformance/src/schema_drift.rs",

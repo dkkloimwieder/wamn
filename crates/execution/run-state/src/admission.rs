@@ -1,12 +1,26 @@
-//! Callable-flow admission.
+//! Callable-flow and private management admission.
 //!
 //! Producers enter the run plane through the same-transaction recipe
 //! returned by [`admission_transaction`]. Its first statement takes the stable
 //! catalog-head key-share lock; its second rechecks the producer-specific
 //! definition and writes the run, queue row, and any producer ledger atomically.
+//!
+//! [`AdmissionTransition::ManagementRun`] is the private cross-plane seam
+//! `wamn-0h0g.7.5` ratified. It is a second STATEMENT, never a second run
+//! creation path: it takes the same head lock, writes the same ordinary
+//! `wamn_run.runs` and `wamn_run.run_queue` facts, and answers in the same
+//! [`AdmissionResult`] vocabulary. Two properties a shared statement cannot hold
+//! keep it separate. It names `capture_mode` in its run insert, and PostgreSQL
+//! checks column privileges per NAMED column, so folding it into the callable
+//! statement would oblige `wamn_app` to hold `INSERT (capture_mode)` — the exact
+//! authority `wamn-0h0g.7.5` denies every guest-visible role. And its producer
+//! key needs parameters the callable statement does not carry, whose numbers are
+//! already fixed by the guests binding that statement positionally.
 
 use serde_json::Value;
 use wamn_pg_core::Identifier;
+
+use crate::capture::CaptureMode;
 
 /// Validated schema containing the durable run-state tables and functions.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -34,11 +48,18 @@ impl Default for RunStateSchema {
     }
 }
 
-/// Producer variant accepted by the admission transition.
+/// Producer variant accepted by the admission transitions.
+///
+/// `Http` and `Event` are the callable-flow producers. `DraftRun` and `TestCase`
+/// are the private management producers: they carry a stable producer key instead
+/// of a caller-minted identity and RECEIVE their capture value rather than
+/// presenting one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdmissionProducer {
     Http,
     Event,
+    DraftRun,
+    TestCase,
 }
 
 impl AdmissionProducer {
@@ -46,6 +67,67 @@ impl AdmissionProducer {
         match self {
             Self::Http => "http",
             Self::Event => "event",
+            Self::DraftRun => "draft-run",
+            Self::TestCase => "test-case",
+        }
+    }
+
+    /// The `runs.trigger_source` literal this producer admits under.
+    ///
+    /// A draft run's literal is `scenario-draft`, not its producer name: that
+    /// exact value is the DDL's `runs_capture_mode_source_check` operand and half
+    /// of the draft-safe connection-grant predicate the effect claim path checks,
+    /// so it is not free to rename here.
+    pub const fn trigger_source(self) -> &'static str {
+        match self {
+            Self::Http => "http",
+            Self::Event => "event",
+            Self::DraftRun => "scenario-draft",
+            Self::TestCase => "test-case",
+        }
+    }
+
+    /// The capture value admission fills for this producer.
+    ///
+    /// Capture is derived from the typed producer and is never an admission
+    /// parameter: a caller able to choose it would hold management-only
+    /// authority over an admitted run's node I/O.
+    pub const fn capture_mode(self) -> CaptureMode {
+        match self {
+            Self::Http | Self::Event | Self::TestCase => CaptureMode::Off,
+            Self::DraftRun => CaptureMode::Full,
+        }
+    }
+}
+
+/// The stable coordinate one private management admission is idempotent under.
+///
+/// A draft run is keyed by its authoring command id; a test case is keyed by its
+/// report id and case ordinal. Admission persists the key as the run's
+/// `idempotency_key`, so the partial unique index over that column — not an
+/// application check — is what refuses a second run under one coordinate, and it
+/// is also how a crashed producer's control-side reconciler recovers the run id
+/// it never recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManagementProducerKey<'a> {
+    DraftRun { command_id: &'a str },
+    TestCase { report_id: &'a str, ordinal: i32 },
+}
+
+impl ManagementProducerKey<'_> {
+    /// The producer this coordinate admits as.
+    pub const fn producer(self) -> AdmissionProducer {
+        match self {
+            Self::DraftRun { .. } => AdmissionProducer::DraftRun,
+            Self::TestCase { .. } => AdmissionProducer::TestCase,
+        }
+    }
+
+    /// The exact `runs.idempotency_key` the management statement composes.
+    pub fn idempotency_key(self) -> String {
+        match self {
+            Self::DraftRun { command_id } => format!("draft:{command_id}"),
+            Self::TestCase { report_id, ordinal } => format!("case:{report_id}:{ordinal}"),
         }
     }
 }
@@ -119,6 +201,8 @@ pub fn registration_evidence(document: &Value) -> (String, String) {
 pub enum AdmissionTransition<'a> {
     /// Shared callable-flow admission for HTTP and event producers.
     CallableFlow { schema: &'a RunStateSchema },
+    /// Private management admission for draft-run and test-case producers.
+    ManagementRun { schema: &'a RunStateSchema },
 }
 
 /// The ordered statements for one admission transaction.
@@ -144,6 +228,9 @@ impl AdmissionTransaction {
 pub fn admission_transaction(transition: AdmissionTransition<'_>) -> AdmissionTransaction {
     match transition {
         AdmissionTransition::CallableFlow { schema } => admission_sql_for_schema(schema),
+        AdmissionTransition::ManagementRun { schema } => {
+            management_admission_sql_for_schema(schema)
+        }
     }
 }
 
@@ -155,12 +242,36 @@ pub(crate) fn admission_sql() -> AdmissionTransaction {
     }
 }
 
+/// Build the private management lock-then-admit transaction recipe.
+///
+/// The head lock is byte-identical to the callable recipe's: management admits
+/// against the same stable head under the same conflict, and a second bridge
+/// would be a second way to promote a run past a moving catalog.
+pub(crate) fn management_admission_sql() -> AdmissionTransaction {
+    AdmissionTransaction {
+        lock_head: lock_catalog_head_sql(),
+        admit: management_admit_sql(),
+    }
+}
+
 /// Build the admission recipe for a validated deployment-specific schema.
 ///
 /// The canonical schema retains its historical byte shape. Alternate schemas
 /// are always PostgreSQL-quoted and can only enter through [`RunStateSchema`].
 pub(crate) fn admission_sql_for_schema(schema: &RunStateSchema) -> AdmissionTransaction {
-    let canonical = admission_sql();
+    qualify_run_state_schema(admission_sql(), schema)
+}
+
+/// Build the management recipe for a validated deployment-specific schema.
+pub(crate) fn management_admission_sql_for_schema(schema: &RunStateSchema) -> AdmissionTransaction {
+    qualify_run_state_schema(management_admission_sql(), schema)
+}
+
+/// Rewrite one canonical recipe onto a validated deployment-specific schema.
+fn qualify_run_state_schema(
+    canonical: AdmissionTransaction,
+    schema: &RunStateSchema,
+) -> AdmissionTransaction {
     if schema.as_str() == RunStateSchema::default().as_str() {
         return canonical;
     }
@@ -472,6 +583,201 @@ SELECT CASE \
         .to_string()
 }
 
+/// Admit one private management run under its stable producer coordinate.
+///
+/// Parameters:
+///
+/// 1. producer (`draft-run | test-case`)
+/// 2. catalog id
+/// 3. environment
+/// 4. expected catalog version
+/// 5. flow id
+/// 6. flow version
+/// 7. run id
+/// 8. input JSON text
+/// 9. invocation-context JSON text
+/// 10. platform revision
+/// 11. run deadline
+/// 12. authoring command id (draft-run)
+/// 13. report id (test case)
+/// 14. case ordinal (test case)
+///
+/// The producer key, `trigger_source`, and `capture_mode` are DERIVED from
+/// parameter 1 rather than presented, so no caller can admit a draft-only
+/// capture value or an unpaired producer marker. The run id stays a parameter
+/// because the control-plane reservation records it BEFORE this transaction; a
+/// crash between the two commits is recovered by re-executing this statement,
+/// which returns the same run under the same key.
+///
+/// SR12a — what the pure tests cannot cover. Neither existence lookup takes a
+/// row lock. `FOR KEY SHARE` on `runs` would oblige this authority to hold
+/// `UPDATE` on at least one of its columns, which `wamn-0h0g.7.5` denies it, so
+/// the run primary key and the partial unique index over `idempotency_key` are
+/// the whole enforcement: a losing concurrent admission conflicts out of
+/// `created_run` and creates nothing.
+///
+/// A loser reports `duplicate` with NO run id, exactly as the callable
+/// statement does. It cannot report `c.run_id`: the run id and the producer key
+/// are INDEPENDENT parameters here, so a stale snapshot can conflict on the key
+/// alone, and answering with the presented id would hand a caller an id no run
+/// carries. Its retry sees the committed row and classifies deterministically.
+/// Only the live PostgreSQL race proof observes any of this.
+fn management_admit_sql() -> String {
+    "\
+WITH input AS ( \
+    SELECT NULLIF(current_setting('app.tenant', true), '')::text AS tenant_id, \
+           $1::text AS producer, $2::text AS catalog_id, $3::text AS environment, \
+           $4::int AS expected_catalog_version, $5::text AS flow_id, \
+           $6::int AS flow_version, $7::text AS run_id, \
+           $8::text::jsonb AS input_json, $9::text::jsonb AS invocation_context, \
+           $10::text AS platform_revision, $11::timestamptz AS run_deadline_at, \
+           $12::text AS command_id, $13::text AS report_id, $14::int AS case_ordinal \
+), \
+keyed AS ( \
+    SELECT i.*, \
+           CASE i.producer \
+             WHEN 'draft-run' THEN 'draft:' || i.command_id \
+             WHEN 'test-case' THEN 'case:' || i.report_id || ':' || i.case_ordinal::text \
+           END AS producer_key, \
+           CASE i.producer \
+             WHEN 'draft-run' THEN 'scenario-draft'::text \
+             WHEN 'test-case' THEN 'test-case'::text \
+           END AS trigger_source, \
+           CASE i.producer \
+             WHEN 'draft-run' THEN 'full'::text \
+             WHEN 'test-case' THEN 'off'::text \
+           END AS capture_mode \
+      FROM input AS i \
+), \
+locked_head AS MATERIALIZED ( \
+    SELECT h.applied_catalog_version \
+      FROM catalog.catalog_heads AS h, keyed AS k \
+     WHERE h.tenant_id = k.tenant_id AND h.catalog_id = k.catalog_id \
+       AND h.environment = k.environment \
+), \
+release_flow AS MATERIALIZED ( \
+    SELECT f.tenant_id, f.flow_id, f.flow_version, f.execution_bundle_hash, \
+           a.artifact_hash \
+      FROM catalog.release_flows AS f \
+      JOIN catalog.flow_artifacts AS a \
+        ON a.tenant_id = f.tenant_id AND a.flow_id = f.flow_id \
+       AND a.flow_version = f.flow_version \
+      CROSS JOIN keyed AS k CROSS JOIN locked_head AS h \
+     WHERE f.tenant_id = k.tenant_id AND f.catalog_id = k.catalog_id \
+       AND f.catalog_version = h.applied_catalog_version \
+       AND f.flow_id = k.flow_id AND f.flow_version = k.flow_version \
+), \
+root_plan AS MATERIALIZED ( \
+    SELECT rf.* \
+      FROM release_flow AS rf \
+      JOIN catalog.execution_bundles AS bundle \
+        ON bundle.tenant_id = rf.tenant_id \
+       AND bundle.execution_bundle_hash = rf.execution_bundle_hash \
+), \
+keyed_run AS MATERIALIZED ( \
+    SELECT r.run_id FROM wamn_run.runs AS r, keyed AS k \
+     WHERE r.tenant_id = k.tenant_id AND k.producer_key IS NOT NULL \
+       AND r.idempotency_key = k.producer_key \
+), \
+existing_run AS MATERIALIZED ( \
+    SELECT r.run_id, r.idempotency_key, r.trigger_source, r.capture_mode, \
+           r.flow_id, r.flow_version, r.catalog_id, r.catalog_version, \
+           r.environment, r.execution_bundle_hash, r.input_json \
+      FROM wamn_run.runs AS r, keyed AS k \
+     WHERE r.tenant_id = k.tenant_id AND r.run_id = k.run_id \
+), \
+classified AS ( \
+    SELECT CASE \
+      WHEN k.producer IS NULL OR k.producer NOT IN ('draft-run', 'test-case') \
+        THEN 'invalid-producer' \
+      WHEN k.tenant_id IS NULL OR k.catalog_id IS NULL OR k.catalog_id = '' \
+        OR k.environment IS NULL OR k.environment = '' \
+        OR k.flow_id IS NULL OR k.flow_id = '' OR k.flow_version IS NULL \
+        OR k.flow_version <= 0 OR k.run_id IS NULL OR k.run_id = '' \
+        OR k.input_json IS NULL OR k.invocation_context IS NULL \
+        OR jsonb_typeof(k.invocation_context) IS DISTINCT FROM 'object' \
+        OR k.platform_revision IS NULL OR k.platform_revision = '' \
+        OR k.run_deadline_at IS NULL THEN 'invalid-input' \
+      WHEN k.producer = 'draft-run' AND (k.command_id IS NULL OR k.command_id = '' \
+        OR k.report_id IS NOT NULL OR k.case_ordinal IS NOT NULL) \
+        THEN 'invalid-input' \
+      WHEN k.producer = 'test-case' AND (k.report_id IS NULL OR k.report_id = '' \
+        OR k.case_ordinal IS NULL OR k.case_ordinal < 0 \
+        OR k.command_id IS NOT NULL \
+        OR k.invocation_context ->> 'producer' = 'draft-scenario') \
+        THEN 'invalid-input' \
+      WHEN h.applied_catalog_version IS NULL THEN 'head-not-found' \
+      WHEN h.applied_catalog_version <> k.expected_catalog_version THEN 'head-drift' \
+      WHEN rf.flow_id IS NULL THEN 'definition-drift' \
+      WHEN plan.execution_bundle_hash IS NULL THEN 'missing-root-plan' \
+      WHEN kr.run_id IS NOT NULL AND kr.run_id <> k.run_id \
+        THEN 'conflicting-run-identity' \
+      WHEN xr.run_id IS NOT NULL \
+       AND (xr.idempotency_key IS DISTINCT FROM k.producer_key \
+         OR xr.trigger_source IS DISTINCT FROM k.trigger_source \
+         OR xr.capture_mode IS DISTINCT FROM k.capture_mode \
+         OR xr.flow_id <> k.flow_id OR xr.flow_version <> k.flow_version \
+         OR xr.catalog_id IS DISTINCT FROM k.catalog_id \
+         OR xr.catalog_version IS DISTINCT FROM k.expected_catalog_version \
+         OR xr.environment IS DISTINCT FROM k.environment \
+         OR xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash \
+         OR xr.input_json IS DISTINCT FROM k.input_json) \
+        THEN 'conflicting-run-identity' \
+      WHEN xr.run_id IS NOT NULL THEN 'duplicate' \
+      ELSE 'ready' END AS result_code, \
+      k.*, plan.artifact_hash, plan.execution_bundle_hash, \
+      COALESCE(xr.run_id, kr.run_id) AS existing_run_id \
+    FROM keyed AS k \
+    LEFT JOIN locked_head AS h ON true \
+    LEFT JOIN release_flow AS rf ON true \
+    LEFT JOIN root_plan AS plan ON true \
+    LEFT JOIN keyed_run AS kr ON true \
+    LEFT JOIN existing_run AS xr ON true \
+), \
+created_run AS ( \
+    INSERT INTO wamn_run.runs \
+      (tenant_id, run_id, flow_id, flow_version, catalog_id, catalog_version, environment, \
+       execution_bundle_hash, status, trigger_source, capture_mode, input_json, \
+       invocation_context, admission_context_version, platform_revision, idempotency_key, \
+       run_deadline_at) \
+    SELECT c.tenant_id, c.run_id, c.flow_id, c.flow_version, c.catalog_id, \
+           c.expected_catalog_version, c.environment, \
+           c.execution_bundle_hash, 'dispatched', c.trigger_source, c.capture_mode, \
+           c.input_json, \
+           jsonb_build_object( \
+             'version', '0.1', \
+             'principal', jsonb_build_object( \
+               'tenant-id', c.tenant_id, 'environment', c.environment, \
+               'catalog-id', c.catalog_id, 'catalog-version', c.expected_catalog_version, \
+               'run-id', c.run_id, \
+               'flow-id', c.flow_id, 'flow-version', c.flow_version, \
+               'artifact-digest', c.artifact_hash), \
+             'source', CASE WHEN c.producer = 'draft-run' \
+               THEN jsonb_set(c.invocation_context, '{producer}', \
+                              to_jsonb('draft-scenario'::text), true) \
+               ELSE c.invocation_context END), \
+           '0.1', c.platform_revision, c.producer_key, c.run_deadline_at \
+      FROM classified AS c WHERE c.result_code = 'ready' \
+    ON CONFLICT DO NOTHING \
+    RETURNING tenant_id, run_id \
+), \
+created_queue AS ( \
+    INSERT INTO wamn_run.run_queue \
+      (tenant_id, run_id, available_at, stream_seq) \
+    SELECT r.tenant_id, r.run_id, now(), 0 \
+      FROM created_run AS r \
+    RETURNING tenant_id, run_id \
+) \
+SELECT CASE \
+         WHEN c.result_code = 'ready' AND q.run_id IS NOT NULL THEN 'admitted' \
+         WHEN c.result_code = 'ready' THEN 'duplicate' \
+         ELSE c.result_code END AS result_code, \
+       CASE WHEN c.result_code = 'ready' AND q.run_id IS NULL THEN NULL \
+         ELSE COALESCE(q.run_id, c.existing_run_id) END AS run_id \
+ FROM classified AS c LEFT JOIN created_queue AS q USING (tenant_id, run_id)"
+        .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -482,10 +788,17 @@ mod tests {
     fn producer_literals_are_stable() {
         assert_eq!(AdmissionProducer::Http.as_sql(), "http");
         assert_eq!(AdmissionProducer::Event.as_sql(), "event");
+        assert_eq!(AdmissionProducer::DraftRun.as_sql(), "draft-run");
+        assert_eq!(AdmissionProducer::TestCase.as_sql(), "test-case");
         assert!(
             admission_sql()
                 .admit()
                 .contains("producer NOT IN ('http', 'event')")
+        );
+        assert!(
+            management_admission_sql()
+                .admit()
+                .contains("producer NOT IN ('draft-run', 'test-case')")
         );
     }
 
@@ -723,6 +1036,277 @@ mod tests {
         assert_eq!(
             AdmissionResult::from_parts("missing-root-plan", None),
             Some(AdmissionResult::MissingRootPlan)
+        );
+    }
+
+    #[test]
+    fn management_admission_shares_the_head_lock_and_the_refusal_vocabulary() {
+        let callable = admission_sql();
+        let management = management_admission_sql();
+
+        assert_eq!(callable.lock_head(), management.lock_head());
+        assert_ne!(callable.admit(), management.admit());
+        assert!(
+            management
+                .lock_head()
+                .contains("wamn_run.lock_catalog_head")
+        );
+        assert_eq!(management.admit().matches("WITH input AS").count(), 1);
+        // Management reuses the existing typed refusals; it adds no wire arm.
+        for code in [
+            "invalid-producer",
+            "invalid-input",
+            "head-not-found",
+            "head-drift",
+            "definition-drift",
+            "missing-root-plan",
+            "conflicting-run-identity",
+            "duplicate",
+            "admitted",
+        ] {
+            assert!(
+                management.admit().contains(code),
+                "management admission dropped {code}"
+            );
+            assert!(
+                AdmissionResult::from_parts(code, Some("r1".to_string())).is_some(),
+                "{code} does not decode"
+            );
+        }
+    }
+
+    #[test]
+    fn management_producers_receive_the_ratified_capture_and_trigger_facts() {
+        assert_eq!(
+            AdmissionProducer::DraftRun.trigger_source(),
+            "scenario-draft"
+        );
+        assert_eq!(AdmissionProducer::TestCase.trigger_source(), "test-case");
+        assert_eq!(AdmissionProducer::Http.trigger_source(), "http");
+        assert_eq!(AdmissionProducer::Event.trigger_source(), "event");
+        assert_eq!(
+            AdmissionProducer::DraftRun.capture_mode(),
+            CaptureMode::Full
+        );
+        for off in [
+            AdmissionProducer::Http,
+            AdmissionProducer::Event,
+            AdmissionProducer::TestCase,
+        ] {
+            assert_eq!(off.capture_mode(), CaptureMode::Off, "{off:?} stays off");
+        }
+
+        let sql = management_admission_sql().admit;
+        assert!(sql.contains(&format!(
+            "WHEN 'draft-run' THEN '{}'::text",
+            AdmissionProducer::DraftRun.trigger_source()
+        )));
+        assert!(sql.contains(&format!(
+            "WHEN 'test-case' THEN '{}'::text",
+            AdmissionProducer::TestCase.trigger_source()
+        )));
+        assert!(sql.contains(&format!(
+            "WHEN 'draft-run' THEN '{}'::text",
+            CaptureMode::Full.as_str()
+        )));
+        assert!(sql.contains(&format!(
+            "WHEN 'test-case' THEN '{}'::text",
+            CaptureMode::Off.as_str()
+        )));
+        // Capture is derived, never bound: the parameter list stops at the
+        // producer coordinate.
+        assert!(sql.contains("$14::int AS case_ordinal"));
+        assert!(!sql.contains("$15"));
+        assert!(sql.contains("END AS capture_mode"));
+        assert!(!sql.contains("::text AS capture_mode"));
+        // The DDL pairs a full-capture run with exactly this trigger literal.
+        let ddl = include_str!("../../../../deploy/sql/run-state.sql");
+        assert!(ddl.contains(&format!(
+            "capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM '{}'",
+            AdmissionProducer::DraftRun.trigger_source()
+        )));
+    }
+
+    #[test]
+    fn management_producer_keys_are_the_stable_admitted_coordinates() {
+        let draft = ManagementProducerKey::DraftRun {
+            command_id: "cmd-1",
+        };
+        let case = ManagementProducerKey::TestCase {
+            report_id: "report-a",
+            ordinal: 3,
+        };
+        let next = ManagementProducerKey::TestCase {
+            report_id: "report-a",
+            ordinal: 4,
+        };
+
+        assert_eq!(draft.idempotency_key(), "draft:cmd-1");
+        assert_eq!(case.idempotency_key(), "case:report-a:3");
+        assert_eq!(next.idempotency_key(), "case:report-a:4");
+        assert_eq!(draft.producer(), AdmissionProducer::DraftRun);
+        assert_eq!(case.producer(), AdmissionProducer::TestCase);
+        // Another ordinal is another coordinate, and no management coordinate
+        // can shadow the event producer's key space.
+        assert_ne!(case.idempotency_key(), next.idempotency_key());
+        for key in [draft.idempotency_key(), case.idempotency_key()] {
+            assert!(!key.starts_with("evt:"), "{key} collides with event keys");
+        }
+
+        let sql = management_admission_sql().admit;
+        assert!(sql.contains("WHEN 'draft-run' THEN 'draft:' || i.command_id"));
+        assert!(
+            sql.contains("WHEN 'test-case' THEN 'case:' || i.report_id || ':' || i.case_ordinal")
+        );
+        // The key is persisted, so the unique index — not a read — enforces it,
+        // and a crashed producer's reconciler can recover the run id from it.
+        assert!(sql.contains("c.producer_key, c.run_deadline_at"));
+        assert!(sql.contains("r.idempotency_key = k.producer_key"));
+        assert!(
+            include_str!("../../../../deploy/sql/run-state.sql")
+                .contains("CREATE UNIQUE INDEX runs_idempotency ON wamn_run.runs")
+        );
+    }
+
+    #[test]
+    fn management_admission_writes_one_ordinary_run_and_unleased_queue_row() {
+        let sql = management_admission_sql().admit;
+
+        assert!(sql.contains("INSERT INTO wamn_run.runs"));
+        assert!(sql.contains("status, trigger_source, capture_mode, input_json"));
+        assert!(sql.contains("'dispatched', c.trigger_source, c.capture_mode"));
+        assert!(sql.contains("INSERT INTO wamn_run.run_queue"));
+        assert!(sql.contains("(tenant_id, run_id, available_at, stream_seq)"));
+        assert!(sql.contains("SELECT r.tenant_id, r.run_id, now(), 0"));
+        assert!(sql.contains("ON CONFLICT DO NOTHING"));
+        assert_eq!(sql.matches("INSERT INTO").count(), 2);
+        // The authority admits; it never claims, leases, ledgers, or mutates.
+        for absent in [
+            "invocation_admissions",
+            "lease_owner",
+            "lease_expires_at",
+            "lease_generation",
+            "UPDATE wamn_run.",
+            "DELETE FROM",
+            "FOR KEY SHARE",
+            "FOR UPDATE",
+            "effect_attempts",
+            "operator_run_actions",
+            "SECURITY DEFINER",
+        ] {
+            assert!(
+                !sql.contains(absent),
+                "management admission must not use {absent}"
+            );
+        }
+    }
+
+    #[test]
+    fn management_admission_refuses_a_diverged_coordinate_before_mutation() {
+        let sql = management_admission_sql().admit;
+
+        assert!(sql.contains("WHEN kr.run_id IS NOT NULL AND kr.run_id <> k.run_id"));
+        for compared in [
+            "xr.idempotency_key IS DISTINCT FROM k.producer_key",
+            "xr.trigger_source IS DISTINCT FROM k.trigger_source",
+            "xr.capture_mode IS DISTINCT FROM k.capture_mode",
+            "xr.flow_id <> k.flow_id OR xr.flow_version <> k.flow_version",
+            "xr.catalog_id IS DISTINCT FROM k.catalog_id",
+            "xr.catalog_version IS DISTINCT FROM k.expected_catalog_version",
+            "xr.environment IS DISTINCT FROM k.environment",
+            "xr.execution_bundle_hash IS DISTINCT FROM plan.execution_bundle_hash",
+            "xr.input_json IS DISTINCT FROM k.input_json",
+        ] {
+            assert!(sql.contains(compared), "conflict check missing {compared}");
+        }
+        assert_eq!(sql.matches("THEN 'conflicting-run-identity'").count(), 2);
+        assert!(sql.contains("WHEN xr.run_id IS NOT NULL THEN 'duplicate'"));
+        // Both writes are fenced behind the classifier, so a refusal is atomic.
+        assert!(sql.contains("FROM classified AS c WHERE c.result_code = 'ready'"));
+        assert!(sql.contains("FROM created_run AS r"));
+        // A refusal names the run already holding the coordinate. A ready
+        // admission that LOST the insert race answers with no run id at all,
+        // because run id and producer key are independent parameters and a
+        // caller must never record an id no run carries.
+        assert!(sql.contains("CASE WHEN c.result_code = 'ready' AND q.run_id IS NULL THEN NULL"));
+        assert!(sql.contains("ELSE COALESCE(q.run_id, c.existing_run_id) END AS run_id"));
+        assert!(!sql.contains("c.admitted_run_id"));
+        assert_eq!(
+            AdmissionResult::from_parts("conflicting-run-identity", Some("r1".to_string())),
+            Some(AdmissionResult::ConflictingRunIdentity)
+        );
+    }
+
+    /// The effect claim path authorizes a draft-safe connection only when
+    /// `runs.trigger_source = 'scenario-draft'` and
+    /// `invocation_context #>> '{source,producer}' = 'draft-scenario'` AGREE
+    /// (`crates/platform/runtime/src/plugins/wamn_postgres/claims.rs`). A
+    /// half-set pair silently refuses every draft effect, so admission writes
+    /// the marker itself and refuses a test case that presents it.
+    #[test]
+    fn management_admission_owns_the_draft_scenario_marker() {
+        let sql = management_admission_sql().admit;
+
+        assert!(sql.contains(
+            "'source', CASE WHEN c.producer = 'draft-run' \
+             THEN jsonb_set(c.invocation_context, '{producer}', \
+             to_jsonb('draft-scenario'::text), true) \
+             ELSE c.invocation_context END)"
+        ));
+        assert!(sql.contains("k.invocation_context ->> 'producer' = 'draft-scenario'"));
+        assert!(sql.contains("jsonb_typeof(k.invocation_context) IS DISTINCT FROM 'object'"));
+    }
+
+    #[test]
+    fn callable_admission_is_unchanged_by_management_admission() {
+        let callable = admission_sql().admit;
+
+        assert!(callable.contains("producer NOT IN ('http', 'event')"));
+        for management_only in [
+            "draft-run",
+            "test-case",
+            "scenario-draft",
+            "producer_key",
+            "command_id",
+            "case_ordinal",
+        ] {
+            assert!(
+                !callable.contains(management_only),
+                "callable admission leaked {management_only}"
+            );
+        }
+        // `wamn_app` holds no INSERT privilege on `capture_mode`, and PostgreSQL
+        // checks column privileges per NAMED column, so the callable statement
+        // must never name it in its run insert.
+        assert!(callable.contains("registration_id, status, trigger_source, input_json"));
+        assert!(!callable.contains("trigger_source, capture_mode"));
+        // The guests binding this statement positionally fix its parameter count.
+        assert!(callable.contains("$24"));
+        assert!(!callable.contains("$25"));
+    }
+
+    #[test]
+    fn custom_management_schema_qualifies_every_run_state_reference() {
+        let schema = RunStateSchema::new("wamn_runner_demo").unwrap();
+        let canonical = management_admission_sql();
+        let configured = management_admission_sql_for_schema(&schema);
+        let canonical_references = canonical.lock_head.matches("wamn_run.").count()
+            + canonical.admit.matches("wamn_run.").count();
+        let configured_sql = format!("{} {}", configured.lock_head, configured.admit);
+
+        assert_eq!(
+            canonical_references, 5,
+            "update this pin when management admission adds a run-state boundary"
+        );
+        assert_eq!(configured_sql.matches("\"wamn_runner_demo\".").count(), 5);
+        assert!(!configured_sql.contains("wamn_run."));
+        assert_eq!(
+            admission_transaction(AdmissionTransition::ManagementRun { schema: &schema }),
+            configured
+        );
+        assert_eq!(
+            management_admission_sql_for_schema(&RunStateSchema::default()),
+            canonical
         );
     }
 }
