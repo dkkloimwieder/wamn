@@ -102,12 +102,24 @@ fn production_host_constructs_the_provider_without_inline_execution() {
     assert!(HOST.contains("WamnFlowInvocation::from_env()"));
     assert!(HOST.contains(".with_plugin(Arc::new("));
     assert!(HOST.contains("wamn:flow-invocation plugin init"));
+    // wamn-0h0g.15.131: two needle shapes, and the split is deliberate. An
+    // identifier unique to the deleted surface stays a bare substring — nothing
+    // else in a host spells it. A needle whose name is ordinary English is pinned
+    // as the clap field it actually was, `pub <field>:`, the shape the SERVICE list
+    // below already uses for `pub project:` and `pub schema:`. Bare, those three
+    // forbade naming a sibling process in a doc comment and forbade the upstream
+    // `wash_runtime::host::allowed_hosts::AllowedHost` path; bare `flowrunner` did
+    // fire, on prose, from wamn-0h0g.15.101 until here — unnoticed for a whole wave
+    // because no sweep ran an integration-test binary. Restoring the surface still
+    // means declaring the field, which `446cdca8~1` spelled exactly as
+    // `pub flowrunner: PathBuf`, `pub credentials_file: Option<PathBuf>` and
+    // `pub allowed_hosts: Vec<String>`. Do not re-broaden these to bare words.
     for deleted in [
         "InlineExecutionDriver",
         "inline_driver",
-        "flowrunner",
-        "credentials_file",
-        "allowed_hosts",
+        "pub flowrunner:",
+        "pub credentials_file:",
+        "pub allowed_hosts:",
         "inline_lease_ttl_ms",
     ] {
         assert!(
