@@ -285,9 +285,14 @@ CREATE TABLE wamn_run.runs (
     CONSTRAINT runs_capture_mode_source_check CHECK (
       capture_mode <> 'full' OR trigger_source IS NOT DISTINCT FROM 'scenario-draft'
     ),
+    -- Both `IS NOT NULL` conjuncts are load-bearing: without them a well-formed
+    -- HALF pair makes this disjunct NULL rather than false, and a CHECK whose
+    -- expression is NULL is SATISFIED — so `(7, NULL)` and `(NULL, <digest>)`
+    -- were both accepted and the pair was not paired (wamn-0h0g.15.126).
     CONSTRAINT runs_release_record_check CHECK (
       (release_version IS NULL AND manifest_digest IS NULL)
-      OR (release_version > 0
+      OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL
+          AND release_version > 0
           AND manifest_digest ~ '^sha256:[0-9a-f]{64}$')
     ),
     PRIMARY KEY (tenant_id, run_id),

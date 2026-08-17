@@ -214,7 +214,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
         // The claim-time release record: absent, or complete and well formed.
         // Table-origin because it names two columns, and explicitly named so it
         // can never collide with the retired child-run `runs_check3` numbering.
-        definition: "CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
+        // The two `IS NOT NULL` conjuncts are what make "complete" true rather
+        // than merely claimed: a well-formed half pair leaves the second
+        // disjunct NULL, and a NULL CHECK expression is satisfied
+        // (wamn-0h0g.15.126). This literal is the `pg_get_constraintdef(oid,
+        // true)` pretty rendering, derived on PostgreSQL 18, not hand-written.
+        definition: "CHECK (release_version IS NULL AND manifest_digest IS NULL OR release_version IS NOT NULL AND manifest_digest IS NOT NULL AND release_version > 0 AND manifest_digest ~ '^sha256:[0-9a-f]{64}$'::text)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -6579,7 +6584,7 @@ CREATE INDEX event_registrations_by_entity
         assert!(runs.contains("manifest_digest text"));
         assert!(runs.contains("CONSTRAINT runs_release_record_check"));
         assert!(runs.contains(
-            "(release_version IS NULL AND manifest_digest IS NULL)\n      OR (release_version > 0"
+            "(release_version IS NULL AND manifest_digest IS NULL)\n      OR (release_version IS NOT NULL AND manifest_digest IS NOT NULL"
         ));
         assert!(runs.contains("capture_mode,\n                 release_version, manifest_digest"));
         assert!(RUN_STATE_SQL.contains("MESSAGE = 'run-release-record-immutable'"));
