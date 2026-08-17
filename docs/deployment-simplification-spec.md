@@ -19,7 +19,10 @@ we already run); everything immutable ships as **OCI artifacts**;
 run executes under the release its claiming pod carries and records
 that fact once. The database keeps only tenant-runtime state: the run
 plane, bindings/generations, applied schema, app data, and the
-control-plane gate artifacts.
+control-plane gate artifacts. Stated from the artifact side, the same
+boundary reads: **the manifest carries release shape;
+environment-operational state stays in Postgres** — the bindings
+boundary applied again.
 
 wamn's embedded `wash-runtime` custom host is the sanctioned v2
 pattern ("substitute your own custom host builds") — adoption is
@@ -32,11 +35,16 @@ substitution, not redesign: our host images enter the operator's
 verify draft + green report → mint immutable release + evidence
 (`tested_resolution_map` included). Then push the content-addressed
 OCI artifacts — plan bytes and the **release manifest** (RFC 8785
-bytes, `sha256:<digest>`; flow → plan-hash / source-artifact /
-callable-contract, call-edge adjacency, attachment + registration
-projections) — and write the environment's desired state to the
-GitOps source: the release-identity ConfigMap
-`(release version, manifest digest)` and any changed CRDs.
+bytes, `sha256:<digest>`; flow → flow-version / plan-hash /
+source-artifact / callable-contract, call-edge adjacency, attachment
++ registration projections) — and write the environment's desired
+state to the GitOps source: the release-identity ConfigMap
+`(release version, manifest digest)` and any changed CRDs. The
+manifest is minted per `(release, environment)` and names that
+environment in its hashed identity block, so one digest exists per
+environment; under the boundary above every projected field is
+release content, so the two documents for one release in two
+environments differ by that label alone.
 
 **Deploy (cluster, operator-reconciled).** Argo/Flux (plain
 `kubectl apply` in dev) converges; the runtime-operator reconciles
@@ -52,16 +60,29 @@ Rollback is Git revert; wrong-target protection is
 namespace/context targeting.
 
 **Serve/admit.** flow-http and the materializer read routes and
-registrations from the mounted manifest. Admission validates input
-against the admitting pod's manifest and writes the durable run +
-queue row — the write-ahead row is the crash floor and idempotency
+registration identity from the mounted manifest; the two pieces of
+environment-operational state stay behind. Enablement is checked
+inside the admission transaction, which already hits the database,
+and refuses through the existing `inactive-definition` classification
+(`attachment-disabled` at the HTTP surface) — so emergency-off is one
+`UPDATE`, effective on the next admission. A registration's condition
+stays an environment-hot column the materializer reads at evaluation,
+itself already a per-event transaction. Neither adds a serving-path
+read, and seconds-scale filter repair survives. Admission validates
+input against the admitting pod's manifest and writes the durable run
++ queue row — the write-ahead row is the crash floor and idempotency
 anchor, and the only reason admission and execution are distinct
 moments. Warm path: milliseconds apart.
 
 **Claim/execute.** A worker claims (lock → classify → lease — the
 never-replay classifier, unchanged) and **records
 `(release version, manifest digest)` from its own pod identity onto
-the run, write-once** under the existing immutability trigger.
+the run**. Its guard is transition-constrained, not write-once:
+`NULL → value` by the claim, `value → NULL` by the classifier's
+pre-effect arm, `value → value'` refused always. The pair is
+therefore write-once per claim attempt — a pre-effect reclaim clears
+it in the same transaction that re-enqueues, and the next claim
+records afresh under whatever release that pod carries.
 Resolution is a pure read of the pod's manifest (adjacency gives the
 transitive set); plan bytes fetch by digest, verify at transfer,
 cache forever. Effect authority verifies: recorded manifest contains
@@ -72,7 +93,10 @@ cache forever. Effect authority verifies: recorded manifest contains
 bytes; every link content-addressed and immutable. Deployment
 bookkeeping is one control-plane attestation row written by the
 publish pipeline; rollout state itself lives where v2 puts it — etcd,
-inspected with kubectl.
+inspected with kubectl. That row is also the audit rule for what a
+release *is*: a digest is **released** iff a deployment attestation
+references it, so a candidate manifest (ruling 1) is distinguishable
+by attestation absence, with zero schema.
 
 ## Version semantics (no pinning)
 
@@ -95,8 +119,11 @@ deployed-manifest append-only rule · the artifact fetch API +
 dedicated artifact-reader DB role (OCI pulls) ·
 `deployment_attestations`' `deployed_resolution_map` (map-only —
 ruling 5; no state column exists in the DDL) ·
-report-level map-consistency checking · hand-rolled host Deployment
-manifests (operator `Host` CRDs replace them) · **the waker, at M2
+report-level map-consistency checking · hand-rolled **wasmCloud
+host** Deployment manifests (operator `Host` CRDs replace them) —
+wamn-run-worker is not one of them and is retained as a plain
+Deployment: no `ClusterHost`, no heartbeat, and pretending otherwise
+would be adoption theater · **the waker, at M2
 adoption** — host/workload scaling is operator territory
 (`hostReplicas` / workload scalers); the dispatcher's wake signal
 becomes a CRD patch; planned deletion with a named trigger, not
@@ -114,10 +141,13 @@ reconciliation is ours) · OCI availability trade as accepted.
 
 ## Alignment costs, accepted
 
-Tracking a fast-moving v1alpha1 CRD surface: chart + operator version
-pin per environment, upgraded only on the fork-sync cadence; operator
-PRs reclassified from N/A to tracked; chart carriage verified at
-`v2.7.0` (see Fork sync below).
+Tracking a fast-moving v1alpha1 CRD surface: the CRDs and the
+operator pin **per cluster** — they are cluster-scoped and Helm
+installs them once, so every environment in a cluster shares one
+operator version — upgraded only on the fork-sync cadence; chart
+**values** (host images, groups) vary per environment and per
+release; operator PRs reclassified from N/A to tracked; chart
+carriage verified at `v2.7.0` (see Fork sync below).
 
 ## Demolition plan — deletion without build/test churn
 
@@ -154,9 +184,13 @@ Report-level map-consistency check (a plpgsql trigger in
 caller; the `tested_resolution_map` evidence column is retained) ·
 `deployment_attestations`' `deployed_resolution_map` (map-only per
 ruling 5; store is days old, no consumers) · superseded doc sections
-via one read-through amendment commit · hand-rolled host manifests
-where they exist outside gates (`runner.yaml`, `scenario-worker.yaml`;
-flow-http/materializer are already `WorkloadDeployment`-shaped).
+via one read-through amendment commit. Hand-rolled host manifests are
+NOT in this tier: on the Deleted list's scoping the delete set is
+empty —
+`runner.yaml` is wamn-run-worker's retained plain Deployment
+(rewritten, not deleted, for the release-identity mount and
+readiness), `scenario-worker.yaml` is no host either, and
+flow-http/materializer are already `WorkloadDeployment`-shaped.
 The waker is NOT in this tier — its deletion is post-wave at M2
 adoption per the Deleted list's named trigger (`wamn-0h0g.15.26`,
 dep the CRD-patch wake replacement `wamn-0h0g.15.19`).
@@ -173,8 +207,8 @@ they land as one branch with a single green-up:
    `schema_drift.rs`, `runnerbench.rs`, ctl `run_plane_live.rs`, and
    guard `global-fifo-claim.sh` (`plan-supply.sh` dies in item 3).
 2. *Pin → claim-time recording*: 24 `execution_bundle_hash` sites in
-   `run-state.sql`, trigger arm, admission builders; two write-once
-   columns added on the existing claim write.
+   `run-state.sql`, trigger arm, admission builders; two
+   transition-guarded columns added on the existing claim write.
 3. *Artifact reader → OCI pull*: the `.9.10`/`.5.14` plane (19
    files including the `artifact-reader-credential.sh` +
    `control-artifact-reader.sh` + `plan-supply.sh` guards), the
@@ -189,10 +223,16 @@ they land as one branch with a single green-up:
    four-family parser → in-draft `cases` + flat expect shape;
    `test-set-run` payload drops; report diff shape unchanged
    (`wamn-0h0g.15.27`).
-Effect authority's verification set is untouched except the map
-lookup rewording — the guards `effect-writer-primitive.sh` and
-`current-plan-effect-authority.sh` survive with a one-line predicate
-update inside wave commit 1.
+Effect authority's verification set was not merely reworded. Wave
+commit 1 **removed** link 1 of the five-link chain above — the
+`run_flow_resolutions` EXISTS predicate that bound the guest-declared
+plan hash to the run — and nothing replaced it, so the run-to-plan
+binding is presently unverified by the database. `wamn-0h0g.15.66`
+restores a run-scoped predicate against the recorded manifest digest
+and re-anchors the `current-plan-effect-authority.sh` mutant on it;
+it **blocks the merge gate** `wamn-0h0g.15.25`.
+`effect-writer-primitive.sh` survives with a one-line predicate
+update.
 
 **Tier D — regenerate once, at wave end.** Registries + mutant
 baselines (inline `EXPECTED_SHA` constants across the 26
@@ -322,10 +362,15 @@ cold starts. The disk-cache deferral (`.13.41`) stays held.
 
 4. **Runtime-revision coherence — construction, not detection.** No
 readiness revision-check ships. The release manifest deploys as an
-**immutable ConfigMap named by digest** (`release-manifest-<digest>`),
-referenced by that name in the pod template — manifest and image are
-therefore atomic per pod by definition; skew has no window to exist
-in. Revision-triple coherence inside the artifact is the mint-time
+**immutable ConfigMap named by digest** (`release-manifest-<64 hex>`:
+a Kubernetes object name is a DNS-1123 subdomain and cannot contain a
+colon, so the `sha256:` prefix is stripped), referenced by that name
+in the pod template — manifest and image are therefore atomic per pod
+by definition; skew has no window to exist in. Its value is the
+canonical bytes exactly, with no trailing newline: the reader
+re-canonicalizes before comparing digests, so anything else is a
+refused mount — a hard constraint on the GitOps writer.
+Revision-triple coherence inside the artifact is the mint-time
 gate's job. This is the `.2.3`/`.2.7` successor rule: pod
 self-identity suffices *because the manifest is part of it*.
 
