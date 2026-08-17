@@ -4,8 +4,8 @@ use serde_json::{Value, json};
 use wamn_authoring_model::{
     AuthoringDocument, AuthoringQueryOutcome, AuthoringQueryResponse, AuthoringQuerySuccess,
     AuthoringResponseEnvelope, ContractDecodeErrorKind, DraftDocument, DraftIdentity,
-    DraftRevisionRef, MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId, ReadDraftRefusal,
-    SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, decode_document,
+    DraftRevisionRef, DraftRun, DraftRunCapture, MAX_QUERY_ID_BYTES, MAX_TEST_SET_CASES, QueryId,
+    ReadDraftRefusal, SAFE_INTEGER_MAX, SCHEMA_VERSION, SafeUint64, decode_document,
 };
 
 fn scope() -> Value {
@@ -295,5 +295,95 @@ fn query_projection_reference_types_are_stable() {
     assert_eq!(
         serde_json::to_value(reference).expect("serializes"),
         json!({"draft-id": "draft-1", "revision": 1})
+    );
+}
+
+#[test]
+fn draft_run_capture_defaults_to_full_and_accepts_only_full_or_off() {
+    let omitted = json!({
+        "scope": scope(),
+        "validated-draft": {"validated-draft-id": "validated-1"},
+        "input": {"value": 1}
+    });
+    let defaulted: DraftRun =
+        serde_json::from_value(omitted.clone()).expect("omitted capture is valid");
+    assert_eq!(DraftRunCapture::default(), DraftRunCapture::Full);
+    assert_eq!(defaulted.capture, DraftRunCapture::Full);
+    assert_eq!(
+        serde_json::to_value(defaulted).expect("draft run serializes"),
+        omitted,
+        "full capture is the omitted wire-canonical form"
+    );
+
+    for (literal, expected) in [
+        ("full", DraftRunCapture::Full),
+        ("off", DraftRunCapture::Off),
+    ] {
+        let mut document = omitted.clone();
+        document["capture"] = json!(literal);
+        let explicit: DraftRun =
+            serde_json::from_value(document).expect("ratified capture literal is valid");
+        assert_eq!(explicit.capture, expected);
+    }
+
+    for refused in ["Full", "OFF", "scrubbed", "preview", ""] {
+        let mut document = omitted.clone();
+        document["capture"] = json!(refused);
+        assert!(
+            serde_json::from_value::<DraftRun>(document).is_err(),
+            "capture literal {refused:?} must be refused"
+        );
+    }
+
+    // The published schema states no `default` for `capture` precisely because
+    // full is the default: `skip_serializing_if` suppresses the schemars default
+    // whenever that default never reaches the wire. A default of off would
+    // publish `allOf` plus `"default": "off"` instead (wamn-0h0g.15.121).
+    let schema = wamn_authoring_model::json_schema();
+    assert_eq!(
+        schema["definitions"]["DraftRun"]["properties"]["capture"],
+        json!({"$ref": "#/definitions/DraftRunCapture"})
+    );
+    assert_eq!(
+        schema["definitions"]["DraftRunCapture"]["enum"],
+        json!(["full", "off"])
+    );
+}
+
+#[test]
+fn publish_requires_a_successful_report_unconditionally() {
+    let complete = json!({
+        "scope": scope(),
+        "validated-draft": {"validated-draft-id": "validated-1"},
+        "successful-report-id": "report-1"
+    });
+    decode(&command("publish", complete.clone()));
+
+    let mut omitted = complete.clone();
+    let removed = omitted
+        .as_object_mut()
+        .expect("publish input is an object")
+        .remove("successful-report-id");
+    assert_eq!(removed, Some(json!("report-1")));
+    let mut nulled = complete;
+    nulled["successful-report-id"] = Value::Null;
+
+    for refused in [omitted, nulled] {
+        let encoded =
+            serde_json::to_string(&command("publish", refused)).expect("command serializes");
+        assert_eq!(
+            decode_document(&encoded)
+                .expect_err("publish without a stated successful report must be refused")
+                .kind(),
+            ContractDecodeErrorKind::Json
+        );
+    }
+
+    // A serde default on the report identity would also drop it from the
+    // published required set, so pin the exact required triple (wamn-0h0g.15.121).
+    let schema = wamn_authoring_model::json_schema();
+    assert_eq!(
+        schema["definitions"]["PublishValidatedDraft"]["required"],
+        json!(["scope", "successful-report-id", "validated-draft"])
     );
 }
