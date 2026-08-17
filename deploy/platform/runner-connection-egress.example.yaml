@@ -8,6 +8,12 @@
 # hostname for Host/TLS verification. Policies are additive, so this extension
 # cannot remove the platform floor and an omitted destination remains denied.
 #
+# Render it into the runner's OWN namespace (one environment = one namespace).
+# An ipBlock destination is namespace-independent, but if an entry ever names an
+# in-cluster peer, pair its podSelector with a namespaceSelector inside the SAME
+# `to:` item: a bare podSelector silently means "same namespace as the runner",
+# and two separate items admit every pod in the namespace (runner-netpol.yaml).
+#
 # TEST-NET-2 is documentation-only. Replace it before applying this example.
 # Automated per-project policy rendering/provisioning is tracked by `wamn-ou1`;
 # until that lands, this environment-owned manifest is hand-maintained.

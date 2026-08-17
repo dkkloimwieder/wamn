@@ -6,6 +6,13 @@
 # dependencies. Each environment separately owns business connection address
 # ranges through runner-connection-egress.example.yaml (or an equivalent
 # generated policy); a connection binding never widens this policy itself.
+#
+# Apply this floor into EVERY namespace that runs runner pods (one environment =
+# one namespace), while the peers below stay cluster singletons in wamn-system.
+# Each in-cluster entry therefore carries a namespaceSelector and a podSelector
+# as siblings of ONE `to:` item — an AND, that pod in that namespace. A bare
+# podSelector would mean "same namespace as the runner" and deny the connect;
+# splitting the pair into two items would admit every pod in the namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -30,11 +37,21 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
     # Per-project PostgreSQL: the checked-in demo and provisioned CNPG shapes.
+    # Both shapes live in wamn-system (deploy/platform/postgres.yaml; every
+    # provisioned Cluster renders there, crates/control/provision/src/org.rs:30),
+    # so each entry names that namespace with its own pod identity and the two
+    # entries stay a union of the two shapes — not a third, wider peer.
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: wamn-system
+          podSelector:
             matchLabels:
               app: postgres
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: wamn-system
+          podSelector:
             matchExpressions:
               - key: cnpg.io/cluster
                 operator: Exists
@@ -44,15 +61,22 @@ spec:
       ports:
         - { protocol: TCP, port: 5432 }
     # Control-plane doorbell hints (the DB polling path remains authoritative).
+    # The operator's NATS is one shared bus in the chart's release namespace.
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: wamn-system
+          podSelector:
             matchLabels:
               wasmcloud.com/name: nats
       ports:
         - { protocol: TCP, port: 4222 }
     # Runner logs and metrics.
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: wamn-system
+          podSelector:
             matchLabels:
               app: otel-collector
       ports:
