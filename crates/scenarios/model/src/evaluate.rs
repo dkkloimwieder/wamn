@@ -34,6 +34,9 @@ fn evaluate_expect(expect: &Expect, captured: &Captured) -> (bool, String) {
     if let Err(error) = expect.validate() {
         return (false, error.to_string());
     }
+    if let Err(error) = captured.validate() {
+        return (false, error.to_string());
+    }
 
     match expect.outcome {
         ExpectedOutcome::Responded => {
@@ -93,7 +96,7 @@ mod tests {
     use wamn_flow::{Expect, ExpectedOutcome, FlowFailureKind, TestSetCase};
 
     use super::evaluate;
-    use crate::{Captured, CapturedResponse};
+    use crate::Captured;
 
     fn case(expect: Expect) -> TestSetCase {
         TestSetCase {
@@ -113,10 +116,7 @@ mod tests {
     }
 
     fn captured_response(status: u16, body: serde_json::Value) -> Captured {
-        Captured {
-            response: Some(CapturedResponse { status, body }),
-            failure_code: None,
-        }
+        Captured::responded(status, body).expect("a storable response status")
     }
 
     #[test]
@@ -220,5 +220,79 @@ mod tests {
                 .expect("a failure carries its detail")
                 .contains("500")
         );
+    }
+
+    /// The terminal `wamn_run.runs` shapes a case's run can end in, paired with
+    /// the verdict each authored expectation must receive once a producer maps
+    /// the row into [`Captured`]. No producer exists yet (wamn-0h0g.15.77); this
+    /// fixes what the one that lands may not get wrong.
+    #[test]
+    fn the_run_row_shapes_a_producer_maps_pin_these_verdicts() {
+        let expect_status_200 = responded(Some(200), None);
+        let expect_any_failure = Expect {
+            outcome: ExpectedOutcome::Failed,
+            status: None,
+            body_subset: None,
+            failure_code: None,
+        };
+        let expect_terminal = Expect {
+            outcome: ExpectedOutcome::Failed,
+            status: None,
+            body_subset: None,
+            failure_code: Some(FlowFailureKind::Terminal),
+        };
+
+        for (label, expect, facts, passed) in [
+            (
+                "responded 200 meets status 200",
+                expect_status_200.clone(),
+                captured_response(200, json!({"ok": true})),
+                true,
+            ),
+            (
+                "responded 500 misses status 200",
+                expect_status_200.clone(),
+                captured_response(500, json!({})),
+                false,
+            ),
+            (
+                "a failed run never responded",
+                expect_status_200,
+                Captured::failed(Some(FlowFailureKind::Terminal)),
+                false,
+            ),
+            (
+                "a responded run never failed",
+                expect_any_failure.clone(),
+                captured_response(200, json!({})),
+                false,
+            ),
+            (
+                "any typed failure meets a bare failed",
+                expect_any_failure.clone(),
+                Captured::failed(Some(FlowFailureKind::RunawayBudget)),
+                true,
+            ),
+            (
+                "an unauthorable fail_kind meets nothing",
+                expect_any_failure,
+                Captured::failed(None),
+                false,
+            ),
+            (
+                "terminal meets failure-code terminal",
+                expect_terminal.clone(),
+                Captured::failed(Some(FlowFailureKind::Terminal)),
+                true,
+            ),
+            (
+                "terminal is not a nearest match for an unauthorable fail_kind",
+                expect_terminal,
+                Captured::failed(None),
+                false,
+            ),
+        ] {
+            assert_eq!(evaluate(&case(expect), &facts).passed, passed, "{label}");
+        }
     }
 }
