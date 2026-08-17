@@ -852,8 +852,8 @@ BEGIN
 
     SELECT encode(sha256(convert_to(string_agg(
         con.contype::text || ':' || pg_get_constraintdef(con.oid, true),
-        E'\n' ORDER BY con.contype::text || ':'
-        || pg_get_constraintdef(con.oid, true)
+        E'\n' ORDER BY (con.contype::text || ':'
+        || pg_get_constraintdef(con.oid, true)) COLLATE "C"
     ), 'UTF8')), 'hex')
     INTO attestation_constraints_fingerprint
     FROM pg_constraint con

@@ -123,6 +123,16 @@ fn portable_store_record_is_exact_and_storage_only() {
         E'\n' ORDER BY (con.contype::text || ':'
         || pg_get_constraintdef(con.oid, false)) COLLATE "C""#
     ));
+    // wamn-0h0g.15.32: the attestation fingerprint's ordering is now CONSTRUCTED
+    // stable rather than accidentally so. Pinned here because no mutant can prove
+    // it — the nine constraint definitions sort identically under C and
+    // en_US.UTF-8, so REMOVING the collation leaves the fingerprint byte-identical
+    // and the live gate green.
+    assert!(sql.contains(
+        r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, true),
+        E'\n' ORDER BY (con.contype::text || ':'
+        || pg_get_constraintdef(con.oid, true)) COLLATE "C""#
+    ));
     assert!(sql.contains("8b8b8486f43076be7fe3a056a4f01acb43b4d78febbe36843c8ebde9d27d1816"));
     assert!(!sql.contains("ab4c8a54366eab426d72c31c81531e929a4b615d051f300be7c993c628699f78"));
     assert!(!sql.contains("06bf7790877f52c2094511dc368d605f7de4b112383fc6b857d8886844160c85"));

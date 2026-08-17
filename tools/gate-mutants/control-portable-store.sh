@@ -94,12 +94,18 @@ case "$mode" in
         run_mutant collation-stability-bypass \
             'pg_get_constraintdef(con.oid, false)) COLLATE "C"' \
             'pg_get_constraintdef(con.oid, false))'
+        # The attestation constraint set orders identically under C and
+        # en_US.UTF-8, so dropping its COLLATE "C" cannot be killed; reversing
+        # the ORDER BY that COLLATE hardens can (wamn-0h0g.15.32).
+        run_mutant attestation-order-stability-bypass \
+            'pg_get_constraintdef(con.oid, true)) COLLATE "C"' \
+            'pg_get_constraintdef(con.oid, true)) COLLATE "C" DESC'
         run_mutant retained-drift-acceptance \
             "b08e42cb2130ae46ebdcbb7c030f566ce37c29a287a5fdcae2ad6fb30cc82d29" \
             "0000000000000000000000000000000000000000000000000000000000000000"
         cp "$baseline" "$ddl"
         assert_baseline
-        echo "control portable-store mutation campaign: 6/6 killed and baseline restored"
+        echo "control portable-store mutation campaign: 7/7 killed and baseline restored"
         ;;
     *)
         echo "usage: $0 {check|green|run-all}" >&2
