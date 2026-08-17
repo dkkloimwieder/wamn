@@ -15,7 +15,9 @@ use wash_runtime::host::http::{DynamicRouter, Ingress};
 use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
-use wamn_runtime::plugins::{WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres};
+use wamn_runtime::plugins::{
+    FlowHttpRouting, WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres,
+};
 use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::{build_engine, spawn_epoch_ticker};
 
@@ -254,7 +256,11 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         ))?
         .with_plugin(Arc::new(
             WamnFlowInvocation::from_env().context("wamn:flow-invocation plugin init")?,
-        ))?;
+        ))?
+        // wamn-0h0g.15.96: READER 3 of the weld, and the first host-side
+        // implementation of wamn:flow-http-routing. Routes come off the manifest's
+        // attachment projection, so the serving path reads no project database.
+        .with_plugin(Arc::new(FlowHttpRouting::new(release.clone())))?;
 
     if let Some(host_name) = &args.host_name {
         builder = builder.with_host_name(host_name);
@@ -279,7 +285,7 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
 
     let cluster_host = builder.build().context("failed to build cluster host")?;
     tracing::info!(
-        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation)"
+        "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation, wamn:flow-http-routing)"
     );
     // Whether this host carries a release is the first thing an operator needs from
     // the log: it decides whether the release-gated interfaces have a manifest to

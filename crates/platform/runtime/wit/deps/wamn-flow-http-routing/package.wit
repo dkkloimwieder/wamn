@@ -1,0 +1,64 @@
+package wamn:flow-http-routing@0.1.0;
+
+/// Authoritative HTTP definition lookup and selected-policy authentication.
+///
+/// The provider reads control-plane views. It does not admit runs; admission
+/// remains exclusively behind `wamn:flow-invocation`.
+interface routing {
+  record header {
+    name: string,
+    value: string,
+  }
+
+  enum mapping-source {
+    body,
+    path,
+    query,
+    header,
+  }
+
+  enum cardinality {
+    one,
+    many,
+  }
+
+  record mapping {
+    %from: mapping-source,
+    name: string,
+    to: string,
+    optional: bool,
+    cardinality: cardinality,
+  }
+
+  record route-definition {
+    attachment-id: string,
+    catalog-version: u64,
+    definition-hash: string,
+    host: string,
+    path: string,
+    method: string,
+    enabled: bool,
+    auth-policy: string,
+    mappings: list<mapping>,
+    input-schema: string,
+    idempotency-required: bool,
+    body-limit: u64,
+    mapped-limit: u64,
+    deadline-override: option<u64>,
+  }
+
+  record auth-rejection {
+    status: u16,
+    code: string,
+  }
+
+  /// Return enabled and disabled route definitions so released admissions can
+  /// still be recovered after disablement.
+  routes: func(method: string, authority: string) -> result<list<route-definition>, string>;
+
+  /// Authenticate only after route selection has supplied the policy.
+  authenticate: func(policy: string, headers: list<header>) -> result<string, auth-rejection>;
+
+  /// Observe whether the caller is still connected between bounded waits.
+  caller-connected: func() -> bool;
+}

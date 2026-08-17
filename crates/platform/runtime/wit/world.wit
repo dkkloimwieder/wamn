@@ -71,3 +71,12 @@ world jetstream-plugin {
 world logging-plugin {
   import wasi:logging/logging@0.1.0-draft;
 }
+
+/// Host-side bindgen world for authoritative flow-http route supply
+/// (wamn-0h0g.15.96): the host IMPLEMENTS `routes`, `authenticate` and
+/// `caller-connected`, serving `route-definition` out of the mounted serving
+/// manifest's attachment projection — reader 3 of the release-manifest weld. No
+/// route read reaches the project database. See plugins/flow_http_routing.rs.
+world flow-http-routing-plugin {
+  import wamn:flow-http-routing/routing@0.1.0;
+}
