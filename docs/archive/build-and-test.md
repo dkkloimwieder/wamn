@@ -1264,13 +1264,15 @@ The former occurrence-keyed child-state/runtime recipes are historical only.
 `wamn-0h0g.4.4` owns deletion of that retained pre-MVP machinery; the current
 global-FIFO gate neither revives nor claims `child_live` as runnable evidence.
 
-### [5.7-admission-pin / wamn-cox] production claim pins the admitted flow_version
+### [5.7-admission-pin / wamn-cox] production claim records the release it runs under
 
 Docs: docs/archive/execution/run-state.md
 
 ```bash
-# The host-owned production claim reads the admitted run's immutable version
-# and materializes its exact release-bound resolution map before lease grant.
+# The host-owned production claim is lock -> classify -> lease, plus one
+# per-attempt record of (release version, manifest digest) taken from the
+# claiming pod's identity (wamn-0h0g.15.10, .15.11). Resolution is a pure read
+# of that pod's mounted release manifest; the admission-time pin is gone.
 cargo test -p wamn-run-state
 ```
 
@@ -4705,14 +4707,17 @@ rustfmt --edition 2024 --check \
 git diff --check
 ```
 
-## SR-MVP — immutable release-bound run-flow resolutions (`wamn-0h0g.4.12`)
+## SR-MVP — run-state and schema-control drift inventory (`wamn-0h0g.4.12`)
 
-This debug-only gate proves the exact immutable resolution substrate for an
-already selected/locked run. It owns pure resolution refusals, schema-control
-repair/drift inventory, and the PostgreSQL 18 materialization proof; it does not
-claim runs, mutate queues, terminalize runs, compose production transactions, or
-dispatch effects. Use the isolated lane target below; cross-worktree target
-sharing can execute artifacts compiled from a different checkout.
+This debug-only gate proves the schema-control repair/drift inventory and the
+PostgreSQL 18 run-plane reconcile. Its release-bound resolution substrate —
+`run_flow_resolutions`, `resolution.rs`, and the typed resolution refusals —
+was deleted by `wamn-0h0g.15.10`; the claim is now lock → classify → lease and
+resolution is a pure read of the claiming pod's mounted release manifest. It
+does not claim runs, mutate queues, terminalize runs, compose production
+transactions, or dispatch effects. Use the isolated lane target below;
+cross-worktree target sharing can execute artifacts compiled from a different
+checkout.
 
 ```bash
 CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
@@ -4751,7 +4756,7 @@ CARGO_TARGET_DIR=/tmp/wamn-target-wave3-4-12 CARGO_INCREMENTAL=0 \
 docker stop wamn-0h0g-4-12-ctl-pg
 
 rustfmt --edition 2024 --check \
-  crates/execution/run-state/src/{lib.rs,resolution.rs,sql.rs} \
+  crates/execution/run-state/src/{lib.rs,sql.rs} \
   crates/execution/run-state/tests/run_state_live.rs \
   crates/schema/control/src/run_plane.rs \
   services/ctl/tests/run_plane_live.rs \
