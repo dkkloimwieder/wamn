@@ -20,7 +20,10 @@ declare -a TEST_ARGV
 mutation_ids() {
   printf '%s\n' \
     schema-control-drops-case-runs \
-    from-zero-skips-post-helper-triggers
+    from-zero-skips-post-helper-triggers \
+    reservation-insert-drops-idempotency \
+    case-run-deadline-unbounded \
+    case-run-rejoins-run-plane
 }
 
 load_mutation() {
@@ -50,6 +53,41 @@ load_mutation() {
       REPLACEMENT='        if !obs.tables.contains_key(&spec.table) {'
       GATE="run_plane::tests::from_zero_plans_the_full_set_in_order"
       TEST_ARGV=(cargo test --locked -p wamn-schema-control --lib "$GATE" -- --exact)
+      ;;
+    reservation-insert-drops-idempotency)
+      TARGET="services/scenario-worker/src/store/test_orchestration.rs"
+      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
+      NEEDLE='             clock_timestamp() + make_interval(secs => $8::int)) \
+     ON CONFLICT (tenant_id, report_id) DO NOTHING"'
+      REPLACEMENT='             clock_timestamp() + make_interval(secs => $8::int))"'
+      GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency"
+      TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
+      ;;
+    case-run-deadline-unbounded)
+      TARGET="services/scenario-worker/src/store/test_orchestration.rs"
+      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
+      NEEDLE='            LEAST(reservation.created_at + \
+                      make_interval(secs => (($3 + 1) * $6)::int), \
+                  reservation.whole_deadline_at) \
+'
+      REPLACEMENT='            reservation.created_at + \
+                      make_interval(secs => (($3 + 1) * $6)::int) \
+'
+      GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency"
+      TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
+      ;;
+    case-run-rejoins-run-plane)
+      TARGET="services/scenario-worker/src/store/test_orchestration.rs"
+      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
+      NEEDLE='       FROM authoring_test_run_reservations AS reservation \
+      WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
+'
+      REPLACEMENT='       FROM authoring_test_run_reservations AS reservation \
+       JOIN runs ON runs.tenant_id = reservation.tenant_id \
+      WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
+'
+      GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency"
+      TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
       ;;
     *)
       echo "unknown mutant: $id" >&2
