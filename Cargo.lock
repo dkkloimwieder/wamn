@@ -4177,7 +4177,10 @@ name = "wamn-control-provision"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hex",
  "serde_json",
+ "sha2 0.11.0",
+ "url",
  "wamn-control-registry",
  "wamn-flow",
  "wamn-pg-core",
@@ -4560,6 +4563,7 @@ dependencies = [
  "wash-runtime",
  "wasmtime-wasi",
  "wasmtime-wasi-http",
+ "wat",
 ]
 
 [[package]]
@@ -4587,8 +4591,10 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tracing",
+ "url",
  "wamn-authoring-model",
  "wamn-catalog",
+ "wamn-control-provision",
  "wamn-control-registry",
  "wamn-execution-host",
  "wamn-flow",
