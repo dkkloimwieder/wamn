@@ -440,13 +440,21 @@ fn governed_json_schema_violation(source: &str, identity: GovernedJsonSchema) ->
 fn governed_literal_violations(repository: &Path) -> Vec<String> {
     let mut violations = Vec::new();
     for identity in GOVERNED_LITERALS {
-        match std::fs::read_to_string(repository.join(identity.path)) {
-            Ok(source) => {
-                if let Some(violation) = governed_literal_violation(&source, *identity) {
-                    violations.push(violation);
-                }
+        // Absence and count are independent faults and one entry can carry both,
+        // so an unreadable file still owes the occurrence it was watched for.
+        // wamn-0h0g.15.110's first entry had MOVED (eb1c3a88) and had SEPARATELY
+        // lost its constant (3a042d96): reporting only the missing file read as a
+        // path needing correction, and correcting the path alone would have turned
+        // a file-mode failure into found 0 rather than a pass.
+        let source = match std::fs::read_to_string(repository.join(identity.path)) {
+            Ok(source) => source,
+            Err(error) => {
+                violations.push(format!("{}: {error}", identity.path));
+                String::new()
             }
-            Err(error) => violations.push(format!("{}: {error}", identity.path)),
+        };
+        if let Some(violation) = governed_literal_violation(&source, *identity) {
+            violations.push(violation);
         }
     }
     for identity in GOVERNED_JSON_SCHEMAS {
@@ -563,5 +571,34 @@ fn representative_version_mutants_are_rejected() {
     };
     assert!(
         governed_json_schema_violation(r#"{"schema_version":1}"#, governance_identity).is_some()
+    );
+}
+
+#[test]
+fn a_missing_watched_file_still_reports_its_missing_occurrence() {
+    // Under a root where nothing is readable, every watch entry carries both
+    // faults at once: the file is absent AND the identity it was watched for is
+    // unaccounted for. Reporting only the first is what made wamn-0h0g.15.110's
+    // first entry read as a path needing correction, when the constant had
+    // separately been deleted and no path would have brought it back.
+    let violations = governed_literal_violations(&repository_root().join("no-such-subtree"));
+    let owed = GOVERNED_LITERALS
+        .iter()
+        .filter(|identity| identity.expected_count > 0)
+        .count();
+    let occurrences = violations
+        .iter()
+        .filter(|violation| violation.contains("occurrence(s) of governed identity"))
+        .count();
+    let reported = violations.len();
+    let expected = GOVERNED_LITERALS.len() + owed + GOVERNED_JSON_SCHEMAS.len();
+
+    assert_eq!(
+        occurrences, owed,
+        "an unreadable watched file still owes every occurrence its entry expects"
+    );
+    assert_eq!(
+        reported, expected,
+        "absence must be reported alongside the missing occurrence, not instead of it"
     );
 }
