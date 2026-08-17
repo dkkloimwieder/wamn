@@ -195,6 +195,17 @@ impl PlanRelease {
     pub fn new(weld: Arc<ReleaseManifestWeld>, source: Arc<dyn PlanSource>) -> Self {
         Self { weld, source }
     }
+
+    /// The weld this release resolves against.
+    ///
+    /// Exposed for the construction site, which injects the same object's
+    /// `(release version, manifest digest)` pair into the claim path
+    /// (`wamn-0h0g.15.103`). Reading it from here rather than keeping a second
+    /// handle beside it is what makes the pair the pod RECORDS and the manifest
+    /// the pod RESOLVES AGAINST provably the same object.
+    pub fn weld(&self) -> &ReleaseManifestWeld {
+        &self.weld
+    }
 }
 
 /// Host-owned release and cache boundary for immutable per-run plans.

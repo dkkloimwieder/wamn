@@ -49,6 +49,39 @@ const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
     ),
 ];
 
+/// The one production call that hands the claim path its release pair.
+///
+/// wamn-0h0g.15.103 struck the per-workload config keys that used to assert this
+/// pair at bind time, leaving the mounted manifest as its sole carrier. A second
+/// injection site would restore the dual-representation bug the ruling closed: two
+/// carriers with nothing reconciling them, so a pod could stamp one release onto a
+/// run while resolving plans against another.
+const RELEASE_IDENTITY_INJECTION: &str = "plugin.set_release_identity(";
+
+/// The file the injection lives in, and the text that must precede it.
+///
+/// The pair is read off the weld, so the weld has to exist first. Pinning the
+/// ORDER rather than only the count is what stops the injection drifting above
+/// `load_plan_release` onto some other source of the pair.
+const RELEASE_IDENTITY_INJECTION_SITE: (&str, &str) = (
+    "crates/execution/host/src/lib.rs",
+    "let plan_release = load_plan_release(",
+);
+
+/// The two struck config keys, and every file that could plausibly re-read them.
+///
+/// Spelled here rather than imported so the guard fails if the constants are
+/// reintroduced under any name at all.
+const STRUCK_RELEASE_IDENTITY_KEYS: [&str; 2] = ["wamn.release-version", "wamn.manifest-digest"];
+
+/// Files whose text must not carry a struck key: both host construction sites and
+/// the plugin whose bind path used to read them.
+const STRUCK_KEY_SITES: [&str; 3] = [
+    "crates/platform/runtime/src/plugins/wamn_postgres/mod.rs",
+    "crates/execution/host/src/lib.rs",
+    "services/host/src/host.rs",
+];
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum WorkloadAbi {
@@ -263,6 +296,38 @@ fn validate_weld_precedes_bind(
              carries no release identity for its claim to record"
         ))
     }
+}
+
+fn validate_release_identity_injection(source: &str, weld: &str, seam: &str) -> Result<(), String> {
+    let production = production_half(source, seam)?;
+    validate_one(production, RELEASE_IDENTITY_INJECTION, seam)?;
+    let injected_at = production
+        .find(RELEASE_IDENTITY_INJECTION)
+        .expect("the counted injection must locate");
+    let Some(weld_at) = production.find(weld) else {
+        return Err(format!("{seam} must reach its weld through `{weld}`"));
+    };
+    if weld_at < injected_at {
+        Ok(())
+    } else {
+        Err(format!(
+            "{seam} must reach `{weld}` before `{RELEASE_IDENTITY_INJECTION}`; a pair injected \
+             first came from somewhere other than the verified manifest"
+        ))
+    }
+}
+
+fn validate_no_struck_key(source: &str, seam: &str) -> Result<(), String> {
+    for key in STRUCK_RELEASE_IDENTITY_KEYS {
+        let observed = source.matches(key).count();
+        if observed != 0 {
+            return Err(format!(
+                "{seam} must carry no `{key}`; found {observed}. Release identity has one \
+                 carrier, the mounted manifest (wamn-0h0g.15.102)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn host_source(root: &Path, path: &str) -> String {
@@ -763,6 +828,66 @@ fn one_release_manifest_weld_construction_site_per_host_process() {
         validate_one_weld_site(&source, path).unwrap_or_else(|error| panic!("{error}"));
         validate_weld_precedes_bind(&source, entry, bind, path)
             .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn one_release_identity_injection_reaches_the_pair_through_the_weld() {
+    let (path, weld) = RELEASE_IDENTITY_INJECTION_SITE;
+    let source = host_source(&repository_root(), path);
+    validate_release_identity_injection(&source, weld, path)
+        .unwrap_or_else(|error| panic!("{error}"));
+}
+
+#[test]
+fn the_struck_release_identity_config_keys_do_not_return() {
+    let root = repository_root();
+    for path in STRUCK_KEY_SITES {
+        let source = host_source(&root, path);
+        validate_no_struck_key(&source, path).unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn release_identity_inventory_rejects_a_removed_or_duplicated_injection() {
+    let welded = "let plan_release = load_plan_release(release)?;\n";
+    for source in [
+        String::new(),
+        format!("{welded}{RELEASE_IDENTITY_INJECTION}\n{RELEASE_IDENTITY_INJECTION}\n"),
+    ] {
+        let error =
+            validate_release_identity_injection(&source, RELEASE_IDENTITY_INJECTION_SITE.1, "seam")
+                .expect_err("a missing or duplicated injection must be rejected");
+        assert!(
+            error.contains("exactly one"),
+            "the refusal must name the count it required: {error}"
+        );
+    }
+}
+
+#[test]
+fn release_identity_inventory_rejects_an_injection_above_the_weld() {
+    let inverted =
+        format!("{RELEASE_IDENTITY_INJECTION}\nlet plan_release = load_plan_release(release)?;\n");
+    let error =
+        validate_release_identity_injection(&inverted, RELEASE_IDENTITY_INJECTION_SITE.1, "seam")
+            .expect_err("a pair injected before the weld must be rejected");
+    assert!(
+        error.contains("came from somewhere other than the verified manifest"),
+        "the refusal must name why order matters: {error}"
+    );
+}
+
+#[test]
+fn release_identity_inventory_rejects_a_returning_config_key() {
+    for key in STRUCK_RELEASE_IDENTITY_KEYS {
+        let source = format!("config.get(\"{key}\")");
+        let error = validate_no_struck_key(&source, "seam")
+            .expect_err("a reintroduced config key must be rejected");
+        assert!(
+            error.contains(key),
+            "the refusal must name the key it found: {error}"
+        );
     }
 }
 

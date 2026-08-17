@@ -622,6 +622,24 @@ impl ExecutionHost {
             plugin.set_schema(owner, s)?;
         }
         plugin.set_runner(owner, owner)?;
+        // wamn-0h0g.15.103: the release a claim records comes from the SAME
+        // verified object plan supply resolves against, so the pair stamped onto a
+        // run and the manifest that run was resolved from cannot disagree. Ruling
+        // wamn-0h0g.15.102 struck the per-workload config keys that used to assert
+        // this pair — an asserted carrier cannot correct a welded one, so a
+        // comparator between them would have carried no information.
+        //
+        // A process with no release records nothing, which is why this is
+        // conditional rather than required: gates, benches and the pool's own
+        // fixtures pass no `ReleaseSupply` and stay byte-unchanged.
+        if let Some(plan_release) = plan_release.as_ref() {
+            let carried = plan_release.weld().release();
+            plugin.set_release_identity(
+                owner,
+                carried.release_version,
+                carried.manifest_digest.clone(),
+            )?;
+        }
         // wamn-yf3: the wasi:logging tenant/project claim is host-injected too —
         // the guest's run-path log records enrich with THIS replica's identity,
         // never a guest-chosen one (the same trust boundary as the tenant above).

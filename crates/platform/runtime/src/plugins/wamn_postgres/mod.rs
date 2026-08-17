@@ -132,22 +132,6 @@ pub const PROJECT_CONFIG_KEY: &str = "wamn.project";
 /// It is set by the platform (the workload instance id), never by the guest.
 pub const RUNNER_CONFIG_KEY: &str = "wamn.runner";
 
-/// Per-workload config key carrying the release VERSION this pod is running, as
-/// decimal text. It pairs with [`MANIFEST_DIGEST_CONFIG_KEY`]. BOTH must be
-/// present or neither is registered — the run plane's `runs_release_record_check`
-/// forbids a half record, so half a pair is a bind-time refusal. Optional: absent
-/// leaves a production claim recording nothing, so every path that carries no
-/// release identity is byte-unchanged. Set by the platform, never by the guest.
-///
-/// RULED REDUNDANT by `wamn-0h0g.15.102`: these keys are an *asserted* carrier of
-/// a pair the mounted manifest already welds, and `wamn-0h0g.15.103` deletes them
-/// along with the half-a-pair refusal below. Do not build anything new on them.
-pub const RELEASE_VERSION_CONFIG_KEY: &str = "wamn.release-version";
-
-/// Per-workload config key carrying this pod's `sha256:<hex>` serving-manifest
-/// digest — the other half of [`RELEASE_VERSION_CONFIG_KEY`].
-pub const MANIFEST_DIGEST_CONFIG_KEY: &str = "wamn.manifest-digest";
-
 /// The project id used when a component names none — the single database a
 /// [`WamnPostgresConfig`] URL points at.
 pub const DEFAULT_PROJECT: &str = "default";
@@ -221,45 +205,14 @@ impl HostPlugin for WamnPostgres {
                 "wamn:postgres runner lease-owner registered"
             );
         }
-        let release_version = item
-            .local_resources()
-            .config
-            .get(RELEASE_VERSION_CONFIG_KEY)
-            .cloned();
-        let manifest_digest = item
-            .local_resources()
-            .config
-            .get(MANIFEST_DIGEST_CONFIG_KEY)
-            .cloned();
-        match (release_version, manifest_digest) {
-            (Some(version), Some(digest)) => {
-                let version = version.parse::<i32>().map_err(|error| {
-                    anyhow::anyhow!("invalid {RELEASE_VERSION_CONFIG_KEY} {version:?}: {error}")
-                })?;
-                let parsed =
-                    wamn_catalog::ManifestDigest::parse(digest.clone()).map_err(|error| {
-                        anyhow::anyhow!("invalid {MANIFEST_DIGEST_CONFIG_KEY} {digest:?}: {error}")
-                    })?;
-                self.set_release_identity(item.id(), version, parsed)?;
-                tracing::debug!(
-                    component = item.id(),
-                    release_version = version,
-                    manifest_digest = digest,
-                    "wamn:postgres carried release identity registered"
-                );
-            }
-            (None, None) => {}
-            (version, digest) => {
-                return Err(anyhow::anyhow!(
-                    "component {} sets only half a release identity \
-                     ({RELEASE_VERSION_CONFIG_KEY}={:?}, {MANIFEST_DIGEST_CONFIG_KEY}={:?}); \
-                     a claim would record a half pair the run plane forbids",
-                    item.id(),
-                    version,
-                    digest,
-                ));
-            }
-        }
+        // Release identity is deliberately NOT read here. Under ruling
+        // `wamn-0h0g.15.102` the mounted manifest is the sole carrier of the
+        // (release version, manifest digest) pair, so the serving process injects
+        // it from its loaded weld at instantiation — see
+        // `ExecutionHost::instantiate`. A bind-time config read would be a second,
+        // *asserted* carrier that cannot correct the welded one, and the pair it
+        // asserted could disagree with the manifest the same pod resolves plans
+        // against.
         client::add_to_linker::<_, SharedCtx>(item.linker(), extract_active_ctx)?;
         Ok(())
     }
