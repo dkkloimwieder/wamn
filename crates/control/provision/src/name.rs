@@ -294,10 +294,18 @@ fn frame_artifact_reader_identity(output: &mut Vec<u8>, value: &[u8]) {
     output.extend_from_slice(value);
 }
 
-/// Validate that a `(org, project, env)` yields a safe provisioned database /
-/// Secret name: **all three** identity components are slugs and the assembled
-/// name fits [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal
-/// DNS-1123 label for the CNPG `Database` resource.
+/// Validate that a `(org, project, env)` yields safe provisioned names: **all
+/// three** identity components are slugs, the assembled namespace fits
+/// [`MAX_NAMESPACE_LEN`], and the assembled database / Secret name fits
+/// [`MAX_DB_NAME_LEN`] — a legal Postgres identifier and a legal DNS-1123 label
+/// for the CNPG `Database` resource.
+///
+/// Both assembled names are bounded here, and neither is ever truncated or
+/// hash-suffixed to fit: a triple that does not fit is REFUSED, at the one point
+/// that can mint it. The namespace carries its own bound rather than inheriting
+/// the database one — the two differ only by the `wamn-` / `wamn-db-` prefix
+/// today, and the namespace-per-environment mapping must not rest on that
+/// coincidence.
 ///
 /// Every component is slug-checked (wamn-R27): the org and env — not only the
 /// project — separate on `--`/`__` into the derived database and CDC object
@@ -320,6 +328,13 @@ pub fn validate_project_env(org: &str, project: &str, env: &str) -> Result<(), P
             component: "env",
             value: env.to_string(),
             reason,
+        });
+    }
+    let namespace = project_env_namespace(org, project, env);
+    if namespace.len() > MAX_NAMESPACE_LEN {
+        return Err(ProvisionError::NameTooLong {
+            name: namespace,
+            max: MAX_NAMESPACE_LEN,
         });
     }
     let name = project_env_database_name(org, project, env);
@@ -630,6 +645,33 @@ mod tests {
             MAX_NAMESPACE_LEN - 3,
             "three bytes of margin: `wamn-` against `wamn-db-`"
         );
+
+        // One byte more and provisioning REFUSES — no truncation, no hash
+        // suffix. At this size the database name is the binding bound.
+        let over_org = "o".repeat(26);
+        match validate_project_env(&over_org, &project, "prod") {
+            Err(ProvisionError::NameTooLong { name, max }) => {
+                assert_eq!(name, project_env_database_name(&over_org, &project, "prod"));
+                assert_eq!(max, MAX_DB_NAME_LEN);
+            }
+            other => panic!("the database bound must refuse this triple, got {other:?}"),
+        }
+
+        // The namespace bound is enforced in its own right, not inherited from
+        // the database one: a triple whose NAMESPACE breaches the DNS-1123 cap
+        // is refused naming the namespace.
+        let long_org = "o".repeat(40);
+        let long_project = "p".repeat(40);
+        match validate_project_env(&long_org, &long_project, "prod") {
+            Err(ProvisionError::NameTooLong { name, max }) => {
+                assert_eq!(
+                    name,
+                    project_env_namespace(&long_org, &long_project, "prod")
+                );
+                assert_eq!(max, MAX_NAMESPACE_LEN);
+            }
+            other => panic!("the namespace bound must refuse this triple, got {other:?}"),
+        }
     }
 
     #[test]

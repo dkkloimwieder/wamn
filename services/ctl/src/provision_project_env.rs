@@ -416,8 +416,10 @@ pub async fn run(args: ProvisionProjectEnvArgs) -> anyhow::Result<()> {
         .context("--env is required for provisioning")?;
     let triple = Triple::new(org, project, env);
 
-    // Validate the project id + the assembled `wamn-db-<org>--<project>--<env>`
-    // name length before any effect.
+    // Validate the project id + the assembled `wamn-<org>--<project>--<env>`
+    // namespace and `wamn-db-<org>--<project>--<env>` database name lengths
+    // before any effect. This is the one point that mints an environment's
+    // names, so a triple that breaches a bound is refused here — never shortened.
     validate_project_env(org, project, env)
         .map_err(|e| anyhow::anyhow!("project-env names: {e}"))?;
 
