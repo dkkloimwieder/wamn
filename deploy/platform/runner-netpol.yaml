@@ -60,6 +60,27 @@ spec:
                 values: [instance]
       ports:
         - { protocol: TCP, port: 5432 }
+    # [15.113] Plan bytes, pulled by digest from the registry singleton
+    # (deploy/platform/registry.yaml — the container listens on 5000 and the
+    # Service maps 5000 to it, so this pod port is the number the client dials).
+    # This pull is HOST-process egress — oci-client inside wamn-run-worker, not
+    # guest wasi:http — so the guest --allowed-hosts allowlist never sees it and
+    # this policy is its only gate. Required, not tuning: OciPlanSource::new only
+    # builds a client, so a denied pull surfaces at the FIRST PULL of a pod that
+    # has already welded to its release and gone ready, never at startup.
+    # A runner OUTSIDE wamn-system must also be given a fully-qualified
+    # --plan-artifact-base: the default `registry:5000` is a bare name that the
+    # pod's own namespace resolves first (services/executor/src/lib.rs:38), and
+    # this entry admits only the wamn-system singleton.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: wamn-system
+          podSelector:
+            matchLabels:
+              app: registry
+      ports:
+        - { protocol: TCP, port: 5000 }
     # Control-plane doorbell hints (the DB polling path remains authoritative).
     # The operator's NATS is one shared bus in the chart's release namespace.
     - to:

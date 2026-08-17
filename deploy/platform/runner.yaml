@@ -219,12 +219,12 @@ spec:
             # (registry:5000/wamn/execution-plans, services/executor/src/lib.rs:38),
             # which already names that Service.
             #
-            # STILL BLOCKED, and not by this file: this pull is HOST egress, so
-            # it is subject to runner-netpol.yaml, which admits only DNS,
-            # postgres, NATS and the collector. No policy anywhere admits
-            # app: registry on TCP 5000, so every plan pull is denied at the
-            # network before it is denied at the registry. runner-netpol.yaml
-            # needs that peer added; it is a separate owner.
+            # [15.113] The netpol side is CLOSED: runner-netpol.yaml admits
+            # app: registry in wamn-system on TCP 5000 as a platform-plane peer,
+            # so this HOST-process pull is no longer denied at the network. Note
+            # every netpol in this repo is INERT under kind's kindnetd, which does
+            # not enforce NetworkPolicy — the peer matters on a policy-enforcing
+            # CNI, which is where the denial would otherwise first appear.
             - { name: WAMN_INSECURE_PLAN_REGISTRY, value: "true" }
             # [wamn-yf3] Run-path observability. The flowrunner emits a few
             # structured wasi:logging records per run (node/run lifecycle) that
