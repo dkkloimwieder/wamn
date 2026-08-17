@@ -23,7 +23,8 @@ mutation_ids() {
     from-zero-skips-post-helper-triggers \
     reservation-insert-drops-idempotency \
     case-run-deadline-unbounded \
-    case-run-rejoins-run-plane
+    case-run-rejoins-run-plane \
+    reconcile-verdict-disjoins-cases
 }
 
 load_mutation() {
@@ -87,6 +88,14 @@ load_mutation() {
       WHERE reservation.tenant_id = $1 AND reservation.report_id = $2 \
 '
       GATE="store::test_orchestration::tests::statements_pin_normalized_idempotency"
+      TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
+      ;;
+    reconcile-verdict-disjoins-cases)
+      TARGET="services/scenario-worker/src/store/test_orchestration.rs"
+      EXPECTED_SHA="2dc1ee0e0c508b433adeca3f9856982a76a7ec41ff7eea77bd827b4bed9e0f9f"
+      NEEDLE='                       bool_and(test_case.passed), \'
+      REPLACEMENT='                       bool_or(test_case.passed), \'
+      GATE="store::test_orchestration::tests::the_report_reconcile_cannot_finalize_green_by_omission_or_race"
       TEST_ARGV=(cargo test --locked -p wamn-scenario-worker --lib "$GATE" -- --exact)
       ;;
     *)

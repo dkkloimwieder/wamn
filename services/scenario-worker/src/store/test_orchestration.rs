@@ -528,7 +528,13 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("the module has an implementation");
-        for project_local in ["FROM runs", "JOIN runs", " runs AS ", "run.status", "run.run_id"] {
+        for project_local in [
+            "FROM runs",
+            "JOIN runs",
+            " runs AS ",
+            "run.status",
+            "run.run_id",
+        ] {
             assert!(
                 !implementation.contains(project_local),
                 "a statement reaches the project run plane via {project_local}"
@@ -537,6 +543,37 @@ mod tests {
         // The already-observed terminal status arrives as a bound parameter.
         assert!(implementation.contains("test_case.run_id = ANY($3::text[])"));
         assert!(implementation.contains("effect_uncertain_run_ids"));
+    }
+
+    /// wamn-0h0g.15.123: the report reconcile decides the publish gate's verdict,
+    /// and it needs a live client, so its inline statements are pinned as source
+    /// text the way the guard above pins the run plane.
+    #[test]
+    fn the_report_reconcile_cannot_finalize_green_by_omission_or_race() {
+        let source = include_str!("test_orchestration.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the module has an implementation");
+        let reconcile = implementation
+            .split("pub async fn reconcile_test_report(")
+            .nth(1)
+            .expect("the module defines the report reconcile");
+        // Two reconcilers cannot both finalize: the reservation row is locked.
+        assert!(reconcile.contains("WHERE tenant_id = $1 AND report_id = $2 FOR UPDATE"));
+        // An already finalized report reports its stored verdict, never a new one.
+        assert!(reconcile.contains("SELECT passed FROM authoring_test_reports"));
+        // Neither unresolved leg may leave a case pending, and each fails it.
+        assert!(reconcile.contains("failure_kind = 'effect-uncertain'"));
+        assert!(reconcile.contains("failure_kind = 'deadline-exhausted'"));
+        assert!(reconcile.contains("clock_timestamp() >= LEAST("));
+        assert!(reconcile.contains("test_case.case_deadline_at, reservation.whole_deadline_at)"));
+        // The report is written only once no case of it is still pending.
+        assert!(reconcile.contains("SELECT count(*) FROM authoring_test_case_runs"));
+        assert!(reconcile.contains("if pending != 0 {"));
+        // The verdict is the conjunction of every case, never a disjunction.
+        assert!(reconcile.contains("bool_and(test_case.passed)"));
+        assert!(!reconcile.contains("bool_or("));
     }
 
     /// The store these statements now run against.
