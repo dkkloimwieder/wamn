@@ -7,7 +7,7 @@
 //! retry, and shutdown lifecycle around the shared execution host. Deterministic
 //! scenario capabilities live in the separate `wamn-scenario-worker` artifact.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -168,6 +168,38 @@ fn resolve_execution_target_id(
         None => mvp_execution_target_id(tenant)
             .context("derive MVP execution target from tenant configuration"),
     }
+}
+
+/// Refuse a SERVING replica that has no environment identity to be checked
+/// against the environment it was applied to.
+///
+/// `--org` / `--environment` / `--database` are all-or-nothing: together they
+/// select the private effect writer, whose mounted credential carries its OWN
+/// `(org, project, environment, database)` and is refused unless it equals this
+/// replica's identity, then confirmed again against the live `current_user` /
+/// `current_database()` (`crates/execution/host/src/effect_writer.rs`). Passing
+/// none of them opts out of that cross-check entirely — right for a bench that
+/// serves no release, wrong for a replica welded to one, where a mis-targeted
+/// apply would converge silently and the first expired pre-effect projection
+/// would then fail every drain turn instead. Serving-ness is read from the
+/// argument, never recovered from a failure, the same call `load_plan_release`
+/// makes.
+fn verify_serving_environment_identity(
+    release_manifest_root: Option<&Path>,
+    org: Option<&str>,
+    environment: Option<&str>,
+    database: Option<&str>,
+) -> anyhow::Result<()> {
+    if release_manifest_root.is_none()
+        || (org.is_some() && environment.is_some() && database.is_some())
+    {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "a serving replica (--release-manifest-root) requires --org, --environment and \
+         --database together; without them nothing checks this replica against the \
+         project-environment it was applied to"
+    )
 }
 
 /// Map a guest or host terminalization to its bounded metric attribute.
@@ -338,6 +370,12 @@ pub async fn run(args: ExecutorArgs) -> anyhow::Result<()> {
 
     wash_runtime::init_crypto();
 
+    verify_serving_environment_identity(
+        args.release_manifest_root.as_deref(),
+        args.org.as_deref(),
+        args.environment.as_deref(),
+        args.database.as_deref(),
+    )?;
     let cadence = wamn_scheduler::Cadence::new(args.min_idle_ms as i64, args.max_idle_ms as i64)
         .context("invalid idle poll cadence (--min-idle-ms / --max-idle-ms)")?;
     let database_url = args
@@ -570,5 +608,20 @@ mod tests {
                 "shared execution host must not own {dependency}"
             );
         }
+    }
+
+    /// A serving replica must carry something to be checked against; a bench
+    /// that serves no release opts out of the whole check (metricbench spawns
+    /// this binary with neither a release nor an environment identity).
+    #[test]
+    fn a_serving_replica_refuses_an_incomplete_environment_identity() {
+        let root = Some(Path::new("/etc/wamn/release-manifest"));
+        let org = Some("acme");
+        let environment = Some("dev");
+        let database = Some("wamn-db-acme--billing--dev");
+        assert!(verify_serving_environment_identity(root, org, environment, database).is_ok());
+        assert!(verify_serving_environment_identity(root, org, environment, None).is_err());
+        assert!(verify_serving_environment_identity(root, None, None, None).is_err());
+        assert!(verify_serving_environment_identity(None, None, None, None).is_ok());
     }
 }
