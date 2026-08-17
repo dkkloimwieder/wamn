@@ -287,6 +287,33 @@ fn bounded_outgoing_config(mut config: OutgoingRequestConfig) -> OutgoingRequest
     config
 }
 
+/// The p3 twin of [`bounded_outgoing_config`]. p3 makes every timeout
+/// `Option<Duration>` and `wasmtime_wasi_http::p3::default_send_request`
+/// substitutes 600s for each `None` — twenty times [`MAX_HOST_CALL_DURATION`],
+/// with nothing behind it, since epoch interruption cannot reach a host call
+/// parked in `await`. So an absent timeout must come out AS the ceiling, not as
+/// `None`: passing `None` through is what hands the guest the 600s default.
+/// Destructured field-by-field so a new upstream timeout is a compile error
+/// rather than a silent bypass.
+fn bounded_request_options(options: Option<RequestOptions>) -> Option<RequestOptions> {
+    let RequestOptions {
+        connect_timeout,
+        first_byte_timeout,
+        between_bytes_timeout,
+    } = options.unwrap_or_default();
+    Some(RequestOptions {
+        connect_timeout: Some(bounded_timeout(connect_timeout)),
+        first_byte_timeout: Some(bounded_timeout(first_byte_timeout)),
+        between_bytes_timeout: Some(bounded_timeout(between_bytes_timeout)),
+    })
+}
+
+fn bounded_timeout(timeout: Option<Duration>) -> Duration {
+    timeout
+        .unwrap_or(MAX_HOST_CALL_DURATION)
+        .min(MAX_HOST_CALL_DURATION)
+}
+
 #[async_trait::async_trait]
 impl HostHandler for RunnerEgress {
     async fn start(&self) -> anyhow::Result<()> {
@@ -352,7 +379,8 @@ impl HostHandler for RunnerEgress {
     /// directly, so inheriting it would drop BOTH the fqg.11 connection-derived
     /// narrowing and this handler's own `inner` transport — the same authority
     /// on one protocol version and not the other. Both checks run here in the
-    /// same order, with the same clean-denial (never a trap) semantics.
+    /// same order, with the same clean-denial (never a trap) semantics and the
+    /// same finite outbound ceiling ([`bounded_request_options`]).
     ///
     /// No production guest reaches this today: the runner's linker registers
     /// only the p2 `wasi:http` surface (see `instantiate`) and the flowrunner
@@ -395,7 +423,7 @@ impl HostHandler for RunnerEgress {
             });
         }
         self.inner
-            .send_request_p3(workload_id, request, options, fut)
+            .send_request_p3(workload_id, request, bounded_request_options(options), fut)
     }
 }
 
@@ -1126,6 +1154,43 @@ mod tests {
         assert_eq!(bounded.connect_timeout, MAX_HOST_CALL_DURATION);
         assert_eq!(bounded.first_byte_timeout, MAX_HOST_CALL_DURATION);
         assert_eq!(bounded.between_bytes_timeout, MAX_HOST_CALL_DURATION);
+    }
+
+    /// `None` is not "no policy" on p3 — the wasi-http default reads it as 600s.
+    /// A clamp that only lowers PRESENT values leaves all three `None` and hands
+    /// the guest that default, which is the whole of wamn-0h0g.15.87.
+    #[test]
+    fn absent_p3_timeouts_become_the_host_call_ceiling_not_the_wasi_default() {
+        let bounded = bounded_request_options(None).expect("p3 options are always supplied");
+
+        assert_eq!(bounded.connect_timeout, Some(MAX_HOST_CALL_DURATION));
+        assert_eq!(bounded.first_byte_timeout, Some(MAX_HOST_CALL_DURATION));
+        assert_eq!(bounded.between_bytes_timeout, Some(MAX_HOST_CALL_DURATION));
+        // Substituting the ceiling only narrows while it stays under the 600s
+        // wasi-http default; raising the ceiling past it would make this a
+        // widening.
+        assert!(MAX_HOST_CALL_DURATION < Duration::from_secs(600));
+    }
+
+    /// The ceiling is a ceiling, not a rewrite: a guest asking for LESS keeps it.
+    /// Distinct per-field values so a clamp wired to one field, or one that stamps
+    /// 30s over everything, fails here.
+    #[test]
+    fn over_long_p3_timeouts_clamp_down_while_shorter_ones_survive() {
+        let bounded = bounded_request_options(Some(RequestOptions {
+            connect_timeout: Some(Duration::from_secs(600)),
+            first_byte_timeout: Some(Duration::MAX),
+            between_bytes_timeout: Some(Duration::from_secs(5)),
+        }))
+        .expect("p3 options are always supplied");
+
+        assert_eq!(bounded.connect_timeout, Some(MAX_HOST_CALL_DURATION));
+        assert_eq!(bounded.first_byte_timeout, Some(MAX_HOST_CALL_DURATION));
+        assert_eq!(
+            bounded.between_bytes_timeout,
+            Some(Duration::from_secs(5)),
+            "a guest timeout below the ceiling stands"
+        );
     }
 
     /// A `RunnerEgress` whose connection-derived set is unset (`None`) or seeded.
