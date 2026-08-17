@@ -127,9 +127,9 @@ image, replicas, or podTemplate) — wamn-run-worker is not one of
 them and is retained as a plain Deployment: no `ClusterHost`, no
 heartbeat, and pretending otherwise would be adoption theater ·
 **the waker, at M2 adoption** — host/workload scaling is operator
-territory (`hostReplicas` / workload scalers); the dispatcher's wake
-signal becomes a CRD patch; planned deletion with a named trigger,
-not immediate.
+territory (`runtime.hostGroups[].replicas` / workload scalers); the
+dispatcher's wake signal becomes a CRD patch; planned deletion with a
+named trigger, not immediate.
 
 ## Retained, each with its consumer
 
