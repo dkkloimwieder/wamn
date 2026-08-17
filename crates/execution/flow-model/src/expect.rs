@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::FlowFailureKind;
+use crate::status::FlowFailureKind;
 
 /// The one observable a test case may require of its run.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct Expect {
     pub outcome: ExpectedOutcome,
@@ -19,7 +19,7 @@ pub struct Expect {
 }
 
 /// The two terminal shapes a black-box test case distinguishes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExpectedOutcome {
     Responded,
@@ -33,8 +33,10 @@ pub(crate) enum ExpectErrorKind {
     FailedResponseFields,
 }
 
+/// Why an [`Expect`] is refused. Read through [`std::fmt::Display`]; the
+/// classification behind it is this crate's own concern.
 #[derive(Debug)]
-pub(crate) struct ExpectError {
+pub struct ExpectError {
     kind: ExpectErrorKind,
 }
 
@@ -64,7 +66,8 @@ impl std::fmt::Display for ExpectError {
 impl std::error::Error for ExpectError {}
 
 impl Expect {
-    pub(crate) fn validate(&self) -> Result<(), ExpectError> {
+    /// `Ok` if the outcome and its optional fields are a legal pairing.
+    pub fn validate(&self) -> Result<(), ExpectError> {
         if self
             .status
             .is_some_and(|status| !(100..=599).contains(&status))
@@ -92,7 +95,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{Expect, ExpectErrorKind, ExpectedOutcome};
-    use crate::FlowFailureKind;
+    use crate::status::FlowFailureKind;
 
     fn round_trip(expect: Expect, wire: Value) {
         assert_eq!(serde_json::to_value(&expect).unwrap(), wire);

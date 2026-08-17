@@ -2,8 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use crate::FlowFailureKind;
+use wamn_flow::FlowFailureKind;
 
 /// The bounded facts one run makes available to the flat expectation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

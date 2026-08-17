@@ -132,6 +132,46 @@
       ],
       "type": "object"
     },
+    "Expect": {
+      "additionalProperties": false,
+      "description": "The one observable a test case may require of its run.",
+      "properties": {
+        "body-subset": true,
+        "failure-code": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/FlowFailureKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "outcome": {
+          "$ref": "#/definitions/ExpectedOutcome"
+        },
+        "status": {
+          "format": "uint16",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "type": "object"
+    },
+    "ExpectedOutcome": {
+      "description": "The two terminal shapes a black-box test case distinguishes.",
+      "enum": [
+        "responded",
+        "failed"
+      ],
+      "type": "string"
+    },
     "FlowConnectionRequirement": {
       "additionalProperties": false,
       "description": "One artifact-local name bound to a portable connection requirement.",
@@ -154,6 +194,19 @@
         "requirement"
       ],
       "type": "object"
+    },
+    "FlowFailureKind": {
+      "description": "A typed flow failure accepted by `failure-code`.",
+      "enum": [
+        "terminal",
+        "retry-exhausted",
+        "invalid-input",
+        "runaway-budget",
+        "effect-uncertain",
+        "depth-budget",
+        "dispatch-budget"
+      ],
+      "type": "string"
     },
     "Node": {
       "additionalProperties": false,
@@ -190,10 +243,36 @@
         "type"
       ],
       "type": "object"
+    },
+    "TestSetCase": {
+      "additionalProperties": false,
+      "description": "One bounded test case: a golden input and the observable it requires.",
+      "properties": {
+        "case-id": {
+          "type": "string"
+        },
+        "expect": {
+          "$ref": "#/definitions/Expect"
+        },
+        "input": true
+      },
+      "required": [
+        "case-id",
+        "expect",
+        "input"
+      ],
+      "type": "object"
     }
   },
   "description": "One version of a flow — the unit stored in the catalog and pointed at by the active-version pointer (deploying = flipping that pointer + a NATS doorbell, 5.14).",
   "properties": {
+    "cases": {
+      "description": "The publish gate's test cases. Tests live in the draft beside the graph, so one draft hash covers both and a successor draft carries them forward with the rest of the document. Bounded by [`crate::validate_cases`]; the array's order is each case's ordinal.",
+      "items": {
+        "$ref": "#/definitions/TestSetCase"
+      },
+      "type": "array"
+    },
     "connection-requirements": {
       "description": "Portable connection requirements named by this artifact. Environment bindings, instances, generations, authorities, and secrets never enter this declaration or the artifact identity derived from it.",
       "items": {

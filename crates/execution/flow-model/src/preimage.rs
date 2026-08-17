@@ -29,6 +29,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::test_set::TestSetCase;
 use crate::types::{Edge, Flow, FlowConnectionRequirement, Node};
 
 /// The canonical digest preimage of a [`Flow`].
@@ -70,6 +71,12 @@ pub struct FlowPreimage<'a> {
     edges: Vec<&'a Edge>,
     #[serde(skip_serializing_if = "is_empty")]
     connection_requirements: &'a [FlowConnectionRequirement],
+    /// In **document order**, deliberately unsorted. A case's position in the
+    /// array is its ordinal, and the ordinal derives the test run's identity
+    /// (`wamn-scenario-worker`'s `test_case_run_id`), so permuting `cases` is a
+    /// different document and must be a different digest.
+    #[serde(skip_serializing_if = "is_empty")]
+    cases: &'a [TestSetCase],
 }
 
 /// A graph node's identity: [`Node`] without its editor [`Node::label`].
@@ -124,6 +131,7 @@ impl<'a> FlowPreimage<'a> {
             nodes,
             edges,
             connection_requirements: &flow.connection_requirements,
+            cases: &flow.cases,
         }
     }
 }

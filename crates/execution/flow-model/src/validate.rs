@@ -7,6 +7,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::node_contract::{ConnectionTypeDescriptor, normalize_portable_http_target};
+use crate::test_set::{TestSetCasesErrorKind, validate_cases};
 use crate::types::{
     CallFlowConfig, ERROR_PORT, EntryKind, FailConfig, Flow, MAIN_PORT, Node, RequestConfig,
     RespondConfig, SCHEMA_VERSION,
@@ -177,7 +178,31 @@ pub fn validate(flow: &Flow, resolved_interfaces: &ResolvedInterfaces) -> Vec<Is
         }
     }
 
+    validate_flow_cases(flow, &mut issues);
+
     issues
+}
+
+/// Apply the bounded-cases rules to the document's `cases` array.
+///
+/// A flow carrying no cases is not refused here: `cases` is optional, and its
+/// absent and empty documents are the same bytes. The remaining refusals map
+/// one-to-one onto [`TestSetCasesErrorKind`], so a caller reading [`Issue`]
+/// codes keeps the classification `validate_cases` returns.
+fn validate_flow_cases(flow: &Flow, issues: &mut Vec<Issue>) {
+    if flow.cases.is_empty() {
+        return;
+    }
+    if let Err(error) = validate_cases(&flow.cases) {
+        let code = match error.kind() {
+            TestSetCasesErrorKind::EmptyCases => "empty-cases",
+            TestSetCasesErrorKind::CaseCountOverflow => "case-count-overflow",
+            TestSetCasesErrorKind::EmptyCaseId => "empty-case-id",
+            TestSetCasesErrorKind::DuplicateCaseId => "duplicate-case-id",
+            TestSetCasesErrorKind::InvalidExpect => "invalid-case-expect",
+        };
+        issues.push(Issue::error(code, "cases", error.to_string()));
+    }
 }
 
 fn validate_identity(flow: &Flow, issues: &mut Vec<Issue>) {
@@ -957,7 +982,10 @@ mod tests {
 
     use serde_json::json;
 
+    use crate::expect::{Expect, ExpectedOutcome};
     use crate::node_contract::ConnectionTypeDescriptor;
+    use crate::status::FlowFailureKind;
+    use crate::test_set::{MAX_TEST_SET_CASES, TestSetCase};
 
     use crate::types::{Edge, Flow, FlowConnectionRequirement, Node};
 
@@ -1009,6 +1037,7 @@ mod tests {
             nodes: vec![request, node("work", "step"), respond],
             edges: vec![edge("in", "main", "work"), edge("work", "main", "out")],
             connection_requirements: vec![],
+            cases: vec![],
         }
     }
 
@@ -1465,5 +1494,61 @@ mod tests {
             "cron must not be accepted as a retained entry type: {issues:?}"
         );
         assert_eq!(flow.entry_node(), None);
+    }
+
+    fn responded_case(case_id: &str) -> TestSetCase {
+        TestSetCase {
+            case_id: case_id.into(),
+            input: json!({}),
+            expect: Expect {
+                outcome: ExpectedOutcome::Responded,
+                status: Some(200),
+                body_subset: None,
+                failure_code: None,
+            },
+        }
+    }
+
+    /// `cases` is optional, so an absent test set is not a validation failure —
+    /// only a present one is bounded. Without the emptiness guard every flow in
+    /// the repository would carry an `empty-cases` error.
+    #[test]
+    fn a_flow_without_cases_is_valid_and_a_bounded_one_stays_valid() {
+        let mut flow = request_flow();
+        assert!(flow.cases.is_empty());
+        assert!(codes(&flow).is_empty());
+
+        flow.cases = vec![responded_case("first"), responded_case("second")];
+        assert!(codes(&flow).is_empty(), "{:?}", flow.issues(&interfaces()));
+    }
+
+    /// Every `validate_cases` refusal must reach `Flow::issues` under its own
+    /// code: a call that dropped the result, or a `code` collapsed to one
+    /// literal, fails here.
+    #[test]
+    fn each_case_refusal_reaches_the_flow_issue_list_under_its_own_code() {
+        let mut duplicate = request_flow();
+        duplicate.cases = vec![responded_case("same"), responded_case("same")];
+        assert_eq!(codes(&duplicate), ["duplicate-case-id"]);
+
+        let mut empty_id = request_flow();
+        empty_id.cases = vec![responded_case("")];
+        assert_eq!(codes(&empty_id), ["empty-case-id"]);
+
+        let mut overflowing = request_flow();
+        overflowing.cases = (0..=MAX_TEST_SET_CASES)
+            .map(|ordinal| responded_case(&format!("case-{ordinal}")))
+            .collect();
+        assert_eq!(codes(&overflowing), ["case-count-overflow"]);
+
+        let mut invalid_expect = request_flow();
+        let mut case = responded_case("bad");
+        case.expect.failure_code = Some(FlowFailureKind::Terminal);
+        invalid_expect.cases = vec![case];
+        let issues = invalid_expect.issues(&interfaces());
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].code, "invalid-case-expect");
+        assert_eq!(issues[0].path, "cases");
+        assert!(issues[0].message.contains("forbids failure-code"));
     }
 }

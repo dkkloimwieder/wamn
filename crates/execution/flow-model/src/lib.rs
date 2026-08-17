@@ -16,14 +16,19 @@
 //!   node interfaces; ordinary node `config` remains node-library-owned);
 //! - **preimage** — [`FlowPreimage`] (the canonical projection every graph
 //!   digest hashes; W2 digest ordering);
+//! - **cases** — [`TestSetCase`] (the publish gate's test cases live in the
+//!   flow document, so one draft hash covers the graph and its tests);
 //! - **diff** — [`diff::diff`] (structured version diff for the editor);
 //! - **contract** — [`json_schema`] generates the language-neutral JSON Schema
 //!   published at `docs/archive/contracts/flow-schema.schema.json` (drift-guarded by a test).
 
 mod canonical;
 mod diff;
+mod expect;
 pub mod node_contract;
 mod preimage;
+mod status;
+mod test_set;
 mod types;
 mod validate;
 
@@ -32,12 +37,17 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 pub use diff::{FlowDiff, NodeChange, diff};
+pub use expect::{Expect, ExpectError, ExpectedOutcome};
 pub use node_contract::{
     CanonicalHttpTarget, ConnectionAuthorityModel, ConnectionField, ConnectionFieldOwner,
     ConnectionFieldOwnership, ConnectionRequirement, ConnectionTypeDescriptor, CredentialInjection,
     PortableHttpTargetError, normalize_portable_http_target,
 };
 pub use preimage::FlowPreimage;
+pub use status::FlowFailureKind;
+pub use test_set::{
+    MAX_TEST_SET_CASES, TestSetCase, TestSetCasesError, TestSetCasesErrorKind, validate_cases,
+};
 pub use types::{
     CallFlowConfig, ENTRY_TYPES, ERROR_PORT, Edge, EntryKind, EventInput, FailConfig, Flow,
     FlowConnectionRequirement, MAIN_PORT, Node, NodeId, RequestConfig, RespondConfig, RowEvent,

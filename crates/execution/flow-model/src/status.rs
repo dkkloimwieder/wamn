@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A typed flow failure accepted by `failure-code`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum FlowFailureKind {
     Terminal,

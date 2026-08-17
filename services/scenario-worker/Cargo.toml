@@ -12,7 +12,6 @@ wamn-control-registry = { workspace = true }
 wamn-execution-host = { workspace = true }
 wamn-platform-identity = { workspace = true }
 wamn-runtime = { workspace = true }
-wamn-scenario-model = { workspace = true }
 wamn-schema-control = { workspace = true }
 wamn-flow = { workspace = true }
 wamn-standard-nodes = { workspace = true }

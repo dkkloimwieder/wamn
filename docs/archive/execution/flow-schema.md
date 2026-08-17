@@ -21,6 +21,7 @@ artifact.
 | `nodes` | Node[] | Exactly one `request` or `event` entry node. |
 | `edges` | Edge[] | Wiring between output ports and downstream nodes. |
 | `connection-requirements` | FlowConnectionRequirement[] | Artifact-local portable requirements consumed by integrate nodes. |
+| `cases` | TestSetCase[] | Publish-gate test cases carried in the draft. Array order is each case's ordinal and is artifact identity. |
 
 **Node** — `{ id, type, label?, config?, connection? }`. `id` accepts exactly
 lowercase ASCII letters, digits, and hyphens (`^[a-z0-9-]+$`). `type` is an
@@ -36,6 +37,12 @@ identity.
 
 **Call-flow config** — `{ flow-id }`. Callee content and binding facts do not
 enter the caller flow document.
+
+**Test case** — `{ case-id, input, expect }`; at most 256 per document, each
+`case-id` non-empty and unique. **Expect** — `{ outcome, status?, body-subset?,
+failure-code? }` where `outcome` is `responded` or `failed`; a `responded`
+expectation forbids `failure-code`, a `failed` one forbids `status` and
+`body-subset`.
 
 ## Retired vocabulary
 
@@ -59,14 +66,17 @@ not flow-owned credential references.
 issue codes. The published schema rejects unknown fields; validation additionally
 checks entry cardinality, flow and node identifiers, connection requirement
 shape and ordering, edge endpoints and ports, request input schemas, call-flow
-config, terminal node config, and request-flow answerability.
+config, terminal node config, request-flow answerability, and the bounded cases
+array when one is present.
 
 ## Diff and identity
 
 `diff(old, new)` reports nodes, edges, and connection requirements added,
 removed, or changed. `Flow::canonical_bytes` hashes a `FlowPreimage` projection:
 node frames are ordered by node id, edges by their stable edge key, display text
-is omitted, and portable connection requirements remain artifact identity.
+is omitted, and portable connection requirements remain artifact identity. Test
+cases enter the projection in document order, because a case's position is its
+ordinal.
 
 ## Regenerating the contract
 

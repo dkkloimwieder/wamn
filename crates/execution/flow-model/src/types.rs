@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use crate::canonical;
 use crate::node_contract::ConnectionTypeDescriptor;
 use crate::preimage::FlowPreimage;
+use crate::test_set::TestSetCase;
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 
@@ -53,6 +54,12 @@ pub struct Flow {
     /// this declaration or the artifact identity derived from it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connection_requirements: Vec<FlowConnectionRequirement>,
+    /// The publish gate's test cases. Tests live in the draft beside the graph,
+    /// so one draft hash covers both and a successor draft carries them forward
+    /// with the rest of the document. Bounded by
+    /// [`crate::validate_cases`]; the array's order is each case's ordinal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cases: Vec<TestSetCase>,
 }
 
 /// A single graph step.

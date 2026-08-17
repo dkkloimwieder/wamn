@@ -133,8 +133,7 @@ fn validate_reservation(reservation: &TestReportReservation) -> anyhow::Result<(
     if !is_sha256(&reservation.command_hash) {
         bail!("test report command hash must be lowercase sha256");
     }
-    if reservation.case_ids.is_empty()
-        || reservation.case_ids.len() > wamn_scenario_model::MAX_TEST_SET_CASES
+    if reservation.case_ids.is_empty() || reservation.case_ids.len() > wamn_flow::MAX_TEST_SET_CASES
     {
         bail!("test report case count is outside the stored bound");
     }
@@ -472,7 +471,7 @@ mod tests {
         assert!(
             TEST_REPORT_DEADLINE_SECONDS
                 > TEST_CASE_DEADLINE_SECONDS
-                    * i32::try_from(wamn_scenario_model::MAX_TEST_SET_CASES).unwrap()
+                    * i32::try_from(wamn_flow::MAX_TEST_SET_CASES).unwrap()
         );
         validate_reservation(&reservation()).unwrap();
     }

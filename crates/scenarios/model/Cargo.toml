@@ -1,10 +1,14 @@
 [package]
 name = "wamn-scenario-model"
-description = "Pure contracts and evaluation for inline MVP test sets."
+description = "Pure evaluation of the MVP test cases carried by a flow document."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# The test case and its expectation are part of the flow document, so they are
+# owned by the document's contract crate; this crate only evaluates them. The
+# edge is one-way: wamn-flow must never depend on this evaluator.
+wamn-flow = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

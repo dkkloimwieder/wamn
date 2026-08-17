@@ -4578,6 +4578,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "wamn-flow",
 ]
 
 [[package]]
@@ -4603,7 +4604,6 @@ dependencies = [
  "wamn-flow",
  "wamn-platform-identity",
  "wamn-runtime",
- "wamn-scenario-model",
  "wamn-schema-control",
  "wamn-standard-nodes",
  "wash-runtime",

@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use wamn_flow::{Expect, ExpectedOutcome, TestSetCase};
 
-use crate::{Captured, Expect, ExpectedOutcome, TestSetCase};
+use crate::Captured;
 
 /// The machine-diffable expected/actual result of one test case.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,11 +90,10 @@ fn is_subset(expected: &Value, actual: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
+    use wamn_flow::{Expect, ExpectedOutcome, FlowFailureKind, TestSetCase};
 
     use super::evaluate;
-    use crate::{
-        Captured, CapturedResponse, Expect, ExpectedOutcome, FlowFailureKind, TestSetCase,
-    };
+    use crate::{Captured, CapturedResponse};
 
     fn case(expect: Expect) -> TestSetCase {
         TestSetCase {

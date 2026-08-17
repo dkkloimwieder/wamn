@@ -1141,6 +1141,9 @@ fn reducer_inputs(verified: &VerifiedResolutionPlan) -> Result<(Flow, ResolvedIn
         nodes,
         edges,
         connection_requirements,
+        // The execution plan carries no test cases; this reconstruction is for
+        // structural revalidation of the graph only.
+        cases: Vec::new(),
     };
     Ok((flow, inferred_interfaces(execution)))
 }

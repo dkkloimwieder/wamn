@@ -6,13 +6,13 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::Expect;
+use crate::expect::Expect;
 
 /// Maximum number of cases one flow document may carry.
 pub const MAX_TEST_SET_CASES: usize = 256;
 
 /// One bounded test case: a golden input and the observable it requires.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct TestSetCase {
     pub case_id: String,
@@ -60,6 +60,12 @@ impl fmt::Display for TestSetCasesError {
 impl std::error::Error for TestSetCasesError {}
 
 /// Validate every non-vacuous cardinality and expectation bound.
+///
+/// A caller that requires a test set calls this directly and gets
+/// [`TestSetCasesErrorKind::EmptyCases`] for an empty slice. [`crate::Flow`]
+/// does not: `cases` is an optional document array whose absent and empty
+/// forms are the same bytes, so flow validation applies these bounds only to a
+/// flow that carries at least one case.
 pub fn validate_cases(cases: &[TestSetCase]) -> Result<(), TestSetCasesError> {
     if cases.is_empty() {
         return Err(TestSetCasesError::new(
@@ -106,7 +112,8 @@ mod tests {
     use serde_json::json;
 
     use super::{MAX_TEST_SET_CASES, TestSetCase, TestSetCasesErrorKind, validate_cases};
-    use crate::{Expect, ExpectedOutcome, FlowFailureKind};
+    use crate::expect::{Expect, ExpectedOutcome};
+    use crate::status::FlowFailureKind;
 
     fn case(case_id: &str) -> TestSetCase {
         TestSetCase {

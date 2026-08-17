@@ -227,6 +227,98 @@ fn graph_preimage_bytes_are_pinned() {
     );
 }
 
+/// Two cases, deliberately in an order that is *not* their case-id order, so a
+/// projection that sorted them would be indistinguishable from one that kept
+/// document order.
+const CASED_GRAPH: &str = r#"{
+  "schema-version": "0.1",
+  "flow-id": "cased",
+  "version": 1,
+  "nodes": [
+    {"id": "entry", "type": "request", "config": {"input-schema": true}},
+    {"id": "done", "type": "respond", "config": {"status": 200}}
+  ],
+  "edges": [{"from": "entry", "to": "done"}],
+  "cases": [
+    {"case-id": "second", "input": {"id": 2}, "expect": {"outcome": "failed"}},
+    {"case-id": "first", "input": {"id": 1},
+     "expect": {"outcome": "responded", "status": 200}}
+  ]
+}"#;
+
+fn cased_flow() -> Flow {
+    Flow::from_json(CASED_GRAPH).expect("cased fixture parses")
+}
+
+fn draft_preimage(flow: &Flow) -> Value {
+    serde_json::to_value(FlowPreimage::version_independent(flow)).expect("the preimage serializes")
+}
+
+fn preimage_case_ids(flow: &Flow) -> Vec<String> {
+    draft_preimage(flow)["cases"]
+        .as_array()
+        .expect("the preimage carries cases")
+        .iter()
+        .map(|case| case["case-id"].as_str().expect("a case id").to_owned())
+        .collect()
+}
+
+/// The whole point of carrying cases in the document: `wamn-catalog`'s
+/// `DraftContentHash::for_flow` hashes `FlowPreimage::version_independent`, so
+/// one draft hash covers the graph *and* its tests (wamn-0h0g.15.76). A `cases`
+/// field that reached `Flow` but not the projection would let two drafts with
+/// different expectations share one content address, and every other test in
+/// this crate would still pass.
+#[test]
+fn case_content_reaches_the_graph_and_draft_digests() {
+    let baseline = cased_flow();
+
+    let mut expectation_moved = cased_flow();
+    expectation_moved.cases[1].expect.status = Some(500);
+    assert_ne!(baseline.graph_hash(), expectation_moved.graph_hash());
+    assert_ne!(
+        draft_preimage(&baseline),
+        draft_preimage(&expectation_moved),
+        "the draft content address must move when a case expectation moves"
+    );
+
+    let mut input_moved = cased_flow();
+    input_moved.cases[1].input = json!({"id": 99});
+    assert_ne!(
+        draft_preimage(&baseline),
+        draft_preimage(&input_moved),
+        "a golden input is part of the test the draft hash covers"
+    );
+
+    let mut dropped = cased_flow();
+    dropped.cases.clear();
+    assert_ne!(
+        draft_preimage(&baseline),
+        draft_preimage(&dropped),
+        "deleting the tests must not leave the draft content address unchanged"
+    );
+}
+
+/// Unlike `nodes`, `cases` is **not** reordered by the projection. A case's
+/// position in the array is its ordinal, and the ordinal derives the test run's
+/// identity (`test_case_run_id` in `wamn-scenario-worker`), so two documents
+/// that permute `cases` produce different runs and must produce different
+/// digests.
+#[test]
+fn case_sequence_position_is_identity_and_is_not_sorted_away() {
+    let baseline = cased_flow();
+    let mut permuted = cased_flow();
+    permuted.cases.swap(0, 1);
+
+    assert_eq!(
+        preimage_case_ids(&baseline),
+        ["second", "first"],
+        "the projection keeps document order, it does not sort by case id"
+    );
+    assert_eq!(preimage_case_ids(&permuted), ["first", "second"]);
+    assert_ne!(baseline.graph_hash(), permuted.graph_hash());
+}
+
 /// A flow with every optional field populated, so serializing it skips nothing.
 const MAXIMAL_GRAPH: &str = r#"{
   "schema-version": "0.1",
@@ -239,7 +331,9 @@ const MAXIMAL_GRAPH: &str = r#"{
      "connection": "erp-callback"}
   ],
   "edges": [{"from": "entry", "from-port": "alt", "to": "call", "to-port": "in"}],
-  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}]
+  "connection-requirements": [{"name":"erp-callback","requirement":{"descriptor-version":"1","requirement-type":"http","contract":"wamn:connection/http@0.1.0","authority-model":"http-origin","field-ownership":[{"field":"method","owner":"author"},{"field":"relative-target","owner":"author"},{"field":"headers","owner":"author"},{"field":"body","owner":"author"},{"field":"authority","owner":"environment"},{"field":"tls","owner":"environment"},{"field":"redirect","owner":"environment"},{"field":"proxy","owner":"environment"},{"field":"credential","owner":"environment"}],"credential-injection":"environment-selected-http-header"}}],
+  "cases": [{"case-id": "smoke", "input": {"id": 1},
+             "expect": {"outcome": "responded", "status": 200}}]
 }"#;
 
 fn sorted_keys(value: &Value) -> Vec<String> {
@@ -268,6 +362,7 @@ fn every_flow_field_is_classified_as_identity_or_display() {
     assert_eq!(
         sorted_keys(&document),
         [
+            "cases",
             "connection-requirements",
             "edges",
             "flow-id",
