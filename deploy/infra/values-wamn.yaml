@@ -1,8 +1,36 @@
-# Helm values for the runtime-operator chart with the wamn custom host image
-# (S1). Install:
+# Helm values for the CLUSTER-SINGLETON runtime-operator release (S1).
+#
+# TWO KINDS OF RELEASE COME OUT OF THIS ONE CHART, and this file is only the
+# first of them (rulings wamn-0h0g.13.49 + .13.50, bead wamn-0h0g.15.15):
+#
+#   1. THIS FILE — the operator, its five CRDs, and the control-plane NATS.
+#      ONE PER CLUSTER, in `wamn-system`, installed once: the CRDs are
+#      cluster-scoped, so every environment in the cluster shares this one
+#      operator version. It carries NO host groups.
+#   2. THE HOST TIER — `deploy/platform/values-host-default.yaml`, ONE HELM
+#      RELEASE PER ENVIRONMENT. Host images and host groups are per-environment,
+#      per-release values, which is why they live in the `platform/` tier
+#      (long-lived, per release) and not in `infra/` (install-once).
+#
+# Install, in this order — the CRDs must exist before any host release or
+# WorkloadDeployment is applied:
 #   helm upgrade --install --create-namespace -n wamn-system wamn \
-#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.5.2 \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
 #     -f deploy/infra/values-wamn.yaml
+#   # then this environment's host tier — deploy/platform/values-host-default.yaml
+#
+# [wamn-0h0g.15.15] CHART + OPERATOR VERSION PIN — PER CLUSTER (ruling
+# wamn-0h0g.13.49). The chart version in the install command above is the whole
+# pin, and the conformance guard parses it from there: the chart's
+# release train sets `appVersion` equal to `version` on every release
+# (Chart.yaml:15-26), and the operator image tag defaults to `.Chart.AppVersion`
+# (templates/operator/deployment.yaml:39), so pinning the chart pins the
+# operator and the two cannot drift. `operator.image.tag` is deliberately left
+# unset: hard-coding it would add a second place to forget, and the published
+# chart's own appVersion is by construction the tag that exists. Move this pin
+# ONLY on the fork-sync cadence, together with
+# `workspace.dependencies.wash-runtime.rev` in the root `Cargo.toml`, and re-run
+# the seam re-verification below when you do.
 #
 # [wamn-0h0g.15.54] CHART SEAM RECORD — re-verify on every fork sync.
 # Nothing in this repository renders the chart; it is pulled from OCI at
@@ -18,62 +46,73 @@
 #   runtime.hostGroups[].volumeMounts -> {{- with .volumeMounts }}
 # in templates/runtime/deployment.yaml. Upstream e256a9f6 added them. The chart
 # ships no values.schema.json, so a rename downgrades our keys to a SILENT
-# no-op instead of an install error — which is why the record exists.
+# no-op instead of an install error — which is why the record exists. Nothing
+# sets either key yet; when ruling 4's mount lands it goes on the host-tier
+# file's host group, since this release has no host group to hang it on.
 #
 # Pinned: fork rev daba6029 = chart 2.7.0. Both expressions verified present
 # and unrenamed there — the grep below was re-run at this pin (wamn-0h0g.15.20),
 # not carried over from the previous record — and they held at 2.5.2, 2.6.0 and
 # 2.6.1 before it; the 2.6.1 -> 2.7.0 bump rewrote both surrounding blocks and
 # left them byte-identical.
-# The install above pulls chart 2.5.2, two minors behind the pinned host. The
-# seam holds at both; realigning the installed chart is a deploy-procedure
-# change owned by wamn-0h0g.15.15 (which pins the chart and operator version
-# and cannot be validated while the kind cluster is frozen), not a comment fix
-# here. (The retired note here claimed rev 8b53285, two fork retargets stale.)
+# The install above pulls chart 2.7.0, the chart the pinned fork rev carries:
+# wamn-0h0g.15.15 realigned it from 2.5.2, which was two minors behind. The
+# seam holds at both. Not yet exercised against a cluster — the kind cluster is
+# frozen, so this install is proved at the RC's fresh-namespace convergence.
 #
 # Re-verify — the chart ships inside the pinned fork checkout:
 #   grep -n 'with \.volumes\|with \.volumeMounts' ~/.cargo/git/checkouts/wasmcloud-*/daba602/charts/runtime-operator/templates/runtime/deployment.yaml
 
-# Deprecated HTTP gateway off: its NodePort would collide with workload
-# Services on 30950; routing is EndpointSlice-based now.
+# Deprecated HTTP gateway off, and never adopted: HTTP exposure rides
+# operator-managed EndpointSlices on standard Services (chart
+# values.yaml:205-210), and the gateway's NodePort would collide with workload
+# Services on 30950.
 gateway:
   enabled: false
 
+operator:
+  # -- The environment namespaces whose WorkloadDeployments this operator
+  # reconciles, one entry each. A non-empty list takes the operator off
+  # cluster-wide RBAC entirely: the chart drops the ClusterRole and its binding
+  # (templates/operator/clusterrole.yaml:1, clusterrolebinding.yaml:1) and binds
+  # the same grants as per-namespace Roles instead (workload-crd-role.yaml,
+  # workload-namespace-role.yaml, endpointslice-role.yaml), while the operator
+  # scopes its workload informer cache to the same set
+  # (runtime-operator/cmd/main.go:252-255). A WorkloadDeployment in any other
+  # namespace is then not seen at all. Chart default is `[]` = watch every
+  # namespace (chart values.yaml:157-158).
+  watchNamespaces:
+    - wamn-system
+  # -- The namespaces where host Pods run, so the operator's Pod informer cache
+  # and per-namespace Pod RBAC cover them (chart values.yaml:159-164, default
+  # `[]`). The chart also derives this set from `runtime.hostGroups[].namespace`
+  # (templates/_helpers.tpl:143-152) — but only from host groups in the SAME
+  # release, and this release deliberately has none, so every environment
+  # namespace has to be listed here by hand. That helper drops entries equal to
+  # the release namespace, so the MVP entry below renders no `-host-namespaces`
+  # flag today (host Pods in the operator's own namespace are covered by the
+  # in-namespace Role at templates/operator/role.yaml); it is the line
+  # environment #2 appends to.
+  hostNamespaces:
+    - wamn-system
+  # -- THE WRONG-TARGET LOCK. This ships TRUE, and the chart's own values file
+  # calls that default "permissive across tenants" (chart values.yaml:165-180):
+  # with it on, a WorkloadDeployment in one namespace can schedule onto hosts in
+  # another just by naming `spec.template.spec.environment`. False locks
+  # scheduling to the workload's own namespace and refuses any other environment
+  # with a `CrossEnvironmentSchedulingDenied` Warning Event plus a
+  # `HostSelection=False` condition
+  # (runtime-operator/internal/controller/runtime/workload_controller.go:144-158).
+  allowSharedHosts: false
+
 runtime:
-  image:
-    registry: ""              # bare local name, loaded via `kind load`
-    repository: wamn-host
-    tag: dev
-    pull_policy: Never
-  hostGroups:
-    - name: default
-      replicas: 3
-      service:
-        type: ClusterIP
-      http:
-        enabled: true
-        port: 80
-      # The default project's Postgres URL: the wamn:postgres plugin's from_env()
-      # default pool connects as this non-superuser role for project-scoped
-      # component SQL.
-      env:
-        - name: WAMN_PG_URL
-          value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
-        # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
-        # plugin — the materializer Service workload's stream/doorbell path.
-        # Absent, the plugin still links and returns connection-unavailable.
-        - name: WAMN_EVT_NATS_URL
-          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
-      # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
-      # component images from the in-cluster registry (deploy/platform/registry.yaml).
-      extraArgs:
-        - "--allow-insecure-registries"
-      resources:
-        requests:
-          memory: "256Mi"
-          cpu: "250m"
-        limits:
-          # Roomy on purpose: the S1 density/cap-kill measurements must hit
-          # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
-          memory: "4Gi"
-          cpu: "2"
+  # -- No host groups in the operator release: the host tier is one Helm release
+  # per environment (ruling wamn-0h0g.13.50), and its values live in
+  # deploy/platform/values-host-<environment>.yaml. `runtime.image` — the
+  # chart-wide host image, which is the carriage our `wamn-host` image actually
+  # rides (chart values.yaml:285-289; `hostGroups[].image` is only an optional
+  # per-group override, chart values.yaml:358-363) — moved there with them.
+  #
+  # Every chart template that touches host groups reaches them through `range`,
+  # so an empty list renders nothing rather than failing.
+  hostGroups: []

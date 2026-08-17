@@ -36,13 +36,24 @@ apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
   name: materializer-demo
+  # Must be one of `operator.watchNamespaces` (deploy/infra/values-wamn.yaml),
+  # or the operator never sees this object at all.
   namespace: wamn-system
 spec:
   replicas: 1
   template:
     spec:
+      # [wamn-0h0g.15.15] The host group this schedules onto — the label the
+      # host reports from `--host-group` (deploy/platform/values-host-default.yaml).
       hostSelector:
         hostgroup: default
+      # The environment whose hosts may run this workload, matched against
+      # `Host.Environment` (the host Pod's namespace). Under the operator's
+      # `allowSharedHosts: false` lock this is only honoured when it equals this
+      # object's own namespace; any other value is refused with a
+      # `CrossEnvironmentSchedulingDenied` Warning Event and a
+      # `HostSelection=False` condition.
+      environment: wamn-system
       hostInterfaces:
         # The host's hostInterfaces are the ALLOWLIST for host plugins — the
         # materializer imports wamn:postgres AND wamn:jetstream; both must be

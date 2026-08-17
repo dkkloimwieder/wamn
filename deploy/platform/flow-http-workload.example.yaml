@@ -28,13 +28,28 @@ apiVersion: runtime.wasmcloud.dev/v1alpha1
 kind: WorkloadDeployment
 metadata:
   name: flow-http
+  # Must be one of `operator.watchNamespaces` (deploy/infra/values-wamn.yaml),
+  # or the operator never sees this object at all.
   namespace: wamn-system
 spec:
   replicas: 1
   template:
     spec:
+      # [wamn-0h0g.15.15] The host group this schedules onto — the label the
+      # host reports from `--host-group` (deploy/platform/values-host-default.yaml).
       hostSelector:
         hostgroup: default
+      # The environment whose hosts may run this workload, matched against
+      # `Host.Environment` (the host Pod's namespace). Under the operator's
+      # `allowSharedHosts: false` lock this is only honoured when it equals this
+      # object's own namespace; any other value is refused with a
+      # `CrossEnvironmentSchedulingDenied` Warning Event and a
+      # `HostSelection=False` condition. Naming it rather than leaving it unset
+      # makes the target legible and gives the RC one string to flip to prove
+      # the refusal.
+      environment: wamn-system
+      # HTTP exposure: the operator manages EndpointSlices for this Service
+      # (above) — the deprecated runtime-gateway is never adopted.
       kubernetes:
         service:
           name: flow-http

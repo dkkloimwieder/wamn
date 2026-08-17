@@ -6,6 +6,15 @@
 //! seam the mount depends on against the fork revision whose chart was
 //! inspected, and that revision is the pin in the root `Cargo.toml`. Moving the
 //! pin without re-inspecting the chart fails here (wamn-0h0g.15.54).
+//!
+//! The same reasoning covers the two-release split the chart is installed under
+//! (wamn-0h0g.15.15): one cluster-singleton operator release plus one host-tier
+//! release per environment. Convergence itself needs a cluster, so what is
+//! guarded here is the agreement between the files — the host tier names the
+//! environment namespace, and the operator's watch/host namespace lists and the
+//! component workloads' namespace and `environment` must all follow it, or the
+//! operator's `allowSharedHosts: false` lock refuses the workload at schedule
+//! time with `CrossEnvironmentSchedulingDenied`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,14 +22,42 @@ use std::path::{Path, PathBuf};
 const CARGO_MANIFEST: &str = "Cargo.toml";
 const FORK_LEDGER: &str = "docs/archive/platform/wash-runtime-fork.md";
 const VALUES: &str = "deploy/infra/values-wamn.yaml";
+const HOST_VALUES: &str = "deploy/platform/values-host-default.yaml";
+
+/// The component workloads the operator schedules onto the host tier — the only
+/// two in scope for operator management (ruling wamn-0h0g.13.46).
+const WORKLOADS: [&str; 2] = [
+    "deploy/platform/flow-http-workload.example.yaml",
+    "deploy/platform/materializer.example.yaml",
+];
 
 const RE_VERIFY: &str = "grep -n 'with \\.volumes\\|with \\.volumeMounts'";
+
+/// Chart halves the host-tier release must leave to the operator release, each
+/// paired with why it is that release's alone.
+const HOST_RELEASE_DISABLED: [(&str, &str); 3] = [
+    (
+        "operator:\n  enabled: false",
+        "the operator and its cluster-scoped CRDs are a per-cluster singleton",
+    ),
+    (
+        "nats:\n  enabled: false",
+        "the control-plane NATS the hosts heartbeat into belongs to the operator release",
+    ),
+    (
+        "generate: false",
+        "the operator release owns the CA and every certificate Secret in its namespace",
+    ),
+];
 
 /// The values key the manifest mount sets, paired with the chart template
 /// expression that renders it — the two halves a rename would separate.
 const SEAM: [(&str, &str); 2] = [
     ("runtime.hostGroups[].volumes", "{{- with .volumes }}"),
-    ("runtime.hostGroups[].volumeMounts", "{{- with .volumeMounts }}"),
+    (
+        "runtime.hostGroups[].volumeMounts",
+        "{{- with .volumeMounts }}",
+    ),
 ];
 
 fn repository_root() -> PathBuf {
@@ -75,6 +112,70 @@ fn installed_chart_version(values: &str) -> &str {
         .split_once("--version ")
         .and_then(|(_, rest)| rest.split_whitespace().next())
         .expect("values file must document the chart version its install pulls")
+}
+
+/// Every `<key>: <value>` mapping in a YAML document, comments dropped and list
+/// items (`- <key>: …`) left out — a list item is a different object, and both
+/// workload files carry `- namespace: <wit-namespace>` entries under
+/// `hostInterfaces` that are not Kubernetes namespaces at all.
+fn mapping_values<'a>(document: &'a str, key: &str) -> Vec<&'a str> {
+    let needle = format!("{key}: ");
+    document
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.strip_prefix(needle.as_str()))
+        .collect()
+}
+
+/// The items of a YAML list opened by `<key>:`, up to the first following line
+/// that is not one — a comment between the key and its items ends the list, and
+/// none of the files read here puts one there.
+fn list_items<'a>(document: &'a str, key: &str) -> Vec<&'a str> {
+    let opener = format!("{key}:");
+    let mut items = Vec::new();
+    let mut open = false;
+    for line in document.lines().map(str::trim) {
+        if line == opener.as_str() {
+            open = true;
+            continue;
+        }
+        if open {
+            match line.strip_prefix("- ") {
+                Some(item) => items.push(item),
+                None => break,
+            }
+        }
+    }
+    items
+}
+
+/// Whether `entries` holds `wanted`. Written out rather than `contains`, which
+/// would demand both sides borrow for the same region: the values compared here
+/// come from different files, read at different points.
+fn holds(entries: &[&str], wanted: &str) -> bool {
+    for entry in entries {
+        if *entry == wanted {
+            return true;
+        }
+    }
+
+    false
+}
+
+/// The environment namespaces the host tier deploys its host groups into. This
+/// is the authority every other namespace in the split follows: the host Pod's
+/// namespace is what the operator records as `Host.Environment`.
+fn host_tier_namespaces(host_values: &str) -> Vec<&str> {
+    let namespaces = mapping_values(host_values, "namespace");
+    assert!(
+        !namespaces.is_empty(),
+        "{HOST_VALUES} must give every runtime.hostGroups[] entry an explicit \
+         `namespace:` — it is the environment identity the operator's \
+         allowSharedHosts=false lock is enforced against"
+    );
+
+    namespaces
 }
 
 #[test]
@@ -142,4 +243,171 @@ fn install_command_and_seam_record_agree_on_the_installed_chart() {
         "{VALUES} install command pulls chart {installed}, which its seam record \
          does not state; expected {expected:?}"
     );
+}
+
+#[test]
+fn both_releases_install_the_same_pinned_chart() {
+    let root = repository_root();
+    let values = read_repository_file(&root, VALUES);
+    let host_values = read_repository_file(&root, HOST_VALUES);
+
+    assert_eq!(
+        installed_chart_version(&host_values),
+        installed_chart_version(&values),
+        "{HOST_VALUES} and {VALUES} install the same chart, and the pin is per \
+         cluster (ruling wamn-0h0g.13.49): two versions in one cluster renders \
+         the host tier from a chart the operator was not installed from"
+    );
+}
+
+#[test]
+fn the_operator_release_locks_scheduling_to_the_workload_namespace() {
+    let root = repository_root();
+    let values = read_repository_file(&root, VALUES);
+
+    assert!(
+        values.contains("allowSharedHosts: false"),
+        "{VALUES} must set operator.allowSharedHosts: false. The chart ships it \
+         true, which lets a WorkloadDeployment in one namespace schedule onto \
+         hosts in another just by naming spec.template.spec.environment"
+    );
+    assert!(
+        !values.contains("allowSharedHosts: true"),
+        "{VALUES} must not re-enable operator.allowSharedHosts: it is the \
+         wrong-target lock, and the operator only refuses a cross-environment \
+         target while it is false"
+    );
+    assert!(
+        values.contains("CrossEnvironmentSchedulingDenied"),
+        "{VALUES} must record the refusal the lock produces, so the value is not \
+         softened later as though it were cosmetic"
+    );
+}
+
+#[test]
+fn the_operator_release_covers_every_host_tier_namespace() {
+    let root = repository_root();
+    let values = read_repository_file(&root, VALUES);
+    let host_values = read_repository_file(&root, HOST_VALUES);
+    let namespaces = host_tier_namespaces(&host_values);
+
+    assert!(
+        values.contains("hostGroups: []"),
+        "{VALUES} is the cluster-singleton operator release and must carry no \
+         host groups: the host tier is one Helm release per environment \
+         ({HOST_VALUES}), ruling wamn-0h0g.13.50"
+    );
+
+    for key in ["watchNamespaces", "hostNamespaces"] {
+        let declared = list_items(&values, key);
+        assert!(
+            !declared.is_empty(),
+            "{VALUES} must list this cluster's environment namespaces under \
+             operator.{key}; the chart's `[]` default watches every namespace \
+             and assumes host Pods run only in the operator's own"
+        );
+        for namespace in &namespaces {
+            assert!(
+                holds(&declared, namespace),
+                "{VALUES} operator.{key} does not cover {namespace:?}, which \
+                 {HOST_VALUES} deploys a host group into. The chart derives \
+                 host namespaces from runtime.hostGroups[] in the SAME release \
+                 only, and this release has none, so an uncovered namespace \
+                 leaves the operator without Pod RBAC or cache access there"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_host_release_leaves_the_cluster_singletons_to_the_operator_release() {
+    let root = repository_root();
+    let values = read_repository_file(&root, VALUES);
+    let host_values = read_repository_file(&root, HOST_VALUES);
+
+    for (setting, why) in HOST_RELEASE_DISABLED {
+        assert!(
+            host_values.contains(setting),
+            "{HOST_VALUES} must set {setting:?} — {why}, so rendering it from \
+             the host release either installs a duplicate or collides with the \
+             operator release on Helm ownership metadata"
+        );
+    }
+    assert!(
+        !values.contains("operator:\n  enabled: false"),
+        "{VALUES} is the release that installs the operator; disabling it there \
+         leaves the cluster with host groups and no controller"
+    );
+}
+
+#[test]
+fn the_deprecated_gateway_is_off_in_both_releases() {
+    let root = repository_root();
+    for file in [VALUES, HOST_VALUES] {
+        let document = read_repository_file(&root, file);
+        assert!(
+            document.contains("gateway:\n  enabled: false"),
+            "{file} must keep the deprecated runtime-gateway off: HTTP exposure \
+             rides operator-managed EndpointSlices on standard Services, and the \
+             gateway's NodePort collides with workload Services on 30950"
+        );
+    }
+}
+
+#[test]
+fn the_component_workloads_target_the_host_tier_environment() {
+    let root = repository_root();
+    let host_values = read_repository_file(&root, HOST_VALUES);
+    let namespaces = host_tier_namespaces(&host_values);
+
+    for workload in WORKLOADS {
+        let document = read_repository_file(&root, workload);
+
+        let environments = mapping_values(&document, "environment");
+        assert!(
+            !environments.is_empty(),
+            "{workload} must name the environment it schedules into under \
+             spec.template.spec.environment, so the target is legible rather \
+             than implied by the object's own namespace"
+        );
+
+        for environment in &environments {
+            assert!(
+                holds(&namespaces, environment),
+                "{workload} targets environment {environment:?}, which no host \
+                 group in {HOST_VALUES} runs in — no host will ever report that \
+                 Environment, so the workload never schedules"
+            );
+        }
+
+        for namespace in mapping_values(&document, "namespace") {
+            assert!(
+                holds(&namespaces, namespace),
+                "{workload} lives in {namespace:?}, which no host group in \
+                 {HOST_VALUES} runs in"
+            );
+            assert!(
+                holds(&environments, namespace),
+                "{workload} lives in {namespace:?} but does not name it as its \
+                 environment. Under operator.allowSharedHosts: false the \
+                 operator refuses any environment other than the workload's own \
+                 namespace with CrossEnvironmentSchedulingDenied"
+            );
+        }
+
+        let selected = mapping_values(&document, "hostgroup");
+        assert!(
+            !selected.is_empty(),
+            "{workload} must select a host group under spec.template.spec.hostSelector"
+        );
+        for group in selected {
+            let entry = format!("- name: {group}");
+            assert!(
+                host_values.contains(&entry),
+                "{workload} selects host group {group:?}, which {HOST_VALUES} \
+                 does not define; the selector matches the label the host \
+                 reports from the chart's --host-group"
+            );
+        }
+    }
 }

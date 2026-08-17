@@ -1,0 +1,142 @@
+# Helm values for the HOST TIER of ONE environment — the MVP environment, whose
+# namespace is `wamn-system`.
+#
+# ONE HELM RELEASE PER ENVIRONMENT (ruling wamn-0h0g.13.50, bead
+# wamn-0h0g.15.15): the runtime revision is environment-singular, so each
+# environment pins its own host image in its own release. MVP has exactly one
+# environment, so the shape costs nothing to run today — but it is not free for
+# the second one either; see the namespace note below before copying this file.
+#
+# This is the SAME chart at the SAME pinned version as the cluster-singleton
+# operator release (deploy/infra/values-wamn.yaml) — with every cluster-singular
+# half of it switched off:
+#
+#   helm upgrade --install -n wamn-system wamn-host \
+#     oci://ghcr.io/wasmcloud/charts/runtime-operator --version 2.7.0 \
+#     -f deploy/platform/values-host-default.yaml
+#   kubectl -n wamn-system rollout status deploy/hostgroup-default --timeout=150s
+#
+# ORDER MATTERS, TWICE:
+#   * The operator release installs the CRDs and the control-plane NATS these
+#     hosts heartbeat into. Install it first.
+#   * On a cluster that predates this split, `hostgroup-default` is still owned
+#     by the `wamn` release. Upgrade the operator release FIRST — its
+#     `runtime.hostGroups: []` deletes that object — and only then install this
+#     one, or Helm refuses with an ownership-metadata error on the identically
+#     named Deployment, Service and NetworkPolicy (all three are named after the
+#     host group, not the release). A fresh namespace has nothing to collide
+#     with, which is how the RC proves this (wamn-0h0g.15.25).
+#
+# WHY THIS ENVIRONMENT'S HOST NAMESPACE EQUALS THE OPERATOR'S RELEASE NAMESPACE.
+# Giving the host tier a namespace of its own is not free at the pinned chart
+# (fork rev daba6029 = chart 2.7.0), and both failure modes are in the chart
+# source rather than in anything we wrote:
+#   * templates/certificates.yaml:24 looks the CA up in `.Release.Namespace`
+#     only. A host release in its own namespace, at the chart defaults
+#     `global.tls.enabled: true` + `global.certificates.generate: true`, finds no
+#     CA there and MINTS A FRESH ONE — the host then presents a client
+#     certificate the operator's NATS does not trust, and never registers.
+#   * With `generate: false` instead, nothing renders `wasmcloud-runtime-tls` or
+#     `wasmcloud-data-tls` into that namespace, and the host Pod mounts both by
+#     name (templates/runtime/deployment.yaml:83-89), so it never starts.
+# Either way the CA plus those two client-cert Secrets have to be distributed
+# into every environment namespace, and nothing does that today. Keeping this
+# environment's host namespace equal to the operator's release namespace
+# sidesteps both, because the operator release already renders those Secrets
+# there. Environment #2 is blocked on the distribution step, not on this file.
+
+# The cluster-singular halves of the chart, all owned by the operator release
+# (chart values.yaml:101-102 and :55-56 both default these to enabled).
+operator:
+  enabled: false
+nats:
+  enabled: false
+# Deprecated HTTP gateway off here too, and never adopted in either release:
+# HTTP exposure rides operator-managed EndpointSlices on standard Services
+# (chart values.yaml:205-210).
+gateway:
+  enabled: false
+
+global:
+  certificates:
+    # -- The operator release owns the CA and every certificate Secret in this
+    # namespace (chart values.yaml:28-31 defaults this to true); re-rendering
+    # them here would collide on Helm ownership metadata. `global.tls.enabled`
+    # stays at its default true, so the host still mounts them and still speaks
+    # mTLS on both NATS connections (templates/runtime/deployment.yaml:83-89).
+    generate: false
+  nats:
+    # -- Both default to `nats://nats.<this release's namespace>.svc.cluster.local:4222`
+    # (chart values.yaml:9-23, resolved in templates/_helpers.tpl's
+    # schedulerNatsUrl/dataNatsUrl helpers), which is only accidentally right
+    # while this release shares the operator's namespace. Named explicitly so it
+    # stays right, and so it matches the SANs the operator release generated for
+    # its NATS certificate (templates/certificates.yaml:70-75).
+    schedulerUrl: nats://nats.wamn-system.svc.cluster.local:4222
+    dataUrl: nats://nats.wamn-system.svc.cluster.local:4222
+
+runtime:
+  # -- THE HOST IMAGE CARRIAGE. `runtime.image` is the chart-wide host image
+  # (chart values.yaml:285-289). `hostGroups[].image` is only an OPTIONAL
+  # per-group override in which any of registry/repository/tag set there win and
+  # unset keys inherit this one (chart values.yaml:358-363, implemented at
+  # templates/runtime/deployment.yaml:7-10) — so with one host group per
+  # environment release, this is where the environment's runtime revision is
+  # pinned.
+  image:
+    registry: ""              # bare local name, loaded via `kind load`
+    repository: wamn-host
+    tag: dev
+    pull_policy: Never
+  hostGroups:
+    - name: default
+      # -- This environment's namespace, and the environment identity the
+      # operator's wrong-target lock is enforced against: the host Pod's
+      # namespace becomes `Host.Environment`
+      # (templates/runtime/deployment.yaml:135-138 + :162), and with
+      # `operator.allowSharedHosts: false` a WorkloadDeployment can only
+      # schedule onto hosts whose Environment equals its own namespace. Empty
+      # would mean the release namespace; naming it makes the identity explicit
+      # (chart values.yaml:338-343). Three values must agree with it:
+      # `operator.watchNamespaces` and `operator.hostNamespaces` in
+      # deploy/infra/values-wamn.yaml, and the WorkloadDeployments'
+      # `metadata.namespace` + `spec.template.spec.environment`.
+      namespace: wamn-system
+      replicas: 3
+      service:
+        type: ClusterIP
+      http:
+        enabled: true
+        port: 80
+      # The default project's Postgres URL: the wamn:postgres plugin's from_env()
+      # default pool connects as this non-superuser role for project-scoped
+      # component SQL.
+      env:
+        - name: WAMN_PG_URL
+          value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+        # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
+        # plugin — the materializer Service workload's stream/doorbell path.
+        # Absent, the plugin still links and returns connection-unavailable.
+        - name: WAMN_EVT_NATS_URL
+          value: nats://evt-nats.wamn-system.svc.cluster.local:4222
+      # [4.1b] Allow plain-HTTP OCI pulls so the host can pull locally-built
+      # component images from the in-cluster registry (deploy/platform/registry.yaml).
+      #
+      # Chart 2.7.0 argues against this flag and offers `ociCaPaths` instead
+      # (chart values.yaml:258-273): the flag "does not relax verification but
+      # replaces it: every registry drops to plain HTTP, so nothing is verified
+      # and credentials travel in the clear". `ociCaPaths` is not usable while
+      # deploy/platform/registry.yaml serves plain HTTP with no certificate at
+      # all, so the flag stays and moving the in-cluster registry to TLS is
+      # tracked separately.
+      extraArgs:
+        - "--allow-insecure-registries"
+      resources:
+        requests:
+          memory: "256Mi"
+          cpu: "250m"
+        limits:
+          # Roomy on purpose: the S1 density/cap-kill measurements must hit
+          # wasmtime's 256 MiB per-component cap, not the K8s OOM killer.
+          memory: "4Gi"
+          cpu: "2"
