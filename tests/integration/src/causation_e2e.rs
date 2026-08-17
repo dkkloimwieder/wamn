@@ -19,6 +19,7 @@ use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
+use crate::release_fixture::{ReleaseFixture, load_release};
 use wamn_control_provision::sql as provision_sql;
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql as registry_sql;
@@ -1259,11 +1260,24 @@ async fn build_materializer(
     pg.set_tenant(&resources.gate_id, &resources.tenant)?;
     pg.set_schema(&resources.gate_id, "wamn_run")?;
     pg.probe_checkout().await?;
+    // The production guest's durable-consumer bind is release-gated
+    // (wamn-0h0g.15.95): a release-less host refuses the run-owned durable, so
+    // no CDC event would ever be decided.
+    let release = load_release(ReleaseFixture {
+        tenant: resources.tenant.as_str(),
+        catalog: resources.catalog_id.as_str(),
+        environment: resources.env.as_str(),
+        registration: resources.registration_id.as_str(),
+        flow: resources.flow_id.as_str(),
+        entity: resources.entity_id.as_str(),
+        ops: &["insert", "delete"],
+    })?;
     let jetstream = Arc::new(
         WamnJetstream::new(WamnJetstreamConfig {
             nats_url: Some(args.nats_url.clone()),
         })
-        .with_doorbell(async_nats::connect(&args.nats_url).await?),
+        .with_doorbell(async_nats::connect(&args.nats_url).await?)
+        .with_release(Some(release)),
     );
     jetstream.set_execution_target(
         &resources.gate_id,

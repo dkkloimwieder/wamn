@@ -49,6 +49,7 @@ use wash_runtime::wasmtime::{Engine as RawEngine, Store};
 use wasmtime_wasi::p2::bindings::CommandPre;
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
+use crate::release_fixture::{ReleaseFixture, load_release};
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_event_wire::Op;
 use wamn_run_state::queue::mint_evt_run_id;
@@ -624,11 +625,25 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
     pg.set_schema(BENCH_ID, "wamn_run")?;
     pg.probe_checkout().await.context("postgres preflight")?;
 
+    // The REAL guest binds a durable consumer per registration, and that bind is
+    // release-gated (wamn-0h0g.15.95): a release-less host refuses all four and
+    // the tape never reaches the guest. All four registrations source ENTITY, so
+    // one entity-matching registration in the release admits every bind.
+    let release = load_release(ReleaseFixture {
+        tenant: TENANT,
+        catalog: "matcat",
+        environment: ENV,
+        registration: "r-plain",
+        flow: "f-plain",
+        entity: ENTITY,
+        ops: &["insert", "delete"],
+    })?;
     let jsp = Arc::new(
         WamnJetstream::new(WamnJetstreamConfig {
             nats_url: Some(args.nats_url.clone()),
         })
-        .with_doorbell(nats.clone()),
+        .with_doorbell(nats.clone())
+        .with_release(Some(release)),
     );
     jsp.set_execution_target(BENCH_ID, execution_target_id);
 

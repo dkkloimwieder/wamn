@@ -69,6 +69,7 @@ use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::cdc_reader_process::{ReaderArgs, ReaderProcess};
 use crate::ctl_process;
+use crate::release_fixture::{ReleaseFixture, load_release};
 use wamn_control_provision::{cdc_object_name, event_stream_name, sql as provision_sql};
 use wamn_control_registry::identifiers::{doorbell_subject, mvp_execution_target_id};
 use wamn_control_registry::sql::{
@@ -578,11 +579,24 @@ pub async fn run(args: Rie2eBenchArgs) -> anyhow::Result<()> {
     pg.set_tenant(BENCH_ID, TENANT)?;
     pg.set_schema(BENCH_ID, "wamn_run")?;
     pg.probe_checkout().await.context("postgres preflight")?;
+    // The REAL guest's durable-consumer bind is release-gated
+    // (wamn-0h0g.15.95): with no release the delete-subscribed consumer is
+    // refused and neither DELETE ever reaches a verdict.
+    let release = load_release(ReleaseFixture {
+        tenant: TENANT,
+        catalog: CATALOG_ID,
+        environment: ENV,
+        registration: REG_ID,
+        flow: FLOW_ID,
+        entity: ENTITY_ID,
+        ops: &["delete"],
+    })?;
     let jsp = Arc::new(
         WamnJetstream::new(WamnJetstreamConfig {
             nats_url: Some(args.nats_url.clone()),
         })
-        .with_doorbell(nats.clone()),
+        .with_doorbell(nats.clone())
+        .with_release(Some(release)),
     );
     jsp.set_execution_target(BENCH_ID, execution_target_id);
     let engine = build_engine(&[])?;

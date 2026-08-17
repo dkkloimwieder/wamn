@@ -67,9 +67,11 @@ inside the admission transaction, which already hits the database,
 and refuses through the existing `inactive-definition` classification
 (`attachment-disabled` at the HTTP surface) — so emergency-off is one
 `UPDATE`, effective on the next admission. A registration's condition
-stays an environment-hot column the materializer reads at evaluation,
-itself already a per-event transaction. Neither adds a serving-path
-read, and seconds-scale filter repair survives. Admission validates
+stays an environment-hot key inside the stored `registration` jsonb
+document — there is no `condition` column — swept once per sweep and
+evaluated per event in the pure decision, before the fire transaction
+opens. Neither adds a serving-path read, and seconds-scale filter
+repair survives. Admission validates
 input against the admitting pod's manifest and writes the durable run
 + queue row — the write-ahead row is the crash floor and idempotency
 anchor, and the only reason admission and execution are distinct

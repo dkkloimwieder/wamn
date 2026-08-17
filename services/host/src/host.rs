@@ -155,7 +155,7 @@ pub struct HostArgs {
 /// `attachments` and `registrations`, both of which are already inside the
 /// verified manifest, so it fetches nothing. The registry knobs would be
 /// configuration for a pull that never happens.
-fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<ReleaseManifestWeld>> {
+fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<Arc<ReleaseManifestWeld>>> {
     let Some(manifest_root) = manifest_root else {
         return Ok(None);
     };
@@ -166,7 +166,12 @@ fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<ReleaseMa
             error.kind()
         )
     })?;
-    Ok(Some(weld))
+    // Shared by reference-count rather than by borrow: this process has two
+    // release-gated plugins (jetstream delivery gating, flow-http routing) and
+    // both are `Arc`-owned by the builder, so neither can hold a lifetime tied
+    // to `run`'s stack. One allocation, one manifest, two readers — the same
+    // handle shape `RunnerPlanSupply` already takes in the flowrunner host.
+    Ok(Some(Arc::new(weld)))
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
@@ -238,8 +243,14 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL
         // (absent ⇒ links but returns connection-unavailable, the WAMN_PG_*
         // posture); the doorbell rings on the control-plane client above.
+        // wamn-0h0g.15.95: READER 4 of the weld. Delivery is gated on the serving
+        // release's registration projection, so an event whose registration
+        // identity is not in this release never reaches a component. The plugin
+        // takes the loaded manifest — it does not load one.
         .with_plugin(Arc::new(
-            WamnJetstream::from_env().with_doorbell(doorbell_client),
+            WamnJetstream::from_env()
+                .with_doorbell(doorbell_client)
+                .with_release(release.clone()),
         ))?
         .with_plugin(Arc::new(
             WamnFlowInvocation::from_env().context("wamn:flow-invocation plugin init")?,

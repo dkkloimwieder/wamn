@@ -26,6 +26,7 @@ pub mod materializer;
 pub mod metricbench;
 pub mod provisionbench;
 pub mod readerbench;
+mod release_fixture;
 pub mod rie2ebench;
 pub mod runnerbench;
 pub mod streambench;

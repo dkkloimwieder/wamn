@@ -20,6 +20,13 @@
 //! - Streams are provisioned out-of-band (per-org `EVT_<org>_<env>` streams,
 //!   D19 §5). A guest binds a durable consumer by name and publishes to a
 //!   subject; it cannot create, configure, or delete a stream here.
+//! - Event DELIVERY is gated on the serving release's registration projection
+//!   ([`ServingManifest::registrations`] — reader 4 of the release-manifest
+//!   weld, `wamn-0h0g.15.95`): a durable consumer binds only over subjects some
+//!   registration of the release sources, so an event whose registration
+//!   identity is not the release's never reaches a component.
+//!   [`WamnJetstream::with_release`] draws the line the gate stops at —
+//!   publication and the doorbell hint are NOT release-gated.
 //! - A publish waits for the server ack (async-nats: send future, then the
 //!   server-ack future) — the returned `publish-ack` is the only delivery truth.
 //! - The `doorbell.ring` wake hint (l5i9.17) publishes on the CONTROL-plane
@@ -30,6 +37,7 @@
 //!   bind time (a guest can never name or redirect its execution target).
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_nats::HeaderMap;
@@ -41,15 +49,19 @@ use async_nats::jetstream::message::AckKind;
 use async_nats::jetstream::publish::PublishAck as NatsPublishAck;
 use futures_util::StreamExt as _;
 use tokio::sync::Mutex;
+use wamn_catalog::ServingManifest;
 use wamn_control_registry::identifiers::{
     ExecutionTargetId, doorbell_subject, mvp_execution_target_id,
 };
+use wamn_event_wire::subject_token;
 
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
 use wash_runtime::engine::workload::WorkloadItem;
 use wash_runtime::plugin::{HostPlugin, WitInterfaces};
 use wash_runtime::wasmtime::component::{Linker, Resource};
 use wash_runtime::wit::{WitInterface, WitWorld};
+
+use crate::release_manifest::ReleaseManifestWeld;
 
 mod bindings {
     wash_runtime::wasmtime::component::bindgen!({
@@ -120,6 +132,10 @@ pub struct WamnJetstream {
     /// Per-component execution target for the doorbell subject, registered at
     /// workload bind by the trusted MVP placement adapter — never guest-supplied.
     execution_targets: std::sync::RwLock<HashMap<String, ExecutionTargetId>>,
+    /// The release this process serves, held BY REFERENCE — reader 4 of the
+    /// release-manifest weld. `None` ⇒ this process carries no release; see
+    /// [`WamnJetstream::with_release`].
+    release: Option<Arc<ReleaseManifestWeld>>,
 }
 
 impl WamnJetstream {
@@ -129,6 +145,7 @@ impl WamnJetstream {
             ctx: Mutex::new(None),
             doorbell_nats: None,
             execution_targets: std::sync::RwLock::new(HashMap::new()),
+            release: None,
         }
     }
 
@@ -144,6 +161,38 @@ impl WamnJetstream {
     pub fn with_doorbell(mut self, client: async_nats::Client) -> Self {
         self.doorbell_nats = Some(client);
         self
+    }
+
+    /// Attach the release this process serves — reader 4 of the release-manifest
+    /// weld, consulted by reference. This plugin never loads, parses or
+    /// digest-verifies a manifest, and keeps no copy of one: the weld already
+    /// holds the digest-named document for the life of the process, and a
+    /// digest-named object has no stale state to refresh or invalidate.
+    ///
+    /// # Where the release gate starts, and where it stops
+    ///
+    /// `None` means this host was given no release, and then every consumer bind
+    /// is REFUSED. That is the fail-closed half of the same posture that makes
+    /// [`RunnerPlanSupply`](crate::plugins::runner_plan_supply::RunnerPlanSupply)
+    /// report `unavailable` for every run on a release-less process: a host that
+    /// cannot name the registrations of a release cannot decide that an event
+    /// belongs to one, and delivering it anyway would hand the identity back to
+    /// the guest sweep this gate took it from.
+    ///
+    /// The gate stops at consumption. `producer::publish` and `doorbell::ring`
+    /// keep working on a release-less host, because neither carries a
+    /// registration identity there is anything to check: a publish names a
+    /// subject the stream itself covers or rejects, and the doorbell is a wake
+    /// hint already scoped by the workload's trusted tenant config. Gating them
+    /// would refuse work whose identity was never the manifest's to hold.
+    pub fn with_release(mut self, release: Option<Arc<ReleaseManifestWeld>>) -> Self {
+        self.release = release;
+        self
+    }
+
+    /// The serving release's manifest, or `None` on a release-less process.
+    fn serving_manifest(&self) -> Option<&ServingManifest> {
+        self.release.as_deref().map(ReleaseManifestWeld::manifest)
     }
 
     /// Register a validated doorbell execution target for a component id.
@@ -335,6 +384,85 @@ fn map_get_stream_err(stream: &str, e: &GetStreamError) -> JsError {
 }
 
 // ---------------------------------------------------------------------------
+// The release gate (reader 4 of the weld)
+// ---------------------------------------------------------------------------
+
+/// The named refusal class for a consumer bind the serving release does not
+/// register. Stable prose, because it is what an operator greps and what tells
+/// a held registration apart from a transient `connection-unavailable`.
+const UNREGISTERED_SOURCE: &str = "unregistered-source";
+
+/// The `(entity, op)` tail of one event subject — the whole of a registration's
+/// identity that a subject can carry.
+///
+/// `evt.<org>.<project>.<env>.<entity>.<op>` is the entire grammar the event
+/// plane publishes ([`wamn_event_wire::subject`]), and its entity segment is
+/// [`subject_token`]-sanitized. Anything else — an empty filter (which selects
+/// the whole stream), a `>` above the entity — yields `None`: it selects
+/// subjects whose registration identity cannot be read off at all, and what
+/// cannot be read cannot be shown to be the release's.
+fn subject_source(subject: &str) -> Option<(&str, &str)> {
+    let mut tokens = subject.split('.');
+    let prefix = tokens.next()?;
+    let _org = tokens.next()?;
+    let _project = tokens.next()?;
+    let _environment = tokens.next()?;
+    let entity = tokens.next()?;
+    let op = tokens.next()?;
+    if prefix != "evt" || tokens.next().is_some() {
+        return None;
+    }
+    Some((entity, op))
+}
+
+/// Does some registration of the serving release source `(entity, op)`?
+///
+/// Membership in the manifest's projection, never a rederivation of it. The
+/// comparison happens in subject-token space because the manifest carries the
+/// raw stable entity id while the subject carries the sanitized token (R22).
+///
+/// `op` is a NATS wildcard for the materializer's own per-registration filter,
+/// which spans every op of its entity. A wildcard therefore gates on the entity
+/// alone — the op half stays the guest's `SkipReason::OpMismatch` to make, as it
+/// already was. A filter that pins ONE op is gated on it, since then every
+/// subject it selects would be unregistered.
+fn release_sources(manifest: &ServingManifest, entity: &str, op: &str) -> bool {
+    let any_op = op == ">" || op == "*";
+    manifest.registrations.values().any(|registration| {
+        subject_token(&registration.entity) == entity && (any_op || registration.ops.contains(op))
+    })
+}
+
+/// The refusal a consumer bind over `filter_subject` earns, or `None` to admit.
+///
+/// `release` is the manifest of the release this process serves; `None` is a
+/// release-less process, which admits nothing — see
+/// [`WamnJetstream::with_release`].
+fn bind_refusal(release: Option<&ServingManifest>, filter_subject: &str) -> Option<String> {
+    let Some(manifest) = release else {
+        return Some(format!(
+            "{UNREGISTERED_SOURCE}: this host carries no release, so it has no \
+             registration projection to admit a consumer against"
+        ));
+    };
+    let Some((entity, op)) = subject_source(filter_subject) else {
+        return Some(format!(
+            "{UNREGISTERED_SOURCE}: filter subject {filter_subject:?} does not name \
+             one entity and op, so the subjects it selects cannot be shown to be \
+             registered"
+        ));
+    };
+    if !release_sources(manifest, entity, op) {
+        return Some(format!(
+            "{UNREGISTERED_SOURCE}: no registration in release {} of catalog {:?} \
+             sources entity {entity:?} op {op:?}",
+            manifest.release.catalog_version, manifest.release.catalog_id
+        ));
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Host trait impls
 // ---------------------------------------------------------------------------
 
@@ -348,6 +476,22 @@ impl consumer::Host for ActiveCtx<'_> {
         config: consumer::ConsumerConfig,
     ) -> wash_runtime::wasmtime::Result<Result<Resource<JsConsumer>, JsError>> {
         let plugin = plugin_of(self)?;
+        // THE RELEASE GATE, and the only place it is applied. Every message
+        // resource a guest can reach came from a consumer bound here, so refusing
+        // the bind refuses delivery for that whole registration before one event
+        // is handed over — which is what "before reaching any component" means.
+        // Filtering per delivered message instead would make the host take over
+        // the ack disposition the WIT deliberately leaves to the guest.
+        if let Some(refusal) = bind_refusal(plugin.serving_manifest(), &config.filter_subject) {
+            tracing::warn!(
+                target: "wamn::jetstream",
+                durable = %config.durable,
+                filter_subject = %config.filter_subject,
+                refusal = %refusal,
+                "consumer bind refused: the serving release does not register this source"
+            );
+            return Ok(Err(JsError::Other(refusal)));
+        }
         let ctx = match plugin.ensure_ctx().await {
             Ok(c) => c,
             Err(e) => return Ok(Err(e)),
@@ -558,6 +702,10 @@ impl producer::Host for ActiveCtx<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
+    use wamn_catalog::{ServingRegistration, ServingRelease};
+
     use super::*;
 
     #[test]
@@ -675,6 +823,83 @@ mod tests {
         // other tests in-process; the skip-when-absent posture is the contract.
         let cfg = WamnJetstreamConfig { nats_url: None };
         assert!(cfg.nats_url.is_none());
+    }
+
+    /// A serving release registering exactly one entity's ops.
+    fn release_registering(entity: &str, ops: &[&str]) -> ServingManifest {
+        let registration = ServingRegistration {
+            flow_id: "f1".into(),
+            entity: entity.to_string(),
+            ops: ops.iter().copied().map(String::from).collect(),
+        };
+        ServingManifest::new(
+            ServingRelease {
+                tenant_id: "t1".into(),
+                catalog_id: "cat".into(),
+                catalog_version: 7,
+                environment: "prod".into(),
+            },
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::from([("r1".to_string(), registration)]),
+        )
+        .expect("the fixture release is valid")
+    }
+
+    #[test]
+    fn a_release_less_host_admits_no_consumer_bind() {
+        let plugin = WamnJetstream::new(WamnJetstreamConfig { nats_url: None });
+        let refusal = bind_refusal(plugin.serving_manifest(), "evt.acme.proj.prod.receipts.>")
+            .expect("a host with no release has no registration projection to admit against");
+        assert!(refusal.starts_with(UNREGISTERED_SOURCE));
+        assert!(
+            refusal.contains("carries no release"),
+            "the refusal must name the deployment fact, not look transient: {refusal}"
+        );
+    }
+
+    #[test]
+    fn only_a_source_the_serving_release_registers_admits_a_consumer() {
+        let manifest = release_registering("receipts", &["insert"]);
+
+        // The materializer's own filter: one entity, every op of it.
+        assert_eq!(
+            bind_refusal(Some(&manifest), "evt.acme.proj.prod.receipts.>"),
+            None
+        );
+        // An entity no registration sources is not this release's to deliver.
+        let stranger = bind_refusal(Some(&manifest), "evt.acme.proj.prod.orders.>")
+            .expect("an unregistered entity is refused");
+        assert!(stranger.contains("orders"), "{stranger}");
+        // A filter pinning ONE op selects only that op, so the op is gated too.
+        assert_eq!(
+            bind_refusal(Some(&manifest), "evt.acme.proj.prod.receipts.insert"),
+            None
+        );
+        let wrong_op = bind_refusal(Some(&manifest), "evt.acme.proj.prod.receipts.delete");
+        assert!(
+            wrong_op.is_some(),
+            "an op no registration on the entity subscribes is refused"
+        );
+        // A filter that pins no single entity would deliver every source on the
+        // stream ungated, so it is refused rather than partially checked.
+        for unpinned in [
+            "",
+            "evt.>",
+            "evt.acme.proj.prod.*.>",
+            "evt.acme.proj.prod.>",
+        ] {
+            assert!(
+                bind_refusal(Some(&manifest), unpinned).is_some(),
+                "filter {unpinned:?} pins no entity and must be refused"
+            );
+        }
+        // The manifest carries the RAW entity id and the subject a sanitized
+        // token, so membership is decided in token space — comparing the raw
+        // names would refuse a registration on a dotted entity id.
+        let dotted = release_registering("a.b", &["insert"]);
+        let dotted_filter = format!("evt.acme.proj.prod.{}.>", subject_token("a.b"));
+        assert_eq!(bind_refusal(Some(&dotted), &dotted_filter), None);
     }
 
     // -----------------------------------------------------------------------

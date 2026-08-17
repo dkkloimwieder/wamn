@@ -9,6 +9,19 @@
 /// declaration is the jsonb document
 /// (`wamn_event_reg::EventRegistration::from_json` is the decoder); the
 /// columns are lookup denormalizations (catalog-schema.sql). No params.
+///
+/// # Why the host-side release gate does not narrow this (wamn-0h0g.15.95)
+///
+/// Delivery is now gated on the serving release's registration projection
+/// before an event reaches this guest, so it is fair to ask what the sweep still
+/// owes. Measured against the guest's uses, every selected value has a consumer
+/// the manifest cannot supply: the `registration` document carries the
+/// hot-editable `condition` (which deliberately does not travel in the manifest,
+/// so seconds-scale filter repair survives) and is the evidence document the
+/// admission transaction re-checks; `registration_id` and `catalog_id` name the
+/// durable consumer whose ack floor is per registration; `flow_id` resolves the
+/// subscribed flow through the environment's applied head. The gate refuses
+/// delivery — it replaces no read here.
 pub fn select_registrations_sql() -> String {
     "SELECT registration_id, catalog_id, flow_id, registration::text AS registration \
        FROM catalog.event_registrations \
@@ -52,6 +65,13 @@ mod tests {
         assert!(
             regs.contains("registration::text"),
             "the jsonb doc travels as text for the guest decoder"
+        );
+        assert!(
+            regs.contains("registration_id")
+                && regs.contains("catalog_id")
+                && regs.contains("flow_id"),
+            "the durable name and the flow lookup keep needing the identity columns \
+             even with delivery gated host-side"
         );
 
         let flow = select_release_flow_sql();
