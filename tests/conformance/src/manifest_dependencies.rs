@@ -92,6 +92,131 @@ fn workspace_members(workspace_manifest: &Path) -> Vec<(String, PathBuf)> {
         .collect()
 }
 
+/// One dependency declaration, in either spelling Cargo allows: an inline
+/// `name = { .. }` entry, or a dotted single-dependency table whose header names
+/// the crate and whose keys arrive on the lines below it.
+struct Declaration<'a> {
+    line: usize,
+    name: &'a str,
+    /// The declaration's keys with all whitespace stripped, so that
+    /// `workspace = true` and `path = "."` are matched the same way in both
+    /// spellings.
+    keys: String,
+    dev: bool,
+}
+
+/// Splits a table header into the dependency-table keyword it carries and, for
+/// the single-dependency form, the crate its remaining segments name.
+///
+/// A dependency table is spelled either with the keyword last (`[dependencies]`,
+/// `[workspace.dependencies]`, `[target.'cfg(unix)'.dependencies]`) or with the
+/// keyword ahead of the one crate it declares, as in
+/// `[dev-dependencies.wamn-catalog]`. Reading only the last segment mistook that
+/// crate name for the table kind, so every key of a dotted table escaped the
+/// identity rule (`wamn-0h0g.15.115`).
+fn dependency_table_kind(table: &str) -> Option<(&str, Option<&str>)> {
+    let mut rest = table;
+    loop {
+        let (segment, tail) = match rest.split_once('.') {
+            Some((segment, tail)) => (segment, Some(tail)),
+            None => (rest, None),
+        };
+        if matches!(
+            segment,
+            "dependencies" | "dev-dependencies" | "build-dependencies"
+        ) {
+            return Some((segment, tail));
+        }
+        rest = tail?;
+    }
+}
+
+fn dependency_declarations(source: &str) -> Vec<Declaration<'_>> {
+    let mut declarations = Vec::new();
+    let mut dependency_table = false;
+    let mut dev_dependency_table = false;
+    let mut dotted: Option<Declaration<'_>> = None;
+
+    for (line_index, line) in source.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            declarations.extend(dotted.take());
+            let kind = dependency_table_kind(&trimmed[1..trimmed.len() - 1]);
+            dependency_table = kind.is_some();
+            dev_dependency_table = matches!(kind, Some(("dev-dependencies", _)));
+            if let Some((_, Some(name))) = kind {
+                dotted = Some(Declaration {
+                    line: line_index + 1,
+                    name,
+                    keys: String::new(),
+                    dev: dev_dependency_table,
+                });
+            }
+            continue;
+        }
+        if !dependency_table || trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // A dotted table names its crate in the header, so the lines below it are
+        // that one declaration's keys rather than declarations of their own.
+        if let Some(declaration) = dotted.as_mut() {
+            declaration.keys.extend(trimmed.split_whitespace());
+            continue;
+        }
+
+        let Some((raw_name, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        declarations.push(Declaration {
+            line: line_index + 1,
+            name: raw_name.trim().trim_matches('"'),
+            keys: value.split_whitespace().collect(),
+            dev: dev_dependency_table,
+        });
+    }
+    declarations.extend(dotted);
+
+    declarations
+}
+
+/// Whether one declaration duplicates a governed identity that it should instead
+/// inherit from the workspace.
+fn duplicates_governed_identity(
+    declaration: &Declaration<'_>,
+    package_name: &str,
+    governed_names: &HashSet<String>,
+) -> bool {
+    let governed = declaration.name.starts_with("wamn-")
+        || governed_names.contains(declaration.name)
+        || declaration.keys.contains("package=\"wamn-");
+    if !governed {
+        return false;
+    }
+
+    // `wamn-0h0g.15.104`: a DEV-dependency on this same package by its own
+    // directory is a governed construction, not drift. A crate's `tests/`
+    // directory is a separate compilation unit, so under resolver 2 it can
+    // only see its parent's `test-util` feature if the crate dev-depends on
+    // itself by path — which is what keeps the M-TEST-UTIL fence intact for
+    // every crate downstream, since a dev-dependency feature never reaches
+    // the production graph. It has no workspace identity to inherit: the
+    // workspace entry is what it would be a copy of.
+    //
+    // This is not a loophole, and all three conditions are load-bearing.
+    // Promoting the declaration to a normal or build dependency, naming any
+    // other crate, or pointing at any other path is ordinary duplication
+    // and still fails below.
+    if declaration.dev
+        && declaration.name == package_name
+        && declaration.keys.contains(OWN_DIRECTORY)
+    {
+        return false;
+    }
+
+    !declaration.keys.contains("workspace=true")
+}
+
 fn identity_violations(
     manifest: &Path,
     source: &str,
@@ -100,59 +225,13 @@ fn identity_violations(
     workspace_name: &str,
 ) -> Vec<String> {
     let mut violations = Vec::new();
-    let mut dependency_table = false;
-    let mut dev_dependency_table = false;
-
-    for (line_index, line) in source.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            let table = &trimmed[1..trimmed.len() - 1];
-            let kind = table.rsplit_once('.').map_or(table, |(_, tail)| tail);
-            dependency_table = matches!(
-                kind,
-                "dependencies" | "dev-dependencies" | "build-dependencies"
-            );
-            dev_dependency_table = kind == "dev-dependencies";
-            continue;
-        }
-        if !dependency_table || trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        let Some((raw_name, declaration)) = trimmed.split_once('=') else {
-            continue;
-        };
-        let name = raw_name.trim().trim_matches('"');
-        let compact: String = declaration.split_whitespace().collect();
-        let governed = name.starts_with("wamn-")
-            || governed_names.contains(name)
-            || compact.contains("package=\"wamn-");
-        if !governed {
-            continue;
-        }
-
-        // `wamn-0h0g.15.104`: a DEV-dependency on this same package by its own
-        // directory is a governed construction, not drift. A crate's `tests/`
-        // directory is a separate compilation unit, so under resolver 2 it can
-        // only see its parent's `test-util` feature if the crate dev-depends on
-        // itself by path — which is what keeps the M-TEST-UTIL fence intact for
-        // every crate downstream, since a dev-dependency feature never reaches
-        // the production graph. It has no workspace identity to inherit: the
-        // workspace entry is what it would be a copy of.
-        //
-        // This is not a loophole, and all three conditions are load-bearing.
-        // Promoting the declaration to a normal or build dependency, naming any
-        // other crate, or pointing at any other path is ordinary duplication
-        // and still fails below.
-        if dev_dependency_table && name == package_name && compact.contains(OWN_DIRECTORY) {
-            continue;
-        }
-
-        if !compact.contains("workspace=true") {
+    for declaration in dependency_declarations(source) {
+        if duplicates_governed_identity(&declaration, package_name, governed_names) {
             violations.push(format!(
-                "{}:{}: `{name}` must inherit its {workspace_name} workspace identity",
+                "{}:{}: `{}` must inherit its {workspace_name} workspace identity",
                 manifest.display(),
-                line_index + 1
+                declaration.line,
+                declaration.name
             ));
         }
     }
@@ -271,6 +350,96 @@ fn the_self_dev_dependency_exemption_admits_nothing_else() {
         assert!(
             violations[0].ends_with("must inherit its native workspace identity"),
             "`{entry}` under `[{table}]` was refused for the wrong reason: {}",
+            violations[0]
+        );
+    }
+}
+
+#[test]
+fn a_dotted_single_dependency_table_is_scanned_by_the_identity_rule() {
+    // The keyword leads these headers, so reading only the last segment took
+    // `wamn-flow` for the table kind and every key below it escaped the rule.
+    for table in [
+        "dependencies.wamn-flow",
+        "target.'cfg(unix)'.dependencies.wamn-flow",
+    ] {
+        let refused = fixture_violations(table, "path = \"../flow-model\"");
+        assert_eq!(
+            refused.len(),
+            1,
+            "`[{table}]` must be judged as the dependency its header names"
+        );
+        assert!(
+            refused[0].starts_with("fixture/Cargo.toml:1:"),
+            "`[{table}]` must be reported at the header naming its crate: {}",
+            refused[0]
+        );
+        assert!(
+            refused[0].ends_with("`wamn-flow` must inherit its native workspace identity"),
+            "`[{table}]` was refused for the wrong reason: {}",
+            refused[0]
+        );
+    }
+
+    // Inheritance is spelled inside the table in this form, and it counts
+    // wherever it appears among the table's lines.
+    let admitted = fixture_violations(
+        "dependencies.wamn-flow",
+        "default-features = false\nworkspace = true",
+    );
+    assert!(
+        admitted.is_empty(),
+        "an inheriting dotted table must be admitted: {}",
+        admitted.join("\n")
+    );
+
+    // The target-cfg spelling keeps its meaning, and no manifest in the tree
+    // carries one, so only a fixture holds it: there the entry line is judged,
+    // not the header.
+    let entry = "wamn-flow = { path = \"../flow-model\" }";
+    let targeted = fixture_violations("target.'cfg(unix)'.dependencies", entry);
+    assert_eq!(
+        targeted.len(),
+        1,
+        "a target-cfg dependency table must still reach the identity rule"
+    );
+    assert!(
+        targeted[0].starts_with("fixture/Cargo.toml:2:"),
+        "an inline entry is reported at its own line: {}",
+        targeted[0]
+    );
+}
+
+#[test]
+fn the_dotted_spelling_does_not_widen_the_self_dev_dependency_exemption() {
+    // One exemption, two spellings: the dotted form is judged by the same three
+    // conjuncts and must not become a second, looser one.
+    let admitted = fixture_violations("dev-dependencies.wamn-catalog", "path = \".\"");
+    assert!(
+        admitted.is_empty(),
+        "the governed construction must be admitted in either spelling: {}",
+        admitted.join("\n")
+    );
+
+    let mutants = [
+        // Not a DEV table.
+        ("dependencies.wamn-catalog", "path = \".\""),
+        // Not this package.
+        ("dev-dependencies.wamn-flow", "path = \".\""),
+        // Not this package's own directory.
+        ("dev-dependencies.wamn-catalog", "path = \"../model\""),
+    ];
+
+    for (table, entry) in mutants {
+        let violations = fixture_violations(table, entry);
+        assert_eq!(
+            violations.len(),
+            1,
+            "`[{table}]` with `{entry}` must be refused"
+        );
+        assert!(
+            violations[0].ends_with("must inherit its native workspace identity"),
+            "`[{table}]` with `{entry}` was refused for the wrong reason: {}",
             violations[0]
         );
     }
