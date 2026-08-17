@@ -105,6 +105,13 @@ pub struct ConnectionEffectLookup<'a> {
 pub struct ConnectionEffectSnapshot {
     pub run_status: String,
     pub root_plan_matches: bool,
+    /// An execution bundle with the guest-declared `current_plan_hash` exists in
+    /// the run's tenant — and nothing more. It has not bound that plan to the RUN
+    /// since wamn-0h0g.15.10 deleted `run_flow_resolutions`, and by owner ruling
+    /// it never will again: that binding is enforced host-side against the release
+    /// manifest (`authorize_plan_closure`, wamn-0h0g.15.66). What this flag still
+    /// carries is that the CTE found the exact plan bytes `node_permitted` reads
+    /// the presented node out of.
     pub resolution_matches: bool,
     pub attempt_matches: bool,
     pub requirement_json: Option<serde_json::Value>,
@@ -123,6 +130,12 @@ pub struct ConnectionEffectSnapshot {
     /// True for release runs; draft runs require an exact current unrevoked
     /// generation grant at this immediate pre-network snapshot.
     pub draft_generation_granted: bool,
+    /// The run's ROOT flow (`runs.flow_id`) — server-written at admission, never
+    /// guest-supplied. It is the entry point the host-side plan-closure check
+    /// walks the release manifest's call-edge adjacency from (wamn-0h0g.15.66);
+    /// it is carried on this snapshot rather than read separately so the run's
+    /// root travels in the same read-only transaction as its status.
+    pub root_flow_id: String,
 }
 
 /// What plan supply needs from a run's own row: which flow it entered at, and
@@ -155,17 +168,28 @@ SELECT r.tenant_id, r.flow_id, r.manifest_digest \
  WHERE r.tenant_id = NULLIF(current_setting('app.tenant', true), '') \
    AND r.run_id = $1";
 
-/// SECURITY GAP (wamn-0h0g.15.66) — `authorized_plan` NO LONGER BINDS THE PLAN
-/// TO THE RUN. Its only run-scoped predicate was an EXISTS over
-/// `run_flow_resolutions`, deleted with that table (wamn-0h0g.15.10); the CTE now
-/// admits ANY execution bundle whose hash is `$3`, narrowed only by the outer
-/// `plan.tenant_id = r.tenant_id` join. Every surviving constraint on `$3` flows
-/// through `attempt_matches`, and `effect_attempts` is written by
-/// `begin_effect_attempt` from the SAME guest-supplied context this statement
-/// then checks `$3` against — so the run-to-plan binding is not verified by the
-/// database at all, and a compromised component may present another flow's
-/// bundle hash within its own tenant. wamn-0h0g.15.66 restores a run-scoped
-/// predicate here once the claim-time recorded manifest digest lands.
+/// `authorized_plan` DOES NOT BIND THE PLAN TO THE RUN, and by owner ruling
+/// (wamn-0h0g.15.66) it never will again. Its only run-scoped predicate was an
+/// EXISTS over `run_flow_resolutions`, deleted with that table
+/// (wamn-0h0g.15.10), and the fact that predicate read now lives in the pod's
+/// mounted release manifest — a file, which no SQL predicate can join against.
+/// The CTE therefore admits ANY execution bundle whose hash is `$3` within the
+/// run's tenant (narrowed by the outer `plan.tenant_id = r.tenant_id` join), and
+/// exists only to hand `plan_node` the exact plan bytes to read the presented
+/// node out of.
+///
+/// THE BINDING IS ENFORCED HOST-SIDE, and this statement's job is to supply its
+/// input: `authorized_plan` returns the run's root flow as `r.flow_id`, and
+/// `authorize_plan_closure`
+/// (`crates/platform/runtime/src/plugins/connection_http.rs`) refuses unless `$3`
+/// is the plan hash of a flow the release manifest reaches from that root. The
+/// ruling chose that over restoring a run-scoped table (which would be
+/// `run_flow_resolutions` reborn) and over projecting release shape back into
+/// Postgres. A guest can forge neither the manifest (content-addressed, verified
+/// at load — wamn-0h0g.15.100) nor the run's recorded manifest digest
+/// (host-injected and write-once, written before any guest code ran —
+/// wamn-0h0g.15.11), so the host-side check answers the same question the deleted
+/// EXISTS did, against the same threat model.
 const CONNECTION_EFFECT_SNAPSHOT_SQL: &str = "\
 WITH authorized_plan AS MATERIALIZED ( \
     SELECT bundle.tenant_id, bundle.execution_bundle_hash, bundle.exact_bytes \
@@ -189,7 +213,8 @@ SELECT r.status, r.execution_bundle_hash = $2, \
             AND r.invocation_context #>> '{source,producer}' IS DISTINCT FROM 'draft-scenario' \
            THEN true \
            ELSE false \
-       END \
+       END, \
+       r.flow_id \
   FROM runs AS r \
   LEFT JOIN authorized_plan AS plan ON plan.tenant_id = r.tenant_id \
   LEFT JOIN effect_attempts AS attempt \
@@ -645,6 +670,19 @@ impl WamnPostgres {
     /// The digest arrives as [`ManifestDigest`], so its shape is already proven;
     /// only the version still needs a check, and `wamn-0h0g.15.65` owns giving
     /// that value a type too.
+    ///
+    /// # Why effect authority needs no equality check against this record
+    ///
+    /// The pair comes from the same welded object every reader resolves against,
+    /// so the digest recorded on a run IS the digest of the manifest the recording
+    /// pod loaded — structurally, not because anything compares them (owner ruling
+    /// `wamn-0h0g.15.102`, after `wamn-0h0g.15.103` struck the asserted carrier).
+    /// That survives a re-claim by a differently-released pod: the record is
+    /// write-once, and the run plane only lets it be cleared while the run has NO
+    /// effect attempts at all (`run-release-record-immutable`,
+    /// `deploy/sql/run-state.sql`), so whichever pod holds a run's lease always
+    /// carries the release that run records. This is what makes the host-side
+    /// plan-closure check honest without a comparator (`wamn-0h0g.15.66`).
     pub fn set_release_identity(
         &self,
         component_id: &str,
@@ -923,6 +961,7 @@ impl WamnPostgres {
                 definition_hash: row.try_get(15)?,
                 credential_handle: row.try_get(16)?,
                 draft_generation_granted: row.try_get::<_, Option<bool>>(17)?.unwrap_or(false),
+                root_flow_id: row.try_get(18)?,
             };
             Ok(Some(snapshot))
         }
@@ -1337,9 +1376,12 @@ mod tests {
 
     #[test]
     fn effect_authority_uses_the_exact_attempt_and_current_plan() {
-        // Short of the run-scoped resolution predicates by design; wamn-0h0g.15.66 restores them.
+        // Deliberately carries no run-scoped predicate on $3: the release manifest
+        // is a file, so that binding is host-side (wamn-0h0g.15.66). What this
+        // statement owes that check is the run's root flow, asserted below.
         for required in [
             "FROM runs AS r",
+            "r.flow_id",
             "FROM catalog.execution_bundles AS bundle",
             "bundle.execution_bundle_hash = $3",
             "convert_from(plan.exact_bytes, 'UTF8')::jsonb #> '{body,nodes}'",
@@ -1381,6 +1423,21 @@ mod tests {
         assert!(CONNECTION_EFFECT_SNAPSHOT_SQL.contains("attempt.current_plan_hash = $3"));
         assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$2 = $3"));
         assert!(!CONNECTION_EFFECT_SNAPSHOT_SQL.contains("$3 = $2"));
+    }
+
+    /// The run-to-plan binding moved out of SQL (wamn-0h0g.15.66, owner ruling
+    /// option C), so this statement's remaining obligation to it is to project the
+    /// run's ROOT flow — and to project it LAST, because
+    /// [`WamnPostgres::connection_effect_snapshot`] decodes it positionally. A
+    /// column inserted ahead of it would silently rebind that index, which is the
+    /// failure this pins rather than a spelling.
+    #[test]
+    fn effect_authority_projects_the_run_root_flow_last_for_the_host_side_binding() {
+        assert!(
+            CONNECTION_EFFECT_SNAPSHOT_SQL.contains("END, r.flow_id FROM runs AS r"),
+            "the run's root flow must be the final projected column"
+        );
+        assert_eq!(CONNECTION_EFFECT_SNAPSHOT_SQL.matches("r.flow_id").count(), 1);
     }
 
     #[test]
@@ -2149,6 +2206,9 @@ mod tests {
         assert_eq!(exact.active_generation, Some(1));
         assert_eq!(exact.generation, Some(1));
         assert!(exact.draft_generation_granted);
+        // The host-side plan-closure check's only input from this statement
+        // (wamn-0h0g.15.66). It is the run's ROOT flow, not the executing frame's.
+        assert_eq!(exact.root_flow_id, "root-flow");
 
         let wrong_occurrence = postgres
             .connection_effect_snapshot(
@@ -2201,9 +2261,13 @@ mod tests {
             .await
             .expect("load wrong-source snapshot")
             .expect("run remains visible for wrong source artifact");
-        // resolution_matches no longer binds the source artifact — `authorized_plan`
-        // only asks that a bundle with hash $3 exist in the tenant;
-        // wamn-0h0g.15.66 restores the binding.
+        // `resolution_matches` does not bind the source artifact, and by owner
+        // ruling (wamn-0h0g.15.66) this statement will not make it: `authorized_plan`
+        // only asks that a bundle with hash $3 exist in the tenant. This lookup is
+        // refused by the exact attempt and the absent requirement below, and the
+        // run-to-plan binding is refused outside this statement entirely, by
+        // `authorize_plan_closure` against the release manifest. Asserting the true
+        // value here records what the SQL proves, not a hole.
         assert!(wrong_source.resolution_matches);
         assert!(!wrong_source.attempt_matches);
         assert!(!wrong_source.node_permitted);

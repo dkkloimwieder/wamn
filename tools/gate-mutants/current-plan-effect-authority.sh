@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly OWNER="bd:wamn-0h0g.2.5"
-readonly OUTCOME="HTTP effects require the exact attempt and source artifact, and a permitting node in the presented current plan; binding that plan to the run is wamn-0h0g.15.66"
+readonly OUTCOME="HTTP effects require the exact attempt and source artifact, a permitting node in the presented current plan, and that plan to lie inside the run's own release closure taken from its server-recorded ROOT flow — the same set the deleted run_flow_resolutions predicate held. Frame-to-plan binding is interpreter-attested per the attempt-attestation ruling; the database verifies closure membership (wamn-0h0g.15.66)"
 
 readonly CAMPAIGN="current-plan-effect-authority"
 readonly BEAD="wamn-0h0g.2.5"
@@ -24,6 +24,7 @@ mutation_ids() {
     connection-attempt-bypass \
     connection-root-plan-bypass \
     connection-resolution-bypass \
+    connection-run-plan-closure-bypass \
     claims-root-bundle-for-current-plan \
     claims-drop-attempt-source-artifact-match \
     claims-drop-attempt-occurrence-match \
@@ -63,6 +64,24 @@ load_mutation() {
       NEEDLE='|| !snapshot.resolution_matches'
       REPLACEMENT='|| false'
       GATE="plugins::connection_http::tests::mismatched_source_or_revoked_draft_generation_is_denied_before_network_data"
+      TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --exact)
+      ;;
+    # wamn-0h0g.15.66 — the run-to-plan binding (link 1 of the chain). It is the
+    # only predicate in this campaign that is NOT a database fact: the release
+    # manifest is a mounted file, so the binding is enforced host-side against the
+    # one welded manifest instance. Disabling it re-opens cross-flow effect-node
+    # borrowing within a tenant, which is what the killing test presents.
+    #
+    # There is deliberately no mutant on a mounted-vs-recorded digest comparison:
+    # owner ruling wamn-0h0g.15.102 established that equality is structural (the
+    # recorder and the authority read the same object), and a mutant that disables
+    # a tautology cannot fail a test.
+    connection-run-plan-closure-bypass)
+      TARGET="crates/platform/runtime/src/plugins/connection_http.rs"
+      EXPECTED_SHA="fa581bea81e9afa26b167ad11efbd47bfa3e8fd0616750207d8745bf5289b2d7"
+      NEEDLE='if !plan_reachable_from_root(manifest, &snapshot.root_flow_id, current_plan_hash) {'
+      REPLACEMENT='if false {'
+      GATE="plugins::connection_http::tests::a_run_may_present_only_a_plan_its_own_release_closure_reaches"
       TEST_ARGV=(cargo test --locked -p wamn-runtime --lib "$GATE" -- --exact)
       ;;
     claims-root-bundle-for-current-plan)

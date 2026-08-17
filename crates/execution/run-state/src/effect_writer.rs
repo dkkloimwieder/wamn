@@ -27,6 +27,20 @@ pub struct EffectWriterScope<'a> {
 }
 
 /// Caller-owned immutable facts for one effect attempt.
+///
+/// `current_plan_hash` originates with the GUEST, and nothing in this crate binds
+/// it to the run — the statements here gate only on the run being leased and
+/// running. That binding is the host's, and it must stay strictly UPSTREAM of
+/// [`EffectWriterClient::begin_attempt`]: owner ruling `wamn-0h0g.15.66` restored
+/// it as a pre-check so no attempt row can ever exist carrying a plan hash outside
+/// the run's release closure, which is what keeps the ledger audit-clean. An
+/// attempt inserted before that check would defeat it, because the row is
+/// immutable and cannot be withdrawn.
+///
+/// The trusted HTTP effect already does this (`authorize_plan_closure` in
+/// `crates/platform/runtime/src/plugins/connection_http.rs`). Whoever activates a
+/// production caller for this writer (`wamn-0h0g.5.4`) inherits the same
+/// obligation; there is no caller today.
 #[derive(Debug, Clone, Copy)]
 pub struct BeginEffectAttempt<'a> {
     pub run_id: &'a str,

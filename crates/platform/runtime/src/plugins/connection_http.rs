@@ -1,10 +1,30 @@
 //! Trusted one-frame HTTP connection effect for the digest-pinned flowrunner.
+//!
+//! # The run-to-plan binding is checked before anything is written
+//!
+//! `authorize_plan_closure` is the host-side restoration of link 1 of the
+//! effect-authority chain (`wamn-0h0g.15.66`): the guest-declared
+//! `current-plan-hash` must name a plan the run's release actually reaches. It
+//! runs inside `ConnectionHttp::send` before the credential lookup and before
+//! the wire, and — load-bearing, and the point of the ruling — before any effect
+//! ledger write, so no `effect_attempts` row can ever exist carrying a plan hash
+//! outside the run's release closure and the ledger stays audit-clean.
+//!
+//! That ordering is structural rather than merely arranged. `wamn:runner/http-effect`
+//! exports exactly one function, `send`, so this is the whole guest-visible
+//! surface of the capability; the effect ledger is host-written, never
+//! guest-written (`wamn_run.effect_attempts` denies INSERT to `wamn_app`); and no
+//! production caller of that writer exists yet at all. The obligation that
+//! whoever activates it keeps the writer downstream of this check is recorded on
+//! `BeginEffectAttempt` in `crates/execution/run-state/src/effect_writer.rs`,
+//! beside the guest-supplied `current_plan_hash` it would persist.
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use wamn_catalog::ServingManifest;
 use wamn_flow::node_contract::normalize_portable_http_target;
 use wamn_run_state::invocation_context::HttpEffectPrincipal;
 use wash_runtime::engine::ctx::{ActiveCtx, SharedCtx, extract_active_ctx};
@@ -17,6 +37,7 @@ use crate::connection_authority::{
     AuthorityError, NetworkPolicy, TlsPolicy, TokioDnsResolver, TransportDecision,
     parse_http_connection_authority, resolve_http_request,
 };
+use crate::release_manifest::ReleaseManifestWeld;
 
 use super::runner_egress::RunnerEgressPolicy;
 use super::wamn_credentials::WamnCredentials;
@@ -56,6 +77,16 @@ pub struct ConnectionHttp {
     tenant: Box<str>,
     project: Box<str>,
     allowed_hosts: Arc<[AllowedHost]>,
+    /// Reader 2 of the four the weld enumerates (`wamn-0h0g.15.100`): the ONE
+    /// loaded, digest-verified serving manifest, held by reference and never
+    /// loaded, parsed or digest-verified here. It is a weld, not a cache — there
+    /// is no TTL, refresh or invalidation, because a digest-named object cannot go
+    /// stale.
+    ///
+    /// `None` in a process that was given no release (gates, benches, the pool's
+    /// own fixtures). Such a process cannot resolve a plan for any run, so it
+    /// cannot authorize an effect either — see `authorize_plan_closure`.
+    release: Option<Arc<ReleaseManifestWeld>>,
 }
 
 impl ConnectionHttp {
@@ -66,6 +97,7 @@ impl ConnectionHttp {
         tenant: impl Into<Box<str>>,
         project: impl Into<Box<str>>,
         allowed_hosts: Arc<[AllowedHost]>,
+        release: Option<Arc<ReleaseManifestWeld>>,
     ) -> Self {
         Self {
             postgres,
@@ -74,6 +106,7 @@ impl ConnectionHttp {
             tenant: tenant.into(),
             project: project.into(),
             allowed_hosts,
+            release,
         }
     }
 
@@ -115,6 +148,15 @@ impl ConnectionHttp {
             .await
             .map_err(|error| EffectError::Transport(error.to_string()))?
             .ok_or(EffectError::InvalidContext)?;
+        // Link 1 first: every lookup parameter above is guest-supplied, so nothing
+        // is trustworthy until the presented plan is bound to the run
+        // (wamn-0h0g.15.66). The manifest travels from the one welded instance by
+        // reference; nothing is loaded, parsed or copied here.
+        authorize_plan_closure(
+            self.release.as_deref().map(|weld| weld.manifest()),
+            &snapshot,
+            &context.current_plan_hash,
+        )?;
         authorize_snapshot(&snapshot)?;
 
         let definition = snapshot
@@ -213,6 +255,102 @@ fn validate_claims(
     )
     .map_err(|_| EffectError::InvalidContext)?;
     Ok(())
+}
+
+/// Link 1 of the effect-authority chain: bind the guest-declared current plan to
+/// the run through the release manifest the run's recorded digest names
+/// (`wamn-0h0g.15.66`, owner ruling option C — the host-side pre-check).
+///
+/// Every parameter of the authority lookup is guest-supplied, and since
+/// `wamn-0h0g.15.10` deleted `run_flow_resolutions` no DATABASE-side statement
+/// binds `current-plan-hash` to the run: `resolution_matches` only asks that a
+/// bundle with that hash exist in the tenant, and `effect_attempts` is written
+/// from the same guest-supplied context authority then checks against. Without
+/// this function a compromised or buggy interpreter could present the bundle hash
+/// of any other flow in its tenant and perform that flow's effect node under that
+/// node's connection generation and credential handle.
+///
+/// # Why the host may answer this
+///
+/// The manifest this pod loaded IS the manifest the run's recorded digest names,
+/// by construction rather than by comparison — see
+/// [`WamnPostgres::set_release_identity`](super::wamn_postgres::WamnPostgres::set_release_identity)
+/// for why, and owner ruling `wamn-0h0g.15.102` for why a comparator here would
+/// carry no information and gets no mutant. The guest can forge neither half: the
+/// recorded digest is host-injected and write-once (`wamn-0h0g.15.11`), and the
+/// manifest is content-addressed and digest-verified at load
+/// (`wamn-0h0g.15.100`). The threat model is unchanged from the deleted SQL
+/// predicate's — the guest is untrusted, the host is not.
+///
+/// # Where the frame boundary is enforced, and why not here
+///
+/// The closure is taken from the run's ROOT flow. That is not a shortfall: it is
+/// the same set the deleted `run_flow_resolutions` predicate held, which was by
+/// construction the transitive reachable set from the root under the run's
+/// release. This check computes it at check time instead of materializing it at
+/// claim time — same predicate, same granularity, different carrier.
+///
+/// Frame-to-plan binding is interpreter-attested per the attempt-attestation
+/// ruling; the database verifies closure membership. That ruling withdrew the
+/// "descends from root" database check and rejected a `run_frames` registry, so
+/// flow identity is absent from the effect wire BY DECISION rather than by
+/// omission — the `wamn-0h0g.15.62` probe records the consequence, not a gap.
+/// Should the interpreter's trust model ever change (non-first-party guest code,
+/// custom nodes returning), `wamn-0h0g.15.128` carries the price.
+fn authorize_plan_closure(
+    manifest: Option<&ServingManifest>,
+    snapshot: &ConnectionEffectSnapshot,
+    current_plan_hash: &str,
+) -> Result<(), EffectError> {
+    // A process given no release resolves no plan for any run, so it can never
+    // legitimately reach an effect. Refuse rather than admit an unbindable one;
+    // plan supply takes the same posture and reports `unavailable`.
+    let Some(manifest) = manifest else {
+        tracing::warn!(
+            phase = "effect-authority-violation",
+            reason = "no-release-manifest",
+            root_flow_id = snapshot.root_flow_id,
+            "trusted HTTP connection authority denied"
+        );
+        return Err(EffectError::AuthorityDenied);
+    };
+    if !plan_reachable_from_root(manifest, &snapshot.root_flow_id, current_plan_hash) {
+        // Host-side only, by owner recommendation: the flowrunner collapses
+        // `authority-denied` with six sibling variants into one
+        // `HttpCapError::Denied`, which standard-nodes codes as an egress refusal,
+        // so the guest cannot be told this apart from an allowedHosts denial
+        // without an SDK change. The name belongs in the audit record anyway.
+        tracing::warn!(
+            phase = "effect-authority-violation",
+            reason = "plan-outside-run-closure",
+            root_flow_id = snapshot.root_flow_id,
+            current_plan_hash,
+            "trusted HTTP connection authority denied"
+        );
+        return Err(EffectError::AuthorityDenied);
+    }
+    Ok(())
+}
+
+/// True when `current_plan_hash` is the plan of a flow the release manifest
+/// reaches from `root_flow_id` over its call-edge adjacency.
+///
+/// The same walk plan supply resolves a run's plan set with
+/// ([`ServingManifest::reachable_flows`]), read here instead of stored per run.
+/// An absent root yields the empty set, so a run whose root is not a member of
+/// this release admits nothing.
+fn plan_reachable_from_root(
+    manifest: &ServingManifest,
+    root_flow_id: &str,
+    current_plan_hash: &str,
+) -> bool {
+    manifest
+        .reachable_flows(root_flow_id)
+        .iter()
+        // Total by construction: `from_canonical_bytes` has already proved every
+        // call edge names a member flow.
+        .filter_map(|flow_id| manifest.flows.get(flow_id))
+        .any(|flow| flow.plan_hash == current_plan_hash)
 }
 
 fn authorize_snapshot(snapshot: &ConnectionEffectSnapshot) -> Result<(), EffectError> {
@@ -456,6 +594,10 @@ impl http_effect::Host for ActiveCtx<'_> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use wamn_catalog::{ServingFlow, ServingRelease};
+
     use super::*;
 
     fn hash(byte: char) -> String {
@@ -499,7 +641,49 @@ mod tests {
             definition_hash: Some("sha256:def".into()),
             credential_handle: Some("notify-auth".into()),
             draft_generation_granted: true,
+            root_flow_id: ROOT_FLOW.into(),
         }
+    }
+
+    const ROOT_FLOW: &str = "root";
+    const CALLEE_FLOW: &str = "callee";
+    const UNREACHED_FLOW: &str = "sibling";
+
+    /// A member flow whose plan hash is [`hash`] of `plan`.
+    fn flow(plan: char, calls: BTreeSet<String>) -> ServingFlow {
+        ServingFlow {
+            flow_version: 1,
+            plan_hash: hash(plan),
+            source_artifact: hash('c'),
+            binding_base_artifact: hash('c'),
+            callable_contract: None,
+            calls,
+        }
+    }
+
+    /// One release holding three flows: `root`, the `callee` it calls, and an
+    /// unreachable `sibling` — the borrowing target the deleted SQL predicate used
+    /// to exclude (wamn-0h0g.15.66).
+    fn release() -> ServingManifest {
+        ServingManifest::new(
+            ServingRelease {
+                tenant_id: "t1".into(),
+                catalog_id: "cat".into(),
+                catalog_version: 7,
+                environment: "prod".into(),
+            },
+            BTreeMap::from([
+                (
+                    ROOT_FLOW.to_string(),
+                    flow('a', BTreeSet::from([CALLEE_FLOW.to_string()])),
+                ),
+                (CALLEE_FLOW.to_string(), flow('b', BTreeSet::new())),
+                (UNREACHED_FLOW.to_string(), flow('d', BTreeSet::new())),
+            ]),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        )
+        .expect("release fixture is a valid manifest")
     }
 
     #[test]
@@ -607,6 +791,103 @@ mod tests {
         ));
     }
 
+    /// wamn-0h0g.15.66, link 1: a run may present only a plan its own release
+    /// reaches from its root flow.
+    ///
+    /// The `sibling` flow is a legal member of the SAME release and the SAME
+    /// tenant, so every database-side fact about its bundle holds — it exists, it
+    /// is tenant-scoped, and its bytes parse. Nothing but this check separates it
+    /// from the run's own closure, which is exactly what the deleted
+    /// `run_flow_resolutions` EXISTS predicate used to do.
+    #[test]
+    fn a_run_may_present_only_a_plan_its_own_release_closure_reaches() {
+        let manifest = release();
+        let facts = snapshot();
+
+        // The root's own plan and its callee's are both inside the closure.
+        for admitted in [hash('a'), hash('b')] {
+            assert!(
+                authorize_plan_closure(Some(&manifest), &facts, &admitted).is_ok(),
+                "plan {admitted} is reachable from {ROOT_FLOW}"
+            );
+        }
+
+        // The unreached sibling's plan, and a plan in no release at all, are not.
+        for denied in [hash('d'), hash('e')] {
+            assert!(
+                matches!(
+                    authorize_plan_closure(Some(&manifest), &facts, &denied),
+                    Err(EffectError::AuthorityDenied)
+                ),
+                "plan {denied} is outside {ROOT_FLOW}'s closure and must be denied"
+            );
+        }
+
+        // The closure is the RUN's, not the release's: a run rooted at the sibling
+        // reaches the sibling's plan and nothing else.
+        let sibling_run = ConnectionEffectSnapshot {
+            root_flow_id: UNREACHED_FLOW.into(),
+            ..snapshot()
+        };
+        assert!(authorize_plan_closure(Some(&manifest), &sibling_run, &hash('d')).is_ok());
+        assert!(matches!(
+            authorize_plan_closure(Some(&manifest), &sibling_run, &hash('b')),
+            Err(EffectError::AuthorityDenied)
+        ));
+    }
+
+    /// A root flow this release does not contain reaches nothing, so it authorizes
+    /// nothing — including a plan the release does carry under another root.
+    #[test]
+    fn a_run_rooted_outside_this_release_authorizes_no_plan_at_all() {
+        let manifest = release();
+        let foreign = ConnectionEffectSnapshot {
+            root_flow_id: "not-a-member".into(),
+            ..snapshot()
+        };
+        for plan in [hash('a'), hash('b'), hash('d')] {
+            assert!(matches!(
+                authorize_plan_closure(Some(&manifest), &foreign, &plan),
+                Err(EffectError::AuthorityDenied)
+            ));
+        }
+    }
+
+    /// A process that was given no release cannot bind a plan to a run, so it
+    /// refuses instead of admitting an unbindable one — the same fail-closed
+    /// posture plan supply takes with `unavailable`.
+    #[test]
+    fn a_process_carrying_no_release_authorizes_no_effect() {
+        assert!(matches!(
+            authorize_plan_closure(None, &snapshot(), &hash('b')),
+            Err(EffectError::AuthorityDenied)
+        ));
+    }
+
+    /// Rider 1 of the owner ruling: the run-to-plan binding is checked before the
+    /// credential is fetched and before the wire, so nothing downstream — the
+    /// effect ledger included — can observe an out-of-closure plan hash. Reordering
+    /// `send` fails this.
+    #[test]
+    fn the_run_plan_binding_is_checked_before_credentials_and_the_wire() {
+        // First occurrence of each: `send` is the first item in the file, so every
+        // needle below lands on its call rather than on a later definition.
+        let source = include_str!("connection_http.rs");
+        let binding = source
+            .find("authorize_plan_closure(")
+            .expect("send checks the run-to-plan binding");
+        let snapshot_gate = source
+            .find("authorize_snapshot(&snapshot)?;")
+            .expect("send checks the database-side facts");
+        let credential = source
+            .find("let secret = self")
+            .expect("send resolves the credential");
+        let wire = source
+            .find("execute(decision, request, credential_headers)")
+            .expect("send reaches the wire");
+        assert!(binding < snapshot_gate && snapshot_gate < credential && credential < wire);
+    }
+
     /// Until .4.9 installs the immutable attempt reader/writer together, the
     /// production `send` path refuses before a socket reaches the listener.
     #[tokio::test]
@@ -667,6 +948,9 @@ mod tests {
         )])));
         let allowed_hosts: Arc<[AllowedHost]> =
             vec![PROBE_AUTHORITY.parse().expect("parse probe host policy")].into();
+        // No release: this probe's run row does not exist, so `send` refuses on the
+        // absent snapshot before the plan-closure check is reached. The zero-wire
+        // property is what is under test, and it holds either way.
         let connection = ConnectionHttp::new(
             postgres,
             vault,
@@ -674,6 +958,7 @@ mod tests {
             "t1",
             DEFAULT_PROJECT,
             allowed_hosts,
+            None,
         );
         let context = InvocationContext {
             version: "0.1".to_string(),

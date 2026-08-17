@@ -44,7 +44,7 @@ const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
     ),
     (
         "crates/execution/host/src/lib.rs",
-        "let plan_release = load_plan_release(",
+        "let (effect_authority_weld, plan_release) = load_plan_release(",
         "WasmtimeComponent::new(",
     ),
 ];
@@ -65,7 +65,7 @@ const RELEASE_IDENTITY_INJECTION: &str = "plugin.set_release_identity(";
 /// `load_plan_release` onto some other source of the pair.
 const RELEASE_IDENTITY_INJECTION_SITE: (&str, &str) = (
     "crates/execution/host/src/lib.rs",
-    "let plan_release = load_plan_release(",
+    "let (effect_authority_weld, plan_release) = load_plan_release(",
 );
 
 /// The two struck config keys, and every file that could plausibly re-read them.
@@ -850,7 +850,7 @@ fn the_struck_release_identity_config_keys_do_not_return() {
 
 #[test]
 fn release_identity_inventory_rejects_a_removed_or_duplicated_injection() {
-    let welded = "let plan_release = load_plan_release(release)?;\n";
+    let welded = "let (effect_authority_weld, plan_release) = load_plan_release(release)?.unzip();\n";
     for source in [
         String::new(),
         format!("{welded}{RELEASE_IDENTITY_INJECTION}\n{RELEASE_IDENTITY_INJECTION}\n"),
@@ -868,7 +868,7 @@ fn release_identity_inventory_rejects_a_removed_or_duplicated_injection() {
 #[test]
 fn release_identity_inventory_rejects_an_injection_above_the_weld() {
     let inverted =
-        format!("{RELEASE_IDENTITY_INJECTION}\nlet plan_release = load_plan_release(release)?;\n");
+        format!("{RELEASE_IDENTITY_INJECTION}\nlet (effect_authority_weld, plan_release) = load_plan_release(release)?.unzip();\n");
     let error =
         validate_release_identity_injection(&inverted, RELEASE_IDENTITY_INJECTION_SITE.1, "seam")
             .expect_err("a pair injected before the weld must be rejected");

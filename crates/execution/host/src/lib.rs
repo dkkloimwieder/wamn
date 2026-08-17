@@ -477,7 +477,9 @@ pub struct ReleaseSupply<'a> {
 /// `ManifestUnreadable` and cannot be separated after the fact. Whoever wires the
 /// wash host (`wamn-0h0g.15.101`) must make the same call at *its* construction
 /// site or restore a variant; recovering it from an error kind is not available.
-fn load_plan_release(release: Option<ReleaseSupply<'_>>) -> anyhow::Result<Option<PlanRelease>> {
+fn load_plan_release(
+    release: Option<ReleaseSupply<'_>>,
+) -> anyhow::Result<Option<(Arc<ReleaseManifestWeld>, PlanRelease)>> {
     let Some(supply) = release else {
         return Ok(None);
     };
@@ -499,7 +501,14 @@ fn load_plan_release(release: Option<ReleaseSupply<'_>>) -> anyhow::Result<Optio
         plan_artifacts = supply.plan_artifact_base,
         "execution host welded to its release"
     );
-    Ok(Some(PlanRelease::new(Arc::new(weld), Arc::new(source))))
+    // ONE loaded instance, handed out by reference-count: reader 1 (plan supply)
+    // takes it inside `PlanRelease`, reader 2 (effect authority, wamn-0h0g.15.66)
+    // takes the same `Arc`. Nobody loads a second copy.
+    let weld = Arc::new(weld);
+    Ok(Some((
+        Arc::clone(&weld),
+        PlanRelease::new(weld, Arc::new(source)),
+    )))
 }
 
 /// The host-injected, non-spoofable identity one runner replica carries: the
@@ -606,7 +615,7 @@ impl ExecutionHost {
         ttl_ms: u64,
     ) -> anyhow::Result<Self> {
         let runtime_revision = TrustedExecutionRuntimeRevision::from_flowrunner_bytes(guest);
-        let plan_release = load_plan_release(release)?;
+        let (effect_authority_weld, plan_release) = load_plan_release(release)?.unzip();
         let effect_writer = load_effect_writer(&identity).await?;
         let ExecutionIdentity {
             owner,
@@ -684,6 +693,7 @@ impl ExecutionHost {
             tenant,
             project,
             connection_allowed_hosts,
+            effect_authority_weld,
         ));
         let plan_supply = Arc::new(RunnerPlanSupply::new(
             plugin.clone(),
