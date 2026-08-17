@@ -6075,3 +6075,35 @@ Prove it by unpinning one of the four and confirming the guard reports
 ```bash
 cargo test --locked -p wamn-proof-conformance --lib version_identity
 ```
+
+## SR-MVP — one release-manifest weld per host process (wamn-0h0g.15.101)
+
+The wash host now constructs its weld, mirroring the flowrunner host's argument-shaped
+absent-mount posture: no `--release-manifest-root` means this process was never given
+a release, and a root that is passed but unusable is fatal to startup. It takes ONE
+knob where the executor takes four, because its readers serve `attachments` and
+`registrations` from inside the verified manifest and pull nothing.
+
+The drift guard spans both host files and pins two things per process: exactly one
+production construction site, and that the weld is reached before anything can bind a
+component. `#[cfg(test)]` construction is excluded, so the weld's own fixtures do not
+widen the inventory.
+
+```bash
+# The posture itself, at the wash host's construction site.
+cargo test --locked -p wamn-host
+
+# One site per process, and construction ahead of the first bind.
+cargo test --locked -p wamn-proof-conformance --lib runtime_inventory
+```
+
+Mutants are recorded rather than scripted (the guard surface is frozen until
+`wamn-0h0g.15.22`). Apply, confirm the named test fails, restore, verify the sha256:
+
+| mutant | edit | must fail |
+| --- | --- | --- |
+| `weld-site-removed` | drop the wash host's construction call | `one_release_manifest_weld_construction_site_per_host_process` |
+| `weld-site-duplicated` | add a second production construction | same |
+| `weld-after-bind` | move construction below `ClusterHostBuilder::default()` | same |
+| `exec-weld-unreached` | replace `load_plan_release(release)?` with `None` | same |
+| `unusable-mount-degrades` | return `Ok(None)` instead of the weld's error | `a_host_given_an_unusable_root_refuses` |

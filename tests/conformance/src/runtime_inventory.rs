@@ -12,6 +12,43 @@ const CFG_TEST_MODULE: &str = "#[cfg(test)]\nmod tests {";
 const EXECUTION_HOST_STORE_CONSTRUCTOR: &str =
     "let mut store = Store::new(raw, SharedCtx::new(ctx));";
 
+/// The release-manifest weld construction call, deliberately truncated before the
+/// `(` so it matches `load` and `load_from` alike — the guard counts
+/// *construction*, not one spelling of it.
+///
+/// Counted as raw text, like every other marker here, so prose in a host file that
+/// wrote this marker out in full would read as a second construction site. Host
+/// doc comments name the type and the method separately for that reason.
+const RELEASE_WELD_CONSTRUCTION: &str = "ReleaseManifestWeld::load";
+
+/// The two host processes, and per process the two positions that must hold:
+/// `(file, the text that reaches the weld, the first bind-capable text it must
+/// precede)`.
+///
+/// wamn-0h0g.15.101 rules one weld instance PER PROCESS: the flowrunner
+/// in-process host serves plan supply and effect authority, the wash host serves
+/// flow-http routing and jetstream delivery. Separate processes cannot share one
+/// object, so each constructs exactly once — and must do so before anything binds
+/// a component, because under ruling wamn-0h0g.15.102 the loaded manifest is the
+/// sole carrier of the `(release version, manifest digest)` pair a claim records.
+/// A component that bound first would have no pair.
+///
+/// The wash host calls the weld directly; the execution host reaches it through
+/// `load_plan_release`, so the position that matters there is that call, not the
+/// function's definition.
+const HOST_WELD_SITES: [(&str, &str, &str); 2] = [
+    (
+        "services/host/src/host.rs",
+        "let release = load_release(",
+        "ClusterHostBuilder::default()",
+    ),
+    (
+        "crates/execution/host/src/lib.rs",
+        "let plan_release = load_plan_release(",
+        "WasmtimeComponent::new(",
+    ),
+];
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum WorkloadAbi {
@@ -177,6 +214,60 @@ fn validate_execution_host_store_constructor(source: &str) -> Result<(), String>
         EXECUTION_HOST_STORE_CONSTRUCTOR,
         "production ExecutionHost store constructor",
     )
+}
+
+/// Everything before a file's terminal `#[cfg(test)] mod tests {`, or the whole
+/// file when it has none.
+///
+/// Unlike [`production_execution_host_source`], which pins a seam to a file that
+/// must always carry a test module, both shapes are legitimate for the host weld
+/// sites: the wash host carries no test module and the execution host carries one.
+fn production_half<'a>(source: &'a str, seam: &str) -> Result<&'a str, String> {
+    match source.matches(CFG_TEST_MODULE).count() {
+        0 => Ok(source),
+        1 => Ok(source
+            .split_once(CFG_TEST_MODULE)
+            .expect("the counted cfg(test) module must split")
+            .0),
+        found => Err(format!(
+            "{seam} must carry at most one terminal `{CFG_TEST_MODULE}` module; found {found}"
+        )),
+    }
+}
+
+fn validate_one_weld_site(source: &str, seam: &str) -> Result<(), String> {
+    let production = production_half(source, seam)?;
+    validate_one(production, RELEASE_WELD_CONSTRUCTION, seam)
+}
+
+fn validate_weld_precedes_bind(
+    source: &str,
+    entry: &str,
+    bind: &str,
+    seam: &str,
+) -> Result<(), String> {
+    let production = production_half(source, seam)?;
+    let Some(entry_at) = production.find(entry) else {
+        return Err(format!("{seam} must reach its weld through `{entry}`"));
+    };
+    let Some(bind_at) = production.find(bind) else {
+        return Err(format!(
+            "{seam} must still bind components through `{bind}`"
+        ));
+    };
+    if entry_at < bind_at {
+        Ok(())
+    } else {
+        Err(format!(
+            "{seam} must reach `{entry}` before `{bind}`; a component that binds first \
+             carries no release identity for its claim to record"
+        ))
+    }
+}
+
+fn host_source(root: &Path, path: &str) -> String {
+    let full = root.join(path);
+    fs::read_to_string(&full).unwrap_or_else(|error| panic!("read {}: {error}", full.display()))
 }
 
 fn observed_store_paths(root: &Path, wash_runtime: &Path) -> BTreeSet<String> {
@@ -660,4 +751,107 @@ fn execution_host_inventory_rejects_removed_or_duplicated_production_constructor
         duplicate.ends_with("found 2"),
         "duplicate-constructor failure must report the production count: {duplicate}"
     );
+}
+
+/// wamn-0h0g.15.101: one release-manifest weld per host process, constructed
+/// before that process can bind a component.
+#[test]
+fn one_release_manifest_weld_construction_site_per_host_process() {
+    let root = repository_root();
+    for (path, entry, bind) in HOST_WELD_SITES {
+        let source = host_source(&root, path);
+        validate_one_weld_site(&source, path).unwrap_or_else(|error| panic!("{error}"));
+        validate_weld_precedes_bind(&source, entry, bind, path)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
+}
+
+#[test]
+fn weld_inventory_ignores_cfg_test_construction_sites() {
+    // The weld's own unit tests and the plan-supply tests construct welds from
+    // fixture directories; only production sites are the subject of the one-per-
+    // process rule.
+    let source = format!(
+        "{RELEASE_WELD_CONSTRUCTION}_from(root)\n\
+         {CFG_TEST_MODULE}\n\
+             {RELEASE_WELD_CONSTRUCTION}_from(fixture)\n\
+             {RELEASE_WELD_CONSTRUCTION}()\n\
+         }}\n"
+    );
+    assert_eq!(
+        source.matches(RELEASE_WELD_CONSTRUCTION).count(),
+        3,
+        "fixture must carry one production and two test-only construction sites"
+    );
+    validate_one_weld_site(&source, "weld-mutant.rs")
+        .expect("cfg(test) construction must not widen the production inventory");
+}
+
+#[test]
+fn weld_inventory_rejects_removed_or_duplicated_construction_site() {
+    let test_module =
+        format!("{CFG_TEST_MODULE}\n    {RELEASE_WELD_CONSTRUCTION}_from(fixture)\n}}\n");
+
+    let removed = validate_one_weld_site(&test_module, "weld-mutant.rs")
+        .expect_err("removing the production weld construction must fail");
+    assert!(
+        removed.ends_with("found 0"),
+        "removed-weld failure must report the production count: {removed}"
+    );
+
+    // Two production sites in one process is the exact drift this guard exists to
+    // catch: two loaded manifests where the ruling allows one.
+    let duplicated = format!(
+        "{RELEASE_WELD_CONSTRUCTION}_from(root)\n\
+         {RELEASE_WELD_CONSTRUCTION}()\n\
+         {test_module}"
+    );
+    let duplicate = validate_one_weld_site(&duplicated, "weld-mutant.rs")
+        .expect_err("a second production weld construction must fail");
+    assert!(
+        duplicate.ends_with("found 2"),
+        "duplicate-weld failure must report the production count: {duplicate}"
+    );
+}
+
+#[test]
+fn weld_inventory_rejects_construction_after_the_first_bind() {
+    let ordered = "let release = load_release(root)?;\nClusterHostBuilder::default()\n";
+    validate_weld_precedes_bind(
+        ordered,
+        "let release = load_release(",
+        "ClusterHostBuilder::default()",
+        "weld-mutant.rs",
+    )
+    .expect("construction ahead of the builder must pass");
+
+    let inverted = "ClusterHostBuilder::default()\nlet release = load_release(root)?;\n";
+    let error = validate_weld_precedes_bind(
+        inverted,
+        "let release = load_release(",
+        "ClusterHostBuilder::default()",
+        "weld-mutant.rs",
+    )
+    .expect_err("constructing the weld after the host builder must fail");
+    assert!(
+        error.contains("carries no release identity for its claim to record"),
+        "ordering failure must name the consequence: {error}"
+    );
+
+    for (name, mutant) in [
+        ("weld-unreachable", "ClusterHostBuilder::default()\n"),
+        ("bind-removed", "let release = load_release(root)?;\n"),
+    ] {
+        let error = validate_weld_precedes_bind(
+            mutant,
+            "let release = load_release(",
+            "ClusterHostBuilder::default()",
+            "weld-mutant.rs",
+        )
+        .expect_err("a missing anchor must fail closed");
+        assert!(
+            error.starts_with("weld-mutant.rs must "),
+            "{name} mutation failed for an unexpected reason: {error}"
+        );
+    }
 }

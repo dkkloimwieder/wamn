@@ -3,7 +3,7 @@
 //! template renders for `wash host` (charts/runtime-operator).
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -16,6 +16,7 @@ use wash_runtime::plugin;
 use wash_runtime::washlet::{ClusterHostBuilder, NatsConnectionOptions, connect_nats};
 
 use wamn_runtime::plugins::{WamnFlowInvocation, WamnJetstream, WamnLogging, WamnPostgres};
+use wamn_runtime::release_manifest::ReleaseManifestWeld;
 use wamn_runtime::{build_engine, spawn_epoch_ticker};
 
 #[derive(Debug, Args)]
@@ -97,10 +98,91 @@ pub struct HostArgs {
     /// epoch deadlines never fire)
     #[arg(long = "epoch-tick-ms", default_value_t = 10)]
     pub epoch_tick_ms: u64,
+
+    /// Directory the digest-named release-manifest ConfigMap is projected into —
+    /// normally `/etc/wamn/release-manifest`, the mount path
+    /// `wamn_catalog::RELEASE_MANIFEST_MOUNT_PATH` names.
+    ///
+    /// Absent means this host serves no release; present and unusable means it
+    /// refuses to start. See [`load_release`] for why that distinction lives in
+    /// this argument's shape rather than in an error.
+    ///
+    /// Unlike every flag above it, this one is NOT part of the chart's rendered
+    /// surface: `wash host` upstream has no release model. It is set on our own
+    /// host template, which `wamn-0h0g.15.98` writes.
+    #[arg(long = "release-manifest-root", env = "WAMN_RELEASE_MANIFEST_ROOT")]
+    pub release_manifest_root: Option<PathBuf>,
+}
+
+/// Load and verify this process's release, or record that it carries none.
+///
+/// This is the wash host's weld construction site: the one place in this process
+/// that reads the mounted manifest. flow-http routing (`wamn-0h0g.15.96`) and
+/// jetstream delivery gating (`wamn-0h0g.15.95`) take the loaded manifest from
+/// here by reference; nobody loads a second copy.
+///
+/// # The absent-mount posture, and why it is the same rule as the executor's
+///
+/// `ExecutionHost`'s `load_plan_release` decided this for the flowrunner process,
+/// and it is decided identically here because `wamn-0h0g.15.101` requires one
+/// rule for both processes rather than one per host. The two absent-mount cases
+/// are told apart by the *argument*, never by inspecting a failure:
+///
+/// - **No root passed.** This host was never given a release: nothing to mount
+///   and nothing to refuse. It serves exactly as it did before the release model
+///   existed, which is what keeps the gateway, the S2..S6 paths, the gates and the
+///   benches running while `wamn-0h0g.15.98` is still mounting things.
+/// - **Passed, but the mount is absent, unreadable or non-canonical.** This host
+///   was told it serves a release and cannot. Startup fails and the pod never goes
+///   ready — the only refusal worth making, since a host serving an unverified
+///   manifest would be routing and gating against nothing.
+///
+/// Those three are the complete mount-time set. There is deliberately no
+/// digest-mismatch case here: the weld takes no expected digest and *derives* both
+/// identity halves from the bytes it verified (`wamn-0h0g.15.104`), so the name and
+/// the content are one fact and cannot disagree. The only digest comparison in the
+/// system is at run time, between a run's recorded digest and the pod's carried
+/// one, and it belongs to the claim path.
+///
+/// Encoding it in the argument is forced, not stylistic: `wamn-0h0g.15.104`
+/// collapsed the weld's error kinds to two, so "no mount" and "corrupt mount"
+/// both arrive as `ManifestUnreadable` and cannot be separated afterwards.
+///
+/// # Why this host takes one knob where the executor takes four
+///
+/// The executor also pulls plan BYTES by digest, so it needs a registry base, an
+/// insecure-registry flag and a fetch timeout. This host's two readers serve
+/// `attachments` and `registrations`, both of which are already inside the
+/// verified manifest, so it fetches nothing. The registry knobs would be
+/// configuration for a pull that never happens.
+fn load_release(manifest_root: Option<&Path>) -> anyhow::Result<Option<ReleaseManifestWeld>> {
+    let Some(manifest_root) = manifest_root else {
+        return Ok(None);
+    };
+    let weld = ReleaseManifestWeld::load_from(manifest_root).map_err(|error| {
+        anyhow::anyhow!(
+            "serving release manifest under {} is unusable ({:?}): {error}",
+            manifest_root.display(),
+            error.kind()
+        )
+    })?;
+    Ok(Some(weld))
 }
 
 pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     wash_runtime::init_crypto();
+
+    // THE WELD IS CONSTRUCTED FIRST, and the ordering is load-bearing rather than
+    // tidy. Under ruling wamn-0h0g.15.102 the mounted manifest is the SOLE carrier
+    // of the (release version, manifest digest) pair, so every consumer takes the
+    // pair from this object — including the claim-time recording that
+    // wamn-0h0g.15.103 repoints at it. A component that bound before the weld
+    // existed would have no pair to record. Building it here, ahead of the NATS
+    // connections, the engine and every plugin, makes that ordering impossible to
+    // get wrong, and makes a host that cannot verify its release refuse before it
+    // opens a socket. The one-site-per-process guard in
+    // tests/conformance/src/runtime_inventory.rs pins both facts across both hosts.
+    let release = load_release(args.release_manifest_root.as_deref())?;
 
     let scheduler_nats_client = connect_nats(
         args.scheduler_nats_url.clone(),
@@ -188,6 +270,21 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     tracing::info!(
         "wamn-host starting (plugins: wasi:config, wamn:logging, wasi:otel, wamn:postgres, wamn:jetstream, wamn:flow-invocation)"
     );
+    // Whether this host carries a release is the first thing an operator needs from
+    // the log: it decides whether the release-gated interfaces have a manifest to
+    // serve from at all. The binding also has to outlive this point — `release`
+    // holds the process's only loaded manifest for as long as `run` is on the
+    // stack, which is the whole serving period.
+    match release.as_ref() {
+        Some(weld) => tracing::info!(
+            release_version = weld.release().release_version,
+            manifest_digest = %weld.release().manifest_digest,
+            "wamn-host welded to its release"
+        ),
+        None => {
+            tracing::info!("wamn-host carries no release; no release-gated interface is served")
+        }
+    }
     let cleanup = wash_runtime::washlet::run_cluster_host(cluster_host)
         .await
         .context("failed to start cluster host")?;
@@ -200,4 +297,44 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
     }
     tracing::info!("shutting down wamn-host");
     cleanup.await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The R2 posture's first half: a host given no root was never given a
+    /// release, so there is nothing to load and nothing to refuse.
+    #[test]
+    fn a_host_given_no_root_carries_no_release() {
+        let release = load_release(None).expect("no root is not a failure");
+        assert!(
+            release.is_none(),
+            "a host with no release root must carry no release rather than \
+             loading one from somewhere else"
+        );
+    }
+
+    /// The R2 posture's second half, and the reason the distinction cannot be
+    /// recovered from the error: this path is absent, which is exactly the fault
+    /// an unmounted ConfigMap produces, and it must still be fatal — because the
+    /// caller asked for a release.
+    #[test]
+    fn a_host_given_an_unusable_root_refuses() {
+        // Deliberately a path that cannot exist rather than a scratch directory:
+        // the fault under test is the absent mount itself, and manufacturing it
+        // needs no filesystem.
+        let root = Path::new("/nonexistent/wamn-release-manifest-root");
+        let error = load_release(Some(root)).expect_err("an unusable root must refuse");
+        let message = format!("{error}");
+        assert!(
+            message.contains("/nonexistent/wamn-release-manifest-root"),
+            "the refusal must name the root it could not use: {message}"
+        );
+        assert!(
+            message.contains("ManifestUnreadable"),
+            "an absent mount must surface as ManifestUnreadable, the kind \
+             wamn-0h0g.15.104 left for it: {message}"
+        );
+    }
 }
