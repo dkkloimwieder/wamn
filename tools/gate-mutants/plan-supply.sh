@@ -35,8 +35,8 @@ load_mutation() {
       GATE="plugins::runner_plan_supply::tests::hash_mismatch_never_enters_the_cache"
       ;;
     cache-drops-tenant)
-      TARGET="crates/platform/runtime/src/plugins/control_artifact_reader.rs"
-      EXPECTED_SHA="b8ccb76cfede49b253355e78f6c5b580c11647cb2cfceebfc403bd57b72acc5b"
+      TARGET="crates/platform/runtime/src/plugins/runner_plan_supply.rs"
+      EXPECTED_SHA="735fb0613ad0ceb5602d2cd0a03c34cd6b7d2dec4e0364446832a61e705ab9b7"
       NEEDLE=$'        let key = PlanCacheKey {\n            tenant_id: Arc::from(tenant_id),\n            execution_bundle_hash: Arc::from(execution_bundle_hash),\n        };\n        let bytes = state.entries.get(&key)?.clone();'
       REPLACEMENT=$'        let key = PlanCacheKey {\n            tenant_id: Arc::from(""),\n            execution_bundle_hash: Arc::from(execution_bundle_hash),\n        };\n        let bytes = state.entries.get(&key)?.clone();'
       EXPECTED_COUNT=1

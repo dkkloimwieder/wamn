@@ -95,7 +95,7 @@ case "$mode" in
             'pg_get_constraintdef(con.oid, false)) COLLATE "C"' \
             'pg_get_constraintdef(con.oid, false))'
         run_mutant retained-drift-acceptance \
-            "fb752b794bed00e6180f3b621349fb0257bf099b0e1c740d3e0a3c12993a9edb" \
+            "b08e42cb2130ae46ebdcbb7c030f566ce37c29a287a5fdcae2ad6fb30cc82d29" \
             "0000000000000000000000000000000000000000000000000000000000000000"
         cp "$baseline" "$ddl"
         assert_baseline

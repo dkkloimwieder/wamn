@@ -105,10 +105,14 @@ load_mutation() {
       TEST_ARGV=(cargo test --locked --offline -p wamn-run-state --features native --lib "$GATE" -- --exact)
       ;;
     pre-effect-keeps-node-projections)
-      TARGET="crates/execution/run-state/src/queue/sql.rs"
-      EXPECTED_SHA="0fc07c601f2c2d7e31ead289ce2c14c6c24c23d1e4c7d5a4e0917620e398a737"
-      NEEDLE=$'         DELETE FROM node_runs \\\n          WHERE'
-      REPLACEMENT=$'         DELETE FROM node_runs \\\n          WHERE false AND'
+      TARGET="crates/execution/run-state/src/effect_writer.rs"
+      EXPECTED_SHA="c71950c56ce4461eaa10ac501de8a668e21ed2afd713ce22c331afd77e815640"
+      NEEDLE='    DELETE FROM node_runs AS projection
+     USING exact_claim AS claim
+     WHERE projection.tenant_id = claim.tenant_id'
+      REPLACEMENT='    DELETE FROM node_runs AS projection
+     USING exact_claim AS claim
+     WHERE false AND projection.tenant_id = claim.tenant_id'
       EXPECTED_COUNT=1
       GATE="production_claim_live"
       TEST_ARGV=(cargo test --locked --offline -p wamn-runtime --test production_claim_live "$GATE" -- --ignored --exact --nocapture --test-threads=1)
