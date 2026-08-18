@@ -1,42 +1,65 @@
 //! Bounded lifecycle pool for independently stored execution instances.
+//!
+//! # Pool key, and what tenant isolation rests on (wamn-0h0g.17.1)
+//!
+//! A pool is keyed by the **component digest alone** ([`ExecutionPoolKey`]), so
+//! every wiring that resolves to the same component bytes shares one warm pool.
+//! The key deliberately carries no entitlement: warm instances are no longer
+//! partitioned by tenant, which is the whole of the cross-wiring amortization.
+//!
+//! Inside this pool, isolation rests on [`INVOCATIONS_PER_INSTANCE`]: an
+//! instance is destroyed at the end of the checkout it was handed to, so no
+//! instance ever serves two invocations, and the idle set holds only
+//! never-invoked instances. No guest-visible state written during one checkout
+//! can be observed by another.
+//!
+//! That argument covers state this pool stores. It does NOT cover the identity
+//! an instance carries. At HEAD the only production store constructor
+//! (`ExecutionHost::instantiate`) binds `component_id` into the store's `Ctx`
+//! and registers the `wamn:postgres` tenant/schema/runner claims under that id
+//! at construction; nothing re-injects identity at checkout, and [`checkout`]
+//! takes no identity. A digest-keyed pool is therefore only safe while every
+//! instance under one key was constructed for the same identity. Filling one
+//! digest's pool from two identities is a cross-tenant leak, and no code here
+//! can detect it — the checkout-time injection seam it would need does not
+//! exist yet.
+//!
+//! [`checkout`]: ExecutionInstancePool::checkout
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::{Debug, Display};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Immutable reuse boundary for one execution bundle.
+/// Invocations one instance may serve before it is destroyed.
+///
+/// One, deliberately, not as a placeholder: reuse stays off until windowed
+/// state ships with explicit affinity. Single use is what lets a pool be keyed
+/// by digest alone — see the module docs. Raising it re-opens every question
+/// dropping the entitlement key closed.
+pub const INVOCATIONS_PER_INSTANCE: u64 = 1;
+
+/// Immutable reuse boundary: one pool per component digest.
+///
+/// The digest is content-addressed, so a new component revision is a new key
+/// and cannot be served from the old pool. The value is host-derived (see
+/// `TrustedExecutionRuntimeRevision::flowrunner_component_digest`); this type
+/// carries it, it does not validate it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExecutionPoolKey {
-    bundle: Arc<str>,
-    revision: Arc<str>,
-    entitlement: Arc<str>,
+    digest: Arc<str>,
 }
 
 impl ExecutionPoolKey {
-    /// Create the exact bundle, platform revision, and entitlement boundary.
-    pub fn new(
-        bundle: impl Into<Arc<str>>,
-        revision: impl Into<Arc<str>>,
-        entitlement: impl Into<Arc<str>>,
-    ) -> Self {
+    /// Key one pool by the digest of the exact component bytes.
+    pub fn new(digest: impl Into<Arc<str>>) -> Self {
         Self {
-            bundle: bundle.into(),
-            revision: revision.into(),
-            entitlement: entitlement.into(),
+            digest: digest.into(),
         }
     }
 
-    pub fn bundle(&self) -> &str {
-        &self.bundle
-    }
-
-    pub fn revision(&self) -> &str {
-        &self.revision
-    }
-
-    pub fn entitlement(&self) -> &str {
-        &self.entitlement
+    pub fn digest(&self) -> &str {
+        &self.digest
     }
 }
 
@@ -45,7 +68,7 @@ impl ExecutionPoolKey {
 pub struct ExecutionPoolLimits {
     pub max_instances: usize,
     pub max_reserved_bytes: usize,
-    pub max_idle_per_bundle: usize,
+    pub max_idle_per_digest: usize,
     pub max_invocations_per_instance: u64,
     pub max_idle_age: Duration,
 }
@@ -54,7 +77,7 @@ impl ExecutionPoolLimits {
     pub fn validate(self) -> Result<Self, InvalidExecutionPoolLimits> {
         if self.max_instances == 0
             || self.max_reserved_bytes == 0
-            || self.max_idle_per_bundle == 0
+            || self.max_idle_per_digest == 0
             || self.max_invocations_per_instance == 0
         {
             return Err(InvalidExecutionPoolLimits);
@@ -163,8 +186,7 @@ struct IdleInstance<T> {
 
 struct PoolState<T> {
     idle: BTreeMap<ExecutionPoolKey, VecDeque<IdleInstance<T>>>,
-    revision_generations: BTreeMap<Arc<str>, u64>,
-    entitlement_generations: BTreeMap<Arc<str>, u64>,
+    digest_generations: BTreeMap<Arc<str>, u64>,
     snapshot: ExecutionPoolSnapshot,
 }
 
@@ -205,8 +227,7 @@ where
                 limits: limits.validate()?,
                 state: Mutex::new(PoolState {
                     idle: BTreeMap::new(),
-                    revision_generations: BTreeMap::new(),
-                    entitlement_generations: BTreeMap::new(),
+                    digest_generations: BTreeMap::new(),
                     snapshot: ExecutionPoolSnapshot::empty(),
                 }),
             }),
@@ -230,7 +251,7 @@ where
                     .max_reserved_bytes
                     .saturating_sub(snapshot.reserved_bytes)
             || state.idle.get(&key).map_or(0, VecDeque::len)
-                >= self.shared.limits.max_idle_per_bundle
+                >= self.shared.limits.max_idle_per_digest
         {
             return Err(PoolCapacityError);
         }
@@ -269,16 +290,14 @@ where
             .snapshot
             .peak_checked_out_instances
             .max(state.snapshot.checked_out_instances);
-        let revision_generation = generation(&state.revision_generations, key.revision());
-        let entitlement_generation = generation(&state.entitlement_generations, key.entitlement());
+        let digest_generation = generation(&state.digest_generations, key.digest());
         Some(ExecutionLease {
             shared: self.shared.clone(),
             key: key.clone(),
             instance: Some(idle.instance),
             reserved_bytes: idle.reserved_bytes,
             invocations: idle.invocations,
-            revision_generation,
-            entitlement_generation,
+            digest_generation,
         })
     }
 
@@ -318,47 +337,31 @@ where
             .clone()
     }
 
-    /// Destroy idle instances whose bundle revision is no longer current.
-    pub fn invalidate_revision(&self, revision: &str) {
-        self.invalidate_matching(
-            RetirementReason::RevisionInvalidated,
-            |state| advance_generation(&mut state.revision_generations, revision),
-            |key| key.revision() == revision,
-        );
-    }
-
-    /// Destroy idle instances whose entitlement may no longer receive the bundle.
-    pub fn invalidate_entitlement(&self, entitlement: &str) {
-        self.invalidate_matching(
-            RetirementReason::EntitlementInvalidated,
-            |state| advance_generation(&mut state.entitlement_generations, entitlement),
-            |key| key.entitlement() == entitlement,
-        );
-    }
-
-    fn invalidate_matching(
-        &self,
-        reason: RetirementReason,
-        advance: impl FnOnce(&mut PoolState<T>),
-        mut matches: impl FnMut(&ExecutionPoolKey) -> bool,
-    ) {
+    /// Destroy idle instances built from a component digest that is no longer
+    /// servable, and fence the ones already checked out under it.
+    ///
+    /// The digest-keyed pool has no entitlement dimension left to invalidate.
+    /// A revoked entitlement is now a property of one run, not of a warm
+    /// instance, so it is carried by
+    /// [`InvocationDisposition::EntitlementInvalidated`] at the end of the
+    /// checkout it applies to.
+    pub fn invalidate_digest(&self, digest: &str) {
         let mut state = self
             .shared
             .state
             .lock()
             .expect("execution pool lock poisoned");
-        advance(&mut state);
-        let keys = state
-            .idle
-            .keys()
-            .filter(|key| matches(key))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in keys {
-            let instances = state.idle.remove(&key).expect("collected idle key exists");
-            for idle in instances {
-                retire_locked(&mut state, idle.reserved_bytes, reason, false);
-            }
+        advance_generation(&mut state.digest_generations, digest);
+        let Some(instances) = state.idle.remove(&ExecutionPoolKey::new(digest)) else {
+            return;
+        };
+        for idle in instances {
+            retire_locked(
+                &mut state,
+                idle.reserved_bytes,
+                RetirementReason::RevisionInvalidated,
+                false,
+            );
         }
     }
 }
@@ -413,8 +416,7 @@ where
     instance: Option<T>,
     reserved_bytes: usize,
     invocations: u64,
-    revision_generation: u64,
-    entitlement_generation: u64,
+    digest_generation: u64,
 }
 
 impl<T> Debug for ExecutionLease<T>
@@ -501,23 +503,17 @@ where
             .state
             .lock()
             .expect("execution pool lock poisoned");
-        let invalidation = if generation(&state.revision_generations, self.key.revision())
-            != self.revision_generation
-        {
-            Some(RetirementReason::RevisionInvalidated)
-        } else if generation(&state.entitlement_generations, self.key.entitlement())
-            != self.entitlement_generation
-        {
-            Some(RetirementReason::EntitlementInvalidated)
-        } else {
-            None
-        };
-        if let Some(reason) = invalidation {
-            retire_locked(&mut state, reserved_bytes, reason, true);
+        if generation(&state.digest_generations, self.key.digest()) != self.digest_generation {
+            retire_locked(
+                &mut state,
+                reserved_bytes,
+                RetirementReason::RevisionInvalidated,
+                true,
+            );
             return Ok(());
         }
         let idle_count = state.idle.get(&self.key).map_or(0, VecDeque::len);
-        if idle_count >= self.shared.limits.max_idle_per_bundle {
+        if idle_count >= self.shared.limits.max_idle_per_digest {
             retire_locked(
                 &mut state,
                 reserved_bytes,
@@ -644,14 +640,14 @@ mod tests {
         ExecutionPoolLimits {
             max_instances: 4,
             max_reserved_bytes: 4_096,
-            max_idle_per_bundle: 4,
+            max_idle_per_digest: 4,
             max_invocations_per_instance: 8,
             max_idle_age: Duration::from_secs(60),
         }
     }
 
-    fn key(bundle: &str) -> ExecutionPoolKey {
-        ExecutionPoolKey::new(bundle, "r0", "org-a")
+    fn key(digest: &str) -> ExecutionPoolKey {
+        ExecutionPoolKey::new(digest)
     }
 
     fn fixture(id: usize) -> FixtureInstance {
@@ -820,7 +816,7 @@ mod tests {
     fn max_invocations_idle_limit_age_and_invalidation_retire_instances() {
         let mut bounded = limits();
         bounded.max_invocations_per_instance = 2;
-        bounded.max_idle_per_bundle = 1;
+        bounded.max_idle_per_digest = 1;
         let pool = ExecutionInstancePool::new(bounded).expect("valid pool limits");
         let pool_key = key("bundle-a");
         pool.insert(pool_key.clone(), fixture(0))
@@ -855,11 +851,11 @@ mod tests {
             Some(&1)
         );
 
-        let revision_lease = pool.checkout(&pool_key).expect("old revision checkout");
-        pool.invalidate_revision("r0");
+        let revision_lease = pool.checkout(&pool_key).expect("old digest checkout");
+        pool.invalidate_digest("bundle-a");
         revision_lease
             .finish(InvocationDisposition::Reusable)
-            .expect("checked-out old revision is retired");
+            .expect("checked-out stale digest is retired");
         assert_eq!(
             pool.snapshot()
                 .retirements
@@ -867,21 +863,15 @@ mod tests {
             Some(&1)
         );
 
-        let entitlement_key = ExecutionPoolKey::new("bundle-a", "r1", "org-b");
-        pool.insert(entitlement_key.clone(), fixture(3))
-            .expect("new revision");
-        let entitlement_lease = pool
-            .checkout(&entitlement_key)
-            .expect("old entitlement checkout");
-        pool.invalidate_entitlement("org-b");
-        entitlement_lease
-            .finish(InvocationDisposition::Reusable)
-            .expect("checked-out old entitlement is retired");
+        pool.insert(pool_key.clone(), fixture(3))
+            .expect("idle instance under the stale digest");
+        pool.invalidate_digest("bundle-a");
+        assert!(pool.checkout(&pool_key).is_none());
         assert_eq!(
             pool.snapshot()
                 .retirements
-                .get(&RetirementReason::EntitlementInvalidated),
-            Some(&1)
+                .get(&RetirementReason::RevisionInvalidated),
+            Some(&2)
         );
 
         let mut expiring = limits();

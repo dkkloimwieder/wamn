@@ -12,8 +12,9 @@ mod pool;
 
 pub use pool::{
     ExecutionInstancePool, ExecutionLease, ExecutionPoolKey, ExecutionPoolLimits,
-    ExecutionPoolSnapshot, InvalidExecutionPoolLimits, InvocationDisposition, PoolCapacityError,
-    PoolCleanupError, RetirementReason, ReusableExecutionInstance,
+    ExecutionPoolSnapshot, INVOCATIONS_PER_INSTANCE, InvalidExecutionPoolLimits,
+    InvocationDisposition, PoolCapacityError, PoolCleanupError, RetirementReason,
+    ReusableExecutionInstance,
 };
 
 use effect_writer::load_effect_writer;
