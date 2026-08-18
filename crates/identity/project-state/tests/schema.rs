@@ -39,6 +39,32 @@ fn code_only(sql: &str) -> String {
 
 // --- drift guard: DDL ↔ model ----------------------------------------------
 
+/// The privileges `wamn_app` holds on each table. The R11 adjudication is per
+/// relation, not one blanket grant, so the drift guard pins it per relation too:
+///
+/// - `users` / `roles` / `user_roles` / `permissions` / `api_keys` are
+///   SELECT-only. The trust chain reads these rows as authorization INPUT — the
+///   3.5 builder compiles `app.user_id` (a `users.id`) and `app.role` (a
+///   `roles.name`, reached through `user_roles`) into the data policies it
+///   generates, and 4.2 resolves those claims from exactly these tables. Author
+///   SQL holding DML here could write itself the credential its own policies are
+///   then evaluated against.
+/// - `audit_log` is append-only against the audited party: `SELECT` + `INSERT`,
+///   no `UPDATE`/`DELETE`. The grant is the whole enforcement mechanism.
+/// - `configurations` is tenant business state — nothing in the trust chain reads
+///   it — so it deliberately keeps full DML.
+///
+/// A table the model gains later has no adjudicated class, so this panics rather
+/// than silently defaulting it into one.
+fn wamn_app_privileges(table: &str) -> &'static str {
+    match table {
+        "users" | "roles" | "user_roles" | "permissions" | "api_keys" => "SELECT",
+        "audit_log" => "SELECT, INSERT",
+        "configurations" => "SELECT, INSERT, UPDATE, DELETE",
+        other => panic!("table {other} has no adjudicated wamn_app grant (R11)"),
+    }
+}
+
 /// `deploy/sql/app-schema.sql` must mirror the `wamn-project-state` model: the schema
 /// name, every table + its pinned columns, and the tenant RLS floor on each.
 #[test]
@@ -63,7 +89,8 @@ fn app_schema_sql_mirrors_the_model() {
                 "table {qualified} is missing pinned column {col:?}"
             );
         }
-        // Every table carries the RLS floor: a tenant policy, FORCE RLS, grants.
+        // Every table carries the RLS floor: a tenant policy, FORCE RLS, and the
+        // one grant its R11 class allows.
         assert!(
             sql.contains(&format!("CREATE POLICY {}_tenant ON {qualified}", t.name)),
             "table {qualified} is missing its tenant RLS policy"
@@ -72,11 +99,17 @@ fn app_schema_sql_mirrors_the_model() {
             sql.contains(&format!("ALTER TABLE {qualified} FORCE ROW LEVEL SECURITY")),
             "table {qualified} must FORCE row level security"
         );
+        let privileges = wamn_app_privileges(t.name);
         assert!(
-            sql.contains(&format!(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON {qualified} TO wamn_app"
-            )),
-            "table {qualified} is missing its wamn_app grant"
+            sql.contains(&format!("GRANT {privileges} ON {qualified} TO wamn_app")),
+            "table {qualified} must grant exactly `{privileges}` to wamn_app"
+        );
+        // …and only that one line, so a second GRANT cannot widen the class back
+        // out while the assertion above still passes.
+        assert_eq!(
+            sql.matches(&format!("ON {qualified} TO wamn_app")).count(),
+            1,
+            "table {qualified} must carry exactly one wamn_app grant"
         );
     }
 }
