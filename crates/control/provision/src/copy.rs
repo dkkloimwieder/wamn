@@ -122,10 +122,6 @@ pub enum CopyStep {
     /// `pg_dump -Fd` the src database (the q3n.10 artifact; recorded in
     /// `provisioning.dumps`).
     Snapshot { src: Triple },
-    /// Copy the structural half: catalog (migrate engine), flow registrations,
-    /// RLS policy rows + compiled application. `include: definition` only —
-    /// a full (`both`) dump already carries the definition tables.
-    CopyDefinition { src: Triple, dst: Triple },
     /// `pg_restore` the snapshot into the dst database. `data_only` scopes the
     /// restore to the data schema's rows (`--data-only --disable-triggers` —
     /// no trigger may fire per restored row; a restore replays state, it does
@@ -155,7 +151,6 @@ impl CopyStep {
         match self {
             CopyStep::Quiesce { .. } => "quiesce",
             CopyStep::Snapshot { .. } => "snapshot",
-            CopyStep::CopyDefinition { .. } => "copy-definition",
             CopyStep::RestoreData { .. } => "restore-data",
             CopyStep::Verify { .. } => "verify",
             CopyStep::Cutover { .. } => "cutover",
@@ -169,7 +164,8 @@ pub const COPY_SAGA_KIND: &str = "copy";
 
 /// Derive the ordered step plan for a copy request.
 ///
-/// * clone (no cutover): `definition` → `[CopyDefinition, Verify]`;
+/// * clone (no cutover): `definition` → `[Verify]` (the definition half has no
+///   execution path — see the `include` match below);
 ///   `data` → `[Snapshot, RestoreData(data-only), Verify]`;
 ///   `both` → `[Snapshot, RestoreData(full), Verify]`.
 /// * cutover (a move): `Quiesce` is prepended and `Cutover`
@@ -207,10 +203,11 @@ pub fn plan_copy(req: &CopyRequest) -> Result<Vec<CopyStep>, ProvisionError> {
         });
     }
     match req.include {
-        CopyInclude::Definition => steps.push(CopyStep::CopyDefinition {
-            src: req.src.clone(),
-            dst: req.dst.clone(),
-        }),
+        // The definition half plans no step: its records' durable owner is the
+        // control database, and the `copy-project-env` driver refuses
+        // `definition` and `both` before any I/O (wamn-0h0g.8.18). The variant
+        // survives only so that refusal has something to match on.
+        CopyInclude::Definition => {}
         CopyInclude::Data | CopyInclude::Both => {
             steps.push(CopyStep::Snapshot {
                 src: req.src.clone(),
@@ -329,11 +326,6 @@ mod tests {
     #[test]
     fn clone_plans_carry_no_quiesce_and_no_cutover() {
         // Clone into a fresh dst: the src stays live — no quiesce, no cutover.
-        let def = plan_copy(&req(CopyInclude::Definition, false)).unwrap();
-        assert!(matches!(def[0], CopyStep::CopyDefinition { .. }));
-        assert!(matches!(def[1], CopyStep::Verify { .. }));
-        assert_eq!(def.len(), 2);
-
         let both = plan_copy(&req(CopyInclude::Both, false)).unwrap();
         assert!(matches!(both[0], CopyStep::Snapshot { .. }));
         assert!(matches!(
