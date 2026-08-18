@@ -1710,6 +1710,19 @@ mod tests {
                 "let outcome_listener = database_url.map(SharedOutcomeListener::postgres);"
             )
         );
+        // wamn-0h0g.12.114: the host builds this pool and the wamn:postgres pool
+        // from two independent chains, 42 lines apart in one function. They agreed
+        // only because the variable they ordered differently — the generic
+        // `DATABASE_URL`, which base images, operators and sidecars inject
+        // unbidden — happened to be set nowhere; nothing enforced the agreement.
+        // deploy/ wires WAMN_PG_URL only, so this assertion IS the invariant:
+        // neither pool may reacquire an ambient credential name. The count above
+        // is the other half — it fails if the deliberate WAMN_RUN_STORE_PG_URL
+        // override is what gets deleted instead.
+        assert!(!plugin.contains("DATABASE_URL"));
+        let pool = include_str!("plugins/wamn_postgres/pool.rs");
+        assert!(!pool.contains("DATABASE_URL"));
+        assert_eq!(pool.matches("WAMN_PG_URL").count(), 1);
     }
 
     #[test]

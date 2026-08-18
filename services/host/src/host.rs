@@ -238,8 +238,8 @@ pub async fn run(args: HostArgs) -> anyhow::Result<()> {
         // one may be registered.
         .with_plugin(logging)?
         .with_plugin(Arc::new(plugin::wasi_otel::WasiOtel::default()))?
-        // Pool config from DATABASE_URL / WAMN_PG_* env; without a URL the
-        // plugin still links and returns connection-unavailable on use.
+        // Pool config from WAMN_PG_URL + the WAMN_PG_* tuning env; without a URL
+        // the plugin still links and returns connection-unavailable on use.
         .with_plugin(postgres)?
         // l5i9.17: the wamn:jetstream plugin (E10), first bound by the
         // Service-first materializer. Data-plane URL from WAMN_EVT_NATS_URL

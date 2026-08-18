@@ -44,7 +44,6 @@ pub struct WamnFlowInvocation {
 impl WamnFlowInvocation {
     pub fn from_env() -> anyhow::Result<Self> {
         let database_url = std::env::var("WAMN_RUN_STORE_PG_URL")
-            .or_else(|_| std::env::var("DATABASE_URL"))
             .or_else(|_| std::env::var("WAMN_PG_URL"))
             .ok();
         let backend = database_url

@@ -42,9 +42,7 @@ impl WamnPostgresConfig {
                 .unwrap_or(default)
         }
         Self {
-            database_url: std::env::var("DATABASE_URL")
-                .or_else(|_| std::env::var("WAMN_PG_URL"))
-                .ok(),
+            database_url: std::env::var("WAMN_PG_URL").ok(),
             pool_max_size: num("WAMN_PG_POOL_MAX", 16),
             wait_timeout_ms: bounded_wait_timeout_ms(num("WAMN_PG_WAIT_TIMEOUT_MS", 2_000)),
             statement_timeout_ms: bounded_statement_timeout_ms(num(
