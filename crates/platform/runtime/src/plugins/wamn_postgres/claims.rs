@@ -49,6 +49,17 @@ pub struct WamnPostgres {
     /// `SET LOCAL app.runner` so a flowrunner replica reads its owner identity to
     /// claim/renew queue rows under.
     runners: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the caller's `app.role` claim (a `roles.name`). Absent
+    /// (the default) binds the empty role, which is the deny floor every
+    /// compiled role gate coalesces to. When set, a per-role RLS policy
+    /// (`crates/schema/compiler/src/rls/compile.rs`) gates on the caller's role
+    /// instead of denying.
+    roles: std::sync::RwLock<HashMap<String, String>>,
+    /// component id → the caller's `app.user_id` claim (a `users.id` uuid).
+    /// Absent (the default) binds the empty string, which the compiled
+    /// ownership predicate `NULLIF(…, '')::uuid` turns into NULL → deny. When
+    /// set, a per-user RLS policy compares against the caller's own id.
+    users: std::sync::RwLock<HashMap<String, String>>,
     /// component id → the `(release version, manifest digest)` this pod carries.
     /// Absent (the default) ⇒ the production claim records nothing, so every
     /// path that never mounted a release identity is byte-unchanged. When set,
@@ -398,6 +409,31 @@ fn validate_claims(
     Ok(())
 }
 
+/// A caller's `app.role`: a non-empty `roles.name`. The column is free-form
+/// `text` and the value binds as a parameter, so no charset rule applies —
+/// but `''` is the deny floor every compiled role gate coalesces to, so it must
+/// not be spellable as a claim.
+fn valid_role(role: &str) -> bool {
+    !role.is_empty()
+}
+
+/// A caller's `app.user_id`: the canonical `8-4-4-4-12` hex uuid a `users.id`
+/// renders as. Local rather than imported because this claim is a uuid, not one
+/// of the `[A-Za-z0-9_-]` identities `wamn-control-registry` owns. Since R2 it
+/// is not the injection boundary (the value binds as `$6`); it fails closed on a
+/// value the compiled `NULLIF(…, '')::uuid` coercion would raise 22P02 on inside
+/// every ownership predicate.
+fn valid_user_id(user_id: &str) -> bool {
+    let mut groups = user_id.split('-');
+    for len in [8, 4, 4, 4, 12] {
+        match groups.next() {
+            Some(g) if g.len() == len && g.bytes().all(|b| b.is_ascii_hexdigit()) => {}
+            _ => return false,
+        }
+    }
+    groups.next().is_none()
+}
+
 /// True if `sql`'s first keyword is `SET` (covers `SET LOCAL` / `SET SESSION` /
 /// `SET ROLE` / `SET SESSION AUTHORIZATION`) or `RESET`, or if it calls
 /// `set_config` anywhere (CTE, sub-select, target list). `current_setting`
@@ -473,6 +509,8 @@ impl WamnPostgres {
             projects: std::sync::RwLock::new(HashMap::new()),
             schemas: std::sync::RwLock::new(HashMap::new()),
             runners: std::sync::RwLock::new(HashMap::new()),
+            roles: std::sync::RwLock::new(HashMap::new()),
+            users: std::sync::RwLock::new(HashMap::new()),
             release_identities: std::sync::RwLock::new(HashMap::new()),
             current_run: std::sync::RwLock::new(HashMap::new()),
             destroyed: Arc::new(AtomicU64::new(0)),
@@ -660,6 +698,57 @@ impl WamnPostgres {
             .cloned()
     }
 
+    /// Register the caller's `app.role` claim for a component id (4.2). When
+    /// set, every transaction the plugin opens for that component binds
+    /// `app.role`, so a compiled per-role RLS policy gates on the caller's role
+    /// instead of the `''` floor that denies it. Host-injected identity like the
+    /// tenant: the guest has no path to it, and [`reject_claim_mutation`] refuses
+    /// an in-band override.
+    pub fn set_role(&self, component_id: &str, role: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_role(role),
+            "invalid caller role {role:?}: a non-empty roles.name is required"
+        );
+        self.roles
+            .write()
+            .expect("roles lock poisoned")
+            .insert(component_id.to_string(), role.to_string());
+        Ok(())
+    }
+
+    pub(super) fn role_for(&self, component_id: &str) -> Option<String> {
+        self.roles
+            .read()
+            .expect("roles lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
+    /// Register the caller's `app.user_id` claim for a component id (4.2). When
+    /// set, every transaction the plugin opens for that component binds
+    /// `app.user_id`, so a compiled row-ownership RLS policy compares against
+    /// the caller's own `users.id` instead of NULL. Host-injected identity like
+    /// the tenant.
+    pub fn set_user_id(&self, component_id: &str, user_id: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            valid_user_id(user_id),
+            "invalid caller user id {user_id:?}: a canonical 8-4-4-4-12 uuid is required"
+        );
+        self.users
+            .write()
+            .expect("users lock poisoned")
+            .insert(component_id.to_string(), user_id.to_string());
+        Ok(())
+    }
+
+    pub(super) fn user_id_for(&self, component_id: &str) -> Option<String> {
+        self.users
+            .read()
+            .expect("users lock poisoned")
+            .get(component_id)
+            .cloned()
+    }
+
     /// Register the release this pod carries for a component id. The production
     /// claim writes it onto every run it leases, write-once. The bench harness
     /// and live tests call this directly; the host path feeds it from the loaded
@@ -742,7 +831,8 @@ impl WamnPostgres {
 
     /// Reap EVERY per-component-id claim registry this plugin keeps for a workload
     /// on teardown (R31): tenant, project, search_path schema, runner lease-owner,
-    /// the carried release identity, and the causation run context — all set at
+    /// the caller's role / user id, the carried release identity, and the
+    /// causation run context — all set at
     /// workload bind (or via the
     /// runner channel) and keyed by component id. Without this a stale claim
     /// survives unbind, the maps grow across workload churn, and a rebound
@@ -768,6 +858,14 @@ impl WamnPostgres {
         self.runners
             .write()
             .expect("runners lock poisoned")
+            .retain(|c, _| retain(c));
+        self.roles
+            .write()
+            .expect("roles lock poisoned")
+            .retain(|c, _| retain(c));
+        self.users
+            .write()
+            .expect("users lock poisoned")
             .retain(|c, _| retain(c));
         self.release_identities
             .write()
@@ -1517,8 +1615,8 @@ mod tests {
         assert!(pg.current_run_for("c1").is_none());
     }
 
-    // R31 — unbind reaps ALL FIVE per-component claim registries for a workload
-    // (tenant/project/schema/runner/causation) while leaving another workload's
+    // R31 — unbind reaps ALL SEVEN per-component claim registries for a workload
+    // (tenant/project/schema/runner/role/user/causation) while leaving another workload's
     // component untouched; the project-keyed `pools` map is never touched here.
     // Keyed by the workload-id prefix (the fork's builtin convention). An unknown
     // workload id is a no-op.
@@ -1532,6 +1630,8 @@ mod tests {
             pg.set_project(c, "proj").unwrap();
             pg.set_schema(c, "s_run").unwrap();
             pg.set_runner(c, "owner-1").unwrap();
+            pg.set_role(c, "inspector").unwrap();
+            pg.set_user_id(c, "6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b").unwrap();
             pg.set_current_run(
                 c,
                 Some(Causation {
@@ -1554,6 +1654,8 @@ mod tests {
         assert_eq!(pg.project_for("wl-a-component-0"), DEFAULT_PROJECT);
         assert_eq!(pg.schema_for("wl-a-component-0"), None);
         assert_eq!(pg.runner_for("wl-a-component-0"), None);
+        assert_eq!(pg.role_for("wl-a-component-0"), None);
+        assert_eq!(pg.user_id_for("wl-a-component-0"), None);
         assert!(pg.current_run_for("wl-a-component-0").is_none());
 
         // The other workload's component is untouched across the board.
@@ -1563,6 +1665,11 @@ mod tests {
         assert_eq!(
             pg.runner_for("wl-b-component-0").as_deref(),
             Some("owner-1")
+        );
+        assert_eq!(pg.role_for("wl-b-component-0").as_deref(), Some("inspector"));
+        assert_eq!(
+            pg.user_id_for("wl-b-component-0").as_deref(),
+            Some("6e1f2a3b-4c5d-4e6f-8a9b-0c1d2e3f4a5b")
         );
         assert_eq!(pg.current_run_for("wl-b-component-0").unwrap().run, "r1");
     }
@@ -1751,6 +1858,123 @@ mod tests {
             .unwrap()
             .get(0);
         assert_eq!(after.as_deref(), Some(""));
+    }
+
+    /// Rows a component sees for `sql` on the production one-shot path.
+    async fn visible_rows(pg: &WamnPostgres, component: &str, sql: &str) -> usize {
+        match pg.one_shot(component, sql, &[], true).await {
+            Ok(OneShotResult::Rows(rows)) => rows.rows.len(),
+            Ok(OneShotResult::Count(_)) => unreachable!("one_shot(want_rows) returns rows"),
+            Err(e) => panic!("one_shot {sql:?} failed: {e:?}"),
+        }
+    }
+
+    /// The 3.2 tenant floor plus the 3.5 row-ownership rule in the shape
+    /// `crates/schema/compiler/src/rls/compile.rs` emits (pinned by
+    /// `crates/schema/compiler/tests/rls.rs`), over a table the probe role does
+    /// not own so RLS applies to it.
+    fn rls_fixture_sql(schema: &str, probe: &str, tenant: &str, u1: &str, u2: &str) -> String {
+        format!(
+            "DROP SCHEMA IF EXISTS {schema} CASCADE; \
+             DROP ROLE IF EXISTS {probe}; \
+             CREATE ROLE {probe} LOGIN PASSWORD '{probe}' NOSUPERUSER NOBYPASSRLS; \
+             CREATE SCHEMA {schema}; \
+             CREATE TABLE {schema}.dispositions ( \
+                 tenant_id text NOT NULL, id int NOT NULL, inspector_id uuid NOT NULL); \
+             ALTER TABLE {schema}.dispositions ENABLE ROW LEVEL SECURITY; \
+             CREATE POLICY dispositions_tenant ON {schema}.dispositions \
+                 USING (tenant_id = NULLIF(current_setting('app.tenant', true), '')); \
+             CREATE POLICY \"dispositions_owner_0\" ON {schema}.dispositions AS RESTRICTIVE \
+                 FOR ALL \
+                 USING (COALESCE(current_setting('app.role', true), '') IN ('supervisor', 'admin') \
+                        OR \"inspector_id\" = NULLIF(current_setting('app.user_id', true), '')::uuid); \
+             INSERT INTO {schema}.dispositions VALUES ('{tenant}', 1, '{u1}'), ('{tenant}', 2, '{u2}'); \
+             GRANT USAGE ON SCHEMA {schema} TO {probe}; \
+             GRANT SELECT ON {schema}.dispositions TO {probe};"
+        )
+    }
+
+    // wamn-0h0g.23.1 — the compiled per-user / per-role rules key on `app.role`
+    // and `app.user_id`, and under their COALESCE / NULLIF deny floors a policy
+    // that is never handed those claims denies EVERYTHING. Before this bead
+    // `CLAIM_SQL` bound only tenant / statement_timeout / search_path /
+    // app.runner, so every per-user policy silently denied on the production
+    // path while `crates/schema/compiler/tests/rls.rs` passed on hand-written
+    // `SET LOCAL`. This drives the REAL plugin (`one_shot`) as a NOSUPERUSER
+    // NOBYPASSRLS role, so it fails against a `CLAIM_SQL` that does not inject
+    // the caller's identity.
+    #[tokio::test]
+    async fn live_compiled_per_user_policy_permits_the_injected_caller() {
+        const TENANT: &str = "rls-claim-live";
+        const COMPONENT: &str = "rls-claim-live-component";
+        const U1: &str = "11111111-1111-4111-8111-111111111111";
+        const U2: &str = "22222222-2222-4222-8222-222222222222";
+
+        let Some(admin_url) = test_pg_url() else {
+            return;
+        };
+        let suffix = std::process::id();
+        let schema = format!("wamn_rls_claim_{suffix}");
+        let probe = format!("wamn_rls_probe_{suffix}");
+        let admin = connect_raw(&admin_url).await;
+        admin
+            .batch_execute(&rls_fixture_sql(&schema, &probe, TENANT, U1, U2))
+            .await
+            .expect("seed the per-user RLS fixture as the superuser owner");
+
+        let pg = WamnPostgres::new(WamnPostgresConfig {
+            database_url: Some(database_url_for_role(&admin_url, &probe, &probe)),
+            pool_max_size: 2,
+            wait_timeout_ms: 2_000,
+            statement_timeout_ms: 5_000,
+            row_limit: 1_000,
+        })
+        .unwrap();
+        pg.set_tenant(COMPONENT, TENANT).unwrap();
+        pg.set_schema(COMPONENT, &schema).unwrap();
+        pg.set_role(COMPONENT, "inspector").unwrap();
+        pg.set_user_id(COMPONENT, U1).unwrap();
+
+        // CONTROL: the table is REACHABLE on this path — an aggregate returns its
+        // one row however many rows RLS filtered away, and a wrong search_path or
+        // a missing GRANT would raise instead. So a zero below is a policy
+        // denying, not a broken fixture.
+        assert_eq!(
+            visible_rows(&pg, COMPONENT, "SELECT count(*) FROM dispositions").await,
+            1,
+            "control: the probe role must reach the fixture table"
+        );
+
+        // An inspector sees ONLY the row it owns.
+        assert_eq!(
+            visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions WHERE id = 1").await,
+            1,
+            "the injected app.user_id must permit the caller's OWN row"
+        );
+        assert_eq!(
+            visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions WHERE id = 2").await,
+            0,
+            "the ownership rule must still deny another user's row"
+        );
+        assert_eq!(
+            visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
+            1
+        );
+
+        // …and an exempt role sees both, through the injected app.role.
+        pg.set_role(COMPONENT, "admin").unwrap();
+        assert_eq!(
+            visible_rows(&pg, COMPONENT, "SELECT id FROM dispositions ORDER BY id").await,
+            2,
+            "the injected app.role must satisfy the exempt-role gate"
+        );
+
+        admin
+            .batch_execute(&format!(
+                "DROP SCHEMA {schema} CASCADE; DROP OWNED BY {probe}; DROP ROLE {probe};"
+            ))
+            .await
+            .expect("drop the per-user RLS fixture");
     }
 
     // R18 — the post_create hook runs on connect; a successful checkout from the
