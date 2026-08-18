@@ -70,6 +70,18 @@ pub enum FailureKind {
     /// [`DEDUP_ID_FIELD`] string in it, so there is no key the boundary could
     /// dedup the publish on. Routed to the node's error edge if it has one.
     MissingDedupId,
+    /// A node returned a context replacement that is not a JSON object
+    /// ([`ApplyErrorKind::InvalidContext`]). Component data, so it fails one
+    /// delivery; routed to the node's error edge if it has one.
+    InvalidContext,
+    /// A [`Terminal::Respond`] node was reached by a delivery with no caller
+    /// attached ([`ApplyErrorKind::RespondWithoutCaller`]) — an authored wiring
+    /// meeting an ingress path it does not fit.
+    RespondWithoutCaller,
+    /// A second terminal node emitted after this delivery already had a verdict
+    /// ([`ApplyErrorKind::SecondVerdict`]). The first verdict stands and the
+    /// second node is the failure.
+    SecondVerdict,
 }
 
 /// The recorded failure of a walk.
@@ -242,6 +254,34 @@ impl ApplyError {
     /// Which boundary the transition broke.
     pub fn kind(&self) -> &ApplyErrorKind {
         &self.kind
+    }
+
+    /// The walk failure this refusal folds into, with its stable code, or `None`
+    /// when it cannot be folded at all.
+    ///
+    /// The split is the whole point of the two groups.
+    /// [`ApplyErrorKind::InvalidContext`] is a component's returned document;
+    /// [`ApplyErrorKind::RespondWithoutCaller`] and
+    /// [`ApplyErrorKind::SecondVerdict`] are an authored wiring meeting a
+    /// delivery it does not fit. All three are DATA, so they end ONE delivery.
+    /// The other three describe a driver feeding back an outcome the walk never
+    /// handed out — a defect in the driver, which no wiring can recover from
+    /// and which [`route`](crate::route) therefore still panics on.
+    fn node_data_failure(&self) -> Option<(FailureKind, &'static str)> {
+        match &self.kind {
+            ApplyErrorKind::InvalidContext(_) => {
+                Some((FailureKind::InvalidContext, "invalid-context"))
+            }
+            ApplyErrorKind::RespondWithoutCaller(_) => {
+                Some((FailureKind::RespondWithoutCaller, "respond-without-caller"))
+            }
+            ApplyErrorKind::SecondVerdict(_) => {
+                Some((FailureKind::SecondVerdict, "second-verdict"))
+            }
+            ApplyErrorKind::Terminal(_)
+            | ApplyErrorKind::NoActiveNode
+            | ApplyErrorKind::MismatchedNode { .. } => None,
+        }
     }
 }
 
@@ -500,6 +540,35 @@ impl Wiring {
                 self.error_or_fail(walk, &call.node, detail, FailureKind::InvalidInput);
             }
         }
+        Ok(())
+    }
+
+    /// Fold an [`ApplyError`] that DATA caused into the walk: `node`'s error
+    /// edge if it has one, otherwise a failed walk carrying the matching
+    /// [`FailureKind`]. Gives the error back unchanged when it instead describes
+    /// a driver feeding back an outcome the walk never handed out, which no
+    /// wiring can recover from.
+    ///
+    /// [`Wiring::apply`] deliberately does not do this itself: its refusal is
+    /// atomic, so a driver that can re-ask its component sees the walk exactly
+    /// as it found it. Folding is the driver's decision, and
+    /// [`route`](crate::route) — which hands out one call and feeds back its
+    /// answer, so cannot re-ask anything — makes it.
+    pub fn fail_on_node_data(
+        &self,
+        walk: &mut Walk,
+        node: &str,
+        error: ApplyError,
+    ) -> Result<(), ApplyError> {
+        let Some((kind, code)) = error.node_data_failure() else {
+            return Err(error);
+        };
+        self.error_or_fail(
+            walk,
+            node,
+            ErrorDetail::coded(code, error.to_string()),
+            kind,
+        );
         Ok(())
     }
 

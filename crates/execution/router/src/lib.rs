@@ -27,7 +27,13 @@
 //! let mut walk = wiring.start(delivery);
 //! loop {
 //!     match wiring.next(&mut walk, now_ms()) {
-//!         Step::Invoke(call) => { let o = invoke(&call).await; wiring.apply(&mut walk, &call, o, now_ms())?; }
+//!         Step::Invoke(call) => {
+//!             let o = invoke(&call).await;
+//!             // `?` here propagates a component's own bad data as a host fault.
+//!             // Drivers that cannot re-ask their component fold it instead:
+//!             // `wiring.fail_on_node_data(&mut walk, &call.node, refused)?`.
+//!             wiring.apply(&mut walk, &call, o, now_ms())?;
+//!         }
 //!         Step::Wait { until_ms, throttle, .. } => { /* gate `throttle`, wait to until_ms */ }
 //!         Step::Done(status) => break status,
 //!     }
@@ -111,9 +117,17 @@ pub fn route(delivery: Delivery, wiring: &Wiring, invoker: &mut impl NodeInvoker
             Step::Invoke(call) => {
                 let outcome = invoker.invoke(&call);
                 let now = invoker.now_ms();
-                wiring
-                    .apply(&mut walk, &call, outcome, now)
-                    .expect("the walk accepts the outcome of the call it handed out");
+                if let Err(refused) = wiring.apply(&mut walk, &call, outcome, now) {
+                    // A refusal DATA caused — a component's context replacement,
+                    // or a wiring's terminal meeting a delivery it does not fit —
+                    // ends this delivery down the node's error edge. The panic is
+                    // kept for the refusals that describe a driver feeding back an
+                    // outcome the walk never handed out, which this loop, handing
+                    // out one call and feeding back its answer, cannot do.
+                    wiring
+                        .fail_on_node_data(&mut walk, &call.node, refused)
+                        .expect("the walk accepts the outcome of the call it handed out");
+                }
             }
         }
     }
