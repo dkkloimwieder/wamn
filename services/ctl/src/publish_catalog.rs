@@ -685,6 +685,16 @@ pub async fn ensure_catalog_storage(client: &tokio_postgres::Client) -> anyhow::
     Ok(())
 }
 
+/// Converge the catalog schema's role grants on an ALREADY-PROVISIONED database.
+///
+/// `deploy/sql/catalog-schema.sql` applies whole only on a fresh install, so this
+/// is the only path that reaches a database provisioned by an earlier revision —
+/// and it is re-run on every publish, which means an arm missing here silently
+/// restores whatever the old file granted. Two boundaries live in one batch: the
+/// authoring split between `wamn_app` and `wamn_scenario_author`, and the
+/// wamn-0h0g.12.20-.12.29 confinement that leaves the guest-reachable `wamn_app`
+/// LOGIN read-only on the ten schema-of-record relations no production writer
+/// reaches through it. Each half asserts its own effective ACL before returning.
 async fn ensure_authoring_catalog_privileges(
     client: &tokio_postgres::Client,
 ) -> anyhow::Result<()> {
@@ -692,8 +702,6 @@ async fn ensure_authoring_catalog_privileges(
         .batch_execute(
             "REVOKE wamn_scenario_author FROM wamn_app; \
              GRANT USAGE ON SCHEMA catalog TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON catalog.catalogs FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app; \
              REVOKE ALL PRIVILEGES ON catalog.flow_artifacts FROM PUBLIC, wamn_app, wamn_scenario_author; \
              GRANT SELECT ON catalog.flow_artifacts TO wamn_app, wamn_scenario_author; \
              REVOKE ALL PRIVILEGES ON catalog.release_manifests FROM PUBLIC, wamn_app, wamn_scenario_author; \
@@ -746,7 +754,51 @@ async fn ensure_authoring_catalog_privileges(
                  RAISE EXCEPTION USING ERRCODE = '42501', \
                    MESSAGE = 'authoring-effective-privilege-out-of-bounds:catalog'; \
                END IF; \
-             END $effective_acl$;",
+             END $effective_acl$; \
+             DO $confine_catalog$ DECLARE rel text; BEGIN \
+               FOREACH rel IN ARRAY ARRAY[ \
+                 'catalog.catalogs', \
+                 'catalog.schema_migrations', \
+                 'catalog.entities', \
+                 'catalog.fields', \
+                 'catalog.relations', \
+                 'catalog.indexes', \
+                 'catalog.constraints', \
+                 'catalog.rls_policies', \
+                 'catalog.seed_datasets', \
+                 'catalog.event_registrations'] LOOP \
+                 IF to_regclass(rel) IS NULL THEN CONTINUE; END IF; \
+                 EXECUTE format( \
+                   'REVOKE ALL PRIVILEGES ON %s FROM PUBLIC, wamn_app, wamn_scenario_author', rel); \
+                 EXECUTE format('GRANT SELECT ON %s TO wamn_app', rel); \
+                 IF has_any_column_privilege('wamn_app', rel, 'INSERT,REFERENCES') \
+                    OR has_table_privilege('wamn_app', rel, 'UPDATE,DELETE,TRUNCATE,TRIGGER') \
+                    OR has_any_column_privilege( \
+                         'wamn_scenario_author', rel, 'SELECT,INSERT,UPDATE,REFERENCES') \
+                    OR has_table_privilege('wamn_scenario_author', rel, 'DELETE,TRUNCATE,TRIGGER') THEN \
+                   RAISE EXCEPTION USING ERRCODE = '42501', \
+                     MESSAGE = 'catalog-schema-model-privilege-out-of-bounds:' || rel; \
+                 END IF; \
+               END LOOP; \
+               IF to_regclass('catalog.event_registrations') IS NOT NULL THEN \
+                 EXECUTE 'GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app'; \
+                 IF NOT has_column_privilege( \
+                          'wamn_app', 'catalog.event_registrations', 'tenant_id', 'UPDATE') \
+                    OR has_column_privilege( \
+                         'wamn_app', 'catalog.event_registrations', 'catalog_id', 'UPDATE') \
+                    OR has_column_privilege( \
+                         'wamn_app', 'catalog.event_registrations', 'registration_id', 'UPDATE') \
+                    OR has_column_privilege( \
+                         'wamn_app', 'catalog.event_registrations', 'flow_id', 'UPDATE') \
+                    OR has_column_privilege( \
+                         'wamn_app', 'catalog.event_registrations', 'entity_id', 'UPDATE') \
+                    OR has_column_privilege( \
+                         'wamn_app', 'catalog.event_registrations', 'registration', 'UPDATE') THEN \
+                   RAISE EXCEPTION USING ERRCODE = '42501', \
+                     MESSAGE = 'catalog-registration-lock-grant-out-of-bounds'; \
+                 END IF; \
+               END IF; \
+             END $confine_catalog$;",
         )
         .await
         .context("converge host-only catalog authoring privileges")

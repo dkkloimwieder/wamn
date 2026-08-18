@@ -5861,7 +5861,13 @@ mod tests {
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
+GRANT SELECT ON catalog.event_registrations TO wamn_app;
+-- wamn-0h0g.12.29: callable-flow admission locks the live registration with
+-- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
+-- column for ANY row-locking clause. `tenant_id` is the only column whose
+-- FORCE-RLS WITH CHECK admits nothing but the value already in the row, so this
+-- grant buys the lock and carries no semantic rewrite authority.
+GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 -- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
@@ -6488,13 +6494,12 @@ CREATE INDEX event_registrations_by_entity
         assert!(!catalog_tail_is_complete(truncated));
 
         let without_grant = CATALOG_SCHEMA_SQL.replace(
-            "GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;\n",
+            "GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;\n",
             "",
         );
         assert!(!catalog_tail_is_complete(&without_grant));
 
-        let grant =
-            "GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;\n";
+        let grant = "GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;\n";
         let before_tail = CATALOG_SCHEMA_SQL
             .strip_suffix(EVENT_REGISTRATIONS_TAIL)
             .expect("canonical schema has the guarded tail");

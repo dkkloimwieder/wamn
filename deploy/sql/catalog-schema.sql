@@ -76,7 +76,9 @@ ALTER TABLE catalog.catalogs FORCE ROW LEVEL SECURITY;
 CREATE POLICY catalogs_tenant ON catalog.catalogs
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.catalogs TO wamn_app;
+-- wamn-0h0g.12.20: every production writer is the superuser publish/migrate
+-- shell, so the guest-reachable app LOGIN reads this relation and never writes it.
+GRANT SELECT ON catalog.catalogs TO wamn_app;
 
 -- Single-applied invariant: exactly one live version per (catalog, environment).
 CREATE UNIQUE INDEX catalogs_one_applied_per_env
@@ -1470,8 +1472,9 @@ ALTER TABLE catalog.authoring_command_audit
 -- Destructive authorization evidence lives only in the operations database.
 -- `from_version` is NULL for the
 -- first materialization of a catalog. Forward-only: the PK forbids recording the
--- same (catalog, environment, to_version) twice; wamn_app is granted SELECT +
--- INSERT only (no UPDATE/DELETE) so history is append-only.
+-- same (catalog, environment, to_version) twice. The journal row is appended by
+-- the superuser migrate/publish shell inside that same transaction, so
+-- wamn-0h0g.12.21 leaves wamn_app SELECT only.
 -- ---------------------------------------------------------------------------
 CREATE TABLE catalog.schema_migrations (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
@@ -1491,7 +1494,7 @@ ALTER TABLE catalog.schema_migrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY schema_migrations_tenant ON catalog.schema_migrations
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT ON catalog.schema_migrations TO wamn_app;
+GRANT SELECT ON catalog.schema_migrations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Entities. `is_system` = platform-provided, structure-locked but extensible.
@@ -1515,7 +1518,7 @@ ALTER TABLE catalog.entities FORCE ROW LEVEL SECURITY;
 CREATE POLICY entities_tenant ON catalog.entities
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.entities TO wamn_app;
+GRANT SELECT ON catalog.entities TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Fields. `type` is the FieldType as JSON — the exact shape crates/schema/model
@@ -1549,7 +1552,7 @@ ALTER TABLE catalog.fields FORCE ROW LEVEL SECURITY;
 CREATE POLICY fields_tenant ON catalog.fields
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.fields TO wamn_app;
+GRANT SELECT ON catalog.fields TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Relations. Navigational metadata over the physical FKs (a Reference field is
@@ -1579,7 +1582,7 @@ ALTER TABLE catalog.relations FORCE ROW LEVEL SECURITY;
 CREATE POLICY relations_tenant ON catalog.relations
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.relations TO wamn_app;
+GRANT SELECT ON catalog.relations TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Secondary indexes. `fields` is the ordered list of field_ids covered.
@@ -1601,7 +1604,7 @@ ALTER TABLE catalog.indexes FORCE ROW LEVEL SECURITY;
 CREATE POLICY indexes_tenant ON catalog.indexes
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.indexes TO wamn_app;
+GRANT SELECT ON catalog.indexes TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Table-level constraints. `kind` is unique | check; `fields` carries the
@@ -1626,7 +1629,7 @@ ALTER TABLE catalog.constraints FORCE ROW LEVEL SECURITY;
 CREATE POLICY constraints_tenant ON catalog.constraints
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.constraints TO wamn_app;
+GRANT SELECT ON catalog.constraints TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- RLS access rules (3.5, crates/schema/compiler/src/rls). Per-entity access rules tied to
@@ -1652,7 +1655,7 @@ ALTER TABLE catalog.rls_policies FORCE ROW LEVEL SECURITY;
 CREATE POLICY rls_policies_tenant ON catalog.rls_policies
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.rls_policies TO wamn_app;
+GRANT SELECT ON catalog.rls_policies TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Seed datasets (3.6, crates/schema/compiler/src/seed). Reference/fixture data for a catalog —
@@ -1675,7 +1678,7 @@ ALTER TABLE catalog.seed_datasets FORCE ROW LEVEL SECURITY;
 CREATE POLICY seed_datasets_tenant ON catalog.seed_datasets
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.seed_datasets TO wamn_app;
+GRANT SELECT ON catalog.seed_datasets TO wamn_app;
 
 -- ---------------------------------------------------------------------------
 -- Event registrations (EVT-REG, D19 v3 §5, crates/events/registration). One row per
@@ -1712,7 +1715,13 @@ ALTER TABLE catalog.event_registrations FORCE ROW LEVEL SECURITY;
 CREATE POLICY event_registrations_tenant ON catalog.event_registrations
     USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
     WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
-GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.event_registrations TO wamn_app;
+GRANT SELECT ON catalog.event_registrations TO wamn_app;
+-- wamn-0h0g.12.29: callable-flow admission locks the live registration with
+-- `FOR KEY SHARE` as wamn_app, and PostgreSQL demands UPDATE on at least one
+-- column for ANY row-locking clause. `tenant_id` is the only column whose
+-- FORCE-RLS WITH CHECK admits nothing but the value already in the row, so this
+-- grant buys the lock and carries no semantic rewrite authority.
+GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 -- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
