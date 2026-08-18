@@ -34,6 +34,7 @@ fn node_cfg(id: &str, component: &str, config: Value) -> WiringNode {
         operation: "run".to_string(),
         config,
         connection: None,
+        terminal: None,
     }
 }
 
@@ -97,6 +98,7 @@ fn run(
     let mut walk = wiring.start(Delivery {
         id: delivery_id.to_string(),
         payload,
+        caller_attached: false,
     });
     let status = loop {
         match wiring.next(&mut walk, clock.get()) {
@@ -151,6 +153,7 @@ fn delivery(payload: Value) -> Delivery {
     Delivery {
         id: "d1".to_string(),
         payload,
+        caller_attached: false,
     }
 }
 

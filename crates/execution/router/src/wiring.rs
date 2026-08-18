@@ -10,6 +10,8 @@ use std::collections::HashMap;
 
 use serde_json::Value;
 
+use crate::terminal::Terminal;
+
 /// Default per-delivery hop limit (see [`Wiring::set_hop_limit`]): generous for
 /// a legitimate loop, but bounds a permitted cycle that never terminates.
 pub const DEFAULT_HOP_LIMIT: u64 = 10_000;
@@ -28,6 +30,9 @@ pub struct WiringNode {
     pub config: Value,
     /// The connection handle bound to this node, if any.
     pub connection: Option<String>,
+    /// The [`Terminal`] this node ends the delivery with, if it is one. `None`
+    /// on ordinary nodes.
+    pub terminal: Option<Terminal>,
 }
 
 /// One directed edge, leaving `from` on `from_port` and arriving at `to`.

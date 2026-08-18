@@ -17,6 +17,7 @@ use serde_json::Value;
 
 use crate::outcome::{ERROR_PORT, ErrorDetail, NodeError, NodeOutcome};
 use crate::retry::{RetryPolicy, ThrottleKey};
+use crate::terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 use crate::wiring::Wiring;
 
 /// One delivery entering the router: the unit of work a walk carries.
@@ -26,6 +27,11 @@ pub struct Delivery {
     pub id: String,
     /// The payload admitted at the entry node.
     pub payload: Value,
+    /// Whether a synchronous caller is waiting on this delivery: true for
+    /// ingress paths 1 (hot HTTP) and 3 (`begin`/`wait`), false for path 2
+    /// (streams). It is what makes [`Terminal::Respond`] answerable and what
+    /// separates a legitimate [`Verdict::Discard`] from a stranded caller.
+    pub caller_attached: bool,
 }
 
 /// Terminal + in-progress walk status.
@@ -55,6 +61,15 @@ pub enum FailureKind {
     /// permitted loop that never terminated. Unconditionally terminal: never
     /// routed to an error edge, which could itself be part of the loop.
     HopLimit,
+    /// The frontier emptied with a synchronous caller still waiting and no
+    /// [`Terminal::Respond`] reached. Terminal rather than a
+    /// [`Verdict::Discard`]: discarding here would hang the caller until its
+    /// own timeout, reporting nothing about why.
+    UnreleasedCaller,
+    /// A [`Terminal::Emit`] node emitted an event with no
+    /// [`DEDUP_ID_FIELD`] string in it, so there is no key the boundary could
+    /// dedup the publish on. Routed to the node's error edge if it has one.
+    MissingDedupId,
 }
 
 /// The recorded failure of a walk.
@@ -107,6 +122,12 @@ pub struct Walk {
     context: Value,
     result: Value,
     failure: Option<Failure>,
+    /// Whether this delivery arrived with a synchronous caller waiting
+    /// ([`Delivery::caller_attached`]).
+    caller_attached: bool,
+    /// The verdict a terminal node recorded, or [`Verdict::Discard`] settled at
+    /// frontier exhaustion. `None` until then, and on a failed walk.
+    verdict: Option<Verdict>,
 }
 
 impl Walk {
@@ -138,6 +159,12 @@ impl Walk {
     /// The recorded failure, if the walk failed.
     pub fn failure(&self) -> Option<&Failure> {
         self.failure.as_ref()
+    }
+    /// What this delivery ended up doing: `Some` once a terminal node has been
+    /// reached or the frontier has emptied cleanly, `None` while running and on
+    /// a failed walk.
+    pub fn verdict(&self) -> Option<&Verdict> {
+        self.verdict.as_ref()
     }
 }
 
@@ -203,6 +230,12 @@ pub enum ApplyErrorKind {
     MismatchedNode { expected: String, actual: String },
     /// A context replacement that is not a JSON object.
     InvalidContext(Value),
+    /// The named [`Terminal::Respond`] node emitted, but no caller is attached
+    /// to this delivery — a wiring answering nobody.
+    RespondWithoutCaller(String),
+    /// The named terminal node emitted after this delivery already had a
+    /// verdict. One delivery ends once.
+    SecondVerdict(String),
 }
 
 impl ApplyError {
@@ -222,6 +255,12 @@ impl std::fmt::Display for ApplyError {
             }
             ApplyErrorKind::InvalidContext(value) => {
                 write!(f, "context replacement must be an object, got {value}")
+            }
+            ApplyErrorKind::RespondWithoutCaller(node) => {
+                write!(f, "node {node:?} responds, but no caller is attached")
+            }
+            ApplyErrorKind::SecondVerdict(node) => {
+                write!(f, "node {node:?} is a second terminal for this delivery")
             }
         }
     }
@@ -248,6 +287,8 @@ impl Wiring {
             context: Value::Object(Default::default()),
             result: Value::Null,
             failure: None,
+            caller_attached: delivery.caller_attached,
+            verdict: None,
         }
     }
 
@@ -272,10 +313,7 @@ impl Wiring {
                         throttle: None,
                     });
                 }
-                None => {
-                    walk.status = WalkStatus::Completed;
-                    return Step::Done(WalkStatus::Completed);
-                }
+                None => return Step::Done(self.settle(walk)),
             }
         }
         {
@@ -307,6 +345,29 @@ impl Wiring {
         walk.hops += 1;
         let a = walk.current.as_ref().expect("current set above");
         Step::Invoke(self.build_call(walk, a))
+    }
+
+    /// End a walk whose frontier emptied. A verdict already recorded by a
+    /// terminal node stands; otherwise this is [`Verdict::Discard`] — unless a
+    /// caller is still waiting, which is [`FailureKind::UnreleasedCaller`].
+    fn settle(&self, walk: &mut Walk) -> WalkStatus {
+        if walk.verdict.is_none() {
+            if walk.caller_attached {
+                walk.status = WalkStatus::Failed;
+                walk.failure = Some(Failure {
+                    node: self.entry().to_string(),
+                    kind: FailureKind::UnreleasedCaller,
+                    detail: ErrorDetail::coded(
+                        "unreleased-caller",
+                        "frontier emptied with a caller attached and no respond",
+                    ),
+                });
+                return WalkStatus::Failed;
+            }
+            walk.verdict = Some(Verdict::Discard);
+        }
+        walk.status = WalkStatus::Completed;
+        WalkStatus::Completed
     }
 
     fn build_call(&self, walk: &Walk, a: &Active) -> NodeCall {
@@ -370,12 +431,40 @@ impl Wiring {
                         kind: ApplyErrorKind::InvalidContext(replacement.clone()),
                     });
                 }
+                // Decided before anything mutates, so a rejected verdict leaves
+                // the walk exactly as it found it.
+                let verdict = match self.node(&call.node).and_then(|node| node.terminal) {
+                    None => None,
+                    Some(terminal) => {
+                        match terminal_verdict(walk, &call.node, terminal, &payload)? {
+                            recorded @ Some(_) => recorded,
+                            // An emit node that produced no dedup id published
+                            // nothing, so it is a node data failure taking the
+                            // ordinary error-edge route, not a verdict.
+                            None => {
+                                self.error_or_fail(
+                                    walk,
+                                    &call.node,
+                                    ErrorDetail::coded(
+                                        "missing-dedup-id",
+                                        format!("emit node emitted no {DEDUP_ID_FIELD} string"),
+                                    ),
+                                    FailureKind::MissingDedupId,
+                                );
+                                return Ok(());
+                            }
+                        }
+                    }
+                };
                 walk.current = None;
                 walk.step_seq += 1;
                 *walk.visits.entry(call.node.clone()).or_default() += 1;
                 walk.result = payload.clone();
                 if let Some(replacement) = context {
                     walk.context = replacement;
+                }
+                if verdict.is_some() {
+                    walk.verdict = verdict;
                 }
                 self.enqueue_successors(walk, &call.node, &port, payload);
             }
@@ -453,6 +542,39 @@ impl Wiring {
             // above does not.
             self.route_error(walk, node, detail.to_error_payload());
         }
+    }
+}
+
+/// The [`Verdict`] a terminal node's success records. `Ok(None)` means a
+/// [`Terminal::Emit`] node emitted no [`DEDUP_ID_FIELD`] string — the one case
+/// the caller turns into a routed failure instead. Pure: it decides, and the
+/// caller applies.
+fn terminal_verdict(
+    walk: &Walk,
+    node: &str,
+    terminal: Terminal,
+    payload: &Value,
+) -> Result<Option<Verdict>, ApplyError> {
+    if walk.verdict.is_some() {
+        return Err(ApplyError {
+            kind: ApplyErrorKind::SecondVerdict(node.to_string()),
+        });
+    }
+    match terminal {
+        Terminal::Respond if !walk.caller_attached => Err(ApplyError {
+            kind: ApplyErrorKind::RespondWithoutCaller(node.to_string()),
+        }),
+        Terminal::Respond => Ok(Some(Verdict::Respond {
+            payload: payload.clone(),
+        })),
+        Terminal::Emit => Ok(payload
+            .get(DEDUP_ID_FIELD)
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(|id| Verdict::Emit {
+                event: payload.clone(),
+                dedup_id: id.to_string(),
+            })),
     }
 }
 

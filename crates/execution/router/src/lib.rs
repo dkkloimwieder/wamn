@@ -11,8 +11,11 @@
 //!
 //! The walk holds no clock, no pool, no cache, no runtime and no DB. Node
 //! invocation is a plain Rust trait so the typed WIT seam binds outside this
-//! crate; instance pooling, wiring resolution and caching, and the terminal
-//! verdict (`respond` / `emit` / discard) belong to the host that drives it.
+//! crate; instance pooling and wiring resolution belong to the host that drives
+//! it. The walk does DECIDE the terminal [`Verdict`] — `respond` / `emit` /
+//! discard — because only the walk knows which node ended the delivery; acting
+//! on that verdict (answering the caller, publishing to the boundary) is the
+//! host's.
 //!
 //! ## Driving the walk
 //! [`route`] is the synchronous entry point and drives the loop for you. A host
@@ -31,6 +34,7 @@
 
 mod outcome;
 mod retry;
+mod terminal;
 mod walk;
 mod wiring;
 
@@ -40,6 +44,8 @@ use serde_json::Value;
 pub use outcome::{ERROR_PORT, ErrorDetail, MAIN_PORT, NodeError, NodeOutcome, RateLimitDetail};
 #[doc(inline)]
 pub use retry::{RetryPolicy, ThrottleKey};
+#[doc(inline)]
+pub use terminal::{DEDUP_ID_FIELD, Terminal, Verdict};
 #[doc(inline)]
 pub use walk::{
     ApplyError, ApplyErrorKind, Delivery, Failure, FailureKind, NodeCall, Step, Walk, WalkStatus,
@@ -72,6 +78,11 @@ pub struct Outcome {
     pub failure: Option<Failure>,
     /// Invocations handed out, against the wiring's hop limit.
     pub hops: u64,
+    /// What the delivery ended up doing, for the host to carry out. `None` when
+    /// the walk failed before reaching a terminal — a failure is not a verdict,
+    /// and turning one into a caller's answer is ingress's decision, not the
+    /// walk's.
+    pub verdict: Option<Verdict>,
 }
 
 /// Walk `delivery` through `wiring` to a terminal status.
@@ -86,6 +97,7 @@ pub fn route(delivery: Delivery, wiring: &Wiring, invoker: &mut impl NodeInvoker
                     result: walk.result().clone(),
                     failure: walk.failure().cloned(),
                     hops: walk.hops(),
+                    verdict: walk.verdict().cloned(),
                 };
             }
             Step::Wait {
@@ -96,7 +108,7 @@ pub fn route(delivery: Delivery, wiring: &Wiring, invoker: &mut impl NodeInvoker
                 let now = invoker.now_ms();
                 wiring
                     .apply(&mut walk, &call, outcome, now)
-                    .expect("the call came from this walk");
+                    .expect("the walk accepts the outcome of the call it handed out");
             }
         }
     }

@@ -19,6 +19,7 @@ fn node(id: &str, component: &str) -> WiringNode {
         operation: "run".to_string(),
         config: Value::Null,
         connection: None,
+        terminal: None,
     }
 }
 
@@ -35,6 +36,7 @@ fn started(wiring: &Wiring, payload: Value) -> Walk {
     wiring.start(Delivery {
         id: "run".to_string(),
         payload,
+        caller_attached: false,
     })
 }
 
