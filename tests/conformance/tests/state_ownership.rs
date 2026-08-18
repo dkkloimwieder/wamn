@@ -137,6 +137,10 @@ struct StateFamily {
     readers: Vec<String>,
     compatibility_horizon: String,
     drift_gate: String,
+    #[serde(default)]
+    lifecycle: Lifecycle,
+    #[serde(default)]
+    superseded_by: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -150,6 +154,26 @@ struct Ownership {
     readers: Vec<String>,
     compatibility_horizon: String,
     drift_gate: String,
+    #[serde(default)]
+    lifecycle: Lifecycle,
+    #[serde(default)]
+    superseded_by: Vec<String>,
+}
+
+/// Lifecycle state of a declared relation.
+///
+/// `retired` names a relation whose static writer was deleted rather than
+/// delegated. `writers: []` is evidence toward author ownership, never a
+/// definition of it, so a retired relation is separated from tenant business
+/// state by a mandatory forwarding address and a full revoke. The state is
+/// transitional: its population is expected to trend to zero, and a relation
+/// left retired past its successor's landing is a filed bug, not a status.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Lifecycle {
+    #[default]
+    Active,
+    Retired,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -259,6 +283,8 @@ fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), Strin
             &object.ownership.readers,
             &object.ownership.compatibility_horizon,
             &object.ownership.drift_gate,
+            object.ownership.lifecycle,
+            &object.ownership.superseded_by,
         )?;
     }
     for family in &manifest.families {
@@ -283,6 +309,8 @@ fn validate_manifest(repository: &Path, manifest: &Manifest) -> Result<(), Strin
             &family.readers,
             &family.compatibility_horizon,
             &family.drift_gate,
+            family.lifecycle,
+            &family.superseded_by,
         )?;
     }
 
@@ -426,6 +454,8 @@ fn validate_owned_state(
     readers: &[String],
     compatibility_horizon: &str,
     drift_gate: &str,
+    lifecycle: Lifecycle,
+    superseded_by: &[String],
 ) -> Result<(), String> {
     for (field, value) in [
         ("plane", plane),
@@ -467,7 +497,63 @@ fn validate_owned_state(
             return Err(format!("`{id}` references unknown principal `{principal}`"));
         }
     }
+    validate_lifecycle(manifest, id, plane, writers, lifecycle, superseded_by)
+}
+
+/// `retired` is a forwarding address, not a parking permit: it is available
+/// only to a relation that has already lost its static writer, and it must name
+/// the registered relation in the same plane that took the writes over.
+fn validate_lifecycle(
+    manifest: &Manifest,
+    id: &str,
+    plane: &str,
+    writers: &[String],
+    lifecycle: Lifecycle,
+    superseded_by: &[String],
+) -> Result<(), String> {
+    match lifecycle {
+        Lifecycle::Active => {
+            if !superseded_by.is_empty() {
+                return Err(format!(
+                    "active `{id}` must not name a superseding relation {superseded_by:?}"
+                ));
+            }
+        }
+        Lifecycle::Retired => {
+            if !writers.is_empty() {
+                return Err(format!(
+                    "retired `{id}` must not declare a static writer, found {writers:?}"
+                ));
+            }
+            if superseded_by.is_empty() {
+                return Err(format!(
+                    "retired `{id}` must name the relation that took over"
+                ));
+            }
+            for successor in superseded_by {
+                if successor == id {
+                    return Err(format!("retired `{id}` cannot supersede itself"));
+                }
+                if !is_registered_in_plane(manifest, successor, plane) {
+                    return Err(format!(
+                        "retired `{id}` names superseding relation `{successor}`, which is not registered in the `{plane}` plane"
+                    ));
+                }
+            }
+        }
+    }
     Ok(())
+}
+
+fn is_registered_in_plane(manifest: &Manifest, id: &str, plane: &str) -> bool {
+    manifest
+        .objects
+        .iter()
+        .any(|object| object.id == id && object.ownership.plane == plane)
+        || manifest
+            .families
+            .iter()
+            .any(|family| family.id == id && family.plane == plane)
 }
 
 fn validate_temporary_writers(manifest: &Manifest) -> Result<(), String> {
@@ -1540,18 +1626,143 @@ fn conflicting_second_migration_owner_is_rejected() {
     assert!(error.contains("exactly one migration owner"), "{error}");
 }
 
+/// The relation this test is anchored on was the only witness the
+/// "no static writer ⇒ author-SQL writable" rule ever had, and it was the
+/// counterexample: its writer was deleted, not delegated. `writers: []` now
+/// licenses author ownership **or** a completed retirement, never both.
 #[test]
-fn a_relation_with_only_author_sql_mutation_may_have_no_static_writer() {
+fn a_retired_relation_may_have_no_static_writer_when_it_names_its_successor() {
     let repository = repository();
     let manifest = read_manifest(&repository);
     let flows = manifest
         .objects
         .iter()
-        .find(|object| object.id == "wamn_run.flows")
+        .find(|object| object.id == "wamn_run.flows" && object.ownership.plane == "project")
         .expect("flows ownership record");
 
     assert!(flows.ownership.writers.is_empty());
-    validate_manifest(&repository, &manifest).expect("author-only relation is valid");
+    assert_eq!(flows.ownership.lifecycle, Lifecycle::Retired);
+    assert_eq!(
+        flows.ownership.superseded_by,
+        ["catalog.flow_artifacts", "catalog.release_flows"]
+    );
+    for successor in &flows.ownership.superseded_by {
+        assert!(
+            is_registered_in_plane(&manifest, successor, "project"),
+            "{successor} is not a registered project-plane relation"
+        );
+    }
+    validate_manifest(&repository, &manifest).expect("retired relation is valid");
+}
+
+/// Binding decay clause (owner ruling R10): `retired` is transitional and its
+/// population must trend to zero. Pinning the roster forces every retirement
+/// and every disposition through a conscious edit here, so the state cannot
+/// become a third ownership category that deletions park in forever. The
+/// disposition bead for the sole inhabitant is `wamn-0h0g.12.102`.
+#[test]
+fn the_retired_population_is_pinned_by_the_decay_clause() {
+    let manifest = read_manifest(&repository());
+    let retired = manifest
+        .objects
+        .iter()
+        .filter(|object| object.ownership.lifecycle == Lifecycle::Retired)
+        .map(|object| object.id.as_str())
+        .chain(
+            manifest
+                .families
+                .iter()
+                .filter(|family| family.lifecycle == Lifecycle::Retired)
+                .map(|family| family.id.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    assert_eq!(retired, BTreeSet::from(["wamn_run.flows"]));
+}
+
+#[test]
+fn retired_relation_without_a_successor_is_rejected() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    retired_flows(&mut manifest).superseded_by.clear();
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(
+        error.contains("must name the relation that took over"),
+        "{error}"
+    );
+    assert!(error.contains("wamn_run.flows"), "{error}");
+}
+
+#[test]
+fn retired_relation_with_an_unregistered_successor_is_rejected() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    retired_flows(&mut manifest).superseded_by = vec!["catalog.does_not_exist".to_string()];
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(error.contains("catalog.does_not_exist"), "{error}");
+    assert!(
+        error.contains("is not registered in the `project` plane"),
+        "{error}"
+    );
+}
+
+/// A forwarding address has to be reachable from where the retired relation
+/// lived, so `registry.orgs` — registered only in the control plane — cannot
+/// take over a project-plane relation.
+#[test]
+fn retired_relation_cannot_forward_across_planes() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    retired_flows(&mut manifest).superseded_by = vec!["registry.orgs".to_string()];
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(
+        error.contains("is not registered in the `project` plane"),
+        "{error}"
+    );
+    assert!(error.contains("registry.orgs"), "{error}");
+}
+
+#[test]
+fn retired_relation_cannot_supersede_itself() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    retired_flows(&mut manifest).superseded_by = vec!["wamn_run.flows".to_string()];
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(error.contains("cannot supersede itself"), "{error}");
+}
+
+#[test]
+fn retired_relation_cannot_regain_a_static_writer() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    retired_flows(&mut manifest)
+        .writers
+        .push("dispatcher".to_string());
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(
+        error.contains("must not declare a static writer"),
+        "{error}"
+    );
+}
+
+#[test]
+fn an_active_relation_cannot_hold_a_forwarding_address() {
+    let repository = repository();
+    let mut manifest = read_manifest(&repository);
+    manifest.objects[0].ownership.superseded_by = vec!["catalog.release_flows".to_string()];
+    let error = validate_manifest(&repository, &manifest).unwrap_err();
+    assert!(
+        error.contains("must not name a superseding relation"),
+        "{error}"
+    );
+}
+
+fn retired_flows(manifest: &mut Manifest) -> &mut Ownership {
+    &mut manifest
+        .objects
+        .iter_mut()
+        .find(|object| object.id == "wamn_run.flows" && object.ownership.plane == "project")
+        .expect("flows ownership record")
+        .ownership
 }
 
 #[test]

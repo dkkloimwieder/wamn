@@ -6222,14 +6222,34 @@ registry for `--offline` to resolve. `version_identity` also shells out to
 `effect_provider_revision` is both slow and toolchain-pinned: it walks the whole
 `wamn-executor` closure with `cargo tree` and asserts Cargo 1.97.0 exactly.
 
-**Known red, deliberately.** Two integration guards fail on purpose and are
-banked evidence on `wamn-0h0g.15.22`; do not relax either one to make this
+**Known red, deliberately.** Three integration guards fail on purpose and are
+banked evidence on `wamn-0h0g.15.22`; do not relax any of them to make this
 recipe green:
 
 | guard | failure | owner |
 | --- | --- | --- |
 | `effect_provider_revision::locked_effect_provider_closure_matches_manifest` | the checked manifest drifted by exactly two dependency-edge groups | `wamn-0h0g.15.22` |
-| `state_ownership` (three of its tests) | stale `architecture/state-owners.json` rows | `wamn-0h0g.15.22` |
+| `state_ownership` (three of its tests) | two on stale `architecture/state-owners.json` rows; `host_owned_production_claim_authority_is_explicit_and_bounded` on a **pinned writer-set assertion** (`execution-host` carries an extra `wamn_run.run_flow_resolutions`) | `wamn-0h0g.15.22` |
+| `protected_relations::protected_relation_table_matches_declared_ownership` | `retired wamn_run.flows must be fully revoked, still granted to ["wamn_app"]` | `wamn-0h0g.15.22` |
+
+The `state_ownership` row is **not** three instances of one cause: repairing
+`validate_canonical_inventory` alone greens two of the three and leaves
+`host_owned_production_claim_authority_is_explicit_and_bounded` red.
+
+The `protected_relations` row is the amended writers-empty rule
+(`wamn-0h0g.12.113`) telling the truth about an open P1. `wamn_run.flows` is
+classified `retired`, and a retired relation must hold zero grants — but
+`deploy/sql/flows.sql` still grants `wamn_app`, and the frozen
+`architecture/protected-writes.json` still records it. Owner ruling R4 permits
+exactly this window: *a revoke that lands early makes the frozen inventory
+temporarily describe a wider authority than the database grants; that is
+acceptable and must be noted on the row rather than hidden.* Pre-applying the
+`wamn-0h0g.12.37` revoke and the regeneration to the table — dropping the
+`wamn_app` role row and setting `author-reachable` to `"no"`, which
+`protected_relations_live.rs` derives from a live database — turns this guard
+green, which is what isolates the red to the unrevoked grant. **Do not exempt
+`wamn_run.flows` from the rule to make it pass;** an exemption is the quiet
+third ownership category the decay clause exists to forbid.
 
 `effect_provider_revision` carries a `WAMN_UPDATE_EFFECT_PROVIDER_MANIFEST`
 regeneration escape hatch. It belongs to `wamn-0h0g.15.22`'s registry

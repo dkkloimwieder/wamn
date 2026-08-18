@@ -29,6 +29,10 @@ struct OwnershipEntry {
     migration_owners: Vec<String>,
     schema_source: String,
     writers: Vec<String>,
+    #[serde(default)]
+    lifecycle: Lifecycle,
+    #[serde(default)]
+    superseded_by: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +42,32 @@ struct OwnershipFamily {
     migration_owners: Vec<String>,
     schema_source: String,
     writers: Vec<String>,
+    #[serde(default)]
+    lifecycle: Lifecycle,
+    #[serde(default)]
+    superseded_by: Vec<String>,
+}
+
+/// Lifecycle state of a declared relation. `retired` names a relation whose
+/// static writer was deleted rather than delegated; it carries a forwarding
+/// address and must be fully revoked.
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum Lifecycle {
+    #[default]
+    Active,
+    Retired,
+}
+
+/// The ownership facts the protected-relation table is checked against.
+#[derive(Debug)]
+struct DeclaredRelation {
+    ops: bool,
+    installer: String,
+    owner: String,
+    writers_empty: bool,
+    lifecycle: Lifecycle,
+    superseded_by: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,12 +158,14 @@ fn protected_relation_table_matches_declared_ownership() {
                 .clone();
             (
                 (scope, entry.id.clone()),
-                (
-                    is_ops_artifact(&entry.schema_source, &scopes),
-                    sole_installer(&entry.id, &entry.migration_owners),
-                    entry.semantic_owner,
-                    entry.writers.is_empty(),
-                ),
+                DeclaredRelation {
+                    ops: is_ops_artifact(&entry.schema_source, &scopes),
+                    installer: sole_installer(&entry.id, &entry.migration_owners),
+                    owner: entry.semantic_owner,
+                    writers_empty: entry.writers.is_empty(),
+                    lifecycle: entry.lifecycle,
+                    superseded_by: entry.superseded_by,
+                },
             )
         })
         .collect::<BTreeMap<_, _>>();
@@ -144,12 +176,14 @@ fn protected_relation_table_matches_declared_ownership() {
             .clone();
         (
             (scope, family.pattern.clone()),
-            (
-                is_ops_artifact(&family.schema_source, &scopes),
-                sole_installer(&family.pattern, &family.migration_owners),
-                family.semantic_owner,
-                family.writers.is_empty(),
-            ),
+            DeclaredRelation {
+                ops: is_ops_artifact(&family.schema_source, &scopes),
+                installer: sole_installer(&family.pattern, &family.migration_owners),
+                owner: family.semantic_owner,
+                writers_empty: family.writers.is_empty(),
+                lifecycle: family.lifecycle,
+                superseded_by: family.superseded_by,
+            },
         )
     }));
 
@@ -173,12 +207,44 @@ fn protected_relation_table_matches_declared_ownership() {
             });
         assert_eq!(
             (row.ops, &row.installer, &row.owner),
-            (expected.0, &expected.1, &expected.2)
+            (expected.ops, &expected.installer, &expected.owner)
         );
-        if expected.3 {
-            assert_eq!(
-                row.author_reachable, AUTHOR_SQL_EXPOSURE,
-                "{} has no static writer and must be author-SQL writable",
+        let author_writable = row.author_reachable == AUTHOR_SQL_EXPOSURE;
+        let granted_roles = row
+            .roles
+            .iter()
+            .filter(|role| role.basis == "grant")
+            .map(|role| role.role.as_str())
+            .collect::<Vec<_>>();
+        // A retired relation is one whose static writer was deleted rather than
+        // delegated. It owes a forwarding address and a full revoke; it is not
+        // tenant business state.
+        if expected.lifecycle == Lifecycle::Retired {
+            assert!(
+                expected.writers_empty,
+                "retired {} must not declare a static writer",
+                row.relation
+            );
+            assert!(
+                !expected.superseded_by.is_empty(),
+                "retired {} must name the relation that took over",
+                row.relation
+            );
+            assert!(
+                granted_roles.is_empty(),
+                "retired {} must be fully revoked, still granted to {granted_roles:?}",
+                row.relation
+            );
+        }
+        // `writers: []` is evidence, not a definition: it licenses author-SQL
+        // ownership or a completed retirement, and exactly one of the two.
+        if expected.writers_empty {
+            let retired = expected.lifecycle == Lifecycle::Retired
+                && !expected.superseded_by.is_empty()
+                && granted_roles.is_empty();
+            assert!(
+                author_writable ^ retired,
+                "{} has no static writer and must be either author-SQL writable or retired with a superseding relation and zero grants",
                 row.relation
             );
         }
@@ -206,8 +272,7 @@ fn protected_relation_table_matches_declared_ownership() {
         );
         let author_role_present = row.roles.iter().any(|role| role.role == "wamn_app");
         assert_eq!(
-            row.author_reachable == AUTHOR_SQL_EXPOSURE,
-            author_role_present,
+            author_writable, author_role_present,
             "{} author exposure does not match its grant row",
             row.relation
         );

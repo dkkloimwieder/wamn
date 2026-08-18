@@ -1481,7 +1481,12 @@
         "dispatcher"
       ],
       "compatibility_horizon": "flow-format-and-platform-schema-major",
-      "drift_gate": "SR13:generate-and-structurally-compare"
+      "drift_gate": "SR13:generate-and-structurally-compare",
+      "lifecycle": "retired",
+      "superseded_by": [
+        "catalog.flow_artifacts",
+        "catalog.release_flows"
+      ]
     },
     {
       "id": "wamn_run.authoring_test_sets",
