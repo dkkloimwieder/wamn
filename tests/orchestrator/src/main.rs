@@ -10,7 +10,9 @@
 // Each proof implementation is owned and compiled by its tier package. This
 // binary is only the stable deploy-facing command router.
 use wamn_proof_conformance::socketguard;
-use wamn_proof_integration::{capturebench, impactproof, m1, readerbench, runnerbench};
+use wamn_proof_integration::{
+    capturebench, dashproof, impactproof, m1, metricbench, readerbench, runnerbench,
+};
 use wamn_proof_system::traceproof;
 
 use std::str::FromStr as _;
@@ -46,6 +48,12 @@ enum Command {
     Socketguard(socketguard::SocketGuardArgs),
     /// Run the 11.8 schema-change impact-analysis gate (wamn-wvb): seed a name-keyed node-config flow in an ephemeral schema, then assert `wamn-ctl-ops impact-report` names the affected flow/API resource and carries reprovision guidance for a destructive change with dependents
     Impactproof(impactproof::ImpactProofArgs),
+    /// Run the 9.2 trace-inject gate: prove the host stamps `traceparent` on both the P2 and P3 outbound surfaces, read back from serve-echo
+    Traceproof(traceproof::TraceproofArgs),
+    /// Run the 9.8 metric-set gate: drive the production emission seams and assert each `wamn_*` family lands in the collector's Prometheus scrape
+    Metricbench(metricbench::MetricBenchArgs),
+    /// Run the 9.9 dashboards gate: assert a deployed Grafana's health, its datasources, and the static plus per-tenant folders and dashboards
+    Dashproof(dashproof::DashproofArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -73,6 +81,9 @@ async fn async_main() -> anyhow::Result<()> {
         Command::ServeEcho(args) => traceproof::serve_echo(args).await,
         Command::Socketguard(args) => socketguard::run(args).await,
         Command::Impactproof(args) => impactproof::run(args).await,
+        Command::Traceproof(args) => traceproof::run(args).await,
+        Command::Metricbench(args) => metricbench::run(args).await,
+        Command::Dashproof(args) => dashproof::run(args).await,
     };
 
     shutdown_observability();
