@@ -5,11 +5,14 @@
 #   kubectl -n wamn-system apply -f deploy/platform/scenario-worker.yaml
 #   kubectl -n wamn-system rollout status deploy/scenario-worker --timeout=120s
 #
-# PER-PROJECT INSTANTIATION: --org / --project / --tenant and the authoring
-# Secret name below are per-(org, project, env) config. One surface serves
-# exactly one project: a token
+# PER-PROJECT INSTANTIATION: --org / --project / --environment / --tenant and
+# the authoring Secret name below are per-(org, project, env) config. One
+# surface serves exactly one (org, project, environment) triple: a token
 # whose principal holds no role in THAT project is refused, and a request naming
-# any other project is refused identically.
+# any other project or environment is refused identically. All four scope
+# arguments are REQUIRED with no default (wamn-0h0g.8.18) — omitting any one of
+# them makes the process refuse at startup rather than bind to a scope nobody
+# chose.
 #
 # TWO CREDENTIALS, TWO PLANES (R8b — both are Secret REFERENCES, never inline):
 #   WAMN_SYSTEM_URL      the T1 system database, read-only for identity: it
@@ -18,12 +21,19 @@
 #                        reading first-party identity by ctc8.6 design, not a
 #                        data-plane request path. `wamn-system-db` is the same
 #                        operator-provided control-database Secret.
-#   WAMN_AUTHORING_PG_URL the project database, as the dedicated host-author
-#                        login. The adapter's startup probe REFUSES to run
-#                        unless that credential is unprivileged, a member of
-#                        nothing but wamn_scenario_author, denied wamn_app, and
-#                        holds no mutation privilege beyond its allow-list — so
-#                        a mis-scoped Secret crash-loops instead of serving.
+#   WAMN_CONTROL_AUTHORING_PG_URL
+#                        the SOLE authoring and report connection
+#                        (wamn-0h0g.8.18): a scoped A/B LOGIN generation of
+#                        `wamn_control_author` on the CONTROL database. There is
+#                        no project-URL fallback, no dual read, no dual write.
+#                        The surface REFUSES before any I/O unless the value
+#                        parses as a postgres URL, names a host, carries no
+#                        query or fragment, names exactly one database, and
+#                        authenticates as the control-author generation role
+#                        derived from THIS (org, project, environment) and that
+#                        database name — so a project-database URL or a
+#                        mis-scoped Secret crash-loops instead of serving
+#                        (crates/control/provision parse_control_authoring_url).
 #
 # NETWORK POSTURE: wamn-system ships egress policies only (runner-netpol.yaml,
 # there is no ingress policy, so this listener adds no
@@ -62,6 +72,7 @@ spec:
             - serve
             - --org=acme
             - --project=receiving
+            - --environment=dev
             - --tenant=receiving
             - --source-schema=wamn_run
           env:
@@ -72,7 +83,7 @@ spec:
                 secretKeyRef:
                   name: wamn-system-db
                   key: url
-            - name: WAMN_AUTHORING_PG_URL
+            - name: WAMN_CONTROL_AUTHORING_PG_URL
               valueFrom:
                 secretKeyRef:
                   name: wamn-authoring-acme--receiving--dev
