@@ -111,9 +111,22 @@ runtime:
       # The default project's Postgres URL: the wamn:postgres plugin's from_env()
       # default pool connects as this non-superuser role for project-scoped
       # component SQL.
+      #
+      # A Secret REFERENCE, never inline plaintext (R8b, wamn-sysdb.yaml:8-11 —
+      # actual credential material lives in K8s Secrets). The chart passes each
+      # `hostGroups[].env` entry through verbatim
+      # (templates/runtime/deployment.yaml `{{- with .env }}{{ toYaml . }}` at
+      # the pinned fork rev), so `valueFrom` needs no chart change.
+      # `wamn-host-db` is host-tier config with this release's lifecycle —
+      # deliberately NOT the runner's per-project `wamn-runner-db`; see
+      # deploy/platform/host-db.example.yaml. APPLY THE SECRET BEFORE THIS
+      # RELEASE: a missing secretKeyRef leaves every host Pod unstartable.
       env:
         - name: WAMN_PG_URL
-          value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+          valueFrom:
+            secretKeyRef:
+              name: wamn-host-db
+              key: url
         # [l5i9.17] The data-plane (event-plane) NATS for the wamn:jetstream
         # plugin — the materializer Service workload's stream/doorbell path.
         # Absent, the plugin still links and returns connection-unavailable.

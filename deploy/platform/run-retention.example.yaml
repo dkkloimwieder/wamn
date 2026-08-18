@@ -14,7 +14,8 @@
 # DELETE the `wamn_app` role is granted — NO superuser needed. The verb connects
 # as `wamn_app`, sets the `app.tenant` claim RLS scopes the delete to, and pins
 # `search_path` to the run-plane schema. Deploy ONE CronJob per project-env,
-# substituting the schema, the tenant, and the app URL.
+# substituting the schema, the tenant, and the app-URL Secret
+# (deploy/platform/run-retention-db.example.yaml).
 #
 # v0 LIMITATION: retention is age-based only.
 #
@@ -70,8 +71,19 @@ spec:
                 # non-superuser `wamn_app` role is granted (no ALTER, no
                 # ownership). The demo project envs live in the fixture pod's
                 # `wamn` database.
+                #
+                # A Secret REFERENCE, never inline plaintext (R8b — actual
+                # credential material lives in K8s Secrets; see
+                # wamn-sysdb.yaml:8-11). The Secret is per-project-env like this
+                # CronJob, so a copy for another project-env substitutes the
+                # Secret alongside the schema and tenant. Defined in
+                # deploy/platform/run-retention-db.example.yaml — APPLY IT
+                # FIRST, or the Job Pod never starts.
                 - name: WAMN_PG_URL
-                  value: postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn
+                  valueFrom:
+                    secretKeyRef:
+                      name: wamn-run-retention-poc-f1
+                      key: url
               resources:
                 requests: { cpu: "100m", memory: "128Mi" }
                 limits: { memory: "256Mi" }

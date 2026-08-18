@@ -1,0 +1,31 @@
+# EXAMPLE per-project-env app-role DB Secret for the run-history retention
+# CronJob (deploy/platform/run-retention.example.yaml, which references it as
+# `WAMN_PG_URL` via secretKeyRef). DELIBERATELY a separate manifest — the
+# dispatcher-projects/runner-db/runner-credentials precedent: it is
+# per-project-env config, so re-applying the CronJob manifest never clobbers a
+# customized Secret back to this demo value.
+#
+# `url` is the project-env's app (wamn_app, NOSUPERUSER) connection string.
+# Pruning is an ordinary tenant-scoped DELETE that role is granted — NO
+# superuser. RLS scopes the delete to the `--tenant` the CronJob passes, so this
+# credential is not a substitute for the tenant/schema arguments.
+#
+# ONE PER PROJECT-ENV, named after it (`poc-f1` here) exactly like the CronJob
+# it feeds. It is NOT the runner's `wamn-runner-db`: that Secret is the demo
+# project's credential (tenant demo-tenant / schema wamn_runner_demo), a
+# different project-env from this one.
+#
+# ORDER: apply this BEFORE the CronJob. A secretKeyRef the kubelet cannot
+# resolve leaves the Job Pod in CreateContainerConfigError, and with
+# `backoffLimit: 0` the tick is simply lost.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/run-retention-db.example.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-run-retention-poc-f1
+  namespace: wamn-system
+  labels: { app: run-retention, project-env: poc-f1 }
+type: Opaque
+stringData:
+  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"

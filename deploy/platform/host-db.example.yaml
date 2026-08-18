@@ -1,0 +1,30 @@
+# EXAMPLE default-project DB Secret for the HOST TIER
+# (deploy/platform/values-host-default.yaml, which references it as
+# `WAMN_PG_URL` via secretKeyRef). DELIBERATELY a separate manifest — the
+# dispatcher-projects/runner-db/runner-credentials precedent: it is
+# per-environment config, so `helm upgrade` of the host release never clobbers a
+# customized Secret back to this demo value.
+#
+# `url` is the default project's app (wamn_app, NOSUPERUSER) connection string.
+# The wamn:postgres plugin's from_env() default pool connects as this role for
+# project-scoped component SQL on every host in the group.
+#
+# NOT the runner's `wamn-runner-db` on purpose, even though the demo values
+# point at the same fixture database: that Secret is per-PROJECT config owned by
+# deploy/platform/runner.yaml's lifecycle, while this one is per-ENVIRONMENT
+# config owned by the host Helm release. Sharing one Secret would make an edit
+# for the runner's project silently repoint every host in the group, and the two
+# demo values already differ (the runner's carries `?sslmode=disable`).
+#
+# ORDER: apply this BEFORE the host release. A secretKeyRef the kubelet cannot
+# resolve leaves the host Pods in CreateContainerConfigError, never Running.
+#
+#   kubectl -n wamn-system apply -f deploy/platform/host-db.example.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: wamn-host-db
+  namespace: wamn-system
+type: Opaque
+stringData:
+  url: "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn"
