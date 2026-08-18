@@ -37,13 +37,6 @@ CREATE TABLE wamn_run.authoring_test_run_reservations (
     catalog_id         text NOT NULL CHECK (catalog_id <> ''),
     catalog_version    int NOT NULL CHECK (catalog_version > 0),
     case_count         int NOT NULL CHECK (case_count BETWEEN 1 AND 256),
-    resolution_map     jsonb CHECK (
-        resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'
-    ),
-    resolution_map_hash text CHECK (
-        resolution_map_hash IS NULL
-        OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
     state              text NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'finalized')),
     created_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -53,13 +46,6 @@ CREATE TABLE wamn_run.authoring_test_run_reservations (
     UNIQUE (
         tenant_id, report_id, catalog_id, catalog_version,
         validated_draft_id
-    ),
-    CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL)),
-    CHECK (
-        resolution_map IS NULL
-        OR resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
     ),
     CHECK (whole_deadline_at > created_at),
     CHECK (
@@ -95,13 +81,6 @@ CREATE TABLE wamn_run.authoring_test_case_runs (
         failure_kind IN ('assertion-failed', 'deadline-exhausted',
                          'effect-uncertain')
     ),
-    resolution_map     jsonb CHECK (
-        resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'
-    ),
-    resolution_map_hash text CHECK (
-        resolution_map_hash IS NULL
-        OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
     summary             jsonb CHECK (
         summary IS NULL OR jsonb_typeof(summary) = 'object'
     ),
@@ -117,13 +96,6 @@ CREATE TABLE wamn_run.authoring_test_case_runs (
     ) REFERENCES wamn_run.authoring_test_run_reservations (
         tenant_id, report_id, catalog_id, catalog_version,
         validated_draft_id
-    ),
-    CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL)),
-    CHECK (
-        resolution_map IS NULL
-        OR resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
     ),
     CHECK (case_deadline_at > created_at),
     CHECK (
@@ -143,29 +115,20 @@ CREATE POLICY authoring_test_case_runs_tenant ON wamn_run.authoring_test_case_ru
 GRANT SELECT, INSERT, UPDATE ON wamn_run.authoring_test_case_runs
     TO wamn_scenario_author;
 
--- Final reports copy every publication-relevant pin. The map is the exact
--- flow_id -> execution_bundle_hash object consumed later as tested_resolution_map.
+-- Final reports copy every publication-relevant pin.
 CREATE TABLE wamn_run.authoring_test_reports (
     tenant_id          text NOT NULL CHECK (tenant_id <> ''),
     report_id          text NOT NULL CHECK (report_id <> ''),
     validated_draft_id text NOT NULL CHECK (validated_draft_id <> ''),
     catalog_id         text NOT NULL CHECK (catalog_id <> ''),
     catalog_version    int NOT NULL CHECK (catalog_version > 0),
-    resolution_map     jsonb NOT NULL CHECK (jsonb_typeof(resolution_map) = 'object'),
-    resolution_map_hash text NOT NULL
-        CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'),
     passed             boolean NOT NULL,
     summary            jsonb NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
     finalized_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, report_id),
     CONSTRAINT authoring_test_report_reservation_fk
         FOREIGN KEY (tenant_id, report_id)
-        REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id),
-    CHECK (
-        resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
-    )
+        REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)
 );
 ALTER TABLE wamn_run.authoring_test_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wamn_run.authoring_test_reports FORCE ROW LEVEL SECURITY;
@@ -194,30 +157,7 @@ BEGIN
                     MESSAGE = 'authoring-test-reservation-must-start-pending';
             END IF;
         ELSIF TG_OP = 'UPDATE' THEN
-            IF OLD.state = 'pending' AND NEW.state = 'pending'
-               AND OLD.resolution_map IS NULL
-               AND NEW.resolution_map IS NOT NULL
-               AND (new_row - 'resolution_map' - 'resolution_map_hash')
-                   = (old_row - 'resolution_map' - 'resolution_map_hash')
-               AND EXISTS (
-                   SELECT 1
-                   FROM wamn_run.authoring_test_case_runs AS test_case
-                   JOIN wamn_run.runs AS run
-                     ON run.tenant_id = test_case.tenant_id
-                    AND run.run_id = test_case.run_id
-                   WHERE test_case.tenant_id = NEW.tenant_id
-                     AND test_case.report_id = NEW.report_id
-                     AND run.catalog_id = NEW.catalog_id
-                     AND run.catalog_version = NEW.catalog_version
-                     AND run.invocation_context #>>
-                         '{principal,validated-draft-hash}' = NEW.validated_draft_id
-                     AND run.invocation_context #>>
-                         '{source,report-id}' = NEW.report_id
-                     AND run.invocation_context #>>
-                         '{source,case-id}' = test_case.case_id
-               ) THEN
-                NULL;
-            ELSIF OLD.state = 'pending' AND NEW.state = 'finalized'
+            IF OLD.state = 'pending' AND NEW.state = 'finalized'
                AND (new_row - 'state' - 'finalized_at')
                    = (old_row - 'state' - 'finalized_at')
                AND EXISTS (
@@ -252,10 +192,8 @@ BEGIN
             END IF;
         ELSIF TG_OP = 'UPDATE' THEN
             IF (new_row - 'state' - 'passed' - 'failure_kind'
-                        - 'resolution_map' - 'resolution_map_hash'
                         - 'summary' - 'finalized_at')
                    <> (old_row - 'state' - 'passed' - 'failure_kind'
-                        - 'resolution_map' - 'resolution_map_hash'
                         - 'summary' - 'finalized_at')
                OR OLD.state <> 'pending' OR NEW.state <> 'finalized' THEN
                 RAISE EXCEPTION USING ERRCODE = '55000',
@@ -286,24 +224,6 @@ BEGIN
                 RAISE EXCEPTION USING ERRCODE = '55000',
                     MESSAGE = 'authoring-test-case-not-effect-uncertain';
             END IF;
-            IF NEW.resolution_map IS NOT NULL THEN
-                IF NOT EXISTS (
-                    SELECT 1 FROM wamn_run.runs AS run
-                    WHERE run.tenant_id = NEW.tenant_id
-                      AND run.run_id = NEW.run_id
-                      AND run.catalog_id = NEW.catalog_id
-                      AND run.catalog_version = NEW.catalog_version
-                      AND run.invocation_context #>>
-                          '{principal,validated-draft-hash}' = NEW.validated_draft_id
-                      AND run.invocation_context #>>
-                          '{source,report-id}' = NEW.report_id
-                      AND run.invocation_context #>>
-                          '{source,case-id}' = NEW.case_id
-                ) THEN
-                    RAISE EXCEPTION USING ERRCODE = '23514',
-                        MESSAGE = 'authoring-test-case-run-pin-mismatch';
-                END IF;
-            END IF;
         ELSE
             RAISE EXCEPTION USING ERRCODE = '55000',
                 MESSAGE = 'authoring-test-case-unexpected-operation';
@@ -317,8 +237,7 @@ BEGIN
         IF NOT FOUND OR reservation.state <> 'pending'
            OR NEW.validated_draft_id <> reservation.validated_draft_id
            OR NEW.catalog_id <> reservation.catalog_id
-           OR NEW.catalog_version <> reservation.catalog_version
-           OR NEW.resolution_map <> COALESCE(reservation.resolution_map, '{}'::jsonb) THEN
+           OR NEW.catalog_version <> reservation.catalog_version THEN
             RAISE EXCEPTION USING ERRCODE = '23514',
                 MESSAGE = 'authoring-test-report-reservation-mismatch';
         END IF;

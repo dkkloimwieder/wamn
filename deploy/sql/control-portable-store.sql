@@ -314,12 +314,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     catalog_id         text NOT NULL CHECK (catalog_id <> ''),
     catalog_version    int NOT NULL CHECK (catalog_version > 0),
     case_count         int NOT NULL CHECK (case_count BETWEEN 1 AND 256),
-    resolution_map     jsonb CHECK (
-        resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'
-    ),
-    resolution_map_hash text CHECK (
-        resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
     state             text NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'finalized')),
     created_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -327,13 +321,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_run_reservations (
     finalized_at      timestamptz,
     PRIMARY KEY (tenant_id, report_id),
     UNIQUE (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id),
-    CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL)),
-    CHECK (
-        resolution_map IS NULL
-        OR resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
-    ),
     CHECK (whole_deadline_at > created_at),
     CHECK (
         (state = 'pending' AND finalized_at IS NULL)
@@ -358,12 +345,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_case_runs (
         failure_kind IN ('assertion-failed', 'deadline-exhausted',
                          'effect-uncertain')
     ),
-    resolution_map      jsonb CHECK (
-        resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'
-    ),
-    resolution_map_hash text CHECK (
-        resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'
-    ),
     summary             jsonb CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'),
     case_deadline_at    timestamptz NOT NULL,
     created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -374,13 +355,6 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_case_runs (
     FOREIGN KEY (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id)
         REFERENCES wamn_run.authoring_test_run_reservations
             (tenant_id, report_id, catalog_id, catalog_version, validated_draft_id),
-    CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL)),
-    CHECK (
-        resolution_map IS NULL
-        OR resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
-    ),
     CHECK (case_deadline_at > created_at),
     CHECK (
         (state = 'pending' AND passed IS NULL AND failure_kind IS NULL
@@ -398,19 +372,12 @@ CREATE TABLE IF NOT EXISTS wamn_run.authoring_test_reports (
     validated_draft_id  text NOT NULL CHECK (validated_draft_id <> ''),
     catalog_id          text NOT NULL CHECK (catalog_id <> ''),
     catalog_version     int NOT NULL CHECK (catalog_version > 0),
-    resolution_map      jsonb NOT NULL CHECK (jsonb_typeof(resolution_map) = 'object'),
-    resolution_map_hash text NOT NULL CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'),
     passed              boolean NOT NULL,
     summary             jsonb NOT NULL CHECK (jsonb_typeof(summary) = 'object'),
     finalized_at        timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, report_id),
     FOREIGN KEY (tenant_id, report_id)
-        REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id),
-    CHECK (
-        resolution_map_hash = 'sha256:' || encode(
-            sha256(convert_to(resolution_map::text, 'UTF8')), 'hex'
-        )
-    )
+        REFERENCES wamn_run.authoring_test_run_reservations (tenant_id, report_id)
 );
 
 -- No test-set hash column (wamn-0h0g.13.56): after one-document lineage

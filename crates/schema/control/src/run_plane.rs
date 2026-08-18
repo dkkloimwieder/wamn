@@ -517,18 +517,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "authoring_test_run_reservations",
-        name: "authoring_test_run_reservations_resolution_map_check",
-        definition: "CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_run_reservations",
-        name: "authoring_test_run_reservations_resolution_map_hash_check",
-        definition: "CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_run_reservations",
         name: "authoring_test_run_reservations_state_check",
         definition: "CHECK (state = ANY (ARRAY['pending'::text, 'finalized'::text]))",
         origin: CheckOrigin::Table,
@@ -536,24 +524,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "authoring_test_run_reservations",
         name: "authoring_test_run_reservations_check",
-        definition: "CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_run_reservations",
-        name: "authoring_test_run_reservations_check1",
-        definition: "CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_run_reservations",
-        name: "authoring_test_run_reservations_check2",
         definition: "CHECK (whole_deadline_at > created_at)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "authoring_test_run_reservations",
-        name: "authoring_test_run_reservations_check3",
+        name: "authoring_test_run_reservations_check1",
         definition: "CHECK (state = 'pending'::text AND finalized_at IS NULL OR state = 'finalized'::text AND finalized_at IS NOT NULL AND finalized_at >= created_at)",
         origin: CheckOrigin::Table,
     },
@@ -619,18 +595,6 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "authoring_test_case_runs",
-        name: "authoring_test_case_runs_resolution_map_check",
-        definition: "CHECK (resolution_map IS NULL OR jsonb_typeof(resolution_map) = 'object'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_case_runs",
-        name: "authoring_test_case_runs_resolution_map_hash_check",
-        definition: "CHECK (resolution_map_hash IS NULL OR resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_case_runs",
         name: "authoring_test_case_runs_summary_check",
         definition: "CHECK (summary IS NULL OR jsonb_typeof(summary) = 'object'::text)",
         origin: CheckOrigin::Table,
@@ -638,24 +602,12 @@ const CHECK_SPECS: &[CheckSpec] = &[
     CheckSpec {
         table: "authoring_test_case_runs",
         name: "authoring_test_case_runs_check",
-        definition: "CHECK ((resolution_map IS NULL) = (resolution_map_hash IS NULL))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_case_runs",
-        name: "authoring_test_case_runs_check1",
-        definition: "CHECK (resolution_map IS NULL OR resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_case_runs",
-        name: "authoring_test_case_runs_check2",
         definition: "CHECK (case_deadline_at > created_at)",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
         table: "authoring_test_case_runs",
-        name: "authoring_test_case_runs_check3",
+        name: "authoring_test_case_runs_check1",
         definition: "CHECK (state = 'pending'::text AND passed IS NULL AND failure_kind IS NULL AND summary IS NULL AND finalized_at IS NULL OR state = 'finalized'::text AND passed IS NOT NULL AND summary IS NOT NULL AND finalized_at IS NOT NULL AND finalized_at >= created_at AND (passed AND failure_kind IS NULL OR NOT passed AND failure_kind IS NOT NULL))",
         origin: CheckOrigin::Table,
     },
@@ -691,26 +643,8 @@ const CHECK_SPECS: &[CheckSpec] = &[
     },
     CheckSpec {
         table: "authoring_test_reports",
-        name: "authoring_test_reports_resolution_map_check",
-        definition: "CHECK (jsonb_typeof(resolution_map) = 'object'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_reports",
-        name: "authoring_test_reports_resolution_map_hash_check",
-        definition: "CHECK (resolution_map_hash ~ '^sha256:[0-9a-f]{64}$'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_reports",
         name: "authoring_test_reports_summary_check",
         definition: "CHECK (jsonb_typeof(summary) = 'object'::text)",
-        origin: CheckOrigin::Table,
-    },
-    CheckSpec {
-        table: "authoring_test_reports",
-        name: "authoring_test_reports_check",
-        definition: "CHECK (resolution_map_hash = ('sha256:'::text || encode(sha256(convert_to(resolution_map::text, 'UTF8'::name)), 'hex'::text)))",
         origin: CheckOrigin::Table,
     },
     CheckSpec {
@@ -9213,10 +9147,10 @@ CREATE INDEX event_registrations_by_entity
     ///
     /// Absent from the record is only half of it. A relation dropped from the
     /// record but not RETIRED survives with live grants on every schema
-    /// provisioned before the change, and `ensure_authoring_run_privileges` no
-    /// longer REVOKEs on it — a privilege the reconciler can no longer see
-    /// (wamn-0h0g.15.78). So the store must also be named by the retirement
-    /// mechanism, together with the FK columns that would block its drop.
+    /// provisioned before the change, and nothing REVOKEs on it — a privilege the
+    /// reconciler can no longer see (wamn-0h0g.15.78). So the store must also be
+    /// named by the retirement mechanism, together with the FK columns that would
+    /// block its drop.
     #[test]
     fn the_authoring_test_set_store_is_absent_from_the_record() {
         assert!(RETIRED_STORED_SUITE_TABLES.contains(&"authoring_test_sets"));
@@ -9276,15 +9210,15 @@ CREATE INDEX event_registrations_by_entity
         for (table, check_count, author_privileges) in [
             (
                 "authoring_test_run_reservations",
-                14,
+                10,
                 &["SELECT", "INSERT", "UPDATE"][..],
             ),
             (
                 "authoring_test_case_runs",
-                17,
+                13,
                 &["SELECT", "INSERT", "UPDATE"][..],
             ),
-            ("authoring_test_reports", 9, &["SELECT", "INSERT"][..]),
+            ("authoring_test_reports", 6, &["SELECT", "INSERT"][..]),
         ] {
             assert_eq!(
                 CHECK_SPECS

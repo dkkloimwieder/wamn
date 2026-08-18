@@ -3826,18 +3826,9 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
     wamn_ctl::publish_catalog::ensure_catalog_storage(su)
         .await
         .expect("additively install catalog authoring storage");
-    assert!(
-        wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
-            .await
-            .expect("additively install authoring-test storage"),
-        "the first additive authoring-test install reports installation"
-    );
-    assert!(
-        !wamn_ctl::publish_catalog::ensure_flow_tests(su, &schema)
-            .await
-            .expect("reapply authoring-test storage"),
-        "the additive authoring-test install is idempotent"
-    );
+    su.batch_execute(&rewrite_schema(AUTHORING_TESTS_SQL, &schema))
+        .await
+        .expect("apply authoring-test storage from the record");
     for table in [
         "flow_drafts",
         "validated_flow_drafts",
@@ -4233,9 +4224,8 @@ async fn authoring_storage_authority_leg(su: &Client, url: &str) {
             &format!(
                 "INSERT INTO {SCHEMA}.authoring_test_reports \
                    (tenant_id,report_id,validated_draft_id,catalog_id, \
-                    catalog_version,resolution_map,resolution_map_hash,passed,summary) \
-                 VALUES ('t1','forged','validated-a','cat',1,'{{}}'::jsonb, \
-                         'sha256:' || repeat('0',64), true, '{{}}'::jsonb)"
+                    catalog_version,passed,summary) \
+                 VALUES ('t1','forged','validated-a','cat',1,true,'{{}}'::jsonb)"
             ),
             &[],
         )

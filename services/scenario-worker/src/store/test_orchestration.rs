@@ -329,16 +329,15 @@ pub async fn finalize_test_case(
 ///
 /// An empty slice is the ordinary case and finalizes nothing on that leg.
 ///
-/// # It pins no resolution map (wamn-0h0g.15.29)
+/// # There is no resolution map here (wamn-0h0g.15.170)
 ///
 /// This used to pin the reservation's `resolution_map` from the first case run
 /// carrying one. wamn-0h0g.15.7 deleted the last writer of
 /// `authoring_test_case_runs.resolution_map`, so that select could only ever match
-/// zero rows and the statement was a no-op that read as a source. The retained
-/// columns still travel to the report as `'{}'` — the ratified spec keeps them and
-/// the report trigger compares them — but nothing downstream consumes that value:
-/// the publish gate's `tested_resolution_map` is derived from the release manifest
-/// in `wamn_ctl::publish_release`, not from this report.
+/// zero rows and the statement was a no-op that read as a source; wamn-0h0g.15.29
+/// removed it, leaving columns that carried `'{}'` forever. The columns are now
+/// gone. The publish gate's `tested_resolution_map` is derived from the release
+/// manifest in `wamn_ctl::publish_release`, never from this report.
 pub async fn reconcile_test_report(
     client: &mut Client,
     tenant_id: &str,
@@ -418,14 +417,10 @@ pub async fn reconcile_test_report(
             "WITH inserted AS ( \
                 INSERT INTO authoring_test_reports \
                     (tenant_id, report_id, validated_draft_id, \
-                     catalog_id, catalog_version, resolution_map, resolution_map_hash, \
-                     passed, summary) \
+                     catalog_id, catalog_version, passed, summary) \
                 SELECT reservation.tenant_id, reservation.report_id, \
                        reservation.validated_draft_id, \
                        reservation.catalog_id, reservation.catalog_version, \
-                       COALESCE(reservation.resolution_map, '{}'::jsonb), \
-                       'sha256:' || encode(sha256(convert_to( \
-                           COALESCE(reservation.resolution_map, '{}'::jsonb)::text, 'UTF8')), 'hex'), \
                        bool_and(test_case.passed), \
                        jsonb_build_object('cases', jsonb_agg( \
                            jsonb_build_object( \
@@ -567,8 +562,8 @@ mod tests {
         assert!(!reconcile.contains("bool_or("));
     }
 
-    /// wamn-0h0g.15.29: the reconcile pins no resolution map, because the column
-    /// it used to pin one from has had no writer since wamn-0h0g.15.7.
+    /// wamn-0h0g.15.170: the reconcile pins no resolution map, because the
+    /// columns it used to pin one from are deleted.
     #[test]
     fn the_reconcile_pins_no_map_from_a_column_nothing_writes() {
         let source = include_str!("test_orchestration.rs");
@@ -576,21 +571,21 @@ mod tests {
             .split("#[cfg(test)]")
             .next()
             .expect("the module has an implementation");
-        // The dead pin and every fragment of the statement that carried it.
+        // The dead pin, every fragment of the statement that carried it, and the
+        // deleted columns themselves.
         for dead in [
             "SET resolution_map = candidate.resolution_map",
             "resolution_map IS NOT NULL",
             "reservation.resolution_map IS NULL",
             "pin first reconciled test resolution map",
+            "COALESCE(reservation.resolution_map",
+            "resolution_map_hash",
         ] {
             assert!(
                 !implementation.contains(dead),
                 "the reconcile still carries the dead resolution-map pin via {dead}"
             );
         }
-        // The retained columns still travel to the report unchanged: the ratified
-        // spec keeps them, and the report-insert trigger compares them.
-        assert!(implementation.contains("COALESCE(reservation.resolution_map, '{}'::jsonb)"));
         // Nothing here re-aggregates a per-case map either (wamn-0h0g.15.7).
         assert!(!implementation.contains("run_flow_resolutions"));
     }
@@ -631,7 +626,10 @@ mod tests {
         assert!(!ddl.contains("authoring_test_sets"));
         assert!(!ddl.contains("resolution-map-mismatch"));
         assert!(!ddl.contains("authoring-test-case-resolution-map-required"));
-        assert!(ddl.contains("'{principal,validated-draft-hash}' = NEW.validated_draft_id"));
+        // wamn-0h0g.15.170: the run-pin cross-check ran only `IF
+        // NEW.resolution_map IS NOT NULL`, so it left with that column.
+        assert!(!ddl.contains("resolution_map"));
+        assert!(!ddl.contains("authoring-test-case-run-pin-mismatch"));
         assert!(ddl.contains("authoring_test_reports_update_immutable"));
     }
 }

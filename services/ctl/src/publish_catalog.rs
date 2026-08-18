@@ -16,10 +16,10 @@
 //!
 //! POC-F1 extended this into the one project-provisioning tool: `--runstate`
 //! applies the run-state storage (`deploy/sql/run-state.sql`: runs/node_runs)
-//! and the authoring test
-//! orchestration tables (`deploy/sql/authoring-tests.sql`) into the project schema —
-//! the canonical deploy files, embedded at compile time and rewritten
-//! from `wamn_run` to the target schema — when their tables are absent;
+//! into the project schema — the canonical deploy file, embedded at compile time
+//! and rewritten from `wamn_run` to the target schema — when its tables are
+//! absent (the authoring-test orchestration tables are the run-plane
+//! reconciler's, wamn-0h0g.15.170);
 //! `--seed-dataset` compiles a wamn-schema-compiler (3.6) dataset against the catalog and
 //! applies it (deterministic ids, `ON CONFLICT DO NOTHING` — idempotent); and
 //! `--flow` resolves standard-node interfaces, constructs canonical CF-DEF-ID
@@ -667,117 +667,6 @@ pub async fn ensure_runstate(
     Ok(true)
 }
 
-/// Apply the authoring test orchestration artifact into `schema` when all three
-/// retained tables are absent. Returns whether it applied.
-pub async fn ensure_flow_tests(
-    client: &tokio_postgres::Client,
-    schema: &BareSchemaName,
-) -> anyhow::Result<bool> {
-    ensure_wamn_app_role(client).await?;
-    let authoring_storage = client
-        .query_one(&authoring_run_storage_probe_sql(schema), &[])
-        .await
-        .context("probe authoring test orchestration storage")?;
-    let authoring_objects = [
-        authoring_storage.get::<_, bool>(0),
-        authoring_storage.get::<_, bool>(1),
-        authoring_storage.get::<_, bool>(2),
-    ];
-    let installed = if authoring_objects.iter().all(|present| *present) {
-        false
-    } else {
-        anyhow::ensure!(
-            authoring_objects.iter().all(|present| !*present),
-            "authoring test orchestration is partially installed; reconcile it before publication"
-        );
-        let ddl = rewrite_schema(
-            include_str!("../../../deploy/sql/authoring-tests.sql"),
-            schema,
-        );
-        client
-            .batch_execute(&ddl)
-            .await
-            .context("install authoring test orchestration")?;
-        true
-    };
-    ensure_authoring_run_privileges(client, schema).await?;
-    Ok(installed)
-}
-
-fn authoring_run_storage_probe_sql(schema: &BareSchemaName) -> String {
-    let schema = schema.as_str();
-    format!(
-        "SELECT to_regclass('{schema}.authoring_test_run_reservations') IS NOT NULL, \
-                to_regclass('{schema}.authoring_test_case_runs') IS NOT NULL, \
-                to_regclass('{schema}.authoring_test_reports') IS NOT NULL"
-    )
-}
-
-async fn ensure_authoring_run_privileges(
-    client: &tokio_postgres::Client,
-    schema: &BareSchemaName,
-) -> anyhow::Result<()> {
-    client
-        .batch_execute(&authoring_run_privileges_sql(schema))
-        .await
-        .context("converge host-only authoring run privileges")
-}
-
-fn authoring_run_privileges_sql(schema: &BareSchemaName) -> String {
-    let schema_name = schema.quoted();
-    let reports = format!("{schema_name}.authoring_test_reports");
-    format!(
-        "REVOKE wamn_scenario_author FROM wamn_app; \
-             GRANT USAGE ON SCHEMA {schema_name} TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_run_reservations \
-                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_test_run_reservations \
-                 TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_case_runs \
-                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT, UPDATE ON {schema_name}.authoring_test_case_runs \
-                 TO wamn_scenario_author; \
-             REVOKE ALL PRIVILEGES ON {schema_name}.authoring_test_reports \
-                 FROM PUBLIC, wamn_app, wamn_scenario_author; \
-             GRANT SELECT, INSERT ON {schema_name}.authoring_test_reports \
-                 TO wamn_scenario_author; \
-             DO $effective_acl$ BEGIN \
-               IF EXISTS ( \
-                   SELECT 1 \
-                     FROM pg_catalog.unnest(ARRAY[ \
-                         'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', \
-                         'REFERENCES', 'TRIGGER']::text[]) AS candidate(privilege) \
-                    WHERE pg_catalog.has_table_privilege( \
-                              'wamn_app', '{reports}', candidate.privilege) \
-                       OR (candidate.privilege IN ( \
-                               'SELECT', 'INSERT', 'UPDATE', 'REFERENCES') \
-                           AND pg_catalog.has_any_column_privilege( \
-                               'wamn_app', '{reports}', candidate.privilege)) \
-               ) \
-                  OR NOT pg_catalog.has_table_privilege( \
-                      'wamn_scenario_author', '{reports}', 'SELECT') \
-                  OR NOT pg_catalog.has_table_privilege( \
-                      'wamn_scenario_author', '{reports}', 'INSERT') \
-                  OR EXISTS ( \
-                      SELECT 1 \
-                        FROM pg_catalog.unnest(ARRAY[ \
-                            'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', \
-                            'TRIGGER']::text[]) AS candidate(privilege) \
-                       WHERE pg_catalog.has_table_privilege( \
-                                 'wamn_scenario_author', '{reports}', \
-                                 candidate.privilege) \
-                          OR (candidate.privilege IN ('UPDATE', 'REFERENCES') \
-                              AND pg_catalog.has_any_column_privilege( \
-                                  'wamn_scenario_author', '{reports}', \
-                                  candidate.privilege)) \
-                  ) THEN \
-                 RAISE EXCEPTION USING ERRCODE = '42501', \
-                   MESSAGE = 'authoring-effective-privilege-out-of-bounds:test-reports'; \
-               END IF; \
-             END $effective_acl$;"
-    )
-}
-
 async fn table_exists(
     client: &tokio_postgres::Client,
     schema: &BareSchemaName,
@@ -874,32 +763,6 @@ pub(crate) static LIVE_DB: std::sync::LazyLock<tokio::sync::Mutex<()>> =
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn authoring_test_orchestration_provisioning_is_fresh_and_privilege_closed() {
-        let schema = BareSchemaName::new("project_run").expect("valid test schema");
-        let probe = authoring_run_storage_probe_sql(&schema);
-        assert!(!probe.contains("authoring_test_sets"));
-        assert!(probe.contains("project_run.authoring_test_run_reservations"));
-        assert!(probe.contains("project_run.authoring_test_case_runs"));
-        assert!(probe.contains("project_run.authoring_test_reports"));
-
-        let privileges = authoring_run_privileges_sql(&schema);
-        assert!(!privileges.contains("authoring_test_sets"));
-        assert!(
-            privileges.contains("REVOKE ALL PRIVILEGES ON \"project_run\".authoring_test_reports")
-        );
-        assert!(
-            privileges.contains("GRANT SELECT, INSERT ON \"project_run\".authoring_test_reports")
-        );
-        assert!(privileges.contains("'wamn_app', '\"project_run\".authoring_test_reports'"));
-        assert!(privileges.contains("pg_catalog.has_any_column_privilege"));
-        assert!(privileges.contains("authoring-effective-privilege-out-of-bounds:test-reports"));
-        assert!(
-            !privileges
-                .contains("GRANT SELECT, INSERT, UPDATE ON \"project_run\".authoring_test_reports")
-        );
-    }
 
     #[tokio::test]
     async fn invalid_schema_is_rejected_before_catalog_io_or_admin_connect() {

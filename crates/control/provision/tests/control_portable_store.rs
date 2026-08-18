@@ -575,10 +575,8 @@ VALUES ('tenant-a','report-a','sha256:'||repeat('1',64),'validated-a',
         'cat',1,1,clock_timestamp()+interval '1 hour');
 INSERT INTO wamn_run.authoring_test_reports
   (tenant_id,report_id,validated_draft_id,catalog_id,
-   catalog_version,resolution_map,resolution_map_hash,passed,summary)
-VALUES ('tenant-a','report-a','validated-a','cat',1,
-        '{{}}'::jsonb,'sha256:'||encode(sha256(convert_to('{{}}'::jsonb::text,'UTF8')),'hex'),
-        true,'{{}}'::jsonb);
+   catalog_version,passed,summary)
+VALUES ('tenant-a','report-a','validated-a','cat',1,true,'{{}}'::jsonb);
 
 DO $$ DECLARE
   first_created_at timestamptz;

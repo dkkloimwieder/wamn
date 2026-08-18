@@ -34,15 +34,14 @@
 //! produces, and identity is byte equality, never a reserialized projection
 //! (wamn-0h0g.9.9, owner amendment 2026-08-15).
 //!
-//! Step A does **not** read `wamn_run.authoring_test_reports.resolution_map`
-//! (wamn-0h0g.15.29). That producer is dead: wamn-0h0g.15.7 deleted the last
-//! writer of `authoring_test_case_runs.resolution_map`, so the report-level map
-//! mints `'{}'` on every report and reading it welded an empty evidence map to
-//! every release. The map's semantics survived the deletion intact —
-//! `deploy/sql/authoring-tests.sql` calls it "the exact `flow_id ->
-//! execution_bundle_hash` object", and [`ServingManifest::reachable_flows`] is by
-//! its own doc the replacement for the walk that used to build it — so the manifest
-//! is where it is now sourced.
+//! Step A does **not** read a report-level resolution map (wamn-0h0g.15.29).
+//! That producer was dead — wamn-0h0g.15.7 deleted the last writer of
+//! `authoring_test_case_runs.resolution_map`, so the report-level map minted
+//! `'{}'` on every report and reading it welded an empty evidence map to every
+//! release — and wamn-0h0g.15.170 deleted the columns themselves. The map's
+//! semantics survived: [`ServingManifest::reachable_flows`] is by its own doc the
+//! replacement for the walk that used to build it, so the manifest is where it is
+//! now sourced.
 //!
 //! # Why the reachable set, and not the whole release
 //!
@@ -601,8 +600,8 @@ async fn verify_callee_is_released_and_callable(
 ///
 /// The map is `flow_id -> plan_hash` over [`ServingManifest::reachable_flows`]
 /// from the flow being published — the exact `flow_id -> execution_bundle_hash`
-/// object `deploy/sql/authoring-tests.sql` names, sourced from the manifest rather
-/// than from the report (wamn-0h0g.15.29).
+/// object, sourced from the manifest rather than from the report
+/// (wamn-0h0g.15.29).
 ///
 /// An empty reachable set is a refusal, not an empty map. That is the whole point
 /// of the bead: the map this replaced could only ever be `'{}'` once
@@ -1205,11 +1204,6 @@ mod tests {
     const COMMAND_HASH: &str =
         "sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    /// What every finalized report's `resolution_map` actually holds since
-    /// wamn-0h0g.15.7 deleted the last writer of the case-level map it aggregated.
-    /// Seeding the live proof with this is what makes it a regression proof.
-    const REPORT_MAP_AS_PRODUCED_TODAY: &str = "{}";
-
     /// The wamn-0h0g.9.9 frozen tested-resolution-map vector.
     const CANONICAL_MAP: &[u8] = concat!(
         r#"{"flow-a":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","#,
@@ -1785,18 +1779,14 @@ mod tests {
             .execute(
                 "INSERT INTO wamn_run.authoring_test_reports \
                    (tenant_id, report_id, validated_draft_id, catalog_id, catalog_version, \
-                    resolution_map, resolution_map_hash, passed, summary) \
-                 SELECT $1, $2, $3, $4, $5, stored.map, \
-                        'sha256:' || encode(sha256(convert_to(stored.map::text, 'UTF8')), 'hex'), \
-                        $7, '{}'::jsonb \
-                   FROM (SELECT $6::text::jsonb AS map) AS stored",
+                    passed, summary) \
+                 VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb)",
                 &[
                     &TENANT,
                     &report_id,
                     &draft_id,
                     &CATALOG_ID,
                     &CATALOG_VERSION,
-                    &REPORT_MAP_AS_PRODUCED_TODAY,
                     &passed,
                 ],
             )
