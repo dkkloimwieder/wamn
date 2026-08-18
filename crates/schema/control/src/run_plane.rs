@@ -1836,7 +1836,12 @@ const AUTHORING_PRIVILEGE_SPECS: &[AuthoringPrivilegeSpec] = &[
     AuthoringPrivilegeSpec {
         schema: AuthoringTableSchema::Catalog,
         table: "catalogs",
-        app: &["SELECT", "INSERT", "UPDATE", "DELETE"],
+        // wamn-0h0g.12.20 confined this relation to SELECT. This spec is the
+        // SIXTH encoding of the old blanket grant and the only one the run-plane
+        // reconciler owns: left at full DML it planned RepairAuthoringPrivilege
+        // forever -- never converging -- and each repair re-granted the very DML
+        // the DDL and the publish converge path had just revoked.
+        app: &["SELECT"],
         author: &[],
     },
     AuthoringPrivilegeSpec {
