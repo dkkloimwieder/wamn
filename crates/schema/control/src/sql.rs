@@ -308,17 +308,6 @@ pub fn select_registration_flow_refs_for_catalog_sql() -> String {
         .to_string()
 }
 
-/// The 11.8 node-config edge: every ACTIVE flow's `graph_json` across ALL tenants,
-/// so the analysis can scan each graph for a postgres node's `config["entity"]`
-/// (the name-keyed edge). Projects `(tenant_id, flow_id, version, graph_json)`.
-/// `schema` is the caller-validated project schema, not the fixed `catalog` one.
-pub fn select_active_flows_sql(schema: &str) -> String {
-    format!(
-        "SELECT tenant_id, flow_id, version, graph_json::text FROM {schema}.flows \
-         WHERE active ORDER BY tenant_id, flow_id, version"
-    )
-}
-
 /// A cheap, dependency-free checksum (FNV-1a 64) of the applied DDL script — an
 /// integrity/audit fingerprint stored in the history row, not a security hash.
 pub fn ddl_checksum(sql: &str) -> String {

@@ -4,13 +4,11 @@
 //!
 //! Set `WAMN_CTL_PG_URL` to a **superuser** url of a throwaway Postgres (recipe:
 //! docs/archive/build-and-test.md [11.8]); skipped cleanly when unset. Drives the REAL
-//! machinery against the REAL storage SQL (deploy/sql/{catalog-schema,flows}.sql):
+//! machinery against the REAL storage SQL (deploy/sql/catalog-schema.sql):
 //!
 //!   1. materialize a v1 catalog with `E_touched` (`orders`) + `E_untouched`
 //!      (`audit`) through `migrate-catalog`;
-//!   2. seed, on the SAME data schema, a dependent flow per entity — an event
-//!      registration (id-keyed) + an active graph whose postgres node names the
-//!      entity BY NAME (config-keyed);
+//!   2. seed a dependent flow per entity through an event registration (id-keyed);
 //!   3. stage v2 = destructive on `E_touched` (drop a column) + additive on
 //!      `E_untouched` (add a column), and assert `wamn_schema_control::impact::analyze` (through
 //!      the shell's [`gather_impact`]) names EXACTLY `E_touched`'s flow/api
@@ -73,13 +71,6 @@ fn v2_json() -> String {
     )
 }
 
-/// An active flow whose single postgres node references `entity_name` by NAME.
-fn graph_json(flow_id: &str, entity_name: &str) -> String {
-    format!(
-        r#"{{"schema-version":"0.1","flow-id":"{flow_id}","version":1,"nodes":[{{"id":"n","type":"postgres","config":{{"entity":"{entity_name}","op":"get"}}}}],"edges":[]}}"#
-    )
-}
-
 fn write_tmp(name: &str, content: &str) -> std::path::PathBuf {
     let p = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(name);
     std::fs::write(&p, content).expect("write catalog fixture");
@@ -108,7 +99,7 @@ fn migrate_args(target: std::path::PathBuf, url: &str) -> migrate_catalog::Migra
 }
 
 /// Reset schemas + role, apply the catalog metadata schema, and provision the
-/// run-plane and flows into the data schema through the production `ensure_*`
+/// run-plane into the data schema through the production `ensure_*`
 /// path used by `publish-catalog --runstate`.
 async fn reset(su: &Client) {
     let schema = BareSchemaName::new(DATA_SCHEMA).expect("live-test schema is valid");
@@ -154,18 +145,6 @@ async fn insert_reg(su: &Client, reg_id: &str, flow_id: &str, entity_id: &str) {
     .expect("seed registration");
 }
 
-async fn insert_flow(su: &Client, flow_id: &str, entity_name: &str) {
-    su.execute(
-        &format!(
-            "INSERT INTO {DATA_SCHEMA}.flows (tenant_id, flow_id, version, active, graph_json) \
-             VALUES ($1, $2, 1, true, $3::text::jsonb)"
-        ),
-        &[&TENANT, &flow_id, &graph_json(flow_id, entity_name)],
-    )
-    .await
-    .expect("seed flow row");
-}
-
 async fn column_present(su: &Client, table: &str, column: &str) -> bool {
     su.query_one(
         "SELECT EXISTS (SELECT 1 FROM information_schema.columns \
@@ -193,19 +172,17 @@ async fn impact_report_names_the_affected_change() {
         .expect("first materialization applies");
     assert!(column_present(&su, "orders", "note").await);
 
-    // Seed a dependent flow per entity: registration (id-keyed) + active graph
-    // (name-keyed). flow-t depends on E_touched; flow-u on
-    // E_untouched (the decoy that must never be attributed to E_touched).
+    // Seed a dependent flow per entity through its registration (id-keyed).
+    // flow-t depends on E_touched; flow-u on E_untouched (the decoy that must
+    // never be attributed to E_touched).
     insert_reg(&su, "reg-touched", "flow-t", "touched").await;
-    insert_flow(&su, "flow-t", "orders").await;
     insert_reg(&su, "reg-untouched", "flow-u", "untouched").await;
-    insert_flow(&su, "flow-u", "audit").await;
 
     // --- the typed analysis, through the shell's live reads -----------------
     let v1 = wamn_schema_model::Catalog::from_json(&v1_json()).unwrap();
     let v2 = wamn_schema_model::Catalog::from_json(&v2_json()).unwrap();
     let plan = compile_plan(Some(&v1), &v2).expect("compile plan");
-    let report = gather_impact(&su, &plan, Some(&v1), &v2, DATA_SCHEMA)
+    let report = gather_impact(&su, &plan, Some(&v1), &v2)
         .await
         .expect("gather impact");
 
@@ -226,10 +203,6 @@ async fn impact_report_names_the_affected_change() {
         touched.flows_via_registration[0].registration_id,
         "reg-touched"
     );
-    // node-config edge: flow-t, matched by the NAME `orders`.
-    assert_eq!(touched.flows_via_node_config.len(), 1);
-    assert_eq!(touched.flows_via_node_config[0].flow_id, "flow-t");
-    assert_eq!(touched.flows_via_node_config[0].referenced_name, "orders");
     // api edge: the entity's own resource.
     assert!(
         touched

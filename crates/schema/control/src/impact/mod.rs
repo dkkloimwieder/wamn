@@ -8,7 +8,7 @@
 //!
 //! This crate is a JOIN over data the platform already stores; it holds no
 //! connection, clock, or wasm. The [`analyze`] inputs are plain data ([`ImpactInput`]);
-//! the [`ImpactReport`] output is plain data. The four edges it computes:
+//! the [`ImpactReport`] output is plain data. The three edges it computes:
 //!
 //! 1. **affected entity + classification** — group the plan's operations by
 //!    [`wamn_schema_compiler::Operation::entity`]; an entity is destructive iff any of its ops
@@ -17,19 +17,11 @@
 //! 2. **flows via event registration** — id-keyed and rename-proof: registrations
 //!    whose stable `entity_id` equals the affected entity's id
 //!    (`catalog.event_registrations`, the `event_registrations_by_entity` index).
-//! 3. **flows via node config** — NAME-keyed and NOT rename-proof: an active
-//!    flow's `postgres` node names its entity in `config["entity"]`, resolved by
-//!    the generated router *by entity name* (`wamn_api`). A rename silently
-//!    dangles the ref; surfacing it (by the OLD name) is a genuine report line
-//!    ([`nodescan`]).
-//! 4. **generated-API resources** — pure over the catalog: the entity's own
+//! 3. **generated-API resources** — pure over the catalog: the entity's own
 //!    `/api/rest/{name}` plus the neighbours' `?expand=` resources that embed it.
-
-pub mod nodescan;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use wamn_flow::Flow;
 use wamn_schema_compiler::MigrationPlan;
 use wamn_schema_model::{Catalog, Entity};
 
@@ -48,25 +40,16 @@ pub struct RegistrationEdge {
     pub registration_id: String,
 }
 
-/// One active flow graph (a `<schema>.flows` row where `active`), tagged with its
-/// owning tenant — the input to the name-keyed node-config scan.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FlowGraph {
-    pub tenant: String,
-    pub flow: Flow,
-}
-
 /// The pure analysis inputs. `current` is the pre-migration applied catalog (the
 /// diff/plan source; `None` for a first materialization); `target` is the
-/// post-migration catalog. `registrations` and `flows` are read cross-tenant by
-/// the superuser driver.
+/// post-migration catalog. `registrations` is read cross-tenant by the superuser
+/// driver.
 #[derive(Debug, Clone)]
 pub struct ImpactInput<'a> {
     pub plan: &'a MigrationPlan,
     pub current: Option<&'a Catalog>,
     pub target: &'a Catalog,
     pub registrations: &'a [RegistrationEdge],
-    pub flows: &'a [FlowGraph],
 }
 
 // ---------------------------------------------------------------------------
@@ -101,18 +84,6 @@ pub struct FlowViaRegistration {
     pub registration_id: String,
 }
 
-/// A flow whose active graph references the entity by NAME through a postgres
-/// node's `config["entity"]` — the not-rename-proof edge. `referenced_name` is the
-/// name the node used (the OLD name for a rename, which now dangles).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FlowViaNodeConfig {
-    pub tenant: String,
-    pub flow_id: String,
-    pub flow_version: u32,
-    pub node_id: String,
-    pub referenced_name: String,
-}
-
 /// The impact on a single affected entity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EntityImpact {
@@ -124,18 +95,17 @@ pub struct EntityImpact {
     /// `true` if any of the entity's plan operations is destructive.
     pub destructive: bool,
     pub flows_via_registration: Vec<FlowViaRegistration>,
-    pub flows_via_node_config: Vec<FlowViaNodeConfig>,
     /// The generated-API resources over the catalog: `/api/rest/{name}` plus the
     /// neighbours' `?expand=` resources that embed this entity.
     pub api_resources: Vec<String>,
 }
 
 impl EntityImpact {
-    /// `true` if some flow depends on this entity (either edge). The
-    /// generated-API resources are pure catalog derivations, NOT downstream
-    /// dependents — every entity has them — so they do not count here.
+    /// `true` if some flow depends on this entity. The generated-API resources
+    /// are pure catalog derivations, NOT downstream dependents — every entity has
+    /// them — so they do not count here.
     pub fn has_downstream_impact(&self) -> bool {
-        !self.flows_via_registration.is_empty() || !self.flows_via_node_config.is_empty()
+        !self.flows_via_registration.is_empty()
     }
 }
 
@@ -185,12 +155,6 @@ impl ImpactReport {
                 out.push_str(&format!(
                     "      flow via registration: tenant {:?} flow {:?} (registration {:?})\n",
                     r.tenant, r.flow_id, r.registration_id,
-                ));
-            }
-            for n in &e.flows_via_node_config {
-                out.push_str(&format!(
-                    "      flow via node config:  tenant {:?} flow {:?} v{} node {:?} (config entity {:?})\n",
-                    n.tenant, n.flow_id, n.flow_version, n.node_id, n.referenced_name,
                 ));
             }
             if !e.has_downstream_impact() {
@@ -246,13 +210,6 @@ pub fn analyze(input: &ImpactInput) -> ImpactReport {
         };
         let entity_name = new_name.or(old_name).unwrap_or(id).to_string();
 
-        // The names this entity is known by, for the name-keyed node-config edge.
-        // A rename means both old and new appear; a flow using the OLD name now
-        // dangles and MUST surface (it references the entity that changed).
-        let mut names: BTreeSet<&str> = BTreeSet::new();
-        names.extend(old_name);
-        names.extend(new_name);
-
         // Edge 2: flows via event registration (id-keyed, rename-proof).
         let mut flows_via_registration: Vec<FlowViaRegistration> = input
             .registrations
@@ -272,33 +229,7 @@ pub fn analyze(input: &ImpactInput) -> ImpactReport {
             ))
         });
 
-        // Edge 3: flows via node config (NAME-keyed, NOT rename-proof).
-        let mut flows_via_node_config: Vec<FlowViaNodeConfig> = Vec::new();
-        for fg in input.flows {
-            for node in &fg.flow.nodes {
-                if let Some(name) = nodescan::node_entity_name(node)
-                    && names.contains(name)
-                {
-                    flows_via_node_config.push(FlowViaNodeConfig {
-                        tenant: fg.tenant.clone(),
-                        flow_id: fg.flow.flow_id.clone(),
-                        flow_version: fg.flow.version,
-                        node_id: node.id.clone(),
-                        referenced_name: name.to_string(),
-                    });
-                }
-            }
-        }
-        flows_via_node_config.sort_by(|a, b| {
-            (&a.tenant, &a.flow_id, a.flow_version, &a.node_id).cmp(&(
-                &b.tenant,
-                &b.flow_id,
-                b.flow_version,
-                &b.node_id,
-            ))
-        });
-
-        // Edge 4: generated-API resources (pure over the catalog holding the
+        // Edge 3: generated-API resources (pure over the catalog holding the
         // entity — target, or current for a removed entity).
         let api_resources = api_resources_for(id, input.target, input.current);
 
@@ -308,7 +239,6 @@ pub fn analyze(input: &ImpactInput) -> ImpactReport {
             change,
             destructive,
             flows_via_registration,
-            flows_via_node_config,
             api_resources,
         });
     }
@@ -413,22 +343,6 @@ mod tests {
         }
     }
 
-    /// A one-node flow whose single `postgres` node references `entity_name` by
-    /// its `config["entity"]` (the name-keyed edge).
-    fn pg_flow(tenant: &str, flow_id: &str, version: u32, entity_name: &str) -> FlowGraph {
-        let json = serde_json::json!({
-            "schema-version": "0.1",
-            "flow-id": flow_id,
-            "version": version,
-            "nodes": [ { "id": "read", "type": "postgres", "config": { "entity": entity_name, "op": "get" } } ],
-            "edges": [],
-        });
-        FlowGraph {
-            tenant: tenant.into(),
-            flow: Flow::from_json(&json.to_string()).expect("flow fixture parses"),
-        }
-    }
-
     // --- named mutant killers ----------------------------------------------
 
     /// MUTANT 1 (invert the entity-match): an UNTOUCHED entity's registration must
@@ -444,7 +358,6 @@ mod tests {
                 reg("t1", "f-touched", "touched", "r-touched"),
                 reg("t1", "f-untouched", "untouched", "r-untouched"),
             ],
-            flows: &[],
         };
         let report = analyze(&input);
         // Only the touched entity is in the report.
@@ -472,7 +385,6 @@ mod tests {
             current: Some(&target),
             target: &target,
             registrations: &[reg("t1", "notify", "orders", "r1")],
-            flows: &[],
         };
         let report = analyze(&input);
         assert!(report.any_destructive());
@@ -490,7 +402,6 @@ mod tests {
             current: Some(&target),
             target: &target,
             registrations: &[reg("t1", "log", "audit", "r-audit")],
-            flows: &[],
         };
         let report = analyze(&input);
         assert!(report.any_destructive());
@@ -510,42 +421,6 @@ mod tests {
         assert!(audit.has_downstream_impact());
     }
 
-    /// MUTANT 3 (key node-config on entity.id instead of entity.name): the config
-    /// edge matches the entity NAME. Fixture with id != name proves it.
-    #[test]
-    fn node_config_edge_keys_on_entity_name_not_id() {
-        // id "sales_orders" but NAME "orders"; the postgres node references "orders".
-        let target = cat(&[("sales_orders", "orders")], &[]);
-        let input = ImpactInput {
-            plan: &plan(&[("sales_orders", Safety::Destructive)]),
-            current: Some(&target),
-            target: &target,
-            registrations: &[],
-            flows: &[pg_flow("t1", "sync", 3, "orders")],
-        };
-        let report = analyze(&input);
-        let e = &report.entities[0];
-        assert_eq!(
-            e.flows_via_node_config.len(),
-            1,
-            "the node referencing the entity NAME is found"
-        );
-        let n = &e.flows_via_node_config[0];
-        assert_eq!(n.flow_id, "sync");
-        assert_eq!(n.flow_version, 3);
-        assert_eq!(n.referenced_name, "orders");
-        // A node referencing the ID (not the name) must NOT match.
-        let id_input = ImpactInput {
-            flows: &[pg_flow("t1", "wrong", 1, "sales_orders")],
-            ..input
-        };
-        assert!(
-            analyze(&id_input).entities[0]
-                .flows_via_node_config
-                .is_empty()
-        );
-    }
-
     // --- other edges --------------------------------------------------------
 
     #[test]
@@ -561,7 +436,6 @@ mod tests {
             current: Some(&target),
             target: &target,
             registrations: &[],
-            flows: &[],
         };
         let e = &analyze(&input).entities[0];
         assert!(e.api_resources.contains(&"/api/rest/orders".to_string()));
@@ -574,9 +448,8 @@ mod tests {
     }
 
     #[test]
-    fn a_rename_surfaces_node_config_flows_by_the_old_name() {
-        // orders renamed to orders2; the flow still references the OLD name, which
-        // now dangles — it MUST surface (the not-rename-proof edge).
+    fn a_rename_reports_the_new_display_name() {
+        // orders renamed to orders2 (id `sales_orders` kept across both versions).
         let current = cat(&[("sales_orders", "orders")], &[]);
         let target = cat(&[("sales_orders", "orders2")], &[]);
         let input = ImpactInput {
@@ -584,13 +457,10 @@ mod tests {
             current: Some(&current),
             target: &target,
             registrations: &[],
-            flows: &[pg_flow("t1", "sync", 1, "orders")], // the OLD name
         };
         let e = &analyze(&input).entities[0];
         assert_eq!(e.change, EntityChangeKind::Changed);
         assert_eq!(e.entity_name, "orders2", "display name is the new name");
-        assert_eq!(e.flows_via_node_config.len(), 1);
-        assert_eq!(e.flows_via_node_config[0].referenced_name, "orders");
     }
 
     #[test]
@@ -602,7 +472,6 @@ mod tests {
             current: Some(&current),
             target: &target,
             registrations: &[],
-            flows: &[],
         };
         let e = &analyze(&input).entities[0];
         assert_eq!(e.change, EntityChangeKind::Removed);
@@ -618,7 +487,6 @@ mod tests {
             current: Some(&target),
             target: &target,
             registrations: &[reg("t1", "notify", "orders", "r1")],
-            flows: &[],
         };
         let report = analyze(&input);
         assert!(report.is_empty());

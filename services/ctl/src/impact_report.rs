@@ -1,7 +1,7 @@
 //! The operations-only `impact-report` subcommand (11.8): the read-only **effect shell** for
 //! `wamn-schema-control` — it reads the current applied catalog + a `--target`, compiles
 //! the migration plan (the same wamn-schema-compiler compiler `migrate-catalog` uses), reads
-//! the dependency edges (event registrations and active flow graphs)
+//! the dependency edges (event registrations)
 //! across ALL tenants on a superuser connection, and prints the typed
 //! [`wamn_schema_control::impact::ImpactReport`]. It **mutates nothing** — the schema-designer
 //! surface for "what breaks if I apply this".
@@ -9,9 +9,9 @@
 //! The pure decision is `wamn_schema_control::impact::analyze`; this shell only
 //! holds the connection (SR6).
 //!
-//! **Tenant scoping.** The registration and flow reads are CROSS-TENANT (the
-//! superuser bypasses RLS): a shared entity's change hits every tenant's flows,
-//! so the report must see them all — the per-edge lines carry their tenant.
+//! **Tenant scoping.** The registration read is CROSS-TENANT (the superuser
+//! bypasses RLS): a shared entity's change hits every tenant's flows, so the
+//! report must see them all — the per-edge lines carry their tenant.
 
 use std::path::PathBuf;
 
@@ -21,9 +21,7 @@ use tokio_postgres::NoTls;
 
 use wamn_schema_control::Env;
 use wamn_schema_control::MigrationPlan;
-use wamn_schema_control::impact::{
-    FlowGraph, ImpactInput, ImpactReport, RegistrationEdge, analyze,
-};
+use wamn_schema_control::impact::{ImpactInput, ImpactReport, RegistrationEdge, analyze};
 use wamn_schema_model::Catalog;
 
 use crate::migrate_catalog::{is_bare_ident, read_current_applied};
@@ -46,8 +44,8 @@ pub struct ImpactReportArgs {
     #[arg(long, default_value = "dev")]
     pub environment: String,
 
-    /// The schema holding the data tables and flow registry (`<schema>.flows`;
-    /// the `catalog` metadata schema is fixed).
+    /// The schema holding the data tables (the `catalog` metadata schema is
+    /// fixed).
     #[arg(long, default_value = "public")]
     pub schema: String,
 
@@ -88,7 +86,7 @@ pub async fn run(args: ImpactReportArgs) -> anyhow::Result<()> {
     let plan = compile_plan(current.as_ref(), &target)?;
     println!("-- schema diff --\n{}", plan.report());
 
-    let impact = gather_impact(&client, &plan, current.as_ref(), &target, &args.schema).await?;
+    let impact = gather_impact(&client, &plan, current.as_ref(), &target).await?;
     conn_task.abort();
     println!("{}", impact.render());
     if impact
@@ -118,16 +116,15 @@ pub fn compile_plan(current: Option<&Catalog>, target: &Catalog) -> anyhow::Resu
 /// Read the dependency edges for `plan` and fold them through
 /// `wamn_schema_control::impact::analyze`.
 ///
-/// Cross-tenant, superuser (RLS bypassed). Each read is `to_regclass`-probed so a
-/// project that is not registration- or run-state-provisioned yet simply
-/// contributes no edges (an absent table is a clean empty, not an error) — the
-/// report still shows the entity change + its generated-API resources.
+/// Cross-tenant, superuser (RLS bypassed). The read is `to_regclass`-probed so a
+/// project that is not registration-provisioned yet simply contributes no edges
+/// (an absent table is a clean empty, not an error) — the report still shows the
+/// entity change + its generated-API resources.
 pub async fn gather_impact(
     client: &tokio_postgres::Client,
     plan: &MigrationPlan,
     current: Option<&Catalog>,
     target: &Catalog,
-    schema: &str,
 ) -> anyhow::Result<ImpactReport> {
     // Edge 2: event registrations (id-keyed) — the D24 read + flow_id.
     let mut registrations = Vec::new();
@@ -149,41 +146,16 @@ pub async fn gather_impact(
         }
     }
 
-    // Edge 3: active flow graphs (name-keyed node config).
-    let mut flows = Vec::new();
-    if table_present(client, &format!("{schema}.flows")).await? {
-        let rows = client
-            .query(
-                &wamn_schema_control::sql::select_active_flows_sql(schema),
-                &[],
-            )
-            .await
-            .context("read active flows for impact analysis")?;
-        for row in &rows {
-            let tenant: String = row.get(0);
-            let graph_json: String = row.get(3);
-            // A stored graph the CURRENT flow-schema cannot parse contributes no
-            // node-config edge rather than failing the whole report (a report is
-            // advisory; a poison row must not blind the operator to the rest).
-            match wamn_flow::Flow::from_json(&graph_json) {
-                Ok(flow) => flows.push(FlowGraph { tenant, flow }),
-                Err(_) => continue,
-            }
-        }
-    }
-
     Ok(analyze(&ImpactInput {
         plan,
         current,
         target,
         registrations: &registrations,
-        flows: &flows,
     }))
 }
 
 /// Whether a (schema-qualified) relation exists — the D24 guard's probe shape.
-/// `qualified` is built from a validated bare-identifier schema (or a fixed
-/// `catalog.*` name), so the interpolation is safe.
+/// `qualified` is a fixed `catalog.*` name, so the interpolation is safe.
 async fn table_present(client: &tokio_postgres::Client, qualified: &str) -> anyhow::Result<bool> {
     Ok(client
         .query_one(

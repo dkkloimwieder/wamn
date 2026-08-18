@@ -306,7 +306,7 @@ pub(crate) async fn apply_catalog_target(
     Ok(outcome)
 }
 
-// Bundling these would churn the `copy-project-env` caller too, for no behaviour change.
+// Bundling these parameters would only hide the shared transaction boundary.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_catalog_target_in_transaction(
     tx: &tokio_postgres::Transaction<'_>,
@@ -315,70 +315,6 @@ pub(crate) async fn apply_catalog_target_in_transaction(
     schema: &BareSchemaName,
     target: &Catalog,
     expected_base: Option<u32>,
-    advance_release_head: bool,
-) -> anyhow::Result<ApplyOutcome> {
-    apply_catalog_target_in_transaction_with(
-        tx,
-        tenant,
-        environment,
-        schema,
-        target,
-        expected_base,
-        CatalogPlanner::Additive,
-        advance_release_head,
-    )
-    .await
-}
-
-/// The version window covered by a durable operations-state authorization.
-#[cfg(feature = "ops")]
-pub(crate) struct TargetReconciliationWindow {
-    pub(crate) from_version: Option<u32>,
-    pub(crate) to_version: u32,
-}
-
-#[cfg(feature = "ops")]
-// Bundling these parameters would only hide the shared transaction boundary.
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn reconcile_catalog_target_in_transaction(
-    tx: &tokio_postgres::Transaction<'_>,
-    tenant: &str,
-    environment: &str,
-    schema: &BareSchemaName,
-    target: &Catalog,
-    expected_base: Option<u32>,
-    authorization: Option<TargetReconciliationWindow>,
-    advance_release_head: bool,
-) -> anyhow::Result<ApplyOutcome> {
-    apply_catalog_target_in_transaction_with(
-        tx,
-        tenant,
-        environment,
-        schema,
-        target,
-        expected_base,
-        CatalogPlanner::TargetReconciliation(authorization),
-        advance_release_head,
-    )
-    .await
-}
-
-enum CatalogPlanner {
-    Additive,
-    #[cfg(feature = "ops")]
-    TargetReconciliation(Option<TargetReconciliationWindow>),
-}
-
-// Bundling these parameters would only hide the shared transaction boundary.
-#[allow(clippy::too_many_arguments)]
-async fn apply_catalog_target_in_transaction_with(
-    tx: &tokio_postgres::Transaction<'_>,
-    tenant: &str,
-    environment: &str,
-    schema: &BareSchemaName,
-    target: &Catalog,
-    expected_base: Option<u32>,
-    planner: CatalogPlanner,
     advance_release_head: bool,
 ) -> anyhow::Result<ApplyOutcome> {
     ensure_data_schema(tx, schema).await?;
@@ -441,14 +377,7 @@ async fn apply_catalog_target_in_transaction_with(
         target,
         expected_base,
     };
-    let planned = match &planner {
-        CatalogPlanner::Additive => plan_migration(&request),
-        #[cfg(feature = "ops")]
-        CatalogPlanner::TargetReconciliation(_) => {
-            wamn_schema_control::ops::plan_target_reconciliation(&request)
-        }
-    };
-    let plan = match planned {
+    let plan = match plan_migration(&request) {
         Err(MigrationError::AlreadyApplied { version }) => {
             if advance_release_head {
                 let version_i32 = i32::try_from(version).context("catalog version")?;
@@ -465,15 +394,6 @@ async fn apply_catalog_target_in_transaction_with(
         }
         other => other.map_err(anyhow::Error::new)?,
     };
-    #[cfg(feature = "ops")]
-    if plan.destructive {
-        let locked_from = current.as_ref().map(|catalog| catalog.version);
-        let authorization = match &planner {
-            CatalogPlanner::TargetReconciliation(authorization) => authorization.as_ref(),
-            CatalogPlanner::Additive => None,
-        };
-        guard_target_reconciliation_window(authorization, locked_from, target.version)?;
-    }
     for stmt in &plan.statements {
         if !should_execute_migration_statement(advance_release_head, stmt) {
             continue;
@@ -505,28 +425,6 @@ async fn apply_catalog_target_in_transaction_with(
         .context("advance catalog head")?;
     }
     Ok(ApplyOutcome::Applied(plan))
-}
-
-#[cfg(feature = "ops")]
-fn guard_target_reconciliation_window(
-    authorization: Option<&TargetReconciliationWindow>,
-    locked_from: Option<u32>,
-    locked_to: u32,
-) -> anyhow::Result<()> {
-    let authorization = authorization.context(
-        "destructive target reconciliation requires a durable \
-         backup-checkpoint-attested operations record",
-    )?;
-    anyhow::ensure!(
-        authorization.from_version == locked_from && authorization.to_version == locked_to,
-        "destructive target reconciliation authorization window changed: \
-         authorized {:?} -> {}, locked {:?} -> {}",
-        authorization.from_version,
-        authorization.to_version,
-        locked_from,
-        locked_to,
-    );
-    Ok(())
 }
 
 pub(crate) fn is_migration_journal_statement(
@@ -771,19 +669,6 @@ mod tests {
         let default = default_migration_error(shared).to_string();
         assert!(default.contains("reprovision the environment"));
         assert!(default.contains("drop column orders.note"));
-    }
-
-    #[cfg(feature = "ops")]
-    #[test]
-    fn destructive_reconciliation_requires_the_exact_locked_window() {
-        let exact = TargetReconciliationWindow {
-            from_version: Some(2),
-            to_version: 3,
-        };
-        guard_target_reconciliation_window(Some(&exact), Some(2), 3).unwrap();
-        assert!(guard_target_reconciliation_window(None, Some(2), 3).is_err());
-        assert!(guard_target_reconciliation_window(Some(&exact), Some(4), 3).is_err());
-        assert!(guard_target_reconciliation_window(Some(&exact), Some(2), 4).is_err());
     }
 
     #[tokio::test]
