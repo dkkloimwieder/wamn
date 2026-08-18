@@ -803,7 +803,11 @@ async fn exec_copy_definition(
                     serde_json::from_str(&existing).context("parse destination manifest")?;
                 let source: serde_json::Value =
                     serde_json::from_str(&source_manifest).context("parse source manifest")?;
-                anyhow::ensure!(existing == source, "catalog-release-content-conflict");
+                anyhow::ensure!(
+                    crate::publish_catalog::divergent_release_members(&existing, &source)
+                        .is_empty(),
+                    "catalog-release-content-conflict"
+                );
             }
             let artifacts = src_client
                 .query(
@@ -997,18 +1001,11 @@ async fn exec_copy_definition(
             )
             .await
             .context("carry copied attachment activation")?;
-            let copied: i64 = tx
-                .query_one(
-                    "SELECT count(*) FROM catalog.release_flows \
-                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-                    &[&tenant, &catalog_id, &catalog_version],
-                )
-                .await?
-                .get(0);
-            anyhow::ensure!(
-                copied == i64::try_from(artifacts.len()).unwrap_or(i64::MAX),
-                "catalog-release-content-conflict"
-            );
+            // wamn-0h0g.15.163: no member count is asserted here. Every copied
+            // member was read back at exactly its source content in the loop
+            // above — the enforcement of record per ruling R5 — and the only
+            // thing a count could add is "and nothing else is stored", which is
+            // the invariant grow-only append abolished.
             tx.execute(
                 wamn_schema_control::sql::publication_boundary_sql(),
                 &[&"after-members"],

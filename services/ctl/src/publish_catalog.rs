@@ -26,7 +26,7 @@
 //! artifacts, and publishes artifacts + release membership + head atomically.
 //! It does not write the retired mutable `flows.active` publication path.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -944,7 +944,10 @@ async fn publish_release(
                 serde_json::from_str(&existing).context("parse stored release manifest")?;
             let requested: serde_json::Value =
                 serde_json::from_str(&release_manifest).expect("prepared manifest is JSON");
-            anyhow::ensure!(existing == requested, "catalog-release-content-conflict");
+            anyhow::ensure!(
+                divergent_release_members(&existing, &requested).is_empty(),
+                "catalog-release-content-conflict"
+            );
         }
 
         for prepared in &artifacts {
@@ -1202,18 +1205,11 @@ async fn publish_release(
             )
             .await
             .context("carry attachment activation")?;
-        let stored_members: i64 = client
-            .query_one(
-                "SELECT count(*) FROM catalog.release_flows \
-                 WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-                &[&tenant, &cat.catalog_id, &catalog_version],
-            )
-            .await?
-            .get(0);
-        anyhow::ensure!(
-            stored_members == i64::try_from(members.len()).unwrap_or(i64::MAX),
-            "catalog-release-content-conflict"
-        );
+        // wamn-0h0g.15.163: no member count is asserted here. Every member this
+        // publish asked for was read back at exactly its requested content in the
+        // loop above — the enforcement of record per ruling R5 — and the only
+        // thing a count could add is "and nothing else is stored", which is the
+        // invariant grow-only append abolished.
         for stage in ["after-members", "before-head"] {
             client
                 .execute(
@@ -1535,6 +1531,50 @@ struct PreparedFlowArtifact {
     entry_kind: wamn_flow::EntryKind,
     artifact: wamn_catalog::Artifact,
     execution_bundle_hash: Option<String>,
+}
+
+/// The flow ids two release-membership documents both name at DIFFERENT content.
+///
+/// Release membership is grow-only by owner rulings R1/R5 (wamn-0h0g.15.159): the
+/// database now COMMITS an append to a sealed release, so two representations of
+/// one release need not carry the same members and a differing member COUNT is no
+/// longer evidence of anything. A flow id both sides carry at a different
+/// flow-version or artifact hash is the one divergence no append can explain, and
+/// it is what `catalog-release-content-conflict` names from here on. A member only
+/// one side carries is the permitted append and is not reported.
+///
+/// Both arguments are the [`wamn_schema_control::sql::select_release_members_sql`]
+/// shape — an array of `{flow-id, flow-version, artifact-hash}` — and both are
+/// produced by this process or by that statement, never by a caller, so an entry
+/// that is not an object with a string `flow-id` is skipped rather than defended
+/// against.
+pub(crate) fn divergent_release_members(
+    stored: &serde_json::Value,
+    requested: &serde_json::Value,
+) -> Vec<String> {
+    let requested = index_release_members(requested);
+    index_release_members(stored)
+        .into_iter()
+        .filter(|(flow_id, member)| requested.get(flow_id).is_some_and(|other| other != member))
+        .map(|(flow_id, _)| flow_id)
+        .collect()
+}
+
+/// Index one membership document by flow id, keeping the whole member as the
+/// value: the ids are the keys, so comparing members compares everything else.
+fn index_release_members(
+    members: &serde_json::Value,
+) -> BTreeMap<String, &serde_json::Map<String, serde_json::Value>> {
+    members
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|member| {
+            let member = member.as_object()?;
+            let flow_id = member.get("flow-id")?.as_str()?;
+            Some((flow_id.to_string(), member))
+        })
+        .collect()
 }
 
 fn release_members(
@@ -2143,5 +2183,170 @@ mod tests {
         let source = include_str!("publish_catalog.rs");
         assert!(source.contains("from_version IS NOT DISTINCT FROM $4"));
         assert!(source.contains("verify retried release publication journal"));
+    }
+
+    fn member(flow_id: &str, flow_version: i32, artifact_hash: &str) -> serde_json::Value {
+        serde_json::json!({
+            "flow-id": flow_id,
+            "flow-version": flow_version,
+            "artifact-hash": artifact_hash,
+        })
+    }
+
+    #[test]
+    fn only_a_member_both_sides_carry_at_different_content_is_a_release_conflict() {
+        let one = serde_json::json!([member("a", 1, "ah-a")]);
+        let grown = serde_json::json!([member("a", 1, "ah-a"), member("b", 1, "ah-b")]);
+
+        // wamn-0h0g.15.163: the two directions of a permitted grow-only append.
+        assert!(divergent_release_members(&one, &one).is_empty());
+        assert!(divergent_release_members(&grown, &one).is_empty());
+        assert!(divergent_release_members(&one, &grown).is_empty());
+        assert!(divergent_release_members(&serde_json::json!([]), &grown).is_empty());
+
+        // A shared flow id at different content is the one divergence no append
+        // explains — in either field, and named individually.
+        let rehashed = serde_json::json!([member("a", 1, "ah-other"), member("b", 1, "ah-b")]);
+        assert_eq!(divergent_release_members(&grown, &rehashed), vec!["a"]);
+        let reversioned = serde_json::json!([member("a", 2, "ah-a")]);
+        assert_eq!(divergent_release_members(&grown, &reversioned), vec!["a"]);
+        let both = serde_json::json!([member("a", 2, "ah-a"), member("b", 1, "ah-other")]);
+        assert_eq!(divergent_release_members(&grown, &both), vec!["a", "b"]);
+    }
+
+    /// wamn-0h0g.15.163 against live PostgreSQL: a release the database let grow
+    /// republishes, and a changed member still refuses.
+    ///
+    /// The tenant carries a nanosecond suffix because `catalog.release_flows`
+    /// refuses DELETE through its immutability trigger, so a hermetic preamble
+    /// cannot reset the coordinate — only a coordinate nothing has touched is
+    /// clean.
+    #[tokio::test]
+    async fn a_release_grown_by_a_later_append_republishes_and_still_refuses_a_changed_member() {
+        let Ok(url) = std::env::var("WAMN_MIGRATE_PG_URL") else {
+            return;
+        };
+        let (client, connection) = tokio_postgres::connect(&url, NoTls).await.unwrap();
+        let connection_task = tokio::spawn(connection);
+        ensure_wamn_app_role(&client).await.unwrap();
+        ensure_catalog_storage(&client).await.unwrap();
+
+        let tenant = format!(
+            "grown-release-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock is after the epoch")
+                .as_nanos()
+        );
+        let run_schema = BareSchemaName::new("cf_grown_release_probe").unwrap();
+        let (catalog, sealed_graph) = release_fixture("grown");
+        let document = catalog.to_json();
+        seed_test_execution_bundle(&client, &tenant).await;
+
+        // 1. Seal the release with its single member.
+        client.batch_execute("BEGIN").await.unwrap();
+        let sealed = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &run_schema,
+            vec![with_test_execution_bundle(
+                prepare_flow_artifact(&tenant, &sealed_graph).unwrap(),
+            )],
+            None,
+            &document,
+            None,
+        )
+        .await;
+        finish_publication_transaction(&client, sealed)
+            .await
+            .expect("seal the one-member release");
+
+        // 2. A tested publish appends a SECOND member in a LATER transaction —
+        //    the append wamn-0h0g.15.159 proved the database now COMMITS.
+        client
+            .execute(
+                "INSERT INTO catalog.flow_artifacts \
+                   (tenant_id, flow_id, flow_version, schema_version, graph_json, \
+                    graph_hash, artifact_hash) \
+                 VALUES ($1, 'flow-appended', 1, '0.1', '{}'::jsonb, 'gh-appended', \
+                         'ah-appended')",
+                &[&tenant],
+            )
+            .await
+            .expect("register the appended member's artifact");
+        client
+            .execute(
+                wamn_schema_control::sql::insert_release_flow_sql(),
+                &[
+                    &tenant,
+                    &catalog.catalog_id,
+                    &1_i32,
+                    &"flow-appended",
+                    &1_i32,
+                    &wamn_catalog::execution_bundle_hash(TEST_EXECUTION_BUNDLE_BYTES),
+                ],
+            )
+            .await
+            .expect("append a member to the sealed release");
+        let grown: String = client
+            .query_one(
+                wamn_schema_control::sql::select_release_members_sql(),
+                &[&tenant, &catalog.catalog_id, &1_i32],
+            )
+            .await
+            .unwrap()
+            .get(0);
+        assert!(grown.contains("flow-appended"), "{grown}");
+
+        // 3. Republishing the ORIGINAL member set is ADMITTED, not refused.
+        client.batch_execute("BEGIN").await.unwrap();
+        let republish = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &run_schema,
+            vec![with_test_execution_bundle(
+                prepare_flow_artifact(&tenant, &sealed_graph).unwrap(),
+            )],
+            None,
+            &document,
+            Some(1),
+        )
+        .await;
+        finish_publication_transaction(&client, republish)
+            .await
+            .expect("a republish of a grown release is admitted");
+
+        // 4. The same flow id at a different artifact hash is still refused.
+        let changed_graph = sealed_graph.replace(r#""status":200"#, r#""status":201"#);
+        assert_ne!(changed_graph, sealed_graph);
+        client.batch_execute("BEGIN").await.unwrap();
+        let conflict = publish_release(
+            &client,
+            &catalog,
+            &tenant,
+            "dev",
+            &run_schema,
+            vec![with_test_execution_bundle(
+                prepare_flow_artifact(&tenant, &changed_graph).unwrap(),
+            )],
+            None,
+            &document,
+            Some(1),
+        )
+        .await;
+        let error = finish_publication_transaction(&client, conflict)
+            .await
+            .expect_err("a changed member must still refuse");
+        assert!(
+            format!("{error:#}").contains("catalog-release-content-conflict"),
+            "{error:#}"
+        );
+
+        drop(client);
+        let _ = connection_task.await;
     }
 }
