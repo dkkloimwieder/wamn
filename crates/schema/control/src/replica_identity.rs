@@ -33,10 +33,22 @@ use std::fmt;
 use wamn_event_reg::EventRegistration;
 use wamn_schema_model::Catalog;
 
-/// Why the driver could not obtain the FULL cross-tenant registration set for a
-/// catalog (wamn-0h0g.12.103). Each variant is a STABLE refusal name — the ctl
-/// verb and the live gates assert on it, in the shape
-/// [`crate::PublicationError`] uses.
+/// Why a driver could not obtain the FULL cross-tenant registration set for a
+/// catalog (wamn-0h0g.12.103, extended by wamn-0h0g.12.119). Each variant is a
+/// STABLE refusal name — the ctl verbs and the live gates assert on it, in the
+/// shape [`crate::PublicationError`] uses.
+///
+/// TWO subsystems read that registration set, and both failed open on exactly the
+/// same two states, so they share ONE taxonomy rather than growing a parallel
+/// error type. The variants pair `<subsystem>` x `<absent | unreadable>`:
+///
+/// * [`Self::Absent`] / [`Self::Unreadable`] — the REPLICA IDENTITY reconcile
+///   (wamn-0h0g.12.103). Their literals carry no subsystem prefix for historical
+///   reasons: they were minted before the second owner existed, and live gates
+///   key on them verbatim, so they stay frozen exactly as they are.
+/// * [`Self::OrphanGuardAbsent`] / [`Self::OrphanGuardUnreadable`] — the D24
+///   registration-orphan guard shared by publish-catalog and migrate-catalog
+///   (wamn-0h0g.12.119).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnreadableRegistrationsKind {
     /// `catalog.event_registrations` does not exist: the project-env is not
@@ -50,6 +62,14 @@ pub enum UnreadableRegistrationsKind {
     /// driver runs the read under `row_security = off` so Postgres raises
     /// (SQLSTATE 42501) instead of filtering, and the silence lands here.
     Unreadable,
+    /// [`Self::Absent`] as the D24 registration-orphan guard sees it: with no
+    /// registration table there is no evidence that the entities this catalog
+    /// DROPS are unreferenced, and the guard gates a destructive apply.
+    OrphanGuardAbsent,
+    /// [`Self::Unreadable`] as the D24 registration-orphan guard sees it. The
+    /// same silent RLS mechanism, with a worse consequence: the guard gates an
+    /// apply that REMOVES entities.
+    OrphanGuardUnreadable,
 }
 
 impl UnreadableRegistrationsKind {
@@ -58,26 +78,50 @@ impl UnreadableRegistrationsKind {
         match self {
             Self::Absent => "replica-identity-registrations-absent",
             Self::Unreadable => "replica-identity-registrations-unreadable",
+            Self::OrphanGuardAbsent => "orphan-guard-registrations-absent",
+            Self::OrphanGuardUnreadable => "orphan-guard-registrations-unreadable",
+        }
+    }
+
+    /// The operation the refusal aborts, as it reads in the message. Keeps each
+    /// subsystem from claiming the other's verb: an operator running
+    /// `migrate-catalog` must not be told a REPLICA IDENTITY reconcile refused.
+    fn refused_action(self) -> &'static str {
+        match self {
+            Self::Absent | Self::Unreadable => "reconcile REPLICA IDENTITY",
+            Self::OrphanGuardAbsent | Self::OrphanGuardUnreadable => {
+                "run the D24 registration-orphan guard"
+            }
         }
     }
 }
 
-/// The REPLICA IDENTITY reconcile REFUSED because it could not read the
-/// registration set it derives the FULL requirement from.
+/// A registration-set consumer REFUSED because it could not read the
+/// cross-tenant registration set its decision depends on.
 ///
-/// **Why this is a refusal and not an empty set.** The planner
-/// ([`reconcile_replica_identity`]) cannot distinguish "no entity needs FULL"
-/// from "I could not see the registrations": both arrive as an empty slice, and
-/// the second one plans a reset to DEFAULT for EVERY entity currently at FULL.
-/// The flip is NON-RETROACTIVE, so every row event captured until the next
-/// repair permanently lacks its old image, while the run reports as a clean,
-/// idempotent-looking success. The subsystem is fail-closed everywhere else (the
-/// materializer refuses old-image-absent rather than evaluating condition-false);
-/// this is the one place it used to fail open.
+/// **Why this is a refusal and not an empty set.** Neither consumer can
+/// distinguish "there is genuinely nothing here" from "I could not see it": both
+/// states arrive as an empty row set, and the empty reading is the DANGEROUS one
+/// in each case.
+///
+/// * REPLICA IDENTITY reconcile ([`reconcile_replica_identity`]): an empty set
+///   plans a reset to DEFAULT for EVERY entity currently at FULL. The flip is
+///   NON-RETROACTIVE, so every row event captured until the next repair
+///   permanently lacks its old image, while the run reports as a clean,
+///   idempotent-looking success.
+/// * D24 registration-orphan guard ([`crate::check_registration_orphans`]): an
+///   empty set finds no orphans and CLEARS a destructive apply, letting
+///   migrate-catalog REMOVE an entity that event registrations still reference —
+///   the precise outcome D24 exists to prevent — and report the run clean.
+///
+/// Both subsystems are fail-closed everywhere else (the materializer refuses
+/// old-image-absent rather than evaluating condition-false); these were the
+/// places they used to fail open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnreadableRegistrations {
     pub kind: UnreadableRegistrationsKind,
-    /// The catalog whose registrations could not be read (the reconcile's scope).
+    /// The catalog whose registrations could not be read (the refusing
+    /// operation's scope).
     pub catalog_id: String,
 }
 
@@ -85,8 +129,9 @@ impl fmt::Display for UnreadableRegistrations {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "{}: refusing to reconcile REPLICA IDENTITY for catalog {:?} — ",
+            "{}: refusing to {} for catalog {:?} — ",
             self.kind.name(),
+            self.kind.refused_action(),
             self.catalog_id
         )?;
         match self.kind {
@@ -105,6 +150,26 @@ impl fmt::Display for UnreadableRegistrations {
                  table is FORCE ROW LEVEL SECURITY, so a non-bypassing session — the table's own \
                  non-superuser owner included — reads ZERO ROWS WITH NO ERROR, which would be \
                  planned as a non-retroactive reset of every entity to DEFAULT. The read runs \
+                 under `row_security = off` so that silence surfaces as this refusal."
+            ),
+            UnreadableRegistrationsKind::OrphanGuardAbsent => write!(
+                formatter,
+                "catalog.event_registrations does not exist, so this project-env is not \
+                 registration-provisioned. An unprovisioned registration set is NOT an empty \
+                 one: the guard would find no orphans and CLEAR a DESTRUCTIVE apply, letting \
+                 the migration REMOVE an entity that event registrations still reference — the \
+                 exact outcome D24 prevents — while reporting the run clean. Provision the \
+                 catalog schema first."
+            ),
+            UnreadableRegistrationsKind::OrphanGuardUnreadable => write!(
+                formatter,
+                "the cross-tenant read of catalog.event_registrations failed. It must run as a \
+                 role that BYPASSES row-level security (a superuser or a BYPASSRLS role): the \
+                 table is FORCE ROW LEVEL SECURITY, so a non-bypassing session — the table's own \
+                 non-superuser owner included, since FORCE strips the owner's usual exemption and \
+                 BYPASSRLS is checked on the current role only, never through inherited \
+                 membership — reads ZERO ROWS WITH NO ERROR, which would CLEAR a DESTRUCTIVE \
+                 apply and let the migration REMOVE a still-referenced entity. The read runs \
                  under `row_security = off` so that silence surfaces as this refusal."
             ),
         }
@@ -496,6 +561,76 @@ mod tests {
              JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = $1 AND c.relkind = 'r'"
         );
+    }
+
+    /// wamn-0h0g.12.119: the D24 orphan guard's two unreadable-registration
+    /// states refuse under their OWN stable names, distinct from the REPLICA
+    /// IDENTITY pair, and each names the destructive apply it is preventing. The
+    /// live gate (`orphan_guard_live`) keys on these literals.
+    #[test]
+    fn an_unreadable_registration_set_refuses_the_orphan_guard_by_its_own_name() {
+        let absent = UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::OrphanGuardAbsent,
+            catalog_id: "shop".to_string(),
+        };
+        let msg = absent.to_string();
+        assert!(
+            msg.starts_with("orphan-guard-registrations-absent: "),
+            "{msg}"
+        );
+        for needle in ["\"shop\"", "not registration-provisioned", "DESTRUCTIVE"] {
+            assert!(
+                msg.contains(needle),
+                "absent orphan-guard refusal names {needle:?}: {msg}"
+            );
+        }
+
+        let unreadable = UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::OrphanGuardUnreadable,
+            catalog_id: "shop".to_string(),
+        };
+        let msg = unreadable.to_string();
+        assert!(
+            msg.starts_with("orphan-guard-registrations-unreadable: "),
+            "{msg}"
+        );
+        for needle in [
+            "FORCE ROW LEVEL SECURITY",
+            "ZERO ROWS WITH NO ERROR",
+            "DESTRUCTIVE",
+        ] {
+            assert!(
+                msg.contains(needle),
+                "unreadable orphan-guard refusal names {needle:?}: {msg}"
+            );
+        }
+
+        // The orphan guard never borrows the REPLICA IDENTITY verb: an operator
+        // running migrate-catalog must not be told a reconcile refused.
+        for kind in [
+            UnreadableRegistrationsKind::OrphanGuardAbsent,
+            UnreadableRegistrationsKind::OrphanGuardUnreadable,
+        ] {
+            let msg = UnreadableRegistrations {
+                kind,
+                catalog_id: "shop".to_string(),
+            }
+            .to_string();
+            assert!(
+                !msg.contains("reconcile REPLICA IDENTITY"),
+                "orphan-guard refusal must not claim the reconcile verb: {msg}"
+            );
+        }
+
+        // All four states are distinct refusals, never collapsed into one name.
+        let names = [
+            UnreadableRegistrationsKind::Absent.name(),
+            UnreadableRegistrationsKind::Unreadable.name(),
+            UnreadableRegistrationsKind::OrphanGuardAbsent.name(),
+            UnreadableRegistrationsKind::OrphanGuardUnreadable.name(),
+        ];
+        let unique: BTreeSet<&str> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len(), "{names:?}");
     }
 
     /// wamn-0h0g.12.103: the two unreadable-registration states refuse under

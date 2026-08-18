@@ -10,13 +10,26 @@
 //! registrations are deleted, the default command reaches its separate
 //! additive-only refusal for the destructive target.
 //!
+//! wamn-0h0g.12.119 adds the fail-CLOSED half: the guard must REFUSE BY NAME a
+//! registration set it cannot read, rather than reading zero rows and clearing a
+//! destructive apply. `migrate-catalog` has no refusal in front of this guard, so
+//! a silent pass here removes an entity that registrations still reference — the
+//! exact outcome D24 exists to prevent — and reports the run clean.
+//!
 //! Hermetic: each scenario drops+recreates the `catalog` metadata schema, the
 //! data schema, and the publish snapshot tables in its preamble, so a re-run
 //! starts clean and teardown leaves nothing behind.
 
+use std::sync::LazyLock;
+
 use tokio_postgres::{Client, NoTls};
 
 use wamn_ctl::{migrate_catalog, publish_catalog};
+
+/// Every test in this binary rebuilds the FIXED `catalog` metadata schema in its
+/// preamble, so they must not interleave — cargo runs a binary's tests in
+/// parallel threads by default.
+static SERIALIZE: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 const CATALOG_SCHEMA: &str = include_str!("../../../deploy/sql/catalog-schema.sql");
 
@@ -204,11 +217,303 @@ async fn orphan_guard_refuses_then_proceeds() {
         eprintln!("WAMN_CTL_PG_URL unset — skipping the D24 orphan-guard gate");
         return;
     };
+    let _serialized = SERIALIZE.lock().await;
     let su = connect(&url).await;
     publish_scenario(&su, &url).await;
     migrate_scenario(&su, &url).await;
     dry_run_scenario(&su, &url).await;
     dry_run_no_data_schema_scenario(&su, &url).await;
+}
+
+/// A caller that holds every privilege `migrate-catalog --dry-run` needs, and
+/// simply does not BYPASS row-level security. That is the whole hazard: NOT a
+/// under-privileged role (which errors loudly and harmlessly), but a
+/// sufficiently-privileged one that reads the registration set as empty in
+/// silence.
+///
+/// `wamn_app` cannot stand in here. `read_current_applied` runs
+/// `SELECT ... FOR UPDATE` on `catalog.catalogs`, which needs UPDATE privilege,
+/// and wamn-0h0g.12.126 deliberately removed exactly that from the guest role —
+/// so wamn_app fails with a privilege error BEFORE reaching the guard, proving
+/// nothing about the guard.
+const RLS_ROLE: &str = "d24_rls_reader";
+
+/// Create [`RLS_ROLE`] with precisely the dry-run path's privileges. Roles are
+/// CLUSTER-wide, so this drops any leftover first and teardown drops it again.
+async fn create_rls_reader(su: &Client) {
+    su.batch_execute(&format!(
+        "DO $$ BEGIN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{RLS_ROLE}') THEN \
+             EXECUTE 'DROP OWNED BY {RLS_ROLE}'; EXECUTE 'DROP ROLE {RLS_ROLE}'; \
+           END IF; \
+         END $$; \
+         CREATE ROLE {RLS_ROLE} LOGIN PASSWORD '{RLS_ROLE}' NOSUPERUSER NOBYPASSRLS; \
+         GRANT USAGE ON SCHEMA catalog TO {RLS_ROLE}; \
+         GRANT SELECT, UPDATE ON catalog.catalogs TO {RLS_ROLE}; \
+         GRANT SELECT ON catalog.event_registrations TO {RLS_ROLE};"
+    ))
+    .await
+    .expect("create the non-bypassing reader role");
+}
+
+async fn drop_rls_reader(su: &Client) {
+    su.batch_execute(&format!(
+        "DO $$ BEGIN \
+           IF EXISTS (SELECT FROM pg_roles WHERE rolname = '{RLS_ROLE}') THEN \
+             EXECUTE 'DROP OWNED BY {RLS_ROLE}'; EXECUTE 'DROP ROLE {RLS_ROLE}'; \
+           END IF; \
+         END $$;"
+    ))
+    .await
+    .expect("drop the non-bypassing reader role");
+}
+
+/// Derive a `role` URL for the same database as `url`. `migrate-catalog` opens
+/// its OWN connection from a URL string, so handing it a non-bypassing URL is the
+/// only way to drive the REAL verb as a non-bypassing identity (`SET ROLE` on
+/// this test's connection would not reach it). `None` for a non-TCP url.
+fn role_url(url: &str, role: &str) -> Option<String> {
+    let config: tokio_postgres::Config = url.parse().ok()?;
+    let host = match config.get_hosts().first()? {
+        tokio_postgres::config::Host::Tcp(host) => host.clone(),
+        _ => return None,
+    };
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    let dbname = config.get_dbname()?;
+    Some(format!("postgres://{role}:{role}@{host}:{port}/{dbname}"))
+}
+
+/// Registrations visible to `role` on this connection — the measurement that
+/// makes the RLS silence observable rather than asserted.
+async fn registrations_visible_as(su: &Client, role: &str) -> i64 {
+    su.batch_execute(&format!("SET ROLE {role}"))
+        .await
+        .expect("assume the non-bypassing identity");
+    let visible = reg_count(su).await;
+    su.batch_execute("RESET ROLE")
+        .await
+        .expect("drop back to the superuser");
+    visible
+}
+
+/// The applied catalog version for `t1`/`shop`/`dev`, or `None` when nothing is
+/// applied — the proof a refusal advanced nothing.
+async fn applied_version(su: &Client) -> Option<i32> {
+    su.query_opt(
+        "SELECT version FROM catalog.catalogs \
+         WHERE tenant_id='t1' AND catalog_id='shop' AND environment='dev' AND state='applied'",
+        &[],
+    )
+    .await
+    .expect("read applied version")
+    .map(|row| row.get(0))
+}
+
+/// wamn-0h0g.12.119 — THE NAMED MUTANT TARGET. The D24 guard fails CLOSED on a
+/// registration set it cannot read, on BOTH `migrate-catalog` call sites (the
+/// `--dry-run` probe and the real apply). Restoring the `Ok(())` early return for
+/// the absent probe fails this test.
+///
+/// Each unreadable state is driven against an **additive** target first, on
+/// purpose: an additive migration is refused by NOTHING else, so a guard that
+/// fails open shows up as a clean, successful apply rather than as some other
+/// gate's refusal. That is what makes this a sharp mutant kill instead of a test
+/// that passes on the wrong error.
+#[tokio::test]
+async fn an_unreadable_registration_set_refuses_the_migration_by_name() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.119 refusal gate");
+        return;
+    };
+    let _serialized = SERIALIZE.lock().await;
+    let su = connect(&url).await;
+    reset(&su).await;
+
+    let v1 = write_tmp(
+        "d24_unread_v1.json",
+        &cat_json(1, &format!("{E_SALES},{E_LINES}")),
+    );
+    let additive = write_tmp(
+        "d24_unread_additive.json",
+        &cat_json(2, &format!("{E_SALES_ADDITIVE},{E_LINES}")),
+    );
+    let destructive = write_tmp("d24_unread_destructive.json", &cat_json(2, E_LINES));
+
+    // v1 materializes both entities against a provisioned, empty registration set.
+    migrate_catalog::run(migrate_args(v1, &url))
+        .await
+        .expect("v1 materializes");
+    assert!(table_present(&su, &format!("{DATA_SCHEMA}.orders")).await);
+    assert_eq!(applied_version(&su).await, Some(1));
+
+    // --- 1. ABSENT: the catalog schema was dropped and only partially rebuilt. ---
+    su.batch_execute("DROP TABLE catalog.event_registrations")
+        .await
+        .expect("drop the registration table");
+
+    // The DRY RUN refuses: the point is that no plan is ever cleared by a
+    // registration set nobody could read, not merely that the ALTERs are skipped.
+    let err = migrate_catalog::run(migrate_dry_run_args(additive.clone(), &url))
+        .await
+        .expect_err("an absent registration table must refuse the dry run");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("orphan-guard-registrations-absent"),
+        "dry run refuses by name: {msg}"
+    );
+    assert!(
+        msg.contains("dry-run"),
+        "marked as a dry-run finding: {msg}"
+    );
+
+    // The APPLY refuses too — this is the live, destructive call site.
+    let err = migrate_catalog::run(migrate_args(additive.clone(), &url))
+        .await
+        .expect_err("an absent registration table must refuse the apply");
+    assert!(
+        format!("{err:#}").contains("orphan-guard-registrations-absent"),
+        "apply refuses by name: {err:#}"
+    );
+    // The refused apply really did not run: no column, no version advance.
+    assert!(
+        !column_present(&su, "orders", "note").await,
+        "the refused additive apply added nothing"
+    );
+    assert_eq!(
+        applied_version(&su).await,
+        Some(1),
+        "the refused apply advanced no version"
+    );
+
+    // NO ENTITY IS REMOVED as a side effect of an unreadable registration set:
+    // the destructive target is refused by the guard, ahead of every other gate.
+    let err = migrate_catalog::run(migrate_args(destructive, &url))
+        .await
+        .expect_err("a destructive target must refuse on an absent registration set");
+    assert!(
+        format!("{err:#}").contains("orphan-guard-registrations-absent"),
+        "the destructive apply refuses by NAME, not by the additive-only gate: {err:#}"
+    );
+    assert!(
+        table_present(&su, &format!("{DATA_SCHEMA}.orders")).await,
+        "the entity table survives an unreadable registration set"
+    );
+    assert_eq!(applied_version(&su).await, Some(1));
+
+    // --- 2. HIDDEN BY ROW-LEVEL SECURITY. Rebuild the registration storage from ---
+    // the real artifact and seed it, then read it as a non-bypassing identity.
+    su.batch_execute("DROP SCHEMA catalog CASCADE")
+        .await
+        .expect("drop catalog for the rebuild");
+    su.batch_execute(CATALOG_SCHEMA)
+        .await
+        .expect("rebuild deploy/sql/catalog-schema.sql");
+    create_rls_reader(&su).await;
+    insert_reg(&su, "t1", "reg-t1", "sales_orders").await;
+    insert_reg(&su, "t2", "reg-t2", "sales_orders").await;
+
+    // THE SILENCE, PROVEN LIVE: the superuser sees both registrations; the
+    // non-bypassing reader sees ZERO ROWS and NO ERROR, because the table is
+    // FORCE ROW LEVEL SECURITY and no `app.tenant` claim is injected. That zero is
+    // what the guard used to consume as "nothing is referenced".
+    assert_eq!(reg_count(&su).await, 2, "the superuser sees both");
+    assert_eq!(
+        registrations_visible_as(&su, RLS_ROLE).await,
+        0,
+        "FORCE RLS hides the registrations from a non-bypassing role with NO error — \
+         the silent state this bead closes"
+    );
+
+    let Some(app_url) = role_url(&url, RLS_ROLE) else {
+        eprintln!("WAMN_CTL_PG_URL is not a TCP url — skipping the RLS-filtered arm");
+        drop_rls_reader(&su).await;
+        return;
+    };
+    // The REAL verb, driven as the non-bypassing identity, refuses the silence
+    // instead of clearing the migration from it.
+    //
+    // Only the `--dry-run` call site is reachable this way. The apply path first
+    // runs `ensure_wamn_app_role` / `ensure_catalog_storage`, whose REVOKE and
+    // GRANT statements require OWNERSHIP of the catalog tables, so reaching the
+    // apply guard as a non-bypassing caller means making that caller the schema
+    // owner — and `deploy/sql/catalog-schema.sql` hard-codes
+    // `CREATE SCHEMA catalog AUTHORIZATION postgres`. The two call sites share
+    // this one function, and the apply site is proven by the absent arm above.
+    let err = migrate_catalog::run(migrate_dry_run_args(additive, &app_url))
+        .await
+        .expect_err("an RLS-hidden registration set must refuse, not clear the migration");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("orphan-guard-registrations-unreadable"),
+        "refuses by name: {msg}"
+    );
+
+    // Nothing was touched by the refusal.
+    assert!(
+        table_present(&su, &format!("{DATA_SCHEMA}.orders")).await,
+        "the entity table survives the RLS-hidden refusal"
+    );
+    assert_eq!(reg_count(&su).await, 2, "registrations untouched");
+
+    drop_rls_reader(&su).await;
+    su.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
+    ))
+    .await
+    .expect("teardown");
+}
+
+/// wamn-0h0g.12.119 — THE PRECISION CONTROL, and the test that must stay GREEN
+/// under the mutant. A correctly-provisioned project-env whose registration table
+/// holds GENUINELY ZERO rows is a legitimate state, not an unreadable one: both
+/// `migrate-catalog` call sites must still pass. This is what keeps the refusal
+/// precise rather than blunt — a guard that refused every empty read would be
+/// just as wrong, and would break every unregistered project.
+#[tokio::test]
+async fn a_provisioned_but_empty_registration_set_still_passes_the_guard() {
+    let Some(url) = std::env::var("WAMN_CTL_PG_URL").ok() else {
+        eprintln!("WAMN_CTL_PG_URL unset — skipping the wamn-0h0g.12.119 precision control");
+        return;
+    };
+    let _serialized = SERIALIZE.lock().await;
+    let su = connect(&url).await;
+    reset(&su).await;
+
+    let v1 = write_tmp(
+        "d24_empty_v1.json",
+        &cat_json(1, &format!("{E_SALES},{E_LINES}")),
+    );
+    let additive = write_tmp(
+        "d24_empty_additive.json",
+        &cat_json(2, &format!("{E_SALES_ADDITIVE},{E_LINES}")),
+    );
+
+    // Provisioned and genuinely empty — the state the refusal must NOT catch.
+    assert!(table_present(&su, "catalog.event_registrations").await);
+    assert_eq!(reg_count(&su).await, 0);
+
+    migrate_catalog::run(migrate_args(v1, &url))
+        .await
+        .expect("an empty-but-provisioned registration set still applies v1");
+    assert!(table_present(&su, &format!("{DATA_SCHEMA}.orders")).await);
+
+    migrate_catalog::run(migrate_dry_run_args(additive.clone(), &url))
+        .await
+        .expect("an empty-but-provisioned registration set still passes the dry-run guard");
+    migrate_catalog::run(migrate_args(additive, &url))
+        .await
+        .expect("an empty-but-provisioned registration set still passes the apply guard");
+    assert!(
+        column_present(&su, "orders", "note").await,
+        "the additive apply proceeded"
+    );
+    assert_eq!(applied_version(&su).await, Some(2));
+
+    su.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS catalog CASCADE; DROP SCHEMA IF EXISTS {DATA_SCHEMA} CASCADE"
+    ))
+    .await
+    .expect("teardown");
 }
 
 async fn publish_scenario(su: &Client, url: &str) {

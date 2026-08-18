@@ -1274,12 +1274,28 @@ pub async fn upsert_entity_map(
 
 /// The D24 registration-orphan guard (EVT-REG, wamn-rmxa), shared by
 /// publish-catalog and migrate-catalog. Reads every event registration for
-/// `cat`'s catalog id across ALL tenants (the caller connects as a superuser, so
-/// RLS is bypassed) and refuses when any references an entity `cat` does not
-/// keep, naming every orphan (the pure decision `wamn_schema_control::check_registration_orphans`).
-/// A DB with no `catalog.event_registrations` table (a project not yet
-/// registration-provisioned) has nothing to orphan, so the probe returns a clean
-/// pass. Read-only: a refusal mutates nothing.
+/// `cat`'s catalog id across ALL tenants and refuses when any references an
+/// entity `cat` does not keep, naming every orphan (the pure decision
+/// `wamn_schema_control::check_registration_orphans`). Read-only: a refusal
+/// mutates nothing.
+///
+/// **The empty read is the dangerous one (wamn-0h0g.12.119).** This guard gates a
+/// DESTRUCTIVE apply — `migrate-catalog` has no other refusal in front of it — so
+/// "I saw no registrations" and "I could not read the registrations" must not be
+/// the same value. Both used to arrive as zero rows and CLEAR the apply, letting
+/// the migration REMOVE an entity that registrations still referenced while the
+/// run reported clean. Both are now named refusals, mirroring wamn-0h0g.12.103:
+///
+/// - **absent** — no `catalog.event_registrations` table at all. NOT a
+///   provisioned-but-empty registration set, which legitimately passes.
+/// - **unreadable** — the read errored. The dangerous member is silent: the table
+///   is `FORCE ROW LEVEL SECURITY`, so a session that does not BYPASS RLS reads
+///   zero rows with NO error. That includes the table's own non-superuser owner
+///   (FORCE strips the owner exemption) and a role that merely INHERITS a
+///   BYPASSRLS role, because Postgres checks BYPASSRLS on the current role only.
+///   The read therefore runs under `row_security = off`, the `pg_dump` idiom,
+///   which makes Postgres raise SQLSTATE 42501 instead of filtering — so the
+///   silence becomes an error and the error becomes this refusal.
 pub(crate) async fn guard_registration_orphans(
     client: &impl tokio_postgres::GenericClient,
     cat: &wamn_schema_model::Catalog,
@@ -1293,15 +1309,32 @@ pub(crate) async fn guard_registration_orphans(
         .context("probe catalog.event_registrations")?
         .get(0);
     if !table_present {
-        return Ok(());
+        return Err(wamn_schema_control::UnreadableRegistrations {
+            kind: wamn_schema_control::UnreadableRegistrationsKind::OrphanGuardAbsent,
+            catalog_id: cat.catalog_id.clone(),
+        }
+        .into());
     }
-    let rows = client
+    client
+        .batch_execute("SET row_security = off")
+        .await
+        .context("SET row_security = off for the cross-tenant registration read")?;
+    let read = client
         .query(
             &wamn_schema_control::sql::select_registrations_for_catalog_sql(),
             &[&cat.catalog_id],
         )
-        .await
-        .context("read event registrations for the D24 orphan guard")?;
+        .await;
+    // Best-effort restore: a failed read inside a caller's open transaction
+    // aborts it, so RESET cannot run and the caller is already unwinding to a
+    // ROLLBACK that restores the GUC anyway.
+    let _ = client.batch_execute("RESET row_security").await;
+    let rows = read.map_err(|e| {
+        anyhow::Error::new(e).context(wamn_schema_control::UnreadableRegistrations {
+            kind: wamn_schema_control::UnreadableRegistrationsKind::OrphanGuardUnreadable,
+            catalog_id: cat.catalog_id.clone(),
+        })
+    })?;
     let referenced: Vec<wamn_schema_control::RegistrationRef> = rows
         .iter()
         .map(|row| wamn_schema_control::RegistrationRef {
