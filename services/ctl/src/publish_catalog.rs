@@ -867,16 +867,27 @@ async fn publish_release(
         })
         .map_err(anyhow::Error::new)?;
         let same_target_retry = publication_is_same_target_retry(applied_version, catalog_version)?;
-        if let Some(existing) = client
-            .query_opt(
-                "SELECT members_json::text FROM catalog.release_manifests \
-                 WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+        // Existence and membership are two reads now that membership is derived
+        // from catalog.release_flows: the derivation answers `[]` for a release
+        // that was never sealed exactly as it does for one sealed empty, so only
+        // the identity row can say whether there is anything to conflict with.
+        let release_sealed: bool = client
+            .query_one(
+                wamn_schema_control::sql::release_manifest_exists_sql(),
                 &[&tenant, &cat.catalog_id, &catalog_version],
             )
             .await
-            .context("preflight existing release membership")?
-        {
-            let existing: String = existing.get(0);
+            .context("preflight existing release identity")?
+            .get(0);
+        if release_sealed {
+            let existing: String = client
+                .query_one(
+                    wamn_schema_control::sql::select_release_members_sql(),
+                    &[&tenant, &cat.catalog_id, &catalog_version],
+                )
+                .await
+                .context("preflight existing release membership")?
+                .get(0);
             let existing: serde_json::Value =
                 serde_json::from_str(&existing).context("parse stored release manifest")?;
             let requested: serde_json::Value =
@@ -1026,12 +1037,7 @@ async fn publish_release(
         client
             .execute(
                 wamn_schema_control::sql::register_release_manifest_sql(),
-                &[
-                    &tenant,
-                    &cat.catalog_id,
-                    &catalog_version,
-                    &release_manifest.as_str(),
-                ],
+                &[&tenant, &cat.catalog_id, &catalog_version],
             )
             .await
             .context("seal release membership")?;
@@ -1703,8 +1709,6 @@ mod tests {
                 "SELECT \
                    COALESCE((SELECT jsonb_agg(to_jsonb(a) - 'created_at' ORDER BY flow_id, flow_version)::text \
                      FROM catalog.flow_artifacts a WHERE tenant_id = $1), '[]'), \
-                   (SELECT members_json::text FROM catalog.release_manifests \
-                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = 1), \
                    COALESCE((SELECT jsonb_agg(jsonb_build_array( \
                        flow_id, flow_version, execution_bundle_hash) \
                      ORDER BY flow_id)::text FROM catalog.release_flows \
@@ -1726,7 +1730,6 @@ mod tests {
                 row.get::<_, String>(1),
                 row.get::<_, String>(2),
                 row.get::<_, String>(3),
-                row.get::<_, String>(4),
             )
         )
         .into_bytes()

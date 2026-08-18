@@ -120,9 +120,21 @@ fn portable_store_record_is_exact_and_storage_only() {
         "DROP COLUMN deployed_resolution_map;",
         "'control-portable-retired-test-set-lineage-requires-reprovision'",
         "'control-portable-retired-audit-ledger-requires-reprovision'",
+        "'control-portable-retired-release-members-requires-reprovision'",
     ] {
         assert!(sql.contains(retirement), "missing retirement: {retirement}");
     }
+    // wamn-0h0g.15.159: membership is row-per-member in catalog.release_flows.
+    // The snapshot column survives only where the retirement arm above names it
+    // to refuse an already-provisioned database — never in a declaration, a
+    // function signature, or an asserted column fact.
+    assert!(!sql.contains("p_members_json"));
+    assert!(!sql.contains("'members_json:jsonb:true'"));
+    assert!(
+        !sql.lines()
+            .any(|line| line.trim_start().starts_with("members_json ")),
+        "no relation may declare the retired members_json column"
+    );
     assert!(sql.contains(
         r#"con.contype::text || ':' || pg_get_constraintdef(con.oid, false),
         E'\n' ORDER BY (con.contype::text || ':'
@@ -538,8 +550,8 @@ INSERT INTO catalog.execution_bundles
 VALUES ('tenant-a','sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
         '0.1',decode('{bundle_hex}','hex'),4);
 INSERT INTO catalog.release_manifests
-  (tenant_id,catalog_id,catalog_version,members_json)
-VALUES ('tenant-a','cat',1,'[]');
+  (tenant_id,catalog_id,catalog_version)
+VALUES ('tenant-a','cat',1);
 INSERT INTO catalog.release_flows
   (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash)
 VALUES ('tenant-a','cat',1,'flow-a',1,
@@ -808,8 +820,8 @@ DO $seed$ DECLARE tenant text; BEGIN
     VALUES (tenant,'sha256:'||encode(sha256(decode('{bundle_hex}','hex')),'hex'),
             '0.1',decode('{bundle_hex}','hex'),4);
     INSERT INTO catalog.release_manifests
-      (tenant_id,catalog_id,catalog_version,members_json)
-    VALUES (tenant,'cat',1,'[]');
+      (tenant_id,catalog_id,catalog_version)
+    VALUES (tenant,'cat',1);
     INSERT INTO catalog.release_flows
       (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash)
     VALUES (tenant,'cat',1,'flow-a',1,

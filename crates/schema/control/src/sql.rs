@@ -121,9 +121,12 @@ pub fn register_flow_artifact_sql() -> &'static str {
        $1, $2, $3, $4, $5::text::jsonb, $6, $7)"
 }
 
-/// Seal the exact canonical member set for one release.
+/// Ensure the release identity row for one release coordinate. Insert-or-verify:
+/// an identical retry is a no-op and a differing identity row raises
+/// `catalog-release-content-conflict`. Membership is appended separately through
+/// [`insert_release_flow_sql`].
 pub fn register_release_manifest_sql() -> &'static str {
-    "SELECT catalog.register_release_manifest($1, $2, $3, $4::text::jsonb)"
+    "SELECT catalog.register_release_manifest($1, $2, $3)"
 }
 
 /// Traverse a named, superuser-only publication fault boundary. This is a
@@ -257,6 +260,34 @@ pub fn select_release_artifacts_sql() -> &'static str {
      ORDER BY a.flow_id"
 }
 
+/// Derive a release's member set from `catalog.release_flows`, the row-per-member
+/// truth that replaced the sealed `members_json` snapshot (wamn-0h0g.15.159).
+/// Yields `[]` for a release with no members, so a caller that needs to know
+/// whether the release EXISTS must probe `catalog.release_manifests` separately.
+///
+/// The join is 1:1: `catalog.flow_artifacts`' primary key is exactly the
+/// `release_flows` foreign-key target. `COLLATE "C"` is load-bearing, not
+/// decoration -- the comparison partner is built by
+/// [`crate::canonical_release_flows`], whose `Vec::sort` orders `flow_id` by
+/// bytes, and the database's default collation need not agree.
+pub fn select_release_members_sql() -> &'static str {
+    "SELECT COALESCE(jsonb_agg(jsonb_build_object(\
+       'flow-id', r.flow_id, \
+       'flow-version', r.flow_version, \
+       'artifact-hash', a.artifact_hash) ORDER BY r.flow_id COLLATE \"C\"), '[]'::jsonb)::text \
+     FROM catalog.release_flows r \
+     JOIN catalog.flow_artifacts a \
+       ON a.tenant_id = r.tenant_id AND a.flow_id = r.flow_id \
+      AND a.flow_version = r.flow_version \
+     WHERE r.tenant_id = $1 AND r.catalog_id = $2 AND r.catalog_version = $3"
+}
+
+/// Probe whether a release identity row exists at one coordinate.
+pub fn release_manifest_exists_sql() -> &'static str {
+    "SELECT EXISTS (SELECT 1 FROM catalog.release_manifests \
+     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3)"
+}
+
 // ---------------------------------------------------------------------------
 // Schema-impact analysis (11.8, wamn-wvb): the dependency-edge reads the
 // ops `impact-report` / `copy-project-env` shells fold through
@@ -342,7 +373,7 @@ mod tests {
     #[test]
     fn execution_bundles_ddl_is_byte_for_byte_unchanged() {
         const START: &str = "CREATE TABLE catalog.execution_bundles (";
-        const NEXT_SECTION: &str = "\n-- The sealed canonical member set.";
+        const NEXT_SECTION: &str = "\n-- The release identity row:";
         const EXPECTED_SHA256: &str =
             "960e6f2e9f5db1e6752f32ca7518791f1fdd6e94d23af481bb63559472a5a952";
 

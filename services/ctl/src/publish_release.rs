@@ -844,8 +844,8 @@ mod tests {
         admin
             .execute(
                 "INSERT INTO catalog.release_manifests \
-                   (tenant_id, catalog_id, catalog_version, members_json) \
-                 VALUES ($1, $2, $3, '[]'::jsonb)",
+                   (tenant_id, catalog_id, catalog_version) \
+                 VALUES ($1, $2, $3)",
                 &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
             )
             .await
@@ -1083,16 +1083,18 @@ mod tests {
         }
 
         // Step A sealed no release membership: that belongs to wamn-0h0g.15.14.
-        let members: String = admin
+        // Membership is row-per-member now, so an unsealed release is an empty
+        // catalog.release_flows rather than an empty snapshot column.
+        let members: i64 = admin
             .query_one(
-                "SELECT members_json::text FROM catalog.release_manifests \
+                "SELECT count(*) FROM catalog.release_flows \
                   WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
                 &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
             )
             .await
-            .expect("read the untouched release manifest")
+            .expect("read the untouched release membership")
             .get(0);
-        assert_eq!(members, "[]");
+        assert_eq!(members, 0);
 
         drop(admin);
         let _ = admin_task.await;

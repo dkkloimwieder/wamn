@@ -213,12 +213,9 @@ fn admission_live() {
                     '0.1', convert_to('{{\"tenant\":\"t2\"}}','UTF8'), \
                     octet_length(convert_to('{{\"tenant\":\"t2\"}}','UTF8')); \
              INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) VALUES \
-               ('t1','c1',1,'[\
-                 {{\"flow-id\":\"flow-http\",\"flow-version\":1,\"artifact-hash\":\"ah-http\"}},\
-                 {{\"flow-id\":\"flow-event\",\"flow-version\":1,\"artifact-hash\":\"ah-event\"}}\
-               ]'), \
-               ('t2','c1',1,'[]'); \
+               (tenant_id,catalog_id,catalog_version) VALUES \
+               ('t1','c1',1), \
+               ('t2','c1',1); \
              INSERT INTO catalog.release_flows \
                (tenant_id,catalog_id,catalog_version,flow_id,flow_version,execution_bundle_hash) VALUES \
                ('t1','c1',1,'flow-http',1,'sha256:' || encode(sha256(convert_to('{{}}','UTF8')), 'hex')), \

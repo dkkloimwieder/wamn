@@ -319,7 +319,6 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
         .context("seed callable catalog")?;
 
     // Seed immutable flow artifacts and the applied release.
-    let mut members = Vec::new();
     for flow_id in ["f-plain", "f-cond", "f-extra", "f-old"] {
         let artifact_hash = format!("artifact-{flow_id}");
         let graph = flow_json(flow_id);
@@ -339,18 +338,13 @@ pub async fn run(args: MatBenchArgs) -> anyhow::Result<()> {
             )
             .await
             .with_context(|| format!("seed flow {flow_id}"))?;
-        members.push(serde_json::json!({
-            "flow-id": flow_id,
-            "flow-version": 1,
-            "artifact-hash": artifact_hash,
-        }));
     }
     admin
         .execute(
             "INSERT INTO catalog.release_manifests \
-             (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ($1,'matcat',1,$2::text::jsonb)",
-            &[&TENANT, &serde_json::Value::Array(members).to_string()],
+             (tenant_id,catalog_id,catalog_version) \
+             VALUES ($1,'matcat',1)",
+            &[&TENANT],
         )
         .await
         .context("seed release manifest")?;

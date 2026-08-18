@@ -161,12 +161,7 @@ pub(crate) mod tests {
         client
             .execute(
                 wamn_schema_control::sql::register_release_manifest_sql(),
-                &[
-                    &tenant,
-                    &"catalog",
-                    &1_i32,
-                    &r#"[{"flow-id":"flow","flow-version":1,"artifact-hash":"artifact-a"}]"#,
-                ],
+                &[&tenant, &"catalog", &1_i32],
             )
             .await?;
         let execution_bundle_bytes = br#"{}"#;
@@ -224,7 +219,6 @@ pub(crate) mod tests {
                 "SELECT \
                    (SELECT (to_jsonb(a) - 'created_at')::text FROM catalog.flow_artifacts a \
                      WHERE tenant_id = $1), \
-                   (SELECT members_json::text FROM catalog.release_manifests WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(flow_id, flow_version, execution_bundle_hash)::text \
                      FROM catalog.release_flows WHERE tenant_id = $1), \
                    (SELECT jsonb_build_array(from_version, to_version, \
@@ -243,7 +237,6 @@ pub(crate) mod tests {
                 row.get::<_, String>(1),
                 row.get::<_, String>(2),
                 row.get::<_, String>(3),
-                row.get::<_, String>(4),
             )
         )
         .into_bytes()

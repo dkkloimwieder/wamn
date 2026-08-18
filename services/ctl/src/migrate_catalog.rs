@@ -594,20 +594,21 @@ async fn carry_forward_release(
     environment: &str,
     schema: &BareSchemaName,
 ) -> anyhow::Result<()> {
-    let manifest = if let Some(source_version) = current_version {
-        tx.query_opt(
-            "SELECT members_json::text FROM catalog.release_manifests \
-             WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
-            &[&tenant, &catalog_id, &source_version],
-        )
-        .await
-        .context("read applied release manifest")?
-        .with_context(|| {
-            format!(
-                "catalog-release-manifest-missing: cannot migrate {catalog_id:?} v{source_version}"
+    if let Some(source_version) = current_version {
+        // The members themselves are carried forward by the release_flows copy
+        // below; all that has to hold here is that the source release exists.
+        let present: bool = tx
+            .query_one(
+                wamn_schema_control::sql::release_manifest_exists_sql(),
+                &[&tenant, &catalog_id, &source_version],
             )
-        })?
-        .get::<_, String>(0)
+            .await
+            .context("read applied release manifest")?
+            .get(0);
+        anyhow::ensure!(
+            present,
+            "catalog-release-manifest-missing: cannot migrate {catalog_id:?} v{source_version}"
+        );
     } else {
         let flows_present: bool = tx
             .query_one(
@@ -637,11 +638,10 @@ async fn carry_forward_release(
             flow_count == 0,
             "catalog-release-unresolved-sources: first release has {flow_count} legacy flow(s)"
         );
-        "[]".to_string()
-    };
+    }
     tx.execute(
         wamn_schema_control::sql::register_release_manifest_sql(),
-        &[&tenant, &catalog_id, &target_version, &manifest],
+        &[&tenant, &catalog_id, &target_version],
     )
     .await
     .context("seal migrated release manifest")?;
@@ -828,12 +828,11 @@ mod tests {
             )
             .await
             .unwrap();
-        let manifest = r#"[{"flow-id":"flow","flow-version":1,"artifact-hash":"artifact"}]"#;
         client.batch_execute("BEGIN").await.unwrap();
         client
             .execute(
                 wamn_schema_control::sql::register_release_manifest_sql(),
-                &[&tenant, &catalog_id, &1_i32, &manifest],
+                &[&tenant, &catalog_id, &1_i32],
             )
             .await
             .unwrap();

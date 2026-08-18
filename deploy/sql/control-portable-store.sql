@@ -79,7 +79,6 @@ CREATE TABLE IF NOT EXISTS catalog.release_manifests (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int NOT NULL,
-    members_json    jsonb NOT NULL CHECK (jsonb_typeof(members_json) = 'array'),
     verified_publisher_principal text
         CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> ''),
     PRIMARY KEY (tenant_id, catalog_id, catalog_version),
@@ -707,6 +706,20 @@ BEGIN
             MESSAGE = 'control-portable-retired-test-set-lineage-requires-reprovision';
     END IF;
 
+    -- wamn-0h0g.15.159 dropped the sealed member snapshot from the release
+    -- identity row; membership is row-per-member in catalog.release_flows. This
+    -- is a RETAINED relation, so DROP COLUMN cannot reach the asserted shape:
+    -- the dropped slot keeps its attnum and verified_publisher_principal never
+    -- moves to 4, which the retained-shape digest hashes.
+    IF EXISTS (
+        SELECT 1 FROM pg_attribute
+        WHERE attrelid = to_regclass('catalog.release_manifests')
+          AND attname = 'members_json' AND NOT attisdropped
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE = '55000',
+            MESSAGE = 'control-portable-retired-release-members-requires-reprovision';
+    END IF;
+
     -- wamn-0h0g.7.3 ratified the audit retry ledger as two NOT NULL columns
     -- mid-record, which an ALTER can only append past the tail.
     IF to_regclass('catalog.authoring_command_audit') IS NOT NULL AND (
@@ -908,7 +921,7 @@ BEGIN
     INTO retained_fingerprint
     FROM facts;
     IF retained_fingerprint <>
-       'b08e42cb2130ae46ebdcbb7c030f566ce37c29a287a5fdcae2ad6fb30cc82d29'
+       '749c6904e8f8506b5bbc3fd6a7a45e80d177ae9546f89bbd78cfb7f2478ada37'
     THEN
         RAISE EXCEPTION USING ERRCODE = '55000',
             MESSAGE = 'control-portable-retained-shape-drift';

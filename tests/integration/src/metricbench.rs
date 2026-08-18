@@ -37,7 +37,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context as _, bail};
 use clap::Args;
-use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::process::{Child, Command};
@@ -442,18 +441,6 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
             .context("apply canonical catalog and run-plane DDL")?;
 
         let artifacts = fixture_artifacts()?;
-        let members = Value::Array(
-            artifacts
-                .iter()
-                .map(|artifact| {
-                    json!({
-                        "flow-id": artifact.flow_id,
-                        "flow-version": 1,
-                        "artifact-hash": artifact.artifact_hash,
-                    })
-                })
-                .collect(),
-        );
         let transaction = client.transaction().await?;
         transaction
             .execute(
@@ -493,9 +480,9 @@ async fn provision(admin_url: &str) -> anyhow::Result<()> {
         transaction
             .execute(
                 "INSERT INTO catalog.release_manifests \
-                   (tenant_id,catalog_id,catalog_version,members_json) \
-                 VALUES ($1,$2,$3,$4)",
-                &[&TENANT, &CATALOG_ID, &CATALOG_VERSION, &members],
+                   (tenant_id,catalog_id,catalog_version) \
+                 VALUES ($1,$2,$3)",
+                &[&TENANT, &CATALOG_ID, &CATALOG_VERSION],
             )
             .await?;
         for artifact in &artifacts {

@@ -87,8 +87,8 @@ fn run_state_live() {
                'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a', \
                '0.1',decode('7b7d','hex'),2); \
              INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ('t1','cat',1,'[]');"
+               (tenant_id,catalog_id,catalog_version) \
+             VALUES ('t1','cat',1);"
         ),
     );
 

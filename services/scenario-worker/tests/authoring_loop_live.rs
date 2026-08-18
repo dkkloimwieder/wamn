@@ -167,11 +167,6 @@ async fn reset_and_provision(
         .artifact_hash()
         .as_str()
         .to_string();
-    let members = serde_json::json!([{
-        "flow-id": FLOW_ID,
-        "flow-version": 1,
-        "artifact-hash": artifact_hash,
-    }]);
     let transaction = admin.transaction().await?;
     transaction
         .execute(
@@ -198,9 +193,9 @@ async fn reset_and_provision(
     transaction
         .execute(
             "INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ($1,'authoring-loop-catalog',1,$2)",
-            &[&TENANT, &members],
+               (tenant_id,catalog_id,catalog_version) \
+             VALUES ($1,'authoring-loop-catalog',1)",
+            &[&TENANT],
         )
         .await?;
     transaction

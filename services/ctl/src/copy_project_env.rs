@@ -758,25 +758,47 @@ async fn exec_copy_definition(
                 0_i64
             };
             guard_copy_destination(expected_base, applied_version, nonterminal_runs)?;
-            let source_manifest: String = src_client
+            // Existence and membership are two reads now that membership is
+            // derived from catalog.release_flows: the derivation answers `[]`
+            // for an unsealed release exactly as it does for an empty one, so
+            // only the identity row can say whether the release is there.
+            let source_sealed: bool = src_client
                 .query_one(
-                    "SELECT members_json::text FROM catalog.release_manifests \
-                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+                    wamn_schema_control::sql::release_manifest_exists_sql(),
                     &[&tenant, &catalog_id, &catalog_version],
                 )
                 .await
                 .with_context(|| format!("read release manifest for {catalog_id:?}"))?
                 .get(0);
-            if let Some(existing) = tx
-                .query_opt(
-                    "SELECT members_json::text FROM catalog.release_manifests \
-                     WHERE tenant_id = $1 AND catalog_id = $2 AND catalog_version = $3",
+            anyhow::ensure!(
+                source_sealed,
+                "catalog-release-manifest-missing: source release {catalog_id:?} v{catalog_version}"
+            );
+            let source_manifest: String = src_client
+                .query_one(
+                    wamn_schema_control::sql::select_release_members_sql(),
                     &[&tenant, &catalog_id, &catalog_version],
                 )
                 .await
-                .context("preflight destination release membership")?
-            {
-                let existing: String = existing.get(0);
+                .with_context(|| format!("read release members for {catalog_id:?}"))?
+                .get(0);
+            let destination_sealed: bool = tx
+                .query_one(
+                    wamn_schema_control::sql::release_manifest_exists_sql(),
+                    &[&tenant, &catalog_id, &catalog_version],
+                )
+                .await
+                .context("preflight destination release identity")?
+                .get(0);
+            if destination_sealed {
+                let existing: String = tx
+                    .query_one(
+                        wamn_schema_control::sql::select_release_members_sql(),
+                        &[&tenant, &catalog_id, &catalog_version],
+                    )
+                    .await
+                    .context("preflight destination release membership")?
+                    .get(0);
                 let existing: serde_json::Value =
                     serde_json::from_str(&existing).context("parse destination manifest")?;
                 let source: serde_json::Value =
@@ -841,7 +863,7 @@ async fn exec_copy_definition(
             .context("copy boundary after artifacts")?;
             tx.execute(
                 wamn_schema_control::sql::register_release_manifest_sql(),
-                &[&tenant, &catalog_id, &catalog_version, &source_manifest],
+                &[&tenant, &catalog_id, &catalog_version],
             )
             .await
             .with_context(|| format!("seal copied release {catalog_id:?}"))?;

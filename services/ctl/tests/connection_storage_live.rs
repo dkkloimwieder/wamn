@@ -110,12 +110,10 @@ async fn connection_storage_enforces_environment_and_immutability_boundaries_liv
              ); \
              BEGIN; \
              INSERT INTO catalog.release_manifests ( \
-               tenant_id, catalog_id, catalog_version, members_json \
+               tenant_id, catalog_id, catalog_version \
              ) VALUES \
-               ('tenant-a', 'release', 1, \
-                '[{\"flow-id\":\"flow-a\",\"flow-version\":1,\"artifact-hash\":\"artifact-a\"}]'), \
-               ('tenant-a', 'release', 2, \
-                '[{\"flow-id\":\"flow-a\",\"flow-version\":1,\"artifact-hash\":\"artifact-a\"}]'); \
+               ('tenant-a', 'release', 1), \
+               ('tenant-a', 'release', 2); \
              INSERT INTO catalog.release_flows ( \
                tenant_id, catalog_id, catalog_version, flow_id, flow_version, \
                execution_bundle_hash \

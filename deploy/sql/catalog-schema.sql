@@ -202,13 +202,16 @@ CREATE TRIGGER execution_bundles_immutable
 BEFORE UPDATE OR DELETE ON catalog.execution_bundles
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 
--- The sealed canonical member set. Registering the same set converges;
--- attempting to add/remove/change a member of an existing release conflicts.
+-- The release identity row: one row per (tenant, catalog, version). It is the
+-- idempotency anchor a republication conflicts on, the provenance record of who
+-- published, and the foreign-key root that makes "member of a release that does
+-- not exist" unrepresentable. Membership is NOT stored here: it is row-per-member
+-- in catalog.release_flows, which is append-only, so a release may gain a member
+-- but never change or lose one (wamn-0h0g.15.159).
 CREATE TABLE catalog.release_manifests (
     tenant_id       text NOT NULL CHECK (tenant_id <> ''),
     catalog_id      text NOT NULL,
     catalog_version int  NOT NULL,
-    members_json    jsonb NOT NULL CHECK (jsonb_typeof(members_json) = 'array'),
     -- Same provenance rule as flow_artifacts: never manufacture a publisher
     -- identity from the database/service login.
     verified_publisher_principal text
@@ -250,20 +253,36 @@ ALTER TABLE catalog.release_manifests
     CHECK (verified_publisher_principal IS NULL OR verified_publisher_principal <> '');
 -- END DISPOSITION PROVENANCE STORAGE MIGRATION (wamn-4u7p.42)
 
+-- Insert-or-verify-identical on the release identity row. This is where
+-- `catalog-release-content-conflict` is defined as a database error, and
+-- wamn-0h0g.15.159 NARROWED what it means here without renaming it: with the
+-- sealed member snapshot gone, this raise no longer defends aggregate bytes, it
+-- defends the identity row's own remaining content. A plain DO NOTHING would
+-- bless header drift, so the conflict arm re-verifies every column the INSERT
+-- supplies -- the first three are the conflict target, leaving
+-- `verified_publisher_principal`, which this function always supplies as NULL
+-- because publication provenance is minted by the publishing path, not here.
+--
+-- The membership half of that literal did not vanish, it moved up a tier: the
+-- ctl preflights (services/ctl/src/publish_catalog.rs and copy_project_env.rs)
+-- now derive the member set from catalog.release_flows and raise the SAME
+-- literal on a mismatch. Do not re-add a membership RAISE below; under
+-- row-per-member truth the primary key refuses a CHANGED member, the
+-- UPDATE/DELETE immutability triggers refuse a REMOVED one, and an ADDED one is
+-- permitted by ruling.
 CREATE FUNCTION catalog.register_release_manifest(
     p_tenant_id text,
     p_catalog_id text,
-    p_catalog_version int,
-    p_members_json jsonb
+    p_catalog_version int
 )
 RETURNS void
 LANGUAGE plpgsql
 AS $$
 BEGIN
     INSERT INTO catalog.release_manifests (
-        tenant_id, catalog_id, catalog_version, members_json
+        tenant_id, catalog_id, catalog_version
     )
-    VALUES (p_tenant_id, p_catalog_id, p_catalog_version, p_members_json)
+    VALUES (p_tenant_id, p_catalog_id, p_catalog_version)
     ON CONFLICT (tenant_id, catalog_id, catalog_version) DO NOTHING;
 
     IF NOT EXISTS (
@@ -272,7 +291,7 @@ BEGIN
         WHERE tenant_id = p_tenant_id
           AND catalog_id = p_catalog_id
           AND catalog_version = p_catalog_version
-          AND members_json = p_members_json
+          AND verified_publisher_principal IS NULL
     ) THEN
         RAISE EXCEPTION USING
             ERRCODE = '23505',
@@ -281,7 +300,7 @@ BEGIN
 END
 $$;
 REVOKE ALL ON FUNCTION catalog.register_release_manifest(
-    text, text, int, jsonb
+    text, text, int
 ) FROM PUBLIC;
 
 CREATE TABLE catalog.release_flows (
@@ -317,66 +336,6 @@ FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
 CREATE TRIGGER release_flows_delete_immutable
 BEFORE DELETE ON catalog.release_flows
 FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
-
-CREATE FUNCTION catalog.validate_release_members()
-RETURNS trigger
-LANGUAGE plpgsql
-AS $$
-DECLARE
-    p_tenant_id text := NEW.tenant_id;
-    p_catalog_id text := NEW.catalog_id;
-    p_catalog_version int := NEW.catalog_version;
-BEGIN
-    IF EXISTS (
-        SELECT 1
-        FROM catalog.release_manifests m
-        WHERE m.tenant_id = p_tenant_id
-          AND m.catalog_id = p_catalog_id
-          AND m.catalog_version = p_catalog_version
-          AND (
-            jsonb_array_length(m.members_json) <> (
-                SELECT count(*)
-                FROM catalog.release_flows r
-                WHERE r.tenant_id = p_tenant_id
-                  AND r.catalog_id = p_catalog_id
-                  AND r.catalog_version = p_catalog_version
-            )
-            OR EXISTS (
-                SELECT 1
-                FROM catalog.release_flows r
-                WHERE r.tenant_id = p_tenant_id
-                  AND r.catalog_id = p_catalog_id
-                  AND r.catalog_version = p_catalog_version
-                  AND NOT m.members_json @> jsonb_build_array(jsonb_build_object(
-                      'flow-id', r.flow_id,
-                      'flow-version', r.flow_version,
-                      'artifact-hash', (
-                          SELECT a.artifact_hash
-                          FROM catalog.flow_artifacts a
-                          WHERE a.tenant_id = r.tenant_id
-                            AND a.flow_id = r.flow_id
-                            AND a.flow_version = r.flow_version
-                      )
-                  ))
-            )
-          )
-    ) THEN
-        RAISE EXCEPTION USING
-            ERRCODE = '23514',
-            MESSAGE = 'catalog-release-membership-mismatch';
-    END IF;
-    RETURN NULL;
-END
-$$;
-
-CREATE CONSTRAINT TRIGGER release_manifest_members_complete
-AFTER INSERT ON catalog.release_manifests
-DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members();
-CREATE CONSTRAINT TRIGGER release_flows_match_manifest
-AFTER INSERT ON catalog.release_flows
-DEFERRABLE INITIALLY DEFERRED
-FOR EACH ROW EXECUTE FUNCTION catalog.validate_release_members();
 
 -- A superuser-only fault boundary used by the release gate to prove that the
 -- production transaction rolls every definition write back. Normal sessions

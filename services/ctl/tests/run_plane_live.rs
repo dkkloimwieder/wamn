@@ -132,8 +132,8 @@ async fn seed_run_pin_parents(
     .expect("seed run-pin execution bundle");
     su.execute(
         "INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version,members_json) \
-         VALUES ($1,$2,$3,'[]'::jsonb)",
+           (tenant_id,catalog_id,catalog_version) \
+         VALUES ($1,$2,$3)",
         &[&tenant_id, &catalog_id, &catalog_version],
     )
     .await
@@ -572,8 +572,8 @@ async fn execution_pin_cutover_leg(su: &Client) {
            (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
            VALUES ('pin','{EMPTY_EXECUTION_BUNDLE_HASH}','0.1',''::bytea,0); \
          INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version,members_json) \
-           VALUES ('pin','cat',1,'[]'::jsonb); \
+           (tenant_id,catalog_id,catalog_version) \
+           VALUES ('pin','cat',1); \
          INSERT INTO {SCHEMA}.runs \
            (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
             environment,execution_bundle_hash) \
@@ -665,9 +665,8 @@ async fn execution_pin_cutover_leg(su: &Client) {
            (tenant_id,flow_id,flow_version,schema_version,graph_json,graph_hash,artifact_hash) \
            VALUES ('legacy','flow',1,'0.1','{}'::jsonb,'graph','artifact'); \
          INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version,members_json) \
-           VALUES ('legacy','cat',1, \
-             '[{\"flow-id\":\"flow\",\"flow-version\":1,\"artifact-hash\":\"artifact\"}]'::jsonb); \
+           (tenant_id,catalog_id,catalog_version) \
+           VALUES ('legacy','cat',1); \
          INSERT INTO catalog.release_flows \
            (tenant_id,catalog_id,catalog_version,flow_id,flow_version) \
            VALUES ('legacy','cat',1,'flow',1);",

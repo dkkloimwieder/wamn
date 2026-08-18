@@ -3,10 +3,10 @@
 //!
 //! # This is not `catalog.release_manifests`
 //!
-//! The relation `catalog.release_manifests` (`deploy/sql/catalog-schema.sql:207`)
-//! is an unrelated, retained catalog table whose `members_json` lists the member
-//! entities sealed into a catalog release; `catalog.release_exposure_manifests`
-//! (`deploy/sql/catalog-schema.sql:528`) is a second unrelated relation. Neither
+//! The relation `catalog.release_manifests` is an unrelated, retained catalog
+//! table: the identity row of a catalog release, whose member entities live
+//! row-per-member in `catalog.release_flows`;
+//! `catalog.release_exposure_manifests` is a second unrelated relation. Neither
 //! is this document, and the ruling deletes neither. The Rust type here is
 //! deliberately named [`ServingManifest`] — *what the serving plane reads* — so
 //! that no reader confuses the two. Only the Kubernetes object names below keep

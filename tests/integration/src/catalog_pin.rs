@@ -339,18 +339,6 @@ pub(crate) async fn publish_release(
         apply_catalog_preamble(&client).await?;
         for (index, members) in releases.iter().enumerate() {
             let catalog_id = format!("{CATALOG_ID_PREFIX}{}", index + 1);
-            let members_json = Value::Array(
-                members
-                    .iter()
-                    .map(|member| {
-                        json!({
-                            "flow-id": member.flow_id,
-                            "flow-version": member.flow_version,
-                            "artifact-hash": member.artifact_hash,
-                        })
-                    })
-                    .collect(),
-            );
             let transaction = client.transaction().await?;
             transaction
                 .execute(
@@ -404,8 +392,8 @@ pub(crate) async fn publish_release(
             transaction
                 .execute(
                     "INSERT INTO catalog.release_manifests \
-                       (tenant_id,catalog_id,catalog_version,members_json) VALUES ($1,$2,$3,$4)",
-                    &[&tenant, &catalog_id, &CATALOG_VERSION, &members_json],
+                       (tenant_id,catalog_id,catalog_version) VALUES ($1,$2,$3)",
+                    &[&tenant, &catalog_id, &CATALOG_VERSION],
                 )
                 .await
                 .context("publish the release manifest")?;

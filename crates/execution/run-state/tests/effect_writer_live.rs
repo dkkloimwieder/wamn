@@ -174,8 +174,8 @@ async fn native_effect_writer_live() {
                (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
              VALUES ('tenant-live-a','{EMPTY_HASH}','0.1',decode('7b7d','hex'),2); \
              INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ('tenant-live-a','writer-catalog',1,'[]'); \
+               (tenant_id,catalog_id,catalog_version) \
+             VALUES ('tenant-live-a','writer-catalog',1); \
              INSERT INTO wamn_run.runs \
                (tenant_id,run_id,flow_id,flow_version,catalog_id,catalog_version, \
                 environment,execution_bundle_hash,status) \

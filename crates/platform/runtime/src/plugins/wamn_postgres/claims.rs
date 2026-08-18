@@ -1991,19 +1991,6 @@ mod tests {
             i32::try_from(callee_plan_bytes.len()).expect("callee plan fits PostgreSQL int");
         let root_plan_slice = root_plan_bytes.as_slice();
         let callee_plan_slice = callee_plan_bytes.as_slice();
-        let members_json = serde_json::to_string(&serde_json::json!([
-            {
-                "flow-id": "root-flow",
-                "flow-version": 1,
-                "artifact-hash": root_artifact_hash.clone()
-            },
-            {
-                "flow-id": "callee-flow",
-                "flow-version": 1,
-                "artifact-hash": callee_artifact_hash.clone()
-            }
-        ]))
-        .expect("encode release members");
         let descriptor_json =
             serde_json::to_string(&descriptor).expect("encode connection requirement");
 
@@ -2047,9 +2034,9 @@ mod tests {
         .expect("seed distinct exact execution bundles");
         seed.execute(
             "INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ($1,'effect-catalog',1,$2::text::jsonb)",
-            &[&TENANT, &members_json],
+               (tenant_id,catalog_id,catalog_version) \
+             VALUES ($1,'effect-catalog',1)",
+            &[&TENANT],
         )
         .await
         .expect("seed release manifest");

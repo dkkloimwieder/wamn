@@ -943,9 +943,6 @@ async fn setup_project(
     let graph = flow_json(resources);
     let registration = registration_json(resources);
     let (execution_plan, bundle_hash) = execution_plan_fixture()?;
-    let members = serde_json::json!([{
-        "flow-id": resources.flow_id, "flow-version": 1, "artifact-hash": ARTIFACT_HASH
-    }]);
     let transaction = admin.transaction().await?;
     transaction
         .execute(
@@ -971,8 +968,8 @@ async fn setup_project(
     transaction
         .execute(
             "INSERT INTO catalog.release_manifests \
-           (tenant_id,catalog_id,catalog_version,members_json) VALUES ($1,$2,1,$3)",
-            &[&resources.tenant, &resources.catalog_id, &members],
+           (tenant_id,catalog_id,catalog_version) VALUES ($1,$2,1)",
+            &[&resources.tenant, &resources.catalog_id],
         )
         .await?;
     transaction

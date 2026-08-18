@@ -61,8 +61,8 @@ async fn reset_and_install(client: &Client) -> BareSchemaName {
                (tenant_id,execution_bundle_hash,format_version,exact_bytes,byte_length) \
              VALUES ('t1','{HASH}','0.1',''::bytea,0); \
              INSERT INTO catalog.release_manifests \
-               (tenant_id,catalog_id,catalog_version,members_json) \
-             VALUES ('t1','cat',1,'[]'::jsonb);"
+               (tenant_id,catalog_id,catalog_version) \
+             VALUES ('t1','cat',1);"
         ))
         .await
         .expect("seed admission pin parents");
