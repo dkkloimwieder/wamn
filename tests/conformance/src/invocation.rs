@@ -13,7 +13,7 @@ const FLOWRUNNER_WIT: &str = include_str!("../../../components/execution/flowrun
 /// router invokes once per graph node. Included rather than read so that losing
 /// the package fails the build outright, not just a test.
 #[cfg(test)]
-const NODE_WIT: &str = include_str!("../../../wit/wamn-node/package.wit");
+const NODE_WIT: &str = include_str!("../../../crates/execution/router/wit/package.wit");
 
 #[cfg(test)]
 mod tests {
@@ -140,7 +140,7 @@ mod tests {
     /// takes ownership at `crates/execution/router/wit/package.wit`, this
     /// constant and the `include_str!` above move together — and
     /// [`node_abi_source_and_included_copy_agree`] fails if only one of them does.
-    const NODE_ABI_SOURCE: &str = "wit/wamn-node/package.wit";
+    const NODE_ABI_SOURCE: &str = "crates/execution/router/wit/package.wit";
 
     /// Every vendored copy of the node ABI, repo-root-relative. Empty today: the
     /// package is bound by nothing, so a copy has no reason to exist yet. The
@@ -190,12 +190,16 @@ mod tests {
             } else if path.extension().and_then(|ext| ext.to_str()) == Some("wit")
                 && fs::read_to_string(&path).is_ok_and(|text| text.contains("package wamn:node@"))
             {
-                out.push(
-                    path.strip_prefix(root)
-                        .expect("copy is under repo root")
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                );
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("copy is under repo root")
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                // The source of record lives inside a code tier, so the walk
+                // finds it too. A copy is by definition not the source.
+                if relative != NODE_ABI_SOURCE {
+                    out.push(relative);
+                }
             }
         }
     }

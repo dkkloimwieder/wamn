@@ -216,7 +216,7 @@ fn negative_every_post_admission_value_has_run_identity() {
 /// does not exist yet; it is bound by nothing meanwhile. When the router lands
 /// and takes ownership at `crates/execution/router/wit/package.wit`, this
 /// constant moves with it and the guard keeps biting at the new path.
-const LIVE_NODE_ABI: &str = "wit/wamn-node/package.wit";
+const LIVE_NODE_ABI: &str = "crates/execution/router/wit/package.wit";
 
 /// The one signature the router invokes. Pinned here so a silent change to the
 /// node ABI's shape cannot leave this file asserting a contract that is gone.
