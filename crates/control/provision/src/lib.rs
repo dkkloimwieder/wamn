@@ -94,7 +94,7 @@ pub use dump::{
 };
 pub use error::ProvisionError;
 pub use name::{
-    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX,
+    APP_ROLE, CDC_OBJECT_PREFIX, CDC_SECRET_PREFIX, DB_OWNER_ROLE, DB_PREFIX, DISPATCH_READER_ROLE,
     EFFECT_WRITER_SECRET_PREFIX, INSTANCE_SUFFIX_LEN, MAX_DB_NAME_LEN, MAX_NAMESPACE_LEN,
     MAX_NAMESPACE_STEM_LEN, MAX_PROJECT_ID_LEN, NAMESPACE_PREFIX, cdc_object_name, compose_url,
     database_name, event_stream_name, project_env_cdc_secret_name, project_env_database_name,

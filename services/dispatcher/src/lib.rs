@@ -64,6 +64,18 @@ pub struct DispatchArgs {
     /// {"<name>": {"url": "...", "tenant": "...", "execution_target_id":
     /// "...", "schema": "wamn_run"}}
     /// (a mounted Secret/ConfigMap in production — the 2.2 projects-file shape).
+    ///
+    /// `url` carries the dispatcher's DATABASE PRINCIPAL: this file is the only
+    /// place it is stated, because the dispatcher has no separate DB-URL Secret.
+    /// It must be the scoped `wamn_dispatch_reader` (wamn-0h0g.12.66) — CONNECT,
+    /// schema USAGE, and SELECT on `run_queue` and `effect_attempts`, which is
+    /// exactly what a sweep touches and nothing more.
+    ///
+    /// One entry is ONE database pinned to ONE `tenant`, so the reader is
+    /// deliberately NOBYPASSRLS: the per-relation policy keyed on `app.tenant`
+    /// admits precisely the rows this session already read under the old shared
+    /// credential. Provisioning must create the role and its grants BEFORE a pod
+    /// carrying these URLs starts — the initial dial is fatal by design.
     #[arg(long, env = "WAMN_DISPATCH_PROJECTS_FILE")]
     pub projects_file: Option<PathBuf>,
 

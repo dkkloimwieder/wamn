@@ -35,6 +35,26 @@ pub const APP_ROLE: &str = "wamn_app";
 /// whole point.
 pub const DB_OWNER_ROLE: &str = "wamn_db_owner";
 
+/// The shared, cluster-global role the always-on dispatcher authenticates as
+/// (wamn-0h0g.12.66) — `LOGIN`, and otherwise a pure reader.
+///
+/// The dispatcher's entire database surface is two `SELECT`s over
+/// `run_queue`/`effect_attempts` plus the two session `SET`s that pin its
+/// `search_path` and `app.tenant` claim, so it needs `CONNECT`, schema `USAGE`,
+/// and `SELECT` on exactly those two relations — nothing else. It previously
+/// authenticated as [`APP_ROLE`], which additionally holds `INSERT`/`UPDATE`/
+/// `DELETE` on the queue and on the whole `catalog` schema.
+///
+/// Deliberately **`NOBYPASSRLS`**: every relation it reads `FORCE`s RLS keyed on
+/// `app.tenant`, and the dispatcher pins ONE tenant per project connection, so
+/// the policy admits exactly the rows it must see. A bypassing role would widen
+/// the read to every tenant in the database for no gain.
+///
+/// Deliberately **`NOINHERIT` with zero memberships**: this role's authority is
+/// only what is granted to it directly, so the grant inventory is the whole
+/// story.
+pub const DISPATCH_READER_ROLE: &str = "wamn_dispatch_reader";
+
 /// Prefix for the fixed-mount effect-writer credential Secret.
 pub const EFFECT_WRITER_SECRET_PREFIX: &str = "wamn-effect-writer-";
 

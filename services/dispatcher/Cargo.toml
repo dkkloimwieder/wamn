@@ -33,3 +33,9 @@ wamn-scheduler = { workspace = true }
 # R16b identity-format validators — the ONE owner shared with the
 # wamn:postgres plugin (wamn-host).
 wamn-control-registry = { workspace = true }
+
+[dev-dependencies]
+# tests/read_authority.rs drives the REAL provisioning builders that mint the
+# dispatcher's scoped reader role, so the live gate cannot drift from the SQL
+# production actually applies. Dev-only: the shipped binary links no provisioner.
+wamn-control-provision = { workspace = true }

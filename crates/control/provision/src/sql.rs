@@ -8,7 +8,7 @@
 //! database name, a role password) travel as `$n` params or quoted literals.
 
 use crate::control_author::CONTROL_AUTHOR_ROLE;
-use crate::name::{APP_ROLE, DB_OWNER_ROLE, database_name};
+use crate::name::{APP_ROLE, DB_OWNER_ROLE, DISPATCH_READER_ROLE, database_name};
 pub(crate) use wamn_pg_core::quote_ident;
 use wamn_pg_core::quote_literal;
 use wamn_run_state::{EFFECT_WRITER_ROLE, RUN_PROJECTION_WRITER_ROLE};
@@ -168,6 +168,116 @@ pub fn grant_connect_on_database_sql(database: &str) -> String {
 /// database name.
 pub fn grant_connect_sql(project: &str) -> String {
     grant_connect_on_database_sql(&database_name(project))
+}
+
+// --- Dispatcher read-only provisioning (wamn-0h0g.12.66) ---------------------
+//
+// The always-on dispatcher authenticated as the shared, guest-reachable
+// [`APP_ROLE`], which holds `INSERT`/`UPDATE`/`DELETE` on the run queue and on
+// the whole `catalog` schema. Its real surface is two `SELECT`s. These builders
+// mint the scoped reader and grant it exactly that surface, nothing wider.
+//
+// Deliberately parallel to the `CONNECT` builders above rather than folded into
+// them: [`grant_connect_on_database_sql`] names [`APP_ROLE`] specifically, and a
+// shared builder would be one edit away from handing the dispatcher's narrow
+// credential the application role's authority, or vice versa.
+
+/// The relations the dispatcher reads, in the order it touches them: the
+/// parked-due reconciliation `SELECT` scans `run_queue` and its budget clause
+/// `EXISTS`-joins `effect_attempts`; the queue-depth `SELECT` reads the same
+/// pair. PostgreSQL checks privileges on every relation a statement references
+/// regardless of whether the subquery yields rows, so BOTH grants are load
+/// bearing even when the ledger is empty.
+pub const DISPATCH_READER_RELATIONS: [&str; 2] = ["run_queue", "effect_attempts"];
+
+/// Idempotently create or harden the cluster-global dispatcher reader.
+///
+/// Create-or-*harden* under the shared `wamn_role_bootstrap` advisory lock — the
+/// [`ensure_control_author_acl_role_sql`] shape, so a replay that finds a drifted
+/// attribute re-`ALTER`s it instead of reporting success. Unlike the stable ACL
+/// roles this one is `LOGIN`: it IS the connection principal (the dispatcher's
+/// projects file carries its URL), so the drift predicate treats a role that has
+/// LOST `LOGIN` as drifted too.
+///
+/// Table and schema grants deliberately do not live here — they are
+/// database-scoped and land in [`grant_dispatch_reader_read_surface_sql`], applied
+/// inside each project-env database once its run-plane schema exists.
+///
+/// The password is set at creation only, exactly as [`ensure_app_role_sql`] does
+/// for the role this one replaces: rotating it is a `Secret` edit plus an
+/// `ALTER ROLE`, not a generation pair. The dispatcher's credential is mounted
+/// config, not a saga-managed A/B slot.
+pub fn ensure_dispatch_reader_role_sql(password: &str) -> String {
+    format!(
+        "DO $dispatch_reader$ BEGIN \
+           PERFORM pg_advisory_xact_lock(hashtext('wamn_role_bootstrap')); \
+           IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles \
+                          WHERE rolname = {role_lit}) THEN \
+             CREATE ROLE {role} LOGIN PASSWORD {pw} NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           ELSIF EXISTS (SELECT FROM pg_catalog.pg_roles \
+                         WHERE rolname = {role_lit} \
+                           AND (NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole \
+                                OR rolinherit OR rolreplication OR rolbypassrls)) THEN \
+             ALTER ROLE {role} LOGIN NOSUPERUSER NOCREATEDB \
+               NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS; \
+           END IF; \
+         END $dispatch_reader$;",
+        role = quote_ident(DISPATCH_READER_ROLE),
+        role_lit = quote_literal(DISPATCH_READER_ROLE),
+        pw = quote_literal(password),
+    )
+}
+
+/// `GRANT CONNECT ON DATABASE "<database>" TO "wamn_dispatch_reader"`.
+///
+/// **Order is load-bearing exactly as it is for [`grant_connect_on_database_sql`]:
+/// this must run AFTER [`set_database_owner_sql`].** `ALTER DATABASE … OWNER TO`
+/// rewrites the outgoing owner's ACL entry, and any `CONNECT` granted while that
+/// role still owned the database is carried away with it.
+///
+/// Separate from [`grant_connect_on_database_sql`] on purpose: that builder
+/// confines `CONNECT` to [`APP_ROLE`] and revokes `PUBLIC`, and the dispatcher
+/// reader is an ADDITIONAL principal on the same database, not a replacement.
+/// Emit both, in either order, after the owner statement.
+pub fn grant_dispatch_reader_connect_sql(database: &str) -> String {
+    format!(
+        "GRANT CONNECT ON DATABASE {db} TO {role};",
+        db = quote_ident(database),
+        role = quote_ident(DISPATCH_READER_ROLE),
+    )
+}
+
+/// The dispatcher's whole in-database read surface, applied convergently inside
+/// one project-env database: `USAGE` on the run-plane `schema` and `SELECT` on
+/// [`DISPATCH_READER_RELATIONS`]. Nothing else — no `runs`, no `node_runs`, no
+/// `catalog`, no `EXECUTE`.
+///
+/// Every grant is preceded by a blanket `REVOKE` over the same scope, so the
+/// batch NARROWS as well as grants: an environment where someone widened the
+/// reader converges back to exactly this surface on the next apply, and a replay
+/// against an already-correct environment is a no-op. That is what makes this the
+/// provisioner's convergent step rather than a one-shot migration script.
+///
+/// Run connected to the project-env database as a principal that owns the
+/// run-plane relations (the database owner or the cluster superuser), AFTER the
+/// run-plane schema has been applied — the `REVOKE`/`GRANT` name relations that
+/// must already exist.
+pub fn grant_dispatch_reader_read_surface_sql(schema: &str) -> String {
+    let role = quote_ident(DISPATCH_READER_ROLE);
+    let schema_ident = quote_ident(schema);
+    let mut sql = format!(
+        "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA {schema_ident} FROM {role}; \
+         REVOKE ALL PRIVILEGES ON SCHEMA {schema_ident} FROM {role}; \
+         GRANT USAGE ON SCHEMA {schema_ident} TO {role};"
+    );
+    for relation in DISPATCH_READER_RELATIONS {
+        sql.push_str(&format!(
+            " GRANT SELECT ON {schema_ident}.{relation} TO {role};",
+            relation = quote_ident(relation),
+        ));
+    }
+    sql
 }
 
 /// Idempotently create the stable effect-ledger ACL role as NOLOGIN.
@@ -850,6 +960,113 @@ mod tests {
     }
 
     #[test]
+    fn dispatch_reader_role_is_a_hardened_login_reader() {
+        let sql = ensure_dispatch_reader_role_sql("s3cret");
+        // The house create-or-harden shape: advisory-locked, so two provisioners
+        // racing the bootstrap serialize instead of one losing to a duplicate-key.
+        assert!(sql.contains("pg_advisory_xact_lock(hashtext('wamn_role_bootstrap'))"));
+        assert!(sql.contains("CREATE ROLE \"wamn_dispatch_reader\" LOGIN PASSWORD 's3cret'"));
+        assert!(sql.contains("ALTER ROLE \"wamn_dispatch_reader\" LOGIN"));
+        for attr in [
+            "NOSUPERUSER",
+            "NOCREATEDB",
+            "NOCREATEROLE",
+            "NOINHERIT",
+            "NOREPLICATION",
+            "NOBYPASSRLS",
+        ] {
+            assert!(sql.contains(attr), "missing {attr}");
+        }
+        // THE DRIFT PREDICATE IS THE HARDEN ARM. This role is LOGIN, so a role
+        // that has LOST login is drifted — the negation that the NOLOGIN sibling
+        // builders spell the other way round. Drop `NOT rolcanlogin` and a
+        // de-loginned reader is reported healthy while the dispatcher cannot
+        // authenticate.
+        assert!(sql.contains("NOT rolcanlogin OR rolsuper OR rolcreatedb OR rolcreaterole"));
+        assert!(sql.contains("OR rolinherit OR rolreplication OR rolbypassrls"));
+        // The ALTER deliberately carries no PASSWORD: a harden pass must not
+        // silently re-stamp a credential the operator rotated out of band.
+        let alter = sql.split("ELSIF").nth(1).expect("harden arm");
+        assert!(!alter.contains("PASSWORD"));
+        // A password with a quote is escaped, not injected.
+        assert!(ensure_dispatch_reader_role_sql("a'b").contains("PASSWORD 'a''b'"));
+        // This builder owns the role identity only — never a grant.
+        for forbidden in ["ON SCHEMA", "ON TABLE", "CONNECT ON DATABASE"] {
+            assert!(!sql.contains(forbidden), "role builder leaked a grant");
+        }
+    }
+
+    #[test]
+    fn dispatch_reader_read_surface_is_exactly_two_selects_and_narrows() {
+        let sql = grant_dispatch_reader_read_surface_sql("wamn_run");
+        // Every grant is preceded by a blanket REVOKE over the same scope, so a
+        // widened environment CONVERGES BACK. Without these the batch could only
+        // ever add authority, and an over-granted reader would survive forever.
+        let revoke_tables = sql
+            .find("REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA \"wamn_run\" FROM \"wamn_dispatch_reader\"")
+            .expect("blanket table revoke");
+        let revoke_schema = sql
+            .find("REVOKE ALL PRIVILEGES ON SCHEMA \"wamn_run\" FROM \"wamn_dispatch_reader\"")
+            .expect("blanket schema revoke");
+        let grant_usage = sql
+            .find("GRANT USAGE ON SCHEMA \"wamn_run\" TO \"wamn_dispatch_reader\"")
+            .expect("schema usage");
+        assert!(revoke_tables < grant_usage && revoke_schema < grant_usage);
+
+        // Exactly the two relations the dispatcher reads, and exactly SELECT.
+        for relation in DISPATCH_READER_RELATIONS {
+            assert!(sql.contains(&format!(
+                "GRANT SELECT ON \"wamn_run\".\"{relation}\" TO \"wamn_dispatch_reader\""
+            )));
+        }
+        assert_eq!(sql.matches("GRANT SELECT ON").count(), 2);
+        // No write verb, no EXECUTE, and no relation outside the pair. `runs` is
+        // the pointed omission: the dispatcher joins the queue's budget clause to
+        // `effect_attempts`, never to the run history.
+        for forbidden in [
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "TRUNCATE",
+            "REFERENCES",
+            "TRIGGER",
+            "EXECUTE",
+            "ALL TABLES IN SCHEMA \"wamn_run\" TO",
+            "\"runs\"",
+            "\"node_runs\"",
+            "catalog",
+        ] {
+            assert!(
+                !sql.contains(forbidden),
+                "read surface gained {forbidden:?}"
+            );
+        }
+        // The schema is an identifier position and is quoted, not interpolated.
+        assert!(grant_dispatch_reader_read_surface_sql("we\"ird").contains("\"we\"\"ird\""));
+    }
+
+    #[test]
+    fn dispatch_reader_connect_is_additive_and_leaves_the_app_role_builder_alone() {
+        let sql = grant_dispatch_reader_connect_sql("wamn-db-acme--billing--dev");
+        assert_eq!(
+            sql,
+            "GRANT CONNECT ON DATABASE \"wamn-db-acme--billing--dev\" \
+             TO \"wamn_dispatch_reader\";"
+        );
+        // ADDITIVE, never a replacement: this builder must not revoke PUBLIC or
+        // touch wamn_app — that is grant_connect_on_database_sql's job, and both
+        // principals need CONNECT on the same database.
+        assert!(!sql.contains("REVOKE"));
+        assert!(!sql.contains(APP_ROLE));
+        // …and the app-role builder stays free of the reader, so one edit cannot
+        // widen both principals at once.
+        assert!(
+            !grant_connect_on_database_sql("wamn-db-acme--billing--dev")
+                .contains(DISPATCH_READER_ROLE)
+        );
+    }
+
+    #[test]
     fn writer_acl_roles_are_stable_nologin_and_own_no_grants_here() {
         let sql = ensure_effect_writer_acl_role_sql();
         assert!(sql.contains("'wamn_effect_writer'"));
@@ -950,7 +1167,10 @@ mod tests {
             "wamn_run_projection_writer",
             "wamn_app",
         ] {
-            assert!(!sql.contains(other_plane), "control author touched {other_plane}");
+            assert!(
+                !sql.contains(other_plane),
+                "control author touched {other_plane}"
+            );
         }
     }
 
@@ -1004,7 +1224,10 @@ mod tests {
         assert!(membership < connect && connect < no_login);
         assert!(sql.contains("VALID UNTIL 'epoch'"));
         assert!(!sql.contains("pg_terminate_backend"));
-        assert!(!sql.contains("DROP ROLE"), "slots are reused, never dropped");
+        assert!(
+            !sql.contains("DROP ROLE"),
+            "slots are reused, never dropped"
+        );
 
         let terminate = terminate_control_author_generation_sessions_sql(role);
         assert!(terminate.contains(&format!("WHERE usename = '{role}'")));

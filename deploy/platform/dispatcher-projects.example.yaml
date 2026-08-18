@@ -10,6 +10,18 @@
 # `SET`s, the parked-due SELECT, and the queue-depth SELECT), statically pinned
 # by tests/conformance/tests/dispatcher_boundary.rs. Real per-project entries —
 # one per provisioned project DB — land with hosting/2.3 provisioning.
+#
+# THE PRINCIPAL IS NOT wamn_app (wamn-0h0g.12.66). The dispatcher has no separate
+# DB-URL Secret: its credential lives INSIDE this file, so this manifest is the
+# only place its database identity is stated and changing the role means changing
+# these URLs. `wamn_dispatch_reader` holds CONNECT, schema USAGE, and SELECT on
+# exactly the two relations above and nothing else; `wamn_app` additionally holds
+# INSERT/UPDATE/DELETE on the queue and on every `catalog` relation, plus EXECUTE
+# on a SECURITY DEFINER function — none of which the dispatcher has ever used.
+#
+# ORDERING OBLIGATION: the role and its grants must exist BEFORE a pod carrying
+# these URLs starts, or the initial dial is fatal and the pod crash-loops. See the
+# rollout note in deploy/platform/dispatcher.yaml.
 apiVersion: v1
 kind: Secret
 metadata:
@@ -19,14 +31,21 @@ type: Opaque
 stringData:
   # {"<project>": {"url": "...", "tenant": "...", "schema": "..."}} — the shape
   # DispatchArgs::projects_file parses (services/dispatcher/src/lib.rs).
-  # `url` is the project's app-role (NOSUPERUSER, NOBYPASSRLS) connection;
-  # `tenant` becomes the session's app.tenant RLS claim; `schema` its
-  # search_path. Tenant/schema are charset-guarded at startup (they go into
-  # session SET literals).
+  # `url` is the project's scoped read-only dispatch connection (LOGIN,
+  # NOSUPERUSER, NOINHERIT, NOBYPASSRLS); `tenant` becomes the session's
+  # app.tenant RLS claim; `schema` its search_path. Tenant/schema are
+  # charset-guarded at startup (they go into session SET literals).
+  #
+  # NOBYPASSRLS is correct BECAUSE the dispatcher is single-tenant per
+  # connection: one entry here is one database and one `tenant`, and both of its
+  # SELECTs also filter on `current_setting('app.tenant')` explicitly. The RLS
+  # policy therefore admits exactly the rows it already read as wamn_app. A
+  # bypassing role would widen the read to every tenant in the database for no
+  # gain.
   projects.json: |
     {
       "demo": {
-        "url": "postgres://wamn_app:wamn_app@postgres.wamn-system.svc.cluster.local:5432/wamn",
+        "url": "postgres://wamn_dispatch_reader:wamn_dispatch_reader@postgres.wamn-system.svc.cluster.local:5432/wamn",
         "tenant": "demo-tenant",
         "schema": "wamn_run"
       }

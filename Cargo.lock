@@ -4261,6 +4261,7 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+ "wamn-control-provision",
  "wamn-control-registry",
  "wamn-run-state",
  "wamn-scheduler",

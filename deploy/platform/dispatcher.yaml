@@ -36,6 +36,28 @@
 # BOUNDED — an absent NATS delays startup by at most ~30s instead of wedging
 # it.
 #
+# DATABASE PRINCIPAL (wamn-0h0g.12.66): the dispatcher authenticates as
+# `wamn_dispatch_reader` — CONNECT, USAGE on the run-plane schema, and SELECT on
+# `run_queue` and `effect_attempts`. That is its entire database authority. It
+# previously used the shared `wamn_app` credential, which also carries
+# INSERT/UPDATE/DELETE on the queue and on every `catalog` relation.
+#
+# ROLLOUT ORDER IS MANDATORY, and it is a THREE-STEP sequence per project
+# database, not one:
+#   1. apply the role SQL to the target cluster's superuser (creates the role);
+#   2. apply the privilege SQL — the `ALTER DATABASE … OWNER TO` statement FIRST,
+#      then the CONNECT grants. An owner change rewrites the outgoing owner's ACL
+#      entry and carries away any CONNECT that merged into it, so a CONNECT
+#      issued before the owner statement is silently destroyed;
+#   3. apply the read-surface grants INSIDE each project database, after its
+#      run-plane schema exists.
+# Only then update the wamn-dispatch-projects Secret and roll this Deployment.
+# Rolling first is not silent: the initial dial is fatal, and maxUnavailable: 0
+# with minReadySeconds: 30 means the new pod never becomes available and the old
+# replicas keep sweeping — the rollout stalls rather than taking the dispatcher
+# down. Every step re-applies as a no-op, so a stalled rollout is repaired by
+# completing the sequence and retrying.
+#
 # CREDENTIAL SCOPE (residual risk, tracked as a follow-up bead): the doorbell
 # publishes over the operator chart's mTLS NATS using the SAME
 # wasmcloud-runtime-tls cert the host groups use, whose CN maps to an
