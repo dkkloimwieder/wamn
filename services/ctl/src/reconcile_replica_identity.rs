@@ -13,8 +13,14 @@
 //! `ALTER TABLE … REPLICA IDENTITY FULL|DEFAULT` flips.
 //!
 //! **Ownership:** `ALTER TABLE … REPLICA IDENTITY` needs table ownership — the
-//! `wamn_app` role cannot run it — so this connects as a **superuser** (or the
-//! schema owner), like `publish-catalog --provision` / `migrate-catalog`.
+//! `wamn_app` role cannot run it — so this connects as a **superuser**, like
+//! `publish-catalog --provision` / `migrate-catalog`. Table/schema ownership
+//! ALONE is not enough (wamn-0h0g.12.103): `catalog.event_registrations` is
+//! `FORCE ROW LEVEL SECURITY`, so even its own non-superuser owner reads zero
+//! registrations with no error, and the reconcile now REFUSES that instead of
+//! planning a reset of every entity to DEFAULT. Which identity this verb is
+//! actually given is wamn-0h0g.12.70's question, not this module's; the refusal
+//! only makes an inadequate one loud.
 //!
 //! **NON-RETROACTIVE:** a flip to FULL enriches only WAL written AFTER it. Events
 //! captured before the flip permanently lack the old image; a newly registered
@@ -34,8 +40,8 @@ use clap::Args;
 use tokio_postgres::NoTls;
 
 use wamn_schema_control::{
-    EventRegistration, ReplicaIdentity, ReplicaIdentityPlan, reconcile_replica_identity,
-    select_replica_identity_sql, sql,
+    EventRegistration, ReplicaIdentity, ReplicaIdentityPlan, UnreadableRegistrations,
+    UnreadableRegistrationsKind, reconcile_replica_identity, select_replica_identity_sql, sql,
 };
 
 #[derive(Debug, Args)]
@@ -163,10 +169,26 @@ pub async fn reconcile(
     Ok(plan)
 }
 
-/// Every event registration DOCUMENT for `catalog_id`, parsed. Across ALL tenants
-/// (superuser bypasses RLS). A project not yet registration-provisioned (no
-/// `catalog.event_registrations` table) has no registrations — a clean empty set,
-/// so every entity reconciles to DEFAULT.
+/// Every event registration DOCUMENT for `catalog_id`, parsed, across ALL
+/// tenants — or a REFUSAL BY NAME if the full set cannot be read
+/// (wamn-0h0g.12.103).
+///
+/// **This read is fail-closed, and must stay that way.** An empty registration
+/// set and an unreadable one are indistinguishable downstream: both reach the
+/// pure planner as an empty slice, which then plans a reset to DEFAULT for every
+/// entity currently at FULL. That flip is NON-RETROACTIVE, so the events captured
+/// until the next repair permanently lack their old image while the run reports
+/// clean. The two unreadable states are therefore named, not swallowed:
+///
+/// - **absent** — no `catalog.event_registrations` table at all (a catalog schema
+///   dropped and partially rebuilt). Not a provisioned-but-empty registration
+///   set, which is legitimate and reconciles normally.
+/// - **unreadable** — the read errored. The dangerous member of this class is
+///   silent: the table is `FORCE ROW LEVEL SECURITY`, so a session that does not
+///   BYPASS RLS (a non-superuser owner included) reads zero rows with NO error.
+///   The read therefore runs under `row_security = off`, the pg_dump idiom, which
+///   makes Postgres raise SQLSTATE 42501 instead of filtering — so the silence
+///   becomes an error and the error becomes this refusal.
 async fn read_registrations(
     client: &tokio_postgres::Client,
     catalog_id: &str,
@@ -180,15 +202,32 @@ async fn read_registrations(
         .context("probe catalog.event_registrations")?
         .get(0);
     if !table_present {
-        return Ok(Vec::new());
+        return Err(UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::Absent,
+            catalog_id: catalog_id.to_string(),
+        }
+        .into());
     }
-    let rows = client
+    client
+        .batch_execute("SET row_security = off")
+        .await
+        .context("SET row_security = off for the cross-tenant registration read")?;
+    let read = client
         .query(
             &sql::select_registration_docs_for_catalog_sql(),
             &[&catalog_id],
         )
-        .await
-        .context("read event registrations for the RI reconcile")?;
+        .await;
+    // Best-effort restore: a failed read inside a caller's open transaction
+    // (publish-catalog holds one) aborts it, so RESET cannot run and the caller
+    // is already unwinding to a ROLLBACK that restores the GUC anyway.
+    let _ = client.batch_execute("RESET row_security").await;
+    let rows = read.map_err(|e| {
+        anyhow::Error::new(e).context(UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::Unreadable,
+            catalog_id: catalog_id.to_string(),
+        })
+    })?;
     let mut regs = Vec::with_capacity(rows.len());
     for row in &rows {
         let doc: String = row.get(0);

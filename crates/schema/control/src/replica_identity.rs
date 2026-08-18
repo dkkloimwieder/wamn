@@ -28,9 +28,90 @@
 //! image as CANNOT-EVALUATE (an alertable refusal), never condition-false.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 
 use wamn_event_reg::EventRegistration;
 use wamn_schema_model::Catalog;
+
+/// Why the driver could not obtain the FULL cross-tenant registration set for a
+/// catalog (wamn-0h0g.12.103). Each variant is a STABLE refusal name — the ctl
+/// verb and the live gates assert on it, in the shape
+/// [`crate::PublicationError`] uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnreadableRegistrationsKind {
+    /// `catalog.event_registrations` does not exist: the project-env is not
+    /// registration-provisioned (a catalog schema dropped and only partially
+    /// rebuilt reaches this). NOT the same state as a provisioned table holding
+    /// no rows, which reconciles normally.
+    Absent,
+    /// The cross-tenant read itself failed. Chiefly the silent case:
+    /// `catalog.event_registrations` is `FORCE ROW LEVEL SECURITY`, so a session
+    /// that does not BYPASS RLS reads zero rows with no error at all — the
+    /// driver runs the read under `row_security = off` so Postgres raises
+    /// (SQLSTATE 42501) instead of filtering, and the silence lands here.
+    Unreadable,
+}
+
+impl UnreadableRegistrationsKind {
+    /// The stable refusal name.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Absent => "replica-identity-registrations-absent",
+            Self::Unreadable => "replica-identity-registrations-unreadable",
+        }
+    }
+}
+
+/// The REPLICA IDENTITY reconcile REFUSED because it could not read the
+/// registration set it derives the FULL requirement from.
+///
+/// **Why this is a refusal and not an empty set.** The planner
+/// ([`reconcile_replica_identity`]) cannot distinguish "no entity needs FULL"
+/// from "I could not see the registrations": both arrive as an empty slice, and
+/// the second one plans a reset to DEFAULT for EVERY entity currently at FULL.
+/// The flip is NON-RETROACTIVE, so every row event captured until the next
+/// repair permanently lacks its old image, while the run reports as a clean,
+/// idempotent-looking success. The subsystem is fail-closed everywhere else (the
+/// materializer refuses old-image-absent rather than evaluating condition-false);
+/// this is the one place it used to fail open.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnreadableRegistrations {
+    pub kind: UnreadableRegistrationsKind,
+    /// The catalog whose registrations could not be read (the reconcile's scope).
+    pub catalog_id: String,
+}
+
+impl fmt::Display for UnreadableRegistrations {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}: refusing to reconcile REPLICA IDENTITY for catalog {:?} — ",
+            self.kind.name(),
+            self.catalog_id
+        )?;
+        match self.kind {
+            UnreadableRegistrationsKind::Absent => write!(
+                formatter,
+                "catalog.event_registrations does not exist, so this project-env is not \
+                 registration-provisioned. An unprovisioned registration set is NOT an empty \
+                 one: reconciling would reset every entity to REPLICA IDENTITY DEFAULT, and the \
+                 flip is NOT retroactive, so every row event captured until the next repair \
+                 would permanently lack its old image. Provision the catalog schema first."
+            ),
+            UnreadableRegistrationsKind::Unreadable => write!(
+                formatter,
+                "the cross-tenant read of catalog.event_registrations failed. It must run as a \
+                 role that BYPASSES row-level security (a superuser or a BYPASSRLS role): the \
+                 table is FORCE ROW LEVEL SECURITY, so a non-bypassing session — the table's own \
+                 non-superuser owner included — reads ZERO ROWS WITH NO ERROR, which would be \
+                 planned as a non-retroactive reset of every entity to DEFAULT. The read runs \
+                 under `row_security = off` so that silence surfaces as this refusal."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for UnreadableRegistrations {}
 
 /// A table's REPLICA IDENTITY, as the reconciler models it. Only the FULL vs
 /// not-FULL distinction is load-bearing: the reconciler sets a needed entity to
@@ -414,6 +495,54 @@ mod tests {
             "SELECT c.relname, c.relreplident::text FROM pg_class c \
              JOIN pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = $1 AND c.relkind = 'r'"
+        );
+    }
+
+    /// wamn-0h0g.12.103: the two unreadable-registration states refuse under
+    /// their own stable names, and each names the non-retroactive reset it is
+    /// preventing. The live gates key on these literals.
+    #[test]
+    fn an_unreadable_registration_set_refuses_by_name() {
+        let absent = UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::Absent,
+            catalog_id: "shop".to_string(),
+        };
+        let msg = absent.to_string();
+        assert!(
+            msg.starts_with("replica-identity-registrations-absent: "),
+            "{msg}"
+        );
+        for needle in [
+            "\"shop\"",
+            "not registration-provisioned",
+            "NOT retroactive",
+        ] {
+            assert!(
+                msg.contains(needle),
+                "absent refusal names {needle:?}: {msg}"
+            );
+        }
+
+        let unreadable = UnreadableRegistrations {
+            kind: UnreadableRegistrationsKind::Unreadable,
+            catalog_id: "shop".to_string(),
+        };
+        let msg = unreadable.to_string();
+        assert!(
+            msg.starts_with("replica-identity-registrations-unreadable: "),
+            "{msg}"
+        );
+        for needle in ["FORCE ROW LEVEL SECURITY", "ZERO ROWS WITH NO ERROR"] {
+            assert!(
+                msg.contains(needle),
+                "unreadable refusal names {needle:?}: {msg}"
+            );
+        }
+
+        // The two states are distinct refusals, never collapsed into one name.
+        assert_ne!(
+            UnreadableRegistrationsKind::Absent.name(),
+            UnreadableRegistrationsKind::Unreadable.name()
         );
     }
 

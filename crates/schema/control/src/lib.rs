@@ -91,8 +91,9 @@ pub use publication::{
     PublicationError, PublicationGuard, ReleaseFlow, canonical_release_flows, guard_publication,
 };
 pub use replica_identity::{
-    ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, alter_replica_identity_sql,
-    entities_requiring_full, reconcile_replica_identity, select_replica_identity_sql,
+    ReplicaIdentity, ReplicaIdentityFlip, ReplicaIdentityPlan, UnreadableRegistrations,
+    UnreadableRegistrationsKind, alter_replica_identity_sql, entities_requiring_full,
+    reconcile_replica_identity, select_replica_identity_sql,
 };
 pub use run_plane::{
     BareSchemaName, EFFECT_WRITER_ROLE, EffectWriterRoleObservation, InvalidBareSchemaName,
