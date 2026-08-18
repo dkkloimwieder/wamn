@@ -47,6 +47,19 @@ metadata:
   namespace: wamn-system
   labels: { app: replica-identity-reconcile, project-env: poc-f1 }
 spec:
+  # SUSPENDED BY DEFAULT (wamn-0h0g.12.70). This is the only recurring workload
+  # in the tier that mounts the `postgres-fixture-superuser` Secret, and it does
+  # so every five minutes — a standing superuser exposure whose least-authority
+  # scoping is still under adjudication on that bead. Applying the manifest must
+  # therefore not, by itself, start the cadence: an operator who accepts the
+  # current authority flips this to `false` (or
+  # `kubectl -n wamn-system patch cronjob replica-identity-reconcile-poc-f1
+  # -p '{"spec":{"suspend":false}}'`), which makes running it a deliberate act
+  # rather than a side effect of `kubectl apply`. Suspension does not lose
+  # correctness: the gap this closes is operational latency only (see WHY
+  # above), the verb stays runnable on demand, and a manual `create job --from`
+  # tick works while suspended.
+  suspend: true
   # ~5 min cadence (owner decision). The gap closes within one tick.
   schedule: "*/5 * * * *"
   # Never overlap: a slow reconcile must finish before the next tick starts —
