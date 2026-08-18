@@ -1725,3 +1725,184 @@ GRANT UPDATE (tenant_id) ON catalog.event_registrations TO wamn_app;
 -- Impact-analysis (wamn-wvb) + materializer lookup by the rename-proof entity id.
 CREATE INDEX event_registrations_by_entity
     ON catalog.event_registrations (tenant_id, catalog_id, entity_id);
+
+-- ---------------------------------------------------------------------------
+-- Wirings: the gated tenant graph over palette components (exe-model rev 4 R3,
+-- "wirings are data"; wamn-0h0g.18.1). A wiring definition is an immutable
+-- versioned row gated against ONE applied catalog version. Activation is the
+-- operational, environment-scoped pointer confirming exactly one definition
+-- hash, and every flip appends one provenance row.
+--
+-- The shape is deliberately the callable-flow attachment shape above: the same
+-- join through `catalog_heads.applied_catalog_version`, the same "not current"
+-- refusal, the same permanent tombstone on a removed id. Where it differs it is
+-- because a wiring is NOT a release member: it is authored, gated and flipped on
+-- the tenant's own cadence (R3's "two speeds"), so it carries its own version
+-- and NAMES the catalog version it was gated against instead of being keyed by
+-- the release that carries it.
+--
+-- The stored document is `WiringDocument` (crates/catalog/model): nodes
+-- reference `(component, interface-version)`, edges connect declared ports,
+-- parameters bind declared params, and the in-draft `cases` array rides the
+-- document (the wamn-0h0g.18.4 ruling — cases attach to the WIRING, not to a
+-- component). `wiring_hash` is the sha256 of that document's RFC 8785 canonical
+-- bytes; like `catalog.validated_flow_drafts.graph_hash` it is not
+-- CHECK-derivable from the jsonb column, which stores a parsed document rather
+-- than the exact bytes.
+-- ---------------------------------------------------------------------------
+CREATE TABLE catalog.wirings (
+    tenant_id       text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id      text NOT NULL,
+    wiring_id       text NOT NULL CHECK (wiring_id <> ''),
+    version         int NOT NULL CHECK (version > 0),
+    -- The applied catalog version this definition was gated against. Promotion
+    -- is one integer comparison against the target's applied version; the FK
+    -- makes the gated version a real row rather than an assertion.
+    gated_catalog_version int NOT NULL CHECK (gated_catalog_version > 0),
+    graph_json      jsonb NOT NULL CHECK (jsonb_typeof(graph_json) = 'object'),
+    wiring_hash     text NOT NULL
+        CHECK (wiring_hash ~ '^sha256:[0-9a-f]{64}$'),
+    -- The gate run that certified this definition against
+    -- `gated_catalog_version` — the TARGET half of the promote provenance pair.
+    -- The source half is `catalog.wiring_activation_events`.
+    gate_report_id  text NOT NULL CHECK (gate_report_id <> ''),
+    created_at      timestamptz NOT NULL DEFAULT now(),
+    -- `catalog_id` is part of the identity, not an attribute: activation is
+    -- keyed by (tenant, catalog, environment, wiring), so a wiring id shared by
+    -- two catalogs must not resolve one catalog's pointer to the other's
+    -- definition.
+    PRIMARY KEY (tenant_id, catalog_id, wiring_id, version),
+    FOREIGN KEY (tenant_id, catalog_id, gated_catalog_version)
+        REFERENCES catalog.catalogs (tenant_id, catalog_id, version)
+);
+ALTER TABLE catalog.wirings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.wirings FORCE ROW LEVEL SECURITY;
+CREATE POLICY wirings_tenant ON catalog.wirings
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.wirings TO wamn_app;
+CREATE TRIGGER wirings_immutable
+BEFORE UPDATE ON catalog.wirings
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+CREATE TRIGGER wirings_delete_immutable
+BEFORE DELETE ON catalog.wirings
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
+
+-- A removed wiring id is permanently retired for this environment and cannot be
+-- reused: the definition rows stay (they are immutable), so without this the
+-- pointer could be re-enabled onto a definition the author deleted.
+CREATE TABLE catalog.wiring_tombstones (
+    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id  text NOT NULL,
+    environment text NOT NULL,
+    wiring_id   text NOT NULL,
+    removed_in_catalog_version int NOT NULL,
+    removed_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment, wiring_id)
+);
+ALTER TABLE catalog.wiring_tombstones ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.wiring_tombstones FORCE ROW LEVEL SECURITY;
+CREATE POLICY wiring_tombstones_tenant ON catalog.wiring_tombstones
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.wiring_tombstones TO wamn_app;
+
+-- The env-scoped enabled pointer. The primary key IS the "exactly one
+-- definition hash" rule: unlike an attachment id, a wiring id is the pointer's
+-- own key, so one environment cannot hold two enabled hashes for one wiring and
+-- the attachment template's second, kind-scoped refusal has no analogue here.
+CREATE TABLE catalog.wiring_activation (
+    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id  text NOT NULL,
+    environment text NOT NULL,
+    wiring_id   text NOT NULL,
+    confirmed_definition_hash text NOT NULL,
+    enabled     boolean NOT NULL DEFAULT false,
+    changed_at  timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (tenant_id, catalog_id, environment, wiring_id)
+);
+ALTER TABLE catalog.wiring_activation ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.wiring_activation FORCE ROW LEVEL SECURITY;
+CREATE POLICY wiring_activation_tenant ON catalog.wiring_activation
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.wiring_activation TO wamn_app;
+
+CREATE FUNCTION catalog.validate_wiring_activation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    target_version int;
+BEGIN
+    IF NOT NEW.enabled THEN
+        RETURN NEW;
+    END IF;
+    SELECT wiring.version
+    INTO target_version
+    FROM catalog.catalog_heads head
+    JOIN catalog.wirings wiring
+      ON wiring.tenant_id = head.tenant_id
+     AND wiring.catalog_id = head.catalog_id
+     AND wiring.gated_catalog_version = head.applied_catalog_version
+    WHERE head.tenant_id = NEW.tenant_id
+      AND head.catalog_id = NEW.catalog_id
+      AND head.environment = NEW.environment
+      AND wiring.wiring_id = NEW.wiring_id
+      AND wiring.wiring_hash = NEW.confirmed_definition_hash
+      AND NOT EXISTS (
+          SELECT 1 FROM catalog.wiring_tombstones dead
+          WHERE dead.tenant_id = NEW.tenant_id
+            AND dead.catalog_id = NEW.catalog_id
+            AND dead.environment = NEW.environment
+            AND dead.wiring_id = NEW.wiring_id
+      );
+    IF target_version IS NULL THEN
+        RAISE EXCEPTION USING ERRCODE = '23503',
+            MESSAGE = 'wiring-definition-not-current';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER wiring_activation_valid
+BEFORE INSERT OR UPDATE ON catalog.wiring_activation
+FOR EACH ROW EXECUTE FUNCTION catalog.validate_wiring_activation();
+
+-- Append-only provenance: one row per flip. `source_environment` and
+-- `source_gate_report_id` are the promote half of the provenance fact (the env
+-- a wiring was proved green in and that run's report); a local flip has no
+-- source and leaves both NULL, so they are constrained as a pair. The target
+-- report id is not repeated here — `catalog.wirings.gate_report_id`, reachable
+-- from `confirmed_definition_hash`, already carries it, and a second copy could
+-- disagree with the definition it claims to certify.
+CREATE TABLE catalog.wiring_activation_events (
+    event_seq   bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    tenant_id   text NOT NULL CHECK (tenant_id <> ''),
+    catalog_id  text NOT NULL,
+    environment text NOT NULL,
+    wiring_id   text NOT NULL,
+    enabled     boolean NOT NULL,
+    confirmed_definition_hash text NOT NULL,
+    source_environment    text,
+    source_gate_report_id text,
+    changed_at  timestamptz NOT NULL DEFAULT now(),
+    changed_by  text NOT NULL,
+    reason      text NOT NULL,
+    CONSTRAINT wiring_activation_events_promote_provenance CHECK (
+        (source_environment IS NULL) = (source_gate_report_id IS NULL)
+        AND (source_environment IS NULL OR source_environment <> '')
+        AND (source_gate_report_id IS NULL OR source_gate_report_id <> '')
+    )
+);
+ALTER TABLE catalog.wiring_activation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog.wiring_activation_events FORCE ROW LEVEL SECURITY;
+CREATE POLICY wiring_activation_events_tenant ON catalog.wiring_activation_events
+    USING (tenant_id = NULLIF(current_setting('app.tenant', true), ''))
+    WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant', true), ''));
+GRANT SELECT ON catalog.wiring_activation_events TO wamn_app;
+-- Append-only against the owning role too, not only against the grants: the
+-- `catalog.validated_flow_drafts` idiom, because a rewritten provenance row is
+-- worse than an absent one.
+CREATE TRIGGER wiring_activation_events_immutable
+BEFORE UPDATE OR DELETE ON catalog.wiring_activation_events
+FOR EACH ROW EXECUTE FUNCTION catalog.reject_immutable_row_change();
